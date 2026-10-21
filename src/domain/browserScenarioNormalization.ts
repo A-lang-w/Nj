@@ -65,8 +65,7 @@ export const normalizeScenarioValue = (
     // after literal rules; names alone can collide after redaction/normalization.
     // Keep multiplicity and every cookie attribute or value fingerprint.
     return artifact === "storage"
-      ? normalized
-          .sort(compareStorageEntries)
+      ? normalized.sort(compareStorageEntries)
       : normalized;
   }
   if (typeof value !== "object" || value === null) return value;
