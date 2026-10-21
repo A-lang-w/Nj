@@ -138,7 +138,7 @@ const addMarkedPatterns = (
   if (prefix !== undefined) matcher.add(`!/${prefix}/`);
 };
 
-const resolveRoot = async (
+export const resolveReferenceSourceRoot = async (
   requestedRoot: string,
   signal?: AbortSignal,
 ): Promise<Result<string, ReferenceSourceImportError>> => {
@@ -284,12 +284,16 @@ export const prepareReferenceSourceImport = async (
   resources: ArtifactResourceScope,
   exclusions: HistoricalSourceGraphInput["exclusions"] = [],
   ignoreCase: boolean | null = false,
+  canonicalRoot?: string,
 ): Promise<
   Result<PreparedReferenceSourceImport, ReferenceSourceImportError>
 > => {
   try {
     return await resources.run(async () => {
-      const root = await resolveRoot(options.root, options.signal);
+      const root =
+        canonicalRoot === undefined
+          ? await resolveReferenceSourceRoot(options.root, options.signal)
+          : ok(canonicalRoot);
       if (!root.ok) return root;
       const policy = await readIgnorePolicy(root.value, resources, {
         signal: options.signal,

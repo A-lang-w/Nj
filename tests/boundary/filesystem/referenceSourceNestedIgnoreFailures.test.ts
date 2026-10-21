@@ -1,4 +1,5 @@
 import { mkdir, open as fsOpen, symlink, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,6 +47,21 @@ const fixture = async () => {
   return { root, source, policy, excluded, sourceBytes };
 };
 
+const initializeUnknownIgnoreCaseRepository = (root: string): void => {
+  const initialized = spawnSync(
+    "git",
+    ["init", "--quiet", "--initial-branch=main", root],
+    { encoding: "utf8" },
+  );
+  expect(initialized.status, initialized.stderr).toBe(0);
+  const unset = spawnSync(
+    "git",
+    ["-C", root, "config", "--local", "--unset-all", "core.ignoreCase"],
+    { encoding: "utf8" },
+  );
+  expect([0, 5], unset.stderr).toContain(unset.status);
+};
+
 const importTree = (
   root: string,
   resources: ArtifactResourceScope,
@@ -65,6 +81,7 @@ const expectUnenteredSubtree = (
   error: ReferenceSourceImportError,
   sourceBytes: string,
   excluded: string,
+  includesGitMetadata = false,
 ) => {
   expect(error.partial?.entries).toContainEqual(
     expect.objectContaining({
@@ -89,6 +106,16 @@ const expectUnenteredSubtree = (
     error.partial?.entries.some(({ path }) => path.startsWith("nested/")),
   ).toBe(false);
   expect(error.partial?.exclusions).toEqual([
+    ...(includesGitMetadata
+      ? [
+          {
+            path: ".git",
+            entry_kind: "directory",
+            reason: "default-ignored",
+            pattern: ".git/",
+          },
+        ]
+      : []),
     {
       path: "excluded-before-failure.ts",
       entry_kind: "file",
@@ -107,6 +134,40 @@ const expectUnenteredSubtree = (
 describe.skipIf(process.platform === "win32")(
   "nested reference source ignore policy failures",
   () => {
+    it("preserves unknown ignore-case limitations in partial nested-policy failures", async () => {
+      const { root, policy, sourceBytes } = await fixture();
+      initializeUnknownIgnoreCaseRepository(root);
+      await writeFile(policy, Buffer.from([0xff, 0xfe]));
+      const resources = new ArtifactResourceScope();
+      try {
+        const result = await importTree(root, resources);
+        if (result.ok) throw new Error("Expected nested policy failure");
+        expect(result.error.code).toBe("io");
+        expect(result.error.partial?.limitations).toContain(
+          "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.",
+        );
+        expect(result.error.partial?.exclusions).toEqual(
+          expect.arrayContaining([
+            {
+              path: "excluded-before-failure.ts",
+              entry_kind: "file",
+              reason: "project-ignored",
+              pattern: "excluded-before-failure.ts",
+              policy_path: ".gitignore",
+            },
+          ]),
+        );
+        expectUnenteredSubtree(
+          result.error,
+          sourceBytes,
+          join(root, "nested", "excluded.ts"),
+          true,
+        );
+      } finally {
+        await resources.close();
+      }
+    });
+
     it.each(["invalid UTF-8", "unreadable file", "symbolic link"] as const)(
       "fails closed for a nested %s policy before reading its children",
       async (condition) => {
@@ -185,6 +246,37 @@ describe.skipIf(process.platform === "win32")(
 describe.skipIf(process.platform === "win32")(
   "nested reference source ignore policy finalization",
   () => {
+    it("keeps unknown ignore-case limitations when cancellation follows nested policy cleanup", async () => {
+      const { root, policy, sourceBytes, excluded } = await fixture();
+      initializeUnknownIgnoreCaseRepository(root);
+      const resources = new ArtifactResourceScope();
+      const controller = new AbortController();
+      const reason = new Error("cancel after nested Git policy cleanup");
+      openMock.mockImplementation(async (...args) => {
+        const handle = await actual.open(...args);
+        if (resolve(String(args[0])) !== resolve(policy)) return handle;
+        const close = handle.close.bind(handle);
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          await close();
+          controller.abort(reason);
+        });
+        return handle;
+      });
+
+      try {
+        const result = await importTree(root, resources, controller.signal);
+        if (result.ok) throw new Error("Expected nested policy cancellation");
+        expect(result.error.code).toBe("cancelled");
+        expect(result.error.cause).toBe(reason);
+        expect(result.error.partial?.limitations).toContain(
+          "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.",
+        );
+        expectUnenteredSubtree(result.error, sourceBytes, excluded, true);
+      } finally {
+        await resources.close();
+      }
+    });
+
     it.each([
       { cancel: false, failFirstClose: false },
       { cancel: true, failFirstClose: false },

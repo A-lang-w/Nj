@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 
@@ -179,6 +179,81 @@ const testMalformedGitIgnoreConfig = async () => {
   );
 };
 
+const testCanonicalSymlinkUsesTargetRepository = async () => {
+  const root = await createTestTempDirectory("rea-reference-vcs-symlink-");
+  const repositoryA = join(root, "repository-a");
+  const repositoryB = join(root, "repository-b");
+  const selected = join(repositoryA, "selected");
+  const target = join(repositoryB, "packages", "chosen");
+  await Promise.all([mkdir(repositoryA), mkdir(repositoryB)]);
+  await writeTree(repositoryA, { "selected.ts": "repository A\n" });
+  await writeTree(repositoryB, {
+    "packages/chosen/.gitignore": "generated/\n",
+    "packages/chosen/Generated/keep.ts": "repository B source\n",
+  });
+  const git = (cwd: string, args: string[]) =>
+    spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  const succeeds = (cwd: string, args: string[]) => {
+    const result = git(cwd, args);
+    expect(result.status, result.stderr).toBe(0);
+    return result;
+  };
+  for (const repository of [repositoryA, repositoryB])
+    expect(
+      spawnSync(
+        "git",
+        ["init", "--quiet", "--initial-branch=main", repository],
+        {
+          encoding: "utf8",
+        },
+      ).status,
+    ).toBe(0);
+  succeeds(repositoryA, ["config", "core.ignoreCase", "true"]);
+  succeeds(repositoryA, ["add", "--", "selected.ts"]);
+  succeeds(repositoryA, [
+    "-c",
+    "user.name=REA fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--quiet",
+    "-m",
+    "repository A",
+  ]);
+  succeeds(repositoryB, ["config", "core.ignoreCase", "false"]);
+  succeeds(repositoryB, ["add", "--", "packages/chosen/.gitignore"]);
+  succeeds(repositoryB, ["add", "--", "packages/chosen/Generated/keep.ts"]);
+  succeeds(repositoryB, [
+    "-c",
+    "user.name=REA fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--quiet",
+    "-m",
+    "repository B",
+  ]);
+  await symlink(target, selected);
+
+  const expectedHead = succeeds(repositoryB, [
+    "rev-parse",
+    "HEAD",
+  ]).stdout.trim();
+  const result = await importReferenceSource({
+    root: selected,
+    caller: "nested-ignore-symlink-vcs-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.vcs).toMatchObject({ kind: "git", head: expectedHead });
+  expect(result.value.exclusions).not.toContainEqual(
+    expect.objectContaining({ path: "Generated", reason: "project-ignored" }),
+  );
+  expect(result.value.entries).toContainEqual(
+    expect.objectContaining({ path: "Generated/keep.ts", kind: "file" }),
+  );
+};
+
 describe.skipIf(process.platform === "win32")(
   "nested reference ignore rules",
   () => {
@@ -250,6 +325,10 @@ describe.skipIf(process.platform === "win32")(
 
     it("does not trust a core setting from a malformed Git config", async () => {
       await testMalformedGitIgnoreConfig();
+    });
+
+    it("reads VCS facts and ignore-case rules from the canonical symlink target", async () => {
+      await testCanonicalSymlinkUsesTargetRepository();
     });
 
     it("scopes anchored rules and negations to their directory and descendants", async () => {

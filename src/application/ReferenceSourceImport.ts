@@ -22,7 +22,10 @@ import type {
   ReferenceSourceImportError,
   ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
-import { prepareReferenceSourceImport } from "./ReferenceSourceImportPolicy.js";
+import {
+  prepareReferenceSourceImport,
+  resolveReferenceSourceRoot,
+} from "./ReferenceSourceImportPolicy.js";
 
 const failure = (
   code: ReferenceSourceImportError["code"],
@@ -40,10 +43,17 @@ type ReferenceSourceImportPartial = NonNullable<
 const withImportExclusions = (
   partial: ReferenceSourceRead | undefined,
   exclusions: HistoricalSourceGraphInput["exclusions"],
+  limitations: readonly string[] = [],
 ): ReferenceSourceImportPartial | undefined =>
   partial === undefined
     ? undefined
-    : { ...partial, exclusions: sortExclusions(exclusions) };
+    : {
+        ...partial,
+        exclusions: sortExclusions(exclusions),
+        limitations: [
+          ...new Set([...partial.limitations, ...limitations]),
+        ].sort(compareUnicodeCodePoints),
+      };
 
 const cancelled = (
   partial?: ReferenceSourceImportPartial,
@@ -156,8 +166,13 @@ export const importReferenceSource = async (
 ): Promise<Result<HistoricalSourceGraph, ReferenceSourceImportError>> => {
   if (isAborted(options.signal)) return err(cancelled());
   const exclusions: HistoricalSourceGraphInput["exclusions"] = [];
-  const vcsResult = await readReferenceSourceVcs(
+  const canonicalRoot = await resolveReferenceSourceRoot(
     options.root,
+    options.signal,
+  );
+  if (!canonicalRoot.ok) return canonicalRoot;
+  const vcsResult = await readReferenceSourceVcs(
+    canonicalRoot.value,
     resources,
     options.signal,
   );
@@ -166,6 +181,7 @@ export const importReferenceSource = async (
     resources,
     exclusions,
     vcsResult.ok ? vcsResult.value.ignoreCase : null,
+    canonicalRoot.value,
   );
   if (!prepared.ok) return prepared;
   const { root, policy } = prepared.value;
@@ -181,7 +197,11 @@ export const importReferenceSource = async (
       combineReadFailures(
         readResult.error,
         vcsResult.ok ? undefined : vcsResult.error,
-        withImportExclusions(readResult.error.partial, exclusions),
+        withImportExclusions(
+          readResult.error.partial,
+          exclusions,
+          prepared.value.limitations,
+        ),
       ),
     );
   if (!vcsResult.ok)
@@ -189,14 +209,26 @@ export const importReferenceSource = async (
       combineReadFailures(
         vcsResult.error,
         undefined,
-        withImportExclusions(readResult.value, exclusions),
+        withImportExclusions(
+          readResult.value,
+          exclusions,
+          prepared.value.limitations,
+        ),
       ),
     );
 
   const vcs = vcsResult.value.info;
 
   if (isAborted(options.signal))
-    return err(cancelled(withImportExclusions(readResult.value, exclusions)));
+    return err(
+      cancelled(
+        withImportExclusions(
+          readResult.value,
+          exclusions,
+          prepared.value.limitations,
+        ),
+      ),
+    );
 
   const read = readResult.value;
   const filePaths = new Set(
@@ -209,7 +241,11 @@ export const importReferenceSource = async (
     parseReferenceSourceEntries(read, filePaths, options.signal);
 
   if (isAborted(options.signal))
-    return err(cancelled(withImportExclusions(read, exclusions)));
+    return err(
+      cancelled(
+        withImportExclusions(read, exclusions, prepared.value.limitations),
+      ),
+    );
 
   const uniqueRelationships = deduplicateRelationships(relationships);
   const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);
