@@ -217,3 +217,12 @@ absolute-path tests also passed: full advertisement conformance explicitly
 selects full, while actual relative-path refusals keep the default compact
 presentation. This fixes the remaining nested-path assertion found by CI.
 These integration checks do not replace the original performance cohorts.
+
+A later unchanged-head CI retry passed the earlier Ghidra Java-cleanup failure
+but exposed a full-schema assumption in call-direction coverage. That workflow
+now tests full and compact with actual canonical invalid-input refusals. A
+fresh-process audit also found a browser scenario cross-field assertion; it
+keeps default valid calls and typed refusals while checking full producer
+constraints separately. Five isolated suites passed 14 tests across call paths,
+ADB start, browser scenarios, source selection and managed analysis. The first
+browser attempt failed and remains recorded; no performance cohort changed.
