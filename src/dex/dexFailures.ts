@@ -12,9 +12,9 @@ import {
 } from "../artifacts/ArtifactFileOperation.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import {
-  ARTIFACT_DECOMPRESSION_RATIO,
-  MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
-} from "../domain/artifactDecompressionBudget.js";
+  ARTIFACT_EXPANSION_RATIO,
+  MINIMUM_ARTIFACT_EXPANDED_BYTES,
+} from "../domain/artifactExpansionBudget.js";
 import type { InspectDexDebugMetadataInput } from "../domain/dex/dexDebugMetadataReport.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -318,9 +318,8 @@ const limitFailure = (
         "capacity",
         cause.message,
         {
-          decompression_ratio: ARTIFACT_DECOMPRESSION_RATIO,
-          minimum_decompression_budget_bytes:
-            MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
+          decompression_ratio: ARTIFACT_EXPANSION_RATIO,
+          minimum_decompression_budget_bytes: MINIMUM_ARTIFACT_EXPANDED_BYTES,
         },
         {
           ...options,

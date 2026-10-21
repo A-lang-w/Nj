@@ -216,6 +216,36 @@ sites remain distinct. A static route does not establish runtime reachability.
 Swift/closure dispatch requires resolved static references; unavailable ABI
 forms remain unknown.
 
+Incomplete reference kinds do not discard known typed calls or partial
+provider call references. A `provider_call` with `observed` resolution retains
+the provider-reported call site and endpoint without claiming generic direct,
+indirect or Objective-C dispatch semantics. Its `call_reference` evidence
+preserves the original endpoints, classification, raw provider type and
+provenance, even when the target node is a containing procedure. Hopper's
+`none`, `unknown`, `direct` and `objective_c` labels stay provider-scoped;
+unknown numeric types remain available in the raw type field. Target-only
+callee fallback uses `provider_call` with `inferred` resolution.
+
+Callee fallback adds inferred targets while each retained route keeps its
+original provider and call site. If enumeration fails, known routes remain alongside an unresolved
+failure; cancellation still terminates the request. A node-limit omission keeps
+the route's known relation while marking its target unresolved. Distinct call
+sites to the same omitted target retain separate evidence.
+Reports sharing a call site and containing target procedure retain all their
+original endpoint evidence on the shared graph edge. Different reported
+relations retain separate edges, independent of enumeration order.
+
+Session discovery describes two automatic source routes for this trace:
+`authored_ui_dispatch` needs Interface Builder decoding and dispatch metadata;
+`native_seed_call_trace` needs native address resolution, dispatch metadata and
+a call reader. Metadata can come from direct inspection or `list_names`;
+the call reader can supply typed `procedure_references` or inferred
+`procedure_callees`. An authored UI-to-handler edge remains useful without
+call expansion, and native-seed tracing can proceed without UI decoding.
+These routes add no request option or default mode, so discovery omits
+`default_mode_available`. Availability describes source prerequisites;
+the result reports the query's actual matches, coverage and failures.
+
 `trace_native_values` / `rea trace-native-values <binary> <procedure> --provider
  ghidra` composes high-p-code def-use graphs across statically resolved calls.
 Logical CALL arguments bind to recovered parameter ordinals; recovered RETURN
@@ -268,13 +298,20 @@ markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
 OpenStep plists, including a data-only value such as `<deadbeef>`, report
 `unknown` even when plutil decodes their values through an XML conversion.
 
+Binary plist inspection reads the original bytes through an owned file descriptor,
+so conversion cannot erase control characters, fractional dates, negative zero,
+or the high word of a 128-bit integer. It accepts at most 64 MiB of input and
+reserves an estimated 64 MiB decode budget before parsing; this estimate is not
+a hard process-memory bound. Binary-source provenance records the `file`
+classification without claiming a `plutil` conversion.
+
 A plist explicitly selected through the path input or as the active plist target
 reports an unreadable or malformed selection as `invalid_request`. A missing or
 unreadable default plist of another target reports `capability_unavailable`.
 Permission failures remain `access_denied`; output and cleanup failures retain
 their own error categories.
 
-A plist decode refusal includes plutil's diagnostic from either output stream.
+A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte
 totals and exit status. `truncated: true` means those excerpts are incomplete.
 
@@ -395,10 +432,32 @@ complete observation.
   vtable descriptors. Records include exact virtual addresses/file offsets and
   artifact evidence. Vtable indexes are metadata word offsets; witness indexes
   start after the conformance header. Names unavailable in metadata remain null.
+  The `swift_class_vtable_descriptors` coverage counters count examined vtable
+  slots and successfully decoded slots, rather than type-section entries.
+  The `objc_class_method_ivar_metadata` counters count admitted class and
+  metaclass objects and successfully decoded objects.
   Pointers are decoded through the image's fixups:
   - `LC_DYLD_CHAINED_FIXUPS` rebases and binds, including the authenticated
     arm64e formats;
-  - legacy `LC_DYLD_INFO` bind opcodes.
+  - legacy `LC_DYLD_INFO` rebase and bind opcodes.
+
+  A Swift conformance whose type or protocol reference is an external bind
+  keeps its name as `null` and carries the raw dyld identity in
+  `type_binding` or `protocol_binding`; that record and its facet coverage are
+  partial. Consumers of this output must handle nullable conformance names
+  and use the typed binding fields instead of substituting a symbol as a
+  display name. Indirect relative-pointer records also retain their binding
+  identity. A decoded rebase to virtual address zero remains an address; only
+  an unfixed zero in a nullable ABI field is treated as null. Incomplete or
+  conflicting fixup streams keep affected pointers unresolved; coverage reports
+  parsing and resource limits while retaining validated prefix facts.
+  Conformance records preserve the raw three-bit `type_reference_kind`. Kinds
+  0 and 1 identify direct and indirect nominal descriptors; kind 2 preserves
+  the inline Objective-C class name and its source location. Kind 3 preserves
+  an imported class binding or the local class-object address when available,
+  but class metadata/name recovery requiring the Objective-C runtime remains
+  partial. Unknown kinds retain the raw kind and reference location without
+  being treated as absent or assigned a guessed type name.
 
   So an external superclass resolves from its `_OBJC_CLASS_$_` bind (for
   example `NSObject`). The `pointer_fixups` coverage facet names the mechanism.
@@ -435,6 +494,21 @@ complete observation.
   workflow tries direct metadata first and uses the symbol fallback only when
   that operation is unavailable; runtime failures remain failures rather than
   being replaced by symbol-only results.
+
+`get_objc_classes` keeps names from the provider inventory. It coalesces rows
+only when their exact selected-image pointer slots decode to the same class
+import, including its binding stream, raw library ordinal, resolved library, weak status, and addend. A literal filter is
+applied to the original names before that join; if the filter selects only an
+alias, the output keeps that exact row. `identity_coverage` distinguishes a
+complete selected-inventory scan from partial, unsupported, and unknown cases.
+Recognized Mach-O formats outside the native metadata reader's support retain
+the provider's class labels with unknown import identity; malformed headers and
+read failures remain errors.
+The join also requires matching whole-artifact digests and matching provider-
+owned selected-image facts: container, byte range, full raw CPU type/subtype,
+and FAT table digest when present. A missing or overridden loader selection
+remains unknown; the result describes agreement on the selected artifact image,
+not an atomic observation of a running process or whole-program class coverage.
 
 ## Native desktop observation
 
@@ -654,7 +728,13 @@ leap seconds) and out-of-range dates remain explicit unknowns. REA does not
 emulate CoreFoundation's normalization of overflowing calendar fields. Invalid
 dates returned by other decoders retain `{ "$plist_type": "date", "iso8601": null }`
 with a counted limitation. `inspect_plist` and Interface Builder decoding use
-the same projection.
+the same projection. Binary plist decoding refuses a reachable date whose marker
+is not `0x33`; date and numeric payloads must end before the offset table.
+Valid overlapping object records retain their independent source values. A valid `0x33` date is
+reported with an ISO-8601 timestamp only when its float64 seconds are exactly
+the canonical encoding of that millisecond instant. Any other finite binary
+date uses `{ "$plist_type": "date", "iso8601": null }` and the counted
+limitation; the archive bytes remain the source of the instant.
 
 A negative-zero real is reported as `{ "$plist_type": "real", "value": "-0" }`
 because a JSON number cannot carry the sign of zero. `inspect_plist` and

@@ -15,11 +15,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
-import {
-  ARTIFACT_DECOMPRESSION_RATIO,
-  artifactDecompressionBudgetBytes,
-  MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
-} from "../domain/artifactDecompressionBudget.js";
+import { MINIMUM_ARTIFACT_EXPANDED_BYTES } from "../domain/artifactExpansionBudget.js";
 
 /** Small real ZIP carriers with forged sizes; metadata-only controls, never decompressed. */
 const writeZipWithDeclaredSize = async (
@@ -76,7 +72,7 @@ describe("ZipArtifactReader decompression budget", () => {
 
   it("charges all declarations in one traversal before yielding an over-budget member", async () => {
     const directory = await createTestTempDirectory("rea-zip-budget-total-");
-    const half = MINIMUM_ARTIFACT_DECOMPRESSION_BYTES / 2;
+    const half = MINIMUM_ARTIFACT_EXPANDED_BYTES / 2;
     const path = await writeZipWithDeclaredSize(directory, [half, half + 1]);
     const reader = new ZipArtifactReader(path, "zip");
     const iterator = reader.entries()[Symbol.asyncIterator]();
@@ -94,8 +90,8 @@ describe("ZipArtifactReader decompression budget", () => {
       "rea-zip-budget-iterators-",
     );
     const path = await writeZipWithDeclaredSize(directory, [
-      MINIMUM_ARTIFACT_DECOMPRESSION_BYTES / 2,
-      MINIMUM_ARTIFACT_DECOMPRESSION_BYTES / 2,
+      MINIMUM_ARTIFACT_EXPANDED_BYTES / 2,
+      MINIMUM_ARTIFACT_EXPANDED_BYTES / 2,
     ]);
     const reader = new ZipArtifactReader(path, "zip");
     const first = reader.entries()[Symbol.asyncIterator]();
@@ -323,21 +319,6 @@ describe("ZipArtifactReader member names", () => {
   });
 });
 
-describe("artifactDecompressionBudgetBytes", () => {
-  it("grants at least the floor and grows with the compressed size", () => {
-    expect(artifactDecompressionBudgetBytes(0)).toBe(
-      MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
-    );
-    expect(artifactDecompressionBudgetBytes(1024)).toBe(
-      MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
-    );
-    const large = MINIMUM_ARTIFACT_DECOMPRESSION_BYTES * 4;
-    expect(artifactDecompressionBudgetBytes(large)).toBe(
-      large * ARTIFACT_DECOMPRESSION_RATIO,
-    );
-  });
-});
-
 describe("ZipArtifactReader traversal options", () => {
   const writeZip = async (names: readonly string[]): Promise<string> => {
     const path = join(
@@ -398,7 +379,7 @@ describe("ZipArtifactReader traversal options", () => {
   it("names the bound a refused archive exceeded", async () => {
     const directory = await createTestTempDirectory("rea-zip-boundary-");
     const path = await writeZipWithDeclaredSize(directory, [
-      MINIMUM_ARTIFACT_DECOMPRESSION_BYTES + 1,
+      MINIMUM_ARTIFACT_EXPANDED_BYTES + 1,
     ]);
     const reader = new ZipArtifactReader(path, "zip");
     try {
