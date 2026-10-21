@@ -712,6 +712,68 @@ describe("reads as serving answers them", () => {
       reason: "unexplained-change",
     });
   });
+
+  it("learns no update's effect from a read made while the update was still running", () => {
+    const full = (description: string) => ({
+      id: 1,
+      name: "First",
+      description,
+    });
+    const summary = [
+      { id: 1, name: "First" },
+      { id: 2, name: "Second" },
+    ];
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary],
+      ["GET", "/api/books/1", full("Old desc")],
+      ["GET", "/api/books/2", { id: 2, name: "Second", description: "Other" }],
+      // The update runs from second 3 to 4.5; the read at second 4 still shows the old description.
+      [
+        "PATCH",
+        "/api/books/1",
+        "",
+        204,
+        { name: "First", description: "New desc" },
+        1500,
+      ],
+      ["GET", "/api/books/1", full("Old desc")],
+      ["GET", "/api/books", summary],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      observation: null,
+    });
+  });
+
+  it("explains a field an update adds that the observing view had shown the entity without", () => {
+    const rows: TimedCaptureRow[] = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+      ],
+      ["GET", "/api/books/1", { id: 1, name: "A" }],
+      ["GET", "/api/books/2", { id: 2, name: "B", edited_at: bookClock(0) }],
+      ["PATCH", "/api/books/1", "", 204, { name: "Z" }],
+      ["GET", "/api/books/1", { id: 1, name: "Z", edited_at: bookClock(3) }],
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "Z" },
+          { id: 2, name: "B" },
+        ],
+      ],
+    ];
+    const plan = gated(rows, "patch_books_by_id");
+    expect(plan).toMatchObject({ served: true });
+    expect(plan.rules).toContainEqual(
+      expect.objectContaining({ field: "edited_at", rule: "clock" }),
+    );
+  });
 });
 
 describe("what a read shows of a write", () => {
@@ -903,6 +965,42 @@ describe("reads named as serving names them", () => {
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: false,
       contradicted_by: 4,
+    });
+  });
+
+  it("ties a create named plainly to the encoded collection serving creates it in", () => {
+    const linked = (id: number, org: string, name: string) => ({
+      id,
+      name,
+      href: `/orgs/${org}/books/${String(id)}`,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [linked(1, "acme1", "Alpha")]],
+      ["GET", "/api/orgs/beta2/books", [linked(2, "beta2", "Beta")]],
+      ["GET", "/api/orgs/%61cme1/books/1", linked(1, "acme1", "Alpha")],
+      ["GET", "/api/orgs/beta2/books/2", linked(2, "beta2", "Beta")],
+      [
+        "POST",
+        "/api/orgs/acme1/books",
+        linked(3, "acme1", "Gamma"),
+        201,
+        { name: "Gamma" },
+      ],
+      ["GET", "/api/orgs/acme1/books/3", linked(3, "acme1", "Gamma")],
+      [
+        "POST",
+        "/api/orgs/beta2/books",
+        linked(4, "beta2", "Delta"),
+        201,
+        { name: "Delta" },
+      ],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "create")).toMatchObject({
+      served: true,
+      collection: "/api/orgs/%61cme1/books",
     });
   });
 });

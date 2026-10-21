@@ -354,6 +354,27 @@ export const itemTarget = (
   );
 };
 
+/** The held collection of a type a path names, as serving picks a create's: the most verbatim spelling, else the path as written. */
+export const heldCollection = (
+  state: SimulatedState,
+  type: string,
+  path: string,
+): string => {
+  const read = segmentsOf(path);
+  let held: string | undefined;
+  let verbatim = -1;
+  for (const collection of new Set(
+    state.ofType(type).map((entity) => entity.collection),
+  )) {
+    const matched = segmentMatch(segmentsOf(collection), read);
+    if (matched !== undefined && matched > verbatim) {
+      held = collection;
+      verbatim = matched;
+    }
+  }
+  return held ?? `/${read.join("/")}`;
+};
+
 export const checkItemRead = (
   state: SimulatedState,
   view: StateItemView,
