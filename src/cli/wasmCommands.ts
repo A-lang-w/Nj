@@ -10,6 +10,7 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { inspectWasmArtifactInputSchema } from "../domain/wasm/wasmArtifact.js";
 
 /** Resolve all caller-selected artifact paths through the shared workflow. */
 export const registerWasmCommands = (
@@ -41,12 +42,17 @@ export const registerWasmCommands = (
       ),
   });
   const service = wasmArtifactModule.create(environment);
+  const commandTimeoutSchema =
+    inspectWasmArtifactInputSchema.shape.command_timeout_ms;
   cli.command(wasmArtifactModule.cliCommand, {
     description: "Inspect an explicit local WASM artifact with WABT",
     args: z.object({
       path: z.string().describe("Local WASM artifact"),
     }),
     options: z.object({
+      commandTimeoutMs: commandTimeoutSchema
+        .optional()
+        .meta(commandTimeoutSchema.meta() ?? {}),
       glue_paths: z
         .array(z.string())
         .optional()
@@ -64,6 +70,9 @@ export const registerWasmCommands = (
               service.inspect(
                 {
                   path: absoluteCallerPath(args.path),
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
                   glue_paths: options.glue_paths?.map((path) =>
                     absoluteCallerPath(path),
                   ),
