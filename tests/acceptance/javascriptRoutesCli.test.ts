@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -238,3 +239,61 @@ cliTest(
   },
   120000,
 );
+
+it("keeps a large source's partial route facts queryable through SDK delivery", async () => {
+  const path = await createTestTempDirectory("rea-large-route-result-");
+  const text = Array.from(
+    { length: 12000 },
+    (_, index) => `route('/reports/${index}/${"x".repeat(96)}');`,
+  ).join("\n");
+  await writeFile(join(path, "routes.js"), text);
+  const { call } = await connectLocalToolsMcp({
+    NODE_OPTIONS: "--max-old-space-size=3072",
+  });
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    max_semantic_nodes: 1,
+    max_semantic_unknowns: 8,
+    max_heap_mb: 512,
+    analysis_timeout_ms: 30000,
+    detail: "summary",
+    view: {
+      kind: "javascript-routes",
+      collection: "routes",
+      fields: ["path"],
+      limit: 2,
+    },
+  });
+  expect(response.isError).not.toBe(true);
+  const selected = javaScriptRoutesViewResultSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(selected.items).toHaveLength(2);
+  expect(selected.source_coverage.candidate_enumeration).toBe("partial");
+  expect(selected.sources[0]).toMatchObject({
+    status: "complete",
+    sha256: createHash("sha256").update(text).digest("hex"),
+    reported_route_capacity: { kind: "result-bytes" },
+  });
+  expect(Buffer.byteLength(JSON.stringify(selected))).toBeLessThanOrEqual(
+    1024 * 1024,
+  );
+  const unknowns = await call("inspect_analysis_view", {
+    source: {
+      kind: "retained-evidence",
+      evidence_id: selected.parent_evidence_id,
+    },
+    view: {
+      kind: "javascript-routes",
+      collection: "unknowns",
+      where: { kinds: ["capacity"] },
+      fields: ["reason"],
+    },
+  });
+  expect(unknowns.isError).not.toBe(true);
+  expect(
+    javaScriptRoutesViewResultSchema.parse(
+      parseEvidence(unknowns.structuredContent).normalized_result,
+    ).items.length,
+  ).toBeGreaterThan(0);
+}, 60000);
