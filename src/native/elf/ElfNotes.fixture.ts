@@ -206,3 +206,34 @@ export const elfNoteFixture = (options: ElfNoteImageOptions = {}): Buffer => {
   notes.copy(bytes, noteOff);
   return bytes;
 };
+
+/**
+ * ELF64 whose only PT_NOTE declares 20 bytes. The file holds the 12-byte
+ * header, 4-byte name, and 1-byte descriptor; the 3 alignment bytes are absent.
+ */
+export const elfNoteTablePastEnd = (): Buffer => {
+  const note = Buffer.alloc(17);
+  write32(note, 0, 4, true);
+  write32(note, 4, 1, true);
+  write32(note, 8, 1, true);
+  note.write("GNU\0", 12, "latin1");
+  note[16] = 0x2a;
+  const header = Buffer.alloc(64);
+  header.writeUInt32LE(0x464c457f, 0);
+  header[4] = 2;
+  header[5] = 1;
+  header[6] = 1;
+  write16(header, 0x10, 3, true);
+  write16(header, 0x12, 62, true);
+  write32(header, 0x14, 1, true);
+  write16(header, 0x34, 64, true);
+  writeWord(header, 0x20, 64, 64, true);
+  write16(header, 0x36, 56, true);
+  write16(header, 0x38, 1, true);
+  const program = Buffer.alloc(56);
+  write32(program, 0, 4, true);
+  writeWord(program, 8, 120, 64, true);
+  writeWord(program, 32, 20, 64, true);
+  writeWord(program, 48, 4, 64, true);
+  return concat(header, program, note);
+};

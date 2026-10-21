@@ -6,6 +6,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   elfNote,
   elfNoteFixture,
+  elfNoteTablePastEnd,
   gnuAbiTagNote,
   gnuBuildIdNote,
   gnuPropertyNote,
@@ -369,6 +370,19 @@ it("decodes a GNU gold version by scanning trailing NULs", () => {
   );
   expect(Date.now() - started).toBeLessThan(1_000);
   expect(report.entries[0]?.gnu?.gold_version).toBe(`${"\0".repeat(131_072)}x`);
+});
+
+it("rejects a declared note table that extends past the file", () => {
+  const truncated = elfNoteTablePastEnd();
+  expect(truncated.length).toBe(137);
+  expect(() => parse(truncated)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(truncated)).toThrow(/leaves the artifact/u);
+  const present = Buffer.concat([truncated, Buffer.alloc(3)]);
+  expect(parse(present).entries).toHaveLength(1);
+  expect(parse(present).tables[0]?.location).toEqual({
+    offset: 120,
+    bytes: 20,
+  });
 });
 
 it("fails when the entry budget is exhausted", () => {

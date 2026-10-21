@@ -165,6 +165,10 @@ const parseNoteStream = (
   examined: { count: number },
   text: TextBudget,
 ): ParsedNote[] => {
+  // Alignment padding is not read when a note's aligned size equals the
+  // declared table. Require the whole table first so a short file is invalid
+  // input instead of a provider result the service rejects.
+  reader.require(offset, size);
   const notes: ParsedNote[] = [];
   let at = 0;
   while (at + 12 <= size) {

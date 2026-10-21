@@ -44,7 +44,8 @@ names, section names, and GNU descriptor text share that file's byte budget,
 and repeated table ranges count again. Each descriptor range is hashed once,
 and each GNU version's trailing NUL run is scanned once; neither walk may
 exceed that byte ceiling. Malformed ELF headers, truncated header
-tables, and truncated note entries fail without partial success. ELF extended
+tables, declared note tables that extend past the file, and truncated
+note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
 unsupported.
 
