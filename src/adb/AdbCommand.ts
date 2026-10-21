@@ -139,22 +139,21 @@ export const runAdbCapture = async (
         new AnalysisProtocolError(`adb failed for ${operation}`, { cause }),
       );
     if (failure.outputTruncated) {
-      const allowance = fixedAllowanceOptions(
-        `The adb output capture allowance of ${String(limits.maxOutputBytes)} bytes`,
-        limits.volatileOutput === true ? "live" : "capture",
-      );
+      const name = `The adb output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override)`;
+      const allowance =
+        limits.volatileOutput === true
+          ? {
+              fixedAllowance: { name, kind: "live" as const },
+              retryable: true as const,
+            }
+          : fixedAllowanceOptions(name, "capture");
       return err(
         new AnalysisResourceConstraintError(
           operation,
           "memory",
           `adb output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
           { max_output_bytes: limits.maxOutputBytes },
-          {
-            cause,
-            ...allowance,
-            remediationAction: `${allowance.remediationAction} This release has no runtime override.`,
-            ...(limits.volatileOutput === true ? { retryable: true } : {}),
-          },
+          { cause, ...allowance },
         ),
       );
     }

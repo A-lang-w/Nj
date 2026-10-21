@@ -200,10 +200,6 @@ const apktoolCommandFailure = (
       ...apktoolDecodeTimeoutGuidance(limits.timeoutMs),
     });
   if (cause.reason === "output-limit") {
-    const allowance = fixedAllowanceOptions(
-      `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes`,
-      "capture",
-    );
     return new AnalysisResourceConstraintError(
       operation,
       "memory",
@@ -212,8 +208,10 @@ const apktoolCommandFailure = (
       {
         cause,
         ...(capturedOutput === undefined ? {} : { capturedOutput }),
-        ...allowance,
-        remediationAction: `${allowance.remediationAction} This release has no runtime override. decode_timeout_ms does not raise it.`,
+        ...fixedAllowanceOptions(
+          `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+          "capture",
+        ),
       },
     );
   }

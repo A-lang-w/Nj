@@ -142,10 +142,6 @@ export const inspectAdbClient = async (
         : { capturedOutput: adbCommandCapturedOutput(failure) }),
     };
     if (failure?.outputTruncated === true) {
-      const allowance = fixedAllowanceOptions(
-        `The adb version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes`,
-        "capture",
-      );
       throw new AnalysisResourceConstraintError(
         "inspect_adb_client",
         "memory",
@@ -153,8 +149,10 @@ export const inspectAdbClient = async (
         { max_output_bytes: VERSION_MAX_OUTPUT_BYTES },
         {
           ...options,
-          ...allowance,
-          remediationAction: `${allowance.remediationAction} This release has no runtime override.`,
+          ...fixedAllowanceOptions(
+            `The adb version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes (this release has no runtime override)`,
+            "capture",
+          ),
         },
       );
     }
