@@ -23,6 +23,9 @@ import type { EnvironmentState } from "./environmentState.js";
 import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
 import { REA_STATE_FORMAT } from "./environmentTools.js";
 
+/** A loaded state document is at most this large, whether it arrives as bytes, a file or a download. */
+export const STATE_INTAKE_LIMIT_BYTES = 32 * 1024 * 1024;
+
 /** A document as the state holds it; only a value equal to the Evidence's cites the record it came from. */
 export type HeldDocument = Omit<StateDocument, "record_ordinal"> & {
   readonly record_ordinal?: number;

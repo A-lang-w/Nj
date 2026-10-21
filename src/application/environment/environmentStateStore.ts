@@ -2,15 +2,25 @@ import type {
   StateEntity,
   StateType,
 } from "../../domain/analysisView/environmentStateRules.js";
-import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { ok, type Result } from "../../domain/result.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { jsonParts } from "../../domain/jsonSerialization.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
+import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
 import type { EnvironmentState } from "./environmentState.js";
 import {
   parseStateDocument,
+  STATE_INTAKE_LIMIT_BYTES,
   type HeldDocument,
   type StateContent,
 } from "./environmentStateDocument.js";
+
+/** The UTF-8 bytes a value's JSON takes, counted part by part so it is never one string. */
+const jsonBytes = (value: unknown): number => {
+  let bytes = 0;
+  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part, "utf8");
+  return bytes;
+};
 
 /** What `data/get` reports: the current state as a `rea-state/v1` document. */
 export interface StateSnapshot {
@@ -52,6 +62,24 @@ export class EnvironmentStateStore {
   replace(document: unknown): Result<void, AnalysisInputError> {
     const content = parseStateDocument(this.state, document);
     if (!content.ok) return content;
+    // data/get writes members a document may omit, so the state it reports must still be one data/add loads.
+    if (jsonBytes(this.#snapshotOf(content.value)) > STATE_INTAKE_LIMIT_BYTES)
+      return err(
+        new AnalysisInputError(
+          ENVIRONMENT_SERVE_OPERATION,
+          {
+            userMessage: `The state would exceed ${String(STATE_INTAKE_LIMIT_BYTES)} bytes as data/get writes it.`,
+          },
+          [
+            {
+              path: [],
+              reason: "out_of_range",
+              message: `would exceed ${String(STATE_INTAKE_LIMIT_BYTES)} bytes as data/get writes it`,
+              maximum: STATE_INTAKE_LIMIT_BYTES,
+            },
+          ],
+        ),
+      );
     this.#install(content.value);
     return ok(undefined);
   }
@@ -83,13 +111,17 @@ export class EnvironmentStateStore {
   }
 
   snapshot(): StateSnapshot {
+    return this.#snapshotOf(this.#content);
+  }
+
+  #snapshotOf(content: StateContent): StateSnapshot {
     return {
       rea_state: {
         version: 1,
         state_evidence_id: this.state.evidenceId,
         types: this.state.types,
-        entities: this.#content.entities,
-        documents: this.#content.documents,
+        entities: content.entities,
+        documents: content.documents,
       },
     };
   }

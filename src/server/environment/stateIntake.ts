@@ -1,6 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -44,8 +45,7 @@ export const CANCELLED: RpcError = {
   data: { reason: "cancelled" },
 };
 
-/** A loaded state document is at most this large, whether it arrives as bytes, a file or a download. */
-export const STATE_INTAKE_LIMIT_BYTES = 32 * 1024 * 1024;
+export { STATE_INTAKE_LIMIT_BYTES };
 /** An https state download must finish within this time. */
 export const STATE_FETCH_TIMEOUT_MS = 30_000;
 
