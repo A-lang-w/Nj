@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { firmwareRequestSchema } from "../domain/firmware/firmwareAnalysis.js";
 import {
@@ -7,6 +10,8 @@ import {
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
 import { startFirmwareDeadline } from "./FirmwareDeadline.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { SafeOutputTreeAdmissionFailure } from "../artifacts/SafeOutputTreeAdmissionFailure.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -165,3 +170,66 @@ it.each([1234, 2_147_483_647])(
       expect(projected.remediation.action).toContain("maximum");
   },
 );
+
+it("classifies an existing-output-root path failure as invalid_request with output_directory issue", () => {
+  const cause = new SafeOutputTreeAdmissionFailure(
+    "path",
+    "Extraction output root already exists",
+  );
+  const failure = firmwareFailure(cause, {
+    engine: "unblob",
+    operation: "extract_firmware",
+  });
+  expect(failure).toBeInstanceOf(AnalysisInputError);
+  const projected = projectAnalysisError(failure);
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    retryable: false,
+  });
+  const inputError = failure as AnalysisInputError;
+  expect(inputError.issues).toHaveLength(1);
+  expect(inputError.issues[0]).toMatchObject({
+    path: ["output_directory"],
+    reason: "invalid_value",
+  });
+});
+
+it("classifies a missing-parent unavailable failure as invalid_request with output_directory issue", () => {
+  const cause = new SafeOutputTreeAdmissionFailure(
+    "unavailable",
+    "Extraction output parent is unavailable",
+  );
+  const failure = firmwareFailure(cause, {
+    engine: "unblob",
+    operation: "extract_firmware",
+  });
+  expect(failure).toBeInstanceOf(AnalysisInputError);
+  const projected = projectAnalysisError(failure);
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    retryable: false,
+  });
+  const inputError = failure as AnalysisInputError;
+  expect(inputError.issues).toHaveLength(1);
+  expect(inputError.issues[0]).toMatchObject({
+    path: ["output_directory"],
+    reason: "invalid_value",
+  });
+});
+
+it("keeps execution_failure classification for a later directory sync failure", () => {
+  const cause = new ArtifactReaderFailure(
+    "path",
+    "Could not durably sync extraction output",
+  );
+  const failure = firmwareFailure(cause, {
+    engine: "unblob",
+    operation: "extract_firmware",
+  });
+  expect(failure).not.toBeInstanceOf(AnalysisInputError);
+  const projected = projectAnalysisError(failure);
+  expect(projected).toMatchObject({
+    code: "execution_failure",
+    retryable: false,
+  });
+});
