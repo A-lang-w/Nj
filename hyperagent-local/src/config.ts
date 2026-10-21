@@ -59,10 +59,23 @@ export const config = {
   // to prevent bypass via spoofable x-forwarded-for / x-real-ip headers.
   // Set to true only when running behind a known trusted reverse proxy.
   trustProxy: process.env.TRUST_PROXY === "true",
-  // SEC-005: Cookie domain for session cookies. Defaults to 'localhost' for
-  // local-only deployments. Override via COOKIE_DOMAIN when running behind
-  // a reverse proxy or on a non-loopback hostname.
-  cookieDomain: process.env.COOKIE_DOMAIN || "localhost",
+  // SEC-005: Session cookie Domain. Empty (default) = host-only cookie for
+  // the request Host, so both 127.0.0.1 and localhost work. The old default
+  // of "localhost" broke sessions when the UI was opened on 127.0.0.1 (cookie
+  // rejected or never sent). Set COOKIE_DOMAIN only behind a reverse proxy
+  // that needs an explicit shared parent domain.
+  cookieDomain: process.env.COOKIE_DOMAIN ?? "",
+  // Secure cookies require HTTPS (or a browser that treats the host as a
+  // secure context). Default off on loopback HTTP so sessions survive full
+  // page loads in Chromium/automation; set COOKIE_SECURE=true behind TLS.
+  cookieSecure:
+    process.env.COOKIE_SECURE === "true"
+      ? true
+      : process.env.COOKIE_SECURE === "false"
+        ? false
+        : !["127.0.0.1", "localhost", "::1"].includes(
+            process.env.HOST || "127.0.0.1",
+          ),
 } as const;
 
 /**

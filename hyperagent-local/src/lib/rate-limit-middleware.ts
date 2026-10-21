@@ -13,6 +13,10 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
  * keys and messages (per-IP for login, per-user for refresh). Counting them
  * against the shared 5/min budget as well would let a login burst 429
  * unrelated session probes and refreshes.
+ *
+ * `/api/auth/sessions` also uses the general bucket: React StrictMode and
+ * remounts probe it on every load. A 5/min shared auth budget 429s the
+ * bootstrap probe and looks like a signed-out session after a hard refresh.
  */
 export function createRateLimitMiddleware() {
   const generalRateLimiter = createRateLimiter({
@@ -31,7 +35,9 @@ export function createRateLimitMiddleware() {
     const path = c.req.path;
     const hasDedicatedLimiter =
       path === "/api/auth/login" || path === "/api/auth/refresh";
-    const isAuth = path.startsWith("/api/auth") && !hasDedicatedLimiter;
+    const isSessionProbe = path === "/api/auth/sessions";
+    const isAuth =
+      path.startsWith("/api/auth") && !hasDedicatedLimiter && !isSessionProbe;
     const limiter = isAuth ? authRateLimiter : generalRateLimiter;
     const key = `${resolveClientIp(c)}:${isAuth ? "auth" : "general"}`;
 

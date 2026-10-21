@@ -34,6 +34,33 @@ const refreshRateLimiter = createRateLimiter({
 
 export const authRouter = new Hono();
 
+/** Session cookie attrs. Omit Domain when unset so the cookie is host-only. */
+function sessionCookieAttrs(maxAge: number): {
+  httpOnly: true;
+  sameSite: "Strict";
+  secure: boolean;
+  path: "/";
+  maxAge: number;
+  domain?: string;
+} {
+  const attrs: {
+    httpOnly: true;
+    sameSite: "Strict";
+    secure: boolean;
+    path: "/";
+    maxAge: number;
+    domain?: string;
+  } = {
+    httpOnly: true,
+    sameSite: "Strict",
+    secure: config.cookieSecure,
+    path: "/",
+    maxAge,
+  };
+  if (config.cookieDomain) attrs.domain = config.cookieDomain;
+  return attrs;
+}
+
 authRouter.post("/login", async (c) => {
   const ip = resolveClientIp(c);
 
@@ -103,14 +130,12 @@ authRouter.post("/login", async (c) => {
   // requirements. The browser never sends the cookie on cross-site navigations, providing
   // full CSRF protection without tokens. If this tool ever gains network accessibility or
   // cross-origin links, downgrade to Lax and add explicit CSRF protection.
-  setCookie(c, "ha_session", token, {
-    httpOnly: true,
-    sameSite: "Strict",
-    secure: true,
-    domain: config.cookieDomain,
-    path: "/",
-    maxAge: config.sessionMaxAgeDays * 24 * 60 * 60,
-  });
+  setCookie(
+    c,
+    "ha_session",
+    token,
+    sessionCookieAttrs(config.sessionMaxAgeDays * 24 * 60 * 60),
+  );
   // Return the full row: the client stores this as its session user, and a
   // 3-field pick would leave settingsJson/avatarPath/timestamps undefined
   // behind the User type. The row carries no secrets (passwordless app).
@@ -137,14 +162,7 @@ authRouter.post("/logout", async (c) => {
         );
     }
   }
-  setCookie(c, "ha_session", "", {
-    httpOnly: true,
-    sameSite: "Strict",
-    secure: true,
-    domain: config.cookieDomain,
-    path: "/",
-    maxAge: 0,
-  });
+  setCookie(c, "ha_session", "", sessionCookieAttrs(0));
   return c.json({ success: true });
 });
 // SEC-011: Token refresh endpoint with single-use rotation. Validates the
@@ -170,14 +188,7 @@ authRouter.post("/refresh", async (c) => {
     }
   }
   if (!payload) {
-    setCookie(c, "ha_session", "", {
-      httpOnly: true,
-      sameSite: "Strict",
-      secure: true,
-      domain: config.cookieDomain,
-      path: "/",
-      maxAge: 0,
-    });
+    setCookie(c, "ha_session", "", sessionCookieAttrs(0));
     return c.json({ error: "Invalid or expired token" }, 401);
   }
 
@@ -201,14 +212,7 @@ authRouter.post("/refresh", async (c) => {
   }
   if (session.expiresAt < new Date()) {
     // The session is actually dead: invalidate the cookie with it.
-    setCookie(c, "ha_session", "", {
-      httpOnly: true,
-      sameSite: "Strict",
-      secure: true,
-      domain: config.cookieDomain,
-      path: "/",
-      maxAge: 0,
-    });
+    setCookie(c, "ha_session", "", sessionCookieAttrs(0));
     return c.json({ error: "Session no longer valid" }, 401);
   }
 
@@ -251,14 +255,7 @@ authRouter.post("/refresh", async (c) => {
     60,
     Math.floor((expiresAt.getTime() - Date.now()) / 1000),
   );
-  setCookie(c, "ha_session", newToken, {
-    httpOnly: true,
-    sameSite: "Strict",
-    secure: true,
-    domain: config.cookieDomain,
-    path: "/",
-    maxAge: remainingMaxAge,
-  });
+  setCookie(c, "ha_session", newToken, sessionCookieAttrs(remainingMaxAge));
 
   return c.json({ success: true });
 });
