@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -146,10 +147,11 @@ const resolveRoot = async (
   }
 };
 
-const ignorePolicyExists = async (path: string): Promise<boolean> => {
+const ignorePolicyMetadata = async (
+  path: string,
+): Promise<Stats | undefined> => {
   try {
-    await lstat(path);
-    return true;
+    return await lstat(path);
   } catch (cause: unknown) {
     if (
       typeof cause === "object" &&
@@ -157,23 +159,31 @@ const ignorePolicyExists = async (path: string): Promise<boolean> => {
       "code" in cause &&
       cause.code === "ENOENT"
     )
-      return false;
+      return undefined;
     throw cause;
   }
 };
 
+interface IgnorePolicyReadOptions {
+  readonly signal: AbortSignal | undefined;
+  readonly symlinks: "follow" | "reject";
+  readonly isSensitive?: (isDirectory: boolean) => boolean;
+}
+
 const readIgnorePolicy = async (
   root: string,
   resources: ArtifactResourceScope,
-  signal?: AbortSignal,
-  symlinks: "follow" | "reject" = "follow",
+  { signal, symlinks, isSensitive }: IgnorePolicyReadOptions,
 ): Promise<Result<string, ReferenceSourceImportError>> => {
   const policyPath = join(root, ".gitignore");
   try {
-    const present = await ignorePolicyExists(policyPath);
+    const metadata = await ignorePolicyMetadata(policyPath);
     if (signal?.aborted === true)
       throw new IgnorePolicyReadCancelled(signal.reason);
-    if (!present) return ok("");
+    // Sensitive policies are omitted before opening or decoding their contents.
+    // The reader records the exclusion once, with the observed entry kind.
+    if (metadata === undefined || isSensitive?.(metadata.isDirectory()))
+      return ok("");
     try {
       return ok(
         await readRegularFileText(policyPath, {
@@ -242,11 +252,10 @@ export const prepareReferenceSourceImport = async (
     return await resources.run(async () => {
       const root = await resolveRoot(options.root, options.signal);
       if (!root.ok) return root;
-      const policy = await readIgnorePolicy(
-        root.value,
-        resources,
-        options.signal,
-      );
+      const policy = await readIgnorePolicy(root.value, resources, {
+        signal: options.signal,
+        symlinks: "follow",
+      });
       if (!policy.ok) return policy;
       const project = ignore();
       addMarkedPatterns(project, [policy.value], "project-ignored");
@@ -311,12 +320,12 @@ const createExclusionPolicy = (
     prepareDirectory: async (directory) => {
       // Root admission already read its policy before any inventory or VCS work.
       if (directory === ".") return ok(policy);
-      const text = await readIgnorePolicy(
-        join(root, directory),
-        resources,
+      const text = await readIgnorePolicy(join(root, directory), resources, {
         signal,
-        "reject",
-      );
+        symlinks: "reject",
+        isSensitive: (isDirectory) =>
+          secrets.ignores(`${directory}/.gitignore${isDirectory ? "/" : ""}`),
+      });
       if (!text.ok)
         return err({
           ...text.error,

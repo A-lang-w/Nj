@@ -324,7 +324,9 @@ tree matches that commit remains unknown. It loads `.gitignore` files inside the
 selected root as it enters each directory. Child rules apply within that directory
 and can override inherited project rules; excluded directories are not traversed.
 Ignore files above the selected root and Git's global excludes are not loaded.
-Child ignore files must be readable regular UTF-8 files. A policy-read failure
+Nested ignore files explicitly marked sensitive are skipped before their contents
+are read; their configured-secret exclusions are recorded during inventory.
+Other child ignore files must be readable regular UTF-8 files. A policy-read failure
 stops the import and retains the inventory already captured.
 Default exclusions for common generated and dependency paths such as
 `node_modules/`, `dist/`, and `*.log` still apply after project rules, followed by
