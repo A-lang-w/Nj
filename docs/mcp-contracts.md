@@ -476,6 +476,9 @@ starts; additional starts wait in FIFO order. The cap covers background starts
 exactly as it covers foreground opens, so a server never starts more provider
 processes than the limit allows. A composed route starts its provider with the
 first query that needs it, and that start waits for the cap the same way.
+A provider that a failed start could not release keeps counting against the
+cap until the cleanup that owns it releases it, so a leftover provider is never
+joined by another start.
 
 The reply of an open names the target that open produced: its `target_id` and
 its `analysis` state belong to it even when another open became the current

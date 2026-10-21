@@ -799,6 +799,10 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     job.error = error;
     job.finishedAt = Date.now();
     if (state === "ready") return;
+    // A failed start that could not release its provider leaves the slot
+    // owning a resource, so the slot is reported as retained and the
+    // retained cleanup keeps the start permit.
+    if (job.slot.retainedPermits.size > 0) this.#retainedSlots.add(job.slot.id);
     this.#separateRestoredTarget(job);
   }
 
@@ -971,13 +975,19 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    * would wait for a request that waits for that same permit, and the two
    * would wait for each other forever.
    *
+   * A failed start leaves a provider behind, and the cleanup of that failed
+   * start runs under the same permit: the permit counts the provider while
+   * it may still be running. A cleanup that could not release the provider
+   * hands the permit to the retained cleanup, which gives it back when the
+   * provider is gone.
+   *
    * The permit belongs to the slot that runs the start: a close that gave up
    * on a start that never unwound gives it back, and a close that could not
    * release the provider keeps it.
    */
   #startAdmission(slot: TargetSlot): ProviderStartAdmission {
     return {
-      run: async (start, operation, signal) => {
+      run: async (start, operation, signal, cleanup) => {
         const permit: StartPermit = { held: false, retained: false };
         const acquired = await this.#acquireStartPermit(
           operation,
@@ -987,7 +997,19 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         if (!acquired.ok) return err(acquired.error);
         slot.startPermits.add(permit);
         try {
-          return await start();
+          const started = await start();
+          if (started.ok || cleanup === undefined) return started;
+          // The failed start left a provider behind. Its cleanup runs under
+          // this permit, so the permit counts that provider until the
+          // cleanup settles.
+          const failed = await cleanup(started.error);
+          if (failed.providerAlive) {
+            // The provider may still be running, so the retained cleanup
+            // owns the permit and gives it back when the provider is gone.
+            permit.retained = true;
+            slot.retainedPermits.add(permit);
+          }
+          return err(failed.error);
         } finally {
           slot.startPermits.delete(permit);
           // A retained cleanup owns the permit when the provider it started
@@ -1004,7 +1026,18 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Result<OpenAnswer, AnalysisError> {
     if (!opened.ok) {
       this.#releaseReservation(slot);
-      if (slot !== this.#primary && slot.session.activeTarget() === undefined)
+      if (slot.retainedPermits.size > 0) {
+        // The failed start left a provider that could not be released, so it
+        // may still be running. The slot keeps its registration and the
+        // retained resource it still owns, so the retained cleanup can
+        // release that provider and a later close can retry the cleanup.
+        this.#slots.set(slot.id, slot);
+        this.#retainedSlots.add(slot.id);
+        this.#jobs.delete(slot.id);
+      } else if (
+        slot !== this.#primary &&
+        slot.session.activeTarget() === undefined
+      )
         this.#removeSlot(slot, "primary");
       return opened;
     }

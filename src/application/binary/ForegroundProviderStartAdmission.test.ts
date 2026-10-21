@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ok as resultOk } from "../../domain/result.js";
+import { ok as resultOk, err } from "../../domain/result.js";
+import { HopperStartError } from "../../domain/hopperErrors.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createDeferred,
+  createTestBinaryTargetRegistry,
   createTestComposedBinaryTargetRegistry,
 } from "../../../tests/fixtures/binarySession.js";
 
@@ -130,5 +133,104 @@ describe("a reopen that waits for an earlier call", () => {
     starts[0]?.resolve(observed(null));
     await expect(call).resolves.toMatchObject({ ok: true });
     await expect(reopening).resolves.toMatchObject({ ok: true });
+  });
+});
+
+/**
+ * A failed start leaves a provider behind, and the cleanup of that failed
+ * start owns it.
+ *
+ * The cleanup runs under the shared start limit, so the limit counts the
+ * provider while it may still be running. A cleanup that could not release
+ * the provider hands the limit to the retained cleanup, which gives it back
+ * when the provider is gone. Without that, the next queued start runs beside
+ * a provider that is still alive and the analysis cap is exceeded.
+ */
+describe("a failed start that could not release its provider", () => {
+  it("keeps counting the provider until a later close releases it", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    let starts = 0;
+    let providerReleased = false;
+    const registry = createTestBinaryTargetRegistry(
+      () => ({
+        execute: (operation: string) => {
+          // The health probe of a client that starts its provider with its
+          // first call is that start.
+          if (operation === "health") {
+            starts += 1;
+            return Promise.resolve(err(new HopperStartError()));
+          }
+          return Promise.resolve(observed(null));
+        },
+        close: () =>
+          Promise.resolve(
+            providerReleased
+              ? resultOk(null)
+              : err(
+                  new ProviderCleanupError("fixture", ["provider-client"], {
+                    reason: "the provider could not be released",
+                  }),
+                ),
+          ),
+      }),
+      {},
+      { maxConcurrentAnalyses: 1 },
+    );
+
+    const failed = await registry.open(first, { keepOthersOpen: true });
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(failed.error.cleanupIncomplete).toBe(true);
+
+    // The provider of the failed start may still be running, so the limit
+    // counts it and the next start waits for the cleanup that owns it.
+    const opening = registry.open(second, { keepOthersOpen: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(starts).toBe(1);
+
+    // The slot that still owns the provider keeps its registration and is
+    // reported as retained, so a later close can retry that cleanup.
+    const status = (await registry.status()) as Record<string, unknown>;
+    const retained = status.retained_target_ids as string[];
+    expect(retained).toHaveLength(1);
+
+    providerReleased = true;
+    const closed = await registry.close({ targetId: retained[0]! });
+    expect(closed.ok).toBe(true);
+
+    // The cleanup released the provider, so the limit counts it no more and
+    // the queued start runs.
+    await vi.waitFor(() => expect(starts).toBe(2));
+    await opening;
+  });
+
+  it("gives the limit back when the cleanup released the provider", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    let starts = 0;
+    const registry = createTestBinaryTargetRegistry(
+      () => ({
+        execute: (operation: string) => {
+          // The health probe of a client that starts its provider with its
+          // first call is that start.
+          if (operation === "health") {
+            starts += 1;
+            return Promise.resolve(err(new HopperStartError()));
+          }
+          return Promise.resolve(observed(null));
+        },
+        close: () => Promise.resolve(resultOk(null)),
+      }),
+      {},
+      { maxConcurrentAnalyses: 1 },
+    );
+
+    const failed = await registry.open(first, { keepOthersOpen: true });
+    expect(failed.ok).toBe(false);
+
+    // The cleanup released the provider, so the failed start holds no limit
+    // and the next start runs without waiting.
+    const opening = registry.open(second, { keepOthersOpen: true });
+    await vi.waitFor(() => expect(starts).toBe(2));
+    await opening;
   });
 });

@@ -20,6 +20,7 @@ import type {
   ExecutionOptions,
   AnalysisOperationPort,
   ProviderIdentity,
+  ProviderStartCleanup,
 } from "../AnalysisProvider.js";
 import type { AnalysisOperation } from "../AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
@@ -689,17 +690,17 @@ export class BinarySession
     // A provider start that rejects instead of returning an error must still
     // release its client. The rejection would otherwise skip the failure path
     // that owns the cleanup and leave the provider process running.
-    const started = await this.#startClient(run, options).catch(
-      (cause: unknown) =>
-        err(
-          new ProviderAdapterError(route.identity.id, "health", {
-            cause,
-            diagnostics: {
-              reason:
-                "the provider start rejected instead of returning an error",
-            },
-          }),
-        ),
+    const started = await this.#startClient(run, options, (failure) =>
+      this.#failedStart(run, previous, failure),
+    ).catch((cause: unknown) =>
+      err(
+        new ProviderAdapterError(route.identity.id, "health", {
+          cause,
+          diagnostics: {
+            reason: "the provider start rejected instead of returning an error",
+          },
+        }),
+      ),
     );
     if (this.#pendingStart === run) this.#pendingStart = undefined;
     if (generation !== this.#lifecycleGeneration) {
@@ -710,7 +711,10 @@ export class BinarySession
       return err(new AnalysisCancelledError("open_binary"));
     }
     if (!started.ok) {
-      return err(await this.#failedOpen(run, previous, started.error));
+      // The failed start already ran its cleanup: the client it started was
+      // released, or the cleanup kept it for a later retry. The admission
+      // reports the failure the cleanup answered with.
+      return err(started.error);
     }
     if (isAborted(options.signal)) {
       return err(
@@ -795,6 +799,10 @@ export class BinarySession
    * calls that ran before it have drained: an open that held the limit while
    * it waited for those calls would wait for a request that waits for that
    * same limit.
+   *
+   * A failed start leaves a provider behind, and the cleanup of that failed
+   * start runs under the same limit: the limit counts the provider while it
+   * may still be running.
    */
   async #startClient(
     run: SessionRun,
@@ -802,28 +810,65 @@ export class BinarySession
       BinarySessionOpenOptions,
       "signal" | "startProvider" | "startAdmission"
     >,
+    cleanup: (failure: AnalysisError) => Promise<ProviderStartCleanup>,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const admission = options.startAdmission;
     const providerStart = run.client.startProvider;
     if (providerStart === undefined) {
       // The client starts its provider with its first call, so the health
       // probe is that start.
       const probe = (): Promise<Result<AnalysisExecution, AnalysisError>> =>
         run.client.execute("health", {}, options);
-      return admission === undefined
-        ? await probe()
-        : await admission.run(probe, "open_binary", options.signal);
+      return this.#runAdmittedStart(probe, run, options, cleanup);
     }
     const health = await run.client.execute("health", {}, options);
     if (!health.ok) return health;
     if (options.startProvider !== true) return health;
     const start = (): Promise<Result<null, AnalysisError>> =>
       providerStart(options);
-    const started =
-      admission === undefined
-        ? await start()
-        : await admission.run(start, "open_binary", options.signal);
+    const started = await this.#runAdmittedStart(start, run, options, cleanup);
     return started.ok ? health : err(started.error);
+  }
+
+  /**
+   * Run one provider start under the shared start limit.
+   *
+   * A start that rejects instead of returning an error is reported as a
+   * failure, so the cleanup of the failed start still runs and the client the
+   * start owned is released.
+   *
+   * The cleanup of a failed start runs under the same limit, so the limit
+   * counts the provider the failed start left behind until the cleanup
+   * settles. Without an admission the cleanup runs here, so a session that
+   * owns no limit still releases the client of a failed start.
+   */
+  async #runAdmittedStart<Value>(
+    start: () => Promise<Result<Value, AnalysisError>>,
+    run: SessionRun,
+    options: Pick<BinarySessionOpenOptions, "signal" | "startAdmission">,
+    cleanup: (failure: AnalysisError) => Promise<ProviderStartCleanup>,
+  ): Promise<Result<Value, AnalysisError>> {
+    const guarded = async (): Promise<Result<Value, AnalysisError>> => {
+      try {
+        return await start();
+      } catch (cause: unknown) {
+        return err(
+          new ProviderAdapterError(run.route.identity.id, "health", {
+            cause,
+            diagnostics: {
+              reason:
+                "the provider start rejected instead of returning an error",
+            },
+          }),
+        );
+      }
+    };
+    const admission = options.startAdmission;
+    if (admission !== undefined)
+      return admission.run(guarded, "open_binary", options.signal, cleanup);
+    const started = await guarded();
+    if (started.ok) return started;
+    const failed = await cleanup(started.error);
+    return err(failed.error);
   }
 
   /** Serialize an external mutation and retire the potentially stale analysis. */
@@ -1209,23 +1254,76 @@ export class BinarySession
     return this.#retryPendingCleanup();
   }
 
+  /**
+   * Release the client of a failed open and report the failure it answers
+   * with.
+   */
   async #failedOpen(
     run: SessionRun,
     previous: SessionBinding | undefined,
     primary: AnalysisError,
     onCleanupFailure?: (failure: AnalysisError) => void,
   ): Promise<AnalysisError> {
-    const closed = await this.#retireClient(
+    const failed = await this.#failedStart(
       run,
-      onCleanupFailure === undefined ? {} : { onCleanupFailure },
+      previous,
+      primary,
+      onCleanupFailure,
     );
-    if (!closed.ok)
-      return analysisErrorWithCleanupFailure(
-        primary,
-        closed.error,
-        "open_binary",
+    return failed.error;
+  }
+
+  /**
+   * The cleanup of a failed start.
+   *
+   * The failed start left a provider behind, and this cleanup owns it: it
+   * either released the provider or kept it for a later retry. The cleanup
+   * reports the failure the open answers with, and whether the provider may
+   * still be running, so the caller can keep counting that provider against
+   * the analysis limit.
+   *
+   * A cleanup that rejects instead of answering is reported as a failure
+   * that left the provider behind: the client stays owned by this session,
+   * so a later close retries the cleanup.
+   */
+  async #failedStart(
+    run: SessionRun,
+    previous: SessionBinding | undefined,
+    primary: AnalysisError,
+    onCleanupFailure?: (failure: AnalysisError) => void,
+  ): Promise<ProviderStartCleanup> {
+    try {
+      const closed = await this.#retireClient(
+        run,
+        onCleanupFailure === undefined ? {} : { onCleanupFailure },
       );
-    return this.#restoreAfterFailedOpen(previous, primary);
+      if (!closed.ok)
+        return {
+          error: analysisErrorWithCleanupFailure(
+            primary,
+            closed.error,
+            "open_binary",
+          ),
+          // The provider could not be released, so it may still be running.
+          providerAlive: true,
+        };
+      return {
+        error: await this.#restoreAfterFailedOpen(previous, primary),
+        providerAlive: false,
+      };
+    } catch (cause: unknown) {
+      return {
+        error: new ProviderAdapterError(run.route.identity.id, "health", {
+          cause,
+          diagnostics: {
+            reason:
+              "the cleanup of the failed start rejected instead of returning an error",
+          },
+        }),
+        // The provider was not proven released, so it may still be running.
+        providerAlive: true,
+      };
+    }
   }
 
   async #restoreAfterFailedOpen(

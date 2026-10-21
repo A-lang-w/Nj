@@ -252,12 +252,37 @@ export interface ProviderStartAdmission {
    *
    * The admission reports the start's own failure. It never starts a
    * provider twice and never runs the start without the limit.
+   *
+   * A failed start leaves a provider behind, and the cleanup of that failed
+   * start owns the provider: it either releases it or keeps it for a later
+   * retry. The cleanup runs under the same limit, so the limit counts the
+   * provider while it may still be running. A start without a cleanup gives
+   * the limit back when the start settles.
    */
   run<Value>(
     start: () => Promise<Result<Value, AnalysisError>>,
     operation: string,
     signal?: AbortSignal,
+    cleanup?: (failure: AnalysisError) => Promise<ProviderStartCleanup>,
   ): Promise<Result<Value, AnalysisError>>;
+}
+
+/**
+ * What the cleanup of a failed start reports to the start admission.
+ *
+ * The cleanup is the owner of the provider the failed start left behind, so
+ * it reports whether that provider may still be running.
+ */
+export interface ProviderStartCleanup {
+  /** The failure the failed start reports to its caller. */
+  readonly error: AnalysisError;
+  /**
+   * True when the provider the failed start left behind may still be running.
+   *
+   * The admission keeps the limit for that provider until a later cleanup
+   * releases it, so the analysis cap counts a provider that is still alive.
+   */
+  readonly providerAlive: boolean;
 }
 
 /** Per-client identity allocated before any provider side effect starts. */

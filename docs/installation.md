@@ -999,9 +999,12 @@ request returns. `REA_GHIDRA_AUTO_BACKGROUND_AFTER_MS` sets the auto threshold
 for foreground and background opens alike; a start beyond the cap waits in FIFO
 order instead of starting another JVM. A composed route starts its provider
 with the first query that needs it, and that start waits for the cap the same
-way. The one-shot CLI has no owner for a background job, so `rea analyze
---analysis-mode background` fails with `capability_unavailable` and names the
-MCP alternative; `--analysis-mode auto` runs in the foreground.
+way. A provider that a failed start could not release keeps counting against
+the cap until the cleanup that owns it releases it, so a leftover provider is
+never joined by another start. The one-shot CLI has no owner for a background
+job, so `rea analyze --analysis-mode background` fails with
+`capability_unavailable` and names the MCP alternative; `--analysis-mode auto`
+runs in the foreground.
 See [Ghidra first-query deadlines and recovery](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for client options and the close/reopen recovery flow.
 
