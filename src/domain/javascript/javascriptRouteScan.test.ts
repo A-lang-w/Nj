@@ -365,6 +365,26 @@ it("does not attach an independent typed tree to ordinary children ancestry", ()
   ]);
 });
 
+it("retains mixed ordinary and typed siblings independently of scan order and builder selection", () => {
+  for (const children of [
+    "{path:'/x',element:X},{_$:'typed'}",
+    "{_$:'typed'},{path:'/x',element:X}",
+  ]) {
+    for (const consumer of ["unknown", "createBrowserRouter"]) {
+      const facts = analyze(
+        `const config={children:[${children}]};${consumer}(config);`,
+      );
+      expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+        "/typed",
+        "/x",
+      ]);
+      expect(
+        facts.candidates.find(({ path }) => path === "/typed")?.mechanism,
+      ).toBe("typed-route-tree");
+    }
+  }
+});
+
 it("owns structured navigation fragments without leaking partial destinations", () => {
   const facts = analyze(
     `createBrowserRouter([{path:'/users'}]);router.push({pathname:'/users/' + id});router.navigate(['/users/',id]);router.push({path:suffix + ['/users/',id]});`,

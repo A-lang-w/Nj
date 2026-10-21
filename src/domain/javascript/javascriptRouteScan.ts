@@ -99,7 +99,10 @@ export class JavaScriptRouteScan {
     typed: boolean;
   }[] = [];
   readonly #automaticRoots: { node: t.ObjectExpression; typed: boolean }[] = [];
-  readonly #claimed = new WeakSet<t.Node>();
+  readonly #claimed = {
+    ordinary: new WeakSet<t.Node>(),
+    typed: new WeakSet<t.Node>(),
+  };
   readonly #seen = new Set<string>();
   readonly #literalPaths: { value: string; node: t.Node }[] = [];
   readonly #propertyValues = new WeakSet<t.Node>();
@@ -372,13 +375,14 @@ export class JavaScriptRouteScan {
     for (const candidate of this.#automaticRoots) {
       if (this.#result.capacity !== null) break;
       yield;
+      const claimed = this.#claimed[candidate.typed ? "typed" : "ordinary"];
       let root = candidate.node,
-        owned = this.#claimed.has(root);
+        owned = claimed.has(root);
       while (!owned && !candidate.typed) {
         const parent = this.#routeParents.get(root);
         if (parent === undefined) break;
         root = parent;
-        owned = this.#claimed.has(root);
+        owned = claimed.has(root);
       }
       if (!owned) {
         this.#unknown(
@@ -531,13 +535,14 @@ export class JavaScriptRouteScan {
     }
   }
 
-  /** Ownership is independent of whether the selected value is unchanged. */
+  /** Ownership is per interpretation, independent of selected-value validity. */
   #claimConfiguration(
     root: t.Node,
     index: JavaScriptBindingIndex,
     typed: boolean,
   ): void {
-    const pending: t.Node[] = [];
+    const pending: t.Node[] = [],
+      claimed = this.#claimed[typed ? "typed" : "ordinary"];
     const admit = (raw: t.Node | null | undefined): void => {
       if (raw == null) return;
       const node = unwrapJavaScriptExpression(raw).node;
@@ -558,8 +563,8 @@ export class JavaScriptRouteScan {
         )
       )
         return;
-      if (!this.#claimed.has(node) && this.#queue(node)) {
-        this.#claimed.add(node);
+      if (!claimed.has(node) && this.#queue(node)) {
+        claimed.add(node);
         pending.push(node);
       }
     };
