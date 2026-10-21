@@ -331,6 +331,8 @@ threadsRouter.post("/:id/chat", (c) => {
           updatedAt: threads.updatedAt,
           agentSystemPrompt: agents.systemPrompt,
           agentModel: agents.model,
+          agentTemperature: agents.temperature,
+          agentMaxTokens: agents.maxTokens,
         })
         .from(threads)
         // SEC-IDOR: scope the agent side to this workspace so a thread bound
@@ -394,6 +396,10 @@ threadsRouter.post("/:id/chat", (c) => {
         },
         abortController.signal,
         auth.userId,
+        {
+          temperature: row.agentTemperature,
+          maxTokens: row.agentMaxTokens,
+        },
       );
       if (!streamResult.ok && !stream.aborted) {
         logger.error("Chat stream failed", {

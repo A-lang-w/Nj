@@ -511,6 +511,7 @@ async function runMcpToolRounds(
   bindings: McpToolBinding[],
   userId: number,
   abortSignal?: AbortSignal,
+  sampling?: { temperature?: number; maxTokens?: number },
 ): Promise<OpenAI.ChatCompletionMessageParam[]> {
   if (bindings.length === 0) return llmMessages;
   const tools = bindingsToOpenAiTools(bindings);
@@ -523,6 +524,7 @@ async function runMcpToolRounds(
       userId,
       signal: abortSignal,
       tools,
+      ...sampling,
     });
     // No tool calls: leave working as-is so the streamed completion produces
     // the user-visible reply (avoids duplicating a non-streamed answer).
@@ -751,6 +753,7 @@ async function persistAndNotify(
  *   upstream LLM stream is cancelled and partial content is persisted with
  *   `incomplete: true` instead of reading past the disconnect.
  * @param userId - Authenticated user for per-account token usage attribution.
+ * @param sampling - Optional agent sampling overrides (`temperature`, `maxTokens`).
  * @returns `Ok` when the stream completed (or when partial content was persisted after an
  *   interruption, with `incomplete: true` on the done event); `Err` when persistence fails
  *   or when the stream fails before producing any content.
@@ -764,6 +767,7 @@ export async function streamAssistantResponse(
   onEvent?: StreamAssistantEventHandler,
   abortSignal?: AbortSignal,
   userId = 0,
+  sampling?: { temperature?: number | null; maxTokens?: number | null },
 ): Promise<Result<void, StorageError>> {
   try {
     const llmMessages = await prepareLlmMessages(
@@ -771,6 +775,21 @@ export async function streamAssistantResponse(
       agentSystemPrompt,
       maxContextTokens,
     );
+
+    const samplingOpts: { temperature?: number; maxTokens?: number } = {};
+    if (
+      sampling?.temperature != null &&
+      Number.isFinite(sampling.temperature)
+    ) {
+      samplingOpts.temperature = sampling.temperature;
+    }
+    if (
+      sampling?.maxTokens != null &&
+      Number.isInteger(sampling.maxTokens) &&
+      sampling.maxTokens > 0
+    ) {
+      samplingOpts.maxTokens = sampling.maxTokens;
+    }
 
     const [threadRow] = await db
       .select({ workspaceId: threads.workspaceId })
@@ -790,6 +809,7 @@ export async function streamAssistantResponse(
             bindings,
             userId,
             abortSignal,
+            samplingOpts,
           );
         }
       } catch (err) {
@@ -808,6 +828,7 @@ export async function streamAssistantResponse(
       for await (const chunk of streamCompletion(messagesForStream, model, {
         signal: abortSignal,
         userId,
+        ...samplingOpts,
       })) {
         if (chunk.type === "done") {
           completed = true;

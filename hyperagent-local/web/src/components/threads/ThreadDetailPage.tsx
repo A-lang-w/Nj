@@ -4,15 +4,17 @@ import { useShallow } from "zustand/react/shallow";
 import { useThreadsStore } from "@/stores/threads-store";
 import { useAgentsStore } from "@/stores/agents-store";
 import { useUiStore } from "@/stores/ui-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { useStreamingChat } from "@/hooks/use-streaming-chat";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { sseClient } from "@/lib/sse-client";
 import { MessageBubble } from "./MessageBubble";
 import { MessageComposer } from "./MessageComposer";
-import { ArrowLeft, Bot, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Bot, AlertTriangle, Star } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
+import { cn } from "@/lib/utils";
 import type { Thread } from "@/types/api";
 
 export function ThreadDetailPage() {
@@ -25,6 +27,9 @@ export function ThreadDetailPage() {
   const agents = useAgentsStore((s) => s.agents);
   const fetchAgents = useAgentsStore((s) => s.fetchAgents);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
+  const fetchFavorites = useFavoritesStore((s) => s.fetchFavorites);
+  const favorited = useFavoritesStore((s) => s.keys.has(`thread:${threadId}`));
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const { isStreaming, streamingContent, streamIncomplete, streamError } =
     useThreadsStore(
       useShallow((state) => ({
@@ -88,7 +93,8 @@ export function ThreadDetailPage() {
 
   useEffect(() => {
     void fetchAgents(activeWorkspaceId);
-  }, [fetchAgents, activeWorkspaceId]);
+    void fetchFavorites();
+  }, [fetchAgents, fetchFavorites, activeWorkspaceId]);
 
   useEffect(() => {
     if (activeThread?.id === threadId) {
@@ -363,6 +369,32 @@ export function ThreadDetailPage() {
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => {
+              void toggleFavorite("thread", threadId).catch((err: unknown) => {
+                setHeaderError(
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to update favorite",
+                );
+              });
+            }}
+            title={favorited ? "Unstar thread" : "Star thread"}
+            aria-label={favorited ? "Unstar thread" : "Star thread"}
+            aria-pressed={favorited}
+            className={cn(
+              "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg p-2 transition-colors hover:opacity-80",
+              favorited ? "text-amber-500" : "",
+            )}
+            style={favorited ? undefined : { color: COLORS.textSecondary }}
+          >
+            <Star
+              className="h-4 w-4"
+              aria-hidden="true"
+              fill={favorited ? "currentColor" : "none"}
+            />
+          </button>
         </div>
         {headerError && (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">

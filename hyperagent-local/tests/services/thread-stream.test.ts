@@ -195,4 +195,35 @@ describe("streamAssistantResponse failure paths", () => {
       rows.filter((m) => m.role === "assistant").map((m) => m.content),
     ).toEqual(["full-reply"]);
   });
+
+  it("forwards agent sampling overrides to the LLM stream", async () => {
+    const thread = unwrap(
+      await createThread(1, null, "stream-sampling"),
+      "createThread",
+    );
+    unwrap(await addMessage(thread.id, "user", "hi"), "addMessage");
+
+    let seenOptions: { temperature?: number; maxTokens?: number } | undefined;
+    mockedStreamCompletion.mockImplementation(
+      async function* (_msgs, _model, options) {
+        seenOptions = options;
+        yield { type: "content" as const, content: "sampled" };
+        yield { type: "done" as const, finishReason: "stop" };
+      },
+    );
+
+    const result = await streamAssistantResponse(
+      thread.id,
+      "sys",
+      "test-model",
+      100,
+      undefined,
+      undefined,
+      0,
+      { temperature: 0.2, maxTokens: 512 },
+    );
+    expect(result.ok).toBe(true);
+    expect(seenOptions?.temperature).toBe(0.2);
+    expect(seenOptions?.maxTokens).toBe(512);
+  });
 });
