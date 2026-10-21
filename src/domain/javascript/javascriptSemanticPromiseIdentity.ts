@@ -305,11 +305,12 @@ const nativePromiseChainParent = (
   return receiver;
 };
 
-/** A returned promise can be adopted without sharing the wrapper promise's identity. */
-export const semanticPromiseSettlementDependency = (
+/** Async adoption preserves values; native handler chains only preserve waits. */
+const semanticPromiseProjection = (
   rawNode: t.Node,
   state: JavaScriptSemanticAnalysisState,
-  onLiteralProjection?: () => void,
+  onLiteralProjection: (() => void) | undefined,
+  followNativeChains: boolean,
 ): ReturnType<typeof semanticExactValueIdentity> => {
   const aliases: NonNullable<
     ReturnType<typeof semanticExactValueIdentity>
@@ -336,11 +337,9 @@ export const semanticPromiseSettlementDependency = (
       return undefined;
     seen.add(result.node);
     aliases.push(...result.aliases);
-    const chained = nativePromiseChainParent(
-      result.node,
-      state,
-      onLiteralProjection,
-    );
+    const chained = followNativeChains
+      ? nativePromiseChainParent(result.node, state, onLiteralProjection)
+      : undefined;
     if (chained !== undefined) {
       if (
         !promiseAmbientLookupIntact("constructor", capture, state) ||
@@ -381,6 +380,22 @@ export const semanticPromiseSettlementDependency = (
     current = t.isAwaitExpression(value) ? value.argument : value;
   }
 };
+
+/** A settled chain needs its receiver to settle, regardless of its handler result. */
+export const semanticPromiseSettlementDependency = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection?: () => void,
+): ReturnType<typeof semanticExactValueIdentity> =>
+  semanticPromiseProjection(node, state, onLiteralProjection, true);
+
+/** Exact fulfilled-value provenance never substitutes a chain's receiver value. */
+export const semanticPromiseFulfilledValueIdentity = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection?: () => void,
+): ReturnType<typeof semanticExactValueIdentity> =>
+  semanticPromiseProjection(node, state, onLiteralProjection, false);
 
 const awaitedResults = new WeakMap<
   JavaScriptSemanticAnalysisState,

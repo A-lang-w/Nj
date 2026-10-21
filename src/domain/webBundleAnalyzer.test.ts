@@ -8456,6 +8456,21 @@ describe("web bundle literal consumers and iteration phases", () => {
 
 describe("web bundle native Promise chain waits", () => {
   it.each([
+    'const {WebSocket:Socket}=await import("ws").then(()=>({WebSocket:class{}}));',
+    'const loaded=import("ws");const replacement=loaded.then(()=>({WebSocket:class{}}));const {WebSocket:Socket}=await replacement;',
+    'const {WebSocket:Socket}=await import("ws").catch(()=>({WebSocket:class{}}));',
+    'const {WebSocket:Socket}=await (async()=>await import("ws").then(()=>({WebSocket:class{}})))();',
+  ])(
+    "does not give handler replacements the parent's module origin: %s",
+    (source) => {
+      expect(
+        socketEndpoints(
+          `export {};${source}new Socket("wss://example.test/replaced-import");`,
+        ).map((items) => items.map((item) => item.value)),
+      ).toEqual([[], []]);
+    },
+  );
+  it.each([
     'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.then(()=>{});',
     'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.catch(()=>{});',
     'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/chain");resolve()});await pending.then(()=>{});',

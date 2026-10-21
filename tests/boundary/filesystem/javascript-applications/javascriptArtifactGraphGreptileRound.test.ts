@@ -12,6 +12,26 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "replaced-import-then.mjs",
+    source:
+      'export {};const {WebSocket:Socket}=await import("ws").then(()=>({WebSocket:class{}}));new Socket("wss://example.test/replaced-import-then");',
+  },
+  {
+    file: "replaced-import-alias.mjs",
+    source:
+      'export {};const loaded=import("ws");const replacement=loaded.then(()=>({WebSocket:class{}}));const {WebSocket:Socket}=await replacement;new Socket("wss://example.test/replaced-import-alias");',
+  },
+  {
+    file: "replaced-import-catch.mjs",
+    source:
+      'export {};const {WebSocket:Socket}=await import("ws").catch(()=>({WebSocket:class{}}));new Socket("wss://example.test/replaced-import-catch");',
+  },
+  {
+    file: "replaced-import-wrapper.mjs",
+    source:
+      'export {};const {WebSocket:Socket}=await (async()=>await import("ws").then(()=>({WebSocket:class{}})))();new Socket("wss://example.test/replaced-import-wrapper");',
+  },
+  {
     file: "async-then.mjs",
     source:
       'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/async-then")})();await pending.then(()=>{});const Socket=globalThis.WebSocket;',

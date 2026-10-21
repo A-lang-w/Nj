@@ -16,7 +16,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
-  semanticPromiseSettlementDependency,
+  semanticPromiseFulfilledValueIdentity,
   semanticExactValueIdentity,
 } from "./javascriptSemanticPromiseIdentity.js";
 import { webSocketInitializerDominatesRead } from "./javascriptWebSocketExecution.js";
@@ -221,7 +221,7 @@ export const semanticAwaitedImportOrigin = (
 ): JavaScriptModuleOrigin | undefined => {
   const chain = semanticMemberChain(node);
   if (chain === undefined || !t.isAwaitExpression(chain.root)) return undefined;
-  const result = semanticPromiseSettlementDependency(
+  const result = semanticPromiseFulfilledValueIdentity(
     chain.root.argument,
     state,
     onLiteralProjection,

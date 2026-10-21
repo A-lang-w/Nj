@@ -9,6 +9,28 @@ const sources = [
   'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();const tail=pending.then(()=>{});await tail.catch(()=>{});',
 ];
 
+it.each([
+  'const {WebSocket:Socket}=await import("ws").then(()=>({WebSocket:class{}}));',
+  'const loaded=import("ws");const replacement=loaded.then(()=>({WebSocket:class{}}));const {WebSocket:Socket}=await replacement;',
+  'const {WebSocket:Socket}=await import("ws").catch(()=>({WebSocket:class{}}));',
+  'const {WebSocket:Socket}=await (async()=>await import("ws").then(()=>({WebSocket:class{}})))();',
+])("does not treat a chain dependency as its fulfilled value: %s", (source) => {
+  const result = analyzeJavaScriptStaticSource(
+    `export {};${source}new Socket("wss://example.test/replaced-import");`,
+  );
+  expect(result.parse_status).not.toBe("failed");
+  expect(result.endpoints).toEqual([]);
+});
+
+it("retains an unchanged fulfilled import value", () => {
+  const result = analyzeJavaScriptStaticSource(
+    'export {};const {WebSocket:Socket}=await import("ws");new Socket("wss://example.test/direct-import");',
+  );
+  expect(result.endpoints.map(({ value }) => value)).toEqual([
+    "wss://example.test/direct-import",
+  ]);
+});
+
 it.each(sources)("preserves chained native promise blocking: %s", (source) => {
   const result = analyzeJavaScriptStaticSource(
     `export {};${source}const Socket=globalThis.WebSocket;`,
