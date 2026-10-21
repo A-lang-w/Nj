@@ -100,6 +100,26 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "truncates oversized recent frames containing multibyte utf-8 characters to the byte limit",
+  async () => {
+    const provider = await makeProvider(
+      'process.stdout.write("\\0"); process.stdin.resume(); setTimeout(() => process.stdout.write("文".repeat(6000) + "\\0"), 20);',
+    );
+    const { manager, sessionId } = await start(provider);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const status = manager.status(sessionId);
+    expect(status?.recent_output_truncated).toBe(true);
+    const recent = status?.recent_output.at(-1);
+    expect(recent).toBeDefined();
+    expect(recent).toContain("[recent frame truncated]");
+    const payload = recent!.slice(0, -"[recent frame truncated]".length);
+    expect(payload).toBe("文".repeat(5461));
+    expect(Buffer.byteLength(payload, "utf8")).toBe(16383);
+    expect(Buffer.byteLength(payload, "utf8")).toBeLessThanOrEqual(16 * 1024);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "bounds recent history after many unsolicited frames",
   async () => {
     const provider = await makeProvider(

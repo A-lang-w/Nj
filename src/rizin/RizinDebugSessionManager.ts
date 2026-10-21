@@ -120,6 +120,15 @@ interface RizinCommandInterruption {
 export const isRizinCommandDeadlineExpired = (remainingMs: number): boolean =>
   remainingMs <= 0;
 
+export const truncateUtf8 = (value: string, maximumBytes: number): string => {
+  if (maximumBytes <= 0) return "";
+  const bytes = Buffer.from(value, "utf8");
+  let end = Math.min(bytes.length, maximumBytes);
+  while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80)
+    end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+};
+
 interface RizinCommandTimeoutEvidenceInput {
   readonly sessionId: string;
   readonly command: string;
@@ -1068,7 +1077,7 @@ export class RizinDebugSessionManager {
   ): void {
     const historyFrame =
       frameBytes > MAX_RECENT_FRAME_BYTES || frame.truncated
-        ? `${frame.text.slice(0, MAX_RECENT_FRAME_BYTES)}[recent frame truncated]`
+        ? `${truncateUtf8(frame.text, MAX_RECENT_FRAME_BYTES)}[recent frame truncated]`
         : frame.text;
     if (frameBytes > MAX_RECENT_FRAME_BYTES || frame.truncated)
       session.historyTruncated = true;
@@ -1544,15 +1553,6 @@ const waitForCommandFrames = async (
     }
     if (markerSeen) return ok(snapshot());
   }
-};
-
-const truncateUtf8 = (value: string, maximumBytes: number): string => {
-  if (maximumBytes <= 0) return "";
-  const bytes = Buffer.from(value, "utf8");
-  let end = Math.min(bytes.length, maximumBytes);
-  while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80)
-    end -= 1;
-  return bytes.subarray(0, end).toString("utf8");
 };
 
 const waitForFrame = (
