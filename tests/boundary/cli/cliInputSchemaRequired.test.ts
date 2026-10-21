@@ -69,6 +69,17 @@ const omissionRejected = (schema: z.ZodObject | undefined): string[] =>
     .map(([key]) => key)
     .sort();
 
+it("counts only parser-required inputs as required", () => {
+  // exactOptional() admits omission while rejecting an explicit undefined
+  // value, so the required-input set must follow zod's optionality marker.
+  const schema = z.object({
+    admitted: z.number().exactOptional(),
+    defaulted: z.number().default(1),
+    required: z.number(),
+  });
+  expect(omissionRejected(schema)).toEqual(["required"]);
+});
+
 describe("CLI advertised input schemas", () => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
