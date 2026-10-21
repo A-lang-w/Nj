@@ -217,10 +217,10 @@ const startLocalAttachedSession = async (
 
 // eslint-disable-next-line max-lines-per-function -- related manager lifecycle cases share the same focused fake provider.
 describe("FridaInstrumentationManager", () => {
-  it("reports a fixed device-lookup deadline when Frida cannot select the device", async () => {
+  it("reports a fixed device-lookup deadline when Frida's lookup times out", async () => {
     const bindings = new FakeDeviceManager();
     bindings.getDeviceById = async () => {
-      throw new Error("unable to find device with id 'local'");
+      throw new Error("Device not found");
     };
     const manager = new FridaInstrumentationManager({
       deviceManager: bindings,
@@ -237,6 +237,28 @@ describe("FridaInstrumentationManager", () => {
     expect(listed.error.userMessage).toContain("1000 ms");
     expect(listed.error.userMessage).toContain("no runtime override");
     expect(listed.error.remediationAction).toContain("no runtime override");
+  });
+
+  it("preserves a Frida device-manager failure instead of claiming the lookup deadline expired", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.getDeviceById = async () => {
+      throw new Error("Device manager is closed");
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const listed = await manager.listProcesses({ deviceId: "local" });
+    expect(listed.ok).toBe(false);
+    if (listed.ok) return;
+    expect(listed.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    expect(listed.error).not.toBeInstanceOf(AnalysisTimeoutError);
+    expect(listed.error).toMatchObject({
+      providerId: "frida",
+      operation: "list_frida_processes",
+      reason: "Device manager is closed",
+    });
+    expect(listed.error.message).toContain("Device manager is closed");
+    expect(listed.error.message).not.toContain("deadlineExpired");
   });
 
   it("names a capture cap only after that observation dropped data", () => {

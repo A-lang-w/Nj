@@ -53,6 +53,17 @@ import {
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
+/**
+ * Frida Core 17.23.2 raises this from `getDeviceById` only after the supplied
+ * timeout elapses without a match. A closed manager or backend failure uses a
+ * different message and is not this deadline.
+ */
+const FRIDA_DEVICE_LOOKUP_TIMEOUT_MESSAGE = "Device not found";
+
+const isFridaDeviceLookupTimeout = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  cause.message === FRIDA_DEVICE_LOOKUP_TIMEOUT_MESSAGE;
+
 export const FRIDA_PROVIDER_IDENTITY = {
   id: "frida",
   name: "Frida",
@@ -1139,6 +1150,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         cause instanceof AnalysisTimeoutError
       )
         throw cause;
+      if (!isFridaDeviceLookupTimeout(cause)) throw cause;
       throw new AnalysisTimeoutError(
         "frida_device_lookup",
         DEVICE_LOOKUP_TIMEOUT_MS,
