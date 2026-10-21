@@ -204,7 +204,7 @@ The selected provider remains bound to the session until an explicit switch
 or close. Provider failures are returned with their original reason. For an
 `ambiguous` selection error, choose from `details.candidate_ids`; for
 `provider_unavailable`, follow `message`, `remediation.action`, and the original
-reasons in `details.rejections`. For Hopper, Ghidra, IDA, and JADX, run
+reasons in `details.rejections`. For Hopper, Ghidra, IDA, JADX, and Kuna, run
 `rea doctor --provider ID --json` to diagnose the selected engine. Other adapters,
 such as `pwntools-elf`, report their configuration requirements directly and are
 not accepted by `doctor --provider`. See
@@ -496,10 +496,12 @@ error and exit `1`, as does a listener that fails after binding.
 pair refusals, a non-empty or file-occupied directory, a missing package
 tarball or a name that is not a kebab-case label or is a Windows device name,
 writing nothing in each case.
-A write that fails after the first file (a permission or disk-space failure
-on a later path) propagates as the host's failure and leaves the partial
-folder in place for inspection; remove it before retrying, since the next
-attempt refuses the non-empty directory.
+A write that fails after the first file (a permission, disk-space or
+pathname-length failure on a later path) propagates as the host's failure,
+naming its cause and, when it failed on one bundle file or the package
+tarball, that file. A failure while syncing the finished folder names only its
+cause. Either way the partial folder stays in place for inspection; remove it
+before retrying, since the next attempt refuses the non-empty directory.
 
 A `cancelled` result does not by itself determine the exit status; it depends on
 the command's signal handling. Commands routed through the shared

@@ -92,15 +92,20 @@ export interface FakeOptions {
   readonly sessionTimeline?:
     | "same_origin"
     | "outside_policy"
-    | "target_detached";
+    | "target_detached"
+    | "target_crashed";
   readonly sessionTimelineEventCount?: number;
   readonly sessionRedirectResourceType?: "Document" | "Fetch" | "Script";
   readonly closeAfterMethod?: string;
   readonly sensitiveShapes?: boolean;
+  /** Deliver a console argument the protocol spells as `{ type: "object", subtype: "null" }`. */
+  readonly nullConsoleArgument?: boolean;
   readonly cachedResponseBody?: string;
   readonly invalidResponseBodyBase64?: boolean;
   readonly webMcpTools?: boolean;
   readonly webMcpConsequential?: JsonValue;
+  /** Replaces the primary tool's registration stack; returning `undefined` omits it. */
+  readonly webMcpStackTrace?: (origin: string) => JsonValue | undefined;
   readonly webMcpSameUrlRegistrations?: "retain" | "remove-second";
   readonly webMcpFrameCount?: number;
   readonly webMcpSchemaPropertyCount?: number;

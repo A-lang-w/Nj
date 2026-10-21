@@ -10,6 +10,7 @@ import {
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
   projectPlistValue,
+  binaryDatePrecisionOverlapLimitation,
   unknownDateLimitation,
   unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
@@ -18,8 +19,9 @@ import {
   parseXmlPropertyList,
 } from "../../domain/propertyListKeys.js";
 import { decodeNibArchive, type NibArchiveDocument } from "./NibArchive.js";
+import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
 import {
-  preflightPropertyListDecode,
+  interfaceBuilderDecodeBudgetFailure,
   InterfaceBuilderDecodeBudget,
   InterfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
@@ -39,9 +41,10 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
-  decodeBinaryPlistNumbers,
-  scanBinaryPlistNumberLiterals,
-} from "./PlistNumberLiterals.js";
+  decodeBinaryPlistScalars,
+  scanBinaryPlistScalars,
+  type BinaryPlistScalarDecodePlan,
+} from "./PlistScalars.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
   hasBinaryPlistSignature,
@@ -55,7 +58,8 @@ const MAX_REPORTED_OMITTED_ARCHIVES = 64;
 /** Decode compiled Interface Builder archives from a local app bundle. */
 export const analyzeInterfaceBuilderBundle = async (input: {
   readonly bundlePath: string;
-  readonly targetSha256: string;
+  readonly targetSha256: string | null;
+  readonly resourceRoot?: import("../../domain/apple/bundleResourceRoot.js").BundleResourceRoot;
   readonly limits?: unknown;
   readonly signal?: AbortSignal;
 }) => {
@@ -69,6 +73,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const unresolvedConnections = new Map<string, number>();
   const prototypeKeyOmissions = new Map<string, number | null>();
   const unknownDates = new Map<string, number>();
+  const datePrecisionOverlaps = new Map<string, number>();
   const unknownScalars = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
@@ -117,6 +122,14 @@ export const analyzeInterfaceBuilderBundle = async (input: {
         let nib: ReturnType<typeof projectNibArchive> | null = null;
         let xmlText: string | undefined;
         let binaryPrototypeKeyObserved = false;
+        let scalarPlan: BinaryPlistScalarDecodePlan = {
+          reachableDateOffsets: [],
+          overlappingDateOffsets: [],
+          reachableWideIntegerOffsets: [],
+          overlappingWideIntegerOffsets: [],
+          reachableNumericOffsets: [],
+        };
+        let datePrecisionOverlapCount = 0;
         if (isNibArchive) {
           const documentBudget = new InterfaceBuilderDecodeBudget(
             decodeBudget.remainingBytes,
@@ -137,7 +150,11 @@ export const analyzeInterfaceBuilderBundle = async (input: {
             bytes,
             decodeBudget.remainingBytes,
             xmlText,
-            { numberProjection: true },
+            {
+              numberProjection: true,
+              budget: "the aggregate Interface Builder decode budget",
+              fail: interfaceBuilderDecodeBudgetFailure,
+            },
           );
           decodeBudget.reserve(
             decodedReservation.estimatedBytes,
@@ -146,6 +163,9 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           plistReservation = decodedReservation.estimatedBytes;
           binaryPrototypeKeyObserved =
             decodedReservation.binaryPrototypeKeyObserved;
+          scalarPlan = decodedReservation;
+          datePrecisionOverlapCount =
+            decodedReservation.datePrecisionOverlapCount;
         }
         const {
           value: raw,
@@ -154,7 +174,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           unknownScalarCount,
           numberLiterals,
         } = nib === null
-          ? decodePlist(bytes, xmlText, binaryPrototypeKeyObserved)
+          ? decodePlist(bytes, xmlText, binaryPrototypeKeyObserved, scalarPlan)
           : {
               value: nib.raw,
               omittedPrototypeKeys: 0,
@@ -170,6 +190,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         if (unknownDateCount !== 0)
           unknownDates.set(entry.path, unknownDateCount);
+        if (datePrecisionOverlapCount > 0)
+          datePrecisionOverlaps.set(entry.path, datePrecisionOverlapCount);
         if (unknownScalarCount !== 0)
           unknownScalars.set(entry.path, unknownScalarCount);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
@@ -205,6 +227,9 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   }
   const result = buildInterfaceBuilderAnalysis({
     targetSha256: input.targetSha256,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resourceRoot: input.resourceRoot }),
     toolVersion: "rea-interface-builder/1",
     documents,
     limits,
@@ -214,6 +239,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
     unresolvedConnections,
     prototypeKeyOmissions,
     unknownDates,
+    datePrecisionOverlaps,
     unknownScalars,
     invalid,
     omittedArchives,
@@ -284,6 +310,7 @@ const finalizeHierarchyCoverage = (
     unresolvedConnections: ReadonlyMap<string, number>;
     prototypeKeyOmissions: ReadonlyMap<string, number | null>;
     unknownDates: ReadonlyMap<string, number>;
+    datePrecisionOverlaps: ReadonlyMap<string, number>;
     unknownScalars: ReadonlyMap<string, number>;
     invalid: readonly string[];
     omittedArchives: readonly { path: string; reason: string }[];
@@ -297,6 +324,7 @@ const finalizeHierarchyCoverage = (
     unresolvedConnections,
     prototypeKeyOmissions,
     unknownDates,
+    datePrecisionOverlaps,
     unknownScalars,
     invalid,
     omittedArchives,
@@ -386,6 +414,9 @@ const finalizeHierarchyCoverage = (
       ...[...unknownDates].map(
         ([path, count]) => `${path}: ${unknownDateLimitation(count)}`,
       ),
+      ...[...datePrecisionOverlaps].map(([path, count]) => {
+        return `${path}: ${binaryDatePrecisionOverlapLimitation(count)}`;
+      }),
       ...[...unknownScalars].map(
         ([path, count]) => `${path}: ${unknownScalarLimitation(count)}`,
       ),
@@ -755,6 +786,7 @@ const decodePlist = (
   bytes: Buffer,
   xmlText: string | undefined,
   binaryPrototypeKeyObserved: boolean,
+  scalarPlan: BinaryPlistScalarDecodePlan,
 ): {
   readonly value: JsonValue;
   readonly omittedPrototypeKeys: number | null;
@@ -763,16 +795,16 @@ const decodePlist = (
   readonly numberLiterals: PlistNumberLiterals;
 } => {
   const binary = hasBinaryPlistSignature(bytes);
-  const binaryNumberMetadata = binary
-    ? scanBinaryPlistNumberLiterals(bytes)
+  const binaryScalarMetadata = binary
+    ? scanBinaryPlistScalars(bytes, scalarPlan)
     : undefined;
   const { value, omittedPrototypeKeys, numberLiterals } = binary
     ? {
         value: parseBinary(
-          decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+          decodeBinaryPlistScalars(bytes, binaryScalarMetadata!, scalarPlan),
         ),
         omittedPrototypeKeys: binaryPrototypeKeyObserved ? null : 0,
-        numberLiterals: binaryNumberMetadata!.literals,
+        numberLiterals: binaryScalarMetadata!.literals,
       }
     : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
   const projected = projectPlistValue(value);
