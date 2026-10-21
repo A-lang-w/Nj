@@ -2379,6 +2379,7 @@ const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
   let escaped = false;
   let token = "";
   let tokenStart = -1;
+  let tokenPlain = true;
   let previousToken: { value: string; end: number; plain: boolean } | undefined;
   const inputs: Array<{
     descriptor: string | undefined;
@@ -2392,10 +2393,11 @@ const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
     previousToken = {
       value: token,
       end,
-      plain: quote === undefined && !escaped,
+      plain: tokenPlain,
     };
     token = "";
     tokenStart = -1;
+    tokenPlain = true;
   };
 
   for (let index = 0; index < tail.length; index += 1) {
@@ -2413,6 +2415,7 @@ const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
     }
     if (char === "\\") {
       if (tokenStart < 0) tokenStart = index;
+      tokenPlain = false;
       if (awaitingInputTarget) {
         inputs.at(-1)!.target = "path";
         awaitingInputTarget = false;
@@ -2422,6 +2425,7 @@ const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
     }
     if (char === "'" || char === '"') {
       if (tokenStart < 0) tokenStart = index;
+      tokenPlain = false;
       if (awaitingInputTarget) {
         inputs.at(-1)!.target = "path";
         awaitingInputTarget = false;

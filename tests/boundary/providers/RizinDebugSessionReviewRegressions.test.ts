@@ -1715,6 +1715,45 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
+  "retains cleanup when a live detached inferior loses its TTY descriptors",
+  async () => {
+    const ttyPath = await rizinTestInferiorTty();
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-detached-live-sink-"));
+    const statePath = join(directory, "inferior-input-state");
+    const commandsPath = join(directory, "commands");
+    const inferior = await spawnTestInferiorWithMutableInput(
+      ttyPath,
+      statePath,
+    );
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    const provider = await createPostDetachInputTransitionProvider(
+      pid,
+      commandsPath,
+    );
+    let tracerReads = 0;
+    const { manager, sessionId } = await startRizinWithOwnedStop(
+      provider,
+      async () => (tracerReads++ === 0 ? 777 : 0),
+    );
+    expect(sessionId).toBeDefined();
+    if (sessionId === undefined) return;
+
+    const close = await manager.close(sessionId);
+    expect(close.ok).toBe(false);
+    if (!close.ok) expect(close.error.cleanupIncomplete).toBe(true);
+    await expect.poll(() => readFile(statePath, "utf8")).toBe("unclassified");
+    expect(tracerReads).toBeGreaterThan(0);
+    expect(manager.status(sessionId)?.state).toBe("closed");
+    expect(
+      (await readFile(commandsPath, "utf8")).match(/^o- 12$/gm),
+    ).toHaveLength(1);
+    expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "re-verifies output policy and descriptors for a replacement traced by the owned debugger",
   async () => {
     const inferior = await spawnTestInferiorOnTty(await rizinTestInferiorTty());

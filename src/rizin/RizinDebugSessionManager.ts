@@ -1652,6 +1652,25 @@ export class RizinDebugSessionManager {
     return replacement === undefined;
   }
 
+  async #verifyOriginalInferiorEnded(
+    session: RizinDebugSession,
+    identity: OwnedInferiorIdentity,
+  ): Promise<boolean> {
+    // Losing the tracer after a confirmed detach is expected. It does not mean
+    // the inferior exited, so only waive descriptor failures after a fresh
+    // start-time read proves the original identity ended. If the PID was reused,
+    // still account for a replacement that remains traced by this debugger.
+    const first = await this.#readProcessStartTime(identity.pid);
+    if (first === identity.startTime) return false;
+    const second = await this.#readProcessStartTime(identity.pid);
+    if (second === identity.startTime) return false;
+    if (first === null && second === null) return true;
+    return (
+      (await this.#resolveInferiorRowIdentity(session, identity.pid)) ===
+      undefined
+    );
+  }
+
   async #verifyConfirmedDetachedInferior(
     session: RizinDebugSession,
     identity: OwnedInferiorIdentity,
@@ -1706,7 +1725,7 @@ export class RizinDebugSessionManager {
     } catch (cause) {
       // Detach resumes the inferior. Its identity or descriptors may disappear
       // before readback; only a previously identified process can prove its end.
-      if (!(await this.#verifyOmittedInferiorEnded(session, identity)))
+      if (!(await this.#verifyOriginalInferiorEnded(session, identity)))
         throw cause;
       session.confirmedDetachedInferiorIdentity = undefined;
       return { status: "no-inferior" };
