@@ -192,9 +192,9 @@ setInterval(() => {}, 1000);
                 descriptorOpen = false;
                 if (mode !== "ambiguous-policy" && mode !== "stale-retry") {
                   launched.process.kill("SIGUSR1");
-                  if (mode === "exit")
+                  if (mode === "exit") {
                     expect(await supervisor.waitForExit(1_000)).toBe(true);
-                  else
+                  } else
                     await expect
                       .poll(() => readFile(redirected, "utf8"), {
                         timeout: 1_000,
@@ -229,6 +229,7 @@ setInterval(() => {}, 1000);
       {
         spawnProcess: injected.spawnProcess,
         stopProcess: createStopProcess(mode, stopAttempts),
+        readProcessTracerPid: async () => process.pid,
       },
     );
     try {
