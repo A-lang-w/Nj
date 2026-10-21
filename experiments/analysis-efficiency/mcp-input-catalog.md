@@ -193,3 +193,9 @@ files have passing checks; the combined run did not pass and its timeout cause
 is not established. Family peaks were 2.43 GiB for the combined run and 1.0 GiB
 for the standalone run, within unchanged limits. These validation attempts are
 separate from the performance cohorts.
+
+The next CI portable aggregate passed 15,703 tests and skipped 29, with one
+remaining Godot inventory advertisement assertion failing. That workflow now
+runs under both full and compact, preserving canonical invalid-field refusal
+and retained facts after source removal. Its three local tests passed within
+the same resource limits, including encrypted-directory unknown coverage.
