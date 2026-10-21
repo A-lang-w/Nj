@@ -241,10 +241,10 @@ refuses to answer with.
   an update's changes confirms nothing of it, and leaves it for a later check
   of that entity or collection.
 - A mismatch contradicts each exercised write that no unmodelled write came
-  after its latest call on the read's entity or collection, whatever earlier
-  write is still pending. When an unmodelled write
-  followed some of them, an item read checks those only on the members they
-  sent and a list is not checked again: such a write may explain the rest.
+  after its latest call on any of the read's entities or collections, whatever
+  earlier write is still pending. An item read checks the writes an unmodelled
+  write did follow only on the members they sent, and a list with such a write
+  is not checked again: the unmodelled write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,
   as `side-effect`, the modelled writes since that previous check whose paths
   are segment-prefix related to the read's path.
