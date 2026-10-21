@@ -5,12 +5,17 @@ import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
-  AnalysisTimeoutError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { FirmwareDeadline } from "./FirmwareDeadline.js";
+import {
+  firmwareFailure,
+  firmwarePhaseInterruption,
+} from "./FirmwareFailures.js";
 import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
@@ -113,14 +118,22 @@ export const runFirmwareCommand = async (context: {
   cwd: string;
   environment: Readonly<Record<string, string | undefined>>;
   signal: AbortSignal;
+  deadline: FirmwareDeadline;
   launcher?: FirmwareLauncher;
   outputBudget?: { root: string; bytes: number; entries: number };
   acceptReportedExtractionFailure?: boolean;
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
-  if (signal.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  const checkInterruption = () => {
+    const failure = firmwarePhaseInterruption(
+      operation,
+      signal,
+      context.deadline,
+    );
+    if (failure !== undefined) throw failure;
+  };
+  checkInterruption();
   const runId = `rea-firmware-${randomUUID()}`;
   const spawned = await (context.launcher ?? spawnOwnedProviderProcess)({
     command: context.limiter,
@@ -128,7 +141,7 @@ export const runFirmwareCommand = async (context: {
       `--as=${FIRMWARE_LIMITS.addressSpaceBytes}`,
       `--fsize=${context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes}`,
       "--core=0",
-      "--cpu=120",
+      `--cpu=${FIRMWARE_LIMITS.cpuSeconds}`,
       "--",
       context.command,
       ...context.args,
@@ -178,15 +191,11 @@ export const runFirmwareCommand = async (context: {
       );
     }
   };
-  let failure: unknown;
+  let failure: AnalysisError | undefined;
   try {
-    const deadline = performance.now() + FIRMWARE_LIMITS.timeoutMs;
     while (!(await supervisor.waitForOutputClose(100))) {
       checkDiagnostics();
-      if (signal.aborted)
-        throw new AnalysisCancelledError(operation, { cause: signal.reason });
-      if (performance.now() >= deadline)
-        throw new AnalysisTimeoutError(operation, FIRMWARE_LIMITS.timeoutMs);
+      checkInterruption();
       if (context.outputBudget !== undefined)
         await inventoryFirmwareOutput(
           context.outputBudget.root,
@@ -197,27 +206,42 @@ export const runFirmwareCommand = async (context: {
         );
     }
     checkDiagnostics();
-    if (signal.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    checkInterruption();
   } catch (cause: unknown) {
-    failure = cause;
+    failure = firmwareFailure(cause, context);
   }
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
   if (stopped.status === "incomplete") {
     context.retainCleanup(supervisor);
-    throw new ProviderCleanupError(engine, [runId, context.cwd], {
-      reason: stopped.reason,
-      leader_pid: spawned.ownership.leaderPid,
-      process_group_id: spawned.ownership.processGroupId,
-      exit_code: snapshot.exitCode ?? null,
-      signal: snapshot.signal ?? null,
-      stdout: snapshot.stdout.text,
-      stderr: snapshot.stderr.text,
-      stdout_bytes: snapshot.stdout.bytes,
-      stderr_bytes: snapshot.stderr.bytes,
-      previous_error: failure instanceof Error ? failure.message : null,
-    });
+    const previous =
+      failure === undefined ? undefined : projectAnalysisError(failure);
+    // Retain typed recovery history, but give captured output exactly one owner.
+    const { captured_output: _captured, ...metadata } = previous?.details ?? {};
+    throw new ProviderCleanupError(
+      engine,
+      [runId, context.cwd],
+      {
+        reason: stopped.reason,
+        leader_pid: spawned.ownership.leaderPid,
+        process_group_id: spawned.ownership.processGroupId,
+        previous_error:
+          previous === undefined ? null : { ...previous, details: metadata },
+      },
+      {
+        operation,
+        cleanupPrimary: failure,
+        capturedOutput: {
+          stdout: snapshot.stdout.text,
+          stderr: snapshot.stderr.text,
+          stdout_bytes: snapshot.stdout.bytes,
+          stderr_bytes: snapshot.stderr.bytes,
+          exit_code: snapshot.exitCode ?? null,
+          signal: snapshot.signal ?? null,
+          truncated: snapshot.diagnosticTruncated === true,
+        },
+      },
+    );
   }
   if (failure !== undefined) throw failure;
   if (
