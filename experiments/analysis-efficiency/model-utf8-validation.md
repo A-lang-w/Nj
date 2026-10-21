@@ -28,7 +28,9 @@ file tables, driver/resource sources, immutable public URLs, artifact digests,
 complete report/answer fingerprints and all final samples. Baseline is main
 `264862bf2e3612c9cb6fcfb861843cbba4e1893f`; measured candidate code is
 `c2550343173c5abd8f34e925eac1bcc12b7ee6a2`. Later documentation/integration
-commits do not relabel that cohort.
+commits do not relabel that cohort. That measured local commit predates the
+rebase: its production file is byte-identical to published
+`2f091ccc734d7bd945bd61432d41cf5ba68be12b`, with both source hashes recorded.
 
 | Artifact                                         |      Bytes | Metadata / tensors | Independent reader |
 | ------------------------------------------------ | ---------: | -----------------: | ------------------ |
@@ -98,7 +100,9 @@ outside Git.
 
 ## Reproduction and validation boundaries
 
-Build each pinned runtime with the pinned toolchain. Capture a complete
+Build the baseline and the same baseline with the published GGUF source file
+using the pinned toolchain; this reconstructs the measured local candidate.
+Capture a complete
 baseline normalized report from existing CLI/MCP Evidence using the same
 absolute input path. Run `model-utf8-validation.mjs` with absolute `--runtime`,
 `--artifact`, `--expected` and a new `--output` directory under `resource-run.py
@@ -117,3 +121,15 @@ The first test launcher refused built projects; the exact built-project gate
 was then used. Neither attempt is a passing check. The initial resource-wrapper
 copy failed source-hash lookup before launching a build; corrected guarded
 builds qualified before measurement.
+
+Integrated onto main `71b696582`: all 68 tests pass again, and three real public
+CLI complete reports plus three production SDK tasks match the original
+normalized reports. Typecheck, lint/module boundaries, formatting, metadata,
+runtime build, docs checks (five tests) and separate architecture guards pass.
+`npm run check` does **not** pass: Knip reports an unlisted `g++` invocation in
+the Windows test added by main's #5772. An independent main source checkout,
+with matching compiled worker artifacts and an uncached Knip run, reproduces
+only that finding. It is outside this change and is left unchanged. Initial
+control attempts lacked resolvable worker artifacts and are not clean controls.
+Development builds/checks used separate 6/8 GiB hard guards; runtime experiments
+retain their 4 GiB limit. No guard stop or OOM occurred.

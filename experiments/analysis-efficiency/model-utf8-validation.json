@@ -423,5 +423,7 @@
         }
       ]
     }
-  ]
+  ],
+  "published_equivalent_source": "2f091ccc734d7bd945bd61432d41cf5ba68be12b",
+  "candidate_reproduction": "Use baseline_source plus the byte-identical src/model/GgufHeader.ts from published_equivalent_source; driver SHA-256 is pinned separately. Measured local candidate predates the integration rebase."
 }
