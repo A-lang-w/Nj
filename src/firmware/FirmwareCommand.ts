@@ -14,6 +14,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
   firmwareFailure,
+  firmwareCancellation,
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
 import {
@@ -158,6 +159,19 @@ export const runFirmwareCommand = async (context: {
       RAYON_NUM_THREADS: "1",
       NO_COLOR: "1",
     },
+  }).catch((cause: unknown) => {
+    // Owned admission can reject before a supervisor/child exists. Attribute
+    // only this signal's raw reason or a linked Node AbortError, never an
+    // unrelated failure merely because a timer also fired.
+    if (
+      signal.aborted &&
+      (cause === signal.reason ||
+        (cause instanceof Error &&
+          cause.name === "AbortError" &&
+          cause.cause === signal.reason))
+    )
+      throw firmwareCancellation(operation, signal.reason, context.deadline);
+    throw cause;
   });
   let diagnosticTruncated = false;
   const supervisor = new ProviderProcessSupervisor(
