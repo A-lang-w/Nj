@@ -251,7 +251,9 @@ Complete Evidence includes `artifact` (original path, byte size and SHA-256),
 Offsets and lengths are decimal byte counts. Blocks begin at the requested
 `offset` (default zero); omitted `length` extends to EOF. Explicit windows past
 EOF fail rather than silently clipping. The final block may be shorter.
-`block_size` must be a power of two from 256 through 65536, default 4096.
+`block_size` must be a power of two from 256 through 65536, default 4096. A
+window may produce at most 32,768 block rows; larger requests fail before the
+file scan with a capacity error. Choose a shorter window or larger block size.
 SHA-256 and `file_entropy` always cover the entire file, including when a window
 is selected. Empty files and empty windows are accepted; empty entropy is zero
 by convention. The tool reads the size the file reports. A file that reports size
@@ -275,7 +277,8 @@ requires a session capable of retaining Evidence.
 Reads use one block-sized buffer and a 256-entry histogram. Full Evidence and
 its serialization require memory proportional to the number of selected
 blocks; summary delivery reduces returned output but still retains that full
-series. Narrow the window or increase block size to reduce retained rows.
+series. The 32,768-row ceiling bounds this retained series; narrow the window
+or increase block size to reduce retained rows further.
 
 Local service measurement (macOS arm64, Node 24.18.0, 100,000,000-byte file,
 4096-byte blocks, file already in the OS cache): first process run took 1.113 s

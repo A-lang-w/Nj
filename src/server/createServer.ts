@@ -738,7 +738,7 @@ const registerConfiguredAnalysisTools = (
   registerBinaryDiagnosticsTools(
     server,
     options.binaryLayout ?? createBinaryLayoutService(environment),
-    createByteEntropyService(),
+    createByteEntropyService(artifactResources),
     toolLogger,
     recordEvidence,
     evidenceById,

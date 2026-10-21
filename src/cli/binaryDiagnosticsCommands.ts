@@ -41,16 +41,22 @@ export const registerBinaryDiagnosticsCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectByteEntropy, async () => {
-          const result = await entropy.inspect(
-            {
-              path: absoluteCallerPath(args.path),
-              block_size: options.blockSize,
-              offset: options.offset,
-              length: options.length,
-            },
-            { signal },
+          return await finishAnalysisCommand(
+            () =>
+              entropy.inspect(
+                {
+                  path: absoluteCallerPath(args.path),
+                  block_size: options.blockSize,
+                  offset: options.offset,
+                  length: options.length,
+                },
+                { signal },
+              ),
+            entropy,
+            "rea-byte-entropy",
+            "inspect_byte_entropy",
+            signal,
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
         }),
       ),
   });
