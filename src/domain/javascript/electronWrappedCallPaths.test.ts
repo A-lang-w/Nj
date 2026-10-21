@@ -546,7 +546,7 @@ it.each([
     ["ch", "wrapper-substitution"],
   ]);
   expect(
-    result.electron.call_paths
+    (result.electron.call_paths ?? [])
       .filter(({ channel }) => channel === "ch")
       .map(({ entry }) => entry)
       .sort(),
