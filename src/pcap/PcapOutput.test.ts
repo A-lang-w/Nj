@@ -53,6 +53,45 @@ it.each([
   ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
 });
 
+it.each(["before", "after"] as const)(
+  "retains endpoint and DNS facts with an empty stack %s the response",
+  async (position) => {
+    const empty = { "frame.protocols": [""] };
+    const response = {
+      "frame.protocols": ["eth:ethertype:ip:udp:dns"],
+      "ip.src": ["192.0.2.53"],
+      "ip.dst": ["192.0.2.1"],
+      "dns.qry.name": ["api.example"],
+      "dns.flags.response": ["True"],
+      "dns.a": ["203.0.113.5"],
+    };
+    const result = await parseTsharkJsonOutput(
+      capture(position === "before" ? [empty, response] : [response, empty]),
+    );
+    expect(result).toMatchObject({
+      packetCount: 2,
+      protocolCount: 1,
+      protocolDistribution: [
+        { protocol: "eth:ethertype:ip:udp:dns", packet_count: 1 },
+      ],
+      endpointCount: 2,
+      endpoints: [
+        { address: "192.0.2.1", port: null, packet_count: 1 },
+        { address: "192.0.2.53", port: null, packet_count: 1 },
+      ],
+      dnsQueryCount: 1,
+      dnsQueries: [
+        {
+          query: "api.example",
+          response_addresses: ["203.0.113.5"],
+          response_address_count: 1,
+        },
+      ],
+      partial: false,
+    });
+  },
+);
+
 it("rejects duplicate frame identities even when protocol stacks are empty", async () => {
   await expect(
     parseTsharkJsonOutput(
