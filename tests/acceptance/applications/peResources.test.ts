@@ -57,7 +57,7 @@ const expectPePaddingFailureAcrossAdapters = async (input: {
   );
   fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
   await writeFile(path, fixture.bytes);
-  const cliResult = await runFileCli(cli, {
+  const cliResult = await cli.run({
     arguments: ["inspect-pe-resources", path, "--json"],
   });
   expect(cliResult.exitCode).not.toBe(0);
@@ -256,11 +256,11 @@ const expectPeInventoriesAcrossAdapters = async (
     const invocation = {
       arguments: ["inspect-pe-resources", path, "--json"],
     };
-    // Keep one fresh public entrypoint; reuse only startup for the other cases.
-    const result =
-      !plus && !empty
-        ? await cli.run(invocation)
-        : await runFileCli(cli, invocation);
+    // Keep an independent public-wrapper process for both PE32 and PE32+.
+    // The empty-payload variants reuse only compiled-command startup.
+    const result = await (empty
+      ? runFileCli(cli, invocation)
+      : cli.run(invocation));
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const report = peResourcesSchema.parse(evidence.normalized_result);
