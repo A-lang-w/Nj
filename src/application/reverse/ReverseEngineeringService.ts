@@ -440,9 +440,9 @@ export class ReverseEngineeringService {
         const cancellation = new AnalysisCancelledError(operation, {
           cause: callerCancellationCause(signal, cause),
           ...(cause instanceof AnalysisError && cause.cleanupIncomplete
-            ? (cause.cleanup === undefined
-                  ? {}
-                  : { cleanup: cause.cleanup })
+            ? cause.cleanup === undefined
+              ? {}
+              : { cleanup: cause.cleanup }
             : {}),
         });
         if (cause instanceof AnalysisError && cause.cleanupIncomplete)
