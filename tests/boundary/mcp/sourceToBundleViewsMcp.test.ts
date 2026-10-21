@@ -22,12 +22,25 @@ it.each(["full", "compact"] as const)(
       parent.normalized_result,
     );
     expect(full.summary).toMatchObject({ split: 1, unknown: 2 });
-    expect(
-      await call("compare_source_to_bundle", {
-        ...inputs,
-        reference: { kind: "file", path },
-      }),
-    ).toEqual(parent);
+    const fileParent = await call("compare_source_to_bundle", {
+      ...inputs,
+      reference: { kind: "file", path },
+    });
+    expect(fileParent.normalized_result).toEqual(parent.normalized_result);
+    expect(fileParent.parameters.reference_source).toEqual({
+      kind: "file",
+      path,
+      requested_path: path,
+    });
+    expect(fileParent.evidence_id).not.toBe(parent.evidence_id);
+    const secondPath = join(root, "same-graph.json");
+    await writeFile(secondPath, JSON.stringify(reference.value));
+    const secondParent = await call("compare_source_to_bundle", {
+      ...inputs,
+      reference: { kind: "file", path: secondPath },
+    });
+    expect(secondParent.normalized_result).toEqual(parent.normalized_result);
+    expect(secondParent.evidence_id).not.toBe(fileParent.evidence_id);
     const summary = await call("compare_source_to_bundle", {
       ...inputs,
       view: { kind: "summary" },
@@ -70,7 +83,7 @@ it.each(["full", "compact"] as const)(
     const page = analysisViewResultSchema.parse(selected.normalized_result);
     expect(page).toMatchObject({
       kind: "source-to-bundle",
-      parent_evidence_id: parent.evidence_id,
+      parent_evidence_id: fileParent.evidence_id,
       source_coverage: full.coverage,
       items: [
         {
@@ -83,10 +96,10 @@ it.each(["full", "compact"] as const)(
       ],
       coverage: { total: 1, exhausted: true },
     });
-    expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
+    expect(session.evidenceById(fileParent.evidence_id)).toEqual(fileParent);
     const source = {
       kind: "retained-evidence",
-      evidence_id: parent.evidence_id,
+      evidence_id: fileParent.evidence_id,
     };
     await assertRetainedPages(call, source, request, full);
     await writeFile(

@@ -1,3 +1,4 @@
+import { holdFirstFileRead } from "../support/holdFirstFileRead.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
@@ -58,6 +59,43 @@ it("reserves graph validation/hash memory before the owning parser allocates", a
     });
     expect(parser).not.toHaveBeenCalled();
   } finally {
+    await resources.close();
+  }
+  expect(resources.hasPending).toBe(false);
+});
+
+it("attributes file-I/O cancellation to the comparison and preserves its exact cause", async () => {
+  const root = await createTestTempDirectory("rea-reference-io-cancel-");
+  const path = join(root, "graph.json");
+  await writeFile(
+    path,
+    JSON.stringify(SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference),
+  );
+  const held = await holdFirstFileRead(path);
+  const controller = new AbortController();
+  const cause = new Error("cancel historical graph read");
+  const resources = new ArtifactResourceScope();
+  try {
+    const pending = resolveSourceToBundleReference(
+      { kind: "file", path },
+      controller.signal,
+      resources,
+    );
+    await held.firstRead;
+    controller.abort(cause);
+    held.release();
+    const result = await pending;
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "compare_source_to_bundle",
+      },
+    });
+    if (result.ok) throw new Error("Expected cancelled read");
+    expect(result.error.cause).toBe(cause);
+  } finally {
+    held.release();
     await resources.close();
   }
   expect(resources.hasPending).toBe(false);

@@ -1871,17 +1871,26 @@ const assertSourceFileView = async (sourceCompared: unknown) => {
     referencePath,
     JSON.stringify(SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference),
   );
-  expect(
+  const requestedPath = relative(process.cwd(), referencePath);
+  const fileParent = parseEvidence(
     await runCli([
       "compare-source-to-bundle",
       JSON.stringify({
-        reference: { kind: "file", path: referencePath },
+        reference: { kind: "file", path: requestedPath },
         application: JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
       }),
       "--json",
     ]),
-  ).toEqual(sourceCompared);
-  await writeFile(sourceComparisonPath, JSON.stringify(sourceCompared));
+  );
+  expect(fileParent.normalized_result).toEqual(
+    parseEvidence(sourceCompared).normalized_result,
+  );
+  expect(fileParent.parameters.reference_source).toEqual({
+    kind: "file",
+    path: absoluteCallerPath(requestedPath),
+    requested_path: requestedPath,
+  });
+  await writeFile(sourceComparisonPath, JSON.stringify(fileParent));
   const selectedSource = await runCli([
     "inspect-analysis-view",
     JSON.stringify({

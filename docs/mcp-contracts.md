@@ -354,7 +354,11 @@ page size or export retained Evidence if the view is too large.
 
 `compare_source_to_bundle` accepts the committed historical graph inline or as
 `reference: {"kind":"file","path":"/absolute/reference.json"}`. The shared
-reader checks resource bounds and the graph's root commitment on every read.
+reader checks resource bounds and the graph's root commitment on every read. File-backed
+comparison Evidence records `parameters.reference_source`: the exact
+`requested_path` and the reader's absolute selected `path`, preserving POSIX
+`..`/symlink semantics. Normalized comparison facts and mapping identities agree
+with inline input; Evidence IDs distinguish caller-selected file origins.
 Omitting `view` preserves the complete comparison. For a compact initial reply,
 select `view: {"kind":"summary"}` or a `source-to-bundle` page; the session retains
 the complete comparison before delivery. Later calls use `inspect_analysis_view`

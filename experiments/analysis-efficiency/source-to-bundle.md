@@ -6,8 +6,9 @@ Measured implementation: the production-file SHA-256 manifest in
 measurements, not a claim that the baseline commit already contains the feature.
 The original cohort predates the CLI error-envelope and review guard fixes,
 pinned separately in the JSON. The CLI invalid-application output was restored
-exactly. Post-review SDK tasks verify both output profiles against the independent
-oracle and preserve byte-identical complete comparison Evidence. Historical paired
+exactly. Post-guard SDK tasks verified both output profiles before the later
+reference-file provenance fix. Final tasks preserve normalized comparison facts
+while full Evidence IDs now commit the selected file origin. Historical paired
 medians are not presented as new measurements of the later guard changes.
 
 ## Analyst question and correctness
@@ -120,7 +121,8 @@ redirect full JSON to a file and select facts in code, so raw SDK savings do not
 establish savings over every native client. These byte sizes are not token counts;
 actual native-agent context and external projection CPU are unmeasured.
 
-The new CLI reference-file form preserves that full output. Its saved Evidence
+The new CLI reference-file form preserves the normalized facts and records its
+file origin. Its saved Evidence
 can be queried by `inspect-analysis-view` using the same source-to-bundle
 projector as MCP. The interface supplies reusable, authenticated facts and
 relationships instead of requiring each caller to maintain an ad-hoc projection.
@@ -182,7 +184,27 @@ All three new guard regressions fail in a negative control with those gates
 temporarily removed, then pass after restoration. Memory admission is an estimate;
 the reported hard process-family ceilings come from the experiment guard.
 
-Final additional public-package SDK tasks for both output profiles retain all
+Post-guard public-package SDK tasks, before the later provenance fix, retained all
 180 source-file / 99 embedded-node / 210 relation oracle checks and byte-identical
 complete comparison Evidence. Their receipts, source hashes and costs are under
 `subsequent_review_guards` in the main JSON; they are excluded from paired medians.
+
+## Reference-file provenance and cancellation attribution
+
+The final file form records `parameters.reference_source` with `kind: file`, the
+exact caller `requested_path` and the reader's absolute selected `path`. The
+shared file owner supplies that path without a second interpretation; POSIX
+`..` and symlink semantics remain intact. Identical graphs in different chosen
+files have the same normalized facts/mapping IDs and distinct Evidence IDs.
+Inline legacy Evidence remains identical. Actual public-package CLI file
+Evidence equals MCP file Evidence for the same origin; relative CLI paths also
+have maintained coverage.
+
+Reader cancellation is reattributed to `compare_source_to_bundle`, preserving the
+original cause. Six MCP/profile/guard tests and 29 selected CLI/shared-JSON
+ownership tests pass. Removing provenance recording and cancellation attribution
+makes three tests fail as expected. Additional Evidence-reader/file cancellation
+checks pass. Final real-package tasks estimate 54,896 cl100k tokens in both output
+profiles, preserve all independent oracle facts, and retain the new provenance;
+these are additional verification runs, not new paired medians. The main JSON's
+`subsequent_reference_provenance` records final source hashes and receipts.

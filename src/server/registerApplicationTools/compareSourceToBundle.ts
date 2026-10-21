@@ -58,7 +58,7 @@ export const registerCompareSourceToBundleTool = (
           if (!reference.ok)
             return server.delivery.toCallToolResult(reference, contract);
           const parsed = {
-            reference: reference.value,
+            ...reference.value,
             application: resolved.value.application,
           };
           const result = await logToolExecution(

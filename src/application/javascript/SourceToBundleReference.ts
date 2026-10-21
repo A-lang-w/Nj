@@ -11,14 +11,24 @@ import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { readJsonFile } from "../JsonFiles.js";
+import { readJsonFileWithSource } from "../JsonFiles.js";
+
+/** Historical facts plus the file-origin metadata supplied by the reader, if any. */
+export type ResolvedSourceToBundleReference = {
+  readonly reference: HistoricalSourceGraph;
+  readonly reference_source?: {
+    readonly kind: "file";
+    readonly path: string;
+    readonly requested_path: string;
+  };
+};
 
 /** Resolve one caller-selected historical graph using the shared bounded regular-file reader. No file cache. */
 export const resolveSourceToBundleReference = async (
   reference: z.output<typeof compareSourceToBundleCliInputSchema>["reference"],
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
-): Promise<Result<HistoricalSourceGraph, AnalysisError>> => {
+): Promise<Result<ResolvedSourceToBundleReference, AnalysisError>> => {
   const cancelled = () => signal?.aborted === true;
   if (cancelled())
     return err(
@@ -26,9 +36,17 @@ export const resolveSourceToBundleReference = async (
         cause: signal?.reason,
       }),
     );
-  if (!("kind" in reference)) return ok(reference);
-  const read = await readJsonFile(reference.path, signal, resources);
-  if (!read.ok) return read;
+  if (!("kind" in reference)) return ok({ reference });
+  const read = await readJsonFileWithSource(reference.path, signal, resources);
+  if (!read.ok) {
+    return read.error instanceof AnalysisCancelledError
+      ? err(
+          new AnalysisCancelledError("compare_source_to_bundle", {
+            cause: read.error.cause,
+          }),
+        )
+      : read;
+  }
   await setImmediate();
   if (cancelled())
     return err(
@@ -36,14 +54,14 @@ export const resolveSourceToBundleReference = async (
         cause: signal?.reason,
       }),
     );
-  const headroom = requireAuthenticationHeadroom(read.value, {
+  const headroom = requireAuthenticationHeadroom(read.value.data, {
     operation: "compare_source_to_bundle",
-    path: reference.path,
+    path: read.value.path,
     description:
       "Insufficient heap headroom to authenticate the historical source graph",
   });
   if (!headroom.ok) return headroom;
-  const parsed = historicalSourceGraphSchema.safeParse(read.value);
+  const parsed = historicalSourceGraphSchema.safeParse(read.value.data);
   // Dispatch aborts queued while synchronous validation and commitment hashing ran.
   await setImmediate();
   if (cancelled())
@@ -60,9 +78,16 @@ export const resolveSourceToBundleReference = async (
           ...issue,
           path: ["reference", ...issue.path],
         })),
-        { reference: read.value },
+        { reference: read.value.data },
         { cause: parsed.error },
       ),
     );
-  return ok(parsed.data);
+  return ok({
+    reference: parsed.data,
+    reference_source: {
+      kind: "file",
+      path: read.value.path,
+      requested_path: reference.path,
+    },
+  });
 };
