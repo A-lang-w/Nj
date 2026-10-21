@@ -180,6 +180,7 @@ const BROWSER_ERROR_CODES: Readonly<
   target_not_allowed: "target_unavailable",
   service_worker_blocked: "target_unavailable",
   target_changed: "target_unavailable",
+  target_session_detached: "target_unavailable",
   protocol_error: "unreadable_output",
   disconnected: "provider_unavailable",
   payload_limit: "truncated",
@@ -592,7 +593,6 @@ const lifecycleErrorDetails = (
 
 const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
   "artifact_changed",
-  "invalid_request",
   "provider_timeout",
   "cancelled",
   "revision_conflict",

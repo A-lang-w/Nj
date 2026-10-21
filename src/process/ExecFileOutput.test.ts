@@ -1,4 +1,5 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -272,42 +273,6 @@ describe.skipIf(process.platform === "win32")(
       }
     });
 
-    it("settles after the grace when an exited command's descendant holds its output open", async () => {
-      const directory = await createTestTempDirectory("rea-exec-descendant-");
-      const pidFile = join(directory, "descendant.pid");
-      const script = [
-        'const { spawn } = require("node:child_process");',
-        'const fs = require("node:fs");',
-        'const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: ["ignore", "inherit", "inherit"] });',
-        `fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
-        "child.unref();",
-        'process.stdout.write("kuna 1.833\\n");',
-      ].join("\n");
-      const started = Date.now();
-      try {
-        await expect(
-          execFileOutput(process.execPath, ["-e", script], {
-            timeout: 500,
-            stopSignal: "SIGTERM",
-          }),
-        ).rejects.toMatchObject({
-          code: "ETIMEDOUT",
-          killed: true,
-          outputReadersCutOff: true,
-        });
-        expect(Date.now() - started).toBeLessThan(15_000);
-      } finally {
-        const pid = Number(await readFile(pidFile, "utf8").catch(() => ""));
-        if (Number.isSafeInteger(pid) && pid > 0)
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch {
-            // The descendant may already have exited.
-          }
-        await rm(directory, { recursive: true, force: true });
-      }
-    }, 30_000);
-
     it("kills a timed-out process that ignores the stop signal", async () => {
       const script = [
         'for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => {});',
@@ -324,6 +289,114 @@ describe.skipIf(process.platform === "win32")(
         killed: true,
         signal: "SIGKILL",
       });
+    });
+  },
+);
+
+const descendantCommand = async (pid: number): Promise<string> => {
+  if (process.platform === "linux")
+    return readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => "");
+  return new Promise((resolve) => {
+    execFile(
+      "ps",
+      ["-p", String(pid), "-o", "command="],
+      { encoding: "utf8" },
+      (error, stdout) => {
+        resolve(error ? "" : stdout);
+      },
+    );
+  });
+};
+
+/** Signal only a still-running descendant whose command line contains `marker`. */
+const stopOwnedDescendant = async (
+  pid: number,
+  marker: string,
+): Promise<unknown> => {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid)
+    return undefined;
+  if (!(await descendantCommand(pid)).includes(marker)) return undefined;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (cause: unknown) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
+      return undefined;
+    return cause;
+  }
+  return undefined;
+};
+
+describe.skipIf(process.platform === "win32")(
+  "execFileOutput inherited pipes",
+  () => {
+    it("keeps scratch files until an inherited-pipe descendant closes them", async () => {
+      const directory = await createTestTempDirectory("rea-exec-inherited-");
+      const scratch = join(directory, "scratch");
+      const finished = join(directory, "finished.json");
+      const pidPath = join(directory, "child.pid");
+      await mkdir(scratch);
+      const childSource = [
+        'const fs = require("node:fs");',
+        "setTimeout(() => {",
+        `  fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) }));`,
+        "  process.exit(0);",
+        "}, 7000);",
+      ].join("\n");
+      const script = [
+        'const { spawn } = require("node:child_process");',
+        'const fs = require("node:fs");',
+        `const child = spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}], { stdio: "inherit" });`,
+        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+        "process.exit(0);",
+      ].join("\n");
+      const settled = execFileOutput(process.execPath, ["-e", script], {
+        timeout: 200,
+        stopSignal: "SIGTERM",
+      })
+        .finally(async () => {
+          await rm(scratch, { recursive: true, force: true });
+        })
+        .then(
+          () => ({ ok: true as const }),
+          (cause: unknown) => ({ ok: false as const, cause }),
+        );
+      let killFailure: unknown;
+      let descendantSettled = false;
+      try {
+        const deadline = Date.now() + 15_000;
+        let text: string | undefined;
+        while (Date.now() < deadline) {
+          text = await readFile(finished, "utf8").then(
+            (value) => value,
+            (cause: unknown) => {
+              if (
+                cause instanceof Error &&
+                "code" in cause &&
+                cause.code === "ENOENT"
+              )
+                return undefined;
+              throw cause;
+            },
+          );
+          if (text !== undefined) break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(text).toBeDefined();
+        expect(JSON.parse(text ?? "")).toEqual({ scratchExists: true });
+        const outcome = await settled;
+        descendantSettled = true;
+        expect(outcome).toMatchObject({
+          ok: false,
+          cause: { code: "ETIMEDOUT", killed: true },
+        });
+      } finally {
+        if (!descendantSettled) {
+          const pid = Number(await readFile(pidPath, "utf8").catch(() => ""));
+          killFailure = await stopOwnedDescendant(pid, finished);
+        }
+        await settled;
+      }
+      if (killFailure !== undefined) throw killFailure;
     });
   },
 );

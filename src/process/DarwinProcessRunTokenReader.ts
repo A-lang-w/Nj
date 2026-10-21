@@ -18,10 +18,6 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
-import {
-  awaitBootstrapCompilerProcessFamilyExit,
-  compilerFamilySettlementBudgetMs,
-} from "./CompilerProcessFamilySettlement.js";
 import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
 import type {
   ProcessIdentityObservation,
@@ -523,41 +519,10 @@ export const createDarwinProcessRunTokenReader = (
     } catch (cause: unknown) {
       operation.primaryFailure = { cause };
       if (operationRoot !== undefined) {
+        // execFileOutput has settled, so inherited compiler pipes are closed.
+        // That is not proof for a child that did not inherit them; this owner
+        // does not signal processes it did not launch.
         try {
-          const commandFailure =
-            execFileOutputFailure(cause) ??
-            (cause instanceof DarwinProcessOwnershipInspectionError &&
-            cause.cause !== undefined
-              ? execFileOutputFailure(cause.cause)
-              : undefined);
-          if (
-            commandFailure?.outputReadersCutOff === true &&
-            commandFailure.leaderPid !== undefined &&
-            compilerEnvironment !== undefined
-          ) {
-            // Use a separate bounded cleanup signal, not the potentially-aborted
-            // operation signal. Cancellation must not skip the family check.
-            const cleanupDeadline = AbortSignal.timeout(
-              compilerFamilySettlementBudgetMs(compilerTimeoutMs),
-            );
-            const settled = await awaitBootstrapCompilerProcessFamilyExit(
-              commandFailure.leaderPid,
-              compilerTimeoutMs,
-              compilerEnvironment,
-              cleanupDeadline,
-            );
-            if (!settled) {
-              throw new ProviderCleanupError(
-                "process-ownership",
-                [operationRoot.path],
-                {
-                  reason:
-                    "The Darwin ownership helper compiler family could not be confirmed finished before removing its scratch root.",
-                },
-                { operation: "prepare_owned_process" },
-              );
-            }
-          }
           await cleanupRoot(operationRoot);
         } catch (cleanup: unknown) {
           if (!(cleanup instanceof ProviderCleanupError)) throw cleanup;
