@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { getHeapStatistics } from "node:v8";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -112,6 +113,7 @@ const hostSystemError = (cause: Error): Error | undefined => {
 const accessDeniedError = (
   cause: unknown,
   path: string,
+  diagnostics?: Readonly<Record<string, JsonValue>>,
 ): AnalysisAccessDeniedError | undefined => {
   const seen = new Set<Error>();
   let current = cause;
@@ -125,6 +127,7 @@ const accessDeniedError = (
         code,
         {
           cause,
+          ...(diagnostics === undefined ? {} : { diagnostics }),
           ...(cause instanceof ArtifactReaderFailure &&
           cause.cleanup !== undefined
             ? { cleanup: cause.cleanup }
@@ -134,6 +137,20 @@ const accessDeniedError = (
       bindArtifactFileCleanup(cause, error);
       return error;
     }
+    current = current.cause;
+  }
+  return undefined;
+};
+
+/** The absolute path a host failure beneath wrappers names, if it names one. */
+const hostFailurePath = (cause: unknown): string | undefined => {
+  const seen = new Set<unknown>();
+  let current = cause;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    const path = Reflect.get(current, "path");
+    if (systemCode(current) !== undefined && typeof path === "string")
+      return isAbsolute(path) ? path : undefined;
     current = current.cause;
   }
   return undefined;
@@ -310,7 +327,13 @@ export const exportEnvironmentBundle = async (
     files = await writeEnvironmentBundle(input, plan.value);
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return err(cause);
-    const denied = accessDeniedError(cause, input.directory);
+    // A refused bundle write names the path the host refused, which may be a
+    // nested file after earlier files were written into the directory.
+    const denied = accessDeniedError(
+      cause,
+      hostFailurePath(cause) ?? input.directory,
+      { output_directory: input.directory },
+    );
     if (denied !== undefined) return err(denied);
     if (cause instanceof RegularFileChangedError)
       return err(
