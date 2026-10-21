@@ -29,7 +29,7 @@ import {
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 
 const promiseAmbientLookupIntact = (
-  property: "constructor" | "then" | "catch",
+  property: "constructor" | "then" | "catch" | "finally",
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
@@ -244,7 +244,7 @@ const nativePromiseChainParent = (
   if (!t.isMemberExpression(member)) return undefined;
   const method = semanticStaticPropertyName(member.property, member.computed);
   if (
-    (method !== "then" && method !== "catch") ||
+    (method !== "then" && method !== "catch" && method !== "finally") ||
     node.arguments.some(
       (argument) =>
         t.isSpreadElement(argument) || !syntaxEvaluationCannotThrow(argument),

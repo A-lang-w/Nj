@@ -2,6 +2,12 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const sources = [
+  'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.finally(()=>{});',
+  'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/chain");resolve()});await pending.finally(()=>{});',
+  'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();const tail=pending.finally(()=>{});await tail;',
+  'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.catch(()=>{}).finally(()=>{}).then(()=>{});',
+  'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending["finally"](()=>{});',
+  'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.finally();',
   'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.then(()=>{});',
   'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.catch(()=>{});',
   'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/chain");resolve()});await pending.then(()=>{});',
@@ -49,6 +55,20 @@ it.each(sources)("retains initialized chained producer: %s", (source) => {
 });
 
 it.each([
+  ["pending.finally=()=>undefined;", "pending.finally()"],
+  ["const alias=pending;alias.finally=()=>undefined;", "pending.finally()"],
+  ["Promise.prototype.finally=()=>undefined;", "pending.finally()"],
+  ["pending.then=()=>undefined;", "pending.finally()"],
+  ["const alias=pending;alias.then=()=>undefined;", "pending.finally()"],
+  ["Promise.prototype.then=()=>undefined;", "pending.finally()"],
+  [
+    "Object.setPrototypeOf(pending,{finally:()=>undefined});",
+    "pending.finally()",
+  ],
+  [
+    "class Fast extends Promise{constructor(executor){super(resolve=>{resolve();executor(()=>{},()=>{})})}}pending.constructor={[Symbol.species]:Fast};",
+    "pending.finally()",
+  ],
   ["pending.then=()=>undefined;", "pending.then()"],
   ["const alias=pending;alias.then=()=>undefined;", "pending.then()"],
   ["pending.catch=()=>undefined;", "pending.catch()"],

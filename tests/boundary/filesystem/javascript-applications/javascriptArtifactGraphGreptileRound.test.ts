@@ -12,6 +12,66 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "finally-0.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/finally-0")})();await pending.finally(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "finally-1.mjs",
+    source:
+      'export {};const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/finally-1");resolve()});await pending.finally(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "finally-2.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/finally-2")})();const tail=pending.finally(()=>{});await tail;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "finally-3.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/finally-3")})();await pending.catch(()=>{}).finally(()=>{}).then(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "finally-4.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/finally-4")})();await pending["finally"](()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "finally-5.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/finally-5")})();await pending.finally();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "finally-initialized.mjs",
+    endpoint: "wss://example.test/finally-initialized",
+    source:
+      'export {};const Socket=globalThis.WebSocket;const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/finally-initialized");resolve()});await pending.finally(()=>{});',
+  },
+  {
+    file: "finally-changed-0.mjs",
+    endpoint: "wss://example.test/changed-finally-0",
+    source:
+      'export {};let release;const ready=new Promise(resolve=>{release=resolve});const pending=(async()=>{await ready;new Socket("wss://example.test/changed-finally-0")})();pending.finally=()=>undefined;await pending.finally();const Socket=globalThis.WebSocket;release();',
+  },
+  {
+    file: "finally-changed-1.mjs",
+    endpoint: "wss://example.test/changed-finally-1",
+    source:
+      'export {};let release;const ready=new Promise(resolve=>{release=resolve});const pending=(async()=>{await ready;new Socket("wss://example.test/changed-finally-1")})();const alias=pending;alias.finally=()=>undefined;await pending.finally();const Socket=globalThis.WebSocket;release();',
+  },
+  {
+    file: "finally-changed-2.mjs",
+    endpoint: "wss://example.test/changed-finally-2",
+    source:
+      'export {};let release;const ready=new Promise(resolve=>{release=resolve});const pending=(async()=>{await ready;new Socket("wss://example.test/changed-finally-2")})();Promise.prototype.finally=()=>undefined;await pending.finally();const Socket=globalThis.WebSocket;release();',
+  },
+  {
+    file: "finally-changed-3.mjs",
+    endpoint: "wss://example.test/changed-finally-3",
+    source:
+      'export {};let release;const ready=new Promise(resolve=>{release=resolve});const pending=(async()=>{await ready;new Socket("wss://example.test/changed-finally-3")})();pending.then=()=>undefined;await pending.finally();const Socket=globalThis.WebSocket;release();',
+  },
+  {
     file: "replaced-import-then.mjs",
     source:
       'export {};const {WebSocket:Socket}=await import("ws").then(()=>({WebSocket:class{}}));new Socket("wss://example.test/replaced-import-then");',

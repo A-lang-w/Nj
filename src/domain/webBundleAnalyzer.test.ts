@@ -8471,6 +8471,12 @@ describe("web bundle native Promise chain waits", () => {
     },
   );
   it.each([
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.finally(()=>{});',
+    'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/chain");resolve()});await pending.finally(()=>{});',
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();const tail=pending.finally(()=>{});await tail;',
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.catch(()=>{}).finally(()=>{}).then(()=>{});',
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending["finally"](()=>{});',
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.finally();',
     'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.then(()=>{});',
     'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.catch(()=>{});',
     'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/chain");resolve()});await pending.then(()=>{});',
@@ -8488,6 +8494,33 @@ describe("web bundle native Promise chain waits", () => {
       ).map((items) => items.map((item) => item.value)),
     ).toEqual([["wss://example.test/chain"], ["wss://example.test/chain"]]);
   });
+  it.each([
+    ["pending.finally=()=>undefined;", "pending.finally()"],
+    ["const alias=pending;alias.finally=()=>undefined;", "pending.finally()"],
+    ["Promise.prototype.finally=()=>undefined;", "pending.finally()"],
+    ["pending.then=()=>undefined;", "pending.finally()"],
+    ["const alias=pending;alias.then=()=>undefined;", "pending.finally()"],
+    ["Promise.prototype.then=()=>undefined;", "pending.finally()"],
+    [
+      "Object.setPrototypeOf(pending,{finally:()=>undefined});",
+      "pending.finally()",
+    ],
+    [
+      "class Fast extends Promise{constructor(executor){super(resolve=>{resolve();executor(()=>{},()=>{})})}}pending.constructor={[Symbol.species]:Fast};",
+      "pending.finally()",
+    ],
+  ] as const)(
+    "keeps changed finally identity unknown in both consumers: %s",
+    (change, wait) => {
+      const source = `export {};let release;const ready=new Promise(resolve=>{release=resolve});const pending=(async()=>{await ready;new Socket("wss://example.test/changed-chain")})();${change}await ${wait};const Socket=globalThis.WebSocket;release();`;
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([
+        ["wss://example.test/changed-chain"],
+        ["wss://example.test/changed-chain"],
+      ]);
+    },
+  );
 });
 
 describe("web bundle Promise capability reference roles", () => {
