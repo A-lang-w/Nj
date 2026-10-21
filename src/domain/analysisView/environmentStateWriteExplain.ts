@@ -77,7 +77,7 @@ const isClockNear = (
 };
 
 /** One more than the largest integer the members hold in the field, or undefined when none holds one. */
-const nextInteger = (
+export const nextInteger = (
   members: readonly JsonObject[],
   field: string,
 ): number | undefined => {
