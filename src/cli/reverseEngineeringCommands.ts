@@ -12,7 +12,10 @@ import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { err } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { OBJDUMP_ARTIFACT_OPERATIONS } from "../domain/reverseEngineering.js";
+import {
+  OBJDUMP_ARTIFACT_OPERATIONS,
+  reverseCommandTimeoutSchema,
+} from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -152,6 +155,7 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
+      commandTimeoutMs: reverseCommandTimeoutSchema,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -173,6 +177,9 @@ export const registerReverseEngineeringCommands = (
                 ...(options.symbol === undefined
                   ? {}
                   : { symbol: options.symbol }),
+                ...(options.commandTimeoutMs === undefined
+                  ? {}
+                  : { command_timeout_ms: options.commandTimeoutMs }),
               },
               { signal },
             ),
@@ -186,7 +193,10 @@ export const registerReverseEngineeringCommands = (
   cli.command(CLI_COMMANDS.listObjdumpArchitectures, {
     description: "List BFD targets advertised by the installed GNU objdump",
     args: z.object({}),
-    options: z.object(analysisEvidenceDeliveryOptions),
+    options: z.object({
+      ...analysisEvidenceDeliveryOptions,
+      commandTimeoutMs: reverseCommandTimeoutSchema,
+    }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(
@@ -205,7 +215,12 @@ export const registerReverseEngineeringCommands = (
               return projectAnalysisError(inputError);
             const result = await executeWithCleanup(service, signal, () =>
               service.inspectWithObjdump(
-                { operation: "architectures" },
+                {
+                  operation: "architectures",
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
+                },
                 { signal },
               ),
             );
@@ -225,11 +240,22 @@ export const registerReverseEngineeringCommands = (
         .describe("Path to the local artifact to analyze."),
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      commandTimeoutMs: reverseCommandTimeoutSchema,
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
           const result = await executeWithCleanup(service, signal, () =>
-            service.executeRizinCommand(args, { signal }),
+            service.executeRizinCommand(
+              {
+                ...args,
+                ...(options.commandTimeoutMs === undefined
+                  ? {}
+                  : { command_timeout_ms: options.commandTimeoutMs }),
+              },
+              { signal },
+            ),
           );
           return result.ok ? result.value : projectAnalysisError(result.error);
         }),
