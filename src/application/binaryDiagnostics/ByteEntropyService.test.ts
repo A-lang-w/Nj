@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { byteEntropySchema } from "../../domain/native/byteEntropy.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   ByteEntropyService,
   MAX_BYTE_ENTROPY_BLOCKS,
@@ -131,6 +132,88 @@ it("honors cancellation before and during streaming", async () => {
   expect(reads).toBe(1);
 });
 
+it("maps cancellation during open to the cancelled algebra with its original cause", async () => {
+  const root = await createTestTempDirectory("rea-entropy-open-cancel-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(512));
+  const controller = new AbortController();
+  const reason = new Error("cancelled while opening");
+  const service = new ByteEntropyService({
+    stat,
+    open: async (...args) => {
+      const file = await open(...args);
+      controller.abort(reason);
+      return file;
+    },
+  });
+
+  const result = await service.inspect(
+    { path, block_size: 256 },
+    { signal: controller.signal },
+  );
+
+  if (result.ok) throw new Error("Expected cancellation during open");
+  expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(result.error.cause).toBe(reason);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+  });
+  await service.close();
+});
+
+it("keeps finalizer cancellation primary when close also fails, then resolves its cleanup owner", async () => {
+  const root = await createTestTempDirectory("rea-entropy-finalizer-cancel-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(512));
+  const controller = new AbortController();
+  const reason = new Error("cancelled during close");
+  const closeFailure = new Error("injected close failure");
+  let failClose = true;
+  const service = new ByteEntropyService({
+    stat,
+    open: async (...args) => {
+      const file = await open(...args);
+      const close = file.close.bind(file);
+      vi.spyOn(file, "close").mockImplementation(async () => {
+        if (failClose) {
+          controller.abort(reason);
+          throw closeFailure;
+        }
+        await close();
+      });
+      return file;
+    },
+  });
+
+  const result = await service.inspect(
+    { path, block_size: 256 },
+    { signal: controller.signal },
+  );
+
+  if (result.ok) throw new Error("Expected cancellation during finalization");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cleanupIncomplete: true,
+    secondaryFailures: [
+      { _tag: "AnalysisOutputError", cleanupIncomplete: true },
+    ],
+  });
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.secondaryFailures[0]?.cause).toBeDefined();
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    retryable: false,
+    details: {
+      cleanup: "incomplete",
+      execution_failure: "cancelled",
+    },
+  });
+
+  failClose = false;
+  await service.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+});
+
 it("reports a changed artifact when its parent directory moves during streaming", async () => {
   const root = await createTestTempDirectory("rea-entropy-moved-");
   const path = join(root, "bytes");
@@ -190,6 +273,14 @@ it("refuses a block series above the output-row limit before scanning", async ()
         max_blocks: MAX_BYTE_ENTROPY_BLOCKS,
         requested_blocks: MAX_BYTE_ENTROPY_BLOCKS + 1,
       },
+    },
+  });
+  if (result.ok) throw new Error("Expected a capacity refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    remediation: {
+      action: expect.stringMatching(/shorter window|increase block_size/i),
     },
   });
   expect(reads).toBe(0);

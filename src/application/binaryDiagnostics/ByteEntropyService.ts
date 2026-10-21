@@ -28,6 +28,7 @@ import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
+  artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -158,6 +159,11 @@ export class ByteEntropyService {
                 block_size: input.block_size,
                 window_length: length,
               },
+              {
+                retryable: false,
+                remediationAction:
+                  "Reduce the selected window length or increase block_size so the selected window contains at most 32768 blocks.",
+              },
             );
           const end = input.offset + length;
           const blocks: ByteEntropy["blocks"] = [];
@@ -260,6 +266,7 @@ export class ByteEntropyService {
         ) {
           const cancelled = new AnalysisCancelledError(OPERATION, {
             cause: outcome.cause.cancellation?.reason,
+            cleanup: cause.cleanup,
           }).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
@@ -267,6 +274,7 @@ export class ByteEntropyService {
         if (options?.signal?.aborted && outcome.kind === "completed") {
           const cancelled = new AnalysisCancelledError(OPERATION, {
             cause: options.signal.reason,
+            cleanup: cause.cleanup,
           }).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
@@ -295,6 +303,13 @@ export class ByteEntropyService {
         return err(cleanup);
       }
       if (cause instanceof ArtifactReaderFailure) {
+        if (cause.reason === "cancelled") {
+          const cancelled = new AnalysisCancelledError(OPERATION, {
+            cause: artifactFileCancellationCause(cause),
+          });
+          bindArtifactFileCleanup(cause, cancelled);
+          return err(cancelled);
+        }
         const retry = new AnalysisOutputError(
           OPERATION,
           "A previous byte-entropy file descriptor is still owned; cleanup must succeed before another file can be inspected.",
