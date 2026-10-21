@@ -50,6 +50,14 @@ const observationSchema = z.strictObject({
 });
 type Observation = z.infer<typeof observationSchema>;
 type SourceSnapshot = Awaited<ReturnType<typeof readSourceSnapshot>>;
+type FileOffsetTarget = Pick<BinaryTarget, "path" | "sha256">;
+
+const changedSourceReason = (
+  path: string,
+  expected: string,
+  observed: string,
+): string =>
+  `Source ${path} differs from the admitted artifact: expected SHA-256 ${expected}, observed ${observed}. Reopen the changed source for a new analysis identity.`;
 
 /** Bind native image-relative offsets to coordinates in the admitted source bytes. */
 export async function mapHopperFileOffset(
@@ -115,7 +123,11 @@ export async function mapHopperFileOffset(
         }),
       );
     if (snapshot.sha256 !== target.sha256) {
-      const reason = `Source ${target.path} differs from the admitted artifact: expected SHA-256 ${target.sha256}, observed ${snapshot.sha256}. Reopen the changed source for a new analysis identity.`;
+      const reason = changedSourceReason(
+        target.path,
+        target.sha256,
+        snapshot.sha256,
+      );
       return err(
         new AnalysisArtifactChangedError(OPERATION, target.path, reason, {
           partialObservation: partial(reason),
@@ -132,6 +144,23 @@ export async function mapHopperFileOffset(
       source_path: target.path,
     });
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) {
+      const cancellation =
+        signal?.aborted === true
+          ? { reason: signal.reason }
+          : cause.completionCancellation;
+      return err(
+        cancellation === undefined
+          ? cleanupFailure(cause, target, observation, partial)
+          : cancellationWithCleanup(
+              cause,
+              target,
+              observation,
+              partial,
+              cancellation.reason,
+            ),
+      );
+    }
     if (signal?.aborted)
       return err(
         new AnalysisCancelledError(OPERATION, {
@@ -139,8 +168,6 @@ export async function mapHopperFileOffset(
           partialObservation: partial("Source verification was cancelled"),
         }),
       );
-    if (cause instanceof RegularFileCleanupFailure)
-      return err(cleanupFailure(cause, target.path, observation, partial));
     if (cause instanceof RegularFileCancelled)
       return err(
         new AnalysisCancelledError(OPERATION, {
@@ -207,27 +234,104 @@ async function snapshotFromPath(
   );
 }
 
+const cleanupReason = (
+  cause: RegularFileCleanupFailure<Result<SourceSnapshot, string>>,
+): string =>
+  `Source descriptor cleanup failed: ${cause.cleanupCause instanceof Error ? cause.cleanupCause.message : String(cause.cleanupCause)}`;
+
+/** Mapping facts from a completed read, only when the bytes still match the admitted source. */
+const completedMappingDiagnostics = (
+  cause: RegularFileCleanupFailure<Result<SourceSnapshot, string>>,
+  target: FileOffsetTarget,
+  observation: Observation,
+): Readonly<Record<string, JsonValue>> | undefined => {
+  if (cause.outcome.kind !== "completed" || !cause.outcome.value.ok)
+    return undefined;
+  const snapshot = cause.outcome.value.value;
+  if (snapshot.sha256 !== target.sha256)
+    return {
+      original_file_offset: {
+        available: false,
+        reason: changedSourceReason(
+          target.path,
+          target.sha256,
+          snapshot.sha256,
+        ),
+      },
+    };
+  const mapped = originalOffset(snapshot, observation);
+  return {
+    original_file_offset: mapped.ok
+      ? {
+          available: true,
+          file_offset: mapped.value + observation.provider_file_offset,
+          image_base_file_offset: mapped.value,
+          source_path: target.path,
+        }
+      : { available: false, reason: mapped.error },
+  };
+};
+
+function cancellationWithCleanup(
+  cause: RegularFileCleanupFailure<Result<SourceSnapshot, string>>,
+  target: FileOffsetTarget,
+  observation: Observation,
+  partial: (reason: string) => FileOffsetPartialObservation,
+  cancellationReason: unknown,
+): AnalysisError {
+  const reason = cleanupReason(cause);
+  const diagnostics = completedMappingDiagnostics(cause, target, observation);
+  return new AnalysisCancelledError(OPERATION, {
+    cause: cancellationReason,
+    cleanup: { reason, resources: [target.path] },
+    partialObservation: partial("Source verification was cancelled"),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+  });
+}
+
 function cleanupFailure(
   cause: RegularFileCleanupFailure<Result<SourceSnapshot, string>>,
-  path: string,
+  target: FileOffsetTarget,
   observation: Observation,
   partial: (reason: string) => FileOffsetPartialObservation,
 ): AnalysisError {
-  const reason = `Source descriptor cleanup failed: ${cause.cleanupCause instanceof Error ? cause.cleanupCause.message : String(cause.cleanupCause)}`;
+  const reason = cleanupReason(cause);
   if (cause.outcome.kind === "completed") {
     const captured = cause.outcome.value;
     if (!captured.ok) {
       const changeReason = captured.error;
-      return new AnalysisArtifactChangedError(OPERATION, path, changeReason, {
-        cause,
-        cleanup: { reason, resources: [path] },
-        partialObservation: partial(changeReason),
-      });
+      return new AnalysisArtifactChangedError(
+        OPERATION,
+        target.path,
+        changeReason,
+        {
+          cause,
+          cleanup: { reason, resources: [target.path] },
+          partialObservation: partial(changeReason),
+        },
+      );
+    }
+    if (captured.value.sha256 !== target.sha256) {
+      const changeReason = changedSourceReason(
+        target.path,
+        target.sha256,
+        captured.value.sha256,
+      );
+      return new AnalysisArtifactChangedError(
+        OPERATION,
+        target.path,
+        changeReason,
+        {
+          cause,
+          cleanup: { reason, resources: [target.path] },
+          partialObservation: partial(changeReason),
+        },
+      );
     }
     const mapped = originalOffset(captured.value, observation);
     return new ProviderCleanupError(
       "hopper",
-      [path],
+      [target.path],
       {
         reason,
         ...(mapped.ok
@@ -236,7 +340,7 @@ function cleanupFailure(
                 available: true,
                 file_offset: mapped.value + observation.provider_file_offset,
                 image_base_file_offset: mapped.value,
-                source_path: path,
+                source_path: target.path,
               },
             }
           : {
@@ -255,16 +359,21 @@ function cleanupFailure(
   }
   const operationFailure = cause.outcome.cause;
   if (operationFailure instanceof NonRegularFileReadError) {
-    const changeReason = `Source ${path} is no longer a regular file. Restore the admitted executable or reopen a regular source.`;
-    return new AnalysisArtifactChangedError(OPERATION, path, changeReason, {
-      cause,
-      cleanup: { reason, resources: [path] },
-      partialObservation: partial(changeReason),
-    });
+    const changeReason = `Source ${target.path} is no longer a regular file. Restore the admitted executable or reopen a regular source.`;
+    return new AnalysisArtifactChangedError(
+      OPERATION,
+      target.path,
+      changeReason,
+      {
+        cause,
+        cleanup: { reason, resources: [target.path] },
+        partialObservation: partial(changeReason),
+      },
+    );
   }
   return new ProviderCleanupError(
     "hopper",
-    [path],
+    [target.path],
     {
       reason,
       operation_failure:
