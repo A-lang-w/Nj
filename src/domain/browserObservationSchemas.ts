@@ -161,13 +161,23 @@ const browserNetworkRequestSchema = z.object({
 });
 const browserConsoleEventSchema = z.object({
   type: z.string(),
-  timestamp: z.number(),
-  argument_types: z.array(z.string()),
+  timestamp: z
+    .number()
+    .nullable()
+    .describe(
+      "CDP Runtime.Timestamp in milliseconds since Unix epoch; null when the producer value is absent or invalid.",
+    ),
+  argument_types: z
+    .array(z.string())
+    .nullable()
+    .describe(
+      "CDP argument types by argument position; null when the producer argument inventory is absent or not an array.",
+    ),
   url: z.string().nullable(),
   line: z.number().int().min(0).nullable(),
   column: z.number().int().min(0).nullable(),
   text_capture: z.object({
-    status: z.enum(["not_approved", "included"]),
+    status: z.enum(["not_approved", "included", "unavailable"]),
     values: z.array(
       z.object({
         argument_index: z.number().int().min(0),
@@ -180,7 +190,7 @@ const browserConsoleEventSchema = z.object({
 });
 const browserWebSocketFrameSchema = z.object({
   direction: z.enum(["sent", "received"]),
-  opcode: z.number().int().min(0),
+  opcode: z.number().int().min(0).max(15).nullable(),
   payload_bytes: z.number().int().min(0).nullable(),
   payload_shape: z
     .object({

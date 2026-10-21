@@ -1,3 +1,4 @@
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
@@ -14,6 +15,7 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (mode = "ok", failCleanup = false) => {
@@ -476,6 +478,9 @@ it("preserves termination signal and effective file ceiling as a resource failur
     reportedLimits: { file_bytes: 1048576 },
     capturedOutput: { signal: "SIGXFSZ", stderr: "before file limit\n" },
   });
+  expect(analysisErrorRemediationAction(result.error)).toContain(
+    "REA retains the tighter inherited limit",
+  );
 });
 
 it("rejects oversized selector lists and UTF-8 argv expansion before provider work", async () => {
@@ -613,11 +618,22 @@ it.each([
     });
   if (mode === "invalid-json")
     expect(result.error.capturedOutput?.stdout).toBe("not json\n");
-  if (mode === "overflow")
+  if (mode === "overflow") {
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(result.error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected command-output allowance refusal");
     expect(result.error).toMatchObject({
       resource: "memory",
       reportedLimits: { output_bytes: 32 * 1024 * 1024 },
+      retryable: false,
     });
+    expect(analysisErrorRemediationAction(result.error)).toContain(
+      "The retained command-output allowance",
+    );
+    expect(analysisErrorRemediationAction(result.error)).not.toMatch(
+      /Review the reported worker memory limits/u,
+    );
+  }
 });
 
 it("retains completed discovery on late cancellation and cleanup failure", async () => {
