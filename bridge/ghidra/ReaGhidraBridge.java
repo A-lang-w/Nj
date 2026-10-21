@@ -58,6 +58,7 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
+import ghidra.app.decompiler.ClangToken;
 import ghidra.app.decompiler.ClangBreak;
 import ghidra.app.decompiler.ClangCommentToken;
 import ghidra.framework.Application;
@@ -2380,7 +2381,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // Ghidra's decompiler emits this warning as a comment ("WARNING: Could not
     // recover jumptable at <address>. ..."); only comment tokens are searched.
     private static final Pattern DECOMPILER_JUMP_TABLE_FAILURE = Pattern.compile(
-        "WARNING:\\s+(Could not recover jumptable at (\\S+?)\\.?(?=\\s|$)[^\\n]*?)\\s*(?:\\*/|\\n|$)"
+        "WARNING:\\s+(Could not recover jumptable at (\\S+?)\\.?(?=\\s|$)[^\\n]*?)(?=\\s*\\*/|\\n|$)"
     );
     private static final int MAX_UNRESOLVED_INDIRECT_BRANCHES = 256;
     private static final int MAX_INDIRECT_BRANCH_LISTING_TARGETS = 64;
@@ -2481,31 +2482,42 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     /**
      * Decompiler-authored "Could not recover jumptable" warnings by address.
-     * Comment tokens are joined per comment so a warning split into words is
-     * read whole; any other token ends the current comment.
+     * Ghidra emits each comment word as its own comment token, with spaces as
+     * whitespace syntax tokens and wrapped lines as breaks. The markup is
+     * rebuilt as text with every character marked by its token kind, and a
+     * warning is accepted only when its whole span is comment text or
+     * whitespace, so code tokens such as string literals never contribute.
      */
     private Map<Address, String> decompilerJumpTableWarnings(
         Function function,
         List<ClangNode> tokens
     ) throws Exception {
-        StringBuilder comments = new StringBuilder();
-        boolean inComment = false;
+        StringBuilder text = new StringBuilder();
+        java.util.BitSet commentText = new java.util.BitSet();
+        boolean sawComment = false;
         for (ClangNode node : tokens) {
-            if (node instanceof ClangCommentToken comment) {
-                comments.append(comment.getText()).append(' ');
-                inComment = true;
-            } else if (inComment && !(node instanceof ClangBreak)) {
-                comments.append('\n');
-                inComment = false;
+            int start = text.length();
+            if (node instanceof ClangBreak) {
+                text.append('\n');
+                commentText.set(start);
+                continue;
             }
+            if (!(node instanceof ClangToken token)) continue;
+            String value = token.getText();
+            if (value == null || value.isEmpty()) continue;
+            text.append(value);
+            boolean comment = token instanceof ClangCommentToken;
+            sawComment |= comment;
+            if (comment || value.isBlank()) commentText.set(start, text.length());
         }
         Map<Address, String> warnings = new HashMap<>();
-        if (comments.length() == 0) return warnings;
+        if (!sawComment) return warnings;
         Set<String> listingComments = listingCommentTexts(function);
-        java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(comments);
+        java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(text);
         while (matcher.find()) {
-            String warning = matcher.group(1).trim();
-            if (listingComments.stream().anyMatch(text -> text.contains(warning))) continue;
+            if (commentText.nextClearBit(matcher.start()) < matcher.end()) continue;
+            String warning = matcher.group(1).replaceAll("\\s+", " ").trim();
+            if (listingComments.stream().anyMatch(comment -> comment.contains(warning))) continue;
             Address address = warningAddress(matcher.group(2));
             if (address != null) warnings.putIfAbsent(address, warning);
         }
