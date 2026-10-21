@@ -70,8 +70,9 @@ class Handle {
   HANDLE get() const noexcept { return owned_.get(); }
   bool valid() const noexcept { return owned_.valid(); }
   bool fullyReleased() const noexcept { return owned_.fullyReleased(); }
-  // Retries a value parked by an earlier unconfirmed close. `blockClose` keeps
-  // CloseHandle from running again until liveness says the value is open.
+  // A failed close leaves the numeric value blocked. It must not be used for
+  // I/O or closed again; only a not-in-table probe may drop it.
+  bool closeBlocked() const noexcept { return owned_.closeBlocked(); }
   void adopt(HANDLE value, bool blockClose) noexcept;
   HandleCloseDecision release() noexcept;
   void reset(HANDLE next = INVALID_HANDLE_VALUE) noexcept;

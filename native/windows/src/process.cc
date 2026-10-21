@@ -217,7 +217,10 @@ static napi_value readOutput(napi_env env, Handle& read, bool& ended) {
   constexpr size_t kMaximumReadPerPoll = 1024 * 1024;
   std::array<unsigned char, 65536> chunk;
   std::vector<unsigned char> bytes;
-  if (!read.valid()) ended = true;
+  // A close-blocked pipe is EOF. Its number may have been reused, so this
+  // poll must not pass it to PeekNamedPipe or ReadFile. process_close still
+  // owns that value.
+  if (!read.valid() || read.closeBlocked()) ended = true;
   else {
     while (bytes.size() < kMaximumReadPerPoll) {
       DWORD available = 0;
@@ -352,7 +355,8 @@ static void completeInput(napi_env env, napi_status status, void* pointer) {
 }
 
 static napi_value inputWrite(napi_env env, napi_value owner, Process& process, napi_value input) {
-  require(process.stdinWrite.valid(), "Owned process has no writable input", L"", ERROR_BROKEN_PIPE);
+  require(process.stdinWrite.valid() && !process.stdinWrite.closeBlocked(),
+          "Owned process has no writable input", L"", ERROR_BROKEN_PIPE);
   require(!process.inputPending, "Owned process input already has a pending write", L"", ERROR_BUSY);
   auto work = std::make_unique<InputWork>(process);
   void* bytes = nullptr;

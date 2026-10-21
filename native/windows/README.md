@@ -114,7 +114,8 @@ automatically. Alternatively, build it using the Linux/MinGW lane above.
   cleanup, and its registry entry remains until removal succeeds. `CloseHandle`
   is checked. A value that is still open, or whose liveness cannot be read,
   stays with its runtime, process, or file owner and is not passed to
-  `CloseHandle` again. An open liveness probe does not prove that the object
+  `CloseHandle` again. A process pipe left in that state is treated as ended
+  and is not read or written again. An open liveness probe does not prove that the object
   still belongs to that owner. A value that is no longer in the process handle table is
   dropped and is not closed again. An incomplete snapshot whose writer cannot
   be closed stays on the runtime instead of being forgotten; source handles
