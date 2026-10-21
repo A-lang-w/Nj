@@ -1,28 +1,38 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { readEvidenceBundle } from "./EvidenceBundleFiles.js";
 
-// The real budget, measured against a heap that cannot hold any bundle.
-vi.mock("./EvidenceAuthenticationHeadroom.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("./EvidenceAuthenticationHeadroom.js")
-    >();
-  return {
-    ...actual,
-    requireAuthenticationHeadroom: (
-      value: unknown,
-      path: string,
-      operation: string,
-    ) => actual.requireAuthenticationHeadroom(value, path, operation, 1024),
-  };
+const HEADROOM_MODULE = "./EvidenceAuthenticationHeadroom.js";
+
+afterEach(() => {
+  vi.doUnmock(HEADROOM_MODULE);
+  vi.resetModules();
 });
+
+/** The reader bound to the real budget, measured against a heap that holds 1024 bytes. */
+const readerUnderStarvedHeap = async () => {
+  vi.resetModules();
+  vi.doMock(HEADROOM_MODULE, async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("./EvidenceAuthenticationHeadroom.js")
+      >();
+    return {
+      ...actual,
+      requireAuthenticationHeadroom: (
+        value: unknown,
+        path: string,
+        operation: string,
+      ) => actual.requireAuthenticationHeadroom(value, path, operation, 1024),
+    };
+  });
+  return import("./EvidenceBundleFiles.js");
+};
 
 describe("evidence bundle import headroom", () => {
   it("refuses to authenticate a bundle the live heap cannot hold", async () => {
@@ -40,6 +50,7 @@ describe("evidence bundle import headroom", () => {
       },
     );
     await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
+    const { readEvidenceBundle } = await readerUnderStarvedHeap();
     expect(await readEvidenceBundle(path)).toMatchObject({
       ok: false,
       error: {

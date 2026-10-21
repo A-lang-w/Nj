@@ -51,8 +51,9 @@ export function* jsonValueValidationSteps(
     if (immutable !== undefined) immutableValidation.set(immutable, issue);
     return issue;
   };
-  // Live state is one frame per open container, so a wide array or object
-  // costs no more than a narrow one; only nesting, bounded below, grows it.
+  // Live state is one frame per open container plus an object frame's own
+  // keys, never a queued entry per member, so width costs an array nothing
+  // and an object its key list; nesting, bounded below, adds frames.
   const frames: ContainerFrame[] = [];
   let examined = 0;
   const examine = (value: unknown, depth: number): string | undefined => {
@@ -94,10 +95,6 @@ export function* jsonValueValidationSteps(
       frames.pop();
       continue;
     }
-    if (examined++ === 4096) {
-      examined = 0;
-      yield;
-    }
     const position = frame.index++;
     let member: unknown;
     if (frame.keys === undefined) {
@@ -116,6 +113,10 @@ export function* jsonValueValidationSteps(
       if (!Object.hasOwn(descriptor, "value"))
         return finish("JSON objects cannot contain accessors");
       member = descriptor.value;
+    }
+    if (examined++ === 4096) {
+      examined = 0;
+      yield;
     }
     const issue = examine(member, frame.depth + 1);
     if (issue !== undefined) return finish(issue);

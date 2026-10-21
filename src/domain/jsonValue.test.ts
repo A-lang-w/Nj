@@ -137,6 +137,18 @@ describe("jsonValueSchema width", () => {
     );
   });
 
+  it("reports the first defect in member order, descending before moving on", () => {
+    const holed: unknown[] = [[Number.NaN], 1, 2];
+    delete holed[2];
+    expect(jsonValueValidationIssue(holed)).toBe("JSON numbers must be finite");
+    expect(jsonValueValidationIssue([Number.NaN, () => 1])).toBe(
+      "JSON numbers must be finite",
+    );
+    expect(jsonValueValidationIssue([() => 1, Number.NaN])).toBe(
+      "Invalid JSON value",
+    );
+  });
+
   it("still yields cooperatively while walking a wide array", () => {
     const steps = jsonValueValidationSteps(
       Array.from({ length: WIDTH }, () => true),
