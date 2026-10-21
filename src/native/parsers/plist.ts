@@ -1,10 +1,19 @@
 import { z } from "zod";
+import { parseBinary } from "plist";
 
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisOutputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
+  binaryDatePrecisionOverlapLimitation,
+  negativeZeroReal,
+  negativeZeroRealLimitation,
+  nonFiniteRealLimitation,
   projectPlistValue,
   unknownDateLimitation,
+  unknownScalarLimitation,
   type ProjectedPlistValue,
 } from "../../domain/apple/plistValue.js";
 import {
@@ -16,8 +25,22 @@ import { err, ok, type Result } from "../../domain/result.js";
 
 import {
   incompletePlistNumberLimitation,
+  createPlistNumberProjection,
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
+import {
+  decodeBinaryPlistScalars,
+  scanBinaryPlistScalars,
+} from "../../artifacts/apple/PlistScalars.js";
+import {
+  estimateBinaryPlistExpansion,
+  PropertyListDecodeBudgetFailure,
+} from "../../artifacts/apple/PropertyListDecodeBudget.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
+
+/** Input ceiling matches native command output; projection is bounded separately. */
+export const MAX_NATIVE_PLIST_BYTES = 64 * 1024 * 1024;
+const MAX_NATIVE_PLIST_DECODE_BYTES = 64 * 1024 * 1024;
 
 const plistObject = z.record(z.string(), z.unknown());
 
@@ -42,17 +65,22 @@ const INTEGRAL_LITERAL = /^-?\d+$/u;
 
 /**
  * Decode plutil JSON, passing each integral number literal beyond the exact
- * range of a JavaScript number, with its source digits, to `unsafe`.
+ * range of a JavaScript number, with its source digits, to `unsafe`, and
+ * each negative zero to `negativeZero`.
  */
 const decodePlistJson = (
   output: string,
   unsafe: (item: number, digits: string) => unknown,
+  negativeZero: (item: number) => unknown = (item) => item,
 ): unknown => {
   // plutil output can carry a UTF-8 BOM, which JSON.parse rejects outright.
   const text = output.replace(/^\uFEFF/u, "");
   return JSON.parse(
     text,
     (_key: string, item: unknown, context?: { readonly source?: string }) => {
+      // A plist integer has no signed zero, so -0 can only come from a real.
+      if (typeof item === "number" && Object.is(item, -0))
+        return negativeZero(item);
       const source = context?.source;
       return typeof item !== "number" ||
         Number.isSafeInteger(item) ||
@@ -95,6 +123,11 @@ export const parsePlistJson = (
   let literals: PlistNumberLiterals | undefined;
   let exactIntegerCount = 0;
   let ambiguousNumberCount = 0;
+  let negativeZeroRealCount = 0;
+  const signedZero = (): unknown => {
+    negativeZeroRealCount += 1;
+    return negativeZeroReal();
+  };
   const classify = (item: number, digits: string): unknown => {
     const exact = BigInt(digits).toString();
     const integer =
@@ -116,7 +149,7 @@ export const parsePlistJson = (
       xmlConversion === undefined
         ? undefined
         : parseXmlPropertyList(xmlConversion).numberLiterals;
-    decoded = omitPrototypeKeys(decodePlistJson(output, classify));
+    decoded = omitPrototypeKeys(decodePlistJson(output, classify, signedZero));
   } catch (cause: unknown) {
     return err(
       new AnalysisOutputError(
@@ -131,6 +164,7 @@ export const parsePlistJson = (
     value,
     bundle: projectPlistBundle(value),
     limitations: [
+      ...negativeZeroLimitations(negativeZeroRealCount),
       ...(literals?.incomplete === true
         ? [incompletePlistNumberLimitation]
         : []),
@@ -189,14 +223,7 @@ export const parsePlistXml = (
     bundle: projectPlistBundle(value),
     limitations: [
       'plutil cannot express this plist as JSON, so it was decoded from plutil\'s XML conversion; data and date values are typed objects such as { "$plist_type": "data", "base64": ... }.',
-      ...(projected.unknownRealCount === 0
-        ? []
-        : [
-            `${String(projected.unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because the XML decoder does not distinguish NaN from infinity.`,
-          ]),
-      ...(projected.unknownDateCount === 0
-        ? []
-        : [unknownDateLimitation(projected.unknownDateCount)]),
+      ...projectedScalarLimitations(projected),
       ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
       ...prototypeKeyLimitations(omittedPrototypeKeys),
@@ -204,8 +231,96 @@ export const parsePlistXml = (
   });
 };
 
+/** Decode binary plist source bytes before conversion can erase scalar facts. */
+export const parsePlistBinary = (
+  bytes: Buffer,
+): Result<
+  ParsedPlist,
+  AnalysisOutputError | AnalysisResourceConstraintError
+> => {
+  try {
+    if (!hasBinaryPlistSignature(bytes))
+      throw new TypeError("selected file does not have a binary plist header");
+    const expansion = estimateBinaryPlistExpansion(
+      bytes,
+      MAX_NATIVE_PLIST_DECODE_BYTES,
+      {
+        budget: "the native plist decode budget",
+        numberProjection: true,
+        fail: (kind, message) =>
+          kind === "cycle"
+            ? new TypeError(
+                "binary plist object references form a cycle, which a property list cannot represent",
+              )
+            : new PropertyListDecodeBudgetFailure(kind, message),
+      },
+    );
+    const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
+    const decoded = parseBinary(
+      decodeBinaryPlistScalars(bytes, scalarMetadata, expansion),
+    );
+    const projected = projectPlistValue(decoded);
+    const numbers = createPlistNumberProjection(scalarMetadata.literals);
+    const value = numbers.project(projected.value);
+    return ok({
+      value,
+      bundle: projectPlistBundle(value),
+      limitations: [
+        ...projectedScalarLimitations(projected),
+        ...(expansion.datePrecisionOverlapCount === 0
+          ? []
+          : [
+              binaryDatePrecisionOverlapLimitation(
+                expansion.datePrecisionOverlapCount,
+              ),
+            ]),
+        ...numbers.limitations(),
+        ...(expansion.binaryPrototypeKeyObserved
+          ? [omittedPrototypeKeysLimitation(null)]
+          : []),
+      ],
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof PropertyListDecodeBudgetFailure)
+      return err(
+        new AnalysisResourceConstraintError(
+          "inspect_plist",
+          "memory",
+          cause.message,
+          { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
+          { cause, retryable: false },
+        ),
+      );
+    return err(
+      new AnalysisOutputError(
+        "inspect_plist",
+        cause instanceof Error ? cause.message : String(cause),
+        { cause },
+      ),
+    );
+  }
+};
+
 const prototypeKeyLimitations = (count: number): string[] =>
   count === 0 ? [] : [omittedPrototypeKeysLimitation(count)];
+
+const projectedScalarLimitations = (
+  projected: ProjectedPlistValue,
+): string[] => [
+  ...(projected.nonFiniteRealCount === 0
+    ? []
+    : [nonFiniteRealLimitation(projected.nonFiniteRealCount)]),
+  ...negativeZeroLimitations(projected.negativeZeroRealCount),
+  ...(projected.unknownDateCount === 0
+    ? []
+    : [unknownDateLimitation(projected.unknownDateCount)]),
+  ...(projected.unknownScalarCount === 0
+    ? []
+    : [unknownScalarLimitation(projected.unknownScalarCount)]),
+];
+
+const negativeZeroLimitations = (count: number): string[] =>
+  count === 0 ? [] : [negativeZeroRealLimitation(count)];
 
 const numberLimitations = (
   exactIntegerCount: number,

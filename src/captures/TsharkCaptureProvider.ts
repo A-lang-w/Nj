@@ -45,6 +45,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence } from "../domain/evidence.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   type InspectPacketCaptureInput,
@@ -447,8 +448,18 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
       return this.#resources.cleanupFailure(
-        cause.cleanup,
         cause,
+        (primary) =>
+          this.#failure(
+            primary,
+            phase,
+            path,
+            workspacePath,
+            effectiveLimits,
+            observedOutput,
+            operation,
+            limits,
+          ),
         observedOutput,
         operation,
       );
@@ -470,6 +481,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
+          ...fixedAllowanceOptions(
+            "The packet-field discovery record allowance",
+            "capture",
+          ),
         },
       );
     const reason = cause instanceof Error ? cause.message : String(cause);
@@ -551,7 +566,13 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         "file-size",
         reason,
         { input_bytes: LIMITS.input_bytes },
-        { cause },
+        {
+          cause,
+          ...fixedAllowanceOptions(
+            "the fixed packet-capture input allowance",
+            "input",
+          ),
+        },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
       return new AnalysisArtifactChangedError(operation, path, reason, {

@@ -35,7 +35,6 @@ export const registerFirmwareCommands = (
           service,
           operation === "inspect_firmware_regions" ? "binwalk" : "unblob",
           operation,
-          undefined,
           signal,
         ),
       ),
@@ -74,6 +73,7 @@ export const registerFirmwareCommands = (
       maxDepth: extractInput.max_depth,
       maxOutputBytes: extractInput.max_output_bytes,
       maxOutputFiles: extractInput.max_output_files,
+      publicationTimeoutMs: extractInput.publication_timeout_ms,
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.extractFirmware, "extract_firmware", {
@@ -85,6 +85,7 @@ export const registerFirmwareCommands = (
         max_depth: options.maxDepth,
         max_output_bytes: options.maxOutputBytes,
         max_output_files: options.maxOutputFiles,
+        publication_timeout_ms: options.publicationTimeoutMs,
       }),
   });
 };
