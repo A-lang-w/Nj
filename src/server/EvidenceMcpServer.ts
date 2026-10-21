@@ -35,7 +35,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   mcpResponseOverflowProjection,
   type ToolResultDelivery,
@@ -493,10 +493,10 @@ class ErrorEvidenceTransport implements Transport {
           ? "The original error could not be retained by this server. Use complete CLI JSON output when the analysis completed. Repeating the unchanged MCP call fails the same way."
           : "The original error could not be retained by this server. Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and a matching client receive buffer, then retry.",
     });
-    const failure = new AnalysisResourceConstraintError(
+    const replacement = this.transportConstraintResult(
       operation,
-      "transport",
       projected.reason,
+      projected.remediationAction,
       {
         boundary: "mcp-response",
         ...(originalError?.success
@@ -523,13 +523,68 @@ class ErrorEvidenceTransport implements Transport {
           ? { retention_error: projectAnalysisError(recorded.error) }
           : {}),
       },
-      { remediationAction: projected.remediationAction },
+      targetContent,
     );
-    const replacement = this.delivery.toErrorToolResult(failure, targetContent);
     return {
       ...message,
       result: replaceToolResultPayload(message.result, replacement),
     };
+  }
+
+  /**
+   * Encode a transport-constraint error inside the MCP text budget.
+   * The complete SDK diagnostic stays in retained Evidence. Its character
+   * preview can still expand past the budget when quotes and backslashes are
+   * escaped into that text, so shorten only the preview and keep the reference.
+   */
+  private transportConstraintResult(
+    operation: string,
+    reason: string,
+    remediationAction: string,
+    limits: Readonly<Record<string, JsonValue>>,
+    targetContent: boolean,
+  ): CallToolResult {
+    const deliver = (
+      reportedLimits: Readonly<Record<string, JsonValue>>,
+    ): CallToolResult =>
+      this.delivery.toErrorToolResult(
+        new AnalysisResourceConstraintError(
+          operation,
+          "transport",
+          reason,
+          reportedLimits,
+          { remediationAction },
+        ),
+        targetContent,
+      );
+    const delivered = deliver(limits);
+    const preview = limits.diagnostic_preview;
+    if (delivered.content.length > 0 || typeof preview !== "string")
+      return delivered;
+    let low = 0;
+    let high = preview.length - 1;
+    let fitted: CallToolResult | undefined;
+    let fittedLength = -1;
+    while (low <= high) {
+      const length = Math.floor((low + high) / 2);
+      const candidate = deliver({
+        ...limits,
+        diagnostic_preview: preview.slice(0, length),
+        diagnostic_truncated: true,
+      });
+      if (candidate.content.length > 0) {
+        fitted = candidate;
+        fittedLength = length;
+        low = length + 1;
+      } else high = length - 1;
+    }
+    if (fitted !== undefined && fittedLength > 0) return fitted;
+    const { diagnostic_preview: _preview, ...withoutPreview } = limits;
+    const omitted = deliver({
+      ...withoutPreview,
+      diagnostic_truncated: preview.length > 0,
+    });
+    return omitted.content.length > 0 || fitted === undefined ? omitted : fitted;
   }
 
   private normalizeSdkValidationError(
