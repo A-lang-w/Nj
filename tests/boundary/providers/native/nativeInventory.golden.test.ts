@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
@@ -96,7 +96,7 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
     );
     const client = new NativeMacOSProvider(
       {},
-      signatureRunner({ signed, unsigned, entitlements }),
+      signatureRunner({ signed, unsigned, entitlements, unsignedHeader: true }),
       "darwin",
     ).createClient(await signatureTarget(signedArchitecture));
 
@@ -110,6 +110,7 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
       designated_requirement: null,
       entitlements: { "com.apple.security.app-sandbox": true },
       limitations: expect.arrayContaining([
+        "Partial signature coverage: aggregate signing metadata describes codesign’s default slice; Mach-O slices have mixed signing states.",
         "Unsigned Mach-O slices: x86_64.",
         "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
       ]),
@@ -154,6 +155,49 @@ it("rejects nonzero supplemental codesign output that is not an unsigned observa
     error: { _tag: "ProviderAdapterError" },
   });
 });
+
+it.each(["extra diagnostic", "foreign executable", "slice diagnostic"])(
+  "rejects an unsigned response with %s",
+  async (kind) => {
+    const signed = (await fixture("codesign.txt")).replace(
+      /^Format=.*$/mu,
+      "Format=Mach-O universal (x86_64 arm64)",
+    );
+    const replay = signatureRunner({
+      signed,
+      unsigned: "code object is not signed at all",
+      entitlements: await fixture("entitlements.xml"),
+      unsignedHeader: true,
+    });
+    const runner: NativeCommandRunner = {
+      async run(tool, args, options) {
+        const result = await replay.run(tool, args, options);
+        if (!result.ok || result.value.exitCode === 0) return result;
+        const isSlice = args.includes("-a");
+        if ((kind === "slice diagnostic") !== isSlice) return result;
+        const stderr =
+          kind === "foreign executable"
+            ? result.value.stderr.replace(
+                /^Executable=.*\n/u,
+                "Executable=/foreign/program\n",
+              )
+            : `${result.value.stderr}additional codesign failure\n`;
+        return ok({
+          ...result.value,
+          stderr,
+          stderrBytes: Buffer.byteLength(stderr),
+        });
+      },
+    };
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(await signatureTarget())
+      .execute("inspect_signature", {});
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError" },
+    });
+  },
+);
 
 it("retains native inventory facts from captured Apple tool output", async () => {
   const outputs: Record<string, string> = {};
@@ -403,8 +447,9 @@ const signatureRunner = (outputs: {
   readonly signed: string;
   readonly unsigned: string;
   readonly entitlements: string;
+  readonly unsignedHeader?: boolean;
 }): NativeCommandRunner => ({
-  run(
+  async run(
     tool: string,
     arguments_: readonly string[],
     options: NativeCommandOptions,
@@ -424,7 +469,7 @@ const signatureRunner = (outputs: {
       selectedResponse.output.includes("code object is not signed at all")
         ? {
             ...selectedResponse,
-            output: `${arguments_.at(-1)}: code object is not signed at all\n`,
+            output: `${outputs.unsignedHeader ? `Executable=${await realpath(arguments_.at(-1)!)}\n` : ""}${arguments_.at(-1)}: code object is not signed at all\n`,
           }
         : selectedResponse;
     const capture: NativeCommandCapture = {
