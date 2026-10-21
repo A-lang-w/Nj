@@ -1,5 +1,13 @@
-import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import { expect } from "vitest";
 
@@ -360,5 +368,83 @@ cliTest(
     );
     expect(summary.summary.coverage).toEqual(report.coverage);
     expect(summary.limitations).toEqual(report.limitations);
+  },
+);
+
+cliTest.for(
+  (process.platform === "win32"
+    ? (["event"] as const)
+    : (["event", "os"] as const)
+  ).flatMap((delivery) => [
+    { signal: "SIGINT" as const, status: 130, delivery },
+    { signal: "SIGTERM" as const, status: 143, delivery },
+  ]),
+)(
+  "keeps a committed receipt when $signal ($delivery) is queued during final cleanup",
+  async ({ signal, status, delivery }, { cli }) => {
+    const root = await createTestTempDirectory("rea-managed-queued-signal-");
+    const target = join(root, "fixture.dll");
+    const destination = join(root, "parent.json");
+    const marker = join(root, "signal.json");
+    const preload = resolve(
+      "tests/fixtures/managedPublicationSignalPreload.mjs",
+    );
+    const prefix = join(await realpath(root), ".rea-write-");
+    await writeFile(target, memberFixture());
+    const reply = await cli.run({
+      cwd: root,
+      arguments: [
+        "inspect-managed-members",
+        target,
+        "--type",
+        "Fixture.Program",
+        "--detail",
+        "summary",
+        "--evidence-bundle",
+        destination,
+        "--json",
+      ],
+      environment: {
+        HOME: root,
+        REA_LOG_LEVEL: "silent",
+        REA_TEST_MANAGED_PUBLICATION: JSON.stringify({
+          prefix,
+          marker,
+          signal,
+          delivery,
+        }),
+        NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(preload).href}`,
+      },
+    });
+    expect(reply.exitCode).toBe(status);
+    const { error: _label, ...projection } =
+      analysisCliErrorEnvelopeSchema.parse(reply.json);
+    const error = analysisErrorProjectionSchema.parse(projection);
+    expect(error.code).toBe("cancelled");
+    expect(error.details?.operation).toBe("inspect_managed_members");
+    const bytes = await readFile(destination);
+    const parent = parseEvidenceBundle(JSON.parse(bytes.toString()))
+      .records[0]!;
+    expect(error.details).toMatchObject({
+      diagnostics: {
+        evidence_bundle: { path: destination, bytes: bytes.length },
+      },
+    });
+    const partial = parseEvidence(error.details?.partial_observation);
+    expect(partial.evidence_links).toEqual([parent.evidence_id]);
+    expect(partial.normalized_result).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: parent.evidence_id,
+    });
+    expect(JSON.parse(await readFile(marker, "utf8"))).toMatchObject({
+      signal,
+      listeners: expect.any(Number),
+    });
+    expect(
+      JSON.parse(await readFile(marker, "utf8")).listeners,
+    ).toBeGreaterThan(0);
+    expect(
+      (await readdir(root)).some((name) => name.startsWith(".rea-write-")),
+    ).toBe(false);
   },
 );

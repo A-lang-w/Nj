@@ -3,7 +3,7 @@
   "tokenizer": "tiktoken==0.12.0/cl100k_base; estimates, not model usage",
   "context_scope": "Question, supplied command recipe, actual selected-command help, all logical CLI argv and all stdout. No model invoked; reasoning, framing, irrelevant tool discovery and actual native-agent usage unmeasured.",
   "cache_scope": "cold disables Node compile cache; warm primes the identical workflow once per runtime/mode before timing. Fresh processes and isolated HOME each trial; OS page cache uncontrolled.",
-  "resource_scope": "Whole task driver plus all CLI children; includes bundle publication/authentication, help, extra calls and local answer/oracle checking. Kernel cgroup peak includes file cache; not sampled RSS. Download/build/oracle preparation and priming excluded.",
+  "resource_scope": "Whole task driver plus all CLI children; includes pre/post source-and-compiled-runtime binding verification, bundle publication/authentication, help, extra calls and local answer/oracle checking. Kernel cgroup peak includes file cache; not sampled RSS. Download/build/oracle preparation and priming excluded.",
   "acquisition": {
     "url": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg",
     "package_bytes": 2441966,
@@ -14,10 +14,10 @@
     "target_execution": false
   },
   "measurement_inputs": {
-    "baseline_revision": "d2015e94f32a51b898918b5b39b374c134119fd5",
-    "feature_parent_revision": "c1e382b2353c3387b54b6e2daa00dd0a35303374",
+    "baseline_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+    "feature_parent_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
     "merged_original_revision": "7b3ed4d025edd24d062cde0327a53bd311e174fc",
-    "feature_tracked_patch_sha256": "41ffa3d52cfe858e0cdda012ab472ad680b65d0d7cbd68875efc8274f3ab31cf",
+    "feature_tracked_patch_sha256": "e4e4abd6d1ddfcdd282f58c969921e45f1fd0f2171ed1a84314703e99e5a6916",
     "untracked_source_sha256": {},
     "node": "v24.18.0",
     "npm": "11.16.0",
@@ -29,7 +29,7 @@
     "production_sources_sha256": {
       "src/application/AnalysisProvider.ts": "97a8b6a01b1cbe50f8f0755a807f7ba93697b82705551bd613089a6f95f51f67",
       "src/application/DirectAnalysis.ts": "42c170ea676fb3c6e99a1ac0b9bac86bd9250cccf3fc1dc1feb4e5afe0296723",
-      "src/application/EvidenceBundleCommands.ts": "53f5d926a1823fa4b54496ab8d174e72e3183ea6dba7d89c0ddd9297f0c58b2a",
+      "src/application/EvidenceBundleCommands.ts": "9b7f8690653ab52e37553a923ca75e40f7afaf7c30274c6242c48e74153b3434",
       "src/application/EvidenceBundleFiles.ts": "1dfd37b3bed5306a21f25ca334caa53172c8ef2e754a4961ccdfc3bb98e1bf8c",
       "src/application/EvidenceInputResolver.test.ts": "96c1bf405fd7ae492da75959bb9285ec91c2f6abc2f161316057e1fd8efee5aa",
       "src/application/EvidenceInputResolver.ts": "7b676ec2f70ad55b97c9a635dce51468101eca964e7a1205f9ce9633ec946f89",
@@ -49,45 +49,72 @@
       "src/dotnet/ManagedPe.fixture.ts": "710af895b190f3b5dbdb17d922c87d3ee699b99c4c5fb46d1f3601fad97bb1a5"
     },
     "harness_sha256": {
-      "measured_private_driver": "09a9d40d31883f66968830b5b1bb14a810a529d7d9721c208277757370887dbb",
-      "published_driver": "f4941bd4d0f9e4d9e7c935de5df121561950ff4b7b7592076a056a324c522185"
+      "managed-cli-task.mjs": "74d3b9b180a4ca73f856496c8e0c82d2f429cb946d2171b9ad4bc129cc758068",
+      "managed-cli-costs.py": "ff1deb2238e684fa347da9c811b552da29651b6a1254d33fc76758c7a91f6b60",
+      "managed-cli-local-control.py": "68f9bfd316f4183afbe6f6a8dcfb3fb0ec086cdb1f7a1731e97fe31e4e523979",
+      "managed-cli-oracle.py": "c917c1bc3f86f628d394581b227b1c7975ec7d7d5d9c2d806b5b908a4bbf576d",
+      "managed-cli-runtime.mjs": "56405411a3d30ca2aa175678b6d18d1d6c7f0e44bbf9f30fc958fee75d9edb48"
+    },
+    "expected_runtime_bindings": {
+      "complete": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-5148-main-control-20261021",
+        "node": "v24.18.0",
+        "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+        "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+        "compiled_cli_files": 140,
+        "compiled_cli_bytes": 10151181
+      },
+      "selected": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
+        "node": "v24.18.0",
+        "git_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+        "source_diff_sha256": "e7bfcbd5372a4c9fb86c624918b9ac829401191f4e9ab39c7b541257cfd583ac",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "ef8b30a35c5edb87710a74fbafcee457b4f3fc1871c76350362854ee8ce5b8ab",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10301778
+      }
     }
   },
   "summary": {
     "cold": {
       "complete": {
         "wall_seconds": {
-          "median": 5.562,
-          "min": 5.36,
-          "max": 5.568
+          "median": 12.047,
+          "min": 10.489,
+          "max": 12.183
         },
         "cpu_seconds": {
-          "median": 5.316532,
-          "min": 5.116118,
-          "max": 5.322904
+          "median": 11.783702,
+          "min": 10.214472,
+          "max": 11.922125
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 406786048,
-          "min": 406069248,
-          "max": 407687168
+          "median": 414728192,
+          "min": 413130752,
+          "max": 415895552
         },
         "whole_task_tokens_estimated": [451373, 451373, 451373]
       },
       "selected": {
         "wall_seconds": {
-          "median": 12.516,
-          "min": 12.429,
-          "max": 12.828
+          "median": 25.636,
+          "min": 19.187,
+          "max": 26.309
         },
         "cpu_seconds": {
-          "median": 12.239656,
-          "min": 12.147681,
-          "max": 12.628841
+          "median": 25.310196,
+          "min": 18.885209,
+          "max": 25.99226
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 406384640,
-          "min": 405696512,
-          "max": 409243648
+          "median": 419405824,
+          "min": 419053568,
+          "max": 421363712
         },
         "whole_task_tokens_estimated": [13078, 13078, 13078]
       }
@@ -95,37 +122,37 @@
     "warm": {
       "complete": {
         "wall_seconds": {
-          "median": 5.158,
-          "min": 4.956,
-          "max": 5.262
+          "median": 5.703,
+          "min": 5.485,
+          "max": 7.253
         },
         "cpu_seconds": {
-          "median": 4.928134,
-          "min": 4.780264,
-          "max": 5.045846
+          "median": 5.449797,
+          "min": 5.265321,
+          "max": 6.940917
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 416677888,
-          "min": 412749824,
-          "max": 420007936
+          "median": 421515264,
+          "min": 421412864,
+          "max": 422289408
         },
         "whole_task_tokens_estimated": [451373, 451373, 451373]
       },
       "selected": {
         "wall_seconds": {
-          "median": 12.175,
-          "min": 12.03,
-          "max": 12.534
+          "median": 13.127,
+          "min": 13.125,
+          "max": 13.486
         },
         "cpu_seconds": {
-          "median": 11.881048,
-          "min": 11.820123,
-          "max": 12.224083
+          "median": 12.89819,
+          "min": 12.849734,
+          "max": 13.183353
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 414957568,
-          "min": 412798976,
-          "max": 415023104
+          "median": 429367296,
+          "min": 425623552,
+          "max": 430452736
         },
         "whole_task_tokens_estimated": [13078, 13078, 13078]
       }
@@ -136,9 +163,25 @@
       "case": "pair-cold-1-complete",
       "mode": "complete",
       "cache": "cold",
-      "wall_seconds": 5.568,
-      "cpu_seconds": 5.316532,
-      "peak_process_family_bytes_including_page_cache": 406786048,
+      "runtime": "/home/yann/yann/rea-5148-main-control-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-5148-main-control-20261021",
+        "node": "v24.18.0",
+        "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+        "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+        "compiled_cli_files": 140,
+        "compiled_cli_bytes": 10151181
+      },
+      "runtime_binding_audit_ms": {
+        "before": 169.697815,
+        "after": 174.04640500000096
+      },
+      "wall_seconds": 12.047,
+      "cpu_seconds": 11.783702,
+      "peak_process_family_bytes_including_page_cache": 414728192,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -149,7 +192,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2122.461532,
+          "elapsed_ms": 4417.249175999999,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -163,7 +206,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 3051.5621970000007,
+          "elapsed_ms": 6790.172717,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -195,9 +238,25 @@
       "case": "pair-cold-1-selected",
       "mode": "selected",
       "cache": "cold",
-      "wall_seconds": 12.828,
-      "cpu_seconds": 12.628841,
-      "peak_process_family_bytes_including_page_cache": 406384640,
+      "runtime": "/home/yann/yann/rea-perf-managed-cli-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
+        "node": "v24.18.0",
+        "git_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+        "source_diff_sha256": "e7bfcbd5372a4c9fb86c624918b9ac829401191f4e9ab39c7b541257cfd583ac",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "ef8b30a35c5edb87710a74fbafcee457b4f3fc1871c76350362854ee8ce5b8ab",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10301778
+      },
+      "runtime_binding_audit_ms": {
+        "before": 161.256846,
+        "after": 125.34283299999879
+      },
+      "wall_seconds": 26.309,
+      "cpu_seconds": 25.99226,
+      "peak_process_family_bytes_including_page_cache": 419405824,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -208,14 +267,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2270.6236599999997,
+          "elapsed_ms": 4472.2051249999995,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2221.336777,
+          "elapsed_ms": 4460.611793,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -233,7 +292,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3014.2716219999993,
+          "elapsed_ms": 6695.999698,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -247,7 +306,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2503.640134,
+          "elapsed_ms": 5131.7416600000015,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -261,7 +320,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2513.833563,
+          "elapsed_ms": 4784.723958999999,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -293,9 +352,25 @@
       "case": "pair-cold-2-complete",
       "mode": "complete",
       "cache": "cold",
-      "wall_seconds": 5.562,
-      "cpu_seconds": 5.322904,
-      "peak_process_family_bytes_including_page_cache": 407687168,
+      "runtime": "/home/yann/yann/rea-5148-main-control-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-5148-main-control-20261021",
+        "node": "v24.18.0",
+        "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+        "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+        "compiled_cli_files": 140,
+        "compiled_cli_bytes": 10151181
+      },
+      "runtime_binding_audit_ms": {
+        "before": 195.828245,
+        "after": 141.70726400000058
+      },
+      "wall_seconds": 10.489,
+      "cpu_seconds": 10.214472,
+      "peak_process_family_bytes_including_page_cache": 415895552,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -306,7 +381,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2133.950322,
+          "elapsed_ms": 4171.975024,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -320,7 +395,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 3045.9791619999996,
+          "elapsed_ms": 5474.351879,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -352,9 +427,25 @@
       "case": "pair-cold-2-selected",
       "mode": "selected",
       "cache": "cold",
-      "wall_seconds": 12.429,
-      "cpu_seconds": 12.147681,
-      "peak_process_family_bytes_including_page_cache": 409243648,
+      "runtime": "/home/yann/yann/rea-perf-managed-cli-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
+        "node": "v24.18.0",
+        "git_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+        "source_diff_sha256": "e7bfcbd5372a4c9fb86c624918b9ac829401191f4e9ab39c7b541257cfd583ac",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "ef8b30a35c5edb87710a74fbafcee457b4f3fc1871c76350362854ee8ce5b8ab",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10301778
+      },
+      "runtime_binding_audit_ms": {
+        "before": 149.35886399999998,
+        "after": 164.87525499999902
+      },
+      "wall_seconds": 25.636,
+      "cpu_seconds": 25.310196,
+      "peak_process_family_bytes_including_page_cache": 419053568,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -365,14 +456,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2211.392892,
+          "elapsed_ms": 4787.143927,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2060.0032800000004,
+          "elapsed_ms": 3972.5213619999995,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -390,7 +481,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2977.4045020000003,
+          "elapsed_ms": 6549.050804999999,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -404,7 +495,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2382.9632199999996,
+          "elapsed_ms": 4539.758255999999,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -418,7 +509,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2406.868210999999,
+          "elapsed_ms": 5000.8645179999985,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -450,9 +541,25 @@
       "case": "pair-cold-3-complete",
       "mode": "complete",
       "cache": "cold",
-      "wall_seconds": 5.36,
-      "cpu_seconds": 5.116118,
-      "peak_process_family_bytes_including_page_cache": 406069248,
+      "runtime": "/home/yann/yann/rea-5148-main-control-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-5148-main-control-20261021",
+        "node": "v24.18.0",
+        "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+        "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+        "compiled_cli_files": 140,
+        "compiled_cli_bytes": 10151181
+      },
+      "runtime_binding_audit_ms": {
+        "before": 187.661545,
+        "after": 198.19741599999907
+      },
+      "wall_seconds": 12.183,
+      "cpu_seconds": 11.922125,
+      "peak_process_family_bytes_including_page_cache": 413130752,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -463,7 +570,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2008.788752,
+          "elapsed_ms": 4620.296204,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -477,7 +584,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2952.237682,
+          "elapsed_ms": 6683.597167000001,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -509,9 +616,25 @@
       "case": "pair-cold-3-selected",
       "mode": "selected",
       "cache": "cold",
-      "wall_seconds": 12.516,
-      "cpu_seconds": 12.239656,
-      "peak_process_family_bytes_including_page_cache": 405696512,
+      "runtime": "/home/yann/yann/rea-perf-managed-cli-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
+        "node": "v24.18.0",
+        "git_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+        "source_diff_sha256": "e7bfcbd5372a4c9fb86c624918b9ac829401191f4e9ab39c7b541257cfd583ac",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "ef8b30a35c5edb87710a74fbafcee457b4f3fc1871c76350362854ee8ce5b8ab",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10301778
+      },
+      "runtime_binding_audit_ms": {
+        "before": 165.72355399999998,
+        "after": 100.61492200000066
+      },
+      "wall_seconds": 19.187,
+      "cpu_seconds": 18.885209,
+      "peak_process_family_bytes_including_page_cache": 421363712,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -522,14 +645,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2055.769263,
+          "elapsed_ms": 4138.5929289999995,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2151.2733179999996,
+          "elapsed_ms": 3639.2514949999995,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -547,7 +670,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3061.286416,
+          "elapsed_ms": 4598.135480000001,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -561,7 +684,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2460.885117,
+          "elapsed_ms": 3227.3665439999986,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -575,7 +698,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2409.6525820000006,
+          "elapsed_ms": 2851.050413000001,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -607,9 +730,25 @@
       "case": "pair-warm-1-complete",
       "mode": "complete",
       "cache": "warm",
-      "wall_seconds": 4.956,
-      "cpu_seconds": 4.780264,
-      "peak_process_family_bytes_including_page_cache": 416677888,
+      "runtime": "/home/yann/yann/rea-5148-main-control-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-5148-main-control-20261021",
+        "node": "v24.18.0",
+        "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+        "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+        "compiled_cli_files": 140,
+        "compiled_cli_bytes": 10151181
+      },
+      "runtime_binding_audit_ms": {
+        "before": 129.15516399999998,
+        "after": 135.48228300000028
+      },
+      "wall_seconds": 7.253,
+      "cpu_seconds": 6.940917,
+      "peak_process_family_bytes_including_page_cache": 422289408,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -620,7 +759,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1895.651305,
+          "elapsed_ms": 2564.811182,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -634,7 +773,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2731.8880529999997,
+          "elapsed_ms": 3961.0578960000003,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -666,9 +805,25 @@
       "case": "pair-warm-1-selected",
       "mode": "selected",
       "cache": "warm",
-      "wall_seconds": 12.534,
-      "cpu_seconds": 12.224083,
-      "peak_process_family_bytes_including_page_cache": 414957568,
+      "runtime": "/home/yann/yann/rea-perf-managed-cli-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
+        "node": "v24.18.0",
+        "git_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+        "source_diff_sha256": "e7bfcbd5372a4c9fb86c624918b9ac829401191f4e9ab39c7b541257cfd583ac",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "ef8b30a35c5edb87710a74fbafcee457b4f3fc1871c76350362854ee8ce5b8ab",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10301778
+      },
+      "runtime_binding_audit_ms": {
+        "before": 111.74701300000001,
+        "after": 100.01259100000061
+      },
+      "wall_seconds": 13.486,
+      "cpu_seconds": 13.183353,
+      "peak_process_family_bytes_including_page_cache": 430452736,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -679,14 +834,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2007.865709,
+          "elapsed_ms": 2297.395605,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1942.5436849999996,
+          "elapsed_ms": 2222.3099740000002,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -704,7 +859,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3217.5225299999997,
+          "elapsed_ms": 3368.38393,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -718,7 +873,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2461.235914,
+          "elapsed_ms": 2600.819673,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -732,7 +887,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2488.031315,
+          "elapsed_ms": 2362.806075999999,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -764,9 +919,25 @@
       "case": "pair-warm-2-complete",
       "mode": "complete",
       "cache": "warm",
-      "wall_seconds": 5.262,
-      "cpu_seconds": 5.045846,
-      "peak_process_family_bytes_including_page_cache": 412749824,
+      "runtime": "/home/yann/yann/rea-5148-main-control-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-5148-main-control-20261021",
+        "node": "v24.18.0",
+        "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+        "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+        "compiled_cli_files": 140,
+        "compiled_cli_bytes": 10151181
+      },
+      "runtime_binding_audit_ms": {
+        "before": 95.84337300000001,
+        "after": 121.89367399999992
+      },
+      "wall_seconds": 5.485,
+      "cpu_seconds": 5.265321,
+      "peak_process_family_bytes_including_page_cache": 421515264,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -777,7 +948,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2189.853423,
+          "elapsed_ms": 2040.471587,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -791,7 +962,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2674.825239,
+          "elapsed_ms": 2832.684805,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -823,9 +994,25 @@
       "case": "pair-warm-2-selected",
       "mode": "selected",
       "cache": "warm",
-      "wall_seconds": 12.175,
-      "cpu_seconds": 11.881048,
-      "peak_process_family_bytes_including_page_cache": 415023104,
+      "runtime": "/home/yann/yann/rea-perf-managed-cli-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
+        "node": "v24.18.0",
+        "git_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+        "source_diff_sha256": "e7bfcbd5372a4c9fb86c624918b9ac829401191f4e9ab39c7b541257cfd583ac",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "ef8b30a35c5edb87710a74fbafcee457b4f3fc1871c76350362854ee8ce5b8ab",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10301778
+      },
+      "runtime_binding_audit_ms": {
+        "before": 90.258543,
+        "after": 81.46469199999956
+      },
+      "wall_seconds": 13.125,
+      "cpu_seconds": 12.89819,
+      "peak_process_family_bytes_including_page_cache": 429367296,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -836,14 +1023,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2116.236192,
+          "elapsed_ms": 2310.755814,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2016.827926,
+          "elapsed_ms": 2229.571232,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -861,7 +1048,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2905.8881059999994,
+          "elapsed_ms": 3094.002453,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -875,7 +1062,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2460.4946900000004,
+          "elapsed_ms": 2635.502351,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -889,7 +1076,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2257.7481370000005,
+          "elapsed_ms": 2356.3771039999992,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -921,9 +1108,25 @@
       "case": "pair-warm-3-complete",
       "mode": "complete",
       "cache": "warm",
-      "wall_seconds": 5.158,
-      "cpu_seconds": 4.928134,
-      "peak_process_family_bytes_including_page_cache": 420007936,
+      "runtime": "/home/yann/yann/rea-5148-main-control-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-5148-main-control-20261021",
+        "node": "v24.18.0",
+        "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+        "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+        "compiled_cli_files": 140,
+        "compiled_cli_bytes": 10151181
+      },
+      "runtime_binding_audit_ms": {
+        "before": 122.08380299999999,
+        "after": 127.55959299999995
+      },
+      "wall_seconds": 5.703,
+      "cpu_seconds": 5.449797,
+      "peak_process_family_bytes_including_page_cache": 421412864,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -934,7 +1137,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1965.974968,
+          "elapsed_ms": 2029.445246,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -948,7 +1151,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2814.713035,
+          "elapsed_ms": 3002.7442289999995,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -980,9 +1183,25 @@
       "case": "pair-warm-3-selected",
       "mode": "selected",
       "cache": "warm",
-      "wall_seconds": 12.03,
-      "cpu_seconds": 11.820123,
-      "peak_process_family_bytes_including_page_cache": 412798976,
+      "runtime": "/home/yann/yann/rea-perf-managed-cli-20261021",
+      "runtime_binding": {
+        "binding_version": 1,
+        "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
+        "node": "v24.18.0",
+        "git_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+        "source_diff_sha256": "e7bfcbd5372a4c9fb86c624918b9ac829401191f4e9ab39c7b541257cfd583ac",
+        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "compiled_cli_sha256": "ef8b30a35c5edb87710a74fbafcee457b4f3fc1871c76350362854ee8ce5b8ab",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10301778
+      },
+      "runtime_binding_audit_ms": {
+        "before": 94.74585200000001,
+        "after": 107.90792200000033
+      },
+      "wall_seconds": 13.127,
+      "cpu_seconds": 12.849734,
+      "peak_process_family_bytes_including_page_cache": 425623552,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -993,14 +1212,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1792.295908,
+          "elapsed_ms": 2048.756715,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1941.942246,
+          "elapsed_ms": 2111.834317,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -1018,7 +1237,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3044.564204,
+          "elapsed_ms": 3252.0200030000005,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -1032,7 +1251,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2476.468633999999,
+          "elapsed_ms": 2481.5328449999997,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -1046,7 +1265,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2474.5628130000005,
+          "elapsed_ms": 2618.4261989999995,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -1076,13 +1295,28 @@
     }
   ],
   "existing_native_control": {
-    "runtime": "unchanged baseline",
+    "runtime": "/home/yann/yann/rea-5148-main-control-20261021",
+    "runtime_binding": {
+      "binding_version": 1,
+      "root": "/home/yann/yann/rea-5148-main-control-20261021",
+      "node": "v24.18.0",
+      "git_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
+      "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "compiled_cli_sha256": "cd1691399852b3191acdb1a22ac937d11f9b3226d1928eff41cf36905d676008",
+      "compiled_cli_files": 140,
+      "compiled_cli_bytes": 10151181
+    },
+    "runtime_binding_audit_ms": {
+      "before": 233.54057500546332,
+      "after": 194.65837399184238
+    },
     "repetitions": 1,
-    "tokens_estimated_script_plus_help_plus_answer": 10345,
+    "tokens_estimated_script_plus_help_plus_answer": 10555,
     "token_scope": "Projection source, original CLI help and returned answer; excludes shared question and launcher argv. No actual model usage measured.",
-    "wall_seconds": 5.479,
-    "cpu_seconds": 5.252715,
-    "peak_process_family_bytes_including_page_cache": 394391552,
+    "wall_seconds": 8.382,
+    "cpu_seconds": 8.21338,
+    "peak_process_family_bytes_including_page_cache": 394657792,
     "answer_matches": true,
     "cleanup_verified": true
   }

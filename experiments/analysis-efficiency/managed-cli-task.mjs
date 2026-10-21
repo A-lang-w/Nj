@@ -1,3 +1,7 @@
+import {
+  captureRuntimeBinding,
+  assertRuntimeBinding,
+} from "./managed-cli-runtime.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -79,6 +83,31 @@ const call = async (label, args, json = true) => {
 };
 let parent, summary, methods, refs;
 try {
+  const inputs = JSON.parse(
+    await readFile(join(root, "measurement-inputs.json"), "utf8"),
+  );
+  const expected = inputs.expected_runtime_bindings?.[mode];
+  assert.ok(expected, `Missing expected runtime for ${mode}`);
+  assert.equal(
+    expected.git_revision,
+    mode === "complete"
+      ? inputs.baseline_revision
+      : inputs.feature_parent_revision,
+  );
+  assert.notEqual(
+    inputs.expected_runtime_bindings.complete.root,
+    inputs.expected_runtime_bindings.selected.root,
+  );
+  assert.notEqual(
+    inputs.expected_runtime_bindings.complete.compiled_cli_sha256,
+    inputs.expected_runtime_bindings.selected.compiled_cli_sha256,
+  );
+  const bindingStarted = performance.now();
+  report.runtime_binding = await captureRuntimeBinding(runtime);
+  report.runtime_binding_audit_ms = {
+    before: performance.now() - bindingStarted,
+  };
+  assertRuntimeBinding(report.runtime_binding, expected, mode);
   await call("help-members", ["inspect-managed-members", "--help"], false);
   if (mode === "complete") {
     parent = await call("complete", [
@@ -202,6 +231,14 @@ try {
     returned_methods: 8,
     returned_member_refs: 16,
   };
+  const bindingFinished = performance.now();
+  assertRuntimeBinding(
+    await captureRuntimeBinding(runtime),
+    report.runtime_binding,
+    mode,
+  );
+  report.runtime_binding_audit_ms.after = performance.now() - bindingFinished;
+  report.runtime_binding_verified = true;
   report.status = "passed";
   await writeFile(join(output, "parent-evidence.json"), JSON.stringify(parent));
   await writeFile(join(output, "answer.json"), JSON.stringify(answer));

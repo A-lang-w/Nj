@@ -30,6 +30,12 @@ import {
 } from "./EvidenceBundleFiles.js";
 import { inspectAnalysisViewValidated } from "./analysisView/AnalysisViewService.js";
 
+/** Drain queued callbacks, then the OS signal notifications they may enqueue. */
+const dispatchQueuedInterrupts = async (): Promise<void> => {
+  await setImmediate();
+  await setImmediate();
+};
+
 /** Validate a standalone bundle and report its complete record/revision counts. */
 export const importEvidenceBundleCommand = async (
   path: string,
@@ -95,6 +101,9 @@ export const deliverAnalysisEvidence = async (
     signal,
     evidence.operation,
   );
+  // Deliver interrupts queued during final publication cleanup before the
+  // command's signal owner accepts completion and removes its listeners.
+  await dispatchQueuedInterrupts();
   if (!written.ok) return err(written.error.retainPartialObservation(evidence));
   if (signal?.aborted)
     return err(
@@ -132,7 +141,7 @@ export const inspectAnalysisViewFromBundle = async (
     "inspect_analysis_view",
   );
   // Authentication and projection are synchronous; dispatch queued interrupts before accepting either result.
-  await setImmediate();
+  await dispatchQueuedInterrupts();
   if (!loaded.ok) return loaded;
   if (signal?.aborted)
     return err(
@@ -143,7 +152,7 @@ export const inspectAnalysisViewFromBundle = async (
   const projected = inspectAnalysisViewValidated(input, (id) =>
     loaded.value.records.find((record) => record.evidence_id === id),
   );
-  await setImmediate();
+  await dispatchQueuedInterrupts();
   if (projected.ok && signal?.aborted)
     return err(
       new AnalysisCancelledError("inspect_analysis_view", {
