@@ -15,8 +15,10 @@ import {
   regexMatchingDeadlineError,
   regexMatchingLimitation,
   regexWorkerHeapError,
+  execArgvFromCommandLine,
   resolveLaunchRegexWorkerHeap,
   resolveRegexWorkerHeap,
+  readLaunchExecArgv,
   readLaunchNodeOptions,
 } from "../../../src/process/RegexMatcher.js";
 
@@ -63,7 +65,7 @@ const probeWorkerHeap = (
 
 it("names the fixed regex deadline and the effective worker heap", () => {
   const heap = resolveLaunchRegexWorkerHeap(
-    process.execArgv,
+    readLaunchExecArgv(),
     readLaunchNodeOptions(),
   );
   expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
@@ -118,33 +120,11 @@ it("names the fixed regex deadline and the effective worker heap", () => {
 const relativeHeapGap = (left: number, right: number): number =>
   Math.abs(left - right) / Math.max(left, right);
 
-it("lets --max-old-space-size-percentage override an absolute heap in either order", () => {
+it("leaves a heap percentage unestablished without reading host memory", () => {
   const percentage = "--max-old-space-size-percentage=50";
   const absolute = "--max-old-space-size=64";
-  const alone = probeWorkerHeap([percentage], undefined);
-  const percentageThenAbsolute = probeWorkerHeap(
-    [percentage, absolute],
-    undefined,
-  );
-  const absoluteThenPercentage = probeWorkerHeap(
-    [absolute, percentage],
-    undefined,
-  );
-  const onlyAbsolute = probeWorkerHeap([absolute], undefined);
-  for (const observed of [
-    alone,
-    percentageThenAbsolute,
-    absoluteThenPercentage,
-    onlyAbsolute,
-  ])
-    expect(observed.resourceOld).toBe(128);
-  expect(relativeHeapGap(alone.heap, percentageThenAbsolute.heap)).toBeLessThan(
-    0.05,
-  );
-  expect(relativeHeapGap(alone.heap, absoluteThenPercentage.heap)).toBeLessThan(
-    0.05,
-  );
-  expect(relativeHeapGap(alone.heap, onlyAbsolute.heap)).toBeGreaterThan(0.25);
+  const observed = probeWorkerHeap([percentage, absolute], undefined);
+  expect(observed.resourceOld).toBe(128);
   for (const execArgv of [
     [percentage],
     [percentage, absolute],
@@ -165,11 +145,16 @@ it("does not report the 128 MiB request for NODE_OPTIONS supplied by an env file
       [`--env-file-if-exists=${file}`],
       undefined,
     );
-    const baseline = probeWorkerHeap([], undefined);
+    const small = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+    const large = probeWorkerHeap(["--max-old-space-size=256"], undefined);
     expect(fromFile.resourceOld).toBe(128);
     expect(ifExists.resourceOld).toBe(128);
-    expect(fromFile.heap).toBeGreaterThan(baseline.heap);
-    expect(ifExists.heap).toBeGreaterThan(baseline.heap);
+    expect(small.resourceOld).toBe(128);
+    expect(large.resourceOld).toBe(128);
+    expect(relativeHeapGap(fromFile.heap, large.heap)).toBeLessThan(0.05);
+    expect(relativeHeapGap(ifExists.heap, large.heap)).toBeLessThan(0.05);
+    expect(fromFile.heap).toBeGreaterThan(small.heap);
+    expect(ifExists.heap).toBeGreaterThan(small.heap);
     for (const execArgv of [
       [`--env-file=${file}`],
       [`--env-file-if-exists=${file}`],
@@ -210,15 +195,10 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
       undefined,
       directory,
     );
-    const baseline = probeWorkerHeap([], undefined);
     expect(fromFile.resourceOld).toBe(128);
     expect(split.resourceOld).toBe(128);
     expect(withAbsolute.resourceOld).toBe(128);
     expect(fromDefault.resourceOld).toBe(128);
-    expect(fromFile.heap).toBeLessThan(baseline.heap);
-    expect(split.heap).toBe(fromFile.heap);
-    expect(withAbsolute.heap).toBe(fromFile.heap);
-    expect(fromDefault.heap).toBe(fromFile.heap);
     for (const execArgv of [
       [`--experimental-config-file=${file}`],
       ["--experimental-config-file", file],
@@ -240,14 +220,14 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
 });
 
 it("does not report the 128 MiB request when --max-heap-size lowers the worker heap", () => {
-  const baseline = probeWorkerHeap([], undefined);
   const heap64 = probeWorkerHeap(["--max-heap-size=64"], undefined);
   const underscore = probeWorkerHeap(["--max_heap_size=64"], undefined);
-  expect(baseline.resourceOld).toBe(128);
+  const old256 = probeWorkerHeap(["--max-old-space-size=256"], undefined);
   expect(heap64.resourceOld).toBe(128);
   expect(underscore.resourceOld).toBe(128);
-  expect(heap64.heap).toBeLessThan(baseline.heap);
-  expect(underscore.heap).toBe(heap64.heap);
+  expect(old256.resourceOld).toBe(128);
+  expect(heap64.heap).toBeLessThan(old256.heap);
+  expect(relativeHeapGap(underscore.heap, heap64.heap)).toBeLessThan(0.05);
   expect(resolveRegexWorkerHeap(["--max-heap-size=64"], undefined)).toEqual({
     kind: "unknown",
   });
@@ -263,14 +243,85 @@ it("does not report the 128 MiB request when --max-heap-size lowers the worker h
 });
 
 it("lets a launch --max-old-space-size override the 128 MiB worker request", () => {
-  const baseline = probeWorkerHeap([], undefined);
   const smaller = probeWorkerHeap(["--max-old-space-size=64"], undefined);
   const larger = probeWorkerHeap([], "--max-old-space-size=256");
-  expect(baseline.resourceOld).toBe(128);
   expect(smaller.resourceOld).toBe(128);
   expect(larger.resourceOld).toBe(128);
-  expect(smaller.heap).toBeLessThan(baseline.heap);
-  expect(larger.heap).toBeGreaterThan(baseline.heap);
+  expect(smaller.heap).toBeLessThan(larger.heap);
+});
+
+it("does not report the 128 MiB request after a preload clears process.execArgv", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rea-regex-exec-argv-"));
+  const preload = join(directory, "preload.cjs");
+  const script = join(directory, "report.cjs");
+  writeFileSync(preload, "process.execArgv.length = 0;\n");
+  writeFileSync(
+    script,
+    `const { Worker } = require("node:worker_threads");
+const fs = require("node:fs");
+const worker = new Worker(
+  \`const { parentPort, resourceLimits } = require("node:worker_threads");
+    const v8 = require("node:v8");
+    parentPort.postMessage({
+      resourceOld: resourceLimits.maxOldGenerationSizeMb,
+      heap: v8.getHeapStatistics().heap_size_limit,
+    });\`,
+  { eval: true, resourceLimits: { maxOldGenerationSizeMb: 128 } },
+);
+worker.once("message", (message) => {
+  process.stdout.write(JSON.stringify({
+    execLen: process.execArgv.length,
+    cmdline: fs.readFileSync("/proc/self/cmdline").toString("base64"),
+    heap: message.heap,
+    resourceOld: message.resourceOld,
+  }));
+});
+worker.once("error", (error) => {
+  process.stderr.write(error.message);
+  process.exitCode = 1;
+});
+`,
+  );
+  try {
+    const result = spawnSync(
+      process.execPath,
+      ["--max-old-space-size=64", `--require=${preload}`, script],
+      { encoding: "utf8" },
+    );
+    expect(result.status).toBe(0);
+    const reported = JSON.parse(result.stdout ?? "") as {
+      execLen: number;
+      cmdline: string;
+      heap: number;
+      resourceOld: number;
+    };
+    const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+    const larger = probeWorkerHeap(["--max-old-space-size=256"], undefined);
+    expect(reported.execLen).toBe(0);
+    expect(reported.resourceOld).toBe(128);
+    expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
+    expect(reported.heap).toBeLessThan(larger.heap);
+    const recovered = execArgvFromCommandLine(
+      Buffer.from(reported.cmdline, "base64"),
+    );
+    expect(recovered).toEqual({
+      kind: "recovered",
+      value: ["--max-old-space-size=64", `--require=${preload}`],
+    });
+    expect(
+      resolveLaunchRegexWorkerHeap(recovered, {
+        kind: "recovered",
+        value: undefined,
+      }),
+    ).toEqual({ kind: "effective", mib: 64, overridden: true });
+    expect(resolveRegexWorkerHeap([], undefined)).toEqual({
+      kind: "effective",
+      mib: 128,
+      overridden: false,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 it("preserves Unicode matching order and refuses a pre-cancelled match", async () => {

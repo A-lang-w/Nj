@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  execArgvFromCommandLine,
+  readLaunchExecArgv,
   readLaunchNodeOptions,
   regexMatchingLimitation,
   regexWorkerHeapError,
@@ -309,20 +311,30 @@ it("does not treat a rewritten NODE_OPTIONS value as the launch heap", () => {
       expect(launch).toEqual({ kind: "unrecoverable" });
     }
     expect(
-      resolveLaunchRegexWorkerHeap(["--max-old-space-size=256"], {
-        kind: "unrecoverable",
-      }),
+      resolveLaunchRegexWorkerHeap(
+        { kind: "recovered", value: ["--max-old-space-size=256"] },
+        { kind: "unrecoverable" },
+      ),
     ).toEqual({ kind: "unknown" });
     expect(
-      resolveLaunchRegexWorkerHeap([], {
-        kind: "recovered",
-        value: "--max_heap_size=64",
-      }),
+      resolveLaunchRegexWorkerHeap(
+        { kind: "recovered", value: [] },
+        { kind: "recovered", value: "--max_heap_size=64" },
+      ),
+    ).toEqual({ kind: "unknown" });
+    expect(
+      resolveLaunchRegexWorkerHeap(
+        { kind: "unrecoverable" },
+        { kind: "recovered", value: "--max-old-space-size=64" },
+      ),
     ).toEqual({ kind: "unknown" });
     if (launch.kind === "recovered") {
       expect(launch.value).not.toBe(rewritten);
       expect(
-        resolveLaunchRegexWorkerHeap(["--max-old-space-size=32"], launch),
+        resolveLaunchRegexWorkerHeap(
+          { kind: "recovered", value: ["--max-old-space-size=32"] },
+          launch,
+        ),
       ).toEqual(
         resolveRegexWorkerHeap(["--max-old-space-size=32"], launch.value),
       );
@@ -330,6 +342,84 @@ it("does not treat a rewritten NODE_OPTIONS value as the launch heap", () => {
   } finally {
     if (previous === undefined) delete process.env.NODE_OPTIONS;
     else process.env.NODE_OPTIONS = previous;
+  }
+});
+
+const commandLine = (...tokens: readonly string[]): Buffer =>
+  Buffer.from(`${tokens.join("\0")}\0`);
+
+it("recovers launch exec argv from the command line, not process.execArgv", () => {
+  expect(
+    execArgvFromCommandLine(
+      commandLine(
+        "node",
+        "--max-old-space-size=64",
+        "script.js",
+        "--max-old-space-size=256",
+      ),
+    ),
+  ).toEqual({ kind: "recovered", value: ["--max-old-space-size=64"] });
+  expect(
+    resolveLaunchRegexWorkerHeap(
+      execArgvFromCommandLine(
+        commandLine("node", "--max-old-space-size=64", "script.js"),
+      ),
+      { kind: "recovered", value: undefined },
+    ),
+  ).toEqual({ kind: "effective", mib: 64, overridden: true });
+  expect(resolveRegexWorkerHeap([], undefined)).toEqual({
+    kind: "effective",
+    mib: 128,
+    overridden: false,
+  });
+  expect(
+    execArgvFromCommandLine(
+      commandLine(
+        "node",
+        "--require",
+        "preload.cjs",
+        "--max_old_space_size=64",
+        "script.js",
+      ),
+    ),
+  ).toEqual({
+    kind: "recovered",
+    value: ["--require", "preload.cjs", "--max_old_space_size=64"],
+  });
+  expect(
+    execArgvFromCommandLine(
+      commandLine("node", "-e", "code", "--max-old-space-size=80"),
+    ),
+  ).toEqual({
+    kind: "recovered",
+    value: ["-e", "code", "--max-old-space-size=80"],
+  });
+  expect(
+    execArgvFromCommandLine(
+      commandLine("node", "--", "--max-old-space-size=64", "script.js"),
+    ),
+  ).toEqual({ kind: "recovered", value: [] });
+  expect(
+    execArgvFromCommandLine(
+      commandLine("node", "--not-a-real-node-option", "script.js"),
+    ),
+  ).toEqual({ kind: "unrecoverable" });
+  expect(execArgvFromCommandLine(Buffer.alloc(0))).toEqual({
+    kind: "unrecoverable",
+  });
+  expect(execArgvFromCommandLine(Buffer.from([0xff, 0]))).toEqual({
+    kind: "unrecoverable",
+  });
+  const before = readLaunchExecArgv();
+  const snapshot = [...process.execArgv];
+  process.execArgv.length = 0;
+  try {
+    expect(process.execArgv).toEqual([]);
+    expect(readLaunchExecArgv()).toEqual(before);
+    if (before.kind === "recovered") expect(before.value).toEqual(snapshot);
+    else expect(before).toEqual({ kind: "unrecoverable" });
+  } finally {
+    process.execArgv.push(...snapshot);
   }
 });
 

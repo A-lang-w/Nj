@@ -35,6 +35,14 @@ const WORKER_HEAP_MIB = 128;
  * `NODE_OPTIONS` entry in the process initial environment when that block can
  * be read. Otherwise the effective heap stays unestablished.
  *
+ * `process.execArgv` is mutable in the same way. A preload can empty it after
+ * V8 has applied `--max-old-space-size`. Linux keeps the original tokens in
+ * `/proc/self/cmdline`. The recovered list skips the executable and the
+ * program entry the way Node builds `execArgv`, and it stops at `--`. When
+ * that block cannot be read, the entry boundary is ambiguous, or the platform
+ * has no equivalent block, the effective heap stays unestablished. The
+ * mutable array is not a fallback.
+ *
  * `--max-heap-size` is the total heap, not the old generation. A positive
  * value can be lower than the 128 MiB request and still changes the result
  * when an old-space flag is also present. The old generation stays
@@ -235,17 +243,115 @@ export const readLaunchNodeOptions = (): LaunchNodeOptions => {
     : { kind: "recovered", value };
 };
 
-/** Heap for this process. Unrecoverable `NODE_OPTIONS` provenance stays unknown. */
+/**
+ * Node options that take the next command-line token when it is not `=`.
+ * Boolean flags and V8 flags do not. Names are the dashed form Node looks up
+ * after replacing `_`. An option absent from both sets, followed by the
+ * program entry, leaves the boundary unrecoverable.
+ */
+const VALUE_OPTION_NAMES =
+  "--allow-fs-read,--allow-fs-write,--build-sea,--build-snapshot-config,--conditions,--cpu-prof-dir,--cpu-prof-interval,--cpu-prof-name,--debug-port,--diagnostic-dir,--disable-proto,--disable-warning,--dns-result-order,--env-file,--env-file-if-exists,--eval,--experimental-config-file,--experimental-default-type,--experimental-loader,--experimental-sea-config,--experimental-test-isolation,--heap-prof-dir,--heap-prof-interval,--heap-prof-name,--heapsnapshot-near-heap-limit,--heapsnapshot-signal,--icu-data-dir,--import,--input-type,--inspect-port,--inspect-publish-uid,--loader,--localstorage-file,--max-http-header-size,--max-old-space-size-percentage,--network-family-autoselection-attempt-timeout,--openssl-config,--print,--redirect-warnings,--report-dir,--report-directory,--report-filename,--report-signal,--require,--run,--secure-heap,--secure-heap-min,--snapshot-blob,--test-concurrency,--test-coverage-branches,--test-coverage-exclude,--test-coverage-functions,--test-coverage-include,--test-coverage-lines,--test-global-setup,--test-isolation,--test-name-pattern,--test-reporter,--test-reporter-destination,--test-shard,--test-skip-pattern,--test-timeout,--title,--tls-cipher-list,--tls-keylog,--trace-event-categories,--trace-event-file-pattern,--trace-require-module,--unhandled-rejections,--use-largepages,--v8-pool-size,--watch-kill-signal,--watch-path,-C,-e,-p,-pe,-r";
+const FLAG_OPTION_NAMES =
+  "--abort-on-uncaught-exception,--allow-addons,--allow-child-process,--allow-inspector,--allow-net,--allow-wasi,--allow-worker,--build-snapshot,--check,--completion-bash,--cpu-prof,--disable-sigusr1,--disable-wasm-trap-handler,--disallow-code-generation-from-strings,--enable-etw-stack-walking,--enable-fips,--enable-network-family-autoselection,--enable-source-maps,--entry-url,--experimental-addon-modules,--experimental-async-context-frame,--experimental-default-config-file,--experimental-eventsource,--experimental-import-meta-resolve,--experimental-inspector-network-resource,--experimental-network-inspection,--experimental-permission,--experimental-print-required-tla,--experimental-quic,--experimental-storage-inspection,--experimental-stream-iter,--experimental-test-coverage,--experimental-test-module-mocks,--experimental-transform-types,--experimental-vm-modules,--experimental-webstorage,--experimental-worker-inspection,--expose-gc,--force-context-aware,--force-fips,--force-node-api-uncaught-exceptions-policy,--frozen-intrinsics,--heap-prof,--heap-snapshot-on-oom,--help,--huge-max-old-generation-size,--insecure-http-parser,--inspect,--inspect-brk,--inspect-wait,--interactive,--interpreted-frames-native-stack,--jitless,--max-heap-size,--max-old-space-size,--max-semi-space-size,--no-addons,--no-async-context-frame,--no-deprecation,--no-experimental-detect-module,--no-experimental-fetch,--no-experimental-global-customevent,--no-experimental-global-navigator,--no-experimental-global-webcrypto,--no-experimental-repl-await,--no-experimental-require-module,--no-experimental-sqlite,--no-experimental-strip-types,--no-experimental-websocket,--no-experimental-webstorage,--no-extra-info-on-fatal-exception,--no-force-async-hooks-checks,--no-global-search-paths,--no-network-family-autoselection,--no-require-module,--no-strip-types,--no-warnings,--node-memory-debug,--openssl-legacy-provider,--openssl-shared-config,--pending-deprecation,--permission,--permission-audit,--preserve-symlinks,--preserve-symlinks-main,--prof,--prof-process,--report-compact,--report-exclude-env,--report-exclude-network,--report-on-fatalerror,--report-on-signal,--report-uncaught-exception,--test,--test-force-exit,--test-only,--test-rerun-failures,--test-update-snapshots,--throw-deprecation,--tls-max-v1.2,--tls-max-v1.3,--tls-min-v1.0,--tls-min-v1.1,--tls-min-v1.2,--tls-min-v1.3,--trace-atomics-wait,--trace-deprecation,--trace-env,--trace-env-js-stack,--trace-env-native-stack,--trace-exit,--trace-promises,--trace-sigint,--trace-sync-io,--trace-tls,--trace-uncaught,--trace-warnings,--track-heap-objects,--use-bundled-ca,--use-env-proxy,--use-openssl-ca,--use-system-ca,--v8-options,--version,--watch,--watch-preserve-output,--zero-fill-buffers,-c,-h,-i,-v";
+const VALUE_OPTIONS = new Set(VALUE_OPTION_NAMES.split(","));
+const FLAG_OPTIONS = new Set(FLAG_OPTION_NAMES.split(","));
+
+/** Provenance of the Node option tokens that were `process.execArgv` at start. */
+export type LaunchExecArgv =
+  | { readonly kind: "recovered"; readonly value: readonly string[] }
+  | { readonly kind: "unrecoverable" };
+
+const commandLineTokens = (raw: Buffer): readonly string[] | "invalid" => {
+  if (raw.length === 0) return "invalid";
+  const end = raw[raw.length - 1] === 0 ? raw.length - 1 : raw.length;
+  const tokens: string[] = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let offset = 0;
+  while (offset < end) {
+    const next = raw.indexOf(0, offset);
+    const tokenEnd = next === -1 || next > end ? end : next;
+    try {
+      tokens.push(decoder.decode(raw.subarray(offset, tokenEnd)));
+    } catch {
+      return "invalid";
+    }
+    if (next === -1 || next >= end) break;
+    offset = next + 1;
+  }
+  return tokens.length === 0 ? "invalid" : tokens;
+};
+
+const normalizedOption = (
+  token: string,
+): { readonly name: string; readonly inline: boolean } => {
+  if (!token.startsWith("--")) return { name: token, inline: false };
+  const equals = token.indexOf("=");
+  const rawName = equals === -1 ? token : token.slice(0, equals);
+  return {
+    name: `${rawName.slice(0, 2)}${rawName.slice(2).replaceAll("_", "-")}`,
+    inline: equals !== -1,
+  };
+};
+
+/**
+ * Node option tokens from an `execve` command line. The executable and the
+ * program entry are omitted. `--` ends the list and is omitted. The buffer
+ * is not retained.
+ */
+export const execArgvFromCommandLine = (raw: Buffer): LaunchExecArgv => {
+  const tokens = commandLineTokens(raw);
+  if (tokens === "invalid") return { kind: "unrecoverable" };
+  const exec: string[] = [];
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    if (token.length <= 1 || !token.startsWith("-") || token === "--") break;
+    exec.push(token);
+    const option = normalizedOption(token);
+    if (option.inline) continue;
+    if (VALUE_OPTIONS.has(option.name)) {
+      const value = tokens[index + 1];
+      if (value === undefined || value.startsWith("-"))
+        return { kind: "unrecoverable" };
+      exec.push(value);
+      index += 1;
+      continue;
+    }
+    if (FLAG_OPTIONS.has(option.name)) continue;
+    const next = tokens[index + 1];
+    if (next !== undefined && (next.length <= 1 || !next.startsWith("-")))
+      return { kind: "unrecoverable" };
+  }
+  return { kind: "recovered", value: exec };
+};
+
+/**
+ * Linux keeps the `execve` argument vector in `/proc/self/cmdline` after
+ * `process.execArgv` is rewritten. Other platforms have no equivalent
+ * immutable block, so the launch options stay unrecoverable there.
+ */
+export const readLaunchExecArgv = (): LaunchExecArgv => {
+  if (process.platform !== "linux") return { kind: "unrecoverable" };
+  let raw: Buffer;
+  try {
+    raw = readFileSync("/proc/self/cmdline");
+  } catch {
+    return { kind: "unrecoverable" };
+  }
+  return execArgvFromCommandLine(raw);
+};
+
+/** Heap for this process. Unrecoverable launch provenance stays unknown. */
 export const resolveLaunchRegexWorkerHeap = (
-  execArgv: readonly string[],
+  launchExecArgv: LaunchExecArgv,
   launchNodeOptions: LaunchNodeOptions,
 ): RegexWorkerHeapLimit =>
+  launchExecArgv.kind === "unrecoverable" ||
   launchNodeOptions.kind === "unrecoverable"
     ? { kind: "unknown" }
-    : resolveRegexWorkerHeap(execArgv, launchNodeOptions.value);
+    : resolveRegexWorkerHeap(launchExecArgv.value, launchNodeOptions.value);
 
 const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
-  process.execArgv,
+  readLaunchExecArgv(),
   readLaunchNodeOptions(),
 );
 
