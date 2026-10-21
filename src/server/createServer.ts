@@ -13,6 +13,9 @@ import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import { createBrowserExtensionService } from "../composition/browserExtension.js";
+import type { BrowserExtensionService } from "../application/browserExtension/BrowserExtensionService.js";
+import { registerBrowserExtensionTool } from "./registerBrowserExtensionTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import {
   evmInterfaceModule,
@@ -335,6 +338,7 @@ export const createServer = (
   const il2cppMetadata =
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
+  const browserExtension = createBrowserExtensionService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
@@ -421,6 +425,7 @@ export const createServer = (
       il2cppMetadata.close(),
       modelArtifact.close(),
       peResources.close(),
+      browserExtension.close(),
       electronFuses.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
@@ -484,6 +489,7 @@ export const createServer = (
     rustBinary,
     il2cppMetadata,
     peResources,
+    browserExtension,
     electronFuses,
     webNetworkCapture,
   };
@@ -707,6 +713,7 @@ const registerConfiguredAnalysisTools = (
     rustBinary,
     il2cppMetadata,
     peResources,
+    browserExtension,
     webNetworkCapture,
     artifactResources,
   }: ServerToolContext,
@@ -751,6 +758,13 @@ const registerConfiguredAnalysisTools = (
   registerPeResourcesTool(
     server,
     peResources,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerBrowserExtensionTool(
+    server,
+    browserExtension,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -887,6 +901,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly rustBinary: RustBinaryService;
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
+  readonly browserExtension: BrowserExtensionService;
   readonly electronFuses: ElectronFuseService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
