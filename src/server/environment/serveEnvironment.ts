@@ -418,8 +418,23 @@ export const serveEnvironment = async (
     },
     close: async () => {
       stop();
-      await served.close();
-      await stateFiles.close();
+      const failures: unknown[] = [];
+      try {
+        await served.close();
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+      try {
+        await stateFiles.close();
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(
+          failures,
+          "Environment server and state-file cleanup both failed",
+        );
     },
   });
 };
