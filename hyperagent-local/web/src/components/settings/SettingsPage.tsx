@@ -499,6 +499,12 @@ function McpServersSection() {
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [probeState, setProbeState] = useState<
+    Record<
+      number,
+      { status: "idle" | "running" | "ok" | "error"; detail?: string }
+    >
+  >({});
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const requestIdRef = useRef(0);
   const [formData, setFormData] = useState({
@@ -590,6 +596,46 @@ function McpServersSection() {
     });
     setEditingId(server.id);
     setShowForm(true);
+  };
+
+  const handleProbe = async (server: McpServer) => {
+    setProbeState((prev) => ({
+      ...prev,
+      [server.id]: { status: "running" },
+    }));
+    try {
+      const result = await apiPost<{
+        ok: boolean;
+        tools?: Array<{ name: string }>;
+        error?: string;
+      }>(`/mcp-servers/${server.id}/probe`);
+      if (result.ok) {
+        const count = result.tools?.length ?? 0;
+        setProbeState((prev) => ({
+          ...prev,
+          [server.id]: {
+            status: "ok",
+            detail: count === 0 ? "Connected (no tools)" : `${count} tools`,
+          },
+        }));
+      } else {
+        setProbeState((prev) => ({
+          ...prev,
+          [server.id]: {
+            status: "error",
+            detail: result.error || "Probe failed",
+          },
+        }));
+      }
+    } catch (err) {
+      setProbeState((prev) => ({
+        ...prev,
+        [server.id]: {
+          status: "error",
+          detail: err instanceof Error ? err.message : "Probe failed",
+        },
+      }));
+    }
   };
 
   if (showForm) {
@@ -869,6 +915,26 @@ function McpServersSection() {
                   </div>
                 ) : (
                   <>
+                    <button
+                      type="button"
+                      onClick={() => void handleProbe(server)}
+                      disabled={probeState[server.id]?.status === "running"}
+                      aria-label={`Test ${server.name}`}
+                      className="rounded px-2 py-1 text-xs font-medium min-h-11 hover:opacity-80 disabled:opacity-50"
+                      style={{
+                        color: COLORS.textSecondary,
+                        border: `1px solid ${COLORS.border}`,
+                      }}
+                      title={probeState[server.id]?.detail}
+                    >
+                      {probeState[server.id]?.status === "running"
+                        ? "Testing…"
+                        : probeState[server.id]?.status === "ok"
+                          ? `OK · ${probeState[server.id]?.detail}`
+                          : probeState[server.id]?.status === "error"
+                            ? "Failed"
+                            : "Test"}
+                    </button>
                     <button
                       onClick={() => handleEdit(server)}
                       aria-label={`Edit ${server.name}`}

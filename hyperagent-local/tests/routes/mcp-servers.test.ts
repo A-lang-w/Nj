@@ -168,4 +168,49 @@ describe("mcp-servers route CRUD", () => {
     const res = await app.request("/mcp-servers?workspaceId=1");
     expect(res.status).toBe(401);
   });
+
+  it("probes stdio servers and reports non-stdio as unsupported", async () => {
+    const stdio = await authed("/mcp-servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "probe-stdio",
+        transportType: "stdio",
+        config: {},
+      }),
+    });
+    expect(stdio.status).toBe(201);
+    const stdioServer = await stdio.json();
+
+    const stdioProbe = await authed(`/mcp-servers/${stdioServer.id}/probe`, {
+      method: "POST",
+    });
+    expect(stdioProbe.status).toBe(200);
+    const stdioBody = await stdioProbe.json();
+    expect(stdioBody.ok).toBe(false);
+    expect(typeof stdioBody.error).toBe("string");
+
+    const sse = await authed("/mcp-servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "probe-sse",
+        transportType: "sse",
+        config: { url: "http://127.0.0.1:9" },
+      }),
+    });
+    const sseServer = await sse.json();
+    const sseProbe = await authed(`/mcp-servers/${sseServer.id}/probe`, {
+      method: "POST",
+    });
+    expect(sseProbe.status).toBe(200);
+    const sseBody = await sseProbe.json();
+    expect(sseBody.ok).toBe(false);
+    expect(sseBody.error).toContain("not implemented");
+
+    const missing = await authed("/mcp-servers/999999/probe", {
+      method: "POST",
+    });
+    expect(missing.status).toBe(404);
+  });
 });

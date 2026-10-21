@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import FocusTrap from "focus-trap-react";
 import { useUiStore } from "@/stores/ui-store";
-import { apiGet, apiPost, apiDelete } from "@/lib/api-client";
+import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api-client";
 import type { Skill } from "@/types/api";
-import { Plus, Search, Sparkles, Trash2, X } from "lucide-react";
+import { Plus, Search, Sparkles, Trash2, Pencil, X } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
@@ -15,6 +15,7 @@ export function SkillsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const requestIdRef = useRef(0);
 
@@ -200,14 +201,26 @@ export function SkillsPage() {
                       </span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDelete(skill.id)}
-                    aria-label={`Delete ${skill.name}`}
-                    className="reveal-on-hover flex items-center justify-center rounded min-w-[44px] min-h-[44px] p-2.5 transition-opacity hover:text-red-500"
-                    style={{ color: COLORS.textSecondary }}
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                  </button>
+                  <div className="flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => setEditingSkill(skill)}
+                      aria-label={`Edit ${skill.name}`}
+                      className="reveal-on-hover flex items-center justify-center rounded min-w-[44px] min-h-[44px] p-2.5 transition-opacity hover:text-primary-600"
+                      style={{ color: COLORS.textSecondary }}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(skill.id)}
+                      aria-label={`Delete ${skill.name}`}
+                      className="reveal-on-hover flex items-center justify-center rounded min-w-[44px] min-h-[44px] p-2.5 transition-opacity hover:text-red-500"
+                      style={{ color: COLORS.textSecondary }}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
                 {skill.description && (
                   <p
@@ -224,13 +237,24 @@ export function SkillsPage() {
         )}
       </div>
 
-      {showCreate && (
-        <CreateSkillDialog
+      {(showCreate || editingSkill) && (
+        <SkillDialog
           workspaceId={activeWorkspaceId}
-          onClose={() => setShowCreate(false)}
-          onCreated={(skill) => {
-            setSkills((prev) => [skill, ...prev]);
+          skill={editingSkill ?? undefined}
+          onClose={() => {
             setShowCreate(false);
+            setEditingSkill(null);
+          }}
+          onSaved={(skill) => {
+            setSkills((prev) => {
+              const idx = prev.findIndex((s) => s.id === skill.id);
+              if (idx === -1) return [skill, ...prev];
+              const next = [...prev];
+              next[idx] = skill;
+              return next;
+            });
+            setShowCreate(false);
+            setEditingSkill(null);
           }}
         />
       )}
@@ -238,19 +262,24 @@ export function SkillsPage() {
   );
 }
 
-function CreateSkillDialog({
+function SkillDialog({
   workspaceId,
+  skill,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   workspaceId: number;
+  skill?: Skill;
   onClose: () => void;
-  onCreated: (skill: Skill) => void;
+  onSaved: (skill: Skill) => void;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [triggers, setTriggers] = useState("");
+  const isEdit = skill !== undefined;
+  const [name, setName] = useState(skill?.name ?? "");
+  const [description, setDescription] = useState(skill?.description ?? "");
+  const [instructions, setInstructions] = useState(skill?.instructions ?? "");
+  const [triggers, setTriggers] = useState(
+    (skill?.triggerPatternsJson ?? []).join("\n"),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -264,16 +293,32 @@ function CreateSkillDialog({
         .split("\n")
         .map((t) => t.trim())
         .filter(Boolean);
-      const created = await apiPost<Skill>("/skills", {
-        workspaceId,
-        name: name.trim(),
-        description: description.trim() || undefined,
-        instructions: instructions.trim(),
-        triggerPatterns,
-      });
-      onCreated(created);
+      if (isEdit && skill) {
+        const updated = await apiPut<Skill>(`/skills/${skill.id}`, {
+          name: name.trim(),
+          description: description.trim() || null,
+          instructions: instructions.trim(),
+          triggerPatterns,
+        });
+        onSaved(updated);
+      } else {
+        const created = await apiPost<Skill>("/skills", {
+          workspaceId,
+          name: name.trim(),
+          description: description.trim() || undefined,
+          instructions: instructions.trim(),
+          triggerPatterns,
+        });
+        onSaved(created);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create skill");
+      setError(
+        err instanceof Error
+          ? err.message
+          : isEdit
+            ? "Failed to update skill"
+            : "Failed to create skill",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -297,13 +342,13 @@ function CreateSkillDialog({
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Create skill"
+          aria-label={isEdit ? "Edit skill" : "Create skill"}
           className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-              Create skill
+              {isEdit ? "Edit skill" : "Create skill"}
             </h2>
             <button
               type="button"
@@ -397,7 +442,13 @@ function CreateSkillDialog({
                 disabled={submitting || !name.trim() || !instructions.trim()}
                 className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-950 disabled:opacity-50"
               >
-                {submitting ? "Creating…" : "Create"}
+                {submitting
+                  ? isEdit
+                    ? "Saving…"
+                    : "Creating…"
+                  : isEdit
+                    ? "Save"
+                    : "Create"}
               </button>
             </div>
           </form>

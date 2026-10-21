@@ -89,6 +89,64 @@ describe("skills route CRUD and search", () => {
     ).toBe(true);
   });
 
+  it("updates only supplied fields on PUT", async () => {
+    const created = await authed("/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "update-skill-target",
+        description: "before",
+        instructions: "old instructions",
+        triggerPatterns: ["^old"],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const skill = await created.json();
+
+    const updated = await authed(`/skills/${skill.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "after",
+        instructions: "new instructions",
+        triggerPatterns: ["^new", "^also"],
+      }),
+    });
+    expect(updated.status).toBe(200);
+    const body = await updated.json();
+    expect(body.name).toBe("update-skill-target");
+    expect(body.description).toBe("after");
+    expect(body.instructions).toBe("new instructions");
+    expect(body.triggerPatternsJson).toEqual(["^new", "^also"]);
+  });
+
+  it("returns 400 when PUT has no fields", async () => {
+    const created = await authed("/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "empty-put-skill",
+        instructions: "keep",
+      }),
+    });
+    const skill = await created.json();
+    const res = await authed(`/skills/${skill.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for non-existent skill on PUT", async () => {
+    const res = await authed("/skills/999999", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "nope" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
   it("deletes an owned skill and returns 404 on re-delete", async () => {
     const created = await authed("/skills", {
       method: "POST",

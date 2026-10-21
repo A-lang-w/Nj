@@ -14,6 +14,7 @@ import {
   createSkill,
   getSkills,
   searchSkills,
+  updateSkill,
   deleteSkill,
 } from "../services/skill-service.js";
 import { MAX_PAGINATION_OFFSET } from "../config/constants.js";
@@ -25,6 +26,15 @@ const createSkillSchema = z
     name: z.string().min(1).max(255),
     description: z.string().max(10000).optional(),
     instructions: z.string().min(1).max(100000),
+    triggerPatterns: z.array(z.string().max(1024)).max(100).optional(),
+  })
+  .strict();
+
+const updateSkillSchema = z
+  .object({
+    name: z.string().min(1).max(255).optional(),
+    description: z.string().max(10000).nullish(),
+    instructions: z.string().min(1).max(100000).optional(),
     triggerPatterns: z.array(z.string().max(1024)).max(100).optional(),
   })
   .strict();
@@ -80,6 +90,37 @@ skillsRouter.post(
     );
     if (!result.ok) return c.json({ error: result.error.message }, 500);
     return c.json(result.value, 201);
+  },
+);
+
+skillsRouter.put(
+  "/:id",
+  zValidator("json", updateSkillSchema, zodEnvelopeHook),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const body = c.req.valid("json");
+    const [candidate] = await db
+      .select({ workspaceId: skills.workspaceId })
+      .from(skills)
+      .where(eq(skills.id, id))
+      .limit(1);
+    const authWorkspaceId = await resolveAuthorizedWorkspaceId(
+      c,
+      candidate?.workspaceId,
+    );
+    if (authWorkspaceId == null) return c.json({ error: "Not found" }, 404);
+    if (Object.keys(body).length === 0) {
+      return c.json({ error: "No updates provided" }, 400);
+    }
+    const result = await updateSkill(id, authWorkspaceId, {
+      name: body.name,
+      description: body.description,
+      instructions: body.instructions,
+      triggerPatterns: body.triggerPatterns,
+    });
+    if (!result.ok) return c.json({ error: result.error.message }, 500);
+    if (!result.value) return c.json({ error: "Not found" }, 404);
+    return c.json(result.value);
   },
 );
 

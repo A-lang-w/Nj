@@ -22,6 +22,12 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
     agent?.systemPrompt ?? "You are a helpful assistant.",
   );
   const [model, setModel] = useState(agent?.model ?? "claude-opus-5-5");
+  const [temperature, setTemperature] = useState(
+    agent?.temperature != null ? String(agent.temperature) : "0.7",
+  );
+  const [maxTokens, setMaxTokens] = useState(
+    agent?.maxTokens != null ? String(agent.maxTokens) : "4096",
+  );
   const [toolsJsonText, setToolsJsonText] = useState(
     JSON.stringify(agent?.toolsJson ?? [], null, 2),
   );
@@ -30,6 +36,8 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
     name?: string;
     systemPrompt?: string;
     tools?: string;
+    temperature?: string;
+    maxTokens?: string;
   }>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -49,6 +57,8 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
       name?: string;
       systemPrompt?: string;
       tools?: string;
+      temperature?: string;
+      maxTokens?: string;
     } = {};
     if (!name.trim()) newErrors.name = "Name is required.";
     if (!systemPrompt.trim())
@@ -64,28 +74,55 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
     } catch {
       newErrors.tools = "Tools must be valid JSON.";
     }
+    const temperatureNum = Number(temperature);
+    const maxTokensNum = Number(maxTokens);
+    if (
+      !Number.isFinite(temperatureNum) ||
+      temperatureNum < 0 ||
+      temperatureNum > 2
+    ) {
+      newErrors.temperature = "Temperature must be between 0 and 2.";
+    }
+    if (
+      !Number.isInteger(maxTokensNum) ||
+      maxTokensNum < 1 ||
+      maxTokensNum > 1_000_000
+    ) {
+      newErrors.maxTokens = "Max tokens must be an integer from 1 to 1000000.";
+    }
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) return;
     setIsSubmitting(true);
     setSubmitError(null);
     try {
+      const payload = {
+        name: name.trim(),
+        description: description.trim() || null,
+        systemPrompt: systemPrompt.trim(),
+        model,
+        temperature: temperatureNum,
+        maxTokens: maxTokensNum,
+        tools,
+      };
       if (isEdit && agent) {
-        await updateAgent(agent.id, {
-          name: name.trim(),
-          description: description.trim() || null,
-          systemPrompt: systemPrompt.trim(),
-          model,
-          tools,
-        } as Partial<Agent> & { tools: unknown[] });
+        await updateAgent(
+          agent.id,
+          payload as Partial<Agent> & {
+            tools: unknown[];
+            temperature: number;
+            maxTokens: number;
+          },
+        );
       } else {
         await createAgent({
           workspaceId: activeWorkspaceId,
-          name: name.trim(),
+          ...payload,
           description: description.trim() || undefined,
-          systemPrompt: systemPrompt.trim(),
-          model,
-          tools,
-        } as Partial<Agent> & { tools: unknown[] });
+        } as Partial<Agent> & {
+          tools: unknown[];
+          temperature: number;
+          maxTokens: number;
+        });
       }
       onClose();
     } catch (err) {
@@ -236,6 +273,72 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
                 <option value="z-ai/glm-5.3">GLM 5.3</option>
                 <option value="gpt-6-astra">GPT-6 Astra</option>
               </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="agent-temperature"
+                  className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+                >
+                  Temperature
+                </label>
+                <input
+                  id="agent-temperature"
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={temperature}
+                  onChange={(e) => {
+                    setTemperature(e.target.value);
+                    if (errors.temperature)
+                      setErrors((prev) => ({
+                        ...prev,
+                        temperature: undefined,
+                      }));
+                  }}
+                  aria-invalid={!!errors.temperature}
+                  className={`mt-1 block w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-slate-950 dark:text-white ${errors.temperature ? "border-red-500" : "border-slate-300 dark:border-slate-700"}`}
+                />
+                {errors.temperature && (
+                  <p
+                    className="mt-1 text-xs text-red-600 dark:text-red-400"
+                    role="alert"
+                  >
+                    {errors.temperature}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label
+                  htmlFor="agent-max-tokens"
+                  className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+                >
+                  Max tokens
+                </label>
+                <input
+                  id="agent-max-tokens"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={maxTokens}
+                  onChange={(e) => {
+                    setMaxTokens(e.target.value);
+                    if (errors.maxTokens)
+                      setErrors((prev) => ({ ...prev, maxTokens: undefined }));
+                  }}
+                  aria-invalid={!!errors.maxTokens}
+                  className={`mt-1 block w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-slate-950 dark:text-white ${errors.maxTokens ? "border-red-500" : "border-slate-300 dark:border-slate-700"}`}
+                />
+                {errors.maxTokens && (
+                  <p
+                    className="mt-1 text-xs text-red-600 dark:text-red-400"
+                    role="alert"
+                  >
+                    {errors.maxTokens}
+                  </p>
+                )}
+              </div>
             </div>
             <div>
               <label

@@ -12,6 +12,7 @@ import {
 } from "../auth/workspace.js";
 import { validateBoundedObject } from "../lib/bounded-object.js";
 import { emitEvent } from "./events.js";
+import { probeStdioMcpServer } from "../services/mcp-runtime.js";
 
 const createMcpServerSchema = z
   .object({
@@ -129,6 +130,42 @@ mcpServersRouter.put(
     return c.json(updated);
   },
 );
+
+mcpServersRouter.post("/:id/probe", async (c) => {
+  const id = Number(c.req.param("id"));
+  const [server] = await db
+    .select()
+    .from(mcpServers)
+    .where(eq(mcpServers.id, id))
+    .limit(1);
+  const authWorkspaceId = await resolveAuthorizedWorkspaceId(
+    c,
+    server?.workspaceId,
+  );
+  if (authWorkspaceId == null || !server) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  const config =
+    server.configJson != null &&
+    typeof server.configJson === "object" &&
+    !Array.isArray(server.configJson)
+      ? (server.configJson as Record<string, unknown>)
+      : {};
+  if (server.transportType !== "stdio") {
+    return c.json(
+      {
+        ok: false,
+        serverName: server.name,
+        transportType: server.transportType,
+        tools: [],
+        error: `${server.transportType} probing is not implemented; use stdio`,
+      },
+      200,
+    );
+  }
+  const result = await probeStdioMcpServer(server.name, config);
+  return c.json(result);
+});
 
 mcpServersRouter.delete("/:id", async (c) => {
   const id = Number(c.req.param("id"));

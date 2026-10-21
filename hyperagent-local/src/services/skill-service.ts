@@ -193,6 +193,46 @@ export async function searchSkills(
  * @returns A Result containing void on success, or a StorageError if the delete fails.
  * @emits skill.deleted with the id of the deleted skill.
  */
+export async function updateSkill(
+  skillId: number,
+  workspaceId: number,
+  updates: {
+    name?: string;
+    description?: string | null;
+    instructions?: string;
+    triggerPatterns?: string[];
+  },
+): Promise<Result<typeof skills.$inferSelect | null, StorageError>> {
+  try {
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (updates.name !== undefined) patch.name = updates.name;
+    if (updates.description !== undefined)
+      patch.description = updates.description;
+    if (updates.instructions !== undefined)
+      patch.instructions = updates.instructions;
+    if (updates.triggerPatterns !== undefined)
+      patch.triggerPatternsJson = updates.triggerPatterns;
+    const [updated] = await db
+      .update(skills)
+      .set(patch)
+      .where(and(eq(skills.id, skillId), eq(skills.workspaceId, workspaceId)))
+      .returning();
+    if (updated) {
+      emitEvent("skill.updated", {
+        id: skillId,
+        workspaceId: updated.workspaceId,
+      });
+    }
+    return Ok(updated ?? null);
+  } catch (err) {
+    return Err(
+      new StorageError(
+        err instanceof Error ? err.message : "Failed to update skill",
+      ),
+    );
+  }
+}
+
 export async function deleteSkill(
   skillId: number,
   workspaceId: number,

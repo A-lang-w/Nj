@@ -14,6 +14,7 @@ import {
   Store,
   Settings,
   Library,
+  Inbox,
 } from "lucide-react";
 
 const MAX_THREAD_RESULTS = 5;
@@ -60,6 +61,7 @@ export function CommandPalette() {
         icon: MessageSquarePlus,
       },
       { label: "Threads", path: "/threads", icon: Search },
+      { label: "Inbox", path: "/inbox", icon: Inbox },
       { label: "Agents", path: "/agents", icon: Bot },
       { label: "Skills", path: "/skills", icon: Sparkles },
       { label: "Memories", path: "/memories", icon: Brain },
