@@ -13,17 +13,34 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
  * Pending cleanup is still retried before each command returns.
  */
 let retainedScope: ArtifactResourceScope | undefined;
+/** One shutdown shared by the exit callback and the dispatch `finally`. */
+let closing: Promise<void> | undefined;
 
 const cliAnalysisScope = (): ArtifactResourceScope => {
   retainedScope ??= new ArtifactResourceScope();
   return retainedScope;
 };
 
-/** Stop the process-owned JavaScript worker. Safe to call more than once. */
-export const closeCliJavaScriptResources = async (): Promise<void> => {
+/**
+ * Stop the process-owned JavaScript worker. Callers that overlap share the
+ * attempt in flight. The scope stays owned when shutdown fails, so the next
+ * call retries instead of treating the worker as already released.
+ */
+export const closeCliJavaScriptResources = (): Promise<void> => {
+  if (closing !== undefined) return closing;
   const scope = retainedScope;
-  retainedScope = undefined;
-  if (scope !== undefined) await scope.close();
+  if (scope === undefined) return Promise.resolve();
+  let published: Promise<void>;
+  published = scope
+    .close()
+    .then(() => {
+      if (retainedScope === scope) retainedScope = undefined;
+    })
+    .finally(() => {
+      if (closing === published) closing = undefined;
+    });
+  closing = published;
+  return published;
 };
 
 /** Execute the shared CLI boundary for static JavaScript analysis. */
