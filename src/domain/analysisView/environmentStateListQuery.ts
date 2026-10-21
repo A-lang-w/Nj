@@ -99,6 +99,23 @@ export const queryValues = (
   return values;
 };
 
+/** Whether a list read's answer keeps the state's order: no sort its query learned applies to the read's values. */
+export const keepsStateOrder = (
+  query: ListQuery | undefined,
+  call: string | undefined,
+): boolean => {
+  const values = queryValues(call);
+  return (
+    query === undefined ||
+    values === undefined ||
+    ![...values.keys()].some(
+      (name) =>
+        Object.hasOwn(query.parameters, name) &&
+        query.parameters[name]!.role === "sort",
+    )
+  );
+};
+
 const textOf = (value: JsonValue | undefined): string | undefined =>
   typeof value === "boolean" ? String(value) : scalarText(value);
 

@@ -356,6 +356,20 @@ const checkRecordedList = (
   };
 };
 
+/** The read's query values when serving evaluates the query for it: on a named query line, or with query values on a line it did not name. */
+const evaluatedQuery = (
+  view: StateListView,
+  record: StateRecordFacts,
+  line: ServedLine,
+): Map<string, string> | undefined =>
+  (
+    line.named
+      ? view.query?.record_ordinals.includes(line.ordinal) === true
+      : line.queried === true
+  )
+    ? queryValues(record.query)
+    : undefined;
+
 /** A list read on a checked line, compared with the answer the served environment renders on that line's base recording from the collection it names: every entity when that line lists them all. */
 export const checkListRead = (
   state: SimulatedState,
@@ -370,11 +384,7 @@ export const checkListRead = (
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
   const { line } = check;
-  // The line lists every entity of its collection, or its query selects them.
-  const query =
-    line.queried === true || view.query?.record_ordinals.includes(line.ordinal)
-      ? queryValues(record.query)
-      : undefined;
+  const query = evaluatedQuery(view, record, line);
   const all = query === undefined && listsAll(view, line.ordinal);
   // Serving answers a page too small for the collection from its recording, so such a read checks nothing.
   const size = pageSize(record.query);
@@ -393,12 +403,13 @@ export const checkListRead = (
   const items = listItems(body, view.pointer);
   // A line the read did not name keeps its own call's envelope, such as a link naming that call's values, which no write changes.
   const envelope = line.named || items === undefined ? base : body;
+  // A query answered on a line the read did not name lists none of that line's members, so only the read's show what the state no longer holds.
   const bodies = {
     ...check,
     body,
     base: envelope,
     items: items ?? [],
-    baseItems,
+    baseItems: line.named || query === undefined ? baseItems : [],
   };
   const outcome =
     query !== undefined

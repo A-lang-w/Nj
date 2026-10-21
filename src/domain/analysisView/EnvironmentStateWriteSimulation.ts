@@ -61,6 +61,7 @@ import {
   unservedPlan,
   type StateWritePlan,
 } from "./environmentStateWriteRules.js";
+import { keepsStateOrder } from "./environmentStateListQuery.js";
 import { WriteTaint } from "./environmentStateWriteTaint.js";
 import { writeVerdict } from "./environmentStateWriteVerdict.js";
 
@@ -416,9 +417,12 @@ export class EnvironmentStateWriteSimulation {
       exercised,
       fields: shownFields(view, this.#input.volatileOf),
     });
+    // A sorted read shows the order its sort gives, not where a create placed its entity.
+    const places =
+      view.shape === "list" && keepsStateOrder(view.query, record.query);
     for (const name of shown.confirmed) {
       this.#drafts.get(name)!.confirmed.push(record.ordinal);
-      if (view.shape === "list") this.#placed.add(name);
+      if (places) this.#placed.add(name);
     }
     return shown.unseen;
   }

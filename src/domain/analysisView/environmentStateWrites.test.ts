@@ -655,3 +655,68 @@ describe("list reads with query values no line recorded", () => {
     });
   });
 });
+
+describe("list reads on a line they did not name", () => {
+  const first = { ...FIRST_BOOK, shelf: "a" };
+  const second = { ...SECOND_BOOK, shelf: "b" };
+
+  it("checks a read with no query on a query line by that line's recorded members, as serving lists them", () => {
+    const third = { ...book(3, "Third Book", bookClock(3)), shelf: "c" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books?shelf=a", [first]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["POST", "/api/books", third, 201, { name: "Third Book", shelf: "c" }],
+      // Serving answers this call on the `shelf=a` line with its recorded book, not the created one.
+      ["GET", "/api/books", [first, second, third]],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("confirms no delete by a filtered read on another value, whose answer never listed the deleted book", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books?shelf=a", [first]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["DELETE", "/api/books/1", "", 204],
+      ["GET", "/api/books?shelf=b", [second]],
+    ];
+    expect(planOf(stateOf(rows), "delete_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("leaves a create's position open after a sorted read, for a later whole list to settle", () => {
+    const shelved = (id: number, name: string, shelf: string, at: number) => ({
+      ...book(id, name, bookClock(at)),
+      shelf,
+    });
+    const beta = shelved(1, "Beta", "a", 0);
+    const mike = shelved(2, "Mike", "b", 1);
+    const zulu = shelved(3, "Zulu", "a", 2);
+    const alpha = shelved(4, "Alpha", "a", 6);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [beta, mike, zulu]],
+      ["GET", "/api/books?shelf=a", [beta, zulu]],
+      ["GET", "/api/books?sort=-id", [zulu, mike, beta]],
+      ["GET", "/api/books/1", beta],
+      ["GET", "/api/books/2", mike],
+      ["GET", "/api/books/3", zulu],
+      ["POST", "/api/books", alpha, 201, { name: "Alpha", shelf: "a" }],
+      // The sorted shelf passes wherever the create placed its book; the whole list orders by name.
+      ["GET", "/api/books?shelf=a&sort=-id", [alpha, zulu, beta]],
+      ["GET", "/api/books", [alpha, beta, mike, zulu]],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [7, 8],
+      insert: { rule: "sorted", field: "name", direction: "ascending" },
+    });
+  });
+});

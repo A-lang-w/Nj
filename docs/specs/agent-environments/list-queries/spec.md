@@ -48,10 +48,13 @@ before paging (`totals`); a `number`-of-items member such as `numberOfElements` 
   name, against the query over its copy of the state, as serving answers it. Only a line whose
   parameters all sort or page, and whose answer holds every match, covers the collection; any other covers the
   entities it lists and those the line or the read listed that the state no longer holds, so a filtered list shows
-  whether a delete or create took effect without speaking for the rest of the collection. A read on a line that keeps
-  its recorded members is compared with the totals it recorded, as serving answers it. A read on a line it did not
-  name is compared in its own envelope: that line's envelope, such as a `next` link naming the line's own values, comes
-  from another call, so it says nothing of a write.
+  whether a delete or create took effect without speaking for the rest of the collection. A read on a line it did not
+  name counts as gone only what it listed itself, since the line lists another call's members. A read with no query
+  answered on a query line, as serving does when no whole line fits, is checked against that line's recorded members,
+  as serving lists them. A read on a line that keeps its recorded members is compared with the totals it recorded, as
+  serving answers it. A read on a line it did not name is compared in its own envelope: that line's envelope, such as
+  a `next` link naming the line's own values, comes from another call, so it says nothing of a write. A read whose
+  query applies a sort shows the sort's order, so it fixes no create's insert position.
 
 The roles are inferences from recorded behaviour and are stated as such. Nothing changes for a list whose lines all
 list the whole collection, or that no role explains.

@@ -96,3 +96,18 @@ verdict as at d5a07e7a. Its 160 query views (161 before) differ from d5a07e7a on
 
 The six environments compare as before: NetBox 472 of 479 steps, Komga 549/600, Mealie 422/449, n8n 199/278, Shlink
 176/202 and Sentry 91/372.
+
+A second review round merged the list-lines branch at c68c63be, which carries the write-plan branch through 6257de93:
+an update's identity member never takes a rule and a page size of zero bounds nothing, fixing two findings Greptile
+raised here against that branch's code, and the paging rules move to `environmentStatePaging.ts`, which this branch's
+line selection now imports. It also fixed three findings in this branch's gate:
+
+- a read with no query answered on a query line is checked against that line's recorded members, as serving lists
+  them, rather than against every entity;
+- a query read on a line it did not name counts as gone only what it listed, so it cannot confirm a delete of a book
+  that line listed;
+- a read whose query applies a sort no longer fixes a create's insert position, so a later whole list can still try
+  another rule.
+
+Each new test fails on the previous head. Over the 50 captures every view and write verdict is as on the previous head,
+and the six environments compare exactly as before.
