@@ -33,6 +33,7 @@ import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 export interface PreparedReferenceSourceImport {
   readonly root: string;
   readonly policy: ReferenceSourceExclusionPolicy;
+  readonly limitations: readonly string[];
 }
 
 const failure = (
@@ -282,6 +283,7 @@ export const prepareReferenceSourceImport = async (
   options: ReferenceSourceImportOptions,
   resources: ArtifactResourceScope,
   exclusions: HistoricalSourceGraphInput["exclusions"] = [],
+  ignoreCase: boolean | null = false,
 ): Promise<
   Result<PreparedReferenceSourceImport, ReferenceSourceImportError>
 > => {
@@ -294,7 +296,9 @@ export const prepareReferenceSourceImport = async (
         symlinks: "follow",
       });
       if (!policy.ok) return policy;
-      const project = ignore({ ignoreCase: false });
+      // If Git's local setting cannot be read, use the broader matcher and
+      // retain that uncertainty in graph limitations below.
+      const project = ignore({ ignoreCase: ignoreCase ?? true });
       addMarkedPatterns(project, [policy.value], "project-ignored");
       const overrides = ignore();
       addMarkedPatterns(
@@ -307,8 +311,15 @@ export const prepareReferenceSourceImport = async (
       const secrets = ignore().add([...options.policy.secretPatterns]);
       return ok({
         root: root.value,
+        limitations:
+          ignoreCase === null
+            ? [
+                "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.",
+              ]
+            : [],
         policy: createExclusionPolicy(project, {
           root: root.value,
+          ignoreCase,
           overrides,
           secrets,
           exclusions,
@@ -335,6 +346,7 @@ const errorMessage = (cause: unknown): string =>
 
 interface ExclusionPolicyContext {
   readonly root: string;
+  readonly ignoreCase: boolean | null;
   readonly overrides: ReturnType<typeof ignore>;
   readonly secrets: ReturnType<typeof ignore>;
   readonly exclusions: HistoricalSourceGraphInput["exclusions"];
@@ -371,7 +383,9 @@ const createExclusionPolicy = (
           code: text.error.code === "cancelled" ? "cancelled" : "io",
         });
       if (text.value === "") return ok(policy);
-      const inherited = ignore({ ignoreCase: false }).add(project);
+      const inherited = ignore({
+        ignoreCase: context.ignoreCase ?? true,
+      }).add(project);
       addMarkedPatterns(inherited, [text.value], "project-ignored", directory);
       return ok(createExclusionPolicy(inherited, context));
     },

@@ -14,58 +14,112 @@ const writeTree = async (root: string, files: Record<string, string>) => {
   }
 };
 
+const testUnknownIncludedGitIgnoreCase = async () => {
+  const root = await createTestTempDirectory("rea-reference-ignore-include-");
+  const included = join(root, "extra.gitconfig");
+  await writeTree(root, {
+    "pkg/.gitignore": "generated/\n",
+    "pkg/Generated/keep.ts": "retained or excluded according to Git config\n",
+  });
+  expect(
+    spawnSync("git", ["init", "--quiet", root], { encoding: "utf8" }).status,
+  ).toBe(0);
+  await writeFile(included, "[core]\n\tignoreCase = true\n");
+  expect(
+    spawnSync("git", ["-C", root, "config", "include.path", included], {
+      encoding: "utf8",
+    }).status,
+  ).toBe(0);
+  const git = spawnSync(
+    "git",
+    ["-C", root, "check-ignore", "--no-index", "pkg/Generated/keep.ts"],
+    { encoding: "utf8" },
+  );
+  expect(git.status, git.stderr).toBe(0);
+
+  const result = await importReferenceSource({
+    root,
+    caller: "nested-ignore-include-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.limitations).toContain(
+    "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.",
+  );
+  expect(result.value.inventory_state).toBe("partial");
+  expect(result.value.exclusions).toContainEqual(
+    expect.objectContaining({
+      path: "pkg/Generated",
+      reason: "project-ignored",
+      pattern: "generated/",
+      policy_path: "pkg/.gitignore",
+    }),
+  );
+};
+
 describe.skipIf(process.platform === "win32")(
   "nested reference ignore rules",
   () => {
-    it("matches Git's case-sensitive nested rules", async () => {
-      const root = await createTestTempDirectory("rea-reference-ignore-case-");
-      await writeTree(root, {
-        "pkg/.gitignore": "generated/\n",
-        "pkg/Generated/keep.ts": "retained\n",
-      });
+    it.each([false, true])(
+      "matches Git core.ignoreCase=%s for nested rules",
+      async (ignoreCase) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-ignore-case-",
+        );
+        await writeTree(root, {
+          "pkg/.gitignore": "generated/\n",
+          "pkg/Generated/keep.ts": "retained\n",
+        });
 
-      const initialized = spawnSync("git", ["init", "--quiet", root], {
-        encoding: "utf8",
-      });
-      expect(initialized.status, initialized.stderr).toBe(0);
-      const caseSensitiveConfig = spawnSync(
-        "git",
-        ["-C", root, "config", "core.ignoreCase", "false"],
-        { encoding: "utf8" },
-      );
-      expect(caseSensitiveConfig.status, caseSensitiveConfig.stderr).toBe(0);
+        const initialized = spawnSync("git", ["init", "--quiet", root], {
+          encoding: "utf8",
+        });
+        expect(initialized.status, initialized.stderr).toBe(0);
+        const caseConfig = spawnSync(
+          "git",
+          ["-C", root, "config", "core.ignoreCase", String(ignoreCase)],
+          { encoding: "utf8" },
+        );
+        expect(caseConfig.status, caseConfig.stderr).toBe(0);
 
-      const ignored = spawnSync(
-        "git",
-        ["-C", root, "check-ignore", "--no-index", "pkg/generated/drop.ts"],
-        { encoding: "utf8" },
-      );
-      const caseVariant = spawnSync(
-        "git",
-        ["-C", root, "check-ignore", "--no-index", "pkg/Generated/keep.ts"],
-        { encoding: "utf8" },
-      );
-      expect(ignored.status, ignored.stderr).toBe(0);
-      expect(caseVariant.status).toBe(1);
+        const ignored = spawnSync(
+          "git",
+          ["-C", root, "check-ignore", "--no-index", "pkg/generated/drop.ts"],
+          { encoding: "utf8" },
+        );
+        const caseVariant = spawnSync(
+          "git",
+          ["-C", root, "check-ignore", "--no-index", "pkg/Generated/keep.ts"],
+          { encoding: "utf8" },
+        );
+        expect(ignored.status, ignored.stderr).toBe(0);
+        expect(caseVariant.status).toBe(ignoreCase ? 0 : 1);
 
-      const result = await importReferenceSource({
-        root,
-        caller: "nested-ignore-case-test",
-        policy: { secretPatterns: [] },
-      });
-      if (!result.ok) throw result.error;
-      expect(result.value.exclusions).not.toContainEqual(
-        expect.objectContaining({
-          reason: "project-ignored",
-          pattern: "generated/",
-          policy_path: "pkg/.gitignore",
-        }),
-      );
-      expect(
-        result.value.entries.some(
-          ({ path }) => path === "pkg/Generated/keep.ts",
-        ),
-      ).toBe(true);
+        const result = await importReferenceSource({
+          root,
+          caller: "nested-ignore-case-test",
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        expect(
+          result.value.exclusions.some(
+            (exclusion) =>
+              exclusion.path === "pkg/Generated" &&
+              exclusion.reason === "project-ignored" &&
+              exclusion.pattern === "generated/" &&
+              exclusion.policy_path === "pkg/.gitignore",
+          ),
+        ).toBe(ignoreCase);
+        expect(
+          result.value.entries.some(
+            ({ path }) => path === "pkg/Generated/keep.ts",
+          ),
+        ).toBe(!ignoreCase);
+      },
+    );
+
+    it("retains unknown ignore case when Git config uses includes", async () => {
+      await testUnknownIncludedGitIgnoreCase();
     });
 
     it("scopes anchored rules and negations to their directory and descendants", async () => {

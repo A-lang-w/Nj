@@ -156,22 +156,25 @@ export const importReferenceSource = async (
 ): Promise<Result<HistoricalSourceGraph, ReferenceSourceImportError>> => {
   if (isAborted(options.signal)) return err(cancelled());
   const exclusions: HistoricalSourceGraphInput["exclusions"] = [];
+  const vcsResult = await readReferenceSourceVcs(
+    options.root,
+    resources,
+    options.signal,
+  );
   const prepared = await prepareReferenceSourceImport(
     options,
     resources,
     exclusions,
+    vcsResult.ok ? vcsResult.value.ignoreCase : null,
   );
   if (!prepared.ok) return prepared;
   const { root, policy } = prepared.value;
   if (isAborted(options.signal)) return err(cancelled());
 
-  const [readResult, vcsResult] = await Promise.all([
-    readReferenceSource(root, resources, {
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...policy,
-    }),
-    readReferenceSourceVcs(root, resources, options.signal),
-  ]);
+  const readResult = await readReferenceSource(root, resources, {
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...policy,
+  });
 
   if (!readResult.ok)
     return err(
@@ -190,7 +193,7 @@ export const importReferenceSource = async (
       ),
     );
 
-  const vcs = vcsResult.value;
+  const vcs = vcsResult.value.info;
 
   if (isAborted(options.signal))
     return err(cancelled(withImportExclusions(readResult.value, exclusions)));
@@ -215,7 +218,10 @@ export const importReferenceSource = async (
     compareUnicodeCodePoints(left.path, right.path),
   );
   const sortedExclusions = sortExclusions(exclusions);
-  const sortedLimitations = [...limitations].sort(compareUnicodeCodePoints);
+  const sortedLimitations = [
+    ...limitations,
+    ...prepared.value.limitations,
+  ].sort(compareUnicodeCodePoints);
 
   const input: HistoricalSourceGraphInput = {
     schema: "HistoricalSourceGraph",
