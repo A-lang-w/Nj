@@ -57,6 +57,7 @@ import {
   type StateWritePlan,
 } from "./environmentStateWriteRules.js";
 import { WriteTaint } from "./environmentStateWriteTaint.js";
+import { writeVerdict } from "./environmentStateWriteVerdict.js";
 
 /** What the write gate reads: the manifest tools, the timeline, the read views and the initial state. */
 export interface WriteSimulationInput {
@@ -155,7 +156,9 @@ export class EnvironmentStateWriteSimulation {
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));
-    return [...this.#drafts.values()].map((draft) => this.#verdict(draft));
+    return [...this.#drafts.values()].map((draft) =>
+      writeVerdict(draft, this.#input),
+    );
   }
 
   #step(record: StateRecordFacts, index: number): void {
@@ -271,12 +274,7 @@ export class EnvironmentStateWriteSimulation {
     this.#taint.known(entity.type, entity.collection, entity.id);
     this.#touched.delete(target);
     if (isAbsence(record.status)) {
-      this.#state.remove(entity);
-      this.#effects.removed(
-        this.#touched,
-        target,
-        collectionTarget(entity.type, entity.collection),
-      );
+      this.#removeEntity(entity);
       return;
     }
     const object = this.#input.io.withBody(record.ordinal, (body) =>
@@ -454,7 +452,17 @@ export class EnvironmentStateWriteSimulation {
     );
     if (isObject(object))
       this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
-    else this.#state.remove(entity);
+    else this.#removeEntity(entity);
+  }
+
+  /** A read showed the entity gone: the state drops it, and no write keeps a claim on its collection through it. */
+  #removeEntity(entity: StateEntity): void {
+    this.#state.remove(entity);
+    this.#effects.removed(
+      this.#touched,
+      entityTarget(entity.type, entity.collection, entity.id),
+      collectionTarget(entity.type, entity.collection),
+    );
   }
 
   /** Contradict the writes a failed check exercised, or, when none, the related writes since its targets were last checked; a failed list stops being checked. */
@@ -522,44 +530,5 @@ export class EnvironmentStateWriteSimulation {
       }
     }
     return false;
-  }
-
-  /** Whether an update or delete that answers with the entity can answer for an initial entity: one holds every field its recorded response shows. */
-  #renders(plan: StateWritePlan): boolean {
-    const { response } = plan;
-    if (
-      (plan.effect !== "update" && plan.effect !== "delete") ||
-      response?.shape !== "entity"
-    )
-      return true;
-    const shown = this.#input.io.withBody(response.ordinal, (body) => {
-      const object =
-        body === undefined ? undefined : at(body, response.pointer ?? "");
-      return isObject(object) ? Object.keys(object) : undefined;
-    });
-    return (
-      shown === undefined ||
-      this.#input.entities.some(
-        (entity) =>
-          entity.type === plan.target &&
-          shown.every((field) => Object.hasOwn(entity.fields, field)),
-      )
-    );
-  }
-
-  #verdict(draft: WriteDraft): StateWritePlan {
-    const plan = draft.plan;
-    if (plan.reason === null) {
-      if (draft.calls === 0) plan.reason = "no-call";
-      else if (draft.contradictedBy !== undefined) {
-        plan.reason = "contradicted";
-        plan.contradicted_by = draft.contradictedBy;
-      } else if (draft.sideEffect) plan.reason = "side-effect";
-      else if (draft.confirmed.length === 0) plan.reason = "unconfirmed";
-      else if (!this.#renders(plan)) plan.reason = "incomplete-entities";
-    }
-    plan.served = plan.reason === null;
-    plan.checked_record_ordinals = [...new Set(draft.confirmed)];
-    return { ...plan };
   }
 }

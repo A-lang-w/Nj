@@ -528,6 +528,21 @@ describe("list lines", () => {
     });
   });
 
+  it("confirms no create by a whole list after an item read showed nothing of its entity", () => {
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      // An unmodelled write elsewhere may explain the next read, which the state then takes.
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["GET", "/api/books/3", null],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+
   it("names no line when every line lists its whole collection, or none does", () => {
     const listOf = (rows: readonly TimedCaptureRow[]) =>
       stateOf(rows).views.find((view) => view.tool === "get_books");

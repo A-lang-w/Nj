@@ -375,6 +375,26 @@ describe("list lines", () => {
       state: { source: "state", membership: "recorded", listed: 1 },
     });
   });
+
+  it("updates on each line only the counters its recording counted, so a partial page keeps its total", () => {
+    const partial = {
+      content: [FIRST_BOOK],
+      totalElements: 2,
+      numberOfElements: 1,
+    };
+    const books = servedFrom([
+      ["GET", "/api/books", bookPage([FIRST_BOOK, SECOND_BOOK])],
+      ["GET", "/api/books?page=1&size=1", partial],
+      ...LIST_LINE_ROWS.slice(2),
+    ]);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books")).toMatchObject({
+      body: bookPage([FIRST_BOOK, SECOND_BOOK, created]),
+    });
+    expect(books.answer("get_books", { page: "1", size: "1" })).toMatchObject({
+      body: partial,
+    });
+  });
 });
 
 describe("path values", () => {

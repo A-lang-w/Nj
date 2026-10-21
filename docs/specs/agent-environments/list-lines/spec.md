@@ -20,11 +20,16 @@ so existing states keep their values.
 
 A whole line's read checks the collection, so it exercises every write that changed the collection since it was last
 read. A write whose entity a read has since shown absent, for example a create an unmodelled delete removed and a 404
-then showed gone, no longer counts there, as when a modelled delete replaces it. Otherwise a whole list taken after the
-entity was gone would confirm a create it cannot show.
+then showed gone, no longer counts there, as when a modelled delete replaces it. The same holds when a failed item check
+takes the read's answer and that answer holds no entity. Otherwise a whole list taken after the entity was gone would
+confirm a create it cannot show.
 
 `numberOfElements` and similar number-of-items members (`number` with `elements`, `entries`, `items` or `results`)
-count the listed entities, so a whole line's counter follows the state as `totalElements` does.
+count the listed entities, so a whole line's counter follows the state as `totalElements` does. A view with whole lines
+takes the counters that equal the number listed on each of them, since a partial page's total counts more than the page;
+a view without one keeps those that do on every line. A line is answered with each counter set to the number listed
+only when its own recording showed that counter equal to the number it listed, so a partial page keeps its recorded
+total.
 
 ## Acceptance
 
@@ -32,6 +37,7 @@ count the listed entities, so a whole line's counter follows the state as `total
   confirmed; a tool whose lines are all whole, or none, names none; a whole list taken after a read showed the created
   entity gone confirms no create.
 - Serving: after a served create, the whole line lists the created entity with its counters, and the filtered line
-  keeps its recorded members.
+  keeps its recorded members; beside a partial page whose total counts the collection, the whole line's total follows
+  the state and the page keeps its recorded total.
 - Measured: the six published environments compared with the application before and after, on the probes of the
   fidelity comparison and the held-out sessions recorded since.

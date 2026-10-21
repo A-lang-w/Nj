@@ -61,3 +61,18 @@ with the write-plan branch's head its create and update are unconfirmed and serv
 that head (at `f2b95351`), when a list taken after the delete still confirmed them, the same comparison moved Komga
 from 94.7% to 95.2%: three list reads after creates agreed and two more differed only in where the created collection
 was placed. None of the other five environments has a list tool with both kinds of line and a served write on its type.
+
+## Review round
+
+The branch merged the write-plan branch at 73c0e9b5 and 6d28aa78 and main at 4dfa1c67. Six of Greptile's eight
+findings were in the write-plan branch's code and were fixed there. This branch fixed the other two:
+
+- a view with whole lines takes its counters from them, and each line updates only the counters its own recording
+  counted, so a partial page no longer drops a whole line's total;
+- a failed item check that takes an answer with no entity drops the writes that claimed it from its collection, as an
+  absence does, so a whole list cannot confirm the create.
+
+Both new tests fail on the previous head. Over the 50 published captures, the merges changed no view or write plan,
+and these two fixes add one counter each to BookStack's pages (`total`) and Linkding's tags (`count`), both views with
+a whole line beside partial ones. Served write tools stay at 31. The six environments compare exactly as in the table
+above, step for step. The gates passed again.

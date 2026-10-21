@@ -558,13 +558,21 @@ export const missingRequiredFields = (
   return view.required_fields.filter((name) => !Object.hasOwn(shown, name));
 };
 
-/** A list response rendered from `base`: its array replaced by `items` and its counters set to their number. */
+/**
+ * A list response rendered from `base`: its array replaced by `items`, and set to their number each counter that
+ * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value.
+ */
 export const renderStateList = (
   view: Pick<StateListView, "pointer" | "counters">,
   base: JsonValue,
   items: readonly JsonObject[],
-): JsonValue =>
-  view.counters.reduce(
-    (body, name) => replaceAt(body, pointerTo(name), items.length),
+): JsonValue => {
+  const listed = listItems(base, view.pointer)?.length;
+  return view.counters.reduce(
+    (body, name) =>
+      at(base, pointerTo(name)) === listed
+        ? replaceAt(body, pointerTo(name), items.length)
+        : body,
     replaceAt(base, view.pointer, [...items]),
   );
+};
