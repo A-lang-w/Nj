@@ -6,6 +6,7 @@ import {
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisCancelledError,
   AnalysisArtifactChangedError,
@@ -123,6 +124,24 @@ const classifyWabtFailure = (
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
       ...(versionProbe === undefined ? {} : { diagnostics: versionProbe }),
     };
+    // Classify once before cleanup takes precedence, so the primary remains actionable.
+    const timeoutMs =
+      execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const timeout =
+      cause.reason === "timeout"
+        ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
+            ...options,
+            // The cleanup wrapper retains output once; its nested primary needs only recovery facts.
+            capturedOutput:
+              cause.cleanupFailure === null ? capturedOutput : undefined,
+            userMessage: `A WABT command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms), not the whole-inspection or MCP client deadline.`,
+            remediationAction: `${
+              timeoutMs < MAX_WASM_COMMAND_TIMEOUT_MS
+                ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_WASM_COMMAND_TIMEOUT_MS)}), or use rea inspect-wasm-artifact <path> --command-timeout-ms <milliseconds> on the CLI.`
+                : `command_timeout_ms is already at the maximum supported ${String(MAX_WASM_COMMAND_TIMEOUT_MS)} ms; no higher command deadline is supported. Report this blocker or select another suitable complete artifact with caller approval.`
+            } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. Input/output safety limits stay fixed, and detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
+          })
+        : undefined;
     if (cause.cleanupFailure !== null)
       return new ProviderCleanupError(
         WABT_PROVIDER_IDENTITY.id,
@@ -131,13 +150,15 @@ const classifyWabtFailure = (
           ...versionProbe,
           reason: cause.cleanupFailure,
           previous_error:
-            cause.reason === "output-limit"
-              ? {
-                  failure_kind: "output-limit",
-                  message: OUTPUT_LIMIT_REASON,
-                  max_output_bytes: WABT_LIMITS.outputBytes,
-                }
-              : reason,
+            timeout !== undefined
+              ? projectAnalysisError(timeout)
+              : cause.reason === "output-limit"
+                ? {
+                    failure_kind: "output-limit",
+                    message: OUTPUT_LIMIT_REASON,
+                    max_output_bytes: WABT_LIMITS.outputBytes,
+                  }
+                : reason,
           ...(capturedOutput === undefined
             ? {}
             : { captured_output: capturedOutput }),
@@ -146,19 +167,7 @@ const classifyWabtFailure = (
       );
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError("inspect_wasm_artifact", options);
-    if (cause.reason === "timeout") {
-      const timeoutMs =
-        execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
-      return new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
-        ...options,
-        userMessage: `A WABT command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms), not the whole-inspection or MCP client deadline.`,
-        remediationAction: `${
-          timeoutMs < MAX_WASM_COMMAND_TIMEOUT_MS
-            ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_WASM_COMMAND_TIMEOUT_MS)}), or use rea inspect-wasm-artifact <path> --command-timeout-ms <milliseconds> on the CLI.`
-            : `command_timeout_ms is already at the maximum supported ${String(MAX_WASM_COMMAND_TIMEOUT_MS)} ms; no higher command deadline is supported. Report this blocker or select another suitable complete artifact with caller approval.`
-        } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. Input/output safety limits stay fixed, and detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
-      });
-    }
+    if (timeout !== undefined) return timeout;
     if (phase !== "configuration" && cause.reason === "output-limit")
       return new AnalysisResourceConstraintError(
         "inspect_wasm_artifact",

@@ -5,6 +5,70 @@ import { wabtFailure } from "./WabtFailures.js";
 import { WABT_LIMITS } from "./WabtRelease.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 
+it.each(["configuration", "producer"] as const)(
+  "retains timeout recovery under %s cleanup failure without making cleanup retryable",
+  (phase) => {
+    const cause = new OwnedCommandFailure(
+      "timeout",
+      "Command deadline elapsed.",
+      null,
+      "owned stop unconfirmed",
+      undefined,
+      ["pid:owned-fixture"],
+    );
+    const failure = wabtFailure(cause, phase, "/module.wasm", {
+      commandTimeoutMs: 1234,
+    });
+    expect(failure.cause).toBe(cause);
+    const projected = projectAnalysisError(failure);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      retryable: false,
+      details: {
+        resources: ["pid:owned-fixture"],
+        diagnostics: {
+          previous_error: {
+            code: "provider_timeout",
+            details: { timeout_ms: 1234 },
+            recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
+            remediation: {
+              action: expect.stringContaining("command_timeout_ms above 1234"),
+            },
+          },
+        },
+      },
+    });
+    expect(projected.remediation.action).not.toContain("Increase");
+  },
+);
+
+it("retains timeout command output once, including when cleanup wraps its recovery", () => {
+  for (const cleanup of [null, "stop unconfirmed"]) {
+    const cause = new OwnedCommandFailure(
+      "timeout",
+      "deadline",
+      {
+        stdout: { text: "partial-owned-output", bytes: 20, observedBytes: 20 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: null,
+        signal: null,
+      },
+      cleanup,
+    );
+    const projected = projectAnalysisError(
+      wabtFailure(cause, "producer", "/module.wasm", {
+        commandTimeoutMs: 1234,
+      }),
+    );
+    expect(
+      JSON.stringify(projected).split("partial-owned-output"),
+    ).toHaveLength(2);
+    expect(projected.code).toBe(
+      cleanup === null ? "provider_timeout" : "cleanup_incomplete",
+    );
+  }
+});
+
 it.each([1234, 2_147_483_647])(
   "reports the actual %i ms command budget without an unsupported higher timer",
   (commandTimeoutMs) => {
