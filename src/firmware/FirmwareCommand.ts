@@ -225,6 +225,9 @@ export const runFirmwareCommand = async (context: {
     failure = firmwareFailure(cause, context);
   }
   const stopped = await supervisor.stop();
+  // Cleanup is an awaited part of this phase. Preserve a prior observed failure,
+  // otherwise retain an interruption that arrived while stopping owned resources.
+  failure ??= firmwarePhaseInterruption(operation, signal, context.deadline);
   const snapshot = supervisor.snapshot();
   if (stopped.status === "incomplete") {
     context.retainCleanup(supervisor);

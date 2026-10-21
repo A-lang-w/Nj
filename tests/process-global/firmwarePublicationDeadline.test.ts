@@ -8,6 +8,7 @@ import { DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS } from "../../src/domain/firmware/
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
 import { finishAnalysisCommand } from "../../src/cli/finishAnalysisCommand.js";
+import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
 import {
   firmwareFixture,
   assertFirmwareCleanup,
@@ -362,6 +363,86 @@ test.each([false, true])(
       details: { timeout_ms: 1234 },
     });
     await fixture.close();
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
+
+test.each(["analysis", "clock", "caller", "prior-failure"] as const)(
+  "retains an interruption observed during incomplete command cleanup: %s",
+  async (interruption) => {
+    const phase = phases(120_000, 54_321);
+    const advance = phaseClock();
+    const fixture = await firmwareFixture("cleanup-failure");
+    const caller = new AbortController();
+    const reason = { caller: "during owned command cleanup" };
+    const original = new AnalysisOutputError(
+      "inspect_firmware_regions",
+      "earlier command failure",
+    );
+    const stop = ProviderProcessSupervisor.prototype.stop;
+    const stopper = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "stop")
+      .mockImplementation(async function (
+        this: ProviderProcessSupervisor,
+        ...args
+      ) {
+        const stopped = await stop.apply(this, args);
+        if (interruption === "clock") advance(54_322);
+        else if (interruption === "caller") caller.abort(reason);
+        else
+          phase.analysis.abort(
+            new DOMException("during owned command cleanup", "TimeoutError"),
+          );
+        return stopped;
+      });
+    if (interruption === "prior-failure")
+      vi.spyOn(
+        ProviderProcessSupervisor.prototype,
+        "waitForOutputClose",
+      ).mockRejectedValueOnce(original);
+    const result = await fixture.service.execute(
+      "inspect_firmware_regions",
+      {
+        path: fixture.path,
+        analysis_timeout_ms: 54_321,
+      },
+      { signal: caller.signal },
+    );
+    if (result.ok) throw new Error("Expected retained command cleanup");
+    const expected =
+      interruption === "caller"
+        ? "cancelled"
+        : interruption === "prior-failure"
+          ? "unreadable_output"
+          : "provider_timeout";
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { diagnostics: { previous_error: { code: expected } } },
+    });
+    const primary = result.error.cleanupPrimary;
+    if (primary === undefined)
+      throw new Error("Expected typed cleanup primary");
+    if (interruption === "prior-failure") expect(primary).toBe(original);
+    else {
+      expect(primary._tag).toBe(
+        interruption === "caller"
+          ? "AnalysisCancelledError"
+          : "AnalysisTimeoutError",
+      );
+      if (interruption !== "caller")
+        expect(projectAnalysisError(primary).details).toMatchObject({
+          timeout_ms: 54_321,
+          diagnostics: { phase: "analysis" },
+        });
+      if (interruption === "caller") expect(primary.cause).toBe(reason);
+      if (interruption === "analysis")
+        expect(primary.cause).toBe(phase.analysis.signal.reason);
+    }
+    stopper.mockRestore();
+    fixture.restoreCleanup();
+    await fixture.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(result.error).code).toBe(expected);
     await assertFirmwareCleanup(fixture.launches);
   },
 );
