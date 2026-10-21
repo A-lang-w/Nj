@@ -12,6 +12,7 @@ import {
   isParam,
   lastSegmentValue,
   listItems,
+  missingRequiredFields,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -124,6 +125,101 @@ export const servedLine = (
   }
   return best?.line;
 };
+
+/** Modelled writes per target since its last check, with the fields each wrote (null: all). */
+export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
+
+/** The fields a write changed on an entity: a create or delete all of them (null), an update those it sent or derived. */
+type ChangedFields = readonly string[] | null;
+
+/** Whether a later write replaces an earlier one's effect: it changes the whole entity, or overwrites every field the earlier changed (an increment adds to its field instead). */
+const replaces = (
+  write: { readonly whole: boolean; readonly overwrites: ReadonlySet<string> },
+  earlier: ChangedFields | undefined,
+): boolean =>
+  earlier !== undefined &&
+  (write.whole ||
+    (earlier !== null &&
+      earlier.every((field) => write.overwrites.has(field))));
+
+/** Add a write's changed fields under a key: all of them once any write there changed the whole entity. */
+const record = (
+  map: Map<string, ChangedFields>,
+  key: string,
+  whole: boolean,
+  changed: readonly string[],
+): Map<string, ChangedFields> => {
+  const before = map.get(key);
+  return map.set(
+    key,
+    whole || before === null
+      ? null
+      : [...new Set([...(before ?? []), ...changed])],
+  );
+};
+
+/**
+ * What each write changed since the targets it touched were last checked, so a later write that replaces its effect
+ * drops it: from the entity's target, and from its collection's once no entity it changed there is left.
+ */
+export class WriteEffects {
+  /** Per entity target, the fields each tool changed there. */
+  readonly #changed = new Map<string, Map<string, ChangedFields>>();
+  /** Per collection target, the entities each tool's claim there rests on, with the fields it changed on each. */
+  readonly #members = new Map<
+    string,
+    Map<string, Map<string, ChangedFields>>
+  >();
+
+  /** Forget a checked target's writes, as the touched targets do. */
+  checked(key: string): void {
+    this.#changed.delete(key);
+    this.#members.delete(key);
+  }
+
+  supersede(
+    touched: TouchedTargets,
+    writer: string,
+    effect: {
+      readonly targets: readonly string[];
+      readonly fields?: readonly string[];
+      readonly changed?: {
+        readonly fields: readonly string[];
+        readonly accumulated: readonly string[];
+      };
+    },
+  ): void {
+    const [entity, collection] = effect.targets as [string, string?];
+    const changed = effect.changed?.fields ?? effect.fields ?? [];
+    const write = {
+      whole: effect.fields === undefined,
+      overwrites: new Set(
+        changed.filter((field) => !effect.changed?.accumulated.includes(field)),
+      ),
+    };
+    const own = this.#changed.get(entity) ?? new Map<string, ChangedFields>();
+    for (const [tool, fields] of own)
+      if (tool !== writer && replaces(write, fields)) {
+        own.delete(tool);
+        touched.get(entity)?.delete(tool);
+      }
+    this.#changed.set(entity, record(own, writer, write.whole, changed));
+    if (collection === undefined) return;
+    const byTool = this.#members.get(collection) ?? new Map();
+    for (const [tool, entities] of byTool) {
+      if (tool === writer || !replaces(write, entities.get(entity))) continue;
+      entities.delete(entity);
+      if (entities.size > 0) continue;
+      byTool.delete(tool);
+      touched.get(collection)?.delete(tool);
+    }
+    byTool.set(
+      writer,
+      record(byTool.get(writer) ?? new Map(), entity, write.whole, changed),
+    );
+    this.#members.set(collection, byTool);
+  }
+}
 
 export const entityTarget = (type: string, collection: string, id: string) =>
   `e${compositeKey([type, collection, id])}`;
@@ -250,8 +346,15 @@ export const checkItemRead = (
   if (!succeeded(record) || check.base === undefined) return undefined;
   const object =
     check.body === undefined ? undefined : at(check.body, view.pointer);
-  if (!isObject(object)) return undefined;
+  // A usable body that no longer holds the entity is not what serving answers for one it holds.
+  if (!isObject(object))
+    return check.body === undefined || entity === undefined
+      ? undefined
+      : { pass: false, targets, unheld: [] };
   if (entity === undefined) return { pass: false, targets, unheld: targets };
+  // Serving refuses an entity lacking a field every recording carried, so no read can confirm one.
+  if (missingRequiredFields(entity, view, check.volatile).length > 0)
+    return { pass: false, targets, unheld: [] };
   const shown = renderStateEntity(entity, view, check.volatile, object);
   return {
     pass: same(replaceAt(check.base, view.pointer, shown), check.body),
@@ -278,6 +381,13 @@ const listCheck = (
   check: ListBodies,
   members: readonly StateEntity[],
 ): boolean => {
+  if (
+    members.some(
+      (entity) =>
+        missingRequiredFields(entity, view, check.volatile).length > 0,
+    )
+  )
+    return false;
   const observed = new Map(
     check.items.map((item) => [scalarText(item[check.idField]) ?? "", item]),
   );
@@ -347,20 +457,17 @@ export const checkListRead = (
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
   const { body, base } = check;
-  const items = body === undefined ? undefined : listItems(body, view.pointer);
   const baseItems =
     base === undefined ? undefined : listItems(base, view.pointer);
-  if (
-    body === undefined ||
-    base === undefined ||
-    items === undefined ||
-    baseItems === undefined
-  )
+  if (body === undefined || base === undefined || baseItems === undefined)
     return undefined;
-  const bodies = { ...check, body, base, items, baseItems };
-  return check.all
+  // A usable body that no longer holds the list is not what serving answers on this line.
+  const items = listItems(body, view.pointer);
+  const bodies = { ...check, body, base, items: items ?? [], baseItems };
+  const outcome = check.all
     ? checkAllList(state, view, bodies)
     : checkRecordedList(state, view, bodies);
+  return items === undefined ? { ...outcome, pass: false } : outcome;
 };
 
 /** A document read on its checked line must equal the held document. */

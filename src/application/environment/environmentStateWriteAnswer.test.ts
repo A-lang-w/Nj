@@ -506,3 +506,90 @@ describe("missing entities after a delete", () => {
     });
   });
 });
+
+describe("values the state started with", () => {
+  it("never reuses a seeded id for a create, even after its entity is deleted first", () => {
+    const books = servedFrom();
+    books.answer("delete_books_by_id", { id: "2" });
+    books.answer("post_books", CREATE_NEW_BOOK);
+    expect(entityOf(books, "2")).toBeUndefined();
+    expect(entityOf(books, "3")?.fields).toMatchObject({ name: "New Book" });
+  });
+
+  const orgBook = (id: number, org: string, name: string): Book => ({
+    id,
+    org,
+    name,
+  });
+  /** Books under two organisations, one spelled `first` in its paths, with creates and a delete the lists confirm. */
+  const twoOrgs = (first: string, org: string) => {
+    const alpha = orgBook(1, org, "Alpha");
+    const beta = orgBook(2, "acme2", "Beta");
+    const gamma = orgBook(3, org, "Gamma");
+    const delta = orgBook(4, "acme2", "Delta");
+    const books = servedFrom([
+      ["GET", `/api/orgs/${first}/books`, [alpha]],
+      ["GET", "/api/orgs/acme2/books", [beta]],
+      ["GET", `/api/orgs/${first}/books/1`, alpha],
+      ["GET", "/api/orgs/acme2/books/2", beta],
+      ["POST", `/api/orgs/${first}/books`, gamma, 201, { name: "Gamma" }],
+      ["GET", `/api/orgs/${first}/books`, [alpha, gamma]],
+      ["POST", "/api/orgs/acme2/books", delta, 201, { name: "Delta" }],
+      ["GET", "/api/orgs/acme2/books", [beta, delta]],
+      ["DELETE", `/api/orgs/${first}/books/3`, "", 204],
+      ["GET", `/api/orgs/${first}/books`, [alpha]],
+    ]);
+    const toolOf = (method: string) =>
+      books.source.manifest.tools.find(
+        (candidate) => candidate.method === method,
+      )!;
+    const create = (value: string, name: string): string | undefined => {
+      const tool = toolOf("POST");
+      const [parent] = environmentToolArguments(tool).path.values();
+      books.answer(tool.name, { [parent!]: value, body: { name } });
+      return books.store
+        .snapshot()
+        .rea_state.entities.find((entity) => entity.fields["name"] === name)
+        ?.collection;
+    };
+    return { books, toolOf, create };
+  };
+
+  it("creates in a collection's recorded spelling after the collection empties", () => {
+    const { books, toolOf, create } = twoOrgs("my%20org1", "my org1");
+    const remove = toolOf("DELETE");
+    const [parent, id] = environmentToolArguments(remove).path.values();
+    for (const held of ["1", "3"])
+      books.answer(remove.name, { [parent!]: "my%20org1", [id!]: held });
+    expect(books.store.collectionsOf("/api/orgs/{org}/books")).not.toContain(
+      "/api/orgs/my%20org1/books",
+    );
+    expect(create("my%20org1", "Epsilon")).toBe("/api/orgs/my%20org1/books");
+  });
+
+  it("forgets the spellings of a loaded state once reset", () => {
+    const { books, create } = twoOrgs("%61cme1", "acme1");
+    const { rea_state: held } = books.store.snapshot();
+    // A loaded state spells the first organisation plainly; the Evidence's state spells it encoded.
+    expect(
+      books.store.replace({
+        rea_state: {
+          version: held.version,
+          // Moved to another spelling, the entity cites none of the Evidence's records.
+          entities: held.entities.map((entity) =>
+            entity.collection.includes("%61cme1")
+              ? {
+                  ...entity,
+                  collection: entity.collection.replace("%61cme1", "acme1"),
+                  record_ordinals: [],
+                }
+              : entity,
+          ),
+          documents: held.documents,
+        },
+      }).ok,
+    ).toBe(true);
+    books.store.reset();
+    expect(create("acme1", "Epsilon")).toBe("/api/orgs/%61cme1/books");
+  });
+});
