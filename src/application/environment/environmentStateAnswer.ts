@@ -4,7 +4,6 @@ import {
   allLines,
   listItems,
   listsAll,
-  pageSize,
   missingRequiredFields,
   renderStateEntity,
   renderStateList,
@@ -17,6 +16,7 @@ import {
   type StateListView,
   type StateView,
 } from "../../domain/analysisView/environmentStateRules.js";
+import { pageSize } from "../../domain/analysisView/environmentStatePaging.js";
 import { isAbsence } from "../../domain/analysisView/environmentStateWriteChecks.js";
 import {
   evaluateQuery,

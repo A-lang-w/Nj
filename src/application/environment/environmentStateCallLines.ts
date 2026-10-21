@@ -1,10 +1,10 @@
 import {
   allLines,
   collectionPathOf,
-  pagesOnly,
   segmentsOf,
   type StateListView,
 } from "../../domain/analysisView/environmentStateRules.js";
+import { pagesOnly } from "../../domain/analysisView/environmentStatePaging.js";
 import {
   pathValueMatches,
   selectReplayExchange,

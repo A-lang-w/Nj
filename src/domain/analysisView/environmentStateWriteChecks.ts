@@ -9,7 +9,6 @@ import {
   listItems,
   listsAll,
   missingRequiredFields,
-  pageSize,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -23,6 +22,7 @@ import {
   type StateRecordFacts,
   segmentsOf,
 } from "./environmentStateRules.js";
+import { pageSize } from "./environmentStatePaging.js";
 import {
   answerQuery,
   queryValues,

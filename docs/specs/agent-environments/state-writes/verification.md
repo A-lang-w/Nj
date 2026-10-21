@@ -297,3 +297,25 @@ A twelfth round settled four findings Greptile raised on the list-lines branch a
 
 Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
 applies all 31 served write tools, and the gates passed again.
+
+A thirteenth round settled seven findings Greptile raised on this branch, the fidelity branch and the list-lines branch:
+
+- a passing read that shows nothing of a write leaves it for a later check, instead of clearing it;
+- a read begun while a write to an unknown entity still ran neither checks nor shows the entity again;
+- a later create whose sequence fields do not follow the learned sequence refuses the plan;
+- a document replacement below the root overwrites only what it replaced;
+- a built document plan writes later calls at its own object, even one sharing no member with the document;
+- an update or delete finds its entity as an item read does, percent-decoded spellings included;
+- a `_start`–`_end` range bounds a page as `limit` does, in serving and in the gate.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.
+
+A fourteenth round settled two findings Greptile raised on the list-queries branch against this branch's code:
+
+- the type's identity field never becomes a constant: an update whose id member the application ignored no longer
+  writes the exemplar's id into the entity another call names;
+- a page size of zero bounds nothing, so a whole line recorded with `limit=0` answers from the state.
+
+Both tests fail on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke applies
+all 31 served write tools, and the gates passed again.

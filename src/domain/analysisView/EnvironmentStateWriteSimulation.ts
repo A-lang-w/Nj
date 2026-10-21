@@ -5,7 +5,6 @@ import {
   isStateWrite,
   listsAll,
   normalizedPath,
-  type StateDocument,
   type JsonObject,
   type StateEntity,
   type StateRecordFacts,
@@ -36,22 +35,24 @@ import {
 } from "./environmentStateCheckedLines.js";
 import {
   exercisedBy,
+  forgetChecked,
   runningAt,
   shownFields,
+  shownWrites,
   touchTarget,
   WriteEffects,
   type PendingTargets,
   type TouchedTargets,
 } from "./environmentStateWriteAttribution.js";
 import { applyCreate } from "./environmentStateWriteCreate.js";
+import { applyDocument } from "./environmentStateWriteDocument.js";
 import {
   applyDelete,
-  applyDocument,
   applyUpdate,
   type EffectContext,
   type EffectResult,
   type WriteDraft,
-  type WriteIo,
+  type WriteSimulationInput,
   type WriteStep,
 } from "./environmentStateWriteEffects.js";
 import {
@@ -62,19 +63,6 @@ import {
 } from "./environmentStateWriteRules.js";
 import { WriteTaint } from "./environmentStateWriteTaint.js";
 import { writeVerdict } from "./environmentStateWriteVerdict.js";
-
-/** What the write gate reads: the manifest tools, the timeline, the read views and the initial state. */
-export interface WriteSimulationInput {
-  readonly tools: readonly StateToolFacts[];
-  readonly records: readonly StateRecordFacts[];
-  readonly timed: boolean;
-  readonly views: ReadonlyMap<string, StateView>;
-  readonly types: readonly StateType[];
-  readonly entities: readonly StateEntity[];
-  readonly documents: readonly StateDocument[];
-  readonly volatileOf: (type: string) => ReadonlySet<string>;
-  readonly io: WriteIo;
-}
 
 const APPLY = {
   create: applyCreate,
@@ -158,6 +146,7 @@ export class EnvironmentStateWriteSimulation {
         sideEffect: false,
         calls: 0,
         updates: [],
+        sequences: new Map(),
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));
@@ -197,6 +186,8 @@ export class EnvironmentStateWriteSimulation {
         this.#taint.unknown(type, collection, id),
       initialDocument: (tool) =>
         this.#input.documents.find((document) => document.tool === tool),
+      startedWith: (type) =>
+        this.#input.entities.filter((entity) => entity.type === type),
     };
   }
 
@@ -295,6 +286,9 @@ export class EnvironmentStateWriteSimulation {
     if (view.shape !== "item") return false;
     const { collection, id } = itemTarget(this.#state, view.type, record);
     if (!this.#taint.unknown(view.type, collection, id)) return false;
+    // A read begun while a modelled write to the entity still ran may show either state, so it neither checks nor shows it.
+    const target = entityTarget(view.type, collection, id);
+    if (runningAt(this.#touchedSince, target, record.start)) return true;
     const entity = this.#state.entity(view.type, collection, id);
     // A recorded absence of an entity the state no longer holds is still a check of its delete.
     if (entity === undefined) {
@@ -376,18 +370,25 @@ export class EnvironmentStateWriteSimulation {
     const pass =
       outcome.pass ||
       (view.shape === "list" && this.#retryInsert(view, record, exercised));
-    if (pass) this.#confirm(view, record, keys, exercised);
-    else if (this.#interfered(keys)) {
+    const unseen = pass
+      ? this.#confirm(view, record, keys, exercised)
+      : undefined;
+    if (!pass) {
+      if (!this.#interfered(keys))
+        this.#mismatch({ record, index, keys, exercised, view });
       // An unmodelled write since these writes may explain the difference: check their own members only.
-      if (view.shape === "item") this.#checkMembers(view, record);
+      else if (view.shape === "item") this.#checkMembers(view, record);
       else for (const key of keys) this.#taint.fail(key);
-    } else this.#mismatch({ record, index, keys, exercised, view });
-    if (!pass && view.shape === "item") this.#adopt(view, record);
+      if (view.shape === "item") this.#adopt(view, record);
+    }
+    const pending = {
+      touched: this.#touched,
+      since: this.#touchedSince,
+      effects: this.#effects,
+    };
     for (const key of keys) {
-      this.#touched.delete(key);
-      this.#effects.checked(key);
-      this.#touchedSince.delete(key);
       this.#lastCheck.set(key, index);
+      forgetChecked(pending, key, unseen?.get(key));
     }
   }
 
@@ -403,22 +404,23 @@ export class EnvironmentStateWriteSimulation {
       this.#drafts.get(name)!.contradictedBy ??= record.ordinal;
   }
 
-  /** A passing read confirms the writes it exercised that it shows something of. */
+  /** A passing read confirms the writes it exercised that it shows something of, and names, per target, those it shows nothing of. */
   #confirm(
     view: StateView,
     record: StateRecordFacts,
     keys: readonly string[],
     exercised: ReadonlySet<string>,
-  ): void {
-    const shown = shownFields(view, this.#input.volatileOf);
-    for (const name of exercised) {
-      const shows = (key: string) =>
-        this.#touched.get(key)?.has(name) === true &&
-        this.#effects.shows(name, key, shown);
-      if (!keys.some(shows)) continue;
+  ): Map<string, Set<string>> {
+    const shown = shownWrites(this.#touched, this.#effects, {
+      keys,
+      exercised,
+      fields: shownFields(view, this.#input.volatileOf),
+    });
+    for (const name of shown.confirmed) {
       this.#drafts.get(name)!.confirmed.push(record.ordinal);
       if (view.shape === "list") this.#placed.add(name);
     }
+    return shown.unseen;
   }
 
   #unmodelled(path: string, index: number): void {

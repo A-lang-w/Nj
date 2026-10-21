@@ -102,7 +102,10 @@ naming the exemplar's collection.
 **Updates.** Body members follow the same accepted and not-accepted rules,
 except that a member the application stored differently is accepted only with
 the value a recorded call sent it with, and then stores the value that call
-recorded (its `constant` rule carries it).
+recorded (its `constant` rule carries it). The type's identity field never
+takes a rule: sent as the path's id it is the identity member, sent as another
+value the application ignored it is accepted with that value and stores
+nothing, and a stored id that changed is `unexplained-change`.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
@@ -123,7 +126,7 @@ response, with the entity re-rendered when the response carries it.
 
 **Documents.** A document write merges the body's members (replaces them, for
 `PUT`) into the document object that holds most of them: the root or one
-member. Document reads answer only on their recorded line, so a write is
+member. Later calls write at the exemplar's object. Document reads answer only on their recorded line, so a write is
 served only at the path the state holds the document at, and the gate treats a
 recorded write at another path as an unmodelled write. A recorded write whose
 body serving would refuse (a member of another JSON type than the document
@@ -156,7 +159,10 @@ the initial state.
 **Writes.** Only a 2xx write is modelled. A modelled write applies its effect, using the values it recorded
 for generated fields and the stored values for fields it transformed. A
 modelled write whose call the plan does not explain brings its entity to the
-recorded outcome instead, without attribution.
+recorded outcome instead, without attribution. A later create whose sequence
+fields hold another value than serving would generate makes the plan
+`unexplained-change`; identities are left to the id mapping. An update or
+delete names its entity as an item read does (below).
 
 Any other write that may have changed state, including a redirected or
 unanswered one, is unmodelled, and what it may have changed
@@ -188,12 +194,13 @@ from the state:
   different values is never chosen, since no call's arguments can name it; one
   repeating a name with one value is, as a call naming it matches both. A list
   is compared as served from the collection of that line. A read on a page
-  (`limit`, `size`, `per_page` and the like) of a whole list checks nothing
-  once the collection holds more entities than the page, which serving then
-  answers from its recording.
+  (`limit`, `size`, `per_page` and the like, a size of zero bounding nothing, or a `_start`–`_end` range) of a
+  whole list checks nothing once the collection holds more entities than the
+  page, which serving then answers from its recording.
 - A read made while a modelled write to its entity or collection was still
   running, starting before that write ended, checks nothing: it may show the
-  state before or after the write.
+  state before or after the write. Nor does such a read show an unknown entity
+  again.
 - A read a write's effect was learned from checks nothing of that write, but
   still contradicts the other writes it exercises.
 
@@ -215,13 +222,15 @@ refuses to answer with.
   An update's effect is the fields it sent or changed, derived ones included.
   A later update overwrites the fields it sets (an increment adds to its field
   instead), a recorded outcome every field, and a create or delete the whole
-  entity. A document write's effect is the members it merged, or the whole
-  document when it replaces it. A write with nothing left on an entity no
+  entity. A document write's effect is the members it merged at its
+  object, or everything under the object it replaces, the whole document at the
+  root. A write with nothing left on an entity no
   longer counts there, nor in a collection where no entity it changed keeps any
   of its effect. A mismatch contradicts them. A pass confirms those it shows
   something of: a create's or delete's membership, or a changed field the
   read's view shows and does not treat as volatile; a read that shows none of
-  an update's changes confirms nothing of it.
+  an update's changes confirms nothing of it, and leaves it for a later check
+  of that entity or collection.
 - A mismatch after an unmodelled write that followed those writes is checked
   only on the members they sent: such a write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,

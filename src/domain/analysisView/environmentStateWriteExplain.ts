@@ -77,7 +77,7 @@ const isClockNear = (
 };
 
 /** One more than the largest integer the members hold in the field, or undefined when none holds one. */
-const nextInteger = (
+export const nextInteger = (
   members: readonly JsonObject[],
   field: string,
 ): number | undefined => {
@@ -280,10 +280,14 @@ export const explainUpdate = (
   const { body } = evidence.call;
   const rules: FieldRule[] = [];
   const echoed = new Set<string>();
+  const unexplained: string[] = [];
   let identity: string | null = null;
   for (const [member, sent] of Object.entries(body)) {
-    if (member === evidence.idField && scalarText(sent) === evidence.id) {
-      identity = member;
+    // The identity is the entity's key: the path's id repeated is the identity member; another value is one the application ignored, or used to re-key the entity, which no rule models.
+    if (member === evidence.idField) {
+      if (scalarText(sent) === evidence.id) identity = member;
+      else if (!same(evidence.after[member], evidence.before[member]))
+        unexplained.push(member);
       continue;
     }
     if (!Object.hasOwn(evidence.after, member)) continue;
@@ -297,7 +301,6 @@ export const explainUpdate = (
         value: evidence.after[member]!,
       });
   }
-  const unexplained: string[] = [];
   for (const field of Object.keys(evidence.after)) {
     if (
       Object.hasOwn(body, field) ||

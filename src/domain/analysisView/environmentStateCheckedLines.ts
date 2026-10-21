@@ -8,12 +8,12 @@ import {
   decodedSegment,
   isParam,
   listsAll,
-  pagesOnly,
   segmentsOf,
   type StateRecordFacts,
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { pagesOnly } from "./environmentStatePaging.js";
 
 /** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name with another value, which no call's arguments can carry. */
 const queryKey = (query: string | undefined): string | undefined => {
