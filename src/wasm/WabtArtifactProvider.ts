@@ -33,6 +33,7 @@ import { createEvidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   wasmArtifactSchema,
+  DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   type InspectWasmArtifactInput,
 } from "../domain/wasm/wasmArtifact.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -111,6 +112,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
     let result: Result<WasmArtifactExecution, AnalysisError>;
     let capturedOutput: AnalysisCapturedOutput | undefined;
     let versionProbe: WabtVersionProbe | undefined;
+    const commandTimeoutMs =
+      input.command_timeout_ms ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
     try {
       if (options?.signal?.aborted) throw new AnalysisCancelledError(OPERATION);
       const directory = this.environment.REA_WABT_BIN_DIRECTORY ?? "";
@@ -188,7 +191,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             hostEnvironment: this.environment,
           },
           {
-            timeoutMs: WABT_LIMITS.timeoutMs,
+            timeoutMs: commandTimeoutMs,
             diagnosticBytes: WABT_LIMITS.outputBytes,
             acceptNonZeroExit,
           },
@@ -405,7 +408,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         "Imports and exports retain exact top-level WABT WAT forms. Names remain escaped producer text; unescaped objdump display names are not parsed as unambiguous identifiers.",
         "JavaScript references are AST-observed static literals only. Candidate matches are associations, not proven data flow, URL-to-file identity or runtime loading. Computed references and aliases are not resolved.",
         "No target execution or implicit fetch. WABT tools are trusted caller-supplied executables; SHA-256 identifies their bytes, not publisher authenticity. No OS memory sandbox is claimed.",
-        "Each subprocess has a 30-second deadline and 32 MiB combined output budget. Oversized output fails instead of producing truncated success.",
+        `Each WABT command has a ${String(commandTimeoutMs)} ms deadline and a fixed 32 MiB combined output budget. The deadline is not a whole-inspection budget. Oversized output fails instead of producing truncated success.`,
       ];
       const report = wasmArtifactSchema.parse({
         artifact,
@@ -426,7 +429,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           release: WABT_VERSION,
           source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48",
           commands,
-          timeout_ms: WABT_LIMITS.timeoutMs,
+          timeout_ms: commandTimeoutMs,
           output_budget_bytes: WABT_LIMITS.outputBytes,
         },
         candidates,
@@ -447,7 +450,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = wabtFailure(cause, phase, input.path, versionProbe);
+      const failure = wabtFailure(cause, phase, input.path, {
+        commandTimeoutMs,
+        ...(versionProbe === undefined ? {} : { versionProbe }),
+      });
       runtime?.retainCommandFailure(cause, failure, this.#resources);
       result = err(
         failure instanceof AnalysisOutputError &&

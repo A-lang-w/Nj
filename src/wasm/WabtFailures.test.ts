@@ -5,6 +5,34 @@ import { wabtFailure } from "./WabtFailures.js";
 import { WABT_LIMITS } from "./WabtRelease.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 
+it.each([1234, 2_147_483_647])(
+  "reports the actual %i ms command budget without an unsupported higher timer",
+  (commandTimeoutMs) => {
+    const projected = projectAnalysisError(
+      wabtFailure(
+        new OwnedCommandFailure("timeout", "deadline"),
+        "producer",
+        "/module.wasm",
+        { commandTimeoutMs },
+      ),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      details: { timeout_ms: commandTimeoutMs },
+      recovery: { kind: "inspect_timeout_state", timeout_ms: commandTimeoutMs },
+    });
+    expect(projected.remediation.action).toContain("no server restart");
+    expect(projected.remediation.action).toContain("cleanup");
+    if (commandTimeoutMs === 2_147_483_647) {
+      expect(projected.remediation.action).toContain(
+        "no higher command deadline",
+      );
+      expect(projected.remediation.action).not.toContain("Increase");
+    } else
+      expect(projected.remediation.action).toContain("--command-timeout-ms");
+  },
+);
+
 it.each([
   { reason: "timeout" as const, cleanup: null, code: "provider_timeout" },
   { reason: "cancelled" as const, cleanup: null, code: "cancelled" },
@@ -28,12 +56,10 @@ it.each([
       tool: "wasm2wat",
       expected_version: "1.0.42" as const,
     };
-    const failure = wabtFailure(
-      cause,
-      "configuration",
-      "/selected.wasm",
-      probe,
-    );
+    const failure = wabtFailure(cause, "configuration", "/selected.wasm", {
+      commandTimeoutMs: 1234,
+      versionProbe: probe,
+    });
     const original = wabtFailure(cause, "configuration", "/selected.wasm");
     expect(failure._tag).toBe(original._tag);
     expect(failure.cleanupIncomplete).toBe(original.cleanupIncomplete);

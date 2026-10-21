@@ -118,6 +118,9 @@ try {
               entrypoint,
               "inspect-wasm-artifact",
               input.path,
+              ...(input.command_timeout_ms === undefined
+                ? []
+                : ["--command-timeout-ms", String(input.command_timeout_ms)]),
               ...input.glue_paths.flatMap((path) => ["--glue_paths", path]),
               ...input.candidate_paths.flatMap((path) => [
                 "--candidate_paths",
@@ -238,7 +241,12 @@ try {
     );
     for (const [index, gluePath] of gluePaths.entries())
       await writeFile(gluePath, glueSources[index]);
-    const input = { path, glue_paths: gluePaths, candidate_paths: [candidate] };
+    const input = {
+      path,
+      glue_paths: gluePaths,
+      candidate_paths: [candidate],
+      ...(index === 0 ? { command_timeout_ms: 60_000 } : {}),
+    };
     assert.ok(ajv.validate(advertised.inputSchema, input));
     const cliValue = await inspectCli(input);
     assert.equal(cliValue.category, undefined, JSON.stringify(cliValue));
@@ -256,6 +264,11 @@ try {
     assert.equal(cli.evidence_id, mcp.evidence_id);
     assert.deepEqual(cli, mcp);
     const report = mcp.normalized_result;
+    assert.equal(
+      report.tool_profile.timeout_ms,
+      input.command_timeout_ms ?? 30_000,
+    );
+    assert.equal(mcp.parameters.command_timeout_ms, input.command_timeout_ms);
     assert.equal(report.artifact.sha256, sha256(original));
     assert.equal(report.artifact.bytes, original.length);
     assert.equal(report.wat.text, wat);

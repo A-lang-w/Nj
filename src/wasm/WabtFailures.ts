@@ -20,6 +20,10 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
 import {
+  DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+  MAX_WASM_COMMAND_TIMEOUT_MS,
+} from "../domain/wasm/wasmArtifact.js";
+import {
   WABT_LIMITS,
   WABT_PROVIDER_IDENTITY,
   WABT_VERSION,
@@ -33,6 +37,11 @@ export type WabtVersionProbe = {
   readonly executable_path: string;
   readonly tool: string;
   readonly expected_version: typeof WABT_VERSION;
+};
+
+type WabtFailureContext = {
+  readonly commandTimeoutMs: number;
+  readonly versionProbe?: WabtVersionProbe;
 };
 
 /** Configuration is captured by the server; fixing files and changing its environment are distinct repairs. */
@@ -67,9 +76,9 @@ export const wabtFailure = (
   cause: unknown,
   phase: "configuration" | "artifact" | "producer",
   path: string,
-  versionProbe?: WabtVersionProbe,
+  execution?: WabtFailureContext,
 ): AnalysisError => {
-  const failure = classifyWabtFailure(cause, phase, path, versionProbe);
+  const failure = classifyWabtFailure(cause, phase, path, execution);
   bindArtifactFileCleanup(cause, failure);
   return failure;
 };
@@ -78,8 +87,9 @@ const classifyWabtFailure = (
   cause: unknown,
   phase: "configuration" | "artifact" | "producer",
   path: string,
-  versionProbe: WabtVersionProbe | undefined,
+  execution: WabtFailureContext | undefined,
 ): AnalysisError => {
+  const versionProbe = execution?.versionProbe;
   if (cause instanceof AnalysisError) return cause;
   const artifactCleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
@@ -136,12 +146,19 @@ const classifyWabtFailure = (
       );
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError("inspect_wasm_artifact", options);
-    if (cause.reason === "timeout")
-      return new AnalysisTimeoutError(
-        "inspect_wasm_artifact",
-        WABT_LIMITS.timeoutMs,
-        options,
-      );
+    if (cause.reason === "timeout") {
+      const timeoutMs =
+        execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+      return new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
+        ...options,
+        userMessage: `A WABT command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms), not the whole-inspection or MCP client deadline.`,
+        remediationAction: `${
+          timeoutMs < MAX_WASM_COMMAND_TIMEOUT_MS
+            ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_WASM_COMMAND_TIMEOUT_MS)}), or use rea inspect-wasm-artifact <path> --command-timeout-ms <milliseconds> on the CLI.`
+            : `command_timeout_ms is already at the maximum supported ${String(MAX_WASM_COMMAND_TIMEOUT_MS)} ms; no higher command deadline is supported. Report this blocker or select another suitable complete artifact with caller approval.`
+        } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. Input/output safety limits stay fixed, and detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
+      });
+    }
     if (phase !== "configuration" && cause.reason === "output-limit")
       return new AnalysisResourceConstraintError(
         "inspect_wasm_artifact",
