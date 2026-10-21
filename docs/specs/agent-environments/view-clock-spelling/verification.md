@@ -1,6 +1,6 @@
 # Verification
 
-Executed on macOS with Node v22.23.1 on this branch over the write-plan branch's head `264ce410`. The pilot recordings
+Executed on macOS with Node v22.23.1 on this branch with the write-plan branch's head `45a5c8b9` merged in. The pilot recordings
 were made against live applications on six disposable Linux VMs, each restored from a snapshot first.
 
 ## Gates
@@ -8,8 +8,8 @@ were made against live applications on six disposable Linux VMs, each restored f
 - `npm run build:cached`, `npm run check:fast` (typecheck and lint, no warnings in the changed files),
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
-- `npm run jscpd`: 3.44% duplicated lines over 3752 files.
-- `npx vitest run --project domain --project services`: 7735 passed, 5 pre-existing skips.
+- `npm run jscpd`: 3.43% duplicated lines over 3753 files.
+- `npx vitest run --project domain --project services`: 7751 passed, 5 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 79 passed.
@@ -21,7 +21,7 @@ were made against live applications on six disposable Linux VMs, each restored f
 - Serving: a served create lists with the list's spelling and reads back with the item's.
 - Unit: re-spelling keeps digits past milliseconds for an equal offset, and formats another offset or an epoch spelling
   from the instant.
-- The gate and serving tests fail on `264ce410`.
+- The gate and serving tests fail on `264ce410`, the write-plan head they were written on.
 
 ## Pilot recordings
 
