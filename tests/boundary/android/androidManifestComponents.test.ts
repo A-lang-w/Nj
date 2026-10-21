@@ -451,6 +451,24 @@ it("preserves exact activity-alias targets and marks malformed references unknow
   );
 });
 
+it("does not expand a package-relative alias target beyond prior name evidence", () => {
+  const packageName = "p".repeat(64 * 1024);
+  const inventory = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${packageName}"><application><activity android:name="org.example.Standalone"/><activity-alias android:name=".Alias" android:targetActivity=".Target"/></application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]?.name).toBe("org.example.Standalone");
+  expect(inventory.items[1]).toMatchObject({
+    declared_name: ".Alias",
+    target_activity: ".Target",
+  });
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "do not match a preceding activity declaration",
+  );
+});
+
 it("does not call resource and manifest placeholder names resolved identities", () => {
   const inventory = parseAndroidManifestComponents(
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="@string/component_class"/><service android:name="${applicationId}.Worker"/></application></manifest>',

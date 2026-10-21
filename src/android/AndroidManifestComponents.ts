@@ -330,6 +330,7 @@ export const parseAndroidManifestComponents = (
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
     const precedingActivityNames = new Set<string>();
+    let maxPrecedingActivityNameBytes = 0;
     const declaredApplicationPermission = androidAttribute(
       element,
       "permission",
@@ -408,8 +409,13 @@ export const parseAndroidManifestComponents = (
         else if (!nameFits) unresolvedNames += 1;
         else nameBudget -= resolvedBytes;
       }
-      if (component.nodeName === "activity" && nameFits)
+      if (component.nodeName === "activity" && nameFits) {
         precedingActivityNames.add(name);
+        maxPrecedingActivityNameBytes = Math.max(
+          maxPrecedingActivityNameBytes,
+          resolvedBytes,
+        );
+      }
       let authorities: readonly string[] | null = null;
       if (component.nodeName === "provider") {
         if (
@@ -511,12 +517,25 @@ export const parseAndroidManifestComponents = (
             !targetInvalid &&
             !targetUnresolved &&
             (!targetNeedsPackage || targetPackageKnown);
-          const targetIdentity =
-            targetNeedsPackage && targetPackageKnown
-              ? resolveAndroidComponentName(packageName, targetName)
-              : targetName;
-          if (!targetResolved || !precedingActivityNames.has(targetIdentity))
-            unresolvedTargetActivities += 1;
+          const targetNameBytes = Buffer.byteLength(targetName);
+          const targetIdentityBytes = targetNeedsPackage
+            ? packageNameBytes +
+              (targetName.startsWith(".") ? 0 : 1) +
+              targetNameBytes
+            : targetNameBytes;
+          // Skip package expansion when no retained preceding activity could
+          // possibly have the target's byte length.
+          const targetCanMatchPreceding =
+            targetResolved &&
+            targetIdentityBytes <= maxPrecedingActivityNameBytes;
+          const targetMatchesPreceding =
+            targetCanMatchPreceding &&
+            precedingActivityNames.has(
+              targetNeedsPackage
+                ? resolveAndroidComponentName(packageName, targetName)
+                : targetName,
+            );
+          if (!targetMatchesPreceding) unresolvedTargetActivities += 1;
         }
       }
       const exportedLiteral =
