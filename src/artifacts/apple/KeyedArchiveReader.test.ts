@@ -569,9 +569,13 @@ describe("binary plist date object region", () => {
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "strict" }),
     ).toThrow(new TypeError("binary plist date object is truncated"));
     // Decoder bounds extend other objects to the end of the file. The date
-    // payload still has to end at the offset table.
+    // payload still has to end at the offset table. The keyed-archive reader
+    // uses those bounds and must refuse the same payload.
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
+    ).toThrow(new TypeError("binary plist date object is truncated"));
+    expect(() =>
+      decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
     ).toThrow(new TypeError("binary plist date object is truncated"));
   });
 
@@ -591,6 +595,9 @@ describe("binary plist date object region", () => {
     bytes.writeBigUInt64BE(8n, trailer + 24);
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
+    ).toThrow(new TypeError("binary plist date object is truncated"));
+    expect(() =>
+      decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
     ).toThrow(new TypeError("binary plist date object is truncated"));
   });
 });
