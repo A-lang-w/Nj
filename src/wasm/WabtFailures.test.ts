@@ -4,6 +4,33 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { wabtFailure } from "./WabtFailures.js";
 import { WABT_LIMITS } from "./WabtRelease.js";
 
+it.each([
+  { code: "EACCES", action: "read and execute access" },
+  {
+    code: "ENOENT",
+    action: "contains wasm-validate, wasm-objdump and wasm2wat",
+  },
+  { code: "ENOTDIR", action: "directory, not an individual executable" },
+])(
+  "explains $code configuration recovery without blaming the WASM input",
+  ({ code, action }) => {
+    const failure = wabtFailure(
+      Object.assign(new Error(`tool admission failed: ${code}`), { code }),
+      "configuration",
+      "/selected.wasm",
+    );
+    const projected = projectAnalysisError(failure);
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      retryable: false,
+      remediation: { action: expect.stringContaining(action) },
+    });
+    expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
+    expect(projected.remediation.action).toContain("restart");
+    expect(projected.remediation.action).toContain("Do not repeat");
+  },
+);
+
 it.each([false, true])(
   "preserves the file-size boundary with cleanup=%s when an input exceeds its fixed allowance",
   (cleanup) => {

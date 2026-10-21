@@ -39,8 +39,15 @@ import { err, ok, type Result } from "../domain/result.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { WabtRuntime } from "./WabtRuntime.js";
-import { WABT_PROVIDER_IDENTITY, WABT_LIMITS } from "./WabtRelease.js";
-import { wabtFailure } from "./WabtFailures.js";
+import {
+  WABT_PROVIDER_IDENTITY,
+  WABT_LIMITS,
+  WABT_VERSION,
+} from "./WabtRelease.js";
+import {
+  wabtFailure,
+  wabtConfigurationRecoveryAction,
+} from "./WabtFailures.js";
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
@@ -208,12 +215,31 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       for (const command of commands) {
         const version = await execute(command, ["--version"]);
         if (
-          version.stdout.text.trim() !== "1.0.42" ||
+          version.stdout.text.trim() !== WABT_VERSION ||
           version.stderr.text !== ""
-        )
-          throw new Error(
-            `Unsupported ${command.tool} version banner; expected 1.0.42.`,
+        ) {
+          const reason = `Unsupported ${command.tool} version banner; expected ${WABT_VERSION}.`;
+          throw new AnalysisCapabilityUnavailableError(
+            WABT_PROVIDER_IDENTITY.id,
+            OPERATION,
+            reason,
+            {
+              userMessage: reason,
+              diagnostics: {
+                configuration_key: "REA_WABT_BIN_DIRECTORY",
+                executable_path: command.path,
+                tool: command.tool,
+                expected_version: WABT_VERSION,
+              },
+              capturedOutput: {
+                stdout: version.stdout.text,
+                stderr: version.stderr.text,
+                truncated: version.diagnosticTruncated === true,
+              },
+              remediationAction: wabtConfigurationRecoveryAction(),
+            },
           );
+        }
         command.version_banner = version.stdout.text;
       }
       phase = "artifact";
@@ -300,7 +326,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                   validation: "rejected-by-selected-profile",
                   tool_profile: {
                     source: "https://github.com/WebAssembly/wabt",
-                    release: "1.0.42",
+                    release: WABT_VERSION,
                     source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48",
                     commands,
                   },
@@ -393,7 +419,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         },
         tool_profile: {
           source: "https://github.com/WebAssembly/wabt",
-          release: "1.0.42",
+          release: WABT_VERSION,
           source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48",
           commands,
           timeout_ms: WABT_LIMITS.timeoutMs,
