@@ -436,7 +436,7 @@ try {
       );
       assert.equal(
         failed.normalized_result.tool_profile.output_budget_bytes,
-        32 * 1024 * 1024,
+        128 * 1024 * 1024,
       );
       assert.equal(
         failed.normalized_result.validation,
