@@ -1,7 +1,7 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`7bf15cbd23d085ff584c4ca160a2eeb985fc3080`, tree `139de4f625371d231d54f6c6b4052cac6c001946`,
+`6363f40a106b472db39280918f5bfd48088134be`, tree `3a7613938e61b5d5626b2bc88950061945fa459f`,
 on main `3dbe314ada9f6dcc994ca4655dc0faf082503847`. Current public interface, worker fixtures,
 SDK, Chromium and the complete fresh 67-worker corpus measurements use this
 runtime. Verification-only
@@ -25,8 +25,8 @@ conditional classifier replay are used for this qualification.
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
 | shadcn-ui        |      38 | 2,465,078 |             36 |                37 |              18 |
 
-At the current runtime, the complete 67-worker task took **294.386 s elapsed**,
-**432.469 CPU s** and **579,248,128 bytes** sampled
+At the current runtime, the complete 67-worker task took **201.783 s elapsed**,
+**301.510 CPU s** and **514,576,384 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -47,8 +47,8 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **12.485 s elapsed**,
-**15.489 CPU s** and **2,189,942,784 bytes** sampled
+cleanup succeeded. This task took **12.057 s elapsed**,
+**15.526 CPU s** and **2,184,130,560 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
 The earlier c86 worker corpus, 55 filename-classifier replay and 658 narrow
@@ -69,11 +69,11 @@ performed three historical view reads and exported complete Evidence.
 
 | Completed workflow                                              | Complete analysis, then route view | Route view in analysis call |
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
-| Estimated tokens: used input declarations and all calls/replies |                          1,938,134 |                      58,842 |
-| Estimated tokens: entire catalog and all calls/replies          |                          3,029,607 |                   1,150,315 |
-| Elapsed seconds, including startup and cleanup                  |                             17.495 |                      14.213 |
-| CPU seconds, process family                                     |                             22.410 |                      18.806 |
-| Peak sampled process-family RSS bytes                           |                      1,472,823,296 |               1,350,627,328 |
+| Estimated tokens: used input declarations and all calls/replies |                          1,938,137 |                      58,845 |
+| Estimated tokens: entire catalog and all calls/replies          |                          3,029,610 |                   1,150,318 |
+| Elapsed seconds, including startup and cleanup                  |                             14.267 |                      12.710 |
+| CPU seconds, process family                                     |                             18.615 |                      16.632 |
+| Peak sampled process-family RSS bytes                           |                      1,611,264,000 |               1,313,144,832 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -144,7 +144,7 @@ inventory finalization, and owned worker cleanup/retry remains covered.
 
 ## Executed checks and limits
 
-**508/508 source/owner regressions** and **70/70 compiled
+**521/521 source/owner regressions** and **70/70 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
@@ -152,22 +152,25 @@ The public suite exercises exported-Evidence reads after source deletion,
 large bounded facts, source selection, retention, cancellation, SDK recovery,
 source-to-bundle integration and every advertised tool schema.
 
-Seven aliased-navigation regressions failed before the current correction
-(7/89); the review's binary-pathname example and cyclic-alias controls already
-passed. Array/query/module aliases caused actual false candidates, and stable
-scalar/pathname aliases were missed. Current source tests cover distinct use-site
-identity, initializer provenance, callable independence, mutation/shadowing,
-callee/projected namespaces and a 256-alias chain exhausting the source-work
-budget. Full/compact SDK historical views and both browser adapters verify the
-shared preparation phase.
+Seven condition-only/reference-edge regressions failed before this correction
+(7/110), while six actual-data-branch controls already passed. One owner now
+classifies which syntax edges supply navigation data. Conditional tests, unary
+and comparison/numeric operations, && guards, nonfinal sequence operands and
+computed keys do not claim independent lexical initializers. Actual conditional
+branches, returned ||/?? operands and final sequence expressions still do.
+Full/compact SDK historical views preserve a condition-only independent route
+after source deletion; both browser adapters preserve a boolean-only reference.
+The earlier callee/projection exclusions share the same edge classifier.
 
-One intermediate suite assertion incorrectly expected a route from a configuration
-already escaped to an opaque navigation call. The positive control now registers
-before escape; a separate negative preserves the escaped order and unknown result.
-The existing freshness guard was retained. Earlier intercepted-page, ancestry,
-typed-child, delivery, capacity, cleanup, cancellation, corrected-oracle and
-failed-control records remain pinned to their actual revisions. Earlier technical
-CI results do not qualify this head; latest CI/review must be checked separately.
+The prior seven aliased-navigation failures, passing binary-example/cycle
+controls, per-use identity, initializer provenance, callable independence,
+mutation/shadowing and long-chain budget checks remain covered. One earlier
+suite assertion wrongly expected stability after opaque escape; its corrected
+before-escape positive and after-escape unknown controls preserve the existing
+freshness guard. Earlier intercepted-page, ancestry, typed-child, delivery,
+capacity, cleanup, cancellation and failed-control records remain pinned to
+their actual revisions. Earlier technical CI results do not qualify this head;
+latest CI/review must be checked separately.
 
 No claim is made for complete application routes, live route execution, private
 issue samples, external cloud clients or Windows/macOS provider execution.
