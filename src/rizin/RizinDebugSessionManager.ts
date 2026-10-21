@@ -57,6 +57,8 @@ const MAX_COMMAND_FRAMES = 4096;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_LINUX_PID = 4_194_303;
+const MAX_INFERIOR_INVENTORY_CHARS = 256 * 1024;
+const MAX_INFERIOR_INVENTORY_ROWS = 1024;
 
 export const RIZIN_DEBUGGER_PROVIDER_IDENTITY = {
   id: "rizin.debugger",
@@ -193,6 +195,7 @@ interface RizinDebugSession {
   readonly inferiorTtyInode: number;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   readonly pendingInferiorPids: Set<string>;
+  inferiorInventoryOverflow: boolean;
   inferiorInventoryRowsComplete: boolean;
   confirmedDetachedInferiorIdentity: OwnedInferiorIdentity | undefined;
   completedDetachCommand:
@@ -201,6 +204,7 @@ interface RizinDebugSession {
         readonly identity: OwnedInferiorIdentity;
         readonly readbackDisproved?: true;
         readonly readbackDisprovedPids?: readonly string[];
+        readonly readbackDisprovedOverflow?: true;
       }
     | undefined;
   verifiedDetachResult: OwnedDebuggerDetachResult | undefined;
@@ -486,6 +490,7 @@ export class RizinDebugSessionManager {
       inferiorTtyInode: ttyInode,
       knownInferiorIdentities: new Map(),
       pendingInferiorPids: new Set(),
+      inferiorInventoryOverflow: false,
       inferiorInventoryRowsComplete: false,
       confirmedDetachedInferiorIdentity: undefined,
       completedDetachCommand: undefined,
@@ -493,6 +498,7 @@ export class RizinDebugSessionManager {
       inferiorInventoryComplete: false,
       inferiorStateUnknown: () => !session.inferiorInventoryComplete,
       verifyInferiorsEndedAfterExit: async () => {
+        if (session.inferiorInventoryOverflow) return false;
         if (!session.inferiorInventoryRowsComplete) return false;
         for (const pid of session.pendingInferiorPids) {
           try {
@@ -1241,6 +1247,10 @@ export class RizinDebugSessionManager {
   async #readInferiorInventory(
     session: RizinDebugSession,
   ): Promise<Array<[string, string]>> {
+    if (session.inferiorInventoryOverflow)
+      throw new Error(
+        "Rizin inferior inventory exceeded the safe identity reconciliation limit; inferior state remains unknown.",
+      );
     // A previous complete read does not certify any later inventory. Invalidate
     // it before awaiting Rizin so cleanup cannot reuse stale completeness if
     // identity resolution fails after a new PID has been observed.
@@ -1249,10 +1259,31 @@ export class RizinDebugSessionManager {
     const parsed = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
+    if (parsed.overflow) {
+      session.inferiorInventoryOverflow = true;
+      throw (
+        parsed.error ??
+        new Error(
+          "Rizin inferior inventory exceeded the safe identity reconciliation limit; inferior state remains unknown.",
+        )
+      );
+    }
     if (parsed.error === undefined)
       session.inferiorInventoryRowsComplete = true;
     let identityFailure: unknown;
     if (parsed.error === undefined) {
+      const retainedPids = new Set([
+        ...session.knownInferiorIdentities.keys(),
+        ...session.pendingInferiorPids,
+        ...(session.completedDetachCommand?.readbackDisprovedPids ?? []),
+        ...parsed.rows.map(([, pid]) => pid),
+      ]);
+      if (retainedPids.size > MAX_INFERIOR_INVENTORY_ROWS) {
+        session.inferiorInventoryOverflow = true;
+        throw new Error(
+          "Rizin inferior inventory exceeded the safe identity reconciliation limit; inferior state remains unknown.",
+        );
+      }
       const pendingAtStart = [...session.pendingInferiorPids];
       const observedPids = new Set(parsed.rows.map(([, pid]) => pid));
       // Retain every reported PID before reconciling previously pending
@@ -1291,6 +1322,18 @@ export class RizinDebugSessionManager {
     // before surfacing its sticky parse error. A retry must account for these
     // targets even if its inventory omits them. Do not stop at the first
     // identity lookup failure either.
+    const retainedPids = new Set([
+      ...session.knownInferiorIdentities.keys(),
+      ...session.pendingInferiorPids,
+      ...(session.completedDetachCommand?.readbackDisprovedPids ?? []),
+      ...parsed.observedPids,
+    ]);
+    if (retainedPids.size > MAX_INFERIOR_INVENTORY_ROWS) {
+      session.inferiorInventoryOverflow = true;
+      throw new Error(
+        "Rizin inferior inventory exceeded the safe identity reconciliation limit; inferior state remains unknown.",
+      );
+    }
     for (const pid of parsed.observedPids) {
       session.pendingInferiorPids.add(pid);
       try {
@@ -1418,8 +1461,13 @@ export class RizinDebugSessionManager {
       readonly identity: OwnedInferiorIdentity;
       readonly readbackDisproved?: true;
       readonly readbackDisprovedPids?: readonly string[];
+      readonly readbackDisprovedOverflow?: true;
     },
   ): Promise<OwnedDebuggerDetachResult> {
+    if (completed.readbackDisprovedOverflow === true)
+      throw new Error(
+        "Rizin detach readback exceeded the safe identity reconciliation limit; inferior state remains unknown.",
+      );
     const after = await this.#readInferiorInventory(session);
     const selectedRow = after.find(
       ([activeFd, activePid]) =>
@@ -1459,21 +1507,16 @@ export class RizinDebugSessionManager {
         // A reused FD or PID cannot confirm which inferior survived `o-`.
         // Retain that contradiction so a later empty inventory cannot turn it
         // into detach proof while the originally selected process is alive.
-        const readbackDisprovedPids = [
-          ...new Set([
-            ...(completed.readbackDisprovedPids ?? []),
-            ...after.map(([, observedPid]) => observedPid),
-          ]),
-        ];
-        session.completedDetachCommand = {
-          ...completed,
-          readbackDisproved: true,
-          readbackDisprovedPids,
-        };
-        // Preserve every identity visible in this contradictory inventory
-        // before a retry can observe a partial or empty row set.
-        for (const [, observedPid] of after)
-          await this.#resolveInferiorRowIdentity(session, observedPid);
+        const reconciliation = await this.#reconcileDisprovedDetachReadback(
+          session,
+          completed,
+          after.map(([, observedPid]) => observedPid),
+        );
+        if (reconciliation.overflow)
+          throw new Error(
+            "Rizin detach readback exceeded the safe identity reconciliation limit; inferior state remains unknown.",
+          );
+        if (reconciliation.failure !== undefined) throw reconciliation.failure;
       }
       throw new Error(
         "Rizin did not confirm that the selected inferior FD was detached.",
@@ -1538,17 +1581,11 @@ export class RizinDebugSessionManager {
           activePid,
         );
       } catch (cause) {
-        const readbackDisprovedPids = [
-          ...new Set([
-            ...(completed.readbackDisprovedPids ?? []),
-            ...after.map(([, observedPid]) => observedPid),
-          ]),
-        ];
-        session.completedDetachCommand = {
-          ...completed,
-          readbackDisproved: true,
-          readbackDisprovedPids,
-        };
+        await this.#reconcileDisprovedDetachReadback(
+          session,
+          completed,
+          after.map(([, observedPid]) => observedPid),
+        );
         throw cause;
       }
       if (activeIdentity !== undefined)
@@ -1570,6 +1607,71 @@ export class RizinDebugSessionManager {
     session.inferiorInventoryComplete = true;
     session.confirmedDetachedInferiorIdentity = completed.identity;
     return this.#verifyConfirmedDetachedInferior(session, completed.identity);
+  }
+
+  async #reconcileDisprovedDetachReadback(
+    session: RizinDebugSession,
+    completed: {
+      readonly fd: string;
+      readonly identity: OwnedInferiorIdentity;
+      readonly readbackDisproved?: true;
+      readonly readbackDisprovedPids?: readonly string[];
+      readonly readbackDisprovedOverflow?: true;
+    },
+    observedPids: readonly string[],
+  ): Promise<{
+    readonly failure?: unknown;
+    readonly overflow?: true;
+  }> {
+    const retained = new Set([
+      ...session.knownInferiorIdentities.keys(),
+      ...session.pendingInferiorPids,
+      ...(completed.readbackDisprovedPids ?? []),
+      ...observedPids,
+    ]);
+    if (retained.size > MAX_INFERIOR_INVENTORY_ROWS) {
+      session.inferiorInventoryOverflow = true;
+      session.completedDetachCommand = {
+        ...completed,
+        readbackDisproved: true,
+        readbackDisprovedPids: [],
+        readbackDisprovedOverflow: true,
+      };
+      return { overflow: true };
+    }
+    const unresolved = new Set(completed.readbackDisprovedPids ?? []);
+    for (const pid of observedPids) {
+      unresolved.add(pid);
+      if (unresolved.size > MAX_INFERIOR_INVENTORY_ROWS) {
+        session.inferiorInventoryOverflow = true;
+        session.completedDetachCommand = {
+          ...completed,
+          readbackDisproved: true,
+          readbackDisprovedPids: [],
+          readbackDisprovedOverflow: true,
+        };
+        return { overflow: true };
+      }
+    }
+    const update = (): void => {
+      session.completedDetachCommand = {
+        ...completed,
+        readbackDisproved: true,
+        readbackDisprovedPids: [...unresolved],
+      };
+    };
+    update();
+    let failure: unknown;
+    for (const pid of unresolved) {
+      try {
+        await this.#resolveInferiorRowIdentity(session, pid);
+        unresolved.delete(pid);
+        update();
+      } catch (cause) {
+        failure ??= cause;
+      }
+    }
+    return failure === undefined ? {} : { failure };
   }
 
   async #resolveInferiorRowIdentity(
@@ -1929,7 +2031,17 @@ export const parseRizinPtraceRows = (
   readonly rows: Array<[string, string]>;
   readonly observedPids: readonly string[];
   readonly error?: Error;
+  readonly overflow?: true;
 } => {
+  if (output.length > MAX_INFERIOR_INVENTORY_CHARS)
+    return {
+      rows: [],
+      observedPids: [],
+      overflow: true,
+      error: new Error(
+        "Rizin `olj` response exceeds the safe inventory size limit.",
+      ),
+    };
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -1945,6 +2057,15 @@ export const parseRizinPtraceRows = (
       rows: [],
       observedPids: [],
       error: new Error("Rizin `olj` response is not an array."),
+    };
+  if (parsed.length > MAX_INFERIOR_INVENTORY_ROWS)
+    return {
+      rows: [],
+      observedPids: [],
+      overflow: true,
+      error: new Error(
+        "Rizin `olj` response exceeds the safe inferior row limit.",
+      ),
     };
   const rows: Array<[string, string]> = [];
   const observedPids = new Set<string>();

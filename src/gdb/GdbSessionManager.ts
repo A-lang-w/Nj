@@ -2449,7 +2449,9 @@ const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
         previousToken?.end === index &&
         previousToken.plain &&
         /^\d+$/u.test(previousToken.value)
-          ? previousToken.value
+          ? /^0+$/u.test(previousToken.value)
+            ? "0"
+            : previousToken.value
           : undefined;
       if (tail[index + 1] === "&" && tail[index + 2] === "-") {
         inputs.push({ descriptor, target: "close" });

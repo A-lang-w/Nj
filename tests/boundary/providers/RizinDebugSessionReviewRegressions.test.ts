@@ -53,6 +53,26 @@ it("does not retain an out-of-range PID from a Rizin ptrace row", () => {
   expect(parsed.error?.message).toContain("invalid Linux PID");
 });
 
+it("rejects an oversized Rizin inferior inventory before retaining rows", () => {
+  const rows = Array.from({ length: 1025 }, (_, index) => ({
+    fd: index + 12,
+    raised: true,
+    uri: `ptrace://${index + 1000}`,
+  }));
+  const parsed = parseRizinPtraceRows(JSON.stringify(rows));
+
+  expect(parsed.overflow).toBe(true);
+  expect(parsed.rows).toEqual([]);
+  expect(parsed.observedPids).toEqual([]);
+  expect(parsed.error?.message).toContain("safe inferior row limit");
+
+  const oversizedText = parseRizinPtraceRows(" ".repeat(256 * 1024 + 1));
+  expect(oversizedText.overflow).toBe(true);
+  expect(oversizedText.rows).toEqual([]);
+  expect(oversizedText.observedPids).toEqual([]);
+  expect(oversizedText.error?.message).toContain("safe inventory size limit");
+});
+
 const startRizinWithProvider = async (
   provider: string,
 ): Promise<{
@@ -1346,6 +1366,167 @@ it.skipIf(process.platform !== "linux")(
     const commands = await readFile(commandsPath, "utf8");
     expect(commands.match(/^o- 13$/gm)).toHaveLength(1);
     expect(manager.status(started.value.session_id)).toBeUndefined();
+    expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "does not retain PIDs already reconciled from contradictory detach readbacks",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const selectedPid = inferior.pid;
+    expect(selectedPid).toBeDefined();
+    if (selectedPid === undefined) return;
+    const foreignPid = 45_678;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-disproved-readback-"));
+    const commandsPath = join(directory, "commands");
+    const provider = join(directory, "fake-rizin-disproved-readback.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let detached = false;
+let contradictoryReadbackUsed = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      if (!detached) process.stdout.write(JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${selectedPid}" }]) + "\\0");
+      else if (!contradictoryReadbackUsed) {
+        contradictoryReadbackUsed = true;
+        process.stdout.write(JSON.stringify([{ fd: 13, raised: true, uri: "ptrace://${foreignPid}" }]) + "\\0");
+      }
+      else process.stdout.write("[]\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 12") detached = true;
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+    let foreignPidReads = 0;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid === String(foreignPid)) {
+            foreignPidReads += 1;
+            return null;
+          }
+          return "100";
+        },
+        readProcessTracerPid: async (pid) =>
+          pid === String(selectedPid) &&
+          (await readFile(commandsPath, "utf8").catch(() => "")).includes(
+            "o- 12\n",
+          )
+            ? 0
+            : 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    expect(foreignPidReads).toBe(2);
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+    expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "keeps cleanup unknown after an oversized inferior readback without scanning its PIDs",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const selectedPid = inferior.pid;
+    expect(selectedPid).toBeDefined();
+    if (selectedPid === undefined) return;
+    const oversizedRows = Array.from({ length: 1025 }, (_, index) => ({
+      fd: index + 13,
+      raised: true,
+      uri: `ptrace://${index + 1000}`,
+    }));
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-inventory-overflow-"));
+    const provider = join(directory, "fake-rizin-inventory-overflow.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+process.stdout.write("\\0");
+const oversizedRows = ${JSON.stringify(oversizedRows)};
+let input = "";
+let detached = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj") process.stdout.write((detached ? JSON.stringify(oversizedRows) : JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${selectedPid}" }])) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 12") detached = true;
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+    let unrelatedPidReads = 0;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid === String(selectedPid)) return "100";
+          unrelatedPidReads += 1;
+          return null;
+        },
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const closed = await manager.close(started.value.session_id);
+    expect(closed.ok).toBe(false);
+    if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
+    expect(await manager.retryCleanupFailures()).toMatchObject({ ok: false });
+    expect(manager.status(started.value.session_id)).toBeDefined();
+    expect(unrelatedPidReads).toBe(0);
     expect(inferior.exitCode).toBeNull();
   },
 );
