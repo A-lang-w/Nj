@@ -677,14 +677,63 @@ it("preserves raw retained byte counts when output text replaces invalid UTF-8",
         },
         partialObservation: {
           raw_result: {
-            stdout: "�",
-            stderr: "�",
             stdout_bytes: 1,
             stderr_bytes: 2,
+            exit_code: null,
           },
         },
       },
     });
+    if (!result.ok)
+      expect(result.error.partialObservation).not.toHaveProperty(
+        "raw_result.stdout",
+      );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("projects cancelled multi-megabyte output only once", async () => {
+  const { directory, path } = await createArtifact();
+  const output = "x".repeat(3 * 1024 * 1024);
+  const snapshot = providerSnapshot({
+    stdout: {
+      text: output,
+      bytes: output.length,
+      observedBytes: output.length,
+    },
+    stderr: {
+      text: output,
+      bytes: output.length,
+      observedBytes: output.length,
+    },
+  });
+  const service = new ReverseEngineeringService({
+    runOwned: async () => {
+      throw new OwnedCommandFailure(
+        "cancelled",
+        "Command was cancelled after output capture",
+        snapshot,
+      );
+    },
+  });
+
+  try {
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const projected = projectAnalysisError(result.error);
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: output,
+      stderr: output,
+    });
+    expect(result.error.partialObservation).not.toHaveProperty(
+      "raw_result.stdout",
+    );
+    expect(result.error.partialObservation).not.toHaveProperty(
+      "raw_result.stderr",
+    );
+    expect(JSON.stringify(projected).length).toBeLessThan(10 * 1024 * 1024);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -980,6 +1029,43 @@ it("preserves a provider timeout when cancellation arrives during the final dige
           limitations: expect.arrayContaining([
             expect.stringContaining("AnalysisTimeoutError"),
           ]),
+        },
+      },
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves the observed exit code when cancellation interrupts the final digest", async () => {
+  const { directory, path } = await createArtifact();
+  const controller = new AbortController();
+  let digests = 0;
+  const service = new ReverseEngineeringService({
+    digest: async () => {
+      digests += 1;
+      if (digests === 2) controller.abort();
+      return "a".repeat(64);
+    },
+    runOwned: async () => providerSnapshot({ exitCode: 0 }),
+  });
+
+  try {
+    const result = await service.executeRizinCommand(
+      { path, command: "iI" },
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        capturedOutput: { exit_code: 0 },
+        partialObservation: {
+          raw_result: { exit_code: 0 },
+          normalized_result: {
+            exit_code: null,
+            completion_status: "unknown",
+          },
         },
       },
     });

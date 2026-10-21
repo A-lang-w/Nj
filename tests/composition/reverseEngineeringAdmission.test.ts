@@ -154,7 +154,11 @@ it("preserves the caller reason when cancellation arrives after provider output"
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
-      raw_result: { stdout: "symbols" },
+      raw_result: { stdout_bytes: 7, stderr_bytes: 0, exit_code: 0 },
+    });
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: "symbols",
+      exit_code: 0,
     });
   } finally {
     await service.close();
@@ -299,8 +303,11 @@ it.each([
           exit_code: null,
         });
         expect(result.error.partialObservation).toMatchObject({
-          raw_result: { stdout: "partial stdout" },
+          raw_result: { stdout_bytes: 14, stderr_bytes: 14 },
         });
+        expect(result.error.partialObservation).not.toHaveProperty(
+          "raw_result.stdout",
+        );
         expect(result.error.partialObservation).not.toHaveProperty(
           "normalized_result.stdout",
         );

@@ -570,6 +570,7 @@ export class ReverseEngineeringService {
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let exitCode: number | string | null = 0;
+    let observedExitCode: number | null = null;
     let signalName: string | null = null;
     let outputTruncated = false;
     let stdoutInvalidUtf8 = false;
@@ -602,6 +603,10 @@ export class ReverseEngineeringService {
         },
         operation,
       );
+      // A resolved provider call establishes a successful process exit. Keep
+      // this observation separate from completionStatus, which may later
+      // become unknown if cancellation interrupts the post-run digest.
+      observedExitCode = 0;
       stdout = output.stdout;
       stderr = output.stderr;
       stdoutBytes = output.stdoutBytes ?? Buffer.byteLength(stdout);
@@ -706,6 +711,10 @@ export class ReverseEngineeringService {
         stdoutBytes = capture.stdoutBytes ?? Buffer.byteLength(stdout);
         stderrBytes = capture.stderrBytes ?? Buffer.byteLength(stderr);
         exitCode = capture.code;
+        observedExitCode =
+          !capture.collectionFailure && typeof capture.code === "number"
+            ? capture.code
+            : null;
         signalName = capture.signal;
         outputTruncated = capture.outputTruncated;
         if (capture.collectionFailure) {
@@ -934,12 +943,10 @@ export class ReverseEngineeringService {
         rawResult:
           failure instanceof AnalysisCancelledError
             ? {
-                stdout,
-                stderr,
                 truncated: outputTruncated,
                 stdout_bytes: stdoutBytes,
                 stderr_bytes: stderrBytes,
-                exit_code: typeof exitCode === "number" ? exitCode : null,
+                exit_code: observedExitCode,
                 signal: signalName,
               }
             : null,

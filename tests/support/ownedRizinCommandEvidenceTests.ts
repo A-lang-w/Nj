@@ -179,7 +179,7 @@ const registerOwnedRizinCommandFailureTests = (): void => {
                   output_truncated: reason !== "cancelled",
                 },
                 ...(reason === "cancelled"
-                  ? { raw_result: { stdout: "captured owned output" } }
+                  ? { raw_result: { stdout_bytes: 21, stderr_bytes: 10 } }
                   : {}),
               },
               ...(reason === "timeout"
