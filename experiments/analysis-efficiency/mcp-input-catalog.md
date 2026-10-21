@@ -1,0 +1,136 @@
+# Default MCP input catalog cost
+
+Continues [#5861](https://github.com/morluto/rea/issues/5861). Baseline is
+`705058f3e2df82503f1c601fc464aea7cbb626b8`. The candidate selects the existing
+compact input presentation when the setting is omitted. Explicit `full` and
+`compact` choices, all 213 tools, descriptions, output contracts, canonical
+validation, provider behavior and complete Evidence remain available.
+
+This is a change to the default advertisement. Callers requiring full field
+guidance and nested validation declarations can set
+`REA_MCP_INPUT_SCHEMA_PROFILE=full`. Compact drops nested annotation prose and
+reduces structurally oversized/deep schemas; it is not an equivalent complete
+input declaration. The canonical server validator still admits or rejects the
+same inputs. No new profile, tool-selection API, cache or discovery protocol is
+introduced. Output schemas retain their existing default.
+
+## Completed SDK tasks
+
+The [receipt](mcp-input-catalog.json) pins sources, publisher URLs/digests,
+individual calls and resource observations. The unchanged Alpine v3.21 x86_64
+releases are ripgrep 14.1.1-r0 (3,416,168 bytes) and Zellij 0.40.0-r0
+(17,151,864 bytes). Neither binary was executed. The independent
+[oracle](mcp-input-catalog-oracle.py) reads ELF section headers, decompresses
+`.dep-v0` with Python zlib, and derives original package indices and dependency
+edges from the embedded JSON, independently of REA.
+
+Each [production stdio SDK task](mcp-input-catalog.mjs) discovers and validates
+the complete advertised input catalog, requests exact serde package fields,
+reads the same retained page twice, probes a negative offset, exports complete
+Evidence, compares every package and edge with the oracle, and closes the
+transport. RPCs bind the exact advertised named tool definition. Tool metadata
+outside input schemas and complete parent Evidence are equal before/after.
+The real negative input is refused in every task.
+
+Three fresh-process pairs per artifact alternate order (before/after,
+after/before, before/after). Both runtimes use Node 24.18.0, npm 11.16.0 and
+MCP SDK 2.3.1 on Linux x86_64. Node compile caching is disabled; OS caches are
+not flushed and unrelated host load is uncontrolled. Artifact acquisition,
+builds and oracle preparation are outside the measured analysis task.
+
+| Artifact | Default before/after | Whole-task estimated tokens | Wall median seconds | CPU median seconds | Family peak median MiB |
+| -------- | -------------------- | --------------------------: | ------------------: | -----------------: | ---------------------: |
+| ripgrep  | full                 |                     204,358 |               7.379 |              7.159 |                  804.3 |
+| ripgrep  | compact              |                      51,801 |               7.274 |              7.036 |                  815.5 |
+| Zellij   | full                 |                     204,278 |               7.373 |              7.162 |                  839.0 |
+| Zellij   | compact              |                      51,721 |               7.374 |              7.131 |                  827.0 |
+
+The input-facing catalog alone changes from 200,425 to 47,868 estimated tokens
+(76.1% lower). Each whole task includes the catalog once, all five calls'
+arguments and text replies: about 74.7% lower. These are offline
+`tiktoken==0.12.0` / `cl100k_base` estimates, not model usage. The raw SDK catalog
+including output schemas changes from 903,377 to 750,623 estimated tokens;
+clients exposing that entire representation have a smaller proportional gain.
+JSON-RPC envelopes and client-specific conversion/replay are unmeasured here.
+
+Wall ranges overlap (ripgrep 7.27–7.68 vs 7.07–7.27 seconds; Zellij 7.17–7.48 vs
+7.07–7.38). No general elapsed, CPU or memory improvement is established.
+Fresh processes include first-use cost and two same-session historical reads;
+the latter are not fresh live-state observations.
+
+## Actual model tasks and the limit of the claim
+
+Six real Codex CLI 0.161.0 tasks used fresh isolated profiles, the complete
+catalog, no enabled-tool filter, and requested `gpt-6.1-sol` / medium reasoning.
+The resolved server-side model identity is unknown. Each profile completed a
+direct ripgrep package question, a broad Zellij metadata question, and an
+intentional invalid-offset question. Artifact bytes were unchanged and owned
+profiles were removed. Answers match independent package/index/count/digest
+facts, cite actual returned Evidence or its parent, preserve embedded-metadata
+limitations, and accurately report the negative cases without retrying.
+
+| Question       | Actual input tokens full → compact | Calls full → compact | Guarded wall seconds full → compact |
+| -------------- | ---------------------------------: | -------------------: | ----------------------------------: |
+| Direct package |                  169,419 → 173,274 |                2 → 2 |                     33.854 → 31.448 |
+| Broad metadata |                  126,522 → 166,082 |                1 → 2 |                     28.434 → 34.989 |
+| Invalid offset |                  167,283 → 140,530 |                1 → 1 |                     32.983 → 29.641 |
+
+These are one pair per question on the baseline runtime's explicit full/compact
+variants, not repeated model-performance cohorts. Compact used an extra call
+for the broad question. **Actual Codex token, latency or task-quality gains are
+not established.** Recorded client usage includes cached input; it does not
+identify the exact rendered catalog contribution. The change addresses the
+default declaration cost for clients carrying the complete catalog; it does not
+promise identical savings for clients performing tool search or other schema
+conversion. Explicit full remains useful when the additional guidance avoids
+extra calls.
+
+All analysis/model runs use one CPU, 4 GiB family hard / 3 GiB early memory
+limits, no swap and 192 tasks. CPU and memory.peak are kernel cgroup counters
+observed at payload exit, including the controller and charged page cache.
+All accepted tasks have authenticated payload-exit observations, successful
+exit and cleanup, and zero observed high/max/OOM/PID-limit events. Final
+whole-scope counters are unavailable after the transient scope disappears.
+
+The first SDK harness attempt used an incorrect retained-source argument and
+was correctly refused. It is retained as a failed attempt and excluded from
+accepted comparisons; the harness was corrected before the repeated cohorts.
+
+## Reproduction
+
+Generate an oracle with Python 3 and the pinned extracted binary:
+
+```bash
+python3 experiments/analysis-efficiency/mcp-input-catalog-oracle.py /absolute/ripgrep /absolute/oracle.json
+python3 experiments/analysis-efficiency/resource-run.py --observe-payload-exit -- \
+  node experiments/analysis-efficiency/mcp-input-catalog.mjs \
+  --runtime /absolute/runtime --artifact /absolute/ripgrep \
+  --oracle /absolute/oracle.json --output /absolute/new-output
+```
+
+Repeat against baseline/candidate runtimes with the setting omitted. Explicit
+`--profile full` and `--profile compact` verify caller overrides. The existing
+`agent-trial.py` runs the recorded model question files and explicit provider
+settings; authentication/profile files and raw binaries are never committed.
+Use [the cost script](mcp-input-catalog-costs.py) with the pinned tokenizer to
+account for complete SDK tasks and separately recorded model usage.
+
+## Latest-main integration and validation
+
+Rebased onto `25e1a24a3ed3671a0148757555f18d16c29d936a`. A separate real Zellij
+pair on that candidate, explicit full versus omitted/default, passed all facts,
+full parent Evidence and negative checks. Catalog input estimates remain
+200,425 versus 47,868 tokens; these integration runs do not replace or extend
+the earlier repeated cohorts. Explicit full on the candidate also reproduced
+the pre-change full catalog exactly.
+
+The initial ten-file local run passed 88 tests, skipped one and failed two: a
+live-identity assertion still expected the old default digest, and the complete
+canonical-schema suite timed out at 30 seconds. The assertion now checks the
+default compact identity. Both affected suites passed all 26 tests with serial
+files and unchanged deadlines; the timeout's cause is not established. After
+rebasing, 32 profile/identity/production-doctor tests passed. Static checks
+passed on both bases. Documentation checks caught a new README link absent from
+translated link inventories (including a duplicate-link attempt); the
+introduction now names the existing guide without changing the link inventory.
+Final documentation and CI results qualify the PR.

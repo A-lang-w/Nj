@@ -82,6 +82,16 @@ describe("production MCP doctor", () => {
 
   it.each([
     {
+      name: "default compact input",
+      environment: {
+        REA_MCP_INPUT_SCHEMA_PROFILE: undefined,
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+      },
+      identity: createCatalogIdentity(
+        compactPresentationForMcpInputSchemaProfile(undefined),
+      ),
+    },
+    {
       name: "full",
       environment: {
         REA_MCP_INPUT_SCHEMA_PROFILE: "full",

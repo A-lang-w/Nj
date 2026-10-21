@@ -14,7 +14,9 @@ import {
   CATALOG_IDENTITY,
   createCatalogDigestProfiles,
   createCatalogDigests,
+  createCatalogIdentity,
 } from "../../../src/catalogIdentity.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
@@ -538,7 +540,9 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
         },
         client: { name: "identity-test", version: "9" },
         negotiated_protocol_version: expect.any(String),
-        catalog: CATALOG_IDENTITY,
+        catalog: createCatalogIdentity({
+          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+        }),
         alignment: { state: "unknown" },
       },
     },
