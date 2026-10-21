@@ -277,6 +277,97 @@ describe("slug rules learned from a later call", () => {
   });
 });
 
+describe("clock rules learned across calls", () => {
+  it("serves a clock only when every recorded call changed that field", () => {
+    const oldFirst = "2026-10-01T09:00:00Z";
+    const oldSecond = "2026-10-01T10:00:00Z";
+    const described = (
+      entry: Book,
+      description: string,
+      publishedAt: string,
+    ): Book => ({ ...entry, description, published_at: publishedAt });
+    const first = described(FIRST_BOOK, "original", oldFirst);
+    const second = described(SECOND_BOOK, "other", oldSecond);
+    const published = described(
+      renamedBook(FIRST_BOOK, "Renamed Book", 3),
+      "original",
+      bookClock(3),
+    );
+    /** The first call stamps `published_at`; `later` is the second call's answer. */
+    const rows = (later: Book, sent: Book): TimedCaptureRow[] => [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/1", published, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", published],
+      ["PATCH", "/api/books/2", later, 200, sent],
+      ["GET", "/api/books/2", later],
+    ];
+    // The description edit stamps `updated_at` and leaves `published_at` as it was.
+    const edited = described(
+      { ...SECOND_BOOK, updated_at: bookClock(5) },
+      "revised",
+      oldSecond,
+    );
+    expect(
+      gated(rows(edited, { description: "revised" }), "patch_books_by_id"),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+    const stamped = described(
+      renamedBook(SECOND_BOOK, "Second Edition", 5),
+      "other",
+      bookClock(5),
+    );
+    const plan = gated(
+      rows(stamped, { name: "Second Edition" }),
+      "patch_books_by_id",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+    });
+    expect(plan.rules).toContainEqual({
+      field: "published_at",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    });
+  });
+
+  it("leaves a clock unserved when an earlier call kept the field a later call stamped", () => {
+    const oldFirst = "2026-10-01T09:00:00Z";
+    const oldSecond = "2026-10-01T10:00:00Z";
+    const described = (
+      entry: Book,
+      description: string,
+      publishedAt: string,
+    ): Book => ({ ...entry, description, published_at: publishedAt });
+    const first = described(FIRST_BOOK, "original", oldFirst);
+    const second = described(SECOND_BOOK, "other", oldSecond);
+    const edited = described(
+      { ...SECOND_BOOK, updated_at: bookClock(3) },
+      "revised",
+      oldSecond,
+    );
+    const published = described(
+      renamedBook(FIRST_BOOK, "Renamed Book", 5),
+      "original",
+      bookClock(5),
+    );
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/2", edited, 200, { description: "revised" }],
+      ["GET", "/api/books/2", edited],
+      ["PATCH", "/api/books/1", published, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", published],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+});
+
 describe("checked lines", () => {
   /** A list page that echoes its own request path, as some APIs do. */
   const page = (path: string, items: JsonValue[]): JsonValue => ({
@@ -1053,6 +1144,30 @@ describe("what a check leaves pending", () => {
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: true,
       checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
+  it("learns an update from a read begun after the write, not from one that overlapped it", () => {
+    const named = (name: string) => ({ id: 1, name });
+    const other = { id: 2, name: "B" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [named("A"), other]],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/2", other],
+      // The patch runs from second 3 to 5.5 and returns no entity. A read begun while it still runs shows the old name.
+      ["PATCH", "/api/books/1", "", 204, { name: "Z" }, 2500],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/1", named("Z")],
+      ["GET", "/api/books", [named("Z"), other]],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      observation: { ordinal: 6, pointer: "" },
+      body: { accepted: ["name"], fixed: [] },
+      rules: [{ field: "name", rule: "echo" }],
+      checked_record_ordinals: [7],
       contradicted_by: null,
     });
   });

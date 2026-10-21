@@ -313,13 +313,15 @@ const contradictsEarlierCalls = (
   const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
   return rules.some(
     (rule) =>
-      unsentChange(rule) &&
+      (unsentChange(rule) || rule.rule === "clock") &&
       !ruled.has(rule.field) &&
       draft.updates.some(({ shown, sent }) => {
         // An unruled field an earlier call showed is one it left as it was.
         const value = shown.get(rule.field);
         if (value === undefined) return false;
         if (rule.rule === "increment") return integerOf(value) !== undefined;
+        // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
+        if (rule.rule === "clock") return true;
         const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
         return typeof from === "string" && slugOf(from) !== value;
       }),

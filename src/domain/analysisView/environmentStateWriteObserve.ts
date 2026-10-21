@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { overlapsWrite } from "./environmentStateWriteAttribution.js";
 import {
   collectionPathOf,
   isObject,
@@ -62,7 +63,7 @@ export const newEntityIn = (
 export interface ObservationSearch {
   readonly records: readonly StateRecordFacts[];
   readonly from: number;
-  /** A timed write's completion; reads begun before it cannot observe its effect. */
+  /** A timed write's completion. A read begun while it still ran may show the prior state. */
   readonly after?: number;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly withBody: <T>(
@@ -77,6 +78,7 @@ const succeeded = (record: StateRecordFacts): boolean =>
 /**
  * The first later read, before the next write, that shows a written entity: an item read of
  * `id` when given, else an item read of an unheld id or a collection read listing exactly one.
+ * A read begun while the write still ran may show the earlier state, so it is not chosen.
  */
 export const laterObservation = (
   search: ObservationSearch,
@@ -93,7 +95,9 @@ export const laterObservation = (
 ): Observed | undefined => {
   for (const record of search.records.slice(search.from + 1)) {
     if (target.isWrite(record)) return undefined;
-    if (search.after !== undefined && record.start < search.after) continue;
+    // The same overlap the check path ignores: the write was still running when this read began.
+    if (search.after !== undefined && overlapsWrite(search.after, record.start))
+      continue;
     const view = search.viewOf(record.ordinal);
     if (
       !succeeded(record) ||

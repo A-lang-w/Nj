@@ -19,12 +19,16 @@ export type PendingTargets = Map<
   { until: number; readonly at: Map<string, number> }
 >;
 
+/** Whether a write that ended at `until` was still running when a read began at `start`, so the read may show either state. */
+export const overlapsWrite = (until: number, start: number): boolean =>
+  until > start;
+
 /** Whether a modelled write to the target was still running when a read began at `start`, so the read may show either state. */
 export const runningAt = (
   pending: PendingTargets,
   key: string,
   start: number,
-): boolean => (pending.get(key)?.until ?? -Infinity) > start;
+): boolean => overlapsWrite(pending.get(key)?.until ?? -Infinity, start);
 
 /** The tools whose writes a read exercises: those that changed its targets since they were last checked, less those that borrowed the read to learn their effect. */
 export const exercisedBy = (
