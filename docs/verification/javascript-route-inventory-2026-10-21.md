@@ -1,7 +1,7 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`658a5bd1ed4c3d414567335f44568b2c2a9276cf`, tree `fe2e0be3cd1023dbb6a04f45670ab018b779ec14`,
+`c86fc9d318f56c28e3678c2dfbdca08a20a258cb`, tree `fc1297fe69ffdeee9d3da318395681448300f77d`,
 on main `3dbe314ada9f6dcc994ca4655dc0faf082503847`. All current source-worker, public interface,
 SDK and Chromium measurements below use this runtime. Verification-only commits
 change this report, not the runtime. Exact inputs, commands, profiles, historical
@@ -21,10 +21,10 @@ as data; their application code was not executed.
 | Supplied capture | Scripts |     Bytes | Completed jobs | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | -------------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
-| shadcn-ui        |      38 | 2,465,078 |             36 |                36 |              18 |
+| shadcn-ui        |      38 | 2,465,078 |             34 |                35 |              18 |
 
-The complete 67-worker task took **291.983 s elapsed**,
-**417.351 CPU s** and **479,731,712 bytes** sampled
+The complete 67-worker task took **283.792 s elapsed**,
+**421.694 CPU s** and **495,742,976 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -45,17 +45,15 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **22.076 s elapsed**,
-**27.164 CPU s** and **2,186,874,880 bytes** sampled
+cleanup succeeded. This task took **12.112 s elapsed**,
+**14.705 CPU s** and **2,171,883,520 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
-The fresh corpus contains one additional deadline compared with the earlier
-56dda3b9f corpus record. Its controlled old-owner/current-owner pair uses the
-same new-main runtime and inputs, replacing only the route scanner, and retains
-both outcomes and the complete dist-byte comparison in JSON. This is a narrow
-control, not a baseline-main or statistical performance qualification. The
-complete current corpus is slower than the historical run; no code-specific
-cause or analysis-speed advantage is established.
+The earlier658 corpus and narrow old-owner/current-owner deadline comparison
+remain pinned to that historical runtime in JSON. Those controls do not qualify
+this newer scanner. Current whole-corpus results above come from a fresh full
+run. The captures and narrow controls establish no general performance equivalence
+or code-specific cause for timing/deadline variation.
 
 ## Equivalent delivery workflows
 
@@ -70,9 +68,9 @@ performed three historical view reads and exported complete Evidence.
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
 | Estimated tokens: used input declarations and all calls/replies |                          1,938,095 |                      58,845 |
 | Estimated tokens: entire catalog and all calls/replies          |                          3,029,568 |                   1,150,318 |
-| Elapsed seconds, including startup and cleanup                  |                             30.254 |                      27.922 |
-| CPU seconds, process family                                     |                             38.319 |                      34.270 |
-| Peak sampled process-family RSS bytes                           |                      1,450,442,752 |               1,258,061,824 |
+| Elapsed seconds, including startup and cleanup                  |                             28.849 |                      20.670 |
+| CPU seconds, process family                                     |                             36.485 |                      25.323 |
+| Peak sampled process-family RSS bytes                           |                      1,524,150,272 |               1,333,301,248 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -97,13 +95,18 @@ views require its export and MCP verifies retention before analysis.
 
 Configuration ownership and ancestry consume the same cached effective fields.
 Erased TypeScript wrappers use the shared AST normalization owner. Named-parent
-`addRoute(name, record)` configurations retain unknown parent ancestry instead
-of inventing root paths; inline, stable aliased and wrapped records are covered.
+`addRoute(name, record)` configurations start with unknown parent ancestry.
+Relative paths stay unresolved until an absolute literal resets the root, including
+below dynamic/uncertain parents. Inline, stable aliased and wrapped records are
+covered. Selected typed children always reach the walker; unsupported expressions
+retain interpretation gaps and rejected argument objects cannot revive as roots.
 The overload semantics are checked against the
 [Vue Router guide](https://router.vuejs.org/guide/advanced/dynamic-routing.html#adding-nested-routes).
 Dynamic/ambiguous/mutated/cyclic parents and incomplete capture remain gaps.
 Recognized local navigation objects expose literal pathnames while owning their
-query/search/hash data. Independent component bodies keep their own context.
+query/search/hash data. Ownership is checked before discovering automatic roots
+or ancestry edges, preventing query objects from becoming pages. Independent
+callable/component bodies keep their own context.
 
 Canonical discriminated delivery contracts share the domain shapes used by CLI.
 Optional complete input is dispatched before its default, preserving omission
@@ -125,7 +128,7 @@ inventory finalization, and owned worker cleanup/retry remains covered.
 
 ## Executed checks and limits
 
-**475/475 source/owner regressions** and **70/70 compiled
+**485/485 source/owner regressions** and **70/70 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
@@ -133,9 +136,11 @@ The public suite exercises exported-Evidence reads after source deletion,
 large bounded facts, source selection, retention, cancellation, SDK recovery,
 source-to-bundle integration and every advertised tool schema.
 
-The record preserves five meaningful named-parent/wrapped-object cases failing
-before the fix, the plain-union SDK diagnostic regression and its structural
-correction, and corrected scalar-wrapper and worker oracles. Earlier capacity, cleanup, malformed
+The record preserves six ancestry/typed-child regressions failing before this
+correction and two navigation-data cases failing before ownership was applied to
+root discovery. A callable-body compatibility control passes. Earlier delivery,
+wrapped-navigation, corrected-oracle and failed-control records remain pinned
+to their actual runtimes. Earlier capacity, cleanup, malformed
 input, cancellation and matched main/runtime deadline controls remain pinned
 to their actual revisions. Historical conditional corpus replays are not used
 as the current full-worker qualification. Earlier technical CI results do not
