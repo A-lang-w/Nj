@@ -149,7 +149,11 @@ For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <cl
 ## Coverage and evidence
 
 The modern headless profile supports direct callers when upstream advertises
-`callgraph`. REA reads incoming entry-point `xrefs_to` as candidates, deduplicates
+`callgraph`. Once the session connects, `binary_session` reflects the observed
+tool catalog: a server without `callgraph` reports callers as unavailable before
+the first caller query. Registration-only discovery does not probe the server.
+Reopening a session observes its own catalog rather than reusing the prior
+session's availability. REA reads incoming entry-point `xrefs_to` as candidates, deduplicates
 their owning functions, and confirms each candidate with a depth-zero call graph.
 Code references alone never establish a call: jump-only and data references are
 excluded unless a function also has a confirmed call edge. No target execution

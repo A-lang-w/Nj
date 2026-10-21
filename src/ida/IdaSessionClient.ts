@@ -5,6 +5,7 @@ import {
   type AnalysisClient,
   type AnalysisOperation,
   type ExecutionOptions,
+  type ProviderCapabilityAvailability,
 } from "../application/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
@@ -167,7 +168,7 @@ export class IdaSessionClient implements AnalysisClient {
   #ready = false;
   #blockingSessions: readonly UpstreamSession[] | undefined;
   #openRejected = false;
-  #callGraphAdvertised = false;
+  #callGraphAdvertised: boolean | undefined;
   #surveyAdvertised = false;
   #initialIdentity: string | undefined;
   #metadata: JsonValue = null;
@@ -179,6 +180,23 @@ export class IdaSessionClient implements AnalysisClient {
     private readonly connection: IdaMcpConnection,
     private readonly profile?: AnalysisProfileCommitment,
   ) {}
+
+  capabilityAvailabilitySnapshot(): readonly ProviderCapabilityAvailability[] {
+    if (
+      idaProtocol(this.config) !== "modern" ||
+      this.#callGraphAdvertised !== false
+    )
+      return [];
+    return [
+      {
+        provider: IDA_PROVIDER_IDENTITY,
+        operation: "procedure_callers",
+        available: false,
+        reason:
+          "The connected IDA server does not advertise the optional callgraph tool required to prove direct callers.",
+      },
+    ];
+  }
 
   execute(
     operation: AnalysisOperation,
@@ -352,7 +370,7 @@ export class IdaSessionClient implements AnalysisClient {
         signal: options?.signal,
         selectorOrigin: options?.selectorOrigin,
         x86Only: isX86OnlyTarget(this.target),
-        callGraphAvailable: this.#callGraphAdvertised,
+        callGraphAvailable: this.#callGraphAdvertised ?? false,
         surveyAvailable: this.#surveyAdvertised,
         admittedDocument: this.target.path,
       },
