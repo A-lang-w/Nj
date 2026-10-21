@@ -112,6 +112,7 @@ const manifestComponent = z.strictObject({
   exported: z.boolean().nullable(),
   exported_default: z.boolean().nullable(),
   permission: z.string().nullable(),
+  permission_source: z.enum(["component", "application", "none", "unknown"]),
   intent_filter_count: z.number().int().nonnegative(),
   actions: z.array(z.string()),
   categories: z.array(z.string()),

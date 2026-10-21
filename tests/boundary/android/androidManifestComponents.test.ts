@@ -100,7 +100,45 @@ it("inherits an application permission when a component omits its own", () => {
   );
   const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
   expect(inventory.items[0]?.permission).toBe("com.example.APP");
+  expect(inventory.items[0]?.permission_source).toBe("application");
   expect(inventory.items[4]?.permission).toBe("com.example.app.SYNC");
+  expect(inventory.items[4]?.permission_source).toBe("component");
+});
+
+it("does not inherit application permission through an explicit empty override", () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="com.example.APP"><activity android:name=".Open" android:permission=""/></application></manifest>';
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(inventory.items[0]).toMatchObject({
+    permission: null,
+    permission_source: "none",
+  });
+});
+
+it("bounds inherited permission copies across the inventory", () => {
+  const permission = "p".repeat(2_050);
+  const declarations = Array.from(
+    { length: ANDROID_MANIFEST_LIMITS.components },
+    (_, index) => `<receiver android:name=".R${String(index)}"/>`,
+  ).join("");
+  const inventory = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="${permission}">${declarations}</application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]?.permission_source).toBe("application");
+  expect(inventory.items.at(-1)).toMatchObject({
+    permission: null,
+    permission_source: "unknown",
+  });
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain("total permission bytes");
+  expect(
+    inventory.items.reduce(
+      (bytes, item) => bytes + Buffer.byteLength(item.permission ?? ""),
+      0,
+    ),
+  ).toBeLessThanOrEqual(ANDROID_MANIFEST_LIMITS.permissionBytes);
 });
 
 it("applies the provider export default from the target SDK", () => {

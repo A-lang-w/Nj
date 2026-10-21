@@ -21,6 +21,8 @@ export const ANDROID_MANIFEST_LIMITS = {
   /** Total bytes of resolved component names, bounding package amplification. */
   resolvedNameBytes: 1024 * 1024,
   authorityBytes: 1024 * 1024,
+  /** Total copied permission-value bytes, including inherited defaults. */
+  permissionBytes: 1024 * 1024,
 } as const;
 
 /** The attribute namespace every component facet uses. */
@@ -51,6 +53,8 @@ export interface AndroidManifestComponent {
    */
   readonly exported_default: boolean | null;
   readonly permission: string | null;
+  /** Source of the effective permission projection; unknown when its copy is capped. */
+  readonly permission_source: "component" | "application" | "none" | "unknown";
   readonly intent_filter_count: number;
   readonly actions: readonly string[];
   readonly categories: readonly string[];
@@ -260,8 +264,10 @@ export const parseAndroidManifestComponents = (
   let invalidExported = 0;
   let unknownFilteredExportDefaults = 0;
   let capacityTruncated = false;
+  let permissionBudgetLimited = false;
   let nameBudget = ANDROID_MANIFEST_LIMITS.resolvedNameBytes;
   let authorityBudget = ANDROID_MANIFEST_LIMITS.authorityBytes;
+  let permissionBudget = ANDROID_MANIFEST_LIMITS.permissionBytes;
   const targetSdkLevel = androidTargetSdkLevel(targetSdk);
   for (const node of childNodes(root)) {
     if (node.nodeType !== 1) continue;
@@ -299,6 +305,8 @@ export const parseAndroidManifestComponents = (
       const containsUnresolvedToken =
         declared.startsWith("@") ||
         declared.startsWith("?") ||
+        declared.includes("@") ||
+        declared.includes("?") ||
         declared.includes("${");
       const needsPackage = declared.startsWith(".") || !declared.includes(".");
       const packageKnown =
@@ -332,6 +340,33 @@ export const parseAndroidManifestComponents = (
           if (authorityBudget < 0) authorityBudget = 0;
           authorities = split.authorities;
         }
+      }
+      const declaredPermission = androidAttribute(component, "permission");
+      const permissionValue =
+        declaredPermission === null
+          ? applicationPermission
+          : declaredPermission.trim() || null;
+      const permissionSource =
+        permissionValue === null
+          ? "none"
+          : declaredPermission === null
+            ? "application"
+            : "component";
+      let permission: string | null = permissionValue;
+      let effectivePermissionSource:
+        | "component"
+        | "application"
+        | "none"
+        | "unknown" = permissionSource;
+      if (permissionValue !== null) {
+        const permissionBytes = Buffer.byteLength(permissionValue);
+        if (permissionBytes > permissionBudget) {
+          permission = null;
+          effectivePermissionSource = "unknown";
+          truncated = true;
+          capacityTruncated = true;
+          permissionBudgetLimited = true;
+        } else permissionBudget -= permissionBytes;
       }
       const providerDefault =
         component.nodeName === "provider"
@@ -384,7 +419,8 @@ export const parseAndroidManifestComponents = (
             : component.nodeName === "provider"
               ? providerDefault
               : filters.length > 0,
-        permission: trimmed(component, "permission") ?? applicationPermission,
+        permission,
+        permission_source: effectivePermissionSource,
         intent_filter_count: filters.length,
         actions: collected.actions,
         categories: collected.categories,
@@ -431,6 +467,10 @@ export const parseAndroidManifestComponents = (
     );
     truncated = true;
   }
+  if (permissionBudgetLimited)
+    limitations.push(
+      `Projected component permission values are capped at ${String(ANDROID_MANIFEST_LIMITS.permissionBytes)} total bytes; omitted copies have permission_source "unknown".`,
+    );
   if (invalidExported > 0) {
     limitations.push(
       `${String(invalidExported)} component(s) with intent filters target API 31 or later and omit android:exported; Android requires an explicit value, so the inventory does not infer a default.`,
@@ -448,7 +488,7 @@ export const parseAndroidManifestComponents = (
   }
   if (capacityTruncated)
     limitations.push(
-      `The component inventory reached a capacity limit: ${String(ANDROID_MANIFEST_LIMITS.components)} declarations, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} filters or ${String(ANDROID_MANIFEST_LIMITS.intentValues)} values per component, ${String(ANDROID_MANIFEST_LIMITS.authorities)} authorities per provider, or ${String(ANDROID_MANIFEST_LIMITS.authorityBytes)} total authority bytes.`,
+      `The component inventory reached a capacity limit: ${String(ANDROID_MANIFEST_LIMITS.components)} declarations, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} filters or ${String(ANDROID_MANIFEST_LIMITS.intentValues)} values per component, ${String(ANDROID_MANIFEST_LIMITS.authorities)} authorities per provider, ${String(ANDROID_MANIFEST_LIMITS.authorityBytes)} total authority bytes, or ${String(ANDROID_MANIFEST_LIMITS.permissionBytes)} total permission bytes.`,
     );
   return {
     status: truncated ? "partial" : "complete",

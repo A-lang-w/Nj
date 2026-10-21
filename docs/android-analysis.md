@@ -43,7 +43,10 @@ relative name only when the manifest package is known and the resolved copy
 fits the UTF-8 byte budget. An unresolved package or exhausted name budget
 retains the declared name and marks the inventory partial. Component
 permissions inherit the application permission when no component permission
-is declared.
+is declared; `permission_source` distinguishes a local declaration, inherited
+value, no requirement (including an explicit empty override), and a value
+omitted because the total permission-byte budget was reached. Repeated
+inherited values share one inventory-wide byte budget.
 
 `exported` is the declared literal `true` or `false`, otherwise null.
 `exported_default` is the documented default only where it can be established;
