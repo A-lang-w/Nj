@@ -26,6 +26,17 @@ execution validates tool files and version banners. Host process-ownership and
 private-workspace controls must also be available. The real-tool profile has
 been exercised on macOS arm64; other hosts require their own verification.
 
+Configuration failures do not establish anything about the selected WASM bytes.
+For a rejected version probe, `details.diagnostics` identifies the executable,
+tool, expected version and configuration key; `details.captured_output` preserves
+its actual stdout and stderr, including empty banners or warnings. Fix the
+reported directory, executable access or release rather than changing the module
+or repeating an unchanged call. All three tools must report 1.0.42 on stdout with
+empty stderr. For CLI calls, set the environment before the next invocation. For
+MCP, change the server's launch environment and restart/reconnect that server;
+exporting a variable in a different shell does not update a running server.
+REA never installs tools or relaxes version admission to recover.
+
 ```bash
 REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin rea inspect-wasm-artifact \
   /artifacts/module.wasm --glue_paths /artifacts/glue.js \
@@ -46,7 +57,10 @@ Equivalent MCP input:
 ```
 
 Each selected regular file is read through the existing stable artifact reader;
-symlinks, changing files and files over 8 MiB fail closed. WASM bytes are copied
+symlinks, changing files and files over 8 MiB fail closed. An oversized input
+returns `resource_constraint` with resource `file-size` and its fixed byte
+allowance in `reported_limits.maximum_input_bytes`; retrying the unchanged file
+does not raise that allowance. WASM bytes are copied
 into a private workspace as read-only `module.wasm`; its digest is rechecked
 before and after each tool. WABT validates with `--enable-all`,
 reports sections through `wasm-objdump -h -x`, and decodes through
