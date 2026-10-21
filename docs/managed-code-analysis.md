@@ -119,9 +119,11 @@ returning an empty one.
 
 The canonical parser admits PE/CLI bytes and their metadata/CIL without loading
 an assembly. It reports observed implementation markers and unavailable facts;
-it does not unpack .NET single-file hosts, decode IL2CPP metadata, or infer a
-NativeAOT identity from an ordinary native PE. Inputs without admitted CLI
-metadata do not become managed assemblies through naming or routing guesses.
+it does not unpack .NET single-file hosts or infer a NativeAOT identity from an
+ordinary native PE. It does not decode IL2CPP; use
+[IL2CPP metadata](il2cpp-metadata.md) for the image, type and method names in a
+Unity `global-metadata.dat`. Inputs without admitted CLI metadata do not
+become managed assemblies through naming or routing guesses.
 Inspect separately obtained components explicitly and preserve their identities.
 
 A valid implementation marker establishes a candidate native boundary, not
@@ -352,7 +354,7 @@ install it or its toolchain. The [NativeAOT guide](ghidra-nativeaot.md) defines
 these routes, their layout/host restrictions, derived-memory provenance, and
 verification coverage.
 
-REA's experimental Windows Ghidra boundary admits native x86 and x86-64 PE
+REA's experimental Windows Ghidra boundary admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE
 applications and DLLs for static analysis. For x64 PE NativeAOT, the read-only
 parser also runs there; the [NativeAOT guide](ghidra-nativeaot.md) lists what a
 Windows host covers.

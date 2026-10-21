@@ -15,6 +15,7 @@ import {
 } from "../../domain/native/recordedCrash.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_recorded_crash";
 
@@ -54,7 +55,11 @@ export class RecordedCrashService {
     ) => ReturnType<RecordedCrashPort["inspect"]>,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+        }),
+      );
     const input = inspectRecordedCrashInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -80,8 +85,6 @@ export class RecordedCrashService {
     const outputOptions = diagnostics.success
       ? { capturedOutput: diagnostics.data }
       : undefined;
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION, outputOptions));
     const report = recordedCrashSchema.safeParse(inspected.value);
     if (
       !report.success ||
@@ -97,7 +100,7 @@ export class RecordedCrashService {
         ),
       );
     const value = report.data;
-    return ok(
+    return completeProviderEvidence(
       createEvidence(
         {
           path: value.artifact.path,
@@ -110,7 +113,13 @@ export class RecordedCrashService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: {
+            path: input.data.path,
+            include_debugger_context: input.data.include_debugger_context,
+            ...(input.data.pwntools_timeout_ms === undefined
+              ? {}
+              : { pwntools_timeout_ms: input.data.pwntools_timeout_ms }),
+          },
           result: value,
           // The decoded report is the only representation; do not repeat it.
           rawResult: null,
@@ -120,6 +129,8 @@ export class RecordedCrashService {
           locations: [{ kind: "artifact-path", path: value.artifact.path }],
         },
       ),
+      options?.signal,
+      outputOptions?.capturedOutput,
     );
   }
 }

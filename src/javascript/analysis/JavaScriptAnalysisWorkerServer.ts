@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticProjectionCapacity } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,6 +17,7 @@ import {
 import { javaScriptWorkerStaticAnalysisSchema } from "./JavaScriptAnalysisWorkerSchemas.js";
 import {
   JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS as DEFAULTS,
+  javaScriptCheckpointCeilingRemediation,
   javaScriptWorkerRequestSchema,
   javaScriptWorkerAdmissionSchema,
   javaScriptWorkerMessageSchema,
@@ -26,7 +28,7 @@ import {
 export interface JavaScriptSourceWorkerAnalyzer {
   (
     file: JavaScriptArtifactFile,
-    nodeBudget: number,
+    capacity: JavaScriptSemanticProjectionCapacity,
     callbacks: {
       readonly phase: (
         phase: "parse" | "static" | "semantic" | "projection",
@@ -111,7 +113,7 @@ const analyzeJob = async (
         ...request.file,
         text: { included: true, value: source },
       },
-      request.node_budget,
+      { nodes: request.node_budget, unknowns: request.unknown_budget },
       {
         phase: async (phase) => send({ kind: "phase", id: request.id, phase }),
         checkpoint: async (facts) => {
@@ -122,10 +124,15 @@ const analyzeJob = async (
             throw new AnalysisResourceConstraintError(
               "analyze_javascript_application",
               "transport",
-              "JavaScript static checkpoint exceeds its complete-fact byte budget",
+              `JavaScript static checkpoint exceeds its ${String(DEFAULTS.checkpointBytes)}-byte complete-fact ceiling. This release has no runtime override.`,
               {
                 checkpoint_bytes: bytes,
                 checkpoint_limit_bytes: DEFAULTS.checkpointBytes,
+              },
+              {
+                remediationAction: javaScriptCheckpointCeilingRemediation(
+                  DEFAULTS.checkpointBytes,
+                ),
               },
             );
           await writeFile(join(root, `${request.id}.static.json`), text, {
