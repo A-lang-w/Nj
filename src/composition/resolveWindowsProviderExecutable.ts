@@ -44,19 +44,22 @@ const isUncPath = (value: string): boolean => /^[\\/]{2}(?![\\/])/u.test(value);
 const isDriveRootedPath = (value: string): boolean =>
   /^[a-z]:[\\/]/iu.test(value);
 
+const isCrossDriveRelativePath = (value: string, cwd: string): boolean => {
+  const drive = /^([a-z]):(?=[^\\/]|$)/iu.exec(value)?.[1];
+  return (
+    drive !== undefined &&
+    `${drive}:`.toLowerCase() !==
+      win32.parse(cwd).root.slice(0, 2).toLowerCase()
+  );
+};
+
 const rejectCrossDriveRelativePath = (
   value: string,
   cwd: string,
   operation: WindowsExecutableLookup["operation"] | undefined,
   field: "executable" | "PATH",
 ): void => {
-  const drive = /^([a-z]):(?=[^\\/]|$)/iu.exec(value)?.[1];
-  if (
-    drive === undefined ||
-    `${drive}:`.toLowerCase() ===
-      win32.parse(cwd).root.slice(0, 2).toLowerCase()
-  )
-    return;
+  if (!isCrossDriveRelativePath(value, cwd)) return;
   throw new AnalysisInputError(
     operation ?? "provider_command_resolution",
     {
@@ -309,8 +312,6 @@ export const resolveWindowsProviderExecutable = async (
   const pathValue = environment.PATH ?? environment.Path ?? environment.path;
   if (pathValue === undefined) return executable;
   const pathEntries = splitWindowsPath(pathValue);
-  for (const entry of pathEntries)
-    rejectCrossDriveRelativePath(entry, cwd, lookup.operation, "PATH");
   const explicitExtension = win32.extname(executable).toLowerCase();
   if (explicitExtension !== "" && ![".com", ".exe"].includes(explicitExtension))
     return executable;
@@ -336,11 +337,12 @@ export const resolveWindowsProviderExecutable = async (
   const candidates = pathEntries.flatMap((entry) =>
     entry.length === 0
       ? []
-      : extensions.map((extension) =>
-          isUncPath(entry)
+      : extensions.map((extension) => ({
+          entry,
+          path: isUncPath(entry)
             ? win32.join(entry, `${executable}${extension}`)
             : absolute(entry, `${executable}${extension}`),
-        ),
+        })),
   );
   const batchOwnedCandidates =
     lookup.findOwnedFiles !== undefined ||
@@ -353,17 +355,25 @@ export const resolveWindowsProviderExecutable = async (
     for (let index = 0; index < candidates.length;) {
       deadline.signal.throwIfAborted();
       const candidate = candidates[index]!;
+      rejectCrossDriveRelativePath(
+        candidate.entry,
+        cwd,
+        lookup.operation,
+        "PATH",
+      );
       if (
         batchOwnedCandidates &&
-        (isUncPath(candidate) || isDriveRootedPath(candidate))
+        (isUncPath(candidate.path) || isDriveRootedPath(candidate.path))
       ) {
         let end = index + 1;
         while (
           end < candidates.length &&
-          (isUncPath(candidates[end]!) || isDriveRootedPath(candidates[end]!))
+          !isCrossDriveRelativePath(candidates[end]!.entry, cwd) &&
+          (isUncPath(candidates[end]!.path) ||
+            isDriveRootedPath(candidates[end]!.path))
         )
           end += 1;
-        const paths = candidates.slice(index, end);
+        const paths = candidates.slice(index, end).map(({ path }) => path);
         const found = await waitForAbortable(
           probeOwnedWindowsPathEntries(
             lookup.findOwnedFiles ?? findRegularFileInOwnedProcess,
@@ -386,14 +396,14 @@ export const resolveWindowsProviderExecutable = async (
       const found = await waitForAbortable(
         probeWindowsPathEntry(
           isFile,
-          candidate,
+          candidate.path,
           lookup.onProbe,
           deadline.signal,
         ),
         deadline.signal,
       );
       if (found === ABORTED) deadline.signal.throwIfAborted();
-      if (found) return candidate;
+      if (found) return candidate.path;
       index += 1;
     }
     return executable;

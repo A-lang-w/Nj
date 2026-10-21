@@ -362,6 +362,22 @@ describe("bounded Windows PATH probes", () => {
 });
 
 describe("drive-relative Windows provider lookup", () => {
+  it("uses an earlier PATH hit before rejecting a later cross-drive entry", async () => {
+    const expected = "C:\\tools\\objdump.EXE";
+    const findOwnedFiles = vi.fn(async (paths: readonly string[]) =>
+      paths.includes(expected) ? expected : undefined,
+    );
+
+    await expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: "C:\\tools;D:other", PATHEXT: ".EXE" },
+        { cwd: "C:\\work", findOwnedFiles },
+      ),
+    ).resolves.toBe(expected);
+    expect(findOwnedFiles).toHaveBeenCalledWith([expected], expect.anything());
+  });
+
   it("rejects a cross-drive drive-relative PATH entry before probing", async () => {
     const isFile = vi.fn(() => false);
 
