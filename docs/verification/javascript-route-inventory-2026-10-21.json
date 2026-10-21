@@ -1961,5 +1961,443 @@
       }
     }
   ],
-  "deadline_control_limit": "The 229185-byte source was sampled on main and initial runtime6c7; the 155988-byte source was sampled on main and corrective runtime e389. Both pairs timed out under the same 512 MiB / 15s choices. The planned size-counter comparison could not execute without a checkpoint, so that cost remains unmeasured. No code-specific timeout cause is claimed."
+  "deadline_control_limit": "The 229185-byte source was sampled on main and initial runtime6c7; the 155988-byte source was sampled on main and corrective runtime e389. Both pairs timed out under the same 512 MiB / 15s choices. The planned size-counter comparison could not execute without a checkpoint, so that cost remains unmeasured. No code-specific timeout cause is claimed.",
+  "deployment_root_followup": {
+    "implementation_commit": "4d0630abb2e34675a875a49d5eecba89a6b442b2",
+    "implementation_tree": "d4f03c70a11d82dfcaca7ec1117c0c27a2426c30",
+    "changes": "Join an inferred deployment root as the base itself, preserving explicit trailing-slash paths; parse Next module metadata after the /_next/ boundary so a deployment app segment cannot become a source app directory.",
+    "before": "New regression failed on prior runtime: produced an extra /app/_next/static/chunks/app candidate and did not coalesce root source provenance.",
+    "equivalent_parent_evidence_id": "ev_bfcb4e0a8eea576f4ca5b501b633d265f65d15ef9c9b234250e90c822a0d759d",
+    "workflows": [
+      {
+        "runtime": "/home/yann/yann/rea-4772-route-inventory",
+        "mode": "complete",
+        "label": "real-full-root",
+        "parameters": {
+          "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+          "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+          "max_semantic_nodes": 1,
+          "max_heap_mb": 512,
+          "analysis_timeout_ms": 15000
+        },
+        "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+        "answer": [
+          "/docs",
+          "/docs/ai-elements",
+          "/docs/changelog",
+          "/docs/cli",
+          "/docs/components",
+          "/docs/components/aria/code-block",
+          "/docs/components/aria/trace",
+          "/docs/components/base/code-block",
+          "/docs/components/base/trace",
+          "/docs/components/radix/code-block",
+          "/docs/components/radix/trace",
+          "/docs/forms",
+          "/docs/installation",
+          "/docs/mcp",
+          "/docs/registry",
+          "/docs/rtl",
+          "/docs/skills",
+          "/docs/theming"
+        ],
+        "source_coverage": {
+          "scope": "provided-code-sources",
+          "source_parsing": "partial",
+          "candidate_enumeration": "partial",
+          "application_routes": "unknown"
+        },
+        "primary_calls": 2,
+        "primary_estimated_tokens": 1885310,
+        "used_input_declarations_plus_primary_estimated_tokens": 1907717,
+        "all_catalog_plus_primary_estimated_tokens": 2990511,
+        "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+        "task_wall_s": 13.712716125,
+        "calls": [
+          {
+            "name": "analyze_javascript_application",
+            "wall_ms": 4828.219223,
+            "estimated_reply_tokens": 1876364,
+            "reply_bytes": 6194453
+          },
+          {
+            "name": "inspect_analysis_view",
+            "wall_ms": 2264.643704,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "inspect_analysis_view",
+            "wall_ms": 32.32032799999979,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "inspect_analysis_view",
+            "wall_ms": 13.16226899999856,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "inspect_analysis_view",
+            "wall_ms": 10.974969999999303,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "export_evidence_bundle",
+            "wall_ms": 96.84487500000068,
+            "estimated_reply_tokens": 120,
+            "reply_bytes": 312
+          }
+        ],
+        "profile": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-4772-lab/bench-routes.mjs",
+            "complete",
+            "real-full-root"
+          ],
+          "exit_code": 0,
+          "wall_s": 14.852448261997779,
+          "cpu_s": 18.508365,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1415036928,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "all_calls_estimated_tokens": 1912027,
+        "used_input_declarations_plus_all_calls_estimated_tokens": 1934654,
+        "full_catalog_plus_all_calls_estimated_tokens": 3017228
+      },
+      {
+        "runtime": "/home/yann/yann/rea-4772-route-inventory",
+        "mode": "selected",
+        "label": "real-selected-root",
+        "parameters": {
+          "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+          "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+          "max_semantic_nodes": 1,
+          "max_heap_mb": 512,
+          "analysis_timeout_ms": 15000
+        },
+        "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+        "answer": [
+          "/docs",
+          "/docs/ai-elements",
+          "/docs/changelog",
+          "/docs/cli",
+          "/docs/components",
+          "/docs/components/aria/code-block",
+          "/docs/components/aria/trace",
+          "/docs/components/base/code-block",
+          "/docs/components/base/trace",
+          "/docs/components/radix/code-block",
+          "/docs/components/radix/trace",
+          "/docs/forms",
+          "/docs/installation",
+          "/docs/mcp",
+          "/docs/registry",
+          "/docs/rtl",
+          "/docs/skills",
+          "/docs/theming"
+        ],
+        "source_coverage": {
+          "scope": "provided-code-sources",
+          "source_parsing": "partial",
+          "candidate_enumeration": "partial",
+          "application_routes": "unknown"
+        },
+        "primary_calls": 1,
+        "primary_estimated_tokens": 8902,
+        "used_input_declarations_plus_primary_estimated_tokens": 11260,
+        "all_catalog_plus_primary_estimated_tokens": 1114103,
+        "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+        "task_wall_s": 12.37499001,
+        "calls": [
+          {
+            "name": "analyze_javascript_application",
+            "wall_ms": 3939.107565,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "inspect_analysis_view",
+            "wall_ms": 2050.5746739999995,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "inspect_analysis_view",
+            "wall_ms": 20.586319000000003,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "inspect_analysis_view",
+            "wall_ms": 13.093929000000571,
+            "estimated_reply_tokens": 8762,
+            "reply_bytes": 28885
+          },
+          {
+            "name": "export_evidence_bundle",
+            "wall_ms": 103.86050500000056,
+            "estimated_reply_tokens": 122,
+            "reply_bytes": 320
+          }
+        ],
+        "profile": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-4772-lab/bench-routes.mjs",
+            "selected",
+            "real-selected-root"
+          ],
+          "exit_code": 0,
+          "wall_s": 13.140042132996314,
+          "cpu_s": 16.913761,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1291862016,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "all_calls_estimated_tokens": 35622,
+        "used_input_declarations_plus_all_calls_estimated_tokens": 58249,
+        "full_catalog_plus_all_calls_estimated_tokens": 1140823
+      }
+    ],
+    "real_browser": {
+      "executable": "/home/yann/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+      "browser_version": "156.0.8078.4",
+      "source": {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+        "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+        "bytes": 86218
+      },
+      "method": "Production chunk compiled inertly with Runtime.compileScript/persistScript in an owned blank local browser page, never run; actual public CLI and SDK analyze_web_bundle captured it through CDP",
+      "routes": [
+        "/docs",
+        "/docs/ai-elements",
+        "/docs/changelog",
+        "/docs/cli",
+        "/docs/components",
+        "/docs/components/aria/code-block",
+        "/docs/components/aria/trace",
+        "/docs/components/base/code-block",
+        "/docs/components/base/trace",
+        "/docs/components/radix/code-block",
+        "/docs/components/radix/trace",
+        "/docs/forms",
+        "/docs/installation",
+        "/docs/mcp",
+        "/docs/registry",
+        "/docs/rtl",
+        "/docs/skills",
+        "/docs/theming"
+      ],
+      "source_coverage": {
+        "scope": "provided-code-sources",
+        "source_parsing": "complete",
+        "candidate_enumeration": "complete",
+        "application_routes": "unknown"
+      },
+      "sources": [
+        {
+          "id": "jss:5a8904ffd2bb9db916cd05f2c0e7624c",
+          "key": "scr_6e20922f65bab674891bd7b6caa8ff2c460ea5afc830881dca59962a49728985",
+          "path": null,
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+          "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+          "container_sha256": null,
+          "status": "complete",
+          "reported_route_capacity": null,
+          "reason": null,
+          "base_path": null
+        }
+      ],
+      "elapsed_s": 8.853280908,
+      "authority_limits": [
+        "Not a live published-page or application execution test",
+        "No reachability, route loading or full application route denominator proof"
+      ],
+      "cleanup": "verified owned browser group and temporary profile removed",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-root.mjs"
+        ],
+        "exit_code": 0,
+        "wall_s": 9.9809587560012,
+        "cpu_s": 12.52111,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 2157809664,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    },
+    "retained_checkpoint_replay": {
+      "method": "Replay prior b5 source-worker checkpoints through the current inventory owner; not a new full source analysis",
+      "replay": [
+        {
+          "site": "nextjs-org",
+          "sources": 29,
+          "inventory_id": "jsri:bcce96e48d8e48860ed7281bb704575e185473c638740eec9e3d9581f8163e70",
+          "statistics": {
+            "sources_seen": 29,
+            "sources_retained": 29,
+            "route_patterns": 0,
+            "occurrences": 0,
+            "unanchored_literals_excluded": 128
+          },
+          "coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "identical": true
+        },
+        {
+          "site": "shadcn-ui",
+          "sources": 38,
+          "inventory_id": "jsri:9491a741d3f1ab2a225d5a385d43fb570c8d5c74bcf6430e6f6c5df850cdc30c",
+          "statistics": {
+            "sources_seen": 38,
+            "sources_retained": 38,
+            "route_patterns": 18,
+            "occurrences": 31,
+            "unanchored_literals_excluded": 89
+          },
+          "coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "identical": true
+        }
+      ],
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/replay-root-inventory.mjs"
+        ],
+        "exit_code": 0,
+        "wall_s": 0.18760073099838337,
+        "cpu_s": 0.222047,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 81096704,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    },
+    "checks": [
+      {
+        "name": "route-root-source-tests",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:local",
+          "--",
+          "src/domain/javascript/javascriptRouteScan.test.ts",
+          "src/domain/javascript/javascriptRouteInventory.test.ts",
+          "src/domain/javascript/javascriptRouteResultBudget.test.ts",
+          "src/domain/analysisView/javascriptRoutesView.test.ts",
+          "src/domain/webBundleAnalyzer.test.ts",
+          "src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.test.ts",
+          "src/application/analysisView/AnalysisViewService.test.ts",
+          "src/domain/javascript/javascriptStaticAnalysis.routeProperties.test.ts"
+        ],
+        "exit_code": 0,
+        "wall_s": 13.495424368004024,
+        "cpu_s": 21.029864,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1503322112,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "route-root-public-tests",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "tests/acceptance/javascriptRoutesCli.test.ts"
+        ],
+        "exit_code": 0,
+        "wall_s": 54.676318325000466,
+        "cpu_s": 70.045972,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 2146729984,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "route-root-check-fast",
+        "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
+        "exit_code": 0,
+        "wall_s": 11.184181381002418,
+        "cpu_s": 20.976992000000003,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1543016448,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "route-root-docs-check",
+        "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
+        "exit_code": 0,
+        "wall_s": 13.142308376998699,
+        "cpu_s": 17.104015,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 787476480,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    ],
+    "limits": [
+      "Full 67-source worker corpus remains pinned to b5ffdba6f. The replay reuses those checkpoints; it does not claim a new full source analysis.",
+      "Fresh public SDK and passive Chromium tasks use this corrective runtime and the same real 86218-byte source. Original application reachability, lazy/server-only code and complete route denominator remain unknown."
+    ],
+    "failed_attempts": [
+      {
+        "profile": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-release.mjs"
+          ],
+          "exit_code": 1,
+          "wall_s": 5.27875236300315,
+          "cpu_s": 6.251640999999999,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1978576896,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "finding": "Verification harness reused an existing Evidence output path. The CLI correctly refused overwrite; no pass claimed. Retried with a fresh output directory, preserving old Evidence."
+      }
+    ]
+  }
 }

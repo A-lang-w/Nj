@@ -1,13 +1,19 @@
 # Static JavaScript route inventory verification
 
-Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
+Issue: [#4772](https://github.com/morluto/rea/issues/4772). Full corpus runtime:
 `b5ffdba6ffdccb7639db12830ec25aa9a697f3f4`, tree
 `7734257d78540ddef3da300a38858f3a4561b712`, on main base `6d356b843`.
+Following root-identity review, delivery, real Chromium and 183 source / 5 public
+regressions were rerun at `4d0630abb2e34675a875a49d5eecba89a6b442b2`
+(tree `d4f03c70a11d82dfcaca7ec1117c0c27a2426c30`). The 67-source checkpoints
+remain pinned to `b5ffdba6f`; replay through the current inventory was byte-for-byte
+equivalent after canonical serialization (not a new full source analysis).
+
 The accompanying JSON retains source digests, matched workflow measurements,
 review corrections, deadline controls and failed attempts. Verification-only
 commits do not change runtime code. Initial qualification of runtime `6c7a72505`
-is retained at record commit `af138bc4e`; the results below use the corrected runtime
-unless a different revision is stated.
+is retained at record commit `af138bc4e`; the corpus results below use that corrected runtime; delivery and checks use
+`4d0630abb` as identified above.
 
 ## Inputs, oracle, and coverage
 
@@ -47,13 +53,14 @@ compiled the production chunk with `Runtime.compileScript` and `persistScript`
 in a blank local page. The chunk was never run. CLI and SDK `analyze_web_bundle`
 calls captured this inert source through CDP and returned the same 18 patterns,
 original URL and SHA-256. Selected-source parsing and enumeration were complete;
-application coverage remained unknown. The verifier took 14.604 s elapsed,
-17.008 CPU s and 2,137,911,296 sampled peak family RSS bytes. Owned browser group
+application coverage remained unknown. The verifier took 9.981 s elapsed,
+12.521 CPU s and 2,157,809,664 sampled peak family RSS bytes. Owned browser group
 and temporary profile cleanup succeeded. This qualifies passive provider capture,
 not the published application's UI behavior.
 
 ## Equivalent delivery workflows
 
+The following measurements use root-corrected runtime `4d0630abb`.
 Both fresh SDK sessions used the same source, semantic budget, 512 MiB worker,
 15-second deadline and `/docs` query with path, confidence, mechanisms and source
 provenance. Both retained parent Evidence ID
@@ -63,11 +70,11 @@ OS caches were already warm; there was no storage-cold or statistical study.
 
 | Measured complete workflow                                    | Complete delivery then route view | Selected view in analysis call |
 | ------------------------------------------------------------- | --------------------------------: | -----------------------------: |
-| Estimated tokens, used input declarations + all calls/replies |                         1,934,657 |                         58,252 |
-| Estimated tokens, entire catalog + all calls/replies          |                         3,017,231 |                      1,140,826 |
-| Elapsed seconds, including startup and cleanup                |                            19.083 |                         18.499 |
-| CPU seconds, process family                                   |                            23.893 |                         22.593 |
-| Peak sampled process-family RSS bytes                         |                     1,541,779,456 |                  1,386,733,568 |
+| Estimated tokens, used input declarations + all calls/replies |                         1,934,654 |                         58,249 |
+| Estimated tokens, entire catalog + all calls/replies          |                         3,017,228 |                      1,140,823 |
+| Elapsed seconds, including startup and cleanup                |                            14.852 |                         13.140 |
+| CPU seconds, process family                                   |                            18.508 |                         16.914 |
+| Peak sampled process-family RSS bytes                         |                     1,415,036,928 |                  1,291,862,016 |
 
 The primary question required two calls with complete delivery and one with
 selected delivery. Used declarations plus primary replies estimate 1,907,717
@@ -79,8 +86,8 @@ separately. SDK/Ajv validation and token-estimation instrumentation are included
 in driver elapsed time, CPU and memory; their separate cost is unmeasured.
 These timings do not establish an underlying source-analysis speedup.
 
-Complete-mode follow-up reads took 38.4, 26.6 and 11.3 ms. Selected-mode reads
-took 3836.4, 47.5 and 33.4 ms; the first includes cold client/tool preparation,
+Complete-mode follow-up reads took 32.3, 13.2 and 11.0 ms. Selected-mode reads
+took 2050.6, 20.6 and 13.1 ms; the first includes cold client/tool preparation,
 which was not separately profiled. The immutable-snapshot cache does not establish
 zero preparation cost. Projection preserves complete Evidence materialization.
 
@@ -101,6 +108,14 @@ That worker run took 5.671 s elapsed, 8.649 CPU s and 497,098,752 peak family RS
 bytes. An actual SDK regression also passed on the qualified runtime: compact
 rows, source SHA, partial enumeration, capacity provenance and retained gap lookup.
 
+The inferred root now joins to the base itself (`/` + inferred `/app` → `/app`).
+Explicit `/app/` remains a distinct source pattern. Next module paths are parsed
+after the `/_next/` boundary, preventing a deployment directory named `app` from
+becoming a source routing ancestor. A new regression failed before the fix and
+now coalesces root syntax, page metadata and explicit `/app` under one identity
+while preserving raw paths, inferred-base uncertainty and metadata-only ranges.
+All prior corpus inventories replayed identically from retained worker checkpoints.
+
 Configuration ownership is separate from validity and actual `children` path
 ancestry. Reassigned/mutated configurations do not revive stale inferred roots;
 ordinary wrapper keys do not create URL ancestors. Rooted constants are checked
@@ -110,7 +125,7 @@ syntax can describe server endpoints. Next App Router metadata recognizes
 `page.ts` and `page.tsx`. Known capture omissions survive as queryable global gaps
 and compact summary metadata without invented script identities or ranges.
 
-- Corrected runtime source regressions: **178/178** across scanner, inventory,
+- Corrected runtime source regressions: **183/183** across scanner, inventory,
   fitter, retained views, web analyzer, worker schemas, Evidence service and legacy
   route-property tests.
 - Public CLI/SDK acceptance: **5/5**, including exported Evidence after source
@@ -133,5 +148,7 @@ configured V8 heap; an invalid harness supplied URL module paths and overlapped
 build cleanup with workers; early export tests used an unsupported option and
 supplied a bundle where one Evidence record was required; a benchmark had a
 syntax error before any request. Only corrected production-boundary runs qualify
-this feature. No live published-page, Windows/macOS, private issue sample,
+this feature. A later browser verifier reused an existing Evidence output path;
+the CLI refused overwrite. The successful retry used a new directory, and the
+failed attempt remains in the JSON. No live published-page, Windows/macOS, private issue sample,
 reachability or complete application route-count claim is made.
