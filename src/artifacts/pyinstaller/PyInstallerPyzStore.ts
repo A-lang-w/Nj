@@ -11,6 +11,10 @@ import {
   sameRegularFileState,
 } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../ArtifactResourceScope.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import { pyInstallerMemberStream } from "./PyInstallerMemberStream.js";
@@ -36,7 +40,11 @@ export interface PyInstallerMemberSource {
 export class PyInstallerPyzStore {
   #root: string | undefined;
   #serial = 0;
-  readonly #owners = new Map<FileHandle, OwnedFileHandle>();
+  readonly #owners = new Map<
+    FileHandle,
+    Extract<ArtifactResourceOwner, { kind: "file-handle" }>
+  >();
+  readonly #cleanup = new ArtifactResourceScope();
   readonly #images = new Map<FileHandle, StoredImage>();
 
   reserveImages(count: number): void {
@@ -63,7 +71,7 @@ export class PyInstallerPyzStore {
     this.#root ??= await mkdtemp(join(tmpdir(), "rea-pyz-"));
     const path = join(this.#root, String(this.#serial++));
     const writer = await open(path, "wx", 0o600);
-    this.#owners.set(writer, new OwnedFileHandle(writer));
+    this.#retain(path, new OwnedFileHandle(writer));
     abortIfNeeded(signal);
     const source = readArtifactFileChunks(handle, {
       start: archiveStart + entry.offset,
@@ -96,7 +104,8 @@ export class PyInstallerPyzStore {
   async release(handle: FileHandle): Promise<void> {
     const owner = this.#owners.get(handle);
     if (owner === undefined) return;
-    await owner.close();
+    const outcome = await this.#cleanup.release(owner);
+    if (outcome.kind === "failed") throw outcome.cause;
     this.#owners.delete(handle);
   }
 
@@ -154,12 +163,17 @@ export class PyInstallerPyzStore {
   }
 
   async close(): Promise<void> {
-    for (const [handle, owner] of this.#owners) {
-      await owner.close();
-      this.#owners.delete(handle);
-    }
+    await this.#cleanup.close();
+    this.#owners.clear();
     if (this.#root !== undefined) {
-      await rm(this.#root, { recursive: true, force: true });
+      try {
+        await rm(this.#root, { recursive: true, force: true });
+      } catch (cause: unknown) {
+        throw ArtifactReaderFailure.withCleanup(
+          cause,
+          ArtifactReaderFailure.cleanupObservation(cause, this.#root),
+        );
+      }
       this.#root = undefined;
     }
     this.#images.clear();
@@ -171,13 +185,19 @@ export class PyInstallerPyzStore {
         symlinks: "reject",
         signal,
       });
-      this.#owners.set(handle, new OwnedFileHandle(handle));
+      this.#retain(path, new OwnedFileHandle(handle));
       return handle;
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure)
-        this.#owners.set(cause.owner.handle, cause.owner);
+        this.#retain(path, cause.owner);
       throw pyInstallerFileAdmissionFailure(path, cause);
     }
+  }
+
+  #retain(path: string, handle: OwnedFileHandle): void {
+    const owner = { kind: "file-handle" as const, resource: path, handle };
+    this.#owners.set(handle.handle, owner);
+    this.#cleanup.retain(owner);
   }
 
   async #writeImage(

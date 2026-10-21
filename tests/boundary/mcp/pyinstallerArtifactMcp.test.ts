@@ -145,6 +145,16 @@ it.each([false, true])(
             }),
             compress: false,
           },
+          ...(opaque
+            ? [
+                {
+                  name: "pyimod00_crypto_key",
+                  typeCode: "m",
+                  payload: Buffer.from("key"),
+                  compress: false,
+                },
+              ]
+            : []),
         ],
       }),
     );
@@ -174,6 +184,17 @@ it.each([false, true])(
       expect(
         inspection.substeps[0]?.evidence.normalized_result.coverage.status,
       ).toBe(opaque ? "unknown" : "complete");
+      if (opaque)
+        expect(
+          inspection.substeps[0]?.evidence.normalized_result.occurrences.find(
+            (row) => row.logical_path === "PYZ.pyz",
+          ),
+        ).toMatchObject({
+          encrypted: false,
+          hash_status: "verified",
+          artifact_id: expect.any(String),
+          format_metadata: { encryption_source: "carchive-marker" },
+        });
       expect(
         inspection.substeps[0]?.evidence.normalized_result.occurrences.map(
           (occurrence) => occurrence.logical_path,

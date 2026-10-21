@@ -125,7 +125,8 @@ export const projectPyzContainer = (
         declaredSize: entry.uncompressedSize,
         compressedSize: entry.compressedSize,
         byteOffset,
-        encrypted,
+        // Legacy encryption applies to inner payloads, never the PYZ image.
+        encrypted: false,
         limitations: [
           ...limitations,
           archive.limitation,

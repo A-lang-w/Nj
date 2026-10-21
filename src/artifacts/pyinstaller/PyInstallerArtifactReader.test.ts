@@ -258,43 +258,82 @@ it("reports encrypted PYZ entries and refuses to extract them", async () => {
   ).rejects.toThrow(/encrypted/u);
 });
 
-it("leaves an unsupported PYZ magic as one opaque member", async () => {
-  const path = await writeArchive(
-    "opaque",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 314,
-      pythonLibrary: "libpython3.14.dylib",
-      members: [
-        {
-          name: "PYZ.pyz",
-          typeCode: "z",
-          payload: pyzArchive({
-            magic: Buffer.alloc(4),
-            modules: [{ name: "app", typeCode: 0, body: Buffer.from("app") }],
-          }),
-          compress: false,
-        },
-      ],
-    }),
-  );
-  const snapshot = await scanCanonicalArtifactInventory(path);
-  const pyz = snapshot.occurrences.find(
-    (occurrence) => occurrence.logical_path === "PYZ.pyz",
-  );
-  expect(pyz).toMatchObject({ entry_kind: "file" });
-  expect(pyz?.format_metadata).toMatchObject({
-    pyz_python_magic: "00000000",
-    pyz_python_version: null,
-    pyz_status: "opaque",
-  });
-  expect(pyz?.limitations.join(" ")).toContain("left opaque");
-  expect(
-    snapshot.occurrences.some((occurrence) =>
-      occurrence.logical_path.endsWith(".pyc"),
-    ),
-  ).toBe(false);
-});
+it.each([false, true])(
+  "leaves an unsupported PYZ magic as one opaque member (marker: %s)",
+  async (marker) => {
+    const payload = pyzArchive({
+      magic: Buffer.alloc(4),
+      modules: [{ name: "app", typeCode: 0, body: Buffer.from("app") }],
+    });
+    const path = await writeArchive(
+      "opaque",
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 314,
+        pythonLibrary: "libpython3.14.dylib",
+        members: [
+          ...(marker
+            ? [
+                {
+                  name: "pyimod00_crypto_key",
+                  typeCode: "m",
+                  payload: Buffer.from("key"),
+                  compress: false,
+                },
+              ]
+            : []),
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            payload,
+            compress: false,
+          },
+        ],
+      }),
+    );
+    const snapshot = await scanCanonicalArtifactInventory(path);
+    const pyz = snapshot.occurrences.find(
+      (occurrence) => occurrence.logical_path === "PYZ.pyz",
+    );
+    expect(pyz).toMatchObject({
+      entry_kind: "file",
+      encrypted: false,
+      hash_status: "verified",
+    });
+    expect(snapshot.coverage.status).toBe("unknown");
+    expect(
+      snapshot.nodes.find((node) => node.artifact_id === pyz?.artifact_id),
+    ).toMatchObject({ sha256: sha256(payload), size: payload.length });
+    expect(pyz?.format_metadata).toMatchObject({
+      pyz_python_magic: "00000000",
+      pyz_python_version: null,
+      pyz_status: "opaque",
+      encryption_source: marker ? "carchive-marker" : null,
+    });
+    expect(pyz?.limitations.join(" ")).toContain("left opaque");
+    expect(
+      snapshot.occurrences.some((occurrence) =>
+        occurrence.logical_path.endsWith(".pyc"),
+      ),
+    ).toBe(false);
+    const outputRoot = join(
+      await createTestTempDirectory("rea-opaque-out-"),
+      "extracted",
+    );
+    await materializeArtifactInventory(
+      {
+        inputPath: path,
+        inputFormat: "elf",
+        outputRoot,
+        environment: process.env,
+        integrityPolicy: "fail",
+      },
+      path,
+      snapshot,
+    );
+    expect(await readFile(join(outputRoot, "PYZ.pyz"))).toEqual(payload);
+  },
+);
 
 it("reads children of a zlib-compressed PYZ", async () => {
   const body = Buffer.from("compressed-child");
@@ -630,7 +669,9 @@ it.each([false, true])(
         await originalClose.call(this);
       });
     try {
-      await expect(reader.close()).rejects.toBe(closeFailure);
+      await expect(reader.close()).rejects.toMatchObject({
+        cleanup: { reason: closeFailure.message, resources: [path] },
+      });
       await reader.close();
       // Spooled PYZ images close after listing, so only the source owner remains.
       expect(attempts).toBe(2);

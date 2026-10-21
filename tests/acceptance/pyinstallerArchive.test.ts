@@ -19,7 +19,10 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
 
-const onefile = async (magic = PYTHON_39_MAGIC): Promise<string> => {
+const onefile = async (
+  magic = PYTHON_39_MAGIC,
+  marker = false,
+): Promise<string> => {
   const directory = await createTestTempDirectory("rea-pyinstaller-cli-");
   const path = join(directory, "hello");
   await writeFile(
@@ -30,6 +33,16 @@ const onefile = async (magic = PYTHON_39_MAGIC): Promise<string> => {
       pythonLibrary: "libpython3.14.dylib",
       trailer: Buffer.from("signature"),
       members: [
+        ...(marker
+          ? [
+              {
+                name: "pyimod00_crypto_key",
+                typeCode: "m",
+                payload: Buffer.from("key"),
+                compress: false,
+              },
+            ]
+          : []),
         {
           name: "pyi-contents-directory _internal",
           typeCode: "o",
@@ -158,7 +171,7 @@ it("extracts CArchive members through extract-artifact", async () => {
 });
 
 it("reports unknown traversal through the CLI for an opaque PYZ", async () => {
-  const path = await onefile(Buffer.alloc(4));
+  const path = await onefile(Buffer.alloc(4), true);
   const result = await execute(process.execPath, [
     cli,
     "inspect-artifact",
@@ -171,8 +184,18 @@ it("reports unknown traversal through the CLI for an opaque PYZ", async () => {
   const inventory = inspection.substeps[0]?.evidence.normalized_result;
   expect(inventory?.coverage.status).toBe("unknown");
   expect(inventory?.limitations.join(" ")).toContain("opaque");
-  expect(
-    inventory?.occurrences.find((row) => row.logical_path === "PYZ.pyz")
-      ?.format_metadata,
-  ).toMatchObject({ pyz_python_magic: "00000000", pyz_status: "opaque" });
+  const opaque = inventory?.occurrences.find(
+    (row) => row.logical_path === "PYZ.pyz",
+  );
+  expect(opaque).toMatchObject({
+    encrypted: false,
+    hash_status: "verified",
+    artifact_id: expect.any(String),
+    source_location: { kind: "byte-span" },
+  });
+  expect(opaque?.format_metadata).toMatchObject({
+    pyz_python_magic: "00000000",
+    pyz_status: "opaque",
+    encryption_source: "carchive-marker",
+  });
 });

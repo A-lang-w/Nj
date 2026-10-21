@@ -110,6 +110,9 @@ These headers do not establish successful execution or decompilation.
 The nonempty CArchive Python module `pyimod00_crypto_key` (`m`/`M`) is recorded
 as an encryption marker; a same-named data file or script is not. Affected
 PYZ blobs are reported without decoding; extraction refuses encrypted entries.
+The raw PYZ container remains readable and hashable, including when its module
+table is opaque. Its marker stays in metadata and opaque child coverage stays
+unknown; extracting the container does not decrypt its payloads.
 The marker also applies to nonempty legacy namespace payloads. Empty namespaces
 have no payload to encrypt and retain a null encryption source.
 

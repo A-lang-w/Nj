@@ -75,11 +75,11 @@ interface LoadedArchive {
  */
 export class PyInstallerArtifactReader implements ArtifactReader {
   readonly format = "pyinstaller" as const;
-  #owner: OwnedFileHandle | undefined;
   #source: StableRegularFileDescriptor | undefined;
   #opening: Promise<FileHandle> | undefined;
   #closed = false;
   readonly #scope = new ArtifactResourceScope();
+  readonly #cleanup = new ArtifactResourceScope();
   readonly #lifecycle = new AbortController();
   #boundSha256: string | undefined;
   #loaded: Promise<LoadedArchive> | undefined;
@@ -97,6 +97,11 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     source?: StableRegularFileDescriptor,
   ) {
     this.#source = source;
+    this.#cleanup.retain({
+      kind: "lease",
+      resource: "PyInstaller private PYZ images",
+      lease: { release: () => this.#pyzStore.close() },
+    });
   }
 
   formatMetadata(): PyInstallerMetadata | undefined {
@@ -270,9 +275,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     );
     this.#lifecycle.abort(closing);
     await this.#scope.close();
-    await this.#pyzStore.close();
-    await this.#owner?.close();
-    this.#owner = undefined;
+    await this.#cleanup.close();
     this.#source = undefined;
     this.#closed = true;
     this.#loaded = undefined;
@@ -381,14 +384,18 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         symlinks: "reject",
         signal: this.#lifecycle.signal,
       });
-      this.#owner = new OwnedFileHandle(handle);
+      this.#retainCarrier(new OwnedFileHandle(handle));
       this.#source = { handle, initial: await handle.stat() };
       return handle;
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure)
-        this.#owner = cause.owner;
+        this.#retainCarrier(cause.owner);
       throw pyInstallerFileAdmissionFailure(this.path, cause);
     }
+  }
+
+  #retainCarrier(handle: OwnedFileHandle): void {
+    this.#cleanup.retain({ kind: "file-handle", resource: this.path, handle });
   }
 
   async #cookie(

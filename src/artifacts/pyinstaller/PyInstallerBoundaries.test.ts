@@ -1,4 +1,6 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash } from "node:crypto";
 import { writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
@@ -38,6 +40,96 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+it.each([false, true])(
+  "settles independent private and carrier closes and retries only failed owners (carrier failure: %s)",
+  async (failCarrier) => {
+    const path = join(await createTestTempDirectory("rea-pyi-cleanup-"), "app");
+    await writeFile(
+      path,
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: ["one", "two"].map((name) => ({
+          name: `${name}.pyz`,
+          typeCode: "z",
+          compress: true,
+          payload: pyzArchive({
+            magic: PYTHON_39_MAGIC,
+            modules: [{ name: "app", typeCode: 0, body: Buffer.from(name) }],
+          }),
+        })),
+      }),
+    );
+    const reader = new PyInstallerArtifactReader(path);
+    const entries = (await members(reader)).filter((entry) =>
+      entry.path.endsWith("app.pyc"),
+    );
+    expect(entries).toHaveLength(2);
+    const nativeClose = OwnedFileHandle.prototype.close;
+    const privateOwners = new Set<OwnedFileHandle>();
+    const attempts: OwnedFileHandle[] = [];
+    let collecting = true;
+    let failing = true;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        attempts.push(this);
+        if (collecting) privateOwners.add(this);
+        if (failing && (privateOwners.has(this) || failCarrier))
+          throw new Error(
+            privateOwners.has(this) ? "private close EIO" : "carrier close EIO",
+          );
+        await nativeClose.call(this);
+      });
+    try {
+      for (const entry of entries)
+        await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+          cleanup: { reason: "private close EIO" },
+        });
+      expect(privateOwners.size).toBe(2);
+      collecting = false;
+      attempts.length = 0;
+      const failure = await reader.close().then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(attempts).toHaveLength(3);
+      expect(new Set(attempts).size).toBe(3);
+      expect(failure).toMatchObject({
+        cleanup: {
+          resources: expect.arrayContaining(failCarrier ? [path] : []),
+        },
+      });
+      expect(
+        (failure as ArtifactReaderFailure).cleanup?.resources,
+      ).toHaveLength(failCarrier ? 3 : 2);
+      expect((failure as ArtifactReaderFailure).cleanup?.reason).toContain(
+        "private close EIO",
+      );
+      if (failCarrier)
+        expect((failure as ArtifactReaderFailure).cleanup?.reason).toContain(
+          "carrier close EIO",
+        );
+      const carrier = attempts.find((owner) => !privateOwners.has(owner))!;
+      expect(carrier.handle.fd >= 0).toBe(failCarrier);
+      for (const owner of privateOwners)
+        expect(owner.handle.fd).toBeGreaterThanOrEqual(0);
+      failing = false;
+      attempts.length = 0;
+      await reader.close();
+      expect(attempts).toHaveLength(failCarrier ? 3 : 2);
+      for (const owner of [...privateOwners, carrier])
+        expect(owner.handle.fd).toBe(-1);
+      attempts.length = 0;
+      await reader.close();
+      expect(attempts).toEqual([]);
+    } finally {
+      close.mockRestore();
+      await reader.close();
+    }
+  },
+);
 
 it("binds materialization to the inventoried digest and checks cached carrier freshness", async () => {
   const bytes = archive(Buffer.from("first"));
@@ -493,7 +585,9 @@ it("preserves a private-image read failure when its descriptor close also fails"
         reason: "io",
         cause: io,
       });
-      await expect(reader.close()).rejects.toThrow("private close EIO");
+      await expect(reader.close()).rejects.toMatchObject({
+        cleanup: { reason: "private close EIO" },
+      });
       expect(failedOwner?.handle.fd).toBeGreaterThanOrEqual(0);
     } finally {
       read.mockRestore();
