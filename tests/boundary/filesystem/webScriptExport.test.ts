@@ -507,6 +507,82 @@ describe("captured script publication failures and cleanup", () => {
       createSpy.mockRestore();
     }
   });
+});
+
+describe("captured script cancellation finalization", () => {
+  it("keeps the caller reason when rollback also fails after an interrupted write", async () => {
+    const { input, resources } = await setup(
+      scriptScenarioFixture([
+        {
+          url: "https://fixture.test/first.js",
+          bytes: Buffer.from("export const a = 1;"),
+        },
+      ]),
+    );
+    const controller = new AbortController();
+    const reason = { request: "stop export" };
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        vi.spyOn(tree, "write").mockImplementationOnce(async () => {
+          controller.abort(reason);
+          throw new Error("injected write failure");
+        });
+        vi.spyOn(tree, "rollback").mockRejectedValueOnce(
+          new Error("injected rollback failure"),
+        );
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+      await resources.close();
+    }
+  });
+
+  it("reports cancellation with the completed output when abort lands during final commit", async () => {
+    const { input, resources } = await setup();
+    const controller = new AbortController();
+    const reason = { request: "stop export" };
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        const commit = tree.commit.bind(tree);
+        vi.spyOn(tree, "commit").mockImplementation(async (...commitArgs) => {
+          await commit(...commitArgs);
+          controller.abort(reason);
+        });
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "web-script-export",
+        result: {
+          output_directory: input.output_directory,
+          manifest: { path: join(input.output_directory, "manifest.json") },
+        },
+      });
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
 
   it("returns cancellation with the caller reason when a retried capture close recovers", async () => {
     const { input, resources } = await setup();

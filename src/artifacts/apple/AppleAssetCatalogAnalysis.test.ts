@@ -332,43 +332,49 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
     await expect(analysis).rejects.toThrow("interface builder failed");
   });
 
-  it("settles a cancelled assetutil run only after its process exits", async () => {
-    const bundle = await catalogBundle();
-    const work = await createTestTempDirectory("rea-assetutil-stop-");
-    const ready = join(work, "ready");
-    const exited = join(work, "exited");
-    const script = `const fs=require("node:fs");process.on("SIGTERM",()=>{setTimeout(()=>{fs.writeFileSync(process.argv[2],"exited");process.exit(0)},500)});fs.writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000);`;
-    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-    const realExecFileOutput = processOutput.execFileOutput;
-    Object.defineProperty(process, "platform", {
-      ...platform,
-      value: "darwin",
-    });
-    const spy = vi
-      .spyOn(processOutput, "execFileOutput")
-      .mockImplementation((_command, _args, options) =>
-        realExecFileOutput(
-          process.execPath,
-          ["-e", script, ready, exited],
-          options,
-        ),
-      );
-    const controller = new AbortController();
-    try {
-      const settled = analyzeAppleAssetCatalogs({
-        environment: {},
-        bundlePath: bundle,
-        targetSha256: "a".repeat(64),
-        signal: controller.signal,
-        analyzeInterfaceBuilder: async () => emptyGraph,
-      }).catch((cause: unknown) => cause);
-      await vi.waitFor(() => expect(access(ready)).resolves.toBeUndefined());
-      controller.abort("stop asset inspection");
-      expect(await settled).toMatchObject({ reason: "cancelled" });
-      await expect(access(exited)).resolves.toBeUndefined();
-    } finally {
-      spy.mockRestore();
-      Object.defineProperty(process, "platform", platform);
-    }
-  });
+  it.skipIf(process.platform === "win32")(
+    "settles a cancelled assetutil run only after its process exits",
+    async () => {
+      const bundle = await catalogBundle();
+      const work = await createTestTempDirectory("rea-assetutil-stop-");
+      const ready = join(work, "ready");
+      const exited = join(work, "exited");
+      const script = `const fs=require("node:fs");process.on("SIGTERM",()=>{setTimeout(()=>{fs.writeFileSync(process.argv[2],"exited");process.exit(0)},500)});fs.writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000);`;
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      const realExecFileOutput = processOutput.execFileOutput;
+      Object.defineProperty(process, "platform", {
+        ...platform,
+        value: "darwin",
+      });
+      const spy = vi
+        .spyOn(processOutput, "execFileOutput")
+        .mockImplementation((_command, _args, options) =>
+          realExecFileOutput(
+            process.execPath,
+            ["-e", script, ready, exited],
+            options,
+          ),
+        );
+      const controller = new AbortController();
+      let settled: Promise<unknown> | undefined;
+      try {
+        settled = analyzeAppleAssetCatalogs({
+          environment: {},
+          bundlePath: bundle,
+          targetSha256: "a".repeat(64),
+          signal: controller.signal,
+          analyzeInterfaceBuilder: async () => emptyGraph,
+        }).catch((cause: unknown) => cause);
+        await vi.waitFor(() => expect(access(ready)).resolves.toBeUndefined());
+        controller.abort("stop asset inspection");
+        expect(await settled).toMatchObject({ reason: "cancelled" });
+        await expect(access(exited)).resolves.toBeUndefined();
+      } finally {
+        controller.abort("stop asset inspection");
+        await settled;
+        spy.mockRestore();
+        Object.defineProperty(process, "platform", platform);
+      }
+    },
+  );
 });
