@@ -7,6 +7,10 @@ import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
+import {
+  CPU,
+  machoImage,
+} from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
@@ -41,6 +45,30 @@ describe("artifact extraction format support", () => {
     expect(await extract(controller.signal)).toMatchObject({
       ok: false,
       error: { _tag: "ArtifactOperationError", reason: "cancelled" },
+    });
+    await expect(access(output)).rejects.toThrow();
+  });
+
+  it("refuses a thin Mach-O that inventory lists as root-only", async () => {
+    const root = await createTestTempDirectory("rea-extract-thin-macho-");
+    const binary = join(root, "thin");
+    await writeFile(binary, machoImage({ cpu: CPU.arm64e }));
+    const output = join(root, "output");
+    expect(
+      await new ArtifactProvider(process.env)
+        .createClient(thinMachOTarget(binary))
+        .execute(
+          "extract_artifact",
+          artifactExtractionExecutionSchema.parse({ output_root: output }),
+        ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisUnsupportedTargetError",
+        operation: "extract_artifact",
+        path: binary,
+        reason: "Artifact format has no extraction reader: mach-o",
+      },
     });
     await expect(access(output)).rejects.toThrow();
   });
@@ -82,4 +110,14 @@ const archiveTarget = (
   sha256: "0".repeat(64),
   kind: "archive",
   format,
+});
+
+const thinMachOTarget = (path: string): BinaryTarget => ({
+  path,
+  sourcePath: path,
+  sha256: "0".repeat(64),
+  kind: "executable",
+  format: "mach-o",
+  architecture: "arm64",
+  availableArchitectures: ["arm64"],
 });
