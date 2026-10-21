@@ -1265,9 +1265,11 @@ export class RizinDebugSessionManager {
             session.pendingInferiorPids.delete(pid);
             continue;
           }
-          const first = await this.#readProcessStartTime(pid);
-          const second = await this.#readProcessStartTime(pid);
-          if (first === null && second === null) {
+          const replacement = await this.#resolveInferiorRowIdentity(
+            session,
+            pid,
+          );
+          if (replacement === undefined) {
             session.pendingInferiorPids.delete(pid);
             continue;
           }
@@ -1342,10 +1344,12 @@ export class RizinDebugSessionManager {
     session.inferiorInventoryComplete = false;
     const inferior = await this.#readInferiorInventory(session);
     if (inferior.length === 0) {
-      await assertRizinEmptyInferiorInventory(
-        session.knownInferiorIdentities.values(),
-        this.#readProcessStartTime,
-      );
+      for (const identity of session.knownInferiorIdentities.values()) {
+        if (!(await this.#verifyOmittedInferiorEnded(session, identity)))
+          throw new Error(
+            `Rizin reported no inferior while identified PID ${identity.pid} is still active.`,
+          );
+      }
       // Keep prior identities until the debugger itself is fully stopped.
       // A later cleanup retry may receive a stale ptrace row after this valid
       // empty inventory; retaining the proof lets us recognize that exact PID.
@@ -1374,12 +1378,7 @@ export class RizinDebugSessionManager {
       // A non-empty but partial ptrace inventory does not prove that an
       // omitted retained target was detached. Only its end or a changed PID
       // identity makes it safe to proceed toward stopping the debugger.
-      if (
-        !(await verifyOwnedInferiorsEnded(
-          [identity],
-          this.#readProcessStartTime,
-        ))
-      )
+      if (!(await this.#verifyOmittedInferiorEnded(session, identity)))
         throw new Error(
           `Rizin omitted retained inferior PID ${pid} from the ptrace inventory while it is still active.`,
         );
@@ -1507,21 +1506,13 @@ export class RizinDebugSessionManager {
           identity.startTime === completed.identity.startTime
         )
           continue;
-        if (
-          !(await verifyOwnedInferiorsEnded(
-            [identity],
-            this.#readProcessStartTime,
-          ))
-        )
+        if (!(await this.#verifyOmittedInferiorEnded(session, identity)))
           throw new Error(
             `Rizin omitted retained inferior PID ${pid} from the ambiguous detach inventory while it is still active.`,
           );
       }
       if (
-        !(await verifyOwnedInferiorsEnded(
-          [completed.identity],
-          this.#readProcessStartTime,
-        ))
+        !(await this.#verifyOmittedInferiorEnded(session, completed.identity))
       )
         throw new Error(
           "Rizin did not confirm that the selected inferior was detached after an ambiguous readback.",
@@ -1566,12 +1557,7 @@ export class RizinDebugSessionManager {
     }
     for (const [pid, identity] of session.knownInferiorIdentities) {
       if (pid === completed.identity.pid) continue;
-      if (
-        !(await verifyOwnedInferiorsEnded(
-          [identity],
-          this.#readProcessStartTime,
-        ))
-      )
+      if (!(await this.#verifyOmittedInferiorEnded(session, identity)))
         throw new Error(
           `Rizin omitted retained inferior PID ${pid} from the post-detach inventory while it is still active.`,
         );
@@ -1653,6 +1639,19 @@ export class RizinDebugSessionManager {
     return resolved(identity);
   }
 
+  async #verifyOmittedInferiorEnded(
+    session: RizinDebugSession,
+    identity: OwnedInferiorIdentity,
+  ): Promise<boolean> {
+    // A changed start time proves only that the original process ended. The
+    // PID may now name a replacement still traced by this owned debugger.
+    const replacement = await this.#resolveInferiorRowIdentity(
+      session,
+      identity.pid,
+    );
+    return replacement === undefined;
+  }
+
   async #verifyConfirmedDetachedInferior(
     session: RizinDebugSession,
     identity: OwnedInferiorIdentity,
@@ -1686,12 +1685,7 @@ export class RizinDebugSessionManager {
         throw new Error(
           "Rizin reported another active inferior while reconciling a completed detach.",
         );
-      if (
-        !(await verifyOwnedInferiorsEnded(
-          [knownIdentity],
-          this.#readProcessStartTime,
-        ))
-      )
+      if (!(await this.#verifyOmittedInferiorEnded(session, knownIdentity)))
         throw new Error(
           `Rizin omitted retained inferior PID ${pid} from the detach inventory while it is still active.`,
         );
@@ -1712,12 +1706,7 @@ export class RizinDebugSessionManager {
     } catch (cause) {
       // Detach resumes the inferior. Its identity or descriptors may disappear
       // before readback; only a previously identified process can prove its end.
-      if (
-        !(await verifyOwnedInferiorsEnded(
-          [identity],
-          this.#readProcessStartTime,
-        ))
-      )
+      if (!(await this.#verifyOmittedInferiorEnded(session, identity)))
         throw cause;
       session.confirmedDetachedInferiorIdentity = undefined;
       return { status: "no-inferior" };

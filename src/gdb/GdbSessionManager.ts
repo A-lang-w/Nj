@@ -2358,47 +2358,11 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
     firstToken !== undefined &&
     ["run", "start", "starti"].some((name) => name.startsWith(firstToken));
   const runTail = runCommand ? command.slice(firstToken.length) : "";
-  // GDB accepts an input-only redirection for the inferior. It does not change
-  // stdout/stderr, which are independently verified from the live process at
-  // close time. Keep the exception narrow: compound commands and any output
-  // redirection still revoke the startup proof.
-  const inputOnlyRunRedirection = (() => {
-    if (
-      !runCommand ||
-      /[>;|\r\n]/u.test(runTail) ||
-      runTail.indexOf("<") < 0 ||
-      runTail.indexOf("<") !== runTail.lastIndexOf("<")
-    )
-      return false;
-    const inputIndex = runTail.indexOf("<");
-    const argumentsAndFd = runTail.slice(0, inputIndex);
-    const inputPath = runTail.slice(inputIndex + 1);
-    // POSIX shell syntax also permits closing stdin with `<&-`. Only fd 0
-    // preserves the configured output sink; closing an output descriptor is
-    // still rejected below.
-    if (/^&-(?:\s+[^<>;&|\s]+)*$/u.test(inputPath.trim())) {
-      const descriptor = /(?:^|\s)(\d+)$/u.exec(argumentsAndFd)?.[1];
-      return (
-        (descriptor === undefined || descriptor === "0") &&
-        !/[<>;&|\r\n]/u.test(argumentsAndFd)
-      );
-    }
-    if (
-      !/^\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)(?:\s+[^<>;&|\s]+)*\s*$/u.test(
-        inputPath,
-      )
-    )
-      return false;
-    // Only a standalone decimal token attached to `<` is an IO descriptor.
-    // `arg2<input.txt` ends in an argument named `arg2`, so it still uses fd 0.
-    const descriptor = /(?:^|\s)(\d+)$/u.exec(argumentsAndFd)?.[1];
-    return (
-      (descriptor === undefined || descriptor === "0") &&
-      !/[<>;&|\r\n]/u.test(argumentsAndFd)
-    );
-  })();
-  const mayRunWithOutputRedirection =
-    runCommand && /[<>]{1,2}|&>/u.test(runTail) && !inputOnlyRunRedirection;
+  // GDB passes run arguments through a shell. Scan shell syntax once so quoted
+  // or escaped metacharacters in arguments and paths remain ordinary text.
+  const runRedirection = runCommand
+    ? classifyRunRedirection(runTail)
+    : { mayChangeOutput: false };
   return (
     maySetInferiorTty ||
     mayBeTtyCommand ||
@@ -2406,8 +2370,120 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
     mayDefineAlias ||
     /\binferior-tty\b/iu.test(command) ||
     /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|py\w*|define\b)/iu.test(command) ||
-    mayRunWithOutputRedirection
+    runRedirection.mayChangeOutput
   );
+};
+
+const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  let token = "";
+  let tokenStart = -1;
+  let previousToken: { value: string; end: number; plain: boolean } | undefined;
+  const inputs: Array<{
+    descriptor: string | undefined;
+    target: "missing" | "path" | "close";
+  }> = [];
+  let awaitingInputTarget = false;
+  let outputOrControl = false;
+  let malformed = false;
+  const finishToken = (end: number): void => {
+    if (tokenStart < 0) return;
+    previousToken = {
+      value: token,
+      end,
+      plain: quote === undefined && !escaped,
+    };
+    token = "";
+    tokenStart = -1;
+  };
+
+  for (let index = 0; index < tail.length; index += 1) {
+    const char = tail[index]!;
+    if (escaped) {
+      token += char;
+      escaped = false;
+      continue;
+    }
+    if (quote !== undefined) {
+      if (char === quote) quote = undefined;
+      else if (char === "\\" && quote === '"') escaped = true;
+      else token += char;
+      continue;
+    }
+    if (char === "\\") {
+      if (tokenStart < 0) tokenStart = index;
+      if (awaitingInputTarget) {
+        inputs.at(-1)!.target = "path";
+        awaitingInputTarget = false;
+      }
+      escaped = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      if (tokenStart < 0) tokenStart = index;
+      if (awaitingInputTarget) {
+        inputs.at(-1)!.target = "path";
+        awaitingInputTarget = false;
+      }
+      quote = char;
+      continue;
+    }
+    if (/\s/u.test(char)) {
+      if (char === "\r" || char === "\n") outputOrControl = true;
+      finishToken(index);
+      continue;
+    }
+    if (char === "<" || char === ">") {
+      finishToken(index);
+      if (char === ">") {
+        outputOrControl = true;
+        previousToken = undefined;
+        continue;
+      }
+      const descriptor =
+        previousToken?.end === index &&
+        previousToken.plain &&
+        /^\d+$/u.test(previousToken.value)
+          ? previousToken.value
+          : undefined;
+      if (tail[index + 1] === "&" && tail[index + 2] === "-") {
+        inputs.push({ descriptor, target: "close" });
+        index += 2;
+      } else {
+        const next = tail[index + 1];
+        if (next === "<" || next === ">") outputOrControl = true;
+        inputs.push({ descriptor, target: "missing" });
+        awaitingInputTarget = true;
+      }
+      previousToken = undefined;
+      continue;
+    }
+    if (char === ";" || char === "|" || char === "&") {
+      outputOrControl = true;
+      previousToken = undefined;
+      continue;
+    }
+    if (tokenStart < 0) tokenStart = index;
+    if (awaitingInputTarget) {
+      inputs.at(-1)!.target = "path";
+      awaitingInputTarget = false;
+    }
+    token += char;
+  }
+  finishToken(tail.length);
+  malformed ||= quote !== undefined || escaped;
+  const soleInput = inputs.length === 1 ? inputs[0] : undefined;
+  const inputOnly =
+    !malformed &&
+    !outputOrControl &&
+    soleInput !== undefined &&
+    (soleInput.descriptor === undefined || soleInput.descriptor === "0") &&
+    (soleInput.target === "close" || soleInput.target === "path");
+  return {
+    mayChangeOutput:
+      malformed || outputOrControl || (inputs.length > 0 && !inputOnly),
+  };
 };
 
 /** Await a serialized command turn, preserving the caller's cancellation reason. */

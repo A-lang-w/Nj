@@ -1932,6 +1932,8 @@ process.stdin.on("data", (chunk) => {
             ? "100"
             : null;
         },
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -1975,6 +1977,85 @@ process.stdin.on("data", (chunk) => {
     await inferiorExit;
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(outcomes[2]).toBe("no-inferior");
+  },
+);
+
+it.skipIf(process.platform !== "linux").each([
+  { name: "untraced replacement", tracerPid: 0, closeSucceeds: true },
+  { name: "replacement traced by Rizin", tracerPid: 777, closeSucceeds: false },
+])(
+  "reconciles an omitted pending PID against a $name",
+  async ({ tracerPid, closeSucceeds }) => {
+    const inferior = await spawnTestInferior();
+    expect(inferior.pid).toBeDefined();
+    if (inferior.pid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-pending-reused-pid-"));
+    const provider = join(directory, "fake-rizin-pending-reused-pid.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+process.stdout.write("\\0");
+let input = "";
+let inventory = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj") {
+      inventory += 1;
+      process.stdout.write((inventory === 1
+        ? JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${inferior.pid}" }])
+        : "[]") + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    let identityReads = 0;
+    let tracerReads = 0;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          expect(pid).toBe(String(inferior.pid));
+          if (identityReads++ === 0)
+            throw new Error("transient identity read failure before PID reuse");
+          return "200";
+        },
+        readProcessTracerPid: async () => {
+          tracerReads += 1;
+          return tracerPid;
+        },
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    const retried = await manager.retryCleanupFailures();
+    expect(retried.ok).toBe(closeSucceeds);
+    expect(tracerReads).toBeGreaterThan(0);
+    if (closeSucceeds) expect(inferior.exitCode).toBeNull();
+    else expect(manager.status(started.value.session_id)).toBeDefined();
   },
 );
 
@@ -2025,6 +2106,8 @@ process.stdin.on("data", (chunk) => {
             throw new Error("transient identity read failure");
           return "100";
         },
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -2128,6 +2211,8 @@ process.stdin.on("data", (chunk) => {
               : null;
           throw new Error(`unexpected PID ${pid}`);
         },
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -2334,6 +2419,105 @@ it.skipIf(process.platform !== "linux")(
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(detachResults[2]).toBe("detached");
     expect(await readFile(commandsPath, "utf8")).toContain("o- 13");
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains an omitted PID replacement traced by the owned Rizin debugger",
+  async () => {
+    const omitted = await spawnTestInferior();
+    const retained = await spawnTestInferiorOnTty(await rizinTestInferiorTty());
+    expect(omitted.pid).toBeDefined();
+    expect(retained.pid).toBeDefined();
+    if (omitted.pid === undefined || retained.pid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-omitted-replacement-"));
+    const commandsPath = join(directory, "commands");
+    const provider = join(directory, "fake-rizin-omitted-replacement.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let inventory = 0;
+let detached = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      inventory += 1;
+      const rows = detached ? [] : inventory === 1
+        ? [
+            { fd: 12, raised: true, uri: "ptrace://${omitted.pid}" },
+            { fd: 13, raised: true, uri: "ptrace://${retained.pid}" },
+          ]
+        : [{ fd: 13, raised: true, uri: "ptrace://${retained.pid}" }];
+      process.stdout.write(JSON.stringify(rows) + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 13") detached = true;
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    const outcomes: string[] = [];
+    let omittedIdentityReads = 0;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid === String(omitted.pid))
+            return omittedIdentityReads++ < 2 ? "100" : "200";
+          if (pid === String(retained.pid)) return "300";
+          throw new Error(`unexpected PID ${pid}`);
+        },
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          try {
+            outcomes.push(
+              (await session.detachInferior?.())?.status ?? "missing-detach",
+            );
+          } catch (cause) {
+            outcomes.push(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+          return { status: "incomplete", reason: "injected retained debugger" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(outcomes[0]).toContain("multiple or ambiguous ptrace inferiors");
+    expect(outcomes[1]).toContain(
+      `omitted retained inferior PID ${omitted.pid} from the ptrace inventory while it is still active`,
+    );
+    expect(await readFile(commandsPath, "utf8")).not.toContain("o- 13");
+    expect(omitted.exitCode).toBeNull();
+    expect(retained.exitCode).toBeNull();
   },
 );
 
