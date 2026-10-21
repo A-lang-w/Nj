@@ -4,13 +4,13 @@ import {
   Il2cppMetadataFormatFailure,
 } from "./Il2cppMetadataFormat.js";
 import {
-  IL2CPP_METADATA_MAGIC,
   IL2CPP_METADATA_VERSIONS,
   il2cppMetadataSectionNames,
   type Il2cppMetadata,
   type Il2cppMetadataSection,
   type IL2cppMetadataSectionName,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { observeIl2cppMetadataHeaderPrefix } from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
 import {
   readIl2cppMembers,
   readIl2cppMemberTables,
@@ -129,13 +129,18 @@ const isIndexWidth = (value: number): value is IndexWidth =>
   value === 1 || value === 2 || value === 4;
 
 const readHeader = (bytes: Buffer) => {
-  const magic = bytes.length < 4 ? null : bytes.readUInt32LE(0);
-  if (bytes.length < 8 || magic !== IL2CPP_METADATA_MAGIC)
+  const prefix = observeIl2cppMetadataHeaderPrefix(bytes);
+  if (prefix.kind !== "il2cpp")
     throw new Il2cppMetadataFormatFailure(
       "unrecognized-magic",
       "the file does not start with the IL2CPP global-metadata magic 0xFAB11BAF; encrypted or non-metadata inputs are not decoded",
     );
-  const version = bytes.readInt32LE(4);
+  if (prefix.version === null)
+    throw new Il2cppMetadataFormatFailure(
+      "truncated-header",
+      `the file has ${bytes.length} bytes, fewer than the 8-byte magic/version prefix; the metadata version is unknown`,
+    );
+  const { magic, version } = prefix;
   if (!isSupportedVersion(version))
     throw new Il2cppMetadataFormatFailure(
       "unsupported-version",
@@ -248,15 +253,25 @@ const FIXED_WIDTHS: Il2cppMetadataDecoded["index_widths"] = {
   type_width_source: "fixed-width-version",
 };
 
+const GENERIC_CONTAINER_RECORD_BYTES = 16;
+
 const resolveWidths = (
   section: (name: SectionName) => Il2cppMetadataSection,
 ): Il2cppMetadataDecoded["index_widths"] => {
+  const genericContainers = section("genericContainers");
+  const genericContainerBytes = recordBytes(genericContainers);
+  if (
+    genericContainerBytes !== null &&
+    genericContainerBytes !== GENERIC_CONTAINER_RECORD_BYTES
+  )
+    throw new Il2cppMetadataFormatFailure(
+      "record-size-mismatch",
+      `section genericContainers records are ${genericContainerBytes} bytes, but each record is ${GENERIC_CONTAINER_RECORD_BYTES}`,
+    );
   const type_definition = il2cppIndexWidth(
     headerCount(section("typeDefinitions")),
   );
-  const generic_container = il2cppIndexWidth(
-    headerCount(section("genericContainers")),
-  );
+  const generic_container = il2cppIndexWidth(headerCount(genericContainers));
   const parameter = il2cppIndexWidth(headerCount(section("parameters")));
   // TypeIndex counts native types, so its width is recovered from records.
   const interfaceOffset = recordBytes(section("interfaceOffsets"));
