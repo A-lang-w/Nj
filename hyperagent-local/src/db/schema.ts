@@ -7,7 +7,7 @@ import {
   uniqueIndex,
   primaryKey,
 } from "drizzle-orm/sqlite-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   DEFAULT_MAX_TOKENS,
   DEFAULT_MODEL,
@@ -226,6 +226,9 @@ export const skills = sqliteTable(
   },
   (table) => ({
     workspaceIdx: index("skills_workspace_idx").on(table.workspaceId),
+    workspaceNameIdx: uniqueIndex("skills_workspace_name_idx")
+      .on(table.workspaceId, table.name)
+      .where(sql`${table.workspaceId} is not null`),
   }),
 );
 

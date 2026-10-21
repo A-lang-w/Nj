@@ -29,6 +29,13 @@
       "when": 1792550000001,
       "tag": "0003_messages_tool_call_id_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792550000002,
+      "tag": "0004_skills_workspace_name_unique",
+      "breakpoints": true
     }
   ]
 }
