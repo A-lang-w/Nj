@@ -228,6 +228,14 @@ class SharedCliProcess implements CliCommandSession {
 
   async #invoke(request: CliCommandRequest): Promise<CliCommandResult> {
     if (this.#closed) throw closedError();
+    try {
+      return await this.#run(request);
+    } finally {
+      await this.#finishRetirement();
+    }
+  }
+
+  async #run(request: CliCommandRequest): Promise<CliCommandResult> {
     await this.#ensure(request.environment);
     const owner = this.#child;
     if (this.#closed || owner === undefined) throw closedError();
@@ -247,11 +255,9 @@ class SharedCliProcess implements CliCommandSession {
         }),
       );
     } catch (error) {
-      this.#failPending(error);
+      this.#failTransport(owner, error);
     }
-    const outcome = await result;
-    await this.#finishRetirement();
-    return outcome;
+    return await result;
   }
 
   async #finishRetirement(): Promise<void> {
@@ -412,9 +418,10 @@ class SharedCliProcess implements CliCommandSession {
     if (this.#child !== owner) return;
     this.#failReady(error);
     this.#failPending(error);
-    if (owner.exitCode === null && owner.signalCode === null) {
-      signalChild(owner, "SIGTERM");
-    }
+    // Clear the worker before the queued command runs. SIGTERM does not set
+    // signalCode until the process actually exits, so #reusable would still
+    // accept this process and write into it.
+    this.#retire(owner);
   }
 
   #failPending(error: unknown): void {

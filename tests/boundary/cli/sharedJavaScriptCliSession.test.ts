@@ -334,6 +334,50 @@ test("retires a fatal worker before starting the next command", async () => {
   await session.close();
 });
 
+test("retires a transport failure before the next command reuses the worker", async () => {
+  const events: string[] = [];
+  const session = createCliCommandSession({
+    spawnWorker: () => {
+      const generation = events.filter((event) =>
+        event.startsWith("spawn"),
+      ).length;
+      events.push(`spawn:${generation}`);
+      const child = respondingProcess(120 + generation, (request, current) => {
+        events.push(`command:${generation}`);
+        if (generation === 0) {
+          current.stdout.write(encodeCliSessionFrame({ id: request.id }));
+          return;
+        }
+        reply(current, request.id, { stdout: "recovered" });
+      });
+      const stop = child.kill.bind(child);
+      child.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+        events.push(`kill:${generation}`);
+        // Leave signalCode unset until a later turn. A synchronous SIGTERM
+        // does not update it, so reuse cannot depend on that field.
+        queueMicrotask(() => {
+          if (child.exitCode !== null || child.signalCode !== null) return;
+          stop(signal);
+        });
+        return true;
+      };
+      return asCliProcess(child);
+    },
+  });
+  const failed = session.run(command(["bad"], { PATH: "/usr/bin" }));
+  const next = session.run(command(["next"], { PATH: "/usr/bin" }));
+  await expect(failed).rejects.toThrow(/exit code/);
+  await expect(next).resolves.toMatchObject({ stdout: "recovered" });
+  expect(events).toEqual([
+    "spawn:0",
+    "command:0",
+    "kill:0",
+    "spawn:1",
+    "command:1",
+  ]);
+  await session.close();
+});
+
 test("restarts the shared CLI process after the command limit", async () => {
   const children: FakeCliProcess[] = [];
   const session = createCliCommandSession({

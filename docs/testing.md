@@ -160,7 +160,8 @@ cases for that helper share one compiled CLI process per child environment.
 The first case pays process startup; later cases reuse the loaded runtime.
 The process restarts when the environment changes, after 32 commands, or when
 the worker reports a resident set of at least 1 GiB. A fatal worker failure
-retires that process and waits for it to exit before the next command starts.
+or a broken session frame retires that process and waits for it to exit before
+the next command starts.
 `cli.run` still starts a fresh process, including stdin and explicit deadlines.
 File teardown stops the shared CLI process, including startup still in flight,
 and does not open another after close.
