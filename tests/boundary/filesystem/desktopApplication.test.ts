@@ -960,6 +960,16 @@ it.each([
     ]);
     expect(report.next_probes).toEqual([
       expect.objectContaining({
+        operation: "inspect_il2cpp_metadata",
+        path: join(
+          await realpath(root),
+          "Game_Data/il2cpp_data/Metadata/global-metadata.dat",
+        ),
+        file_id: report.files.find((file) =>
+          file.path.endsWith("global-metadata.dat"),
+        )?.file_id,
+      }),
+      expect.objectContaining({
         operation: "open_binary",
         path: join(await realpath(root), path),
         file_id: expect.any(String),
@@ -1170,3 +1180,55 @@ it("preserves admitted Unicode and escaped AssemblyRef names in complete Evidenc
     "unity-mono",
   );
 });
+
+it.each([27, 28, 31, 106, 0xffffffff])(
+  "preserves raw metadata version %s and suggests inspection only when supported",
+  async (version) => {
+    const root = await createTestTempDirectory("rea-desktop-metadata-probe-");
+    const bytes = Buffer.alloc(8);
+    bytes.writeUInt32LE(0xfab11baf);
+    bytes.writeUInt32LE(version, 4);
+    await put(root, "global-metadata.dat", bytes);
+    const { report } = await inspect(root);
+    expect(report.candidates).toEqual([]);
+    expect(report.files[0]?.facts).toContainEqual({
+      kind: "il2cpp-metadata-header",
+      offset: 0,
+      value: { magic: "0xfab11baf", raw_version: version },
+    });
+    expect(report.next_probes).toEqual(
+      version === 27 || version === 31
+        ? [
+            expect.objectContaining({
+              operation: "inspect_il2cpp_metadata",
+              path: join(await realpath(root), "global-metadata.dat"),
+              file_id: report.files[0]?.file_id,
+            }),
+          ]
+        : [],
+    );
+  },
+);
+
+it.each([4, 5, 6, 7])(
+  "retains IL2CPP magic with an unknown version for a %i-byte prefix",
+  async (length) => {
+    const root = await createTestTempDirectory("rea-desktop-metadata-prefix-");
+    const bytes = Buffer.alloc(length);
+    bytes.writeUInt32LE(0xfab11baf);
+    await put(root, "global-metadata.dat", bytes);
+    const { report } = await inspect(root);
+    const metadata = report.files.find((file) =>
+      file.path.endsWith("global-metadata.dat"),
+    );
+
+    expect(metadata?.facts).toContainEqual({
+      kind: "il2cpp-metadata-header",
+      offset: 0,
+      value: { magic: "0xfab11baf", raw_version: null },
+    });
+    expect(report.next_probes).not.toContainEqual(
+      expect.objectContaining({ operation: "inspect_il2cpp_metadata" }),
+    );
+  },
+);

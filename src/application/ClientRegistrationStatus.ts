@@ -15,6 +15,7 @@ import { valid } from "semver";
 
 import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import {
   MCP_STARTUP_POLICY,
@@ -37,7 +38,7 @@ import {
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import { clientRegistrationEnvironmentDetails } from "./ClientRegistrationEnvironment.js";
+import { clientRegistrationEnvironmentDetailsWithBudget } from "./ClientRegistrationEnvironment.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
@@ -159,6 +160,7 @@ export const readClientRegistrationInspections = async (
       configuration = readEffectiveClientRegistrationConfiguration(
         client,
         options.resources,
+        options.platform,
       );
       configurations.set(key, configuration);
     }
@@ -285,11 +287,12 @@ export const readClientRegistrationInspections = async (
       const registration = parseRegistration(raw, effectiveClient);
       const registrationEnvironment =
         client.name === "kimi" || client.name === "codex"
-          ? clientRegistrationEnvironmentDetails(
+          ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
               {},
               "effective",
               options.resolveProviderRequestBudget,
+              options.platform,
             )
           : undefined;
       if (
@@ -322,8 +325,10 @@ export const readClientRegistrationInspections = async (
         platform: options.platform ?? process.platform,
         kimiInputSchemaProfileSelected:
           registrationEnvironment?.ok === true &&
-          registrationEnvironment.value.values.REA_MCP_INPUT_SCHEMA_PROFILE !==
-            undefined,
+          snapshotEnvironment(
+            registrationEnvironment.value.values,
+            options.platform,
+          ).REA_MCP_INPUT_SCHEMA_PROFILE !== undefined,
       });
       record(
         configuredStatus(

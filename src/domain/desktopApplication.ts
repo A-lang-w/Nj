@@ -56,7 +56,10 @@ const desktopFactSchema = z.discriminatedUnion("kind", [
   ),
   fact(
     "il2cpp-metadata-header",
-    z.strictObject({ magic: z.literal("0xfab11baf"), raw_version: byteOffset }),
+    z.strictObject({
+      magic: z.literal("0xfab11baf"),
+      raw_version: byteOffset.nullable(),
+    }),
   ),
   fact(
     "godot-pck-header",
@@ -147,6 +150,7 @@ export const desktopProbeSchema = z.strictObject({
   probe_id: prefixedDigestSchema("dsp"),
   operation: z.enum([
     "inspect_managed_artifact",
+    "inspect_il2cpp_metadata",
     "open_binary",
     "analyze_javascript_application",
   ]),
