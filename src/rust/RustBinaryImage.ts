@@ -1,9 +1,9 @@
 import {
-  GoBinaryFormatFailure,
-  GoBinaryResourceFailure,
-  type GoImageSection,
-} from "../go/GoBinaryContainer.js";
-import { readGoBinaryContainer } from "../go/GoBinaryImage.js";
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+  type ImageSection,
+} from "../native/metadata/BinaryContainer.js";
+import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
@@ -30,7 +30,7 @@ export interface RustBinaryImage {
   readonly rustc_commit: RustBinary["rustc_commit"];
 }
 
-type FileSpan = Pick<GoImageSection, "offset" | "size">;
+type FileSpan = Pick<ImageSection, "offset" | "size">;
 
 /** Container identity and the exact file spans that Rust metadata lookups read. */
 interface RustImageLayout extends Pick<
@@ -97,13 +97,13 @@ const wasmLayout = (bytes: Buffer): RustImageLayout => {
 
 const readContainer = (bytes: Buffer) => {
   try {
-    return readGoBinaryContainer(bytes);
+    return readBinaryContainer(bytes);
   } catch (cause) {
-    if (cause instanceof GoBinaryFormatFailure)
+    if (cause instanceof BinaryFormatFailure)
       throw new RustAuditableFormatFailure(cause.kind, cause.message, {
         cause,
       });
-    if (cause instanceof GoBinaryResourceFailure)
+    if (cause instanceof BinaryResourceFailure)
       throw new RustAuditableResourceFailure(
         {
           resource: "memory",
@@ -131,8 +131,8 @@ const singleDependencySection = <Section>(
 };
 
 const dependencySection = (
-  matches: readonly GoImageSection[],
-): GoImageSection | null => {
+  matches: readonly ImageSection[],
+): ImageSection | null => {
   const section = singleDependencySection(matches);
   if (section === null) return null;
   if (section.compressed)
