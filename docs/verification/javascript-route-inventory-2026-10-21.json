@@ -1,10 +1,10 @@
 {
-  "equivalent_parent_evidence_id": "ev_345bf4f2dff7e6a89b26a896d07c4a1ff5a8fd22d092c7ead2cba04d4b021509",
+  "equivalent_parent_evidence_id": "ev_88fe6d629762c29285e04dbd85da65c4f6dbd26bf3f8b1703ddd501968f77f49",
   "issue": 4772,
   "date": "2026-10-21",
   "base_commit": "6d356b843",
-  "implementation_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f",
-  "implementation_tree": "ad1fed1422fda685fccf0461d0c1db1b79b5bd4e",
+  "implementation_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3",
+  "implementation_tree": "4a6d98d4c0f57ccd66ebe27ae84b9908a52a459d",
   "host": {
     "platform": "linux",
     "arch": "x64",
@@ -21,7 +21,7 @@
     "No application source execution or route requests.",
     "The Next homepage capture yields no supported rooted candidates, not evidence of zero application routes.",
     "Source isolation probe uses real production worker boundaries; public SDK tasks and real Chromium are qualified separately.",
-    "2 jobs reached the 15s deadline; 0 retained route-fact checkpoints. 65 jobs completed and 65 sources retained route facts.",
+    "3 jobs reached the 15s deadline; 1 retained route-fact checkpoints. 64 jobs completed and 65 sources retained route facts.",
     "New sessions with OS caches already warm; no filesystem cache flush or repeated statistical timing study.",
     "Tokenx estimates include actual advertised declarations and SDK replies; not actual model usage. Initialization/JSON-RPC envelope tokens are unmeasured.",
     "Same implementation compared with complete vs selected delivery; no claim of faster underlying source analysis.",
@@ -48,11 +48,11 @@
           "bytes": 32352,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2147.5458080000003,
+          "elapsed_ms": 2097.5574540000002,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 5,
+          "candidates": 3,
           "capacity": null
         },
         {
@@ -61,7 +61,7 @@
           "bytes": 33951,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1940.1420849999995,
+          "elapsed_ms": 2023.573453,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -74,7 +74,7 @@
           "bytes": 112594,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 6656.525000000001,
+          "elapsed_ms": 6415.085498999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -87,7 +87,7 @@
           "bytes": 15009,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1072.1574349999992,
+          "elapsed_ms": 1074.5706869999995,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -100,11 +100,11 @@
           "bytes": 133360,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4119.366244000001,
+          "elapsed_ms": 4114.118777,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 38,
+          "candidates": 33,
           "capacity": null
         },
         {
@@ -113,7 +113,7 @@
           "bytes": 229185,
           "source_analysis_completed": false,
           "route_facts_retained": false,
-          "elapsed_ms": 15265.487777000002,
+          "elapsed_ms": 15271.494589999998,
           "parse_status": null,
           "parse_error_count": null,
           "error": {
@@ -128,7 +128,7 @@
           "bytes": 28175,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 5643.524905000002,
+          "elapsed_ms": 5636.2438870000005,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -141,7 +141,7 @@
           "bytes": 12863,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1332.3840960000016,
+          "elapsed_ms": 1372.5978230000037,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -154,11 +154,11 @@
           "bytes": 20385,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1352.0075260000012,
+          "elapsed_ms": 1306.5474089999989,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 4,
+          "candidates": 2,
           "capacity": null
         },
         {
@@ -167,7 +167,7 @@
           "bytes": 31944,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1886.615088999999,
+          "elapsed_ms": 1786.0340859999997,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -180,7 +180,7 @@
           "bytes": 34609,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1766.830581999995,
+          "elapsed_ms": 1765.3967580000026,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -193,7 +193,7 @@
           "bytes": 26926,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1327.7560359999989,
+          "elapsed_ms": 1329.5444390000048,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -206,7 +206,7 @@
           "bytes": 32709,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1772.2520220000006,
+          "elapsed_ms": 1790.565886999997,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -219,7 +219,7 @@
           "bytes": 32580,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1838.7927490000002,
+          "elapsed_ms": 1928.239275,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -232,7 +232,7 @@
           "bytes": 44459,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2290.815116000005,
+          "elapsed_ms": 2237.098137999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -245,11 +245,11 @@
           "bytes": 155519,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 6347.147532000003,
+          "elapsed_ms": 5554.393300000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 12,
+          "candidates": 11,
           "capacity": null
         },
         {
@@ -258,7 +258,7 @@
           "bytes": 42730,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1712.9335640000063,
+          "elapsed_ms": 1687.931349999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -271,7 +271,7 @@
           "bytes": 27406,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1777.233773,
+          "elapsed_ms": 1693.4032690000022,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -284,7 +284,7 @@
           "bytes": 42218,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1976.5856950000016,
+          "elapsed_ms": 2065.973616000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -297,11 +297,11 @@
           "bytes": 166723,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1974.1384849999959,
+          "elapsed_ms": 1926.3615290000016,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 5,
+          "candidates": 4,
           "capacity": null
         },
         {
@@ -310,7 +310,7 @@
           "bytes": 17846,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1501.8651109999919,
+          "elapsed_ms": 1486.524848999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -323,7 +323,7 @@
           "bytes": 24269,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1356.4720050000033,
+          "elapsed_ms": 1342.995102000008,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -336,7 +336,7 @@
           "bytes": 31418,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1738.5554640000046,
+          "elapsed_ms": 1734.8203979999962,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -349,7 +349,7 @@
           "bytes": 75012,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3022.9438010000013,
+          "elapsed_ms": 3010.029785999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -362,7 +362,7 @@
           "bytes": 42111,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1923.4072469999956,
+          "elapsed_ms": 1844.9768089999998,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -375,7 +375,7 @@
           "bytes": 10240,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1235.7649100000126,
+          "elapsed_ms": 1070.3227760000009,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -388,7 +388,7 @@
           "bytes": 35473,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1611.0272669999977,
+          "elapsed_ms": 1580.0247530000051,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -401,7 +401,7 @@
           "bytes": 17541,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1391.6302649999998,
+          "elapsed_ms": 1948.044882000002,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -414,7 +414,7 @@
           "bytes": 23491,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1321.6378879999975,
+          "elapsed_ms": 1373.7097110000032,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -428,7 +428,7 @@
           "sources_retained": 29,
           "route_patterns": 0,
           "occurrences": 0,
-          "unanchored_literals_excluded": 126
+          "unanchored_literals_excluded": 115
         },
         "coverage": {
           "scope": "provided-code-sources",
@@ -477,6 +477,22 @@
               }
             },
             "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:316f01469ecc2a42247f86c46615bd5b",
+            "source_id": "jss:540e8f890d9836b5fc9be2a8f01cc808",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 9268
+              },
+              "end": {
+                "line": 2,
+                "column": 9270
+              }
+            },
+            "reason": "The relative or unsupported navigation literal cannot establish a rooted path without runtime context."
           },
           {
             "id": "jsg:7465d4effa359c558121e3814ff0c1d6",
@@ -1636,11 +1652,11 @@
           "bytes": 31543,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1972.4867150000064,
+          "elapsed_ms": 1967.139710000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 5,
+          "candidates": 3,
           "capacity": null
         },
         {
@@ -1649,7 +1665,7 @@
           "bytes": 63279,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2303.4502559999964,
+          "elapsed_ms": 2257.572046000001,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1662,7 +1678,7 @@
           "bytes": 112594,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 6459.691728999998,
+          "elapsed_ms": 6503.971204999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1675,7 +1691,7 @@
           "bytes": 14486,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1070.459394999998,
+          "elapsed_ms": 1063.3779499999946,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1688,7 +1704,7 @@
           "bytes": 228552,
           "source_analysis_completed": false,
           "route_facts_retained": false,
-          "elapsed_ms": 15314.561691999988,
+          "elapsed_ms": 15252.994131999993,
           "parse_status": null,
           "parse_error_count": null,
           "error": {
@@ -1703,11 +1719,11 @@
           "bytes": 155988,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 10562.386528000003,
+          "elapsed_ms": 9737.18651,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 37,
+          "candidates": 32,
           "capacity": null
         },
         {
@@ -1716,7 +1732,7 @@
           "bytes": 10987,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1099.5813250000065,
+          "elapsed_ms": 1185.4476130000112,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1729,11 +1745,11 @@
           "bytes": 14992,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1175.0123109999986,
+          "elapsed_ms": 1229.4538789999933,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 4,
+          "candidates": 2,
           "capacity": null
         },
         {
@@ -1742,7 +1758,7 @@
           "bytes": 37582,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2010.9638350000023,
+          "elapsed_ms": 2070.5328220000083,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1755,7 +1771,7 @@
           "bytes": 16480,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1374.5181449999945,
+          "elapsed_ms": 1376.0665690000023,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1768,7 +1784,7 @@
           "bytes": 21421,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1538.9418609999993,
+          "elapsed_ms": 1464.7976320000016,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1781,7 +1797,7 @@
           "bytes": 35536,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1624.2363770000084,
+          "elapsed_ms": 1620.9300199999998,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1794,7 +1810,7 @@
           "bytes": 40090,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1916.3734279999917,
+          "elapsed_ms": 1911.3159960000048,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1807,7 +1823,7 @@
           "bytes": 25890,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1618.017887000009,
+          "elapsed_ms": 1645.4272380000039,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1820,7 +1836,7 @@
           "bytes": 350746,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 10742.622662999987,
+          "elapsed_ms": 10044.876762000014,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1833,7 +1849,7 @@
           "bytes": 26497,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1577.4759189999895,
+          "elapsed_ms": 1694.2737970000017,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1846,7 +1862,7 @@
           "bytes": 34416,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1906.6178280000167,
+          "elapsed_ms": 1796.866000000009,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1859,7 +1875,7 @@
           "bytes": 26406,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1443.9721539999882,
+          "elapsed_ms": 1409.345319999993,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1872,7 +1888,7 @@
           "bytes": 64639,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2570.1562470000063,
+          "elapsed_ms": 2527.104943000013,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1885,7 +1901,7 @@
           "bytes": 32890,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2013.629184999998,
+          "elapsed_ms": 2021.2219129999867,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1898,7 +1914,7 @@
           "bytes": 30074,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1873.906679000007,
+          "elapsed_ms": 1792.019300999993,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1911,7 +1927,7 @@
           "bytes": 1004,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 681.017108,
+          "elapsed_ms": 703.5871349999798,
           "parse_status": "complete",
           "parse_error_count": 0,
           "error": null,
@@ -1924,7 +1940,7 @@
           "bytes": 20530,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1632.9893480000028,
+          "elapsed_ms": 1677.8662800000166,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1937,7 +1953,7 @@
           "bytes": 21998,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1508.3149010000052,
+          "elapsed_ms": 1564.0383800000127,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1950,7 +1966,7 @@
           "bytes": 36684,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2318.57110500001,
+          "elapsed_ms": 2309.193492999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1963,7 +1979,7 @@
           "bytes": 23435,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1644.8180869999924,
+          "elapsed_ms": 1852.086947999982,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1976,7 +1992,7 @@
           "bytes": 59881,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2153.934030000004,
+          "elapsed_ms": 2147.410786000022,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1989,11 +2005,11 @@
           "bytes": 86218,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2521.807169000007,
+          "elapsed_ms": 2745.7888920000114,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
-          "candidates": 44,
+          "candidates": 43,
           "capacity": null
         },
         {
@@ -2002,7 +2018,7 @@
           "bytes": 133226,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1143.633163999999,
+          "elapsed_ms": 1221.8326670000097,
           "parse_status": "complete",
           "parse_error_count": 0,
           "error": null,
@@ -2015,7 +2031,7 @@
           "bytes": 19607,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1459.090733000019,
+          "elapsed_ms": 1541.9314939999895,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2028,7 +2044,7 @@
           "bytes": 30064,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1427.647044000012,
+          "elapsed_ms": 1571.7644609999843,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2041,7 +2057,7 @@
           "bytes": 44497,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2563.8751179999963,
+          "elapsed_ms": 3156.636092999979,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2054,7 +2070,7 @@
           "bytes": 30296,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1855.5749999999825,
+          "elapsed_ms": 2005.1055789999955,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2067,7 +2083,7 @@
           "bytes": 34851,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1676.8138369999942,
+          "elapsed_ms": 1889.165839000023,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2078,12 +2094,14 @@
           "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3cg9j5-faot60.js",
           "sha256": "80c6ec39463dea1c936736900b0f33367cda44c9b85b2b7869cd6d39b530d816",
           "bytes": 347373,
-          "source_analysis_completed": true,
+          "source_analysis_completed": false,
           "route_facts_retained": true,
-          "elapsed_ms": 14912.022861999983,
+          "elapsed_ms": 15375.107056000008,
           "parse_status": "partial",
           "parse_error_count": 0,
-          "error": null,
+          "error": {
+            "message": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+          },
           "candidates": 10,
           "capacity": null
         },
@@ -2093,7 +2111,7 @@
           "bytes": 53417,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2607.344416000007,
+          "elapsed_ms": 2593.506531000021,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2106,7 +2124,7 @@
           "bytes": 114918,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4382.195340000006,
+          "elapsed_ms": 4549.189492000005,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2119,7 +2137,7 @@
           "bytes": 31991,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1779.008112999989,
+          "elapsed_ms": 1782.442521000019,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2133,7 +2151,7 @@
           "sources_retained": 38,
           "route_patterns": 18,
           "occurrences": 31,
-          "unanchored_literals_excluded": 89
+          "unanchored_literals_excluded": 79
         },
         "coverage": {
           "scope": "provided-code-sources",
@@ -2508,16 +2526,16 @@
       "-c",
       "0,1",
       "node",
-      "/home/yann/yann/rea-4772-lab/probe-pathspace-routes.mjs"
+      "/home/yann/yann/rea-4772-lab/probe-destination-routes.mjs"
     ],
     "exit_code": 0,
-    "wall_s": 198.36496387100487,
-    "cpu_s": 297.87474100000003,
+    "wall_s": 198.3179338350019,
+    "cpu_s": 300.137525,
     "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-    "peak_family_rss_bytes": 500359168,
+    "peak_family_rss_bytes": 544604160,
     "sample_ms": 20,
     "guard_stop": null,
-    "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f"
+    "runtime_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3"
   },
   "independent_oracle": {
     "method": "All 18 unescaped ASCII /docs quoted literals enumerated directly from the immutable 86218-byte production chunk with a regular expression independent of the AST route decoder; 12 are direct href property literals. These are static declaration checks, not runtime routes.",
@@ -2546,7 +2564,7 @@
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "complete",
-      "label": "real-full-pathspace",
+      "label": "real-full-destination",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2586,43 +2604,43 @@
       "used_input_declarations_plus_primary_estimated_tokens": 1910172,
       "all_catalog_plus_primary_estimated_tokens": 2992966,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 12.93655089,
+      "task_wall_s": 12.509469646,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 4250.6826980000005,
+          "wall_ms": 4050.5331549999996,
           "estimated_reply_tokens": 1878819,
           "reply_bytes": 6202233
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 2042.708082000001,
+          "wall_ms": 2014.9744050000008,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 31.88575000000128,
+          "wall_ms": 32.55301700000018,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 16.546329000000696,
+          "wall_ms": 13.22972899999877,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 11.732888999998977,
+          "wall_ms": 11.887187999998787,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 92.16817699999956,
+          "wall_ms": 161.98860400000012,
           "estimated_reply_tokens": 122,
-          "reply_bytes": 322
+          "reply_bytes": 326
         }
       ],
       "profile": {
@@ -2633,25 +2651,25 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "complete",
-          "real-full-pathspace"
+          "real-full-destination"
         ],
         "exit_code": 0,
-        "wall_s": 14.292381535997265,
-        "cpu_s": 18.83075,
+        "wall_s": 13.554572430002736,
+        "cpu_s": 17.486411999999998,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1567694848,
+        "peak_family_rss_bytes": 1479843840,
         "sample_ms": 20,
         "guard_stop": null
       },
       "all_calls_estimated_tokens": 1914485,
       "used_input_declarations_plus_all_calls_estimated_tokens": 1937112,
       "full_catalog_plus_all_calls_estimated_tokens": 3019686,
-      "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f"
+      "runtime_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3"
     },
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "selected",
-      "label": "real-selected-pathspace",
+      "label": "real-selected-destination",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2691,37 +2709,37 @@
       "used_input_declarations_plus_primary_estimated_tokens": 11260,
       "all_catalog_plus_primary_estimated_tokens": 1114103,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 11.815623158000001,
+      "task_wall_s": 11.407412115000001,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 3649.4972589999998,
+          "wall_ms": 3518.9461359999996,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 2023.4267019999988,
+          "wall_ms": 1986.0357109999986,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 20.698748999999225,
+          "wall_ms": 19.253968000000896,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 13.052130000000034,
+          "wall_ms": 12.743289000000004,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 124.23828599999979,
+          "wall_ms": 85.88002199999937,
           "estimated_reply_tokens": 124,
-          "reply_bytes": 330
+          "reply_bytes": 334
         }
       ],
       "profile": {
@@ -2732,20 +2750,20 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "selected",
-          "real-selected-pathspace"
+          "real-selected-destination"
         ],
         "exit_code": 0,
-        "wall_s": 12.495720805003657,
-        "cpu_s": 16.493975,
+        "wall_s": 12.046086171001662,
+        "cpu_s": 15.904404,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1278681088,
+        "peak_family_rss_bytes": 1257512960,
         "sample_ms": 20,
         "guard_stop": null
       },
       "all_calls_estimated_tokens": 35625,
       "used_input_declarations_plus_all_calls_estimated_tokens": 58252,
       "full_catalog_plus_all_calls_estimated_tokens": 1140826,
-      "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f"
+      "runtime_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3"
     }
   ],
   "real_browser": {
@@ -2797,7 +2815,7 @@
         "base_path": null
       }
     ],
-    "elapsed_s": 8.612901664,
+    "elapsed_s": 8.344287388000001,
     "authority_limits": [
       "Not a live published-page or application execution test",
       "No reachability, route loading or full application route denominator proof"
@@ -2809,20 +2827,20 @@
         "-c",
         "0,1",
         "node",
-        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-pathspace.mjs"
+        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-destination.mjs"
       ],
       "exit_code": 0,
-      "wall_s": 9.683108209996135,
-      "cpu_s": 12.204101000000001,
+      "wall_s": 9.372436686004221,
+      "cpu_s": 11.814135,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2157563904,
+      "peak_family_rss_bytes": 2185371648,
       "sample_ms": 20,
       "guard_stop": null
     }
   },
   "checks": [
     {
-      "name": "route-pathspace-source-tests-corrected",
+      "name": "route-destination-source-tests-final",
       "command": [
         "taskset",
         "-c",
@@ -2841,16 +2859,16 @@
         "src/domain/javascript/javascriptStaticAnalysis.routeProperties.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 11.209863031996065,
-      "cpu_s": 17.218473999999997,
+      "wall_s": 11.482475548997172,
+      "cpu_s": 17.953861999999997,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1509519360,
+      "peak_family_rss_bytes": 1502879744,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f"
+      "runtime_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3"
     },
     {
-      "name": "route-pathspace-public-worker-selection-tests",
+      "name": "route-destination-public-worker-selection-tests",
       "command": [
         "taskset",
         "-c",
@@ -2866,37 +2884,37 @@
         "tests/boundary/mcp/javascriptSourceSelection.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 83.7063384550056,
-      "cpu_s": 146.722159,
+      "wall_s": 81.33687755600113,
+      "cpu_s": 141.920953,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2693435392,
+      "peak_family_rss_bytes": 2749976576,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f"
+      "runtime_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3"
     },
     {
-      "name": "route-pathspace-check-fast",
+      "name": "route-destination-check-fast",
       "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
       "exit_code": 0,
-      "wall_s": 9.912097241998708,
-      "cpu_s": 18.631748,
+      "wall_s": 10.10661655900185,
+      "cpu_s": 18.521588,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1545875456,
+      "peak_family_rss_bytes": 1546809344,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f"
+      "runtime_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3"
     },
     {
-      "name": "route-pathspace-docs-check",
+      "name": "route-destination-docs-check",
       "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
       "exit_code": 0,
-      "wall_s": 11.592576424998697,
-      "cpu_s": 15.05572200000006,
+      "wall_s": 11.617052204004722,
+      "cpu_s": 15.17522699999995,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 801861632,
+      "peak_family_rss_bytes": 807432192,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f"
+      "runtime_commit": "0f7481f429a9a72be9154025602eaf6b71c7e4b3"
     },
     {
       "name": "route-browser-boundary-isolated",
@@ -3124,7 +3142,9 @@
     "135c56bc2: stop dynamic value ownership at arrays, objects and callable/class definitions, preserving independent module constants; production SDK/CLI acceptance covers a Turbopack-shaped module registration.",
     "7dff8ea4e: preserve recognized dynamic navigation destinations as unknown, retain source enumeration partial, reject raw Next private folders while preserving encoded public underscores, and verify canonical selectors through full/compact advertisements.",
     "66e1ca852: compare both based and unbased anchors/constants in application path space while retaining exact raw/output paths and explicit trailing slashes.",
-    "8e59effd5: retain children-only ordinary layout ancestry without crossing into typed-tree interpretation; preserve known application-relative Next filename/module paths in anchor comparison and deployment-prefix joining."
+    "8e59effd5: retain children-only ordinary layout ancestry without crossing into typed-tree interpretation; preserve known application-relative Next filename/module paths in anchor comparison and deployment-prefix joining.",
+    "265fe9b94: recognized navigation owns object/array destination data while callable bodies remain independent; relative literal destinations retain interpretation gaps, and concatenation fragments do not become routes or module paths.",
+    "0f7481f42: route configuration ownership is scoped to the ordinary or typed interpretation, so sibling routes cannot suppress one another; source regressions cover both sibling orders and explicit/inferred roots."
   ],
   "result_budget_regression": {
     "source": "12000 literal route registrations, 1452889 UTF-8 bytes",
@@ -3347,6 +3367,11 @@
       "runtime_commit": "66e1ca85242f4ac17559735d0423718be271977c",
       "record_commit": "8f50c35af414b6cf6169a3f63a3b145abf862654",
       "scope": "Inventory-only correction validated through 7d source-worker checkpoint replay; current corpus is freshly analyzed instead."
+    },
+    {
+      "runtime_commit": "8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f",
+      "record_commit": "a0722940ce17895fb0ee4107c9487b84bcea9380",
+      "scope": "Fresh 67-source qualification, public SDK and real Chromium before destination/dialect ownership follow-ups."
     }
   ],
   "input_schema_profile_integration": {
@@ -3416,9 +3441,9 @@
     "fix": "Exact-schema tests explicitly choose full; public SDK tests cover both profiles, invalid selector rejection, successful recovery and retained route queries. Canonical validation was not weakened."
   },
   "previous_technical_ci": {
-    "head_commit": "8f50c35af414b6cf6169a3f63a3b145abf862654",
-    "run_id": 39642746870,
+    "head_commit": "a0722940ce17895fb0ee4107c9487b84bcea9380",
+    "run_id": 39648332282,
     "conclusion": "success",
-    "limits": "Technical CI passed before the last two review fixes; it is not used as the passing check for a later head. Personal author-readiness checks remain separate."
+    "limits": "Technical CI passed before the latest destination and dialect ownership review fixes; it is not used as the passing check for a later head. Personal author-readiness checks remain separate."
   }
 }

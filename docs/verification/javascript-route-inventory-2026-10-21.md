@@ -1,7 +1,7 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`8e59effd5d9ddd9e8a95b0bfda1eec8752fce25f`, tree `ad1fed1422fda685fccf0461d0c1db1b79b5bd4e`,
+`0f7481f429a9a72be9154025602eaf6b71c7e4b3`, tree `4a6d98d4c0f57ccd66ebe27ae84b9908a52a459d`,
 on main base `6d356b843`. All current corpus, public-interface and delivery measurements use that runtime.
 The entire source corpus was freshly analyzed after the latest syntax-owner
 change; earlier checkpoint replays remain identified in their pinned records. The JSON retains exact source digests,
@@ -17,13 +17,13 @@ Downloaded the 29 homepage-referenced nextjs.org scripts (1,533,098 bytes) and
 and SHA-256. Saved bytes were independently rehashed and checked for lossless
 UTF-8 decoding before writing this record. Sources were read as data.
 
-Production isolated workers completed 65/67 source jobs, retaining route-fact
-checkpoints for 65/67 sources. 2 jobs reached the unchanged 15-second deadline;
-0 of those retained route facts. Unavailable sources and partial enumeration
+Production isolated workers completed 64/67 source jobs, retaining route-fact
+checkpoints for 65/67 sources. 3 jobs reached the unchanged 15-second deadline;
+1 of those retained route facts. Unavailable sources and partial enumeration
 remain visible. Each worker had a caller-selected 512 MiB old-space limit and
 one semantic projection node; route syntax precedes semantic projection. The
-complete probe took 198.365 s elapsed, 297.875 CPU s and
-500,359,168 sampled peak family RSS bytes. No resource guard
+complete probe took 198.318 s elapsed, 300.138 CPU s and
+544,604,160 sampled peak family RSS bytes. No resource guard
 stopped it. These captures do not establish lazy/server-only code, reachability
 or a complete application route denominator.
 
@@ -35,7 +35,7 @@ finds exactly those 18 unescaped quoted `/docs` literals, including 12 direct
 `45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc`.
 They support static candidates, not served-page claims. Next's homepage capture
 yields zero supported rooted candidates and excludes
-126 unanchored constants; this does not establish zero application routes.
+115 unanchored constants; this does not establish zero application routes.
 
 Public CLI and official SDK calls return the same 18 patterns from that source.
 Explicit `source_paths` retains the 38-file inventory while analyzing only the
@@ -50,7 +50,7 @@ it. Actual CLI and SDK `analyze_web_bundle` calls captured that inert source via
 CDP and returned all 18 patterns, its original URL and exact SHA-256.
 Selected-source parsing was `complete` and candidate enumeration
 `partial`; application coverage stayed unknown. The verifier took
-9.683 s elapsed, 12.204 CPU s and 2,157,563,904 sampled
+9.372 s elapsed, 11.814 CPU s and 2,185,371,648 sampled
 peak family RSS bytes. Owned browser-group and temporary-profile cleanup succeeded.
 This qualifies passive capture, not the published application's UI behavior.
 
@@ -59,7 +59,7 @@ This qualifies passive capture, not the published application's UI behavior.
 Both fresh SDK sessions used the same source, semantic budget, 512 MiB worker,
 15-second deadline and `/docs` query with path, confidence, mechanisms and source
 provenance. Both retained the identical parent Evidence ID
-`ev_345bf4f2dff7e6a89b26a896d07c4a1ff5a8fd22d092c7ead2cba04d4b021509`,
+`ev_88fe6d629762c29285e04dbd85da65c4f6dbd26bf3f8b1703ddd501968f77f49`,
 performed three additional historical reads and exported complete Evidence.
 OS caches were already warm; there was no storage-cold or statistical study.
 The benchmark MCP host had a 2 GiB old-space choice; its driver had 3 GiB.
@@ -70,9 +70,9 @@ that default catalog cost is not measured by this comparison.
 | ------------------------------------------------------------- | --------------------------------: | -----------------------------: |
 | Estimated tokens, used input declarations + all calls/replies |                         1,937,112 |                         58,252 |
 | Estimated tokens, entire catalog + all calls/replies          |                         3,019,686 |                      1,140,826 |
-| Elapsed seconds, including startup and cleanup                |                            14.292 |                         12.496 |
-| CPU seconds, process family                                   |                            18.831 |                         16.494 |
-| Peak sampled process-family RSS bytes                         |                     1,567,694,848 |                  1,278,681,088 |
+| Elapsed seconds, including startup and cleanup                |                            13.555 |                         12.046 |
+| CPU seconds, process family                                   |                            17.486 |                         15.904 |
+| Peak sampled process-family RSS bytes                         |                     1,479,843,840 |                  1,257,512,960 |
 
 The primary question required two calls with complete delivery and one with
 selected delivery: used declarations plus primary replies estimate
@@ -86,8 +86,8 @@ is unmeasured. Timing varied between runs: the earlier `135c56bc2` qualification
 selected delivery and remains pinned at `38f2f9637`. These samples establish no
 stable latency or underlying analysis-speedup claim.
 
-Complete-mode view calls took 2042.7, 31.9, 16.5, 11.7 ms; selected-mode historical calls took
-2023.4, 20.7, 13.1 ms. First calls include cold client/tool preparation that was not separately
+Complete-mode view calls took 2015.0, 32.6, 13.2, 11.9 ms; selected-mode historical calls took
+1986.0, 19.3, 12.7 ms. First calls include cold client/tool preparation that was not separately
 profiled. The immutable-snapshot cache does not establish zero preparation cost.
 Projection preserves complete Evidence materialization.
 
@@ -107,21 +107,25 @@ status and an 8 GiB family / 420-second stop guard; no qualifying run hit it.
   and SDK tests recheck bounded retention, SHA, partial coverage and gap lookup.
 - Configuration ownership is independent of validity and actual child ancestry.
   Ordinary pathless layout groups retain their parents, while typed trees keep
-  their own hierarchy. Browser CLI/SDK tests require the complete nested path.
+  their own hierarchy. Ownership is scoped to the ordinary or typed
+  interpretation: mixed siblings survive both source orders and explicit or
+  inferred router roots. Browser CLI/SDK tests require the complete nested path.
   Changed bindings cannot revive stale roots; ordinary wrappers do not become URL
   segments. Claiming follows route-child relationships consumed by the walker,
   leaving component/loader inputs independently discoverable with uncertainty.
 - Dynamic route/navigation expressions own their literal fragments. Recognized
   dynamic navigation, including variable/member destinations, records an unknown
   at the whole expression; fragments are
-  not complete paths. Ownership stops at arrays, objects and callable/class
-  definitions, preserving independent constants inside bundled module bodies.
+  not complete paths. Recognized navigation owns object and array destination
+  data; callable/class definitions remain independent. Unrelated containers
+  preserve bundled module constants. Relative literal destinations retain a gap
+  instead of inventing a runtime base; known external URLs remain excluded.
 - Based and unbased generic constants/anchors compare the same application
   segments before adding an inferred base; unrelated framework strings stay excluded. Inferred root
   `/` joins to the base itself; explicit `/app/` remains distinct. Next module
-  parsing starts after `/_next/`, so deployment `app` is not a source directory. Filename/module-derived paths
-  remain application-relative during anchoring and deployment-prefix joining;
-  ordinary destination literals may already include their deployment base.
+  parsing starts after `/_next/`, so deployment `app` is not a source directory.
+  Known application-relative Next filenames/module paths retain their first
+  segment even when its spelling matches the inferred deployment base.
 - Typed trees share page classification with nested configuration. Name-only
   calls stay unknown because they can denote server endpoints. TypeScript page
   filenames retain metadata-only provenance. Raw private `_folder` trees are
@@ -129,7 +133,7 @@ status and an 8 GiB family / 420-second stop guard; no qualifying run hit it.
   ([Next.js folder rules](https://nextjs.org/docs/app/getting-started/project-structure#private-folders)). Known capture omissions survive as
   global gaps and compact summary metadata without invented script identities.
 
-Current execution: **199/199 source regressions** and **28/28 production-worker /
+Current execution: **203/203 source regressions** and **28/28 production-worker /
 public CLI/SDK tests** passed, including source deletion before exported-Evidence
 queries, Turbopack-shaped modules, dynamic prefixes and independent component
 route tables. Exact advertised-input tests explicitly select the full profile;
