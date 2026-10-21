@@ -77,12 +77,24 @@ describe("client configuration filesystem lifecycle", () => {
       "droid",
       "zcode",
       "dsh",
+      "puku_cli",
       "grok_bot",
     ]);
     expect(
       detected.find(({ name }) => name === "claude_code")?.configPath,
     ).toBe(join(home, ".claude.json"));
     expect(detected.find(({ name }) => name === "devin")?.format).toBe("json");
+    expect(detected.find(({ name }) => name === "puku_cli")).toMatchObject({
+      displayName: "Puku CLI",
+      configPath: join(home, ".puku-cli/.mcp.json"),
+      markerPath: join(home, ".puku-cli"),
+      format: "json",
+    });
+    expect(
+      supportedClients(home).find(({ name }) => name === "puku_cli"),
+    ).toMatchObject({
+      configPath: join(home, ".puku-cli/.mcp.json"),
+    });
     const emptyHome = await createTestTempDirectory("rea-empty-");
     roots.push(emptyHome);
     expect(await detectClients(emptyHome)).toEqual([]);
