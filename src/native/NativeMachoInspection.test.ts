@@ -449,20 +449,27 @@ describe("Mach-O target-layout refusals", () => {
   };
 
   it.each([
-    ["DSYM", "10", "section '__TEXT/__text' has offset=0 but is not a zero-fill section type"],
+    [
+      "DSYM",
+      "10",
+      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
+    ],
     ["CORE", "4", "unknown mh.filetype 4"],
     ["FVMLIB", "3", "unknown mh.filetype 3"],
-  ] as const)("classifies the confirmed %s refusal with retained output", async (_kind, fileType, diagnostic) => {
-    const result = await inspectRefusal(fileType, diagnostic);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      diagnostics: { tool: "dyld_info", target_file_type: fileType },
-      capturedOutput: { exit_code: 1, truncated: false },
-    });
-    expect(result.error.capturedOutput?.stdout).toContain(diagnostic);
-  });
+  ] as const)(
+    "classifies the confirmed %s refusal with retained output",
+    async (_kind, fileType, diagnostic) => {
+      const result = await inspectRefusal(fileType, diagnostic);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisUnsupportedTargetError",
+        diagnostics: { tool: "dyld_info", target_file_type: fileType },
+        capturedOutput: { exit_code: 1, truncated: false },
+      });
+      expect(result.error.capturedOutput?.stdout).toContain(diagnostic);
+    },
+  );
 
   it("keeps a matching diagnostic on a different file type as an output failure", async () => {
     const result = await inspectRefusal(

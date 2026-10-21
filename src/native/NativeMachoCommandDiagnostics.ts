@@ -17,7 +17,10 @@ export const targetLayoutDyldRefusal = (
     capture.signal !== null
   )
     return null;
-  const lines = withoutEchoedPathHeader(capture.stdout, capture.arguments.at(-1))
+  const lines = withoutEchoedPathHeader(
+    capture.stdout,
+    capture.arguments.at(-1),
+  )
     .split(/\r?\n/u)
     .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""));
   if (lines.includes(DSYM_SECTION_DIAGNOSTIC)) return "DSYM";

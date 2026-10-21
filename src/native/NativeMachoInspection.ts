@@ -203,10 +203,15 @@ export const inspectNativeMacho = async (
         load.fileType !== fileTypeNumbers[diagnosedType])
     )
       return err(unusableNativeCommandOutput(layoutRefusal));
-    const diagnostic = withoutEchoedPathHeader(
-      layoutRefusal.stdout,
-      layoutRefusal.arguments.at(-1),
-    ).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean).at(-1) ?? "";
+    const diagnostic =
+      withoutEchoedPathHeader(
+        layoutRefusal.stdout,
+        layoutRefusal.arguments.at(-1),
+      )
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1) ?? "";
     return err(
       new AnalysisUnsupportedTargetError(
         "inspect_macho",
