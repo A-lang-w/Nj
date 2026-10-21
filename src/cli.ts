@@ -1,3 +1,4 @@
+import { registerGpuCommands } from "./cli/gpuCommands.js";
 import { registerNativeFunctionMatchingCommands } from "./cli/nativeFunctionMatchingCommands.js";
 import { registerCaptureCommands } from "./cli/captureCommands.js";
 import { registerSignalCommands } from "./cli/signalCommands.js";
@@ -58,7 +59,12 @@ import {
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 
-/** Describe CLI settings that are invalid before any command runs, as MCP does. */
+export { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
+
+/**
+ * Describe CLI settings that are invalid before any command runs, as MCP does.
+ * Keep this aligned with PROCESS_START_CONFIGURATION_SETTINGS.
+ */
 export const cliConfigurationError = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
 ): string | undefined => {
@@ -82,7 +88,8 @@ export const createCli = (
 ): CliInstance => {
   const environment = snapshotEnvironment(selectedEnvironment);
   const analysis = createDirectAnalysis(environment);
-  // The executable reports an invalid level through cliConfigurationError.
+  // The executable reports an invalid level before every command except doctor.
+  // Doctor keeps going so its readiness report can name REA_LOG_LEVEL.
   const level =
     environment.REA_LOG_LEVEL === undefined
       ? undefined
@@ -124,6 +131,7 @@ export const createCli = (
   registerGoCommands(cli, logger);
   registerIl2cppCommands(cli, logger);
   registerModelCommands(cli, logger);
+  registerGpuCommands(cli, logger);
   registerRustCommands(cli, logger);
   registerSqliteCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);

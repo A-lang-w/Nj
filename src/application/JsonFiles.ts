@@ -19,6 +19,8 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  JsonInputPhysicalReadFailure,
+  JsonInputCancellationFailure,
   readJsonInputFile,
   readJsonObjectFile,
   type JsonObjectMemberReader,
@@ -27,6 +29,11 @@ import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  type AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -46,7 +53,10 @@ export const readJsonFile = async (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<
-  Result<unknown, EvidenceFileError | AnalysisResourceConstraintError>
+  Result<
+    unknown,
+    EvidenceFileError | AnalysisResourceConstraintError | AnalysisCancelledError
+  >
 > =>
   readJsonFileInput(
     path,
@@ -93,7 +103,10 @@ const readJsonFileInput = async <Value>(
   >,
   signal?: AbortSignal,
 ): Promise<
-  Result<Value, EvidenceFileError | AnalysisResourceConstraintError>
+  Result<
+    Value,
+    EvidenceFileError | AnalysisResourceConstraintError | AnalysisCancelledError
+  >
 > => {
   const requestedPath = absoluteCallerPath(path);
   try {
@@ -116,7 +129,25 @@ const readJsonFileInput = async <Value>(
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
-    if (signal?.aborted === true) throw cause;
+    if (cause instanceof JsonInputCancellationFailure)
+      return err(
+        new AnalysisCancelledError("read_evidence_file", {
+          cause: cause.reason,
+        }),
+      );
+    if (cause instanceof JsonInputPhysicalReadFailure)
+      return err(
+        new EvidenceFileError("read", "io", {
+          cause: cause.physicalCause,
+          path: requestedPath,
+        }),
+      );
+    if (isJsonReadCancellation(cause, signal))
+      return err(
+        new AnalysisCancelledError("read_evidence_file", {
+          cause: signal?.reason,
+        }),
+      );
     return err(
       new EvidenceFileError(
         "read",
@@ -130,6 +161,21 @@ const readJsonFileInput = async <Value>(
       ),
     );
   }
+};
+
+const isJsonReadCancellation = (
+  cause: unknown,
+  signal?: AbortSignal,
+): boolean => {
+  if (signal?.aborted !== true) return false;
+  if (cause === signal.reason) return true;
+  return (
+    cause instanceof Error &&
+    cause.name === "AbortError" &&
+    "code" in cause &&
+    cause.code === "ABORT_ERR" &&
+    cause.cause === signal.reason
+  );
 };
 
 /** Atomically write text to the caller-supplied path. */
@@ -171,13 +217,14 @@ export function writeTextParts(
         cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
           ? cause.cleanup
           : undefined;
-      return err(
-        new EvidenceFileError("write", "io", {
-          cause,
-          path: absoluteCallerPath(path),
-          ...(cleanup === undefined ? {} : { cleanup }),
-        }),
-      );
+      const error = new EvidenceFileError("write", "io", {
+        cause,
+        path: absoluteCallerPath(path),
+        ...(cleanup === undefined ? {} : { cleanup }),
+      });
+      // A failed admission retry names its exact retained leases.
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
     });
 }
 
@@ -227,28 +274,31 @@ const writeTextPartsOwned = async (
         resources: [cause.owner.directory],
       };
       if (cause.outcome.ok)
-        return err(
+        return stagedCleanupFailure(
           new EvidenceFileError("write", "io", {
             cause,
             path: requestedPath,
             cleanup,
             published: { ...cause.outcome.value, path: requestedPath },
           }),
+          cause.lease,
         );
       if (cause.outcome.error instanceof AnalysisCancelledError)
-        return err(
+        return stagedCleanupFailure(
           new AnalysisCancelledError(cause.outcome.error.operation, {
             cause: cause.outcome.error.cause,
             cleanupPrimary: cause.outcome.error,
             cleanup,
           }),
+          cause.lease,
         );
-      return err(
+      return stagedCleanupFailure(
         new EvidenceFileError("write", missingOrIo(cause.outcome.error), {
           cause,
           path: requestedPath,
           cleanup,
         }),
+        cause.lease,
       );
     }
     if (
@@ -271,6 +321,17 @@ const writeTextPartsOwned = async (
       }),
     );
   }
+};
+
+/** The retained staging lease clears this error only when a retry confirms release. */
+const stagedCleanupFailure = <
+  Failure extends EvidenceFileError | AnalysisCancelledError,
+>(
+  error: Failure,
+  lease: AnalysisCleanupLease,
+): Result<never, Failure> => {
+  new AnalysisCleanupLeaseGroup(error, [lease]);
+  return err(error);
 };
 
 /** A missing path or parent is a selection error, not a permission failure. */
@@ -332,7 +393,12 @@ const publishFile = async (
     output: owner,
   });
   if (released.kind === "failed")
-    throw new StagedOutputCleanupFailure(outcome, released.cause, owner);
+    throw new StagedOutputCleanupFailure(
+      outcome,
+      released.cause,
+      owner,
+      released.lease,
+    );
   if (!outcome.ok) throw outcome.error;
   return outcome.value.bytes;
 };
@@ -342,6 +408,7 @@ class StagedOutputCleanupFailure extends Error {
     readonly outcome: Result<PublishedEvidenceFile, unknown>,
     readonly cleanupCause: unknown,
     readonly owner: OwnedStagedOutput,
+    readonly lease: AnalysisCleanupLease,
   ) {
     super("Staged output cleanup failed", {
       cause: outcome.ok ? cleanupCause : outcome.error,
