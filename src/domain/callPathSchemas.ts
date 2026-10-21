@@ -9,16 +9,17 @@ import {
 } from "./native/nativeAddress.js";
 const evidenceIdSchema = prefixedDigestSchema("ev");
 
-/**
- * Default and maximum inline shortest-path capacity.
- *
- * The number of distinct shortest paths grows with the graph, not with the
- * caller's declared input, so an uncapped inline list is unbounded even for a
- * modest dossier set. A caller may raise the capacity up to the ceiling; the
- * exact total is always reported so a partial list stays visible as partial.
- */
+/** Default number of shortest paths to return when the caller omits a capacity. */
 export const DEFAULT_CALL_PATH_MAX_PATHS = 64;
-export const CALL_PATH_MAX_PATHS_CEILING = 4_096;
+
+/**
+ * Bound the serialized `paths` field to 2 MiB. REA's smallest accepted MCP
+ * response budget is 10 MiB and successful MCP results carry both structured
+ * JSON and its text representation. This leaves at least 4 MiB for those two
+ * representations of other result fields and their envelopes. The byte bound,
+ * rather than a graph-independent path count, controls representation growth.
+ */
+export const CALL_PATH_REPRESENTATION_BUDGET_BYTES = 2 * 1024 * 1024;
 
 /** Strict input for explicit call-path reconstruction from complete dossiers. */
 export const callPathInputSchema = z.strictObject({
@@ -28,8 +29,8 @@ export const callPathInputSchema = z.strictObject({
   max_paths: z
     .number()
     .int()
+    .safe()
     .positive()
-    .max(CALL_PATH_MAX_PATHS_CEILING)
     .default(DEFAULT_CALL_PATH_MAX_PATHS),
 });
 
@@ -92,19 +93,42 @@ const resultContextShape = {
     .describe(
       "True when `paths` is a prefix of the shortest paths rather than the complete set.",
     ),
+  paths_limited_by_bytes: z
+    .boolean()
+    .describe(
+      "True when the serialized paths field reached its byte budget before the caller-selected path count.",
+    ),
   evidence_links: z.array(evidenceIdSchema).min(1),
   limitations: z.array(z.string()),
 };
 
 /** Evidence-cited directed call-path result containing the shortest paths. */
 export const callPathResultSchema = z.union([
-  z.object({
-    ...resultContextShape,
-    status: z.literal("found"),
-    shortest_hops: z.number().int().min(0),
-    search_scope: z.object({ exhaustive: z.boolean() }),
-    paths: z.array(pathSchema).min(1).max(CALL_PATH_MAX_PATHS_CEILING),
-  }),
+  z
+    .object({
+      ...resultContextShape,
+      status: z.literal("found"),
+      shortest_hops: z.number().int().min(0),
+      search_scope: z.object({ exhaustive: z.boolean() }),
+      paths: z.array(pathSchema),
+    })
+    .superRefine((result, context) => {
+      if (result.paths_limited_by_bytes && !result.paths_truncated)
+        context.addIssue({
+          code: "custom",
+          message: "A byte-limited shortest-path list must be marked truncated",
+        });
+      if (
+        result.total_shortest_paths > 0 &&
+        result.paths.length === 0 &&
+        !result.paths_limited_by_bytes
+      )
+        context.addIssue({
+          code: "custom",
+          message:
+            "A found result without inline paths must report byte-budget truncation",
+        });
+    }),
   z.object({
     ...resultContextShape,
     status: z.literal("not_found"),
