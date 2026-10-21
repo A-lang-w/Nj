@@ -268,9 +268,26 @@ it("ignores pull-request fast history instead of borrowing another artifact", as
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
 });
 
-it("leaves history empty when the tier did not publish an artifact", async () => {
-  const { result, output, calls } = await invoke([artifact(70)], {
-    70: run(70, { event: "schedule" }),
+it("leaves fast history empty when only full-tier history was published", async () => {
+  const { result, output, calls } = await invoke(
+    [artifact(70)],
+    { 70: run(70, { event: "schedule" }) },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls).not.toMatch(/actions\/runs\//u);
+});
+
+it("does not query when the tier has no timing artifact", async () => {
+  const { result, output, calls } = await invoke([artifact(71)], {
+    71: run(71, { event: "schedule" }),
   });
 
   expect(JSON.parse(result.stdout)).toEqual({
