@@ -48,8 +48,8 @@ at the 1 MiB serialized view budget. Oversized indivisible facts return a
 resource error carrying the retained parent Evidence ID.
 
 Pattern IDs bind the exact path. Source IDs bind the source key, path, original
-URL, content digest and container digest. Occurrences preserve the independent
-source locations supporting each pattern. Lookup IDs use 128 bits of SHA-256;
+URL, content digest and container digest. Occurrences identify a detector mechanism at a source location; one location
+may support multiple mechanisms. `source_count` counts distinct sources. Lookup IDs use 128 bits of SHA-256;
 full content and inventory digests remain SHA-256. Field selection always keeps
 row identity and necessary provenance. The page's deduplicated `sources` table
 contains the source descriptors referenced by returned rows. Retrieve all

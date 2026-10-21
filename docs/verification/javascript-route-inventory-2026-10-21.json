@@ -1,0 +1,1664 @@
+{
+  "equivalent_parent_evidence_id": "ev_bfcb4e0a8eea576f4ca5b501b633d265f65d15ef9c9b234250e90c822a0d759d",
+  "issue": 4772,
+  "date": "2026-10-21",
+  "base_commit": "6d356b843",
+  "implementation_commit": "6c7a72505815f72a483b2acccbf09bfe71d5097e",
+  "implementation_tree": "777b93e265f704f1b0af0751449e37ec0bbe2edf",
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v24.18.0",
+    "cpu_affinity": "0,1",
+    "parent_old_space_mib": 3072,
+    "source_worker_old_space_mib": 512,
+    "source_worker_timeout_ms": 15000
+  },
+  "qualification_limits": [
+    "Captured homepage script references only; lazy and server-only code remain unknown.",
+    "No application source execution or route requests.",
+    "The Next homepage capture yields no supported rooted candidates, not evidence of zero application routes.",
+    "Source isolation probe uses real production worker boundaries; public SDK tasks and real Chromium are qualified separately.",
+    "512 MiB worker/15s budgets leave two large scripts unavailable.",
+    "New sessions with OS caches already warm; no filesystem cache flush or repeated statistical timing study.",
+    "Tokenx estimates include actual advertised declarations and SDK replies; not actual model usage. Initialization/JSON-RPC envelope tokens are unmeasured.",
+    "Same implementation compared with complete vs selected delivery; no claim of faster underlying source analysis."
+  ],
+  "corpus": [
+    {
+      "site": "nextjs-org",
+      "page": {
+        "url": "https://nextjs.org/",
+        "final_url": "https://nextjs.org/",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "etag": null,
+        "sha256": "5794a753f5bc88b521ef49c63e74ec75477cdf26ffbaa6fd1b232ebd757bb991",
+        "bytes": 242699
+      },
+      "observed_scripts": 29,
+      "assets": [
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2v5zh6m00lfum.js",
+          "sha256": "cbc64e16e8c3dfb6ecead560a58abf7bb4c7454c409209fd37626d7ac819c2a2",
+          "bytes": 32352,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2293.346681,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 5,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3yp820osdt9kv.js",
+          "sha256": "1841558a199e41795777b48bbd652f92c6d3ec1b121a879b9fc2d41d5cc89b3a",
+          "bytes": 33951,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2121.756774,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 9,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+          "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+          "bytes": 112594,
+          "source_analysis_completed": true,
+          "elapsed_ms": 7206.085192,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3-f__u1tgqe9w.js",
+          "sha256": "a4a7db369b41c7cfc3457bd620c6cd50740171f02ddf369fe9caf704a400170b",
+          "bytes": 15009,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1161.0760069999997,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2qd4c3xjf-y8d.js",
+          "sha256": "e5ac180193cdf48fac1a0eb5e5ad3480514b2a8d558fdb79a002a8ddbd38708d",
+          "bytes": 133360,
+          "source_analysis_completed": true,
+          "elapsed_ms": 4404.824877999999,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 38,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/273-kz7ddae_j.js",
+          "sha256": "2dbef264004178186358965a30a7a258b94d78cebed47b24e9cf0815aa30d8f6",
+          "bytes": 229185,
+          "source_analysis_completed": false,
+          "elapsed_ms": 15286.572197000001,
+          "parse_status": null,
+          "parse_error_count": null,
+          "error": {
+            "message": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+          },
+          "candidates": null,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/32p67covm5twm.js",
+          "sha256": "4e12d2301bf2930ee285e85256d032b3e4c6761f5abe71cf1055b4c1665eac96",
+          "bytes": 28175,
+          "source_analysis_completed": true,
+          "elapsed_ms": 7778.814166999997,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/turbopack-22zuhxnmsa7m2.js",
+          "sha256": "96860acf83d42ba7a295c65d2e1cdeaf582c98156ce0d520a1ff29739580ba38",
+          "bytes": 12863,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1826.668031000001,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 4,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3u1m4t0vzjnq5.js",
+          "sha256": "b7fd67b519b0d95aa5ae8d36b13e22dbd7179a0ff3c18f136c18be1c1e3bb009",
+          "bytes": 20385,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1842.2012199999954,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 4,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/23ugu0wxt5byy.js",
+          "sha256": "891442341e2a100908efcf600375e37e9332167307c8a3290c28c4673957df37",
+          "bytes": 31944,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2535.0090439999985,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 7,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2vko3i5lac74l.js",
+          "sha256": "9433ca68eb2a81002868f259c1e289868fc8777f51c289fa35144080bad4d349",
+          "bytes": 34609,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2460.1156950000004,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2q6evjwm-565v.js",
+          "sha256": "d43801f5709cc869420aea453dde724024c1a18db85e0b76b2bc4f4de674e9d3",
+          "bytes": 26926,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1512.2837440000003,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2e29l35axy4-8.js",
+          "sha256": "8280034a9a1300b9b91e451598b66a0d5fa94ea76a400a6393952084d0c8dd64",
+          "bytes": 32709,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1920.2992509999967,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/12l-srcvwshyf.js",
+          "sha256": "309a744a98f828c8ff1d43ba167e8985f98196fd76638fdc7fa5fe2a6f1023cf",
+          "bytes": 32580,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2168.0703980000035,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 11,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/39by9zrhsjvv9.js",
+          "sha256": "7f0ae6d793b3869905b717fff49d78aee9f93c56443fa164e297c2991290ded9",
+          "bytes": 44459,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2331.0783669999946,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3q448jj_u0oex.js",
+          "sha256": "3c5852456fb053661ced69e9e2961c73047f7fd3d6279c5fbf86d5459fdc4acb",
+          "bytes": 155519,
+          "source_analysis_completed": true,
+          "elapsed_ms": 6131.336219999997,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 13,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/1gv06lcrn7q_b.js",
+          "sha256": "f64bbf866ceebf36a5ea5c07a8d93f34429f9746191ff443df90bf5287fad672",
+          "bytes": 42730,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1927.0421810000043,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 5,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/03vn7c31403r9.js",
+          "sha256": "a71e547f16a1b0a835c0883dbc7a0643ac2b80a77c55c56e7e22ccc030d7f177",
+          "bytes": 27406,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2089.1194109999924,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3gvo0zcvrtjwi.js",
+          "sha256": "133f95790a428bd7fedfd3fc4b0d6e660047e9c9a1061812226bd3b8aca4c77d",
+          "bytes": 42218,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2189.8862389999995,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/25mr3s4f3688g.js",
+          "sha256": "303051d28d05d91216ff155bc89d345ebe31b69ceb1ec04e24a5d3cde1aaf074",
+          "bytes": 166723,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2097.010951000004,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 5,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/26u0yg3-gdc6a.js",
+          "sha256": "4386a5dfdba681bae7a1acf0ce954ffd11ba43e613a464f9078e9c26eec6f064",
+          "bytes": 17846,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1628.6519049999915,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 2,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2hcdffj5-as7m.js",
+          "sha256": "0b496440052a9e3b776adc98912281dae83af1d265616b858a7570cc86646a82",
+          "bytes": 24269,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1391.176078000004,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2s_r_zifx54q7.js",
+          "sha256": "cff7962e92655f31b1a6967324bf70901a3180820f93c0dcc8c2c2a573130e0c",
+          "bytes": 31418,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1915.2905119999923,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3vbktf2fq69e_.js",
+          "sha256": "bdcacca9362e043fa8956ea79b78ae2d1611901f5a4092b14509bff5c9a9070d",
+          "bytes": 75012,
+          "source_analysis_completed": true,
+          "elapsed_ms": 3223.9087410000066,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 10,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/1hhc4p_d_log3.js",
+          "sha256": "6cd04c781348aee469a5846ba6ff16f63332b5a2943c14125e2e4e8b22df3bb6",
+          "bytes": 42111,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2092.585822000008,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 7,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/39v8wpwthko65.js",
+          "sha256": "ff659151c718ac93fe4aac58904de1a91b1e84ec496e7ca66013268b04cd06be",
+          "bytes": 10240,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1194.9926899999991,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 5,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/0-yckxn3tleyi.js",
+          "sha256": "814aafb54addac626276c42edf7f73ef4d7baf92f73211ebce3e8e522e695c35",
+          "bytes": 35473,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1845.0883549999999,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/13ajf8_l__lm4.js",
+          "sha256": "6ab51219f8db4578126c1175565f1b8bc175d982975e5982e40cd23cd01e1910",
+          "bytes": 17541,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1516.5506970000133,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/0u3yva3kyrgqf.js",
+          "sha256": "5ad2ddfbca95282f194a22faccc41c3ea0cd3c3ee84a43785f0ace287c3b1a6a",
+          "bytes": 23491,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1404.1720380000042,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        }
+      ],
+      "inventory": {
+        "statistics": {
+          "sources_seen": 29,
+          "sources_retained": 29,
+          "route_patterns": 0,
+          "occurrences": 0,
+          "unanchored_literals_excluded": 128
+        },
+        "coverage": {
+          "scope": "provided-code-sources",
+          "source_parsing": "partial",
+          "candidate_enumeration": "partial",
+          "application_routes": "unknown"
+        },
+        "capacity": null,
+        "routes": [],
+        "unknowns": [
+          {
+            "id": "jsg:a2b81961592381a36abe52e941490555",
+            "source_id": "jss:3c5f1832bed3e8704a4a913bae966729",
+            "kind": "source-unavailable",
+            "source_range": null,
+            "reason": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+          },
+          {
+            "id": "jsg:c5bac56fda68a9589349c70708e7ff7b",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3195
+              },
+              "end": {
+                "line": 4,
+                "column": 3327
+              }
+            },
+            "reason": "Spread, computed keys or accessors leave route fields partially unknown."
+          },
+          {
+            "id": "jsg:70655a41201cfb0d962b2417cb83cdef",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3195
+              },
+              "end": {
+                "line": 4,
+                "column": 3327
+              }
+            },
+            "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
+          },
+          {
+            "id": "jsg:082c469ebc3722610e6e2bef887469bf",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3367
+              },
+              "end": {
+                "line": 4,
+                "column": 3663
+              }
+            },
+            "reason": "Spread, computed keys or accessors leave route fields partially unknown."
+          },
+          {
+            "id": "jsg:c9a66236d89bbfa9a83b55a91173a924",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3367
+              },
+              "end": {
+                "line": 4,
+                "column": 3663
+              }
+            },
+            "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
+          },
+          {
+            "id": "jsg:b370f438ee78140ddab6689143e4d20d",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3677
+              },
+              "end": {
+                "line": 4,
+                "column": 3842
+              }
+            },
+            "reason": "Spread, computed keys or accessors leave route fields partially unknown."
+          },
+          {
+            "id": "jsg:4a9cc9a820dcb6a4f964966dc76cbfef",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3677
+              },
+              "end": {
+                "line": 4,
+                "column": 3842
+              }
+            },
+            "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
+          }
+        ]
+      }
+    },
+    {
+      "site": "shadcn-ui",
+      "page": {
+        "url": "https://ui.shadcn.com/",
+        "final_url": "https://ui.shadcn.com/",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "etag": "\"11p84voa10sgreb\"",
+        "sha256": "3cd26ad0bf4d921498077e41fbcf85b053e15c530afb1dc4e27dcfc8fb8f670e",
+        "bytes": 782163
+      },
+      "observed_scripts": 38,
+      "assets": [
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0bzde7pyy-uc5.js",
+          "sha256": "38938218385869bf08e5b6c7d026c5a1e0d62685f221e3756d83f6c4e3ca919f",
+          "bytes": 31543,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2179.98701099999,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 5,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3iszc0bk6o3mv.js",
+          "sha256": "1f3bb0c524de6c2340e019e2108f4e1992c4d00169a3581e4e19e2ae3b117714",
+          "bytes": 63279,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2428.779159999991,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+          "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+          "bytes": 112594,
+          "source_analysis_completed": true,
+          "elapsed_ms": 6748.148845000003,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23m56m87a3yx7.js",
+          "sha256": "37c2fca661e00c47550fb5f8bc460b9dc0f4029e5eb0a73ffcdde2b2e675d7ca",
+          "bytes": 14486,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1073.5497719999985,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23nleunmqp_r5.js",
+          "sha256": "63624774d85bee57c8668b48187750fc39be932a66bdf728cf89ff7b6cfb4fc8",
+          "bytes": 228552,
+          "source_analysis_completed": false,
+          "elapsed_ms": 15306.023533,
+          "parse_status": null,
+          "parse_error_count": null,
+          "error": {
+            "message": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+          },
+          "candidates": null,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qdtj-d25cuf4.js",
+          "sha256": "c5320611932b281e9fb664cce6483a5c7b6751c9fbe2b5040729ceafe04634be",
+          "bytes": 155988,
+          "source_analysis_completed": true,
+          "elapsed_ms": 10437.968275000007,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 37,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/turbopack-0yl1_dp50rscn.js",
+          "sha256": "bd458733371ffbc8cfcbcd0ad964cce213058ee64fc263581f89046131e909ad",
+          "bytes": 10987,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1206.7878610000043,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 4,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3vmj7ocz3f6c-.js",
+          "sha256": "d95f555eb4e2ca74af4a1135f52b5f0c40936e984cf6f1613bc06b8e85f7a9b0",
+          "bytes": 14992,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1383.96642099999,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 4,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/02ile3fpmk_64.js",
+          "sha256": "b1563d3335bf031f3ffa57d8297275af96f7cbfd2fd2afc86286d0f4409760e6",
+          "bytes": 37582,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2125.875755000001,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1eknqc3un535f.js",
+          "sha256": "bd82e6b3568595fc03463500565d9304139a7c653e915f2a09bfd5214f5c6152",
+          "bytes": 16480,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1440.3233999999939,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/20e6u600s15u3.js",
+          "sha256": "6dac9d7a5b48860dca231879845b2f5278e860ff366549fcecd42a449668ec38",
+          "bytes": 21421,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1796.1912580000062,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0d52eigre8lfp.js",
+          "sha256": "da905ab3585c069fcc033211f1922d49f4722b714f4a053b66420075d414d61d",
+          "bytes": 35536,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2150.0726760000107,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0gq0axdizcqnp.js",
+          "sha256": "593c0a7b61bcdb6f5178ef466f402ce6b8b052652ff67b32110192d20303136c",
+          "bytes": 40090,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1891.0752870000142,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qkrpqots048e.js",
+          "sha256": "ea78347c01aed982f1a1d973d6949bf94410548d9f4587ccb3529a3f13e989fd",
+          "bytes": 25890,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1727.2098190000106,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/18c383c4nzwlc.js",
+          "sha256": "553e3f8d0069ddf70e28369f464ee5cd08495fa46b7706d90d996c82e3aaff10",
+          "bytes": 350746,
+          "source_analysis_completed": true,
+          "elapsed_ms": 12284.176275000005,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 5,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/00k0993h3uuc4.js",
+          "sha256": "2c7ca6b7f6d4f8f6b7ac614a4699fc6db117141dff0be7f1c94bd147f49800e3",
+          "bytes": 26497,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1971.6392080000078,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c55ckxmkcevb.js",
+          "sha256": "4424e6c091a01fe7e45c110f6f1d43e8097e558a1e64a4411023dfef567fb399",
+          "bytes": 34416,
+          "source_analysis_completed": true,
+          "elapsed_ms": 3070.3468920000014,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/43wayr98w3lhg.js",
+          "sha256": "e39d55ddef9f548af8e27c1672e6e7c48bd519f728860ca6757672aee95aaff7",
+          "bytes": 26406,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1646.3189609999827,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1wjr7w9_jqiiu.js",
+          "sha256": "41bf09a71d4399d14b45afa756736eac0a7b3aa7240c085275e73bb24d6edbd7",
+          "bytes": 64639,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2871.3963140000124,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1v6j29bbqu5y0.js",
+          "sha256": "842e03ef5d938ddeca91cabc2c4265d2397b887b0a7f35ff8781bf3296c0a798",
+          "bytes": 32890,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2029.8969489999872,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3ld4clt1d2k47.js",
+          "sha256": "8214b0df0b2e427c0db7004967f0d1ebaad853f6cd1f6fe9aeaf9528cd90957c",
+          "bytes": 30074,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2015.6122000000032,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/03ki0f1f-yupw.js",
+          "sha256": "4b7b9af0d669b07aa3c6f24bb33006d508f49d97327cc433657250e15fbfc77f",
+          "bytes": 1004,
+          "source_analysis_completed": true,
+          "elapsed_ms": 815.6627549999976,
+          "parse_status": "complete",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1m0zang2tqwnj.js",
+          "sha256": "ac2ef7bdd908caab5fa4037ef623a6422b1f70a6e44af4103c4d5f35dbcee310",
+          "bytes": 20530,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1846.3633600000176,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/032aaa86n1dh1.js",
+          "sha256": "b6083400902148dd72ee7dcda8d1733b0c01ad9af86ac5e1e15e457c39370ef0",
+          "bytes": 21998,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1676.3773610000208,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/25hee-gw8eskv.js",
+          "sha256": "14e8098e503692aa6984203a877b56db953fc299fcbac9bc0cb08f209bf8cca6",
+          "bytes": 36684,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2608.412967000011,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1bxvn5ukbs28_.js",
+          "sha256": "882dcb46f71627625e996d73b3965a0ae3748285cafcdf6311a763971b1e1abf",
+          "bytes": 23435,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1869.9619200000016,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 2,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/28sh6u5tuq4f2.js",
+          "sha256": "3eb374d220a43deeae0687ba9bfa457ae5f0cd4da8f6cd904c47537d898e9ef9",
+          "bytes": 59881,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2144.926348000008,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+          "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+          "bytes": 86218,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2723.828317000007,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 44,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1gx2dkwg9qo3e.js",
+          "sha256": "3d23ccde3326aaae7bb8ec23ba081355e9d3bcfd123fa628b740cf44b653c846",
+          "bytes": 133226,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1280.0041940000083,
+          "parse_status": "complete",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0rckdzguc6bi2.js",
+          "sha256": "3c5182cdb82f3aa47605c2e01a6de83ee1d9db8186bdd5df966851d3767648a6",
+          "bytes": 19607,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1618.7082320000045,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1vi-2xkk1cejt.js",
+          "sha256": "bd12a2497de25f2f826503077a7eed583036caeb38d6a90de4f36fd7b9b8e299",
+          "bytes": 30064,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1629.2742920000164,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/39c74mlpxrrci.js",
+          "sha256": "9951ee056ed51b64d6cc4401910ef83f3725d84498d84e4113481ea042817d8d",
+          "bytes": 44497,
+          "source_analysis_completed": true,
+          "elapsed_ms": 3311.9634249999945,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2b-ga_ylsrfwf.js",
+          "sha256": "19ba5ae9ac9db38212b0ba5c7ec84fbacffaa96fdebaab522c06386851f4647f",
+          "bytes": 30296,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2039.4601409999887,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 4,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2xa04daxqn3ln.js",
+          "sha256": "600399ed13801d06a12df3beabb741c71e97877333e9308d28f58d7e6d2e795b",
+          "bytes": 34851,
+          "source_analysis_completed": true,
+          "elapsed_ms": 1773.288522000017,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3cg9j5-faot60.js",
+          "sha256": "80c6ec39463dea1c936736900b0f33367cda44c9b85b2b7869cd6d39b530d816",
+          "bytes": 347373,
+          "source_analysis_completed": true,
+          "elapsed_ms": 14558.683317999996,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 10,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2gsm7afyxcat9.js",
+          "sha256": "5ec7ed2fb6f59d49deaa6b840217a6f958b28c0b1d10d6b84cafd5684e4cb7c4",
+          "bytes": 53417,
+          "source_analysis_completed": true,
+          "elapsed_ms": 3019.3020079999988,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/26m-fiew9hcdx.js",
+          "sha256": "89b660e8860e0249b9581b1fcc90fc5b6a8583602af40383f9f76bc9b790c115",
+          "bytes": 114918,
+          "source_analysis_completed": true,
+          "elapsed_ms": 5280.163020000007,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 1,
+          "capacity": null
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/10ilc_hrifu7p.js",
+          "sha256": "f44a77042232b99d85d2aa3f92632273beb5603799659c109f76d544c931bd07",
+          "bytes": 31991,
+          "source_analysis_completed": true,
+          "elapsed_ms": 2355.7880920000025,
+          "parse_status": "partial",
+          "parse_error_count": 0,
+          "error": null,
+          "candidates": 0,
+          "capacity": null
+        }
+      ],
+      "inventory": {
+        "statistics": {
+          "sources_seen": 38,
+          "sources_retained": 38,
+          "route_patterns": 18,
+          "occurrences": 31,
+          "unanchored_literals_excluded": 89
+        },
+        "coverage": {
+          "scope": "provided-code-sources",
+          "source_parsing": "partial",
+          "candidate_enumeration": "partial",
+          "application_routes": "unknown"
+        },
+        "capacity": null,
+        "routes": [
+          {
+            "path": "/docs",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/ai-elements",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/changelog",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/cli",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/components",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/components/aria/code-block",
+            "confidence": "low",
+            "mechanisms": ["route-string-constant"]
+          },
+          {
+            "path": "/docs/components/aria/trace",
+            "confidence": "low",
+            "mechanisms": ["route-string-constant"]
+          },
+          {
+            "path": "/docs/components/base/code-block",
+            "confidence": "low",
+            "mechanisms": ["route-string-constant"]
+          },
+          {
+            "path": "/docs/components/base/trace",
+            "confidence": "low",
+            "mechanisms": ["route-string-constant"]
+          },
+          {
+            "path": "/docs/components/radix/code-block",
+            "confidence": "low",
+            "mechanisms": ["route-string-constant"]
+          },
+          {
+            "path": "/docs/components/radix/trace",
+            "confidence": "low",
+            "mechanisms": ["route-string-constant"]
+          },
+          {
+            "path": "/docs/forms",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/installation",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/mcp",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/registry",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/rtl",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/skills",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          },
+          {
+            "path": "/docs/theming",
+            "confidence": "low",
+            "mechanisms": ["navigation-target", "route-string-constant"]
+          }
+        ],
+        "unknowns": [
+          {
+            "id": "jsg:197de14232c580cd78b72450533434ab",
+            "source_id": "jss:069bcdffc70d03b26b303b1ad1d98c97",
+            "kind": "source-unavailable",
+            "source_range": null,
+            "reason": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+          }
+        ]
+      }
+    }
+  ],
+  "corpus_profile": {
+    "command": [
+      "taskset",
+      "-c",
+      "0,1",
+      "node",
+      "/home/yann/yann/rea-4772-lab/probe-isolated-routes-v2.mjs"
+    ],
+    "exit_code": 0,
+    "wall_s": 216.51558201599983,
+    "cpu_s": 321.23999899999995,
+    "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+    "peak_family_rss_bytes": 488484864,
+    "sample_ms": 20,
+    "guard_stop": null
+  },
+  "independent_oracle": {
+    "method": "All 18 unescaped ASCII /docs quoted literals enumerated directly from the immutable 86218-byte production chunk with a regular expression independent of the AST route decoder; 12 are direct href property literals. These are static declaration checks, not runtime routes.",
+    "paths": [
+      "/docs",
+      "/docs/ai-elements",
+      "/docs/changelog",
+      "/docs/cli",
+      "/docs/components",
+      "/docs/components/aria/code-block",
+      "/docs/components/aria/trace",
+      "/docs/components/base/code-block",
+      "/docs/components/base/trace",
+      "/docs/components/radix/code-block",
+      "/docs/components/radix/trace",
+      "/docs/forms",
+      "/docs/installation",
+      "/docs/mcp",
+      "/docs/registry",
+      "/docs/rtl",
+      "/docs/skills",
+      "/docs/theming"
+    ]
+  },
+  "workflows": [
+    {
+      "runtime": "/home/yann/yann/rea-4772-route-inventory",
+      "mode": "complete",
+      "label": "real-full-valid",
+      "parameters": {
+        "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+        "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+        "max_semantic_nodes": 1,
+        "max_heap_mb": 512,
+        "analysis_timeout_ms": 15000
+      },
+      "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+      "answer": [
+        "/docs",
+        "/docs/ai-elements",
+        "/docs/changelog",
+        "/docs/cli",
+        "/docs/components",
+        "/docs/components/aria/code-block",
+        "/docs/components/aria/trace",
+        "/docs/components/base/code-block",
+        "/docs/components/base/trace",
+        "/docs/components/radix/code-block",
+        "/docs/components/radix/trace",
+        "/docs/forms",
+        "/docs/installation",
+        "/docs/mcp",
+        "/docs/registry",
+        "/docs/rtl",
+        "/docs/skills",
+        "/docs/theming"
+      ],
+      "source_coverage": {
+        "scope": "provided-code-sources",
+        "source_parsing": "partial",
+        "candidate_enumeration": "partial",
+        "application_routes": "unknown"
+      },
+      "primary_calls": 2,
+      "primary_estimated_tokens": 1885310,
+      "used_input_declarations_plus_primary_estimated_tokens": 1907693,
+      "all_catalog_plus_primary_estimated_tokens": 2989382,
+      "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+      "task_wall_s": 13.890089603999998,
+      "calls": [
+        {
+          "name": "analyze_javascript_application",
+          "wall_ms": 4562.842305,
+          "estimated_reply_tokens": 1876364,
+          "reply_bytes": 6194453
+        },
+        {
+          "name": "inspect_analysis_view",
+          "wall_ms": 2201.3053180000006,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "inspect_analysis_view",
+          "wall_ms": 30.117120999999315,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "inspect_analysis_view",
+          "wall_ms": 17.189969999999448,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "inspect_analysis_view",
+          "wall_ms": 11.797919999999067,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "export_evidence_bundle",
+          "wall_ms": 104.16858999999931,
+          "estimated_reply_tokens": 120,
+          "reply_bytes": 314
+        }
+      ],
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/bench-routes.mjs",
+          "complete",
+          "real-full-valid"
+        ],
+        "exit_code": 0,
+        "wall_s": 15.328975582997373,
+        "cpu_s": 20.015099,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1565618176,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "all_calls_estimated_tokens": 1912027,
+      "used_input_declarations_plus_all_calls_estimated_tokens": 1934630,
+      "full_catalog_plus_all_calls_estimated_tokens": 3016099
+    },
+    {
+      "runtime": "/home/yann/yann/rea-4772-route-inventory",
+      "mode": "selected",
+      "label": "real-selected-valid",
+      "parameters": {
+        "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+        "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+        "max_semantic_nodes": 1,
+        "max_heap_mb": 512,
+        "analysis_timeout_ms": 15000
+      },
+      "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+      "answer": [
+        "/docs",
+        "/docs/ai-elements",
+        "/docs/changelog",
+        "/docs/cli",
+        "/docs/components",
+        "/docs/components/aria/code-block",
+        "/docs/components/aria/trace",
+        "/docs/components/base/code-block",
+        "/docs/components/base/trace",
+        "/docs/components/radix/code-block",
+        "/docs/components/radix/trace",
+        "/docs/forms",
+        "/docs/installation",
+        "/docs/mcp",
+        "/docs/registry",
+        "/docs/rtl",
+        "/docs/skills",
+        "/docs/theming"
+      ],
+      "source_coverage": {
+        "scope": "provided-code-sources",
+        "source_parsing": "partial",
+        "candidate_enumeration": "partial",
+        "application_routes": "unknown"
+      },
+      "primary_calls": 1,
+      "primary_estimated_tokens": 8902,
+      "used_input_declarations_plus_primary_estimated_tokens": 11248,
+      "all_catalog_plus_primary_estimated_tokens": 1112974,
+      "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+      "task_wall_s": 13.823737049,
+      "calls": [
+        {
+          "name": "analyze_javascript_application",
+          "wall_ms": 4107.062997000001,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "inspect_analysis_view",
+          "wall_ms": 2452.3480789999994,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "inspect_analysis_view",
+          "wall_ms": 23.516450000000987,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "inspect_analysis_view",
+          "wall_ms": 20.907681000000593,
+          "estimated_reply_tokens": 8762,
+          "reply_bytes": 28885
+        },
+        {
+          "name": "export_evidence_bundle",
+          "wall_ms": 110.9070010000014,
+          "estimated_reply_tokens": 122,
+          "reply_bytes": 322
+        }
+      ],
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/bench-routes.mjs",
+          "selected",
+          "real-selected-valid"
+        ],
+        "exit_code": 0,
+        "wall_s": 14.550590128994372,
+        "cpu_s": 18.755208,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1368326144,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "all_calls_estimated_tokens": 35622,
+      "used_input_declarations_plus_all_calls_estimated_tokens": 58225,
+      "full_catalog_plus_all_calls_estimated_tokens": 1139694
+    }
+  ],
+  "real_browser": {
+    "executable": "/home/yann/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+    "browser_version": "156.0.8078.4",
+    "source": {
+      "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+      "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+      "bytes": 86218
+    },
+    "method": "Production chunk compiled inertly with Runtime.compileScript/persistScript in an owned blank local browser page, never run; actual public CLI and SDK analyze_web_bundle captured it through CDP",
+    "routes": [
+      "/docs",
+      "/docs/ai-elements",
+      "/docs/changelog",
+      "/docs/cli",
+      "/docs/components",
+      "/docs/components/aria/code-block",
+      "/docs/components/aria/trace",
+      "/docs/components/base/code-block",
+      "/docs/components/base/trace",
+      "/docs/components/radix/code-block",
+      "/docs/components/radix/trace",
+      "/docs/forms",
+      "/docs/installation",
+      "/docs/mcp",
+      "/docs/registry",
+      "/docs/rtl",
+      "/docs/skills",
+      "/docs/theming"
+    ],
+    "source_coverage": {
+      "scope": "provided-code-sources",
+      "source_parsing": "complete",
+      "candidate_enumeration": "complete",
+      "application_routes": "unknown"
+    },
+    "sources": [
+      {
+        "id": "jss:5a8904ffd2bb9db916cd05f2c0e7624c",
+        "key": "scr_6e20922f65bab674891bd7b6caa8ff2c460ea5afc830881dca59962a49728985",
+        "path": null,
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+        "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+        "container_sha256": null,
+        "status": "complete",
+        "reported_route_capacity": null,
+        "reason": null,
+        "base_path": null
+      }
+    ],
+    "elapsed_s": 10.992568815999999,
+    "authority_limits": [
+      "Not a live published-page or application execution test",
+      "No reachability, route loading or full application route denominator proof"
+    ],
+    "cleanup": "verified owned browser group and temporary profile removed",
+    "profile": {
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "node",
+        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes.mjs"
+      ],
+      "exit_code": 0,
+      "wall_s": 12.163273696001852,
+      "cpu_s": 14.06817,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 2105151488,
+      "sample_ms": 20,
+      "guard_stop": null
+    }
+  },
+  "checks": [
+    {
+      "name": "route-current-public-qualified",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:focused",
+        "--",
+        "tests/acceptance/javascriptRoutesCli.test.ts",
+        "tests/acceptance/browser/webBundleSchemaCoverageCliMcp.test.ts",
+        "src/domain/analysisView/javascriptRoutesView.test.ts",
+        "src/domain/javascript/javascriptRouteInventory.test.ts",
+        "src/domain/javascript/javascriptRouteScan.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 46.31571104100294,
+      "cpu_s": 72.67845700000001,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 2201210880,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "route-current-check-fast",
+      "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
+      "exit_code": 0,
+      "wall_s": 12.294293799001025,
+      "cpu_s": 22.500507000000002,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1552642048,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "route-current-docs-check",
+      "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
+      "exit_code": 0,
+      "wall_s": 13.286992624001869,
+      "cpu_s": 17.316443000000007,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 807628800,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "route-existing-source-boundaries",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:local",
+        "--",
+        "src/domain/webBundleAnalyzer.test.ts",
+        "src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.test.ts",
+        "src/application/analysisView/AnalysisViewService.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 19.854627289001655,
+      "cpu_s": 29.655935,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1429913600,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "route-existing-worker-mcp-boundaries",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:focused",
+        "--",
+        "tests/boundary/javascript/javascriptSourceAnalysisWorker.test.ts",
+        "tests/boundary/mcp/browserMcp.test.ts",
+        "tests/boundary/mcp/retainedApplicationEvidenceMcp.test.ts"
+      ],
+      "exit_code": 1,
+      "wall_s": 79.9317826760016,
+      "cpu_s": 146.06091100000003,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 2882113536,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "route-browser-boundary-isolated",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:focused",
+        "--",
+        "tests/boundary/mcp/browserMcp.test.ts",
+        "src/domain/javascript/javascriptStaticAnalysis.routeProperties.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 40.43995390499913,
+      "cpu_s": 47.083781,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 2051870720,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "route-baseline-worker-mcp-boundaries",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:focused",
+        "--",
+        "tests/boundary/javascript/javascriptSourceAnalysisWorker.test.ts",
+        "tests/boundary/mcp/browserMcp.test.ts",
+        "tests/boundary/mcp/retainedApplicationEvidenceMcp.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 51.546295296997414,
+      "cpu_s": 88.82724900000001,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 2951680000,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "route-current-worker-mcp-boundaries-controlled",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:focused",
+        "--",
+        "tests/boundary/javascript/javascriptSourceAnalysisWorker.test.ts",
+        "tests/boundary/mcp/browserMcp.test.ts",
+        "tests/boundary/mcp/retainedApplicationEvidenceMcp.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 46.03707117399608,
+      "cpu_s": 86.282915,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 2869239808,
+      "sample_ms": 20,
+      "guard_stop": null
+    }
+  ],
+  "failed_attempts": [
+    {
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "--import",
+          "tsx",
+          "/home/yann/yann/rea-4772-lab/probe-full-routes.mts"
+        ],
+        "exit_code": -6,
+        "wall_s": 201.71960464699805,
+        "cpu_s": 253.65316499999997,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 3416809472,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "finding": "Internal unisolated sequential source probe exhausted its configured V8 heap. Superseded by production worker isolation; no pass claimed."
+    },
+    {
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/probe-isolated-routes.mjs"
+        ],
+        "exit_code": 0,
+        "wall_s": 217.29140822499903,
+        "cpu_s": 316.105173,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 475844608,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "finding": "Harness incorrectly supplied URL module paths. Later build cleanup also made some remaining runtime imports unavailable. Invalid attempt; corrected normalized relative paths and froze runtime before the qualifying run."
+    },
+    {
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "tests/acceptance/javascriptRoutesCli.test.ts",
+          "tests/acceptance/browser/webBundleSchemaCoverageCliMcp.test.ts"
+        ],
+        "exit_code": 1,
+        "wall_s": 80.23714811000536,
+        "cpu_s": 138.93533799999997,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 3511980032,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "finding": "First exported-Evidence query used the wrong CLI argument. Subsequent attempt also supplied a bundle to the one-record evidence-file source. Corrected test extracts the parent record and authenticates it after source removal."
+    },
+    {
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/bench-routes.mjs",
+          "complete",
+          "real-full"
+        ],
+        "exit_code": 1,
+        "wall_s": 0.04264321899972856,
+        "cpu_s": 0.041318,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 33955840,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "finding": "Benchmark JavaScript brace syntax error before any MCP request; corrected syntax checked before qualifying runs."
+    }
+  ]
+}
