@@ -11,6 +11,7 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   rustArchitectureForSubject,
   rustBinarySchema,
+  rustFormatForSubject,
 } from "../../domain/rust/rustBinary.js";
 import { inspectRustBinaryRequestSchema } from "../../domain/rust/rustBinaryQuery.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -23,14 +24,6 @@ import {
 } from "../analysisView/AnalysisViewService.js";
 
 const OPERATION = "inspect_rust_binary";
-
-/** Evidence subjects name native containers; a WebAssembly module is a file, as for WABT. */
-const SUBJECT_FORMATS = {
-  elf: "elf",
-  pe: "pe",
-  macho: "mach-o",
-  wasm: "file",
-} as const;
 
 /** Shared exact input validation and artifact-bound Evidence for CLI and MCP. */
 export class RustBinaryService {
@@ -111,7 +104,7 @@ const evidenceFor = (
     {
       path: value.artifact.path,
       sha256: value.artifact.sha256,
-      format: SUBJECT_FORMATS[value.format],
+      format: rustFormatForSubject(value.format),
       ...(architecture === undefined ? {} : { architecture }),
     },
     provider,

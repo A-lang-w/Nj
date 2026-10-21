@@ -17,6 +17,17 @@ export const rustArchitectureForSubject = (architecture: string) => {
   }
 };
 
+const SUBJECT_FORMATS = {
+  elf: "elf",
+  pe: "pe",
+  macho: "mach-o",
+  wasm: "file",
+} as const;
+
+/** Evidence subjects name native containers; a WebAssembly module is a file, as for WABT. */
+export const rustFormatForSubject = (format: keyof typeof SUBJECT_FORMATS) =>
+  SUBJECT_FORMATS[format];
+
 /** Known revisions used to interpret compatible cargo-auditable documents. */
 export const RUST_AUDITABLE_FORMAT_VERSIONS = [0, 1, 8] as const;
 
