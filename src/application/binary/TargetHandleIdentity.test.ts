@@ -2,12 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 
 import { AnalysisTargetNotOpenError } from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { err, ok as resultOk } from "../../domain/result.js";
+import { err, ok as resultOk, type Result } from "../../domain/result.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
+  createDeferred,
   createTestBinaryTargetRegistry,
 } from "../../../tests/fixtures/binarySession.js";
 import type { BinaryTargetRegistry } from "./BinaryTargetRegistry.js";
@@ -22,6 +25,59 @@ const openInBackground = async (
     keepOthersOpen: true,
   });
   expect(opened.ok).toBe(true);
+};
+
+/**
+ * Reopen the primary target while another target takes its slot over.
+ *
+ * The reopen reuses the target the primary holds, so it closes the other
+ * target first, and that close waits. While it waits, the file at the first
+ * path is a different binary and a foreground open takes the new target into
+ * the reused slot. The reopen has to answer for the target it asked for, not
+ * for the replacement that took the slot over.
+ */
+const reopenWhileTheSlotChanges = async (
+  first: string,
+  second: string,
+  reopen: (
+    registry: BinaryTargetRegistry,
+    target: BinaryTarget,
+  ) => Promise<Result<BinaryTarget, AnalysisError>>,
+): Promise<{
+  readonly answered: Result<BinaryTarget, AnalysisError>;
+  readonly requested: string;
+}> => {
+  const closing = createDeferred<void>();
+  const release = createDeferred<Result<null, AnalysisError>>();
+  const registry = createTestBinaryTargetRegistry((target) => ({
+    execute: (operation: string) => Promise.resolve(observed(operation)),
+    close: () => {
+      if (target.path !== second) return Promise.resolve(resultOk(null));
+      closing.resolve(undefined);
+      return release.promise;
+    },
+  }));
+
+  // The first target takes the primary slot, the second one a slot of its own.
+  expect((await registry.open(first)).ok).toBe(true);
+  const target = registry.activeTarget();
+  expect(target).toBeDefined();
+  const requested = target?.sha256;
+  expect(requested).toBeDefined();
+  expect((await registry.open(second, { keepOthersOpen: true })).ok).toBe(true);
+
+  // The reopen waits for the other target to close.
+  const answered = reopen(registry, target!);
+  await closing.promise;
+
+  // While it waits, the file at that path is a different binary and the slot
+  // takes the new target.
+  await writeFile(first, "rebuilt-binary");
+  expect((await registry.open(first, { keepOthersOpen: true })).ok).toBe(true);
+  expect(registry.activeTarget()?.sha256).not.toBe(requested);
+
+  release.resolve(resultOk(null));
+  return { answered: await answered, requested: requested! };
 };
 
 /**
@@ -205,6 +261,58 @@ describe("a reused background target", () => {
     expect(registry.targets()).toHaveLength(1);
     expect(registry.targets()[0]?.target_id).not.toBe(secondId);
     expect(registry.activeTarget()?.path).toBe(first);
+  });
+
+  /**
+   * A reuse that a wait made stale answers for another target.
+   *
+   * The background open closes the other targets before it answers for the
+   * reused one, and that close waits. A foreground open of the same path can
+   * replace the slot while the close waits, so the reuse answered for the
+   * replacement instead of the target the request asked for.
+   */
+  it("does not answer for a target that took the reused slot over", async () => {
+    const [first, second] = await createBinarySessionTargets();
+
+    const { answered, requested } = await reopenWhileTheSlotChanges(
+      first,
+      second,
+      (registry) => registry.open(first, { analysisMode: "background" }),
+    );
+
+    // The answer is the target the request asked for, not the replacement
+    // that took the slot over while the request waited.
+    expect(answered.ok).toBe(true);
+    if (!answered.ok) return;
+    expect(answered.value.sha256).toBe(requested);
+  });
+
+  /**
+   * A resolved open shares the reuse rule.
+   *
+   * A resolved background open closes the other targets before it answers
+   * for the reused one, and that close waits, so the same stale reuse
+   * applies to it.
+   */
+  it("does not answer a resolved open for a target that took the slot over", async () => {
+    const [first, second] = await createBinarySessionTargets();
+
+    const { answered, requested } = await reopenWhileTheSlotChanges(
+      first,
+      second,
+      async (registry, target) => {
+        const preview = await registry.previewTarget(target);
+        if (!preview.ok) return preview;
+        return registry.openResolvedTarget(
+          { target: preview.value.target, route: preview.value.route },
+          { analysisMode: "background" },
+        );
+      },
+    );
+
+    expect(answered.ok).toBe(true);
+    if (!answered.ok) return;
+    expect(answered.value.sha256).toBe(requested);
   });
 });
 

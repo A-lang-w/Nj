@@ -138,6 +138,21 @@ interface AnalysisJob {
 }
 
 /**
+ * The analysis a slot answers for.
+ *
+ * A slot answers for the job that is bound to it, or for the target its
+ * session holds when no job is bound to it. The observation names the job
+ * and the provider the slot is bound to, so a decision that was made against
+ * the slot can be checked against it again after an await.
+ */
+interface SlotAnswer {
+  /** The job that binds the slot, when one binds it. */
+  readonly job: AnalysisJob | undefined;
+  /** The provider the slot is bound to. */
+  readonly providerId: string;
+}
+
+/**
  * One shared start permit.
  *
  * A permit is taken before a provider start and given back when the start
@@ -332,24 +347,12 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? undefined
         : this.#reusableSlot(existing, parsed.value, options);
     if (reusable !== undefined) {
-      // A reused target answers for the slot that holds it, but the request
-      // still replaces the other targets, so they are closed here. The replace
-      // path that closes them is skipped by the reuse.
-      const closed = await this.#closeReplacedSlots(options);
-      if (!closed.ok) return closed;
-      const job = this.#blockingJob(reusable);
-      if (job !== undefined) {
-        // The reused job answers for its own slot, so that slot becomes the
-        // current one. Otherwise the caller reads the handle and the analysis
-        // state of a different target.
-        this.#currentId = reusable.id;
-        return this.#jobOpenResult(job, options);
-      }
-      const active = reusable.session.activeTarget();
-      if (active !== undefined) {
-        this.#currentId = reusable.id;
-        return ok(active);
-      }
+      const reused = await this.#answerForReusedSlot(
+        reusable,
+        parsed.value,
+        options,
+      );
+      if (reused !== undefined) return reused;
     }
     const slot = await this.#slotForJob(options);
     if (!slot.ok) return slot;
@@ -397,21 +400,12 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? undefined
         : this.#reusableSlot(existing, resolved.target, options);
     if (reusable !== undefined) {
-      // A reused target answers for the slot that holds it, but the request
-      // still replaces the other targets, so they are closed here. The replace
-      // path that closes them is skipped by the reuse.
-      const closed = await this.#closeReplacedSlots(options);
-      if (!closed.ok) return closed;
-      const job = this.#blockingJob(reusable);
-      if (job !== undefined) {
-        this.#currentId = reusable.id;
-        return this.#jobOpenResult(job, options);
-      }
-      const active = reusable.session.activeTarget();
-      if (active !== undefined) {
-        this.#currentId = reusable.id;
-        return ok(active);
-      }
+      const reused = await this.#answerForReusedSlot(
+        reusable,
+        resolved.target,
+        options,
+      );
+      if (reused !== undefined) return reused;
     }
     const slot = await this.#slotForJob(options);
     if (!slot.ok) return slot;
@@ -454,6 +448,88 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     const live = slot.session.activeTarget() ?? this.#jobs.get(slot.id)?.target;
     if (live === undefined) return undefined;
     return sameSessionTarget(live, requested) ? slot : undefined;
+  }
+
+  /**
+   * Answer for a background open that reuses an open target.
+   *
+   * A reused target answers for the slot that holds it, but the request
+   * still replaces the other targets, so they are closed here: the replace
+   * path that closes them is skipped by the reuse. The primary keeps the
+   * target and the job the reuse answers for; only the other slots are
+   * closed.
+   *
+   * The close is an await, and the slot may take on another analysis while
+   * it waits: a rebuilt binary at the same path, a job that took the slot
+   * over, or another provider bound to it. The reuse is therefore checked
+   * against the slot again before the answer, and a slot that took on
+   * another analysis answers with nothing, so the request opens the target
+   * it asked for instead of answering for the replacement.
+   */
+  async #answerForReusedSlot(
+    slot: TargetSlot,
+    requested: BinaryTarget,
+    options: OpenOptions,
+  ): Promise<Result<BinaryTarget, AnalysisError> | undefined> {
+    const answer = this.#slotAnswer(slot);
+    const closed = await this.#closeReplacedSlots(options);
+    if (!closed.ok) return closed;
+    if (!this.#stillAnswersFor(slot, answer, requested)) return undefined;
+    const job = this.#blockingJob(slot);
+    if (job !== undefined) {
+      // The reused job answers for its own slot, so that slot becomes the
+      // current one. Otherwise the caller reads the handle and the analysis
+      // state of a different target.
+      this.#currentId = slot.id;
+      return this.#jobOpenResult(job, options);
+    }
+    const active = slot.session.activeTarget();
+    if (active === undefined) return undefined;
+    this.#currentId = slot.id;
+    return ok(active);
+  }
+
+  /**
+   * The analysis a slot answers for.
+   *
+   * The observation is taken with the decision that may reuse the slot, so
+   * the decision can be checked against the slot again after the await that
+   * follows it.
+   */
+  #slotAnswer(slot: TargetSlot): SlotAnswer {
+    return {
+      job: this.#boundJob(slot),
+      providerId: slot.session.providerIdentity().id,
+    };
+  }
+
+  /**
+   * Whether a slot still answers for the analysis a decision was made on.
+   *
+   * The decision was made before an await, so the slot may have taken on
+   * another analysis in the meantime. Another job binds the slot, the slot
+   * answers for another target, or the slot is bound to another provider,
+   * and a reuse that answered for that analysis would give the caller the
+   * handle and the analysis of a target the request never asked for.
+   */
+  #stillAnswersFor(
+    slot: TargetSlot,
+    answer: SlotAnswer,
+    requested: BinaryTarget,
+  ): boolean {
+    const job = this.#boundJob(slot);
+    if (job !== answer.job) return false;
+    const target = slot.session.activeTarget() ?? job?.target;
+    if (target === undefined) return false;
+    if (!sameSessionTarget(target, requested)) return false;
+    // A job owns the provider it started, so only a slot that no job binds
+    // is compared with the provider it was bound to.
+    if (
+      job === undefined &&
+      slot.session.providerIdentity().id !== answer.providerId
+    )
+      return false;
+    return true;
   }
 
   /**
@@ -1520,11 +1596,24 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   #blockingJob(slot: TargetSlot): AnalysisJob | undefined {
     const job = this.#jobs.get(slot.id);
     if (job === undefined) return undefined;
-    if (job.state === "failed" || job.state === "cancelled") {
+    if (!jobBindsSlot(job)) {
       this.#jobs.delete(slot.id);
       return undefined;
     }
     return job;
+  }
+
+  /**
+   * The job that binds a slot, without dropping a job that already failed.
+   *
+   * A job that failed or was cancelled binds nothing, so the slot answers
+   * for the target its session holds. This reports the binding without
+   * changing the registry, so an observation can be taken while the job is
+   * still there.
+   */
+  #boundJob(slot: TargetSlot): AnalysisJob | undefined {
+    const job = this.#jobs.get(slot.id);
+    return job !== undefined && jobBindsSlot(job) ? job : undefined;
   }
 
   #cancelJob(slot: TargetSlot): void {
@@ -1871,3 +1960,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
+
+/** Whether a job still binds its slot. */
+const jobBindsSlot = (job: AnalysisJob): boolean =>
+  job.state !== "failed" && job.state !== "cancelled";
