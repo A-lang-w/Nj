@@ -30,6 +30,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -50,6 +51,42 @@ const MAX_BINARY_MESSAGE_BYTES = Math.floor(
   ((MAX_SESSION_CAPTURE_BYTES - 1024 * 1024) * 3) / 4,
 );
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
+
+/** Limitations for capture caps that already dropped part of an observation. */
+export const fridaCaptureLimitations = (result: unknown): readonly string[] => {
+  const limitations: string[] = [];
+  if (resultHasFlag(result, "messages_truncated"))
+    limitations.push(
+      `Frida session message capture reached its ${String(MAX_SESSION_CAPTURE_BYTES)} byte budget. This release has no runtime override.`,
+    );
+  if (resultHasFieldTruncation(result))
+    limitations.push(
+      `A Frida message field reached a fixed capture cap (metadata ${String(MAX_MESSAGE_METADATA_BYTES)} bytes, type ${String(MAX_MESSAGE_TYPE_BYTES)} bytes, text ${String(MAX_MESSAGE_TEXT_BYTES)} bytes, or ${String(MAX_CAPTURE_JSON_NODES)} JSON nodes). This release has no runtime override.`,
+    );
+  return limitations;
+};
+
+const resultHasFlag = (value: unknown, flag: string): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  if (Array.isArray(value))
+    return value.some((item) => resultHasFlag(item, flag));
+  return Object.entries(value).some(
+    ([key, child]) =>
+      (key === flag && child === true) || resultHasFlag(child, flag),
+  );
+};
+
+const resultHasFieldTruncation = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  if (Array.isArray(value)) return value.some(resultHasFieldTruncation);
+  return Object.entries(value).some(
+    ([key, child]) =>
+      (key.endsWith("_truncated") &&
+        key !== "messages_truncated" &&
+        child === true) ||
+      resultHasFieldTruncation(child),
+  );
+};
 
 export const FRIDA_PROVIDER_IDENTITY = {
   id: "frida",
@@ -1120,10 +1157,27 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   ): Promise<Device> {
     if (selector.remote !== undefined)
       return this.#retainRemote(manager, selector.remote);
-    return manager.getDeviceById(
-      selector.deviceId ?? "local",
-      DEVICE_LOOKUP_TIMEOUT_MS,
-    );
+    try {
+      return await manager.getDeviceById(
+        selector.deviceId ?? "local",
+        DEVICE_LOOKUP_TIMEOUT_MS,
+      );
+    } catch (cause: unknown) {
+      if (
+        cause instanceof AnalysisCancelledError ||
+        cause instanceof AnalysisTimeoutError
+      )
+        throw cause;
+      throw new AnalysisTimeoutError(
+        "frida_device_lookup",
+        DEVICE_LOOKUP_TIMEOUT_MS,
+        {
+          cause,
+          userMessage: `Frida device lookup reached its ${String(DEVICE_LOOKUP_TIMEOUT_MS)} ms deadline (deadlineExpired). This release has no runtime override.`,
+          remediationAction: `The ${String(DEVICE_LOOKUP_TIMEOUT_MS)} ms Frida device lookup has no runtime override. Confirm the selected device is attached, then retry. Another REA timeout does not raise this lookup.`,
+        },
+      );
+    }
   }
 
   async #retainRemote(
@@ -1430,6 +1484,24 @@ const providerError = (
 ): AnalysisError => {
   if (cause instanceof AnalysisInputError)
     return new AnalysisInputError(operation, { cause }, cause.issues);
+  if (cause instanceof AnalysisTimeoutError)
+    return new AnalysisTimeoutError(operation, cause.timeoutMs, {
+      cause,
+      ...(cause.userMessage === undefined
+        ? {}
+        : { userMessage: cause.userMessage }),
+      ...(cause.remediationAction === undefined
+        ? {}
+        : { remediationAction: cause.remediationAction }),
+      ...(cleanupReason === undefined
+        ? {}
+        : {
+            cleanup: {
+              reason: cleanupReason,
+              resources: ["Frida provider operation"],
+            },
+          }),
+    });
   if (cause instanceof AnalysisCancelledError)
     return new AnalysisCancelledError(operation, {
       cause: cause.cause,

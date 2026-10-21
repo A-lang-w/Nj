@@ -10,8 +10,8 @@ export const DEFAULT_HOPPER_STARTUP_TIMEOUT_MS = 120_000;
 /** Fresh Swift SDK cache took ~88s on the supported Intel macOS VM. */
 export const DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS = 120_000;
 
-// Node schedules delays above this signed 32-bit boundary as a 1 ms timer.
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
+/** Node schedules delays above this signed 32-bit boundary as a 1 ms timer. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** Parse the optional setting without reading the ambient process environment. */
 export const providerStartupTimeoutSchema = z

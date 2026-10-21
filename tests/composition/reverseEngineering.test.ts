@@ -17,6 +17,8 @@ describe("reverse engineering command services", () => {
     expect(REVERSE_ENGINEERING_TOOL_CONTRACTS[0]?.description).toContain(
       "does not follow local debug links by default",
     );
+    for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
+      expect(contract.description).toContain("command_timeout_ms");
   });
 
   it("uses compatible local DWARF link flags and disables debuginfod through the environment", async () => {
@@ -500,6 +502,9 @@ it("retains partial Evidence when a provider command times out", async () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisTimeoutError");
+      expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+        "command_timeout_ms",
+      );
       expect(result.error.partialObservation).toMatchObject({
         operation: "execute_rizin_command",
         raw_result: {
@@ -513,6 +518,59 @@ it("retains partial Evidence when a provider command times out", async () => {
       expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
         "captured before timeout",
       );
+      const projected = projectAnalysisError(result.error);
+      expect(projected.message).toContain("command_timeout_ms");
+      expect(projected.message).toContain("120000 ms");
+      expect(projected.remediation.action).toContain("120000");
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("applies a caller-selected one-shot deadline on the next call", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "rea-rizin-timeout-selected-"),
+  );
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, "before");
+  const timeouts: number[] = [];
+  const service = new ReverseEngineeringService({
+    run: async (_command, _args, options) => {
+      timeouts.push(options?.timeout ?? -1);
+      throw Object.assign(new Error("timeout"), {
+        stdout: "",
+        stderr: "",
+        code: "ETIMEDOUT",
+        signal: "SIGTERM",
+        killed: true,
+      });
+    },
+  });
+
+  try {
+    const selected = await service.executeRizinCommand({
+      path,
+      command: "i",
+      command_timeout_ms: 5_000,
+    });
+    expect(selected.ok).toBe(false);
+    if (!selected.ok) {
+      expect(selected.error).toMatchObject({ timeoutMs: 5_000 });
+      expect(projectAnalysisError(selected.error).message).toContain("5000 ms");
+      expect(selected.error.partialObservation).toMatchObject({
+        parameters: { command_timeout_ms: 5_000 },
+      });
+    }
+    expect(timeouts).toEqual([5_000]);
+    for (const command_timeout_ms of [0, 2_147_483_648]) {
+      const rejected = await service.executeRizinCommand({
+        path,
+        command: "i",
+        command_timeout_ms,
+      });
+      expect(rejected.ok).toBe(false);
+      if (!rejected.ok) expect(rejected.error._tag).toBe("AnalysisInputError");
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

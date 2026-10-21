@@ -15,8 +15,12 @@ import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
-import { FridaInstrumentationManager } from "../../frida/FridaInstrumentationManager.js";
+import {
+  FridaInstrumentationManager,
+  fridaCaptureLimitations,
+} from "../../frida/FridaInstrumentationManager.js";
 
 const signal = <Handler extends (...args: never[]) => void>() => {
   let connected: Handler | undefined;
@@ -215,6 +219,40 @@ const startLocalAttachedSession = async (
 
 // eslint-disable-next-line max-lines-per-function -- related manager lifecycle cases share the same focused fake provider.
 describe("FridaInstrumentationManager", () => {
+  it("reports a fixed device-lookup deadline when Frida cannot select the device", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.getDeviceById = async () => {
+      throw new Error("unable to find device with id 'local'");
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const listed = await manager.listProcesses({ deviceId: "local" });
+    expect(listed.ok).toBe(false);
+    if (listed.ok) return;
+    expect(listed.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(listed.error).toMatchObject({
+      operation: "list_frida_processes",
+      timeoutMs: 1_000,
+    });
+    if (!(listed.error instanceof AnalysisTimeoutError)) return;
+    expect(listed.error.userMessage).toContain("1000 ms");
+    expect(listed.error.userMessage).toContain("no runtime override");
+    expect(listed.error.remediationAction).toContain("no runtime override");
+  });
+
+  it("names a capture cap only after that observation dropped data", () => {
+    expect(fridaCaptureLimitations({ messages_truncated: false })).toEqual([]);
+    expect(
+      fridaCaptureLimitations({ messages_truncated: true }).join("\n"),
+    ).toContain("16777216");
+    expect(
+      fridaCaptureLimitations({
+        messages: [{ type_truncated: true }],
+      }).join("\n"),
+    ).toContain("no runtime override");
+  });
+
   it("attaches by PID when Frida omits the target from process lookup", async () => {
     const bindings = new FakeDeviceManager();
     bindings.device.getProcessByPid = async () => {

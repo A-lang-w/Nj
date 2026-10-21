@@ -163,7 +163,11 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
     const acquisition = new SharedStartupAttempt<
       Result<readonly string[], unknown>
     >(async (startupSignal) => {
-      const deadline = new JebMcpDeadline(discoveryTimeoutMs, startupSignal);
+      const deadline = new JebMcpDeadline(
+        discoveryTimeoutMs,
+        startupSignal,
+        "discovery",
+      );
       try {
         await owner.client.connect(owner.transport, {
           signal: deadline.signal,
@@ -220,7 +224,11 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         signal === undefined
           ? owner.signal.signal
           : AbortSignal.any([signal, owner.signal.signal]);
-      const deadline = new JebMcpDeadline(discoveryTimeoutMs, discoverySignal);
+      const deadline = new JebMcpDeadline(
+        discoveryTimeoutMs,
+        discoverySignal,
+        "discovery",
+      );
       try {
         const refreshed = await readToolNames(owner.client, deadline.signal);
         owner.tools = refreshed;
