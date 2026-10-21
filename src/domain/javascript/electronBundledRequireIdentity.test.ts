@@ -286,34 +286,6 @@ describe("Webpack externals with a tampered loader or module object", () => {
         "var o=c[t]={get exports(){return local},set exports(v){}}",
       ),
     ],
-    [
-      "a loader that returns only cached exports",
-      bootstrap(EXTERNAL, CONSUMER).replace(
-        "return m[t](o,o.exports,n),o.exports}",
-        "m[t](o,o.exports,n)}",
-      ),
-    ],
-    [
-      "a loader without returns",
-      bootstrap(EXTERNAL, CONSUMER).replace(
-        "var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};return m[t](o,o.exports,n),o.exports}",
-        "var o=c[t]={exports:{}};m[t](o,o.exports,n)}",
-      ),
-    ],
-    [
-      "a miss path that returns from one branch",
-      bootstrap(EXTERNAL, CONSUMER).replace(
-        "return m[t](o,o.exports,n),o.exports}",
-        "m[t](o,o.exports,n);if(t)return o.exports}",
-      ),
-    ],
-    [
-      "a return whose catch falls through",
-      bootstrap(EXTERNAL, CONSUMER).replace(
-        "return m[t](o,o.exports,n),o.exports}",
-        "try{return m[t](o,o.exports,n),o.exports}catch(x){}}",
-      ),
-    ],
   ])("keeps %s unresolved", (_name, source) => {
     const electron = electronOf(source);
     expect(electron.browser_windows).toEqual([]);
@@ -353,14 +325,64 @@ describe("Webpack externals with a tampered loader or module object", () => {
         "return m[t].call(o.exports,o,o.exports,n),o.loaded=!0,o.exports}",
       ),
     ],
+  ])("still resolves with %s", (_name, source) => {
+    expect(electronOf(source).browser_windows).toMatchObject([
+      { preload_path: "./preload.js" },
+    ]);
+  });
+});
+
+describe("Webpack externals through the loader's completion paths", () => {
+  const MISS_RETURN = "return m[t](o,o.exports,n),o.exports}";
+  const missPath = (tail: string) =>
+    bootstrap(EXTERNAL, CONSUMER).replace(MISS_RETURN, tail);
+
+  // Falling off the end returns undefined, not the dispatched exports.
+  it.each([
+    ["returns only cached exports", missPath("m[t](o,o.exports,n)}")],
     [
-      "exports returned from both branches",
+      "has no returns",
       bootstrap(EXTERNAL, CONSUMER).replace(
-        "return m[t](o,o.exports,n),o.exports}",
+        `var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};${MISS_RETURN}`,
+        "var o=c[t]={exports:{}};m[t](o,o.exports,n)}",
+      ),
+    ],
+    [
+      "returns from one branch",
+      missPath("m[t](o,o.exports,n);if(t)return o.exports}"),
+    ],
+    [
+      "returns from a try whose catch falls through",
+      missPath("try{return m[t](o,o.exports,n),o.exports}catch(x){}}"),
+    ],
+    [
+      "falls through a catch past a completing finally",
+      missPath(
+        "try{return m[t](o,o.exports,n),o.exports}catch(x){}finally{t}}",
+      ),
+    ],
+    [
+      "returns another value from a finally",
+      missPath(
+        "try{return m[t](o,o.exports,n),o.exports}finally{return local}}",
+      ),
+    ],
+  ])("keeps a loader that %s unresolved", (_name, source) => {
+    expect(electronOf(source).browser_windows).toEqual([]);
+  });
+
+  it.each([
+    [
+      "returns exports from both branches",
+      missPath(
         "m[t](o,o.exports,n);if(t)return o.exports;else return o.exports}",
       ),
     ],
-  ])("still resolves with %s", (_name, source) => {
+    [
+      "returns exports from a finally after a falling-through catch",
+      missPath("try{m[t](o,o.exports,n)}catch(x){}finally{return o.exports}}"),
+    ],
+  ])("still resolves a loader that %s", (_name, source) => {
     expect(electronOf(source).browser_windows).toMatchObject([
       { preload_path: "./preload.js" },
     ]);
