@@ -622,9 +622,15 @@ checkpoint at its 8 MiB bound with the same 6x retention expansion used at
 admission. Earlier checkpoints are already charged to retained bytes; the
 remaining inventory does not multiply the reserve. Streamed file transfers keep the default 512 MiB
 allowance, and can grow with the parent's offered retention budget (8x byte
-expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. Exceeding
-either ceiling says this release has no runtime override and that raising
-`max_heap_mb` does not raise it. The parent
+expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The 8 MiB
+record ceiling and the 2 GiB file maximum have no runtime override, and raising
+`max_heap_mb` does not raise them. The effective file ceiling follows the
+parent's offered result budget. On Node, a larger CLI/MCP process heap
+(`NODE_OPTIONS`, for example `--max-old-space-size`, after restarting that
+process) can raise it up to 2 GiB. Selecting fewer `source_paths` can also
+raise that effective allowance, because the reserve for remaining sources and
+earlier retained results reduce the offered budget. Neither change raises the
+record ceiling or the 2 GiB maximum. The parent
 still independently checks actual bytes, record overhead, digests and source
 identities before adopting results.
 
@@ -634,8 +640,11 @@ mebibytes, the inclusive range 128 to 16384, and the 1024 MiB default. A
 changed value applies on the next analysis, which starts a new worker. It does
 not change a worker that is already running and does not require restarting
 the REA server. Raising `max_heap_mb` does not raise the parent result budget,
-transfer record or transfer file ceilings, the CLI/MCP process heap, or fixed
-parser limits. Completed static facts are retained, other files can still be analyzed,
+the transfer record ceiling, the 2 GiB transfer file maximum, the CLI/MCP
+process heap, or fixed parser limits. The parent result budget follows that
+process heap. On Node, set `NODE_OPTIONS` (for example `--max-old-space-size`)
+in the environment that starts the CLI or MCP server, then restart that
+process, to raise the parent heap and the result budget. Completed static facts are retained, other files can still be analyzed,
 and unexamined semantic relationships remain explicit unknowns. The parent
 also checks transfer expansion and accumulated results against its remaining
 heap before accepting semantic facts. A resource-limited result has partial

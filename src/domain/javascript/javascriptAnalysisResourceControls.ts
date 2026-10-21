@@ -36,9 +36,9 @@ export const javaScriptWorkerHeapRemediation = (heapMb: number): string => {
   return `${adjustment} The effective worker heap for this analysis is ${String(heapMb)} MiB. A changed max_heap_mb applies on the next analysis, which starts a new worker. It does not change a worker that is already running, and it does not require restarting the REA server. ${HEAP_DOES_NOT_RAISE} On Bun, V8 heap flags are ignored: Windows limits the analyzer's committed memory to max_heap_mb plus a 512 MiB reserve, and other Bun hosts enforce no analyzer heap limit.`;
 };
 
-/** Parent admission is independent of the isolated worker heap argument. */
+/** Parent admission follows the CLI/MCP heap, not the isolated worker heap argument. */
 export const JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION =
-  "This limit belongs to the parent result budget. Increasing max_heap_mb does not raise it, and this release has no runtime override for that parent budget. Use the retained static facts or analyze fewer source files.";
+  "This limit belongs to the parent result budget. That budget follows the parent V8 heap limit. Increasing max_heap_mb does not raise it. On Node, set NODE_OPTIONS (for example --max-old-space-size) in the environment that starts the CLI or MCP server, then restart that process, to raise the parent heap and this budget. Use the retained static facts or analyze fewer source files.";
 
 const semanticControl = {
   nodes: {

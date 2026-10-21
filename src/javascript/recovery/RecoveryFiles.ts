@@ -34,6 +34,14 @@ class RecoveryFileSizeError extends AnalysisOutputError {
   }
 }
 
+/** A bounded read stopped because the regular file exceeded the caller's maximum. */
+export const isRecoveryFileSizeError = (
+  cause: unknown,
+  maximum?: number,
+): boolean =>
+  cause instanceof RecoveryFileSizeError &&
+  (maximum === undefined || cause.maximum === maximum);
+
 /** Read a stable regular file without retaining bytes during engine fingerprinting. */
 const scanRecoveryFile = async (
   path: string,
@@ -356,6 +364,6 @@ export const checkRecoveryDeadline = (
   if (performance.now() >= deadline)
     throw new AnalysisTimeoutError(OPERATION, RECOVERY_LIMITS.timeoutMs, {
       userMessage: `JavaScript source recovery reached its ${String(RECOVERY_LIMITS.timeoutMs)} ms Wakaru adapter deadline. This is REA's fixed per-operation deadline, not the MCP client deadline.`,
-      remediationAction: `This release has no runtime override for the ${String(RECOVERY_LIMITS.timeoutMs)} ms Wakaru recovery deadline. Raising analysis_timeout_ms or max_heap_mb does not raise it. A smaller complete input may finish inside this deadline. Repeating the unchanged request fails the same way. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+      remediationAction: `This release has no runtime override for the ${String(RECOVERY_LIMITS.timeoutMs)} ms Wakaru recovery deadline. Raising analysis_timeout_ms or max_heap_mb does not raise it. A smaller complete input may finish inside this deadline. An unchanged retry may hit this deadline again. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
     });
 };

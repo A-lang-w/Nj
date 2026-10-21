@@ -3,6 +3,7 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
+  JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
   JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
   JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
@@ -79,6 +80,20 @@ it("names max_heap_mb, its range, and the budgets it does not raise", () => {
     ),
   );
   expect(maximum.remediation.action).toContain("Do not increase it further");
+});
+
+it("names the parent heap control for the parent result budget", () => {
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain(
+    "parent result budget",
+  );
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain("NODE_OPTIONS");
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain(
+    "--max-old-space-size",
+  );
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain("max_heap_mb");
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).not.toContain(
+    "no runtime override",
+  );
 });
 
 it("names the four semantic arguments on ceiling coverage", () => {

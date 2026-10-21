@@ -67,11 +67,28 @@ export const javaScriptTransferByteBudget = (
     Math.max(TRANSFER_BYTES, Math.floor(resultBudgetBytes / 8)),
   );
 
-/** Fixed transfer ceilings. Neither argument nor `max_heap_mb` raises them. */
+/**
+ * The record ceiling and the 2 GiB file maximum are fixed. The effective file
+ * ceiling follows the parent offered result budget and can rise until that maximum.
+ */
 export const javaScriptTransferCeilingRemediation = (
-  transferFileBytes: number,
-): string =>
-  `This release has no runtime override for the ${String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES)}-byte transfer record ceiling or the transfer file ceiling (effective ${String(transferFileBytes)} bytes, maximum ${String(MAX_TRANSFER_BYTES)} bytes). Raising max_heap_mb does not raise either ceiling. Selecting fewer source_paths does not raise them. Repeating the unchanged request fails the same way.`;
+  transferFileBytes: number | undefined,
+): string => {
+  const recordBytes = String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES);
+  const maximumBytes = String(MAX_TRANSFER_BYTES);
+  const fixed = `The ${recordBytes}-byte transfer record ceiling and the ${maximumBytes}-byte transfer file maximum have no runtime override. Raising max_heap_mb does not raise either fixed ceiling. A request that exceeds the record ceiling or that maximum fails the same way when repeated unchanged.`;
+  const adjustable = `On Node, set NODE_OPTIONS (for example --max-old-space-size) in the environment that starts the CLI or MCP server, then restart that process, to raise the effective file ceiling up to ${maximumBytes} bytes. Selecting fewer source_paths can also raise this effective file allowance, because earlier retained results and the reserve for remaining sources reduce the offered budget. Neither change raises the record ceiling or the maximum.`;
+  if (
+    transferFileBytes !== undefined &&
+    transferFileBytes >= MAX_TRANSFER_BYTES
+  )
+    return `${fixed} The effective transfer file ceiling is the ${maximumBytes}-byte maximum. Selecting fewer source_paths does not raise the record ceiling or that maximum.`;
+  const effective =
+    transferFileBytes === undefined
+      ? "The effective transfer file ceiling follows the parent offered result budget, which follows the CLI/MCP process heap, and can be lower than the maximum."
+      : `The effective transfer file ceiling is ${String(transferFileBytes)} bytes. It follows the parent offered result budget, which follows the CLI/MCP process heap.`;
+  return `${fixed} ${effective} ${adjustable}`;
+};
 
 /** Reattach transfer recovery after a worker protocol frame drops remediation. */
 export const javaScriptForwardedTransferRemediation = (
@@ -84,9 +101,7 @@ export const javaScriptForwardedTransferRemediation = (
   )
     return undefined;
   return javaScriptTransferCeilingRemediation(
-    typeof transferFileBytes === "number"
-      ? transferFileBytes
-      : MAX_TRANSFER_BYTES,
+    typeof transferFileBytes === "number" ? transferFileBytes : undefined,
   );
 };
 
@@ -96,7 +111,9 @@ const javaScriptTransferCeilingReason = (
 ): string =>
   recordBytes > FRAME_BYTES
     ? `A complete JavaScript fact exceeds the ${String(FRAME_BYTES)}-byte transfer record ceiling. This release has no runtime override.`
-    : `Complete JavaScript file facts exceed the effective transfer file ceiling of ${String(transferFileBytes)} bytes (maximum ${String(MAX_TRANSFER_BYTES)} bytes). This release has no runtime override.`;
+    : transferFileBytes >= MAX_TRANSFER_BYTES
+      ? `Complete JavaScript file facts exceed the ${String(MAX_TRANSFER_BYTES)}-byte transfer file maximum. This release has no runtime override.`
+      : `Complete JavaScript file facts exceed the effective transfer file ceiling of ${String(transferFileBytes)} bytes (maximum ${String(MAX_TRANSFER_BYTES)} bytes). That effective ceiling follows the parent offered result budget and can rise until the maximum. The record ceiling and that maximum have no runtime override.`;
 
 const assertTransferByteBudget = (transferBytes: number): void => {
   if (

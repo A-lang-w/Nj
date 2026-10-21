@@ -68,6 +68,10 @@ it("says the Wakaru deadline has no runtime override", async () => {
   expect(projected.remediation.action).toContain("no runtime override");
   expect(projected.remediation.action).toContain("analysis_timeout_ms");
   expect(projected.remediation.action).toContain("max_heap_mb");
+  expect(projected.remediation.action).toContain(
+    "An unchanged retry may hit this deadline again",
+  );
+  expect(projected.remediation.action).not.toContain("fails the same way");
 });
 
 it("preserves caller cancellation before acquiring an expired execution budget", async () => {
