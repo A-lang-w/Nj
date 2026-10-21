@@ -251,3 +251,33 @@ it("keeps enumeration partial when a recognized navigation target is unresolved"
     }),
   ]);
 });
+
+it.each(["/app/reports", "/reports"])(
+  "matches based and unbased constants against application segments for %s",
+  (anchor) => {
+    const result = build([
+      source(
+        "mixed.js",
+        `globalThis.TURBOPACK=[];router.push('${anchor}');const paths=['/reports/settings','/app/reports/history','/noise','/app/noise','/ROOT/node_modules/framework'];`,
+        "https://example.test/app/_next/static/chunks/one.js",
+      ),
+    ]);
+    expect(result.routes.map(({ path }) => path)).toEqual([
+      "/app/reports",
+      "/app/reports/history",
+      "/app/reports/settings",
+    ]);
+    expect(result.occurrences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          unprefixed_path: "/reports/settings",
+          inferred_base_path: "/app",
+        }),
+        expect.objectContaining({
+          unprefixed_path: "/app/reports/history",
+          inferred_base_path: null,
+        }),
+      ]),
+    );
+  },
+);

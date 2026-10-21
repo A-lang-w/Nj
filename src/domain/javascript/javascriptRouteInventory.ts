@@ -497,15 +497,30 @@ export function* buildJavaScriptRouteInventorySteps(
         ? base
         : `${base}${path}`;
   };
+  // Anchors and constants share application segments even when one source
+  // already includes its inferred deployment base. Output paths stay exact.
+  const applicationRoot = (
+    path: string,
+    source: JavaScriptRouteInventorySource,
+  ): string => {
+    const base = source.base_path?.value;
+    const start =
+      base !== undefined && (path === base || path.startsWith(`${base}/`))
+        ? base.length + 1
+        : 1;
+    const end = path.indexOf("/", start);
+    return path.slice(start, end < 0 ? undefined : end);
+  };
   const roots = new Set<string>();
   for (const { input, source, metadataPath } of contexts) {
     yield;
     if (metadataPath !== undefined) {
-      if (metadataPath.split("/")[1]) roots.add(metadataPath.split("/")[1]!);
+      const root = applicationRoot(metadataPath, source);
+      if (root) roots.add(root);
     }
     for (const candidate of input.facts?.candidates ?? [])
       if (candidate.mechanism !== "route-string-constant") {
-        const root = candidate.path.split("/")[1];
+        const root = applicationRoot(candidate.path, source);
         if (root) roots.add(root);
       }
   }
@@ -520,7 +535,7 @@ export function* buildJavaScriptRouteInventorySteps(
     const path = prefixPath(candidate.path, source);
     if (
       candidate.mechanism === "route-string-constant" &&
-      !roots.has(candidate.path.split("/")[1]!)
+      !roots.has(applicationRoot(candidate.path, source))
     ) {
       unanchored++;
       return;
