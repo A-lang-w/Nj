@@ -182,3 +182,14 @@ Four affected files passed all 27 tests serially on main
 An earlier parallel-file attempt was stopped at the 3 GiB early boundary before
 OOM and is incomplete. Serial execution stayed below the same boundary without
 raising the 4 GiB family limit. No performance cohort includes these test runs.
+
+Additional CI cases now select full presentation when testing nested schemas
+or literal advertised examples. Default source-comparison and JavaScript-fact
+workflows still exercise canonical invalid-input refusal. After regenerating
+the ignored catalog metadata, four files passed 31 tests; the full-catalog
+ordering case hit its 20-second child deadline. That case passed alone in a
+fresh process with the same deadline (14.85-second test duration). All five
+files have passing checks; the combined run did not pass and its timeout cause
+is not established. Family peaks were 2.43 GiB for the combined run and 1.0 GiB
+for the standalone run, within unchanged limits. These validation attempts are
+separate from the performance cohorts.
