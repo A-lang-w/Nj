@@ -48,6 +48,7 @@ export const registerPythonPycCommands = (
               service,
               "rea-python-pyc",
               "inspect_python_pyc",
+              signal,
             ),
         );
       }),

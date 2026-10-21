@@ -25,7 +25,9 @@ const TYPE_TRUE = 0x54;
 const TYPE_STOPITER = 0x53;
 const TYPE_ELLIPSIS = 0x2e;
 const TYPE_INT = 0x69;
+const TYPE_FLOAT_TEXT = 0x66;
 const TYPE_FLOAT = 0x67;
+const TYPE_COMPLEX_TEXT = 0x78;
 const TYPE_COMPLEX = 0x79;
 const TYPE_LONG = 0x6c;
 const TYPE_BYTES = 0x73;
@@ -50,18 +52,18 @@ type MarshalValue =
   | { readonly kind: "bool"; readonly value: boolean }
   | { readonly kind: "ellipsis" }
   | { readonly kind: "stopiter" }
-  | { readonly kind: "int"; readonly value: bigint }
+  | { readonly kind: "int"; readonly value: bigint; readonly bits: number }
   | { readonly kind: "float"; readonly value: number }
   | { readonly kind: "complex"; readonly real: number; readonly imag: number }
   | { readonly kind: "bytes"; readonly value: Buffer }
-  | { readonly kind: "str"; readonly value: string }
-  | { readonly kind: "tuple"; readonly items: readonly MarshalValue[] }
-  | { readonly kind: "list"; readonly items: readonly MarshalValue[] }
-  | { readonly kind: "set"; readonly items: readonly MarshalValue[] }
-  | { readonly kind: "frozenset"; readonly items: readonly MarshalValue[] }
+  | { readonly kind: "str"; readonly value: string; readonly bytes: number }
+  | { readonly kind: "tuple"; readonly items: MarshalValue[] }
+  | { readonly kind: "list"; readonly items: MarshalValue[] }
+  | { readonly kind: "set"; readonly items: MarshalValue[] }
+  | { readonly kind: "frozenset"; readonly items: MarshalValue[] }
   | {
       readonly kind: "dict";
-      readonly items: readonly (readonly [MarshalValue, MarshalValue])[];
+      readonly items: [MarshalValue, MarshalValue][];
     }
   | { readonly kind: "code"; readonly value: CodeNode };
 
@@ -170,6 +172,9 @@ class MarshalReader {
   #reportedStringBytes = 0;
   /** Const summaries the report copies, including tables shared by TYPE_REF. */
   #reportedConsts = 0;
+  /** Identity keys for NaN values, which are not equal to themselves. */
+  readonly #identities = new WeakMap<MarshalValue, number>();
+  #identityNext = 0;
 
   constructor(
     readonly bytes: Buffer,
@@ -199,17 +204,19 @@ class MarshalReader {
       if (flagged) malformed("TYPE_REF must not also set FLAG_REF.");
       return this.readRef();
     }
-    let slot: number | undefined;
-    if (flagged) {
-      slot = this.#intern.length;
-      this.#intern.push(undefined);
-    }
-    const value = this.readTyped(type, depth);
-    if (slot !== undefined) this.#intern[slot] = value;
+    const slot = flagged ? this.#intern.length : undefined;
+    if (slot !== undefined) this.#intern.push(undefined);
+    const value = this.readTyped(type, depth, slot);
+    if (slot !== undefined && this.#intern[slot] === undefined)
+      this.#intern[slot] = value;
     return value;
   }
 
-  readTyped(type: number, depth: number): MarshalValue {
+  readTyped(
+    type: number,
+    depth: number,
+    slot: number | undefined,
+  ): MarshalValue {
     switch (type) {
       case TYPE_NULL:
         return { kind: "null" };
@@ -223,37 +230,49 @@ class MarshalReader {
         return { kind: "stopiter" };
       case TYPE_ELLIPSIS:
         return { kind: "ellipsis" };
-      case TYPE_INT:
-        return { kind: "int", value: BigInt(this.i32()) };
+      case TYPE_INT: {
+        const value = BigInt(this.i32());
+        return { kind: "int", value, bits: smallBitLength(value) };
+      }
+      case TYPE_FLOAT_TEXT:
+        return { kind: "float", value: this.textFloat() };
       case TYPE_FLOAT:
         return { kind: "float", value: this.f64() };
+      case TYPE_COMPLEX_TEXT:
+        return {
+          kind: "complex",
+          real: this.textFloat(),
+          imag: this.textFloat(),
+        };
       case TYPE_COMPLEX:
         return { kind: "complex", real: this.f64(), imag: this.f64() };
-      case TYPE_LONG:
-        return { kind: "int", value: this.long() };
+      case TYPE_LONG: {
+        const decoded = this.long();
+        return { kind: "int", value: decoded.value, bits: decoded.bits };
+      }
       case TYPE_BYTES:
         return { kind: "bytes", value: this.blob(this.u32()) };
       case TYPE_INTERNED:
       case TYPE_UNICODE:
-        return { kind: "str", value: this.utf8(this.u32(), false) };
+        return this.utf8(this.u32(), false);
       case TYPE_ASCII:
       case TYPE_ASCII_INTERNED:
-        return { kind: "str", value: this.utf8(this.u32(), true) };
+        return this.utf8(this.u32(), true);
       case TYPE_SHORT_ASCII:
       case TYPE_SHORT_ASCII_INTERNED:
-        return { kind: "str", value: this.utf8(this.u8(), true) };
+        return this.utf8(this.u8(), true);
       case TYPE_TUPLE:
-        return { kind: "tuple", items: this.sequence(this.u32(), depth) };
+        return this.sequenceValue("tuple", this.u32(), depth, slot);
       case TYPE_SMALL_TUPLE:
-        return { kind: "tuple", items: this.sequence(this.u8(), depth) };
+        return this.sequenceValue("tuple", this.u8(), depth, slot);
       case TYPE_LIST:
-        return { kind: "list", items: this.sequence(this.u32(), depth) };
+        return this.sequenceValue("list", this.u32(), depth, slot);
       case TYPE_SET:
-        return { kind: "set", items: this.sequence(this.u32(), depth) };
+        return this.setValue("set", this.u32(), depth, slot);
       case TYPE_FROZENSET:
-        return { kind: "frozenset", items: this.sequence(this.u32(), depth) };
+        return this.setValue("frozenset", this.u32(), depth, slot);
       case TYPE_DICT:
-        return { kind: "dict", items: this.dict(depth) };
+        return this.dict(depth, slot);
       case TYPE_CODE:
         return { kind: "code", value: this.code(depth) };
       default:
@@ -334,11 +353,22 @@ class MarshalReader {
       localsplusnames,
       localspluskinds_hex,
       bytecode: { bytes: bytecode.length, sha256: sha256(bytecode) },
-      consts: consts.map(summarizeConst),
-      nested: consts.flatMap((item) =>
-        item.kind === "code" ? [item.value] : [],
-      ),
+      consts: this.#summarizeConsts(consts),
+      nested: nestedCodeObjects(consts),
     };
+  }
+
+  /**
+   * A code-constant summary copies the child's name. Charge every copy the
+   * report will carry before that summary is built.
+   */
+  #summarizeConsts(items: readonly MarshalValue[]): PythonPycConst[] {
+    const summaries: PythonPycConst[] = [];
+    for (const item of items) {
+      if (item.kind === "code") this.#reportStrings([item.value.name]);
+      summaries.push(summarizeConst(item));
+    }
+    return summaries;
   }
 
   /**
@@ -380,24 +410,167 @@ class MarshalReader {
     return value;
   }
 
-  sequence(count: number, depth: number): MarshalValue[] {
+  #publish(slot: number | undefined, value: MarshalValue): void {
+    if (slot !== undefined) this.#intern[slot] = value;
+  }
+
+  /**
+   * CPython registers tuples and lists before reading items, so a container
+   * can refer to itself. The same object is what later TYPE_REF entries see.
+   */
+  sequenceValue(
+    kind: "tuple" | "list",
+    count: number,
+    depth: number,
+    slot: number | undefined,
+  ): MarshalValue {
     const items: MarshalValue[] = [];
+    const value: MarshalValue =
+      kind === "tuple" ? { kind: "tuple", items } : { kind: "list", items };
+    this.#publish(slot, value);
     for (let index = 0; index < count; index += 1) {
       const item = this.readObject(depth + 1);
       if (item.kind === "null")
         malformed("NULL object in marshal data for sequence.");
       items.push(item);
     }
-    return items;
+    return value;
   }
 
-  dict(depth: number): (readonly [MarshalValue, MarshalValue])[] {
-    const items: (readonly [MarshalValue, MarshalValue])[] = [];
+  /**
+   * Sets are registered before their members. Frozensets are registered after,
+   * matching CPython, so a reference inside a frozenset body is still invalid.
+   * Equal members count once; unhashable members fail the walk.
+   */
+  setValue(
+    kind: "set" | "frozenset",
+    count: number,
+    depth: number,
+    slot: number | undefined,
+  ): MarshalValue {
+    const items: MarshalValue[] = [];
+    const value: MarshalValue =
+      kind === "set" ? { kind: "set", items } : { kind: "frozenset", items };
+    if (kind === "set") this.#publish(slot, value);
+    for (let index = 0; index < count; index += 1) {
+      const item = this.readObject(depth + 1);
+      if (item.kind === "null")
+        malformed("NULL object in marshal data for set.");
+      items.push(item);
+    }
+    const unique = this.#unique(items, "set member");
+    items.length = 0;
+    for (const item of unique) items.push(item);
+    return value;
+  }
+
+  /**
+   * Dictionaries are registered before their pairs. A null key or a null value
+   * ends the dict; a null value does not become an entry. Equal keys keep the
+   * last value, and an unhashable key fails the walk.
+   */
+  dict(depth: number, slot: number | undefined): MarshalValue {
+    const items: [MarshalValue, MarshalValue][] = [];
+    const value: MarshalValue = { kind: "dict", items };
+    this.#publish(slot, value);
+    const indexes = new Map<string, number>();
     for (;;) {
       const key = this.readObject(depth + 1);
-      if (key.kind === "null") return items;
-      items.push([key, this.readObject(depth + 1)]);
+      if (key.kind === "null") return value;
+      const mapped = this.readObject(depth + 1);
+      if (mapped.kind === "null") return value;
+      const hash = this.#hashKey(key, "dictionary key");
+      const existing = indexes.get(hash);
+      if (existing === undefined) {
+        indexes.set(hash, items.length);
+        items.push([key, mapped]);
+      } else {
+        items[existing] = [key, mapped];
+      }
     }
+  }
+
+  #unique(items: readonly MarshalValue[], role: string): MarshalValue[] {
+    const seen = new Map<string, MarshalValue>();
+    for (const item of items) {
+      const key = this.#hashKey(item, role);
+      if (!seen.has(key)) seen.set(key, item);
+    }
+    return [...seen.values()];
+  }
+
+  #hashKey(value: MarshalValue, role: string): string {
+    return (
+      this.#pythonKey(value, new Set()) ?? malformed(`Unhashable ${role}.`)
+    );
+  }
+
+  /**
+   * Python equality key for hash-based containers. Null means the value is
+   * unhashable. NaN uses object identity because NaN is not equal to NaN.
+   */
+  #pythonKey(value: MarshalValue, stack: Set<MarshalValue>): string | null {
+    switch (value.kind) {
+      case "none":
+        return "N";
+      case "ellipsis":
+        return "E";
+      case "stopiter":
+        return "S";
+      case "bool":
+        return value.value ? "i1" : "i0";
+      case "int":
+        return `i${value.value.toString()}`;
+      case "float":
+        return Number.isNaN(value.value)
+          ? this.#identity(value)
+          : this.#numberKey(value.value);
+      case "complex":
+        if (Number.isNaN(value.real) || Number.isNaN(value.imag))
+          return this.#identity(value);
+        if (value.imag === 0) return this.#numberKey(value.real);
+        return `c${this.#numberKey(value.real)}:${this.#numberKey(value.imag)}`;
+      case "str":
+        return `s${value.bytes}:${value.value}`;
+      case "bytes":
+        return `b${value.value.length}:${value.value.toString("hex")}`;
+      case "tuple":
+      case "frozenset": {
+        if (stack.has(value)) return null;
+        stack.add(value);
+        const parts: string[] = [];
+        for (const item of value.items) {
+          const key = this.#pythonKey(item, stack);
+          if (key === null) {
+            stack.delete(value);
+            return null;
+          }
+          parts.push(`${key.length}:${key}`);
+        }
+        stack.delete(value);
+        if (value.kind === "frozenset") parts.sort();
+        return `${value.kind === "tuple" ? "t" : "f"}${parts.join(",")}`;
+      }
+      default:
+        return null;
+    }
+  }
+
+  #numberKey(value: number): string {
+    if (value === 0) return "i0";
+    if (Number.isFinite(value) && Number.isInteger(value))
+      return `i${BigInt(value).toString()}`;
+    const bytes = Buffer.alloc(8);
+    bytes.writeDoubleLE(value);
+    return `d${bytes.toString("hex")}`;
+  }
+
+  #identity(value: MarshalValue): string {
+    const existing = this.#identities.get(value);
+    if (existing !== undefined) return `u${existing}`;
+    this.#identityNext += 1;
+    this.#identities.set(value, this.#identityNext);
+    return `u${this.#identityNext}`;
   }
 
   /**
@@ -405,7 +578,7 @@ class MarshalReader {
    * the digits against the string budget (they never use another one), reject
    * the digits CPython rejects, and build the value in one linear pass.
    */
-  long(): bigint {
+  long(): { value: bigint; bits: number } {
     const count = this.i32();
     const size = Math.abs(count);
     if (size * 2 > this.input.max_string_bytes)
@@ -433,24 +606,44 @@ class MarshalReader {
     }
     if (size > 0 && digit === 0) malformed("Marshal long is not normalized.");
     if (carryBits > 0) nibbles.push(carry);
-    if (nibbles.length === 0) return 0n;
-    const value = BigInt(
+    let bits = 0;
+    if (size > 0) {
+      let top = digit;
+      while (top > 0) {
+        top >>>= 1;
+        bits += 1;
+      }
+      bits += (size - 1) * 15;
+    }
+    if (nibbles.length === 0) return { value: 0n, bits: 0 };
+    const magnitude = BigInt(
       `0x${nibbles
         .reverse()
         .map((nibble) => nibble.toString(16))
         .join("")}`,
     );
-    return count < 0 ? -value : value;
+    return { value: count < 0 ? -magnitude : magnitude, bits };
   }
 
-  utf8(length: number, ascii: boolean): string {
+  /** Marshal version 0 writes a one-byte length and a CPython float literal. */
+  textFloat(): number {
+    const bytes = this.blob(this.u8());
+    if (bytes.some((byte) => byte > 0x7f))
+      malformed("Marshal float text is not ASCII.");
+    return (
+      parseMarshalFloat(bytes.toString("latin1")) ??
+      malformed("Marshal float text is not a CPython float.")
+    );
+  }
+
+  utf8(length: number, ascii: boolean): MarshalValue {
     const bytes = this.blob(length);
     if (ascii) {
       if (bytes.some((byte) => byte > 0x7f))
         malformed("Marshal ASCII string contains a non-ASCII byte.");
-      return bytes.toString("latin1");
+      return { kind: "str", value: bytes.toString("latin1"), bytes: length };
     }
-    return decodeSurrogatePass(bytes);
+    return { kind: "str", value: decodeSurrogatePass(bytes), bytes: length };
   }
 
   blob(length: number): Buffer {
@@ -602,6 +795,43 @@ const flattenCode = (root: CodeNode): PythonPycCodeObject[] => {
   }));
 };
 
+/**
+ * Code objects anywhere in a constant, including inside tuples and other
+ * containers. Cycles are containers that refer to themselves; a code object
+ * stops the walk so its own constants stay on that object.
+ */
+const nestedCodeObjects = (items: readonly MarshalValue[]): CodeNode[] => {
+  const nested: CodeNode[] = [];
+  const seen = new Set<MarshalValue>();
+  const visit = (value: MarshalValue): void => {
+    switch (value.kind) {
+      case "code":
+        nested.push(value.value);
+        return;
+      case "tuple":
+      case "list":
+      case "set":
+      case "frozenset":
+        if (seen.has(value)) return;
+        seen.add(value);
+        for (const item of value.items) visit(item);
+        return;
+      case "dict":
+        if (seen.has(value)) return;
+        seen.add(value);
+        for (const [key, mapped] of value.items) {
+          visit(key);
+          visit(mapped);
+        }
+        return;
+      default:
+        return;
+    }
+  };
+  for (const item of items) visit(item);
+  return nested;
+};
+
 const asBytes = (value: MarshalValue, field: string): Buffer => {
   if (value.kind !== "bytes")
     return malformed(`${field} is not marshal bytes.`);
@@ -630,28 +860,39 @@ const strings = (items: readonly MarshalValue[]): string[] =>
     return item.value;
   });
 
+const constSummaries = new WeakMap<MarshalValue, PythonPycConst>();
+
+/** One summary per decoded object, so TYPE_REF does not repeat the work. */
 const summarizeConst = (value: MarshalValue): PythonPycConst => {
+  const cached = constSummaries.get(value);
+  if (cached !== undefined) return cached;
+  const summary = buildConstSummary(value);
+  constSummaries.set(value, summary);
+  return summary;
+};
+
+const buildConstSummary = (value: MarshalValue): PythonPycConst => {
   switch (value.kind) {
     case "none":
       return { kind: "none" };
     case "bool":
       return { kind: "bool", value: value.value };
-    case "int": {
-      const bits = bitLength(value.value);
+    case "int":
       return {
         kind: "int",
-        bits,
+        bits: value.bits,
         value:
-          bits <= PYTHON_PYC_INT_PREVIEW_BITS ? value.value.toString() : null,
+          value.bits <= PYTHON_PYC_INT_PREVIEW_BITS
+            ? value.value.toString()
+            : null,
       };
-    }
     case "float":
       return { kind: "float", value: jsonFloat(value.value) };
     case "str": {
       const truncated = value.value.length > PYTHON_PYC_CONST_PREVIEW_LIMIT;
       return {
         kind: "str",
-        bytes: Buffer.byteLength(value.value, "utf8"),
+        bytes: value.bytes,
         truncated,
         value: truncated
           ? value.value.slice(0, PYTHON_PYC_CONST_PREVIEW_LIMIT)
@@ -693,10 +934,25 @@ const summarizeConst = (value: MarshalValue): PythonPycConst => {
   }
 };
 
-const bitLength = (value: bigint): number => {
+const smallBitLength = (value: bigint): number => {
   if (value === 0n) return 0;
-  const hex = (value < 0n ? -value : value).toString(16);
-  return (
-    (hex.length - 1) * 4 + Number.parseInt(hex[0] ?? "0", 16).toString(2).length
-  );
+  const magnitude = value < 0n ? -value : value;
+  return magnitude.toString(2).length;
+};
+
+/**
+ * CPython's `PyOS_string_to_double` grammar for marshal version 0: an optional
+ * sign, then `inf`/`infinity`, `nan`, or a decimal literal. No hex floats and
+ * no surrounding whitespace.
+ */
+const MARSHAL_FLOAT =
+  /^([+-]?)(?:(inf(?:inity)?)|(nan)|((?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?))$/i;
+
+const parseMarshalFloat = (text: string): number | undefined => {
+  const match = MARSHAL_FLOAT.exec(text);
+  if (match === null) return undefined;
+  if (match[2] !== undefined) return match[1] === "-" ? -Infinity : Infinity;
+  if (match[3] !== undefined) return Number.NaN;
+  const value = Number(text);
+  return Number.isNaN(value) ? undefined : value;
 };

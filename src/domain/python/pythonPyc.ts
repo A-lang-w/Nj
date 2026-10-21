@@ -134,7 +134,7 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("code"),
-    name: z.string().min(1),
+    name: z.string(),
     firstlineno: uint,
   }),
   z.strictObject({ kind: z.literal("tuple"), length: uint }),
@@ -152,8 +152,8 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
 ]);
 
 const pythonCodeFields = {
-  name: z.string().min(1),
-  qualname: z.string().min(1).nullable(),
+  name: z.string(),
+  qualname: z.string().nullable(),
   filename: z.string(),
   firstlineno: uint,
   argcount: uint,

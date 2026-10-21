@@ -380,6 +380,306 @@ it("rejects NULL tuple items and mismatched local kinds", () => {
   expect(pythonPycSchema.safeParse(matched).success).toBe(true);
 });
 
+const textFloat = (text: string): Buffer =>
+  Buffer.concat([
+    Buffer.from([0x66, Buffer.byteLength(text)]),
+    Buffer.from(text),
+  ]);
+
+const textComplex = (real: string, imag: string): Buffer =>
+  Buffer.concat([
+    Buffer.from([0x78, Buffer.byteLength(real)]),
+    Buffer.from(real),
+    Buffer.from([Buffer.byteLength(imag)]),
+    Buffer.from(imag),
+  ]);
+
+const parseLimited = (bytes: Buffer, max_file_bytes: number) =>
+  parsePythonPyc(
+    bytes,
+    {
+      path: defaults.path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    },
+    { ...defaults, max_file_bytes },
+  );
+
+it("charges every reported code-constant name against the file budget", () => {
+  const name = Buffer.alloc(2000, 0x6e);
+  const nameObject = Buffer.concat([
+    Buffer.from([0x61]),
+    u32(name.length),
+    name,
+  ]);
+  const child = marshalCode("py311", {
+    nameObject,
+    qualnameObject: nameObject,
+    flagged: true,
+  });
+  const file = (copies: number): Buffer =>
+    Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", {
+        constsObject: Buffer.concat([
+          Buffer.from([0x28]),
+          u32(copies),
+          child,
+          ...Array.from({ length: copies - 1 }, () => marshalRef(0)),
+        ]),
+      }),
+    ]);
+  const once = parseLimited(file(1), 20_000);
+  expect(root(once).consts[0]).toMatchObject({
+    kind: "code",
+    name: "n".repeat(2000),
+  });
+  expect(pythonPycSchema.safeParse(once).success).toBe(true);
+  expect(() => parseLimited(file(30), 20_000)).toThrow(
+    PythonPycResourceFailure,
+  );
+});
+
+it("reuses a shared integer's bit length instead of converting every reference", () => {
+  const digits = Array.from({ length: 20_000 }, () => 0x7fff);
+  const long = marshalLong(digits);
+  const flagged = Buffer.concat([
+    Buffer.from([(long[0] ?? 0) | 0x80]),
+    long.subarray(1),
+  ]);
+  const refs = 400;
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      constsObject: Buffer.concat([
+        Buffer.from([0x28]),
+        u32(refs + 1),
+        flagged,
+        ...Array.from({ length: refs }, () => marshalRef(0)),
+      ]),
+    }),
+  ]);
+  const started = Date.now();
+  const report = parse(bytes);
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(root(report).consts[0]).toEqual({
+    kind: "int",
+    bits: digits.length * 15,
+    value: null,
+  });
+  expect(root(report).consts[refs]).toEqual(root(report).consts[0]);
+});
+
+it("lists code objects nested inside constant containers", () => {
+  const hidden = marshalCode("py311", {
+    name: "hidden",
+    qualname: "hidden",
+    firstlineno: 4,
+  });
+  const wrapped = Buffer.concat([Buffer.from([0x29, 1]), hidden]);
+  const report = parse(withConsts([wrapped]));
+  expect(report.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "hidden",
+  ]);
+  expect(root(report).nested_code).toEqual([1]);
+  expect(root(report).consts[0]).toEqual({ kind: "tuple", length: 1 });
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    code_objects: 2,
+  });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+
+  const listed = Buffer.concat([Buffer.from([0x5b]), u32(1), hidden]);
+  const deeper = parse(
+    withConsts([Buffer.concat([Buffer.from([0x29, 1]), listed])]),
+  );
+  expect(deeper.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "hidden",
+  ]);
+  const keyed = Buffer.concat([
+    Buffer.from([0x7b, 0x69]),
+    i32(1),
+    hidden,
+    Buffer.from([0x30]),
+  ]);
+  expect(
+    parse(withConsts([keyed])).code_objects.map((code) => code.name),
+  ).toEqual(["<module>", "hidden"]);
+});
+
+it("accepts containers that contain themselves", () => {
+  const list = Buffer.concat([
+    Buffer.from([0x5b | 0x80]),
+    u32(1),
+    marshalRef(0),
+  ]);
+  expect(root(parse(withConsts([list]))).consts[0]).toEqual({
+    kind: "list",
+    length: 1,
+  });
+  const dict = Buffer.concat([
+    Buffer.from([0x7b | 0x80, 0x69 | 0x80]),
+    i32(1),
+    marshalRef(0),
+    Buffer.from([0x30]),
+  ]);
+  const report = parse(withConsts([dict]));
+  expect(root(report).consts[0]).toEqual({ kind: "dict", length: 1 });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("reads marshal version 0 text floats inside a code object", () => {
+  const version0 = Buffer.from(
+    "cb0d0d0a0000000000000000000000006300000000000000000000000001000000000000007308000000970064005a00790128020000006603312e354e280100000075010000007828000000007300000000750900000073616d706c652e707975080000003c6d6f64756c653e75080000003c6d6f64756c653e01000000730a000000f003010101d8040781017300000000",
+    "hex",
+  );
+  const report = parse(version0);
+  expect(report.header).toMatchObject({
+    magic: 3531,
+    python_version: "3.12",
+    code_layout: "py311",
+  });
+  expect(root(report).name).toBe("<module>");
+  expect(root(report).consts[0]).toEqual({ kind: "float", value: 1.5 });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+  const specials = parse(
+    withConsts([
+      textFloat("inf"),
+      textFloat("-inf"),
+      textFloat("nan"),
+      textComplex("0", "inf"),
+      textFloat("1e-2"),
+    ]),
+  );
+  expect(root(specials).consts).toEqual([
+    { kind: "float", value: "inf" },
+    { kind: "float", value: "-inf" },
+    { kind: "float", value: "nan" },
+    { kind: "complex", real: 0, imag: "inf" },
+    { kind: "float", value: 0.01 },
+  ]);
+  for (const text of ["1.5x", "", "0x1.8p1", " 1.5"]) {
+    expect(() => parse(withConsts([textFloat(text)]))).toThrow(
+      PythonPycFormatFailure,
+    );
+  }
+});
+
+it("accepts empty code names", () => {
+  const child = marshalCode("py311", { name: "", qualname: "" });
+  const report = parse(
+    Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", {
+        name: "",
+        qualname: "",
+        consts: [child],
+      }),
+    ]),
+  );
+  expect(root(report).name).toBe("");
+  expect(root(report).qualname).toBe("");
+  expect(root(report).consts[0]).toEqual({
+    kind: "code",
+    name: "",
+    firstlineno: 1,
+  });
+  expect(report.code_objects[1]?.name).toBe("");
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("reports the marshal byte length of a string constant", () => {
+  const report = parse(
+    withConsts([
+      marshalUnicode(Buffer.from([0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80])),
+    ]),
+  );
+  expect(root(report).consts[0]).toMatchObject({ kind: "str", bytes: 6 });
+});
+
+it("applies Python container rules before reporting lengths", () => {
+  const setOf = (...members: Buffer[]): Buffer =>
+    Buffer.concat([Buffer.from([0x3c]), u32(members.length), ...members]);
+  const int = (value: number): Buffer =>
+    Buffer.concat([Buffer.from([0x69]), i32(value)]);
+  expect(root(parse(withConsts([setOf(int(1), int(1))]))).consts[0]).toEqual({
+    kind: "set",
+    length: 1,
+  });
+  expect(
+    root(parse(withConsts([setOf(Buffer.from([0x54]), int(1))]))).consts[0],
+  ).toEqual({ kind: "set", length: 1 });
+  expect(
+    root(
+      parse(
+        withConsts([
+          setOf(int(1), Buffer.concat([Buffer.from([0x67]), f64(1)])),
+        ]),
+      ),
+    ).consts[0],
+  ).toEqual({ kind: "set", length: 1 });
+  expect(
+    root(
+      parse(
+        withConsts([
+          setOf(
+            Buffer.concat([Buffer.from([0x67]), f64(Number.NaN)]),
+            Buffer.concat([Buffer.from([0x67]), f64(Number.NaN)]),
+          ),
+        ]),
+      ),
+    ).consts[0],
+  ).toEqual({ kind: "set", length: 2 });
+  const sameNan = Buffer.concat([Buffer.from([0x67 | 0x80]), f64(Number.NaN)]);
+  expect(
+    root(parse(withConsts([setOf(sameNan, marshalRef(0))]))).consts[0],
+  ).toEqual({ kind: "set", length: 1 });
+  expect(
+    root(
+      parse(
+        withConsts([
+          Buffer.concat([Buffer.from([0x3e]), u32(2), int(1), int(1)]),
+        ]),
+      ),
+    ).consts[0],
+  ).toEqual({ kind: "frozenset", length: 1 });
+  expect(
+    root(parse(withConsts([Buffer.from([0x7b, 0x4e, 0x30])]))).consts[0],
+  ).toEqual({ kind: "dict", length: 0 });
+  const overwritten = Buffer.concat([
+    Buffer.from([0x7b]),
+    int(1),
+    int(10),
+    int(1),
+    int(11),
+    Buffer.from([0x30]),
+  ]);
+  expect(root(parse(withConsts([overwritten]))).consts[0]).toEqual({
+    kind: "dict",
+    length: 1,
+  });
+  const complexOne = Buffer.concat([Buffer.from([0x79]), f64(1), f64(0)]);
+  expect(
+    root(parse(withConsts([setOf(int(1), complexOne)]))).consts[0],
+  ).toEqual({ kind: "set", length: 1 });
+  expect(() =>
+    parse(
+      withConsts([
+        Buffer.concat([
+          Buffer.from([0x7b, 0x5b]),
+          u32(0),
+          Buffer.from([0x4e, 0x30]),
+        ]),
+      ]),
+    ),
+  ).toThrow(PythonPycFormatFailure);
+  expect(() =>
+    parse(withConsts([setOf(Buffer.concat([Buffer.from([0x5b]), u32(0)]))])),
+  ).toThrow(PythonPycFormatFailure);
+});
+
 it("leaves 3.11 alpha magics with other code layouts unsupported", () => {
   for (const magic of [3452, 3459, 3460, 3493]) {
     const bytes = Buffer.concat([pythonPycHeader(magic), marshalCode("py311")]);

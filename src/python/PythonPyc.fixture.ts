@@ -70,6 +70,10 @@ export type FixtureCodeFields = {
   filename?: string;
   name?: string;
   qualname?: string;
+  /** Raw marshal object in place of co_name. */
+  nameObject?: Buffer;
+  /** Raw marshal object in place of co_qualname. */
+  qualnameObject?: Buffer;
   firstlineno?: number;
   linetable?: Buffer;
   exceptiontable?: Buffer;
@@ -124,10 +128,13 @@ export const marshalCode = (
   }
   parts.push(
     marshalShortAscii(fields.filename ?? "sample.py"),
-    marshalShortAscii(fields.name ?? "<module>"),
+    fields.nameObject ?? marshalShortAscii(fields.name ?? "<module>"),
   );
   if (layout === "py311")
-    parts.push(marshalShortAscii(fields.qualname ?? fields.name ?? "<module>"));
+    parts.push(
+      fields.qualnameObject ??
+        marshalShortAscii(fields.qualname ?? fields.name ?? "<module>"),
+    );
   parts.push(
     u32(fields.firstlineno ?? 1),
     marshalBytes(fields.linetable ?? Buffer.alloc(0)),

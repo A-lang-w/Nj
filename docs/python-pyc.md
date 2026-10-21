@@ -34,25 +34,30 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
   for timestamp pycs.
 
 `code_objects` lists each distinct marshal code object once, the top-level
-module code first. `nested_code` holds the indexes of the code objects in that
-object's consts, so a function shared through a marshal reference appears once
-and is named by index. Each object reports name, optional qualname, filename,
+module code first. `nested_code` holds the indexes of the code objects
+reachable from that object's constants, including code nested in tuples and
+other containers, so a function shared through a marshal reference appears
+once and is named by index. Each object reports name, optional qualname,
+filename,
 argument counts, flags, names, locals (or `localsplusnames` on 3.11+), const
 summaries, and bytecode length plus SHA-256.
 
 Bytecode is not decompiled. Const strings may be truncated in the summary while
-the marshal walk still consumed the original bytes. Integer consts report
-`bits`; their decimal `value` is `null` above 256 bits. Non-finite float and
-complex parts use CPython's `inf`, `-inf`, and `nan` spellings.
+the marshal walk still consumed the original bytes; a string summary's `bytes`
+is that marshal length. Integer consts report `bits`; their decimal `value` is
+`null` above 256 bits. Non-finite float and complex parts use CPython's `inf`,
+`-inf`, and `nan` spellings. Dictionary and set lengths follow CPython:
+unhashable keys and members fail the walk, equal members count once, and a
+null dictionary value ends the dict without that entry.
 
 ## Limits and failures
 
 The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
 budget fails without partial success. Names repeated through a marshal
-reference count against the file budget once per copy the report carries,
-copied constant tables count against the object budget the same way, and
-integer digits count against the string budget. Magics outside the pinned 3.7–3.13 table,
+reference, including each code-constant name the report copies, count against
+the file budget once per copy. Copied constant tables count against the object
+budget the same way, and integer digits count against the string budget. Magics outside the pinned 3.7–3.13 table,
 truncated headers, trailing marshal bytes, and a non-code top-level object are
 typed failures.
 
