@@ -115,9 +115,7 @@ export const semanticStaticPropertyKey = (
     const cooked = property.quasis[0]?.value.cooked;
     return cooked === null || cooked === undefined ? null : cooked;
   }
-  if (!computed && t.isIdentifier(property)) return property.name;
-  const literal = readExactJavaScriptLiteral(property);
-  return literal.found ? String(literal.value) : null;
+  return !computed && t.isIdentifier(property) ? property.name : null;
 };
 
 /** Syntax whose value cannot contribute own properties to an object spread. */
