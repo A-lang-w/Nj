@@ -438,12 +438,23 @@ it("does not resolve package-relative names against malformed package syntax", (
 
 it("preserves exact activity-alias targets and marks malformed references unknown", () => {
   const inventory = parseAndroidManifestComponents(
-    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Target"/><activity-alias android:name=".Whitespace" android:targetActivity=" .Target "/><activity-alias android:name=".Empty" android:targetActivity=""/><activity-alias android:name=".Valid" android:targetActivity=".Target"/><activity-alias android:name=".Missing"/><activity-alias android:name=".Later" android:targetActivity=".DeclaredLater"/><activity android:name=".DeclaredLater"/></application></manifest>',
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Target"/><activity android:name="Bare"/><activity-alias android:name=".Whitespace" android:targetActivity=" .Target "/><activity-alias android:name=".Empty" android:targetActivity=""/><activity-alias android:name=".Valid" android:targetActivity=".Target"/><activity-alias android:name=".Qualified" android:targetActivity="com.example.Target"/><activity-alias android:name=".Unqualified" android:targetActivity=".Bare"/><activity-alias android:name=".Missing"/><activity-alias android:name=".Later" android:targetActivity=".DeclaredLater"/><activity android:name=".DeclaredLater"/></application></manifest>',
     "complete",
     "33",
   );
   expect(inventory.items.map(({ target_activity }) => target_activity)).toEqual(
-    [null, " .Target ", "", ".Target", null, ".DeclaredLater", null],
+    [
+      null,
+      null,
+      " .Target ",
+      "",
+      ".Target",
+      "com.example.Target",
+      ".Bare",
+      null,
+      ".DeclaredLater",
+      null,
+    ],
   );
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
@@ -451,21 +462,32 @@ it("preserves exact activity-alias targets and marks malformed references unknow
   );
 });
 
-it("does not expand a package-relative alias target beyond prior name evidence", () => {
-  const packageName = "p".repeat(64 * 1024);
+it("indexes valid alias spellings without re-expanding a large package", () => {
+  const packageName = "p".repeat(900 * 1024);
+  const aliases = Array.from(
+    { length: 511 },
+    (_, index) =>
+      `<activity-alias android:name=".Alias${String(index)}" android:targetActivity=".Target"/>`,
+  ).join("");
   const inventory = parseAndroidManifestComponents(
-    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${packageName}"><application><activity android:name="org.example.Standalone"/><activity-alias android:name=".Alias" android:targetActivity=".Target"/></application></manifest>`,
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${packageName}"><application><activity android:name=".Target"/>${aliases}</application></manifest>`,
     "complete",
     "33",
   );
-  expect(inventory.items[0]?.name).toBe("org.example.Standalone");
+  expect(inventory.items[0]?.name).toHaveLength(packageName.length + 7);
+  expect(inventory.items[0]?.name?.startsWith(packageName)).toBe(true);
   expect(inventory.items[1]).toMatchObject({
-    declared_name: ".Alias",
+    declared_name: ".Alias0",
     target_activity: ".Target",
   });
+  expect(inventory.items.at(-1)).toMatchObject({
+    declared_name: ".Alias510",
+    target_activity: ".Target",
+  });
+  expect(inventory.items).toHaveLength(ANDROID_MANIFEST_LIMITS.components);
   expect(inventory.status).toBe("partial");
-  expect(inventory.limitations.join(" ")).toContain(
-    "do not match a preceding activity declaration",
+  expect(inventory.limitations.join(" ")).not.toContain(
+    "targetActivity value(s)",
   );
 });
 
