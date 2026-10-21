@@ -539,9 +539,10 @@ analysis profile through `analysis_provider_binding`.
 
 `binary_session.analysis_provider_selection_state` reports the deterministic
 selection outcome for the reported target. It is `bound` when a deep provider
-was selected, `unbound` when no configured provider is eligible, and
-`selection_required` when two or more are eligible; it is `null` before any
-target is resolved. `analysis_provider_candidates[].eligibility` is `eligible`
+was selected, `unbound` when no deep provider is bound — either no configured
+provider is eligible, or an auxiliary provider already covers the target and deep
+eligibility was left `unevaluated` — and `selection_required` when two or more
+are eligible; it is `null` before any target is resolved. `analysis_provider_candidates[].eligibility` is `eligible`
 only when host availability, target compatibility, and a resolved
 identity-matched analysis profile all hold for that target, `ineligible` when one
 of those was decided against the provider, and `unevaluated` when REA did not

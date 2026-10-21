@@ -295,3 +295,24 @@ describe("provider selection Evidence", () => {
     );
   });
 });
+
+describe("auxiliary-inspection admission", () => {
+  it("records an omission instead of a negative eligibility result", () => {
+    const admitted = selection({
+      selectionState: "unbound",
+      unboundReason: "auxiliary-inspection",
+      candidates: [candidate("alpha", "unevaluated")],
+    });
+
+    // Deep profile checks were skipped, so the decision is its own fact rather
+    // than the evaluated "no provider was eligible" outcome.
+    expect(rule(admitted)).toBe("auto-auxiliary-inspection");
+
+    const limitations = observation(admitted).limitations.join(" ");
+    expect(limitations).toContain("was not evaluated");
+    expect(limitations).toContain("omission");
+    expect(limitations).not.toContain(
+      "No eligible deep analysis provider was available",
+    );
+  });
+});

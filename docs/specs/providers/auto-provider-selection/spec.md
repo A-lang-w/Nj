@@ -87,8 +87,15 @@ Automatic selection produces exactly one of three states for a parsed target.
 compatibility, and a resolved analysis profile whose provider identity matches
 the adapter. Being installed is never sufficient.
 
-`unbound` also covers artifact-only and auxiliary workflows, where no configured
-deep provider supports the target. Those workflows keep working.
+`unbound` also covers artifact-only and auxiliary workflows. An artifact-only
+target was evaluated: every candidate was decided against it, so that is a real
+negative finding. An auxiliary-covered target (for example
+`inspect_native_dispatch_metadata` on a Mach-O target whose native provider can
+supply it) deliberately skips deep profile resolution instead: its candidates
+stay `unevaluated`, and its Evidence records
+`deterministic_rule: "auto-auxiliary-inspection"` with a limitation stating that
+deep-provider eligibility was not evaluated. That record must not be read as a
+provider that failed or as "no eligible provider".
 
 ### Public contract
 

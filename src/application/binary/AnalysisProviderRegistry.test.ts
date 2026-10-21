@@ -200,7 +200,12 @@ describe("inspection without deep binding", () => {
     });
     expect(await registry.select(DATABASE_TARGET, "auto")).toMatchObject({
       ok: true,
-      value: { binding: null },
+      value: {
+        binding: null,
+        selectionState: "unbound",
+        // No deep profile was resolved, so the record must say why.
+        unboundReason: "auxiliary-inspection",
+      },
     });
     expect(await registry.select(DATABASE_TARGET, "missing")).toMatchObject({
       ok: false,

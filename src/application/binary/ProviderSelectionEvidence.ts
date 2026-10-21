@@ -15,14 +15,19 @@ import type {
  *
  * The rule restates the selection source in Evidence terms. It is never a
  * provider ranking: `auto-multiple-eligible` records that REA declined to
- * choose rather than that one engine is preferable.
+ * choose rather than that one engine is preferable. `auto-none-eligible`
+ * records an evaluated negative: every candidate was resolved and none was
+ * eligible. `auto-auxiliary-inspection` records the opposite kind of fact:
+ * REA never evaluated the deep candidates because an auxiliary provider already
+ * covers the target, so it must not be read as a rejected provider.
  */
 export type ProviderSelectionRule =
   | "explicit-provider"
   | "configured-preference"
   | "auto-single-candidate"
   | "auto-multiple-eligible"
-  | "auto-none-eligible";
+  | "auto-none-eligible"
+  | "auto-auxiliary-inspection";
 
 const SELECTION_LIMITATIONS = [
   "Provider eligibility reflects local host availability, target compatibility, and profile resolution for this target; it does not establish analysis fidelity, completeness, or superiority for any provider.",
@@ -38,9 +43,13 @@ const stateLimitation = (
         "No provider was bound because more than one configured provider is eligible for this target. Reopen the target with an explicit provider_id to bind one.",
       ];
     case "unbound":
-      return [
-        "No eligible deep analysis provider was available for this target, so deep analysis operations stay unavailable; artifact-only operations remain available.",
-      ];
+      return selection.unboundReason === "auxiliary-inspection"
+        ? [
+            "No deep provider was bound because an auxiliary provider already covers this target, so deep-provider eligibility was not evaluated. The reported unevaluated candidates are an omission, not a provider that failed, was unavailable, or was found ineligible.",
+          ]
+        : [
+            "No eligible deep analysis provider was available for this target, so deep analysis operations stay unavailable; artifact-only operations remain available.",
+          ];
     case "bound":
       return [];
   }
@@ -145,6 +154,10 @@ const selectionRule = (
   if (source === "environment") return "configured-preference";
   if (source === "auto-single-candidate") return "auto-single-candidate";
   if (selection.requestedProviderId !== "auto") return "configured-preference";
+  // An auxiliary-covered target skips deep profile resolution, so its
+  // `unevaluated` candidates are an omission rather than a negative result.
+  if (selection.unboundReason === "auxiliary-inspection")
+    return "auto-auxiliary-inspection";
   return selection.selectionState === "selection_required"
     ? "auto-multiple-eligible"
     : "auto-none-eligible";

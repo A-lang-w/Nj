@@ -99,6 +99,15 @@ export interface AnalysisProviderSelection {
    * separately per candidate so consumers never re-derive eligibility.
    */
   readonly selectionState: ProviderSelectionState;
+  /**
+   * Why an unbound selection never evaluated the deep candidates.
+   *
+   * `auxiliary-inspection` records that an auxiliary provider already covers the
+   * target, so REA deliberately skipped deep profile resolution. Those
+   * candidates stay `unevaluated`, which is an omission: this selection must not
+   * be reported as finding no eligible provider.
+   */
+  readonly unboundReason?: "auxiliary-inspection";
   readonly candidates: readonly AnalysisProviderCandidateStatus[];
 }
 
@@ -528,6 +537,7 @@ export class AnalysisProviderRegistry {
           // that the target is inspectable without a deep provider, so their
           // discovery-time `unevaluated` eligibility stands unchanged.
           selectionState: "unbound",
+          unboundReason: "auxiliary-inspection",
           candidates: baseline,
         });
       if (
