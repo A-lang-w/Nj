@@ -277,8 +277,12 @@ requires a session capable of retaining Evidence.
 Reads use one block-sized buffer and a 256-entry histogram. Full Evidence and
 its serialization require memory proportional to the number of selected
 blocks; summary delivery reduces returned output but still retains that full
-series. The 32,768-row ceiling bounds this retained series; narrow the window
-or increase block size to reduce retained rows further.
+series. The 32,768-row ceiling bounds the actual retained block objects and
+their serialized representation: a cap-sized run below produced 1,514,877
+serialized bytes and increased V8 heap use by 21.2 MiB on the measured host.
+The cap therefore bounds this output independently of file size; it is not a
+portable process-memory guarantee. Narrow the window or increase block size to
+reduce retained rows further.
 
 Local service measurement (macOS arm64, Node 24.18.0, 100,000,000-byte file,
 4096-byte blocks, file already in the OS cache): first process run took 1.113 s
@@ -286,7 +290,11 @@ wall / 1.148 s CPU with 145.3 MiB peak RSS; a second run in the same process too
 1.015 s / 1.035 s CPU, with cumulative peak RSS 155.8 MiB. Each read 100,000,000
 bytes and produced 24,415 blocks. Measurements include Evidence construction,
 summary projection and JSON serialization, with no child processes. Complete
-Evidence serialized to 1,122,303 bytes and its summary to 2,705 bytes. Cold disk
-I/O, token counts and an agent investigation were not measured; there was no
-previous equivalent tool to benchmark. These figures do not establish constant
-memory for retained Evidence or faster agent task completion.
+Evidence serialized to 1,122,303 bytes and its summary to 2,705 bytes. A
+cap-sized 134,217,728-byte sparse file with 4096-byte blocks produced 32,768
+rows and 1,514,877 serialized bytes; V8 heap use increased by 21.2 MiB and RSS
+by 18.1 MiB in that process. This separate measurement used the same macOS
+arm64 host and Node version. Cold disk I/O, token counts and an agent
+investigation were not measured; there was no previous equivalent tool to
+benchmark. These figures do not establish a portable peak-memory bound,
+constant memory for retained Evidence or faster agent task completion.
