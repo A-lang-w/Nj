@@ -41,9 +41,9 @@ export const isUIKitRuntimeConnectionClass = (className: string): boolean =>
 /** AppKit NIB connector classes and UIKit runtime connection records. */
 export const isInterfaceBuilderConnectionClass = (className: string): boolean =>
   isUIKitRuntimeConnectionClass(className) ||
-  /^NSNib(?:Connector|BindingConnector|ControlConnector|OutletConnector)$/u.test(
-    className,
-  );
+  // Keep unfamiliar AppKit connector records so projection can report their
+  // missing owner as unresolved instead of silently dropping their identity.
+  (className.startsWith("NS") && className.endsWith("Connector"));
 
 /** The connection class selects the source archive field namespace. */
 export const interfaceBuilderConnectionFieldNames = (className: string) =>
