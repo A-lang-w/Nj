@@ -18,6 +18,7 @@ import {
   type InspectSqliteDatabaseInput,
   type SqliteDatabase,
   SQLITE_ROW_LIMIT_DEFAULT,
+  DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   sqliteSchemaScope,
   sqliteInspectionParameters,
 } from "../../domain/sqlite/sqliteDatabase.js";
@@ -36,6 +37,10 @@ const matchesSelectedDatabase = (
   subject.path === input.path &&
   subject.sha256 === report.artifact.sha256 &&
   subject.format === "file" &&
+  (report.worker_timeout_ms === undefined
+    ? input.worker_timeout_ms === undefined
+    : report.worker_timeout_ms ===
+      (input.worker_timeout_ms ?? DEFAULT_SQLITE_WORKER_TIMEOUT_MS)) &&
   (report.wal === null || report.wal.path === `${input.path}-wal`) &&
   report.schema.scope === sqliteSchemaScope(input) &&
   (report.schema.scope !== "selected_table" ||
@@ -105,7 +110,7 @@ export class SqliteDatabaseService {
       return err(
         new AnalysisOutputError(
           OPERATION,
-          "SQLite adapter returned malformed data or changed the selected database identity/table/row limit.",
+          "SQLite adapter returned malformed data or changed the selected database identity/table/row limit/worker budget.",
         ),
       );
     return ok(

@@ -51,6 +51,57 @@ const createFixture = async (wal = false) => {
 const expectPrivateRootRemoved = (path: string) =>
   expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
 
+it("enforces a selected worker budget and completes the corrected same-database retry", async () => {
+  const { database } = await createFixture();
+  const original = await readFile(database.path);
+  let first = true;
+  let root = "";
+  const provider = new SqliteDatabaseProvider(process.env, (spawn) => {
+    root = spawn.cwd ?? "";
+    if (first) {
+      first = false;
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: [
+          spawn.arguments[0] ?? "--max-old-space-size=256",
+          "-e",
+          `process.argv[2]=process.argv[1];setTimeout(()=>import(${JSON.stringify(workerUrl.href)}),250)`,
+          spawn.arguments[2] ?? "",
+        ],
+      });
+    }
+    return spawnOwnedProviderProcess({
+      ...spawn,
+      arguments: spawn.arguments.map((arg, index) =>
+        index === 1 ? fileURLToPath(workerUrl) : arg,
+      ),
+    });
+  });
+  onTestFinished(() => provider.close());
+  const failed = await provider.inspect({
+    path: database.path,
+    worker_timeout_ms: 50,
+  });
+  if (failed.ok) throw new Error("Worker deadline was ignored");
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "provider_timeout",
+    details: { timeout_ms: 50 },
+  });
+  expect(failed.error.cleanupIncomplete).toBe(false);
+  await expectPrivateRootRemoved(root);
+  const corrected = await provider.inspect({
+    path: database.path,
+    worker_timeout_ms: 2000,
+  });
+  if (!corrected.ok) throw corrected.error;
+  expect(corrected.value.result).toMatchObject({
+    worker_timeout_ms: 2000,
+    schema: { completeness: "complete" },
+  });
+  await expectPrivateRootRemoved(root);
+  expect(await readFile(database.path)).toEqual(original);
+});
+
 it.each(["completed reply", "malformed reply"] as const)(
   "preserves the primary result for a %s while retaining unconfirmed cleanup ownership",
   async (replyKind) => {
@@ -291,7 +342,13 @@ it.each(["late-cancellation", "cleanup-failure"])(
       await provider.close();
     });
     const result = await provider.inspect(
-      { path: database.path, table: "records", columns: ["id"], row_limit: 1 },
+      {
+        path: database.path,
+        table: "records",
+        columns: ["id"],
+        row_limit: 1,
+        worker_timeout_ms: 42000,
+      },
       { signal: controller.signal },
     );
     if (scenario === "late-cancellation") {
@@ -313,8 +370,12 @@ it.each(["late-cancellation", "cleanup-failure"])(
               table: "records",
               columns: ["id"],
               row_limit: 1,
+              worker_timeout_ms: 42000,
             },
-            normalized_result: { rows: { columns: ["id"], returned_rows: 1 } },
+            normalized_result: {
+              worker_timeout_ms: 42000,
+              rows: { columns: ["id"], returned_rows: 1 },
+            },
           },
         },
       });
@@ -338,8 +399,12 @@ it.each(["late-cancellation", "cleanup-failure"])(
               table: "records",
               columns: ["id"],
               row_limit: 1,
+              worker_timeout_ms: 42000,
             },
-            normalized_result: { rows: { columns: ["id"], returned_rows: 1 } },
+            normalized_result: {
+              worker_timeout_ms: 42000,
+              rows: { columns: ["id"], returned_rows: 1 },
+            },
           },
         },
       });

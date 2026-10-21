@@ -43,6 +43,10 @@ it.each([
     table: "data",
     row_limit: Number.MAX_SAFE_INTEGER + 1,
   },
+  ...[0, -1, 1.5, 2_147_483_648, "1000", null].map((worker_timeout_ms) => ({
+    path: "/selected.db",
+    worker_timeout_ms,
+  })),
 ])(
   "rejects invalid SQLite selection before provider effects: %j",
   async (input) => {
@@ -55,6 +59,43 @@ it.each([
       ok: false,
       error: { _tag: "AnalysisInputError" },
     });
+  },
+);
+
+it("preserves the selected worker budget in provider input and Evidence", async () => {
+  const report = { ...fixture(), worker_timeout_ms: 1234 };
+  const service = new SqliteDatabaseService({
+    inspect: async (input) => {
+      expect(input.worker_timeout_ms).toBe(1234);
+      return ok(execution(report));
+    },
+  });
+  const result = await service.inspect({
+    path: "/selected.db",
+    worker_timeout_ms: 1234,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.parameters).toMatchObject({ worker_timeout_ms: 1234 });
+  expect(result.value.normalized_result).toMatchObject({
+    worker_timeout_ms: 1234,
+  });
+});
+
+it.each([undefined, 30_000])(
+  "rejects a missing or changed producer budget %s when a caller selects it",
+  async (worker_timeout_ms) => {
+    const service = new SqliteDatabaseService({
+      inspect: async () =>
+        ok(
+          execution({
+            ...fixture(),
+            ...(worker_timeout_ms === undefined ? {} : { worker_timeout_ms }),
+          }),
+        ),
+    });
+    expect(
+      await service.inspect({ path: "/selected.db", worker_timeout_ms: 1234 }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
   },
 );
 
