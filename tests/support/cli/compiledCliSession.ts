@@ -45,6 +45,7 @@ interface SessionState {
   stderr: string;
   closed: boolean;
   closing: Promise<void> | undefined;
+  settleStart: ((cause?: Error) => void) | undefined;
   ready: boolean;
   readonly requestTimeoutMs: number;
   readonly stopTimeoutMs: number;
@@ -103,6 +104,7 @@ const createSessionState = (
   stderr: "",
   closed: false,
   closing: undefined,
+  settleStart: undefined,
   ready: false,
   requestTimeoutMs: positiveMilliseconds(
     options.requestTimeoutMs,
@@ -201,24 +203,35 @@ const ensureStarted = async (state: SessionState): Promise<void> => {
   if (state.ready && state.child !== undefined) return;
   state.starting ??= launch(state);
   await state.starting;
+  if (state.closed) throw sessionClosed();
 };
 
 const launch = (state: SessionState): Promise<void> =>
   new Promise((resolve, reject) => {
     const child = state.spawnWorker();
     state.child = child;
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (cause?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (state.settleStart === finish) state.settleStart = undefined;
+      if (cause === undefined) resolve();
+      else reject(cause);
+    };
+    timer = setTimeout(() => {
+      signalChild(child, "SIGKILL");
+      finish(
         new Error(
           `Compiled CLI session did not start within ${String(START_TIMEOUT_MS)} ms\n${state.stderr}`,
         ),
       );
     }, START_TIMEOUT_MS);
     timer.unref();
+    state.settleStart = finish;
     const fail = (cause: unknown): void => {
-      clearTimeout(timer);
-      reject(cause instanceof Error ? cause : new Error(String(cause)));
+      finish(cause instanceof Error ? cause : new Error(String(cause)));
     };
     const currentChild = (): boolean => state.child === child;
     child.once("error", fail);
@@ -244,9 +257,8 @@ const launch = (state: SessionState): Promise<void> =>
       if (!currentChild()) return;
       state.buffer += chunk;
       drainLines(state, () => {
-        clearTimeout(timer);
         state.ready = true;
-        resolve();
+        finish();
       });
     });
   });
@@ -398,6 +410,7 @@ const shutdown = async (state: SessionState): Promise<void> => {
   const stillRunning: OwnedStop[] = [];
   if (child !== undefined) {
     rejectPending(state, sessionClosed());
+    state.settleStart?.(sessionClosed());
     detachChild(state, child);
     const stopped = await stopGracefully(state, child);
     if (stopped === "forced") forced = true;

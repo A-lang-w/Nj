@@ -76,6 +76,34 @@ const replyWhenAsked = (
   });
 };
 
+test("rejects a compiled CLI command when close wins the ready handshake", async () => {
+  let child: FakeCliProcess | undefined;
+  let releaseReady: (() => void) | undefined;
+  const session = startCompiledCliSession({
+    stopTimeoutMs: 50,
+    spawnWorker: () => {
+      const started = fakeProcess(60);
+      child = started;
+      exitWhenStdinCloses(started);
+      releaseReady = () => {
+        ready(started);
+      };
+      return asCliProcess(started);
+    },
+  });
+
+  const pending = session.run(["early"]);
+  for (let attempt = 0; child === undefined && attempt < 30; attempt += 1)
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+  if (child === undefined) throw new Error("compiled CLI worker did not start");
+  const closing = session.close();
+  releaseReady?.();
+  await expect(pending).rejects.toThrow("Compiled CLI session is closed");
+  await closing;
+});
+
 test("rejects a compiled CLI command that never replies and serves the next one", async () => {
   const children: FakeCliProcess[] = [];
   const session = startCompiledCliSession({
