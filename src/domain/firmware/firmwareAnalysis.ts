@@ -17,7 +17,7 @@ const target = {
   analysis_timeout_ms: timeout
     .optional()
     .describe(
-      "Analysis wall-clock budget in milliseconds (default 120000), from tool resolution through inventory; excludes queue admission and publication. Does not raise fixed CPU, memory or byte limits.",
+      "Analysis wall-clock budget in milliseconds (default 120000), from tool resolution through inspection and its final workspace cleanup, or extraction through inventory. Excludes queue admission and extraction publication. Does not raise fixed CPU, memory or byte limits.",
     ),
 };
 

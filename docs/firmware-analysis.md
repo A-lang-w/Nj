@@ -159,11 +159,12 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
 - One queued heavy operation per provider instance; Binwalk one thread and
   Unblob one worker. No automatic parallel extraction engines.
 - Analysis defaults to **120 seconds**, from tool resolution and input snapshot
+  through inspection and its final private-workspace cleanup, or extraction
   through report consumption and inventory, excluding queue waiting and retained
-  cleanup admission. Select `analysis_timeout_ms` in either MCP operation or
+  cleanup admission. Inspection has no publication phase. Select `analysis_timeout_ms` in either MCP operation or
   `--analysis-timeout-ms` in either CLI command for slower analysis. Current
   results retain the actual budget; an absent historical value means unknown.
-  Publication and final
+  Extraction publication and its final
   cleanup start a separate **120-second** budget; select
   `publication_timeout_ms` in MCP or `--publication-timeout-ms` in CLI for a slow
   destination. Valid budgets are integers from 1 through 2,147,483,647 ms (the

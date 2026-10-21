@@ -13,6 +13,7 @@ import {
 } from "./FirmwareCommand.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -54,9 +55,7 @@ it.each([
           : spawnOwnedProviderProcess(options);
         (source === "analysis" ? analysis : caller).abort(reason);
         if (admission !== undefined) return admission;
-        const error = new Error("owned admission aborted", { cause: reason });
-        error.name = "AbortError";
-        throw error;
+        throw new ExecFileOutputCancelledError(reason);
       },
       retainCleanup,
     }).catch((cause: unknown) => cause);

@@ -10,7 +10,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
   firmwareFailure,
@@ -229,9 +229,10 @@ export const runFirmwareCommand = async (context: {
   if (stopped.status === "incomplete") {
     context.retainCleanup(supervisor);
     const previous =
-      failure === undefined ? undefined : projectAnalysisError(failure);
+      failure === undefined
+        ? undefined
+        : projectAnalysisErrorWithoutCapturedOutput(failure);
     // Retain typed recovery history, but give captured output exactly one owner.
-    const { captured_output: _captured, ...metadata } = previous?.details ?? {};
     throw new ProviderCleanupError(
       engine,
       [runId, context.cwd],
@@ -239,8 +240,7 @@ export const runFirmwareCommand = async (context: {
         reason: stopped.reason,
         leader_pid: spawned.ownership.leaderPid,
         process_group_id: spawned.ownership.processGroupId,
-        previous_error:
-          previous === undefined ? null : { ...previous, details: metadata },
+        previous_error: previous ?? null,
       },
       {
         operation,
