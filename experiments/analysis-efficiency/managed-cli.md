@@ -179,3 +179,13 @@ uv run --no-project --with tiktoken==0.12.0 python \
 The original issue reporter's executable, foreign operating systems and actual
 model sessions remain unverified. Two setup pilots, including one failed run
 while compiled artifacts were absent after a typecheck failure, are excluded.
+
+## Integration with newer main
+
+After the paired cohort, merged `main@3dbe314ada9f6dcc994ca4655dc0faf082503847`
+and verified runtime `7c200990a` with the same 356 tests, static and documentation
+gates. Every measured feature production-file hash is unchanged. Fresh real
+managed and Redux SDK tasks pass their independent oracles; the managed parent
+and answer remain identical. These single-task observations are recorded in
+[managed-cli-latest-main.json](managed-cli-latest-main.json). They verify integration
+and are not substituted for the paired medians above.
