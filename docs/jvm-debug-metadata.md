@@ -132,12 +132,28 @@ because which body is meant is unknown.
 
 A table entry HotSpot rejects the class for also makes its table `malformed`,
 with the raw values kept: a line `start_pc` or local-variable scope flagged
-`out_of_range`, or a local-variable `slot` at or past `max_locals` (for a `J` or
-`D` `LocalVariableTable` descriptor, the second slot `slot + 1` too). HotSpot reads `LocalVariableTypeTable` only from class version 49, so in
-older classes its entries keep the `out_of_range` flag without making the
-table `malformed`. REA stays more lenient than HotSpot on two rules: a
+`out_of_range`, a local-variable `slot` at or past `max_locals` (for a `J` or
+`D` `LocalVariableTable` descriptor, the second slot `slot + 1` too), a
+local-variable name HotSpot rejects as a field name, or a `LocalVariableTable`
+descriptor that is not a legal field descriptor (JVMS §4.3.2, such as `Q`, `V`,
+or more than 255 array dimensions). From class version 49 a name is an
+unqualified name (no `.`, `;`, `[` or `/`); older classes use Java identifier
+rules, which REA checks exactly for ASCII and accepts for any non-ASCII
+character. A `LocalVariableTypeTable` signature is not checked for grammar, as
+HotSpot does not check it.
+
+HotSpot reads `LocalVariableTypeTable` only from class version 49 and ignores it
+as an unknown attribute in older classes. REA still decodes it there and reports
+its `presence` by the same rules, so `malformed` keeps meaning that its bytes or
+entries are invalid, but in a class older than version 49 it never changes the
+method's `state`. REA stays more lenient than HotSpot on two rules: a
 `LocalVariableTypeTable` row with no matching `LocalVariableTable` row, and
 duplicate `LocalVariableTable` rows, are not checked.
+
+A method whose `Code` attribute declares a `code_length` outside 1 to 65,535,
+or holds a sub-attribute whose name index does not name a `CONSTANT_Utf8`
+entry, is `malformed`, as HotSpot rejects it; tables that could not be ruled out
+are `unread`.
 
 A table whose declared entry count exceeds its bytes is reported `malformed` with
 the entries recovered before the short read. A `Code` attribute with bytes left after its declared

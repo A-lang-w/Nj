@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { jvmDebugClass } from "../../../tests/fixtures/jvmDebugClass.js";
 import { CONSTANT_TAG, parseJavaClassFile } from "./javaClassFile.js";
 import {
   projectDebugOutput,
@@ -91,12 +92,16 @@ const localVariableTable = (
   return b.parts;
 };
 
-const codeAttrInfo = (subAttrs: readonly number[], maxLocals = 1): number[] =>
+const codeAttrInfo = (
+  subAttrs: readonly number[],
+  maxLocals = 1,
+  code: readonly number[] = [0xb1], // return
+): number[] =>
   new Blob()
     .u2(1) // max_stack
     .u2(maxLocals)
-    .u4(1) // code_length
-    .u1(0xb1) // return
+    .u4(code.length) // code_length
+    .raw(code)
     .u2(0) // exception_table_length
     .raw(subAttrs).parts;
 
@@ -614,5 +619,92 @@ describe("decodeClassDebugMetadata — Code attribute length", () => {
     // The framed table is kept; tables the stray bytes may hide are unknown.
     expect(method.lineNumbers.presence).toBe("present");
     expect(method.localVariables.presence).toBe("unread");
+  });
+});
+
+describe("decodeClassDebugMetadata — HotSpot load checks", () => {
+  // HotSpot: "Invalid method Code length".
+  it.each([
+    ["0", []],
+    ["65536", new Array<number>(65_536).fill(0)],
+  ])("marks a method whose code_length is %s malformed", (_label, code) => {
+    const body = codeAttrInfo(subAttrs(0, new Blob()).parts, 1, code);
+    const method = decodeOnly(new Blob().u2(1).attr(3, body)).methods[0]!;
+    expect(method.state).toBe("malformed");
+    expect(method.lineNumbers.presence).toBe("unread");
+  });
+
+  it("keeps a 65535-byte body readable", () => {
+    const body = codeAttrInfo(
+      subAttrs(0, new Blob()).parts,
+      1,
+      new Array<number>(65_535).fill(0),
+    );
+    expect(decodeOnly(new Blob().u2(1).attr(3, body)).methods[0]!.state).toBe(
+      "stripped",
+    );
+  });
+
+  // HotSpot: "Invalid code attribute name index"; an unnamed sibling cannot
+  // be ruled out as debug metadata, so the absent tables are unknown.
+  it("marks a method with an unnamed Code sub-attribute malformed", () => {
+    const body = codeAttrInfo(new Blob().u2(1).attr(0, []).parts);
+    const method = decodeOnly(new Blob().u2(1).attr(3, body)).methods[0]!;
+    expect(method.state).toBe("malformed");
+    expect(method.lineNumbers.presence).toBe("unread");
+    expect(method.localVariables.presence).toBe("unread");
+  });
+
+  const lvt = (nameIndex: number, descriptorIndex: number): number[] =>
+    new Blob().u2(1).u2(0).u2(1).u2(nameIndex).u2(descriptorIndex).u2(0).parts;
+
+  // HotSpot: "Illegal field signature" / "Illegal field name". Pool 6 is `x`
+  // (no field descriptor), 9 is `Example.java` (a `.` is illegal in a name).
+  it.each([
+    ["a descriptor that is not a field descriptor", 6, 6],
+    ["a name containing a dot", 9, 7],
+  ])(
+    "marks a LocalVariableTable entry with %s malformed",
+    (_label, nameIndex, descriptorIndex) => {
+      const body = codeAttrInfo(
+        subAttrs(1, new Blob().attr(5, lvt(nameIndex, descriptorIndex))).parts,
+      );
+      const method = decodeOnly(new Blob().u2(1).attr(3, body)).methods[0]!;
+      expect(method.localVariables.presence).toBe("malformed");
+      expect(method.localVariables.entries).toHaveLength(1);
+      expect(method.state).toBe("malformed");
+    },
+  );
+
+  const decodeFixture = (bytes: Uint8Array) => {
+    const cls = parseJavaClassFile(bytes);
+    if (!cls.ok) throw new Error(`fixture did not frame: ${cls.error.kind}`);
+    return decodeClassDebugMetadata(cls.value).methods[0]!;
+  };
+
+  // Before version 49 HotSpot ignores LocalVariableTypeTable as an unknown
+  // attribute and loads the class, so no defect in it changes the state.
+  it.each([
+    ["an out-of-frame slot", { slot: 2, descriptor: "I" }],
+    ["a non-Utf8 name", { slot: 0, descriptor: "I", nameIndex: 10 }],
+  ] as const)(
+    "keeps a version 48 method present despite a type-table row with %s",
+    (_label, row) => {
+      const method = decodeFixture(
+        jvmDebugClass({ majorVersion: 48, typedLocals: [row] }),
+      );
+      expect(method.localVariableTypes.presence).toBe("malformed");
+      expect(method.state).toBe("present");
+    },
+  );
+
+  it("marks the same type-table row malformed from version 49", () => {
+    const method = decodeFixture(
+      jvmDebugClass({
+        majorVersion: 49,
+        typedLocals: [{ slot: 0, descriptor: "I", nameIndex: 10 }],
+      }),
+    );
+    expect(method.state).toBe("malformed");
   });
 });

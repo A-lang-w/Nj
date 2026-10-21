@@ -22,6 +22,7 @@ import {
   RETAINED_ATTRIBUTES,
   resolveConstantUtf8,
 } from "./javaClassFile.js";
+import { isLegalFieldDescriptor, isLegalFieldName } from "./javaDescriptor.js";
 
 /**
  * Whether a named attribute was found and whether it decoded cleanly.
@@ -242,6 +243,7 @@ const decodeLocalVariableTable = (
   pool: readonly ConstantPoolEntry[],
   codeLength: number,
   maxLocals: number,
+  majorVersion: number,
 ): DebugTable<LocalVariableEntry> =>
   decodeTable(
     infos,
@@ -264,10 +266,12 @@ const decodeLocalVariableTable = (
       };
     },
     // HotSpot rejects an out-of-code scope ("Invalid start_pc"/"Invalid
-    // length") as it rejects an out-of-frame slot.
+    // length") as it rejects an out-of-frame slot or an illegal descriptor.
     (entry) =>
       !entry.outOfRange &&
-      namesResolve(entry) &&
+      legalLocalName(entry.name, majorVersion) &&
+      entry.descriptor !== null &&
+      isLegalFieldDescriptor(entry.descriptor, majorVersion) &&
       slotInFrame(
         entry.slot +
           (entry.descriptor === "J" || entry.descriptor === "D" ? 1 : 0),
@@ -287,21 +291,18 @@ const slotInFrame = (lastSlot: number, maxLocals: number): boolean =>
 /**
  * JVMS §4.7.13–14: name_index and descriptor/signature_index must each name a
  * CONSTANT_Utf8 entry. An index that does not (0, out of range, or another
- * constant kind) is kept as `null` and makes the table malformed.
+ * constant kind) is kept as `null` and makes the table malformed, as does a
+ * name HotSpot rejects as an illegal field name.
  */
-const namesResolve = (entry: {
-  readonly name: string | null;
-  readonly descriptor?: string | null;
-  readonly signature?: string | null;
-}): boolean =>
-  entry.name !== null && (entry.descriptor ?? entry.signature ?? null) !== null;
+const legalLocalName = (name: string | null, majorVersion: number): boolean =>
+  name !== null && isLegalFieldName(name, majorVersion);
 
 const decodeLocalVariableTypeTable = (
   infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
   codeLength: number,
   maxLocals: number,
-  hotSpotChecked: boolean,
+  majorVersion: number,
 ): DebugTable<LocalVariableTypeEntry> =>
   decodeTable(
     infos,
@@ -324,13 +325,12 @@ const decodeLocalVariableTypeTable = (
       };
     },
     // A signature names no wide primitive, so only the entry's own slot is
-    // checked (as HotSpot checks a LocalVariableTypeTable). HotSpot reads the
-    // table only from class version 49 on, so older classes keep the
-    // out_of_range flag without becoming malformed.
+    // checked, and HotSpot does not check the signature's grammar.
     (entry) =>
-      namesResolve(entry) &&
-      (!hotSpotChecked ||
-        (!entry.outOfRange && slotInFrame(entry.slot, maxLocals))),
+      legalLocalName(entry.name, majorVersion) &&
+      entry.signature !== null &&
+      !entry.outOfRange &&
+      slotInFrame(entry.slot, maxLocals),
   );
 
 /** Advance past the fixed Code header and exception table to its sub-attributes, keeping max_locals and code_length. */
@@ -374,12 +374,16 @@ const classifyMethod = (
   lineNumbers: DebugTable<LineNumberEntry>,
   localVariables: DebugTable<LocalVariableEntry>,
   localVariableTypes: DebugTable<LocalVariableTypeEntry>,
+  majorVersion: number,
 ): MethodDebugState => {
   if (!hasCode) return "not-applicable";
   if (
     lineNumbers.presence === "malformed" ||
     localVariables.presence === "malformed" ||
-    localVariableTypes.presence === "malformed"
+    // Before version 49 the JVM ignores LocalVariableTypeTable as an
+    // unknown attribute, so its table cannot make the method malformed.
+    (localVariableTypes.presence === "malformed" &&
+      majorVersion >= LOCAL_VARIABLE_TYPE_TABLE_MIN_MAJOR)
   ) {
     return "malformed";
   }
@@ -394,10 +398,13 @@ const classifyMethod = (
   return "partial";
 };
 
-/** Decode one method's debug tables from its `Code` attribute, if any. */
 /** HotSpot parses LocalVariableTypeTable only from class version 49 (Java 5). */
 const LOCAL_VARIABLE_TYPE_TABLE_MIN_MAJOR = 49;
 
+/** JVMS §4.7.3: `code_length` must be greater than zero and less than 65536. */
+const MAX_CODE_LENGTH = 65_535;
+
+/** Decode one method's debug tables from its `Code` attribute, if any. */
 export const decodeMethodDebugMetadata = (
   method: JavaMember,
   pool: readonly ConstantPoolEntry[],
@@ -448,8 +455,11 @@ export const decodeMethodDebugMetadata = (
   // JVMS fixes attribute_length exactly: bytes left after the declared
   // sub-attributes mean the Code attribute is malformed (as in decodeTable),
   // and any sub-attribute they hide is unknown, so absent tables are unread.
+  // A code_length outside 1..65535 makes HotSpot reject the method too.
   const codeMalformed =
     seeked === null ||
+    seeked.codeLength < 1 ||
+    seeked.codeLength > MAX_CODE_LENGTH ||
     (framed?.error ?? null) !== null ||
     seeked.cursor.remaining !== 0;
   const codeLength = seeked?.codeLength ?? 0;
@@ -471,6 +481,7 @@ export const decodeMethodDebugMetadata = (
       pool,
       codeLength,
       maxLocals,
+      majorVersion,
     ),
   );
   const localVariableTypes = orUnread(
@@ -479,7 +490,7 @@ export const decodeMethodDebugMetadata = (
       pool,
       codeLength,
       maxLocals,
-      majorVersion >= LOCAL_VARIABLE_TYPE_TABLE_MIN_MAJOR,
+      majorVersion,
     ),
   );
 
@@ -491,6 +502,7 @@ export const decodeMethodDebugMetadata = (
         lineNumbers,
         localVariables,
         localVariableTypes,
+        majorVersion,
       );
 
   return {

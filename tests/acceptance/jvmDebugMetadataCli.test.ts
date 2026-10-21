@@ -77,11 +77,18 @@ cliTest(
     const { client, call } = await connectLocalToolsMcp();
     // run(J)V with max_locals 2: the long parameter fills slots 0 and 1.
     const cases = [
-      { name: "valid", options: {}, lvt: "present", lvtt: "absent" },
+      {
+        name: "valid",
+        options: {},
+        state: "present",
+        lvt: "present",
+        lvtt: "absent",
+      },
       // HotSpot: "Invalid index 1 in LocalVariableTable" (a J's second slot).
       {
         name: "wide-second-slot",
         options: { locals: [{ slot: 1, descriptor: "J" }] },
+        state: "malformed",
         lvt: "malformed",
         lvtt: "absent",
       },
@@ -89,22 +96,35 @@ cliTest(
       {
         name: "typed-slot",
         options: { typedLocals: [{ slot: 2, descriptor: "I" }] },
+        state: "malformed",
         lvt: "present",
         lvtt: "malformed",
       },
-      // HotSpot reads LocalVariableTypeTable only from version 49: it loads
-      // the same table in a version 48 class.
+      // Before version 49 HotSpot ignores LocalVariableTypeTable and loads
+      // these classes: the table is still judged by the same rules, but it
+      // never changes the method's state.
       {
         name: "typed-slot-v48",
         options: {
           majorVersion: 48,
           typedLocals: [{ slot: 2, descriptor: "I" }],
         },
+        state: "present",
         lvt: "present",
-        lvtt: "present",
+        lvtt: "malformed",
+      },
+      {
+        name: "typed-name-v48",
+        options: {
+          majorVersion: 48,
+          typedLocals: [{ slot: 0, descriptor: "I", nameIndex: 10 }],
+        },
+        state: "present",
+        lvt: "present",
+        lvtt: "malformed",
       },
     ] as const;
-    for (const { name, options, lvt, lvtt } of cases) {
+    for (const { name, options, state, lvt, lvtt } of cases) {
       const path = join(root, `${name}.class`);
       await writeFile(path, jvmDebugClass(options));
       const outcome = await inspectBoth(cli, call, { path });
@@ -113,10 +133,7 @@ cliTest(
         normalized_result: {
           methods: [
             {
-              state:
-                lvt === "present" && lvtt !== "malformed"
-                  ? "present"
-                  : "malformed",
+              state,
               max_locals: 2,
               local_variable_table: { presence: lvt },
               local_variable_type_table: { presence: lvtt },

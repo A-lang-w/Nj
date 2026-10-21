@@ -5,6 +5,8 @@ export interface JvmFixtureLocal {
   readonly descriptor: "I" | "J";
   readonly startPc?: number;
   readonly length?: number;
+  /** Pool index of the row's name (default 6, `x`); 10 is a CONSTANT_Class. */
+  readonly nameIndex?: number;
 }
 
 /**
@@ -94,7 +96,7 @@ export const jvmDebugClass = (
     for (const row of rows) {
       b2(row.startPc ?? 0);
       b2(row.length ?? 1);
-      b2(6);
+      b2(row.nameIndex ?? 6);
       b2(row.descriptor === "J" ? 8 : 7);
       b2(row.slot);
     }
