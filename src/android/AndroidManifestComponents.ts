@@ -251,6 +251,10 @@ export const parseAndroidManifestComponents = (
       "The decoded manifest root is not <manifest>, so its component inventory is unavailable.",
     );
   const packageName = plainAttribute(root, "package")?.trim() || null;
+  const packageHasUnresolvedToken =
+    packageName?.includes("@") === true ||
+    packageName?.includes("?") === true ||
+    packageName?.includes("${") === true;
   const limitations: string[] = [];
   const items: AndroidManifestComponent[] = [];
   let truncated = false;
@@ -310,7 +314,8 @@ export const parseAndroidManifestComponents = (
         declared.includes("${");
       const needsPackage = declared.startsWith(".") || !declared.includes(".");
       const packageKnown =
-        !containsUnresolvedToken && (!needsPackage || packageName !== null);
+        !containsUnresolvedToken &&
+        (!needsPackage || (packageName !== null && !packageHasUnresolvedToken));
       const resolvedBytes = needsPackage
         ? Buffer.byteLength(packageName ?? "") +
           (declared.startsWith(".") ? 0 : 1) +
@@ -457,7 +462,7 @@ export const parseAndroidManifestComponents = (
     );
   if (unresolvedPackages > 0) {
     limitations.push(
-      `${String(unresolvedPackages)} relative component name(s) remain unresolved because the manifest package is absent; the declared name is retained.`,
+      `${String(unresolvedPackages)} relative component name(s) remain unresolved because the manifest package is absent or contains a resource/placeholder token; the declared name is retained.`,
     );
     truncated = true;
   }

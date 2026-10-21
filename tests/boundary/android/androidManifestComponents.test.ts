@@ -240,6 +240,16 @@ it("does not call resource and manifest placeholder names resolved identities", 
   expect(inventory.limitations.join(" ")).toContain(
     "unresolved resource or manifest placeholder",
   );
+  const placeholderPackage = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${applicationId}"><application><activity android:name=".Main"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(placeholderPackage.items[0]?.name).toBe(".Main");
+  expect(placeholderPackage.status).toBe("partial");
+  expect(placeholderPackage.limitations.join(" ")).toContain(
+    "package is absent or contains",
+  );
 });
 
 it("does not establish a component inventory from truncated manifest text", () => {
