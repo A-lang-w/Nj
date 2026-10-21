@@ -434,8 +434,10 @@ an invalid supplied size remains unknown with incomplete resource coverage while
 the resource's other facts are retained. Zero and nonnegative fractional sizes
 are preserved.
 
-CDP discovery has a 10-second response deadline and an 8 MiB document budget.
-Neither has a runtime override. `list_browser_targets` accepts no
+CDP discovery has a 10-second response deadline. HTTP discovery documents
+use an 8 MiB budget. Browser-socket discovery (`Browser.getVersion`,
+`Target.getTargets`) uses the 64 MiB protocol message budget. Neither budget
+nor the discovery deadline has a runtime override. `list_browser_targets` accepts no
 `command_timeout_ms`: HTTP discovery and browser-socket discovery
 (`Browser.getVersion`, `Target.getTargets`) stay on that fixed deadline, and
 the socket closes without a later command. Other CDP tools use

@@ -14,6 +14,7 @@ import type { BrowserObservationOperation } from "../domain/browserObservationEr
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpConnection } from "./CdpConnection.js";
 
 const endpointVersionSchema = z.object({
@@ -41,6 +42,11 @@ const CDP_DISCOVERY_RESPONSE_LIMITS = {
   timeoutMs: CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
 } as const;
 
+const discoveryBudget = (phase: "response" | "browser-socket"): string =>
+  phase === "response"
+    ? `The ${String(CDP_DISCOVERY_RESPONSE_LIMITS.bytes)}-byte discovery document budget`
+    : `The ${String(WEB_RUNTIME_LIMITS.protocolBytes)}-byte browser-socket message budget`;
+
 const discoveryTimeout = (
   operation: BrowserObservationOperation,
   timeoutMs: number,
@@ -51,7 +57,7 @@ const discoveryTimeout = (
       ? `CDP discovery response exceeded its ${String(timeoutMs)} ms deadline.`
       : `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`;
   const fixed = noRuntimeOverrideSentence(
-    `The ${String(CDP_DISCOVERY_RESPONSE_LIMITS.bytes)}-byte discovery document budget and the ${String(timeoutMs)} ms discovery deadline stay fixed.`,
+    `${discoveryBudget(phase)} and the ${String(timeoutMs)} ms discovery deadline stay fixed.`,
     cdpCommandTimeoutUnrelatedControl(operation),
   );
   return new BrowserObservationError(operation, "timeout", {
