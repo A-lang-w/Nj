@@ -10,6 +10,11 @@ import {
   gdbCommandSummarySchema,
   projectCommandObservationView,
 } from "./commandObservationView.js";
+import {
+  fridaSessionStatusSummarySchema,
+  fridaSessionStatusViewContext,
+  projectFridaSessionStatusView,
+} from "./fridaSessionStatusView.js";
 import { commandObservationSchema } from "../commandObservation.js";
 import {
   goBinarySummarySchema,
@@ -73,6 +78,7 @@ import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
+import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
 import { functionDossierSchema } from "../hopperValues.js";
 import {
   artifactGraphManifestSchema,
@@ -341,7 +347,9 @@ const coverageSchema = z.strictObject({
 const artifactSchema = z.strictObject({
   path: z
     .string()
-    .describe("Exact recorded artifact path, including an empty string."),
+    .describe(
+      "Selected artifact path, or the canonical resource root when resource-only Evidence has no executable subject.",
+    ),
   sha256: digestSchema.nullable(),
 });
 
@@ -385,6 +393,7 @@ const viewResultBase = {
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
+    "frida_session_status",
     "inspect_with_objdump",
     "inspect_desktop_application",
     "analyze_javascript_application",
@@ -435,6 +444,14 @@ export const objdumpSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("inspect_with_objdump"),
   artifact: artifactSchema.nullable(),
   summary: commandObservationSchema,
+});
+
+export const fridaSessionStatusSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...fridaSessionStatusViewContext,
+  parent_operation: z.literal("frida_session_status"),
+  artifact: artifactSchema.nullable(),
+  summary: fridaSessionStatusSummarySchema,
 });
 
 /** Opt-in Go delivery retains original bytes and exposes build identity/counts. */
@@ -510,6 +527,7 @@ export const machoSummaryViewResultSchema = z.strictObject({
 export const interfaceBuilderSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("decode_interface_builder"),
+  resource_root: bundleResourceRootSchema.optional(),
   summary: interfaceBuilderSummarySchema,
 });
 
@@ -645,6 +663,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.discriminatedUnion("parent_operation", [
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
+    fridaSessionStatusSummaryViewResultSchema,
     goBinarySummaryViewResultSchema,
     binaryLayoutSummaryViewResultSchema,
     desktopApplicationSummaryViewResultSchema,
@@ -767,6 +786,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: interfaceBuilderViewRequestSchema,
     items: interfaceBuilderViewItemsSchema,
     ...viewResultBase,
+    resource_root: bundleResourceRootSchema.optional(),
     ...interfaceBuilderViewContextSchema.shape,
     parent_operation: z.literal("decode_interface_builder"),
   }),
@@ -930,6 +950,7 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 
 /** Named source owners for views that need no extra decoder or accumulator. */
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
+  ["frida_session_status", projectFridaSessionStatusView],
   ["gdb_console", projectCommandObservationView],
   ["inspect_with_objdump", projectCommandObservationView],
   ["inspect_go_binary", projectGoBinaryView],
