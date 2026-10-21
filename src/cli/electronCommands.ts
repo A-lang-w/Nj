@@ -25,17 +25,24 @@ import {
   runCliJavaScriptApplicationAnalysis,
 } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
+  options: {
+    readonly createActiveProvider?: (
+      environment: Readonly<Record<string, string | undefined>>,
+    ) => ElectronActiveObservationPort;
+  } = {},
 ): void => {
   registerElectronObservationCommands(cli, logger);
   registerElectronFuseCommand(cli, logger);
-  registerElectronActiveCommand(cli, logger, environment);
+  registerElectronActiveCommand(cli, logger, environment, options);
   registerJavaScriptApplicationCommand(cli, logger);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
@@ -88,6 +95,11 @@ const registerElectronActiveCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
+  options: {
+    readonly createActiveProvider?: (
+      environment: Readonly<Record<string, string | undefined>>,
+    ) => ElectronActiveObservationPort;
+  },
 ): void => {
   cli.command(CLI_COMMANDS.captureElectronScenario, {
     description: "Run one owned Electron scenario with cancellable actions",
@@ -124,9 +136,13 @@ const registerElectronActiveCommand = (
               );
             const { captureElectronScenario } =
               await import("../application/javascript/ElectronActiveObservationService.js");
-            const { createElectronScenarioProvider } =
-              await import("../composition/electronScenario.js");
-            const provider = createElectronScenarioProvider(environment);
+            const provider =
+              options.createActiveProvider === undefined
+                ? await import("../composition/electronScenario.js").then(
+                    ({ createElectronScenarioProvider }) =>
+                      createElectronScenarioProvider(environment),
+                  )
+                : options.createActiveProvider(environment);
             const result = await finishAnalysisCommand(
               () => captureElectronScenario(provider, parsed.data, { signal }),
               {
@@ -291,7 +307,7 @@ const registerJavaScriptApplicationCommand = (
             if (!sourcePaths.ok) return sourcePaths.error;
             return runCliJavaScriptApplicationAnalysis(
               {
-                input_path: args.path,
+                input_path: absoluteCallerPath(args.path),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined

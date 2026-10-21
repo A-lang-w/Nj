@@ -317,22 +317,22 @@ describe("CLI JSON file cancellation", () => {
     return path;
   };
 
-  it("propagates a cancelled file read instead of reporting a file failure", async () => {
+  it("reports a cancelled file read as cancellation, not a file failure", async () => {
     const path = await writeSelection();
     const controller = new AbortController();
     controller.abort();
-    await expect(
-      parseCliJsonInput(path, "test-input", controller.signal),
-    ).rejects.toBeDefined();
+    expect(
+      await parseCliJsonInput(path, "test-input", controller.signal),
+    ).toMatchObject({ ok: false, error: { code: "cancelled" } });
   });
 
-  it("propagates cancellation through --source-paths-json selection", async () => {
+  it("reports cancellation through --source-paths-json selection", async () => {
     const path = await writeSelection();
     const controller = new AbortController();
     controller.abort();
-    await expect(
-      cliJavaScriptSourcePaths(["index.js"], path, controller.signal),
-    ).rejects.toBeDefined();
+    expect(
+      await cliJavaScriptSourcePaths(["index.js"], path, controller.signal),
+    ).toMatchObject({ ok: false, error: { code: "cancelled" } });
   });
 
   it("still reads the selection when the signal is not aborted", async () => {
