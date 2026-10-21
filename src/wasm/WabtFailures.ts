@@ -18,6 +18,7 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
 import {
@@ -226,9 +227,7 @@ const classifyWabtFailure = (
       {
         cause,
         ...cleanupOptions,
-        retryable: false,
-        remediationAction:
-          "Select a suitable stable artifact within the reported input byte allowance. Do not truncate required bytes; retrying the unchanged oversized input will fail again.",
+        ...fixedAllowanceOptions("the fixed WASM input allowance", "input"),
       },
     );
   if (
