@@ -173,7 +173,7 @@ it.skipIf(process.platform !== "linux").each([
   },
   {
     name: "inactive ptrace row",
-    response: '[{"raised":false,"fd":3,"uri":"ptrace://999999999"}]',
+    response: '[{"raised":false,"fd":3,"uri":"ptrace://999999"}]',
     closeSucceeds: false,
   },
   {
@@ -237,7 +237,7 @@ it.skipIf(process.platform !== "linux").each([
   },
   {
     name: "an unexpected ptrace inferior remains listed",
-    afterDetach: () => '[{"raised":true,"fd":4,"uri":"ptrace://999999999"}]',
+    afterDetach: () => '[{"raised":true,"fd":4,"uri":"ptrace://999999"}]',
     closeSucceeds: true,
   },
 ])(
@@ -316,7 +316,7 @@ it.skipIf(process.platform !== "linux")(
   async () => {
     const sessionId = await startFakeInferiorSession({
       launchTarget: false,
-      initialRows: '[{"raised":true,"fd":3,"uri":"ptrace://999999999"}]',
+      initialRows: '[{"raised":true,"fd":3,"uri":"ptrace://999999"}]',
       startupWatchdogMs: 2_000,
     });
     const closed = await manager!.close(sessionId);
