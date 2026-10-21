@@ -12,7 +12,7 @@ const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data'}});router.addRoute('admin',{path:'settings',component:View});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
+    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
   );
   return path;
 };
@@ -186,6 +186,23 @@ it.each(["full", "compact"] as const)(
     expect(result.items).toHaveLength(2);
     expect(result.sources).toHaveLength(1);
     expect(result.source_coverage.application_routes).toBe("unknown");
+    const dataPaths = await call("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: selected.parent_evidence_id,
+      },
+      view: {
+        kind: "javascript-routes",
+        collection: "routes",
+        where: { paths: ["/download/file", "/query-data"] },
+      },
+    });
+    expect(dataPaths.isError).not.toBe(true);
+    expect(
+      javaScriptRoutesViewResultSchema.parse(
+        parseEvidence(dataPaths.structuredContent).normalized_result,
+      ).items,
+    ).toEqual([]);
   },
 );
 

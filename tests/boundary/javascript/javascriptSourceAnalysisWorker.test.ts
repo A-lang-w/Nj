@@ -786,15 +786,21 @@ it("keeps wrapped route ancestry, navigation and unknown named parents in the re
     const analyzed = await worker.analyze(
       source(
         "routes.ts",
-        "const detail={_$:'detail'};defineRoutes({reports:{_$:'reports',detail:(detail as typeof detail)}});router.push(({pathname:'/users'} as const));router.push(({pathname:'/settings'} satisfies {pathname:string}));router.addRoute('admin',({path:'settings',component:View} as const));",
+        "const detail={_$:'detail'};defineRoutes({reports:{_$:'reports',detail:(detail as typeof detail)}});router.push(({pathname:'/users'} as const));router.push(({pathname:'/settings'} satisfies {pathname:string}));router.addRoute('admin',({path:'settings',component:View} as const));router.addRoute('admin',{path:'relative',children:[{path:'/public',component:View},{path:'relative'}]});defineRoutes({generated:buildRoutes()});",
       ),
       { nodes: 1, unknowns: 8 },
     );
     if (!analyzed.ok) throw analyzed.error.error;
     expect(
       analyzed.value.javascript.routes!.candidates.map(({ path }) => path),
-    ).toEqual(["/users", "/settings", "/reports", "/reports/detail"]);
-    expect(analyzed.value.javascript.routes!.unresolved).toHaveLength(1);
+    ).toEqual([
+      "/users",
+      "/settings",
+      "/reports",
+      "/reports/detail",
+      "/public",
+    ]);
+    expect(analyzed.value.javascript.routes!.unresolved).toHaveLength(3);
     expect(analyzed.value.javascript.routes!.unresolved[0]!.reason).toContain(
       "parent",
     );

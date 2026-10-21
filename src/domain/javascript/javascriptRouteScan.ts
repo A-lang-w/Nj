@@ -44,7 +44,7 @@ interface Ancestry {
 }
 interface Frame {
   readonly node: t.Node;
-  readonly parent: SegmentLink | null;
+  readonly parent: SegmentLink | null | undefined;
   readonly ancestry?: Ancestry;
   readonly fallback?: { key: string; node: t.Node };
 }
@@ -91,11 +91,6 @@ const isRouteChildKey = (key: string, typed: boolean): boolean =>
   typed ? !key.startsWith("_") && !key.startsWith("$") : key === "children";
 const isRouteSegmentKey = (key: string | undefined): boolean =>
   key === "path" || key === "route" || key === "_$";
-const isTypedRouteChild = (node: t.Node): boolean => {
-  const value = unwrapJavaScriptExpression(node).node;
-  return t.isObjectExpression(value) || t.isIdentifier(value);
-};
-
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
 export class JavaScriptRouteScan {
   readonly #result: JavaScriptRouteSourceFacts = {
@@ -352,6 +347,10 @@ export class JavaScriptRouteScan {
   }
 
   #object(node: t.ObjectExpression): void {
+    // Structured navigation owns these data containers before either automatic
+    // roots or parent edges are discovered. Callable bodies are already outside
+    // that ownership at the traversal boundary.
+    if (this.#dynamicValues.has(node)) return;
     let typed = false,
       hasPath = false,
       hasChildren = false,
@@ -417,6 +416,9 @@ export class JavaScriptRouteScan {
             call.node,
             "The named parent route does not establish a static URL ancestry.",
           );
+          yield* this.#walk(first, call.node, false, index, {
+            unknownParent: true,
+          });
         }
         continue;
       }
@@ -453,7 +455,7 @@ export class JavaScriptRouteScan {
           "The routing root is inferred from configuration syntax without a bound route-builder call.",
         );
         this.#claimConfiguration(root, index, typed);
-        yield* this.#walk(root, root, typed, index, true);
+        yield* this.#walk(root, root, typed, index, { inferredRoot: true });
       }
     }
     const roots = new Set(
@@ -726,10 +728,7 @@ export class JavaScriptRouteScan {
             );
             // Owning a route does not own the component/loader inputs it uses.
             // Follow the same route relationships consumed by the route walker.
-            if (
-              (key === null || isRouteChildKey(key, typed)) &&
-              (!typed || isTypedRouteChild(property.value))
-            )
+            if (key === null || isRouteChildKey(key, typed))
               admit(property.value, typed);
           } else if (t.isSpreadElement(property))
             admit(property.argument, typed);
@@ -759,11 +758,16 @@ export class JavaScriptRouteScan {
     site: t.Node,
     typed: boolean,
     index: JavaScriptBindingIndex,
-    inferredRoot = false,
+    options: { inferredRoot?: boolean; unknownParent?: boolean } = {},
   ): Generator<void> {
     const mechanism = typed ? "typed-route-tree" : "nested-route-object",
       frames: Frame[] = [];
-    this.#frame(frames, { node: root, parent: null });
+    // null is the known URL root; undefined retains an unknown ancestry.
+    // An absolute literal can re-establish a known root below either state.
+    this.#frame(frames, {
+      node: root,
+      parent: options.unknownParent === true ? undefined : null,
+    });
     while (frames.length > 0 && this.#result.capacity === null) {
       yield;
       const frame = frames.pop()!,
@@ -813,6 +817,7 @@ export class JavaScriptRouteScan {
         continue;
       }
       if (!t.isObjectExpression(node)) {
+        this.#claimConfiguration(frame.node, index, typed, true);
         this.#unknown(
           mechanism,
           node,
@@ -838,9 +843,8 @@ export class JavaScriptRouteScan {
           node,
           "Spread, computed keys or accessors leave route fields partially unknown.",
         );
-        if (property === undefined) continue;
       }
-      let link = frame.parent,
+      let link = uncertain && property === undefined ? undefined : frame.parent,
         emit = property !== undefined;
       if (property !== undefined) {
         const value = stringValue(property.value);
@@ -853,18 +857,25 @@ export class JavaScriptRouteScan {
             property.value,
             "The parent segment is unknown; descendant full paths are not inferred.",
           );
-          continue;
-        }
-        link = {
-          previous: value.startsWith("/") ? null : link,
-          segment: {
-            value,
-            location: range(property.value),
-            origin: "literal",
-          },
-          inferred: false,
-        };
-      } else if (typed && frame.fallback !== undefined) {
+          link = undefined;
+          emit = false;
+        } else if (value.startsWith("/") || link !== undefined) {
+          link = {
+            previous: value.startsWith("/") ? null : link!,
+            segment: {
+              value,
+              location: range(property.value),
+              origin: "literal",
+            },
+            inferred: false,
+          };
+        } else emit = false;
+      } else if (
+        typed &&
+        frame.fallback !== undefined &&
+        !uncertain &&
+        link !== undefined
+      ) {
         link = {
           previous: link,
           segment: {
@@ -879,9 +890,9 @@ export class JavaScriptRouteScan {
         const value = own.get("index")?.value;
         emit = t.isBooleanLiteral(value) && value.value;
       }
-      if (emit) {
+      if (emit && link !== undefined) {
         const segments: JavaScriptRouteSegment[] = [];
-        let inferred = inferredRoot;
+        let inferred = options.inferredRoot ?? false;
         for (let part = link; part !== null; part = part.previous) {
           segments.push(part.segment);
           inferred ||= part.inferred;
@@ -922,13 +933,12 @@ export class JavaScriptRouteScan {
         ) {
           const [key, child] = entries[at]!;
           if (!isRouteChildKey(key, true)) continue;
-          if (isTypedRouteChild(child.value))
-            this.#frame(frames, {
-              node: child.value,
-              parent: link,
-              ancestry,
-              fallback: { key, node: child.key },
-            });
+          this.#frame(frames, {
+            node: child.value,
+            parent: link,
+            ancestry,
+            fallback: { key, node: child.key },
+          });
         }
       } else {
         const children = own.get("children");

@@ -319,3 +319,13 @@ it("keeps filename and module-derived anchors application-relative when a deploy
     );
   expect(result.statistics.unanchored_literals_excluded).toBe(1);
 });
+
+it("reports generated typed configurations as partial even without retained candidates", () => {
+  const result = build([
+    source("generated.js", "defineRoutes({reports:buildRoutes()});"),
+  ]);
+  expect(result.routes).toEqual([]);
+  expect(result.coverage.candidate_enumeration).toBe("partial");
+  expect(result.unknowns).toHaveLength(1);
+  expect(result.unknowns[0]!.kind).toBe("interpretation");
+});

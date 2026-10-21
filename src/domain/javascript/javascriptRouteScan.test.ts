@@ -589,3 +589,61 @@ it("preserves literal route registration with an independent handler", () => {
   ).toEqual(["/legacy", "/ordinary"]);
   expect(facts.unresolved).toEqual([]);
 });
+
+it.each([
+  [
+    "router.addRoute('admin',{path:'/settings',component:View,children:[{path:'detail'}]});",
+    ["/settings", "/settings/detail"],
+  ],
+  [
+    "router.addRoute('admin',{path:'settings',component:View,children:[{path:'relative'},{path:'/public',children:[{path:'detail'}]}]});",
+    ["/public", "/public/detail"],
+  ],
+  [
+    "createBrowserRouter([{path:computedParent,children:[{path:'relative'},{path:'/public'}]}]);",
+    ["/public"],
+  ],
+] as const)(
+  "retains rooted children through unknown ancestry: %s",
+  (source, paths) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(paths);
+    expect(facts.unresolved.length).toBeGreaterThan(0);
+  },
+);
+
+it.each([
+  "defineRoutes({reports:buildRoutes()});",
+  "defineRoutes({reports:{_$:'reports',detail:buildRoutes()}});",
+  "defineRoutes({reports:buildRoutes({path:'/unresolved-argument',component:View})});",
+] as const)(
+  "retains an interpretation gap for generated typed children: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.unresolved.length).toBeGreaterThan(0);
+    expect(
+      facts.candidates.some(({ path }) => path === "/unresolved-argument"),
+    ).toBe(false);
+  },
+);
+
+it.each([
+  "router.push({pathname:'/users',query:{path:'/download/file',component:'preview'}});",
+  "router.push(({pathname:'/users',query:{children:[{path:'/download/file',component:'preview'}]}} as const));",
+] as const)(
+  "keeps navigation data outside route root discovery: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+it("keeps callable bodies independent of navigation data ownership", () => {
+  const facts = analyze(
+    "router.push({pathname:'/users',query:{render:()=>({path:'/component',element:View})}});",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/users",
+    "/component",
+  ]);
+});
