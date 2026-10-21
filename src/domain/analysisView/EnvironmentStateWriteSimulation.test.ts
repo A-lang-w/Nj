@@ -812,3 +812,174 @@ it("counts the sent values a plan keeps for fixed members against the view's all
   retainFixed(context, []);
   expect(retained).toBe(0);
 });
+
+describe("what a check leaves pending", () => {
+  const summary = (books: readonly Book[]): JsonValue =>
+    books.map(({ id, name }) => ({ id: id ?? null, name: name ?? null }));
+  const described = (id: number, name: string, description: string) => ({
+    id,
+    name,
+    description,
+  });
+
+  it("keeps an update a passing read showed nothing of for a later read to confirm", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
+      ["GET", "/api/books/1", described(1, "First Book", "x")],
+      ["GET", "/api/books/2", described(2, "Second Book", "y")],
+      [
+        "PATCH",
+        "/api/books/1",
+        described(1, "First Book", "new"),
+        200,
+        { description: "new" },
+      ],
+      // The list passes but shows no description; the item read does.
+      ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
+      ["GET", "/api/books/1", described(1, "First Book", "new")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("neither resynchronises nor checks an entity by a read begun while a write to it still ran", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      // The rename runs from second 3 to 5.5, and an unmodelled action leaves book 1 unknown.
+      ["PATCH", "/api/books/1", RENAMED, 200, { name: "Renamed Book" }, 2500],
+      ["POST", "/api/books/1/archive", null, 204, {}],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/1", RENAMED],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
+  it("checks nothing by a range read the collection has outgrown", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books?_start=0&_end=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      // The application still answers the range with two books.
+      ["GET", "/api/books?_start=0&_end=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/3", THIRD_BOOK],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+});
+
+describe("what a later call must follow", () => {
+  it("refuses a create whose later call does not follow the sequence it learned", () => {
+    const ranked = (at: Book, rank: number) => ({ ...at, rank });
+    const third = ranked(book(3, "Third Book", bookClock(3)), 3);
+    const fourth = ranked(book(4, "Fourth Book", bookClock(4)), 3);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [ranked(FIRST_BOOK, 1), ranked(SECOND_BOOK, 2)]],
+      ["GET", "/api/books/1", ranked(FIRST_BOOK, 1)],
+      ["GET", "/api/books/2", ranked(SECOND_BOOK, 2)],
+      ["POST", "/api/books", third, 201, { name: "Third Book" }],
+      // Serving ranks the next create 4; the application recorded 3 again.
+      ["POST", "/api/books", fourth, 201, { name: "Fourth Book" }],
+      [
+        "GET",
+        "/api/books",
+        [ranked(FIRST_BOOK, 1), ranked(SECOND_BOOK, 2), third, fourth],
+      ],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it("keeps a document write a later replacement of another member left in place", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/settings", { theme: "light", prefs: { lang: "en" } }],
+      [
+        "PATCH",
+        "/api/settings",
+        { theme: "dark", prefs: { lang: "en" } },
+        200,
+        { theme: "dark" },
+      ],
+      // The replacement holds `lang`, so it replaces `prefs` alone.
+      [
+        "PUT",
+        "/api/settings",
+        { theme: "dark", prefs: { lang: "fr" } },
+        200,
+        { lang: "fr" },
+      ],
+      ["GET", "/api/settings", { theme: "dark", prefs: { lang: "fr" } }],
+    ];
+    expect(gated(rows, "patch_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+    expect(gated(rows, "put_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+  });
+
+  it("applies a later document replacement at the plan's pointer, though it shares no member with the document", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/settings", { theme: "light", lang: "en" }],
+      [
+        "PUT",
+        "/api/settings",
+        { theme: "dark", lang: "fr" },
+        200,
+        { theme: "dark", lang: "fr" },
+      ],
+      ["PUT", "/api/settings", { theme: "blue" }, 200, { theme: "blue" }],
+      ["PUT", "/api/settings", { lang: "de" }, 200, { lang: "de" }],
+      ["GET", "/api/settings", { lang: "de" }],
+    ];
+    expect(gated(rows, "put_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+
+  it("finds an update's entity as serving does when the write spells the collection plainly", () => {
+    const alpha = { id: 1, org: "acme1", name: "Alpha" };
+    const beta = { id: 2, org: "beta2", name: "Beta" };
+    const renamed = { ...alpha, name: "Renamed" };
+    const renamedBeta = { ...beta, name: "Renamed Beta" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [alpha]],
+      ["GET", "/api/orgs/beta2/books", [beta]],
+      ["GET", "/api/orgs/%61cme1/books/1", alpha],
+      ["GET", "/api/orgs/beta2/books/2", beta],
+      ["PATCH", "/api/orgs/acme1/books/1", renamed, 200, { name: "Renamed" }],
+      [
+        "PATCH",
+        "/api/orgs/beta2/books/2",
+        renamedBeta,
+        200,
+        { name: "Renamed Beta" },
+      ],
+      ["GET", "/api/orgs/%61cme1/books/1", renamed],
+      ["GET", "/api/orgs/beta2/books/2", renamedBeta],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "update")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [6, 7],
+    });
+  });
+});

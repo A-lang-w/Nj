@@ -1,8 +1,6 @@
 import type { ExtractedState } from "./environmentStateRules.js";
-import {
-  EnvironmentStateWriteSimulation,
-  type WriteSimulationInput,
-} from "./EnvironmentStateWriteSimulation.js";
+import { EnvironmentStateWriteSimulation } from "./EnvironmentStateWriteSimulation.js";
+import type { WriteSimulationInput } from "./environmentStateWriteEffects.js";
 
 /** The instant a served clock starts from: the end of the last timed record, to the next whole second. */
 const clockStart = (

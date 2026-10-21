@@ -1,35 +1,29 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
   collectionPathOf,
-  decodedSegment,
   isObject,
   isStateWrite,
   lastSegmentValue,
   locateItem,
   at,
   same,
-  segmentsOf,
   type JsonObject,
   type StateDocument,
+  type StateEntity,
   type StateRecordFacts,
   type StateToolFacts,
+  type StateType,
   type StateView,
 } from "./environmentStateRules.js";
-import {
-  documentBodyProblem,
-  updatedEntity,
-  updatedFields,
-  writtenDocument,
-} from "./environmentStateWriteApply.js";
+import { updatedEntity, updatedFields } from "./environmentStateWriteApply.js";
 import {
   collectionTarget,
-  documentTarget,
   entityTarget,
+  itemTarget,
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import {
   conflictsWithPlan,
-  documentPointerOf,
   explainUpdate,
   otherFields,
   responseShapeOf,
@@ -65,6 +59,8 @@ export interface WriteDraft {
     readonly shown: ReadonlyMap<string, JsonValue>;
     readonly sent: ReadonlyMap<string, JsonValue>;
   }[];
+  /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
+  readonly sequences: Map<string, number>;
 }
 
 /** Response bodies, request bodies and budget the effects read. */
@@ -76,6 +72,19 @@ export interface WriteIo {
   readonly requestBody: (ordinal: number) => JsonValue | undefined;
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => void;
+}
+
+/** What the write gate reads: the manifest tools, the timeline, the read views and the initial state. */
+export interface WriteSimulationInput {
+  readonly tools: readonly StateToolFacts[];
+  readonly records: readonly StateRecordFacts[];
+  readonly timed: boolean;
+  readonly views: ReadonlyMap<string, StateView>;
+  readonly types: readonly StateType[];
+  readonly entities: readonly StateEntity[];
+  readonly documents: readonly StateDocument[];
+  readonly volatileOf: (type: string) => ReadonlySet<string>;
+  readonly io: WriteIo;
 }
 
 /** What applying a recorded write reads besides the draft and the call. */
@@ -92,6 +101,8 @@ export interface EffectContext {
   readonly unknown: (type: string, collection: string, id: string) => boolean;
   /** A document as the initial state holds it: its path, and the value serving also reads member types from. */
   readonly initialDocument: (tool: string) => StateDocument | undefined;
+  /** The entities of a type the initial state held, whose values a sequence never reuses. */
+  readonly startedWith: (type: string) => readonly StateEntity[];
 }
 
 /** One recorded write: the record, its timeline index, its tool, and whether its plan only takes the recorded outcome. */
@@ -188,17 +199,17 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   withBody: context.io.withBody,
 });
 
-/** The entity an update's response shows, located by its identity, else a later item read of it. */
+/** The entity an update's response shows, located by its identity, else a later item read of it spelled as the call was. */
 const updatedObservation = (
   context: EffectContext,
   step: WriteStep,
-  target: {
-    readonly type: string;
-    readonly collection: string;
-    readonly idField: string;
-    readonly id: string;
-  },
+  entity: { readonly type: string; readonly idField: string },
 ): Observed | undefined => {
+  const target = {
+    ...entity,
+    collection: collectionPathOf(step.record, true),
+    id: lastSegmentValue(step.record.path),
+  };
   const own = context.io.withBody(
     step.record.ordinal,
     (body): Observed | undefined => {
@@ -346,13 +357,13 @@ export const applyUpdate = (
 ): EffectResult => {
   const type = draft.plan.target!;
   const idField = context.idField(type);
-  const collection = collectionPathOf(step.record, true);
-  const id = lastSegmentValue(step.record.path);
+  // The entity as serving names it.
+  const { collection, id } = itemTarget(context.state, type, step.record);
   const entity = context.state.entity(type, collection, id);
   const after =
     entity === undefined
       ? undefined
-      : updatedObservation(context, step, { type, collection, idField, id });
+      : updatedObservation(context, step, { type, idField });
   if (entity === undefined || after === undefined) {
     fail(draft, step, "no-observation");
     return UNKNOWN;
@@ -448,8 +459,7 @@ export const applyDelete = (
   step: WriteStep,
 ): EffectResult => {
   const type = draft.plan.target!;
-  const collection = collectionPathOf(step.record, true);
-  const id = lastSegmentValue(step.record.path);
+  const { collection, id } = itemTarget(context.state, type, step.record);
   const entity = context.state.entity(type, collection, id);
   if (entity === undefined) {
     fail(draft, step, "no-observation");
@@ -475,93 +485,5 @@ export const applyDelete = (
     kind: step.observeOnly ? "observed" : "applied",
     targets,
     entity: { type, collection, id },
-  };
-};
-
-/** Whether a write's path names the held document's, a segment verbatim or once percent-decoded, as serving matches a call. */
-const namesDocument = (path: string, held: string): boolean => {
-  const written = segmentsOf(path);
-  const recorded = segmentsOf(held);
-  return (
-    written.length === recorded.length &&
-    recorded.every(
-      (segment, index) =>
-        segment === written[index] ||
-        decodedSegment(segment) === written[index],
-    )
-  );
-};
-
-/** Apply a recorded document write: the body merged into, or replacing, the object holding most of its members. */
-export const applyDocument = (
-  context: EffectContext,
-  draft: WriteDraft,
-  step: WriteStep,
-): EffectResult => {
-  const tool = draft.plan.target!;
-  const initial = context.initialDocument(tool);
-  // Serving refuses a write at another path, so one here changes no document the state holds.
-  if (initial !== undefined && !namesDocument(step.record.path, initial.path))
-    return UNKNOWN;
-  const value = context.state.document(tool);
-  const body = requestObject(context, step.record);
-  const pointer =
-    value === undefined || body === undefined
-      ? undefined
-      : documentPointerOf(value, body);
-  if (
-    step.observeOnly ||
-    value === undefined ||
-    body === undefined ||
-    pointer === undefined
-  ) {
-    fail(draft, step, body === undefined ? "body-unusable" : "no-observation");
-    return UNKNOWN;
-  }
-  const { ordinal } = step.record;
-  if (!built(draft))
-    Object.assign(draft.plan, {
-      exemplar_ordinal: ordinal,
-      observation: { ordinal, pointer },
-      merge: step.tool.method === "PUT" ? "replace" : "merge",
-      body: {
-        accepted: Object.keys(body),
-        fixed: [],
-        required: [],
-        identity: null,
-      },
-    });
-  const call = callOf(step, body);
-  // Serving refuses a body its check refuses, so such a call cannot confirm the plan.
-  if (
-    documentBodyProblem(draft.plan, call, {
-      initial: initial?.value,
-      current: value,
-    }) !== undefined
-  ) {
-    refuse(draft, step, "unexplained-change");
-    return UNKNOWN;
-  }
-  const written = writtenDocument(draft.plan, value, call);
-  if (!written.ok) {
-    refuse(draft, step, "no-observation");
-    return UNKNOWN;
-  }
-  draft.plan.response ??= context.io.withBody(ordinal, (response) => ({
-    ordinal,
-    shape: context.io.emptyResponse(ordinal)
-      ? "empty"
-      : response !== undefined && same(response, written.value)
-        ? "entity"
-        : "recorded",
-    pointer: null,
-  }));
-  context.io.retain(64 + JSON.stringify(written.value).length * 2);
-  context.state.setDocument(tool, written.value);
-  // A merge writes the members it sent; a replacement writes the whole document.
-  return {
-    kind: "applied",
-    targets: [documentTarget(tool)],
-    ...(draft.plan.merge === "merge" ? { fields: Object.keys(body) } : {}),
   };
 };

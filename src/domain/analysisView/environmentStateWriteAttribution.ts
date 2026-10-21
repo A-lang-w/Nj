@@ -67,11 +67,18 @@ export const touchTarget = (
 /** The fields of a write's effect on an entity no later write has overwritten: all of them for a create or delete (null). */
 type ChangedFields = readonly string[] | null;
 
-/** What a later write overwrites: the whole entity, the fields it sets, or every field (a recorded outcome). */
+/** What a later write overwrites: the whole entity, the fields it sets, or every field (a recorded outcome). A document's fields are pointers, each covering the members under it. */
 interface Overwrite {
   readonly whole: boolean;
   readonly fields: ReadonlySet<string> | "all";
 }
+
+/** Whether a write's fields cover a field: the same one, or, for a document, a pointer above it. */
+const covers = (fields: ReadonlySet<string>, field: string): boolean =>
+  fields.has(field) ||
+  [...fields].some(
+    (over) => over.startsWith("/") && field.startsWith(`${over}/`),
+  );
 
 /** What an earlier effect keeps after a write: nothing once every field it holds is overwritten; an update leaves a create's or delete's whole effect. */
 const remaining = (
@@ -82,7 +89,7 @@ const remaining = (
   if (claim === null) return null;
   const { fields } = write;
   if (fields === "all") return undefined;
-  const left = claim.filter((field) => !fields.has(field));
+  const left = claim.filter((field) => !covers(fields, field));
   return left.length > 0 ? left : undefined;
 };
 
@@ -116,10 +123,13 @@ export class WriteEffects {
     Map<string, Map<string, ChangedFields>>
   >();
 
-  /** Forget a checked target's writes, as the touched targets do. */
-  checked(key: string): void {
-    this.#changed.delete(key);
-    this.#members.delete(key);
+  /** Forget a checked target's writes, as the touched targets do: all, or all but those a read showed nothing of. */
+  checked(key: string, unseen?: ReadonlySet<string>): void {
+    for (const byTool of [this.#changed, this.#members])
+      if (unseen === undefined) byTool.delete(key);
+      else
+        for (const tool of byTool.get(key)?.keys() ?? [])
+          if (!unseen.has(tool)) byTool.get(key)!.delete(tool);
   }
 
   /** Whether a read showing `fields` of a target shows anything of a tool's effect there: a create's or delete's always, an update's through a field it changed; unknown claims count as shown. */
@@ -222,3 +232,50 @@ export class WriteEffects {
     }
   }
 }
+
+/** Of the tools a read exercised, those it shows something of on some target, and per target those it shows nothing of. */
+export const shownWrites = (
+  touched: TouchedTargets,
+  effects: WriteEffects,
+  read: {
+    readonly keys: readonly string[];
+    readonly exercised: ReadonlySet<string>;
+    readonly fields: ReadonlySet<string> | "all";
+  },
+): {
+  readonly confirmed: string[];
+  readonly unseen: Map<string, Set<string>>;
+} => {
+  const confirmed: string[] = [];
+  const unseen = new Map<string, Set<string>>();
+  for (const name of read.exercised) {
+    const on = read.keys.filter((key) => touched.get(key)?.has(name));
+    const seen = on.filter((key) => effects.shows(name, key, read.fields));
+    for (const key of on)
+      if (!seen.includes(key))
+        unseen.set(key, (unseen.get(key) ?? new Set()).add(name));
+    if (seen.length > 0) confirmed.push(name);
+  }
+  return { confirmed, unseen };
+};
+
+/** A checked target forgets its writes, but for those a passing read showed nothing of, which a later check still takes. */
+export const forgetChecked = (
+  pending: {
+    readonly touched: TouchedTargets;
+    readonly since: PendingTargets;
+    readonly effects: WriteEffects;
+  },
+  key: string,
+  unseen: ReadonlySet<string> | undefined,
+): void => {
+  const writes = pending.touched.get(key);
+  if (unseen === undefined || writes === undefined) {
+    pending.touched.delete(key);
+    pending.effects.checked(key);
+    pending.since.delete(key);
+    return;
+  }
+  for (const name of writes.keys()) if (!unseen.has(name)) writes.delete(name);
+  pending.effects.checked(key, unseen);
+};
