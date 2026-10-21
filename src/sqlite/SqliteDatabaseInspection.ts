@@ -424,10 +424,40 @@ const readSchema = (
   return { schema, selectedTable };
 };
 
+/** Byte length of one cell's projected representation, without copying its value. */
+const cellByteLength = (name: string): string => {
+  const column = quoteIdentifier(name);
+  return `CASE typeof(${column}) WHEN 'text' THEN length(CAST(${column} AS BLOB)) WHEN 'blob' THEN length(${column}) ELSE 0 END`;
+};
+
+/** Ordinary and stored generated columns, read without evaluating an expression; skips undecodable names. */
+const storedColumnNames = (
+  db: DatabaseSync,
+  table: string,
+  encoding: DatabaseEncoding,
+): string[] => {
+  const names: string[] = [];
+  for (const raw of db
+    .prepare(
+      "SELECT CAST(name AS BLOB) AS name FROM temp.pragma_table_xinfo(?, 'main') WHERE hidden IN (0, 3) ORDER BY cid",
+    )
+    .iterate(table)) {
+    const { name } = z.object({ name: z.instanceof(Uint8Array) }).parse(raw);
+    try {
+      names.push(decodeSchemaText(name, encoding, "column name"));
+    } catch (cause: unknown) {
+      // An unrelated malformed name cannot be selected exactly, so it is not recommended.
+      if (!(cause instanceof SqliteInspectionFailure)) throw cause;
+    }
+  }
+  return names;
+};
+
 /**
  * Attribute an SQL error from selected cells to the virtual generated columns
- * that raise it on this connection. Only those cells evaluate expressions when
- * read; any other cause keeps its original classification.
+ * that raise it on this connection. Each column is probed alone over the same
+ * sampled rows, so only columns whose probe succeeds are recommended; any
+ * other cause keeps its original classification.
  */
 const columnEvaluationFailure = (
   db: DatabaseSync,
@@ -437,44 +467,61 @@ const columnEvaluationFailure = (
     readonly columns: readonly string[];
     readonly source: string;
     readonly limit: number;
+    readonly encoding: DatabaseEncoding;
   },
 ): unknown => {
   if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
-  const { table, columns, source, limit } = selection;
+  const { table, columns, source, limit, encoding } = selection;
+  // The aggregate evaluates exactly the sampled cells, as the length pass does.
+  const probe = (name: string): { readonly failure: unknown } | undefined => {
+    try {
+      db.prepare(
+        `SELECT count(${cellByteLength(name)}) FROM (SELECT ${quoteIdentifier(name)} FROM ${source} LIMIT ?)`,
+      ).get(limit);
+      return undefined;
+    } catch (failure: unknown) {
+      return { failure };
+    }
+  };
+  const failures = new Map<string, unknown>();
+  for (const name of new Set(columns)) {
+    const failed = probe(name);
+    if (failed !== undefined) failures.set(name, failed.failure);
+  }
   const generated = new Set(
     table.columns
       .filter((column) => column.hidden === 2)
       .map((column) => column.name),
   );
-  const failed = new Map<string, string>();
-  for (const name of new Set(columns)) {
-    if (!generated.has(name)) continue;
+  if (
+    ![...failures].some(
+      ([name, failure]) =>
+        generated.has(name) &&
+        sqlitePrimaryResultCode(failure) === SQLITE_ERROR,
+    )
+  )
+    return cause;
+  const remaining = columns.filter((name) => !failures.has(name));
+  const readableStoredColumns = (): string[] => {
     try {
-      // The aggregate evaluates the expression for exactly the sampled rows.
-      db.prepare(
-        `SELECT count(typeof(${quoteIdentifier(name)})) FROM (SELECT ${quoteIdentifier(name)} FROM ${source} LIMIT ?)`,
-      ).get(limit);
-    } catch (probe: unknown) {
-      if (sqlitePrimaryResultCode(probe) === SQLITE_ERROR)
-        failed.set(
-          name,
-          probe instanceof Error ? probe.message : String(probe),
-        );
+      return storedColumnNames(db, table.name, encoding).filter(
+        (name) => !failures.has(name) && probe(name) === undefined,
+      );
+    } catch {
+      // Discovery only refines recovery; it must not replace the attributed failure.
+      return [];
     }
-  }
-  if (failed.size === 0) return cause;
-  const remaining = columns.filter((name) => !failed.has(name));
+  };
   return new SqliteColumnEvaluationFailure(
-    `SQLite cannot evaluate selected generated column(s) of table ${JSON.stringify(table.name)} on REA's read-only connection: ${[
-      ...failed,
+    `SQLite cannot evaluate selected column(s) of table ${JSON.stringify(table.name)} on REA's read-only connection: ${[
+      ...failures,
     ]
-      .map(([name, reason]) => `${JSON.stringify(name)}: ${reason}`)
+      .map(
+        ([name, failure]) =>
+          `${JSON.stringify(name)}: ${failure instanceof Error ? failure.message : String(failure)}`,
+      )
       .join("; ")}`,
-    remaining.length > 0
-      ? remaining
-      : table.columns
-          .filter((column) => column.hidden === 0 || column.hidden === 3)
-          .map((column) => column.name),
+    remaining.length > 0 ? remaining : readableStoredColumns(),
   );
 };
 
@@ -532,12 +579,7 @@ const readRows = (
   // attributed to the selected generated expressions rather than the file.
   try {
     const lengths = db.prepare(
-      `SELECT ${columns
-        .map((name) => {
-          const column = quoteIdentifier(name);
-          return `CASE typeof(${column}) WHEN 'text' THEN length(CAST(${column} AS BLOB)) WHEN 'blob' THEN length(${column}) ELSE 0 END`;
-        })
-        .join(", ")} FROM ${source} LIMIT ?`,
+      `SELECT ${columns.map(cellByteLength).join(", ")} FROM ${source} LIMIT ?`,
     );
     lengths.setReturnArrays(true);
     for (const raw of lengths.iterate(limit))
@@ -553,7 +595,13 @@ const readRows = (
       rows.values.push(values);
     }
   } catch (cause: unknown) {
-    throw columnEvaluationFailure(db, cause, { table, columns, source, limit });
+    throw columnEvaluationFailure(db, cause, {
+      table,
+      columns,
+      source,
+      limit,
+      encoding,
+    });
   }
   rows.returned_rows = rows.values.length;
   rows.truncated =

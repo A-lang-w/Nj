@@ -95,11 +95,11 @@ const rejectedReply = (
       {
         capturedOutput,
         userMessage: reply.message,
-        remediationAction: `The database is readable; only these computed values failed. REA's SQLite connection loads no extensions or application functions and disables schema trust. ${
+        remediationAction: `The database is readable; only the listed column values failed. REA's SQLite connection loads no extensions or application functions and disables schema trust. ${
           readable.length === 0
-            ? "Select other stored columns explicitly"
-            : `Select the remaining columns: columns: ${JSON.stringify(readable)} (CLI: ${readable.map((name) => `--column ${JSON.stringify(name)}`).join(" ")})`
-        }, or omit table and use schema_scope: database to read the generation expressions without evaluating rows. Obtaining these values needs a SQLite connection able to evaluate their expressions. Do not repeat the unchanged request.`,
+            ? "No other readable column was found"
+            : `Select columns whose values were read: columns: ${JSON.stringify(readable)} (CLI: one --column per name)`
+        }; omit table and use schema_scope: database to read the stored declarations without evaluating rows. Obtaining the failed values needs a SQLite connection able to evaluate them. Do not repeat the unchanged request.`,
       },
     );
   }

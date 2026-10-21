@@ -402,7 +402,7 @@ it("attributes compile and row evaluation errors to each failing generated colum
     }
     throw new Error("Expected a generated-column evaluation failure");
   };
-  const prefix = `SQLite cannot evaluate selected generated column(s) of table "t" on REA's read-only connection: `;
+  const prefix = `SQLite cannot evaluate selected column(s) of table "t" on REA's read-only connection: `;
   expect(failure({})).toMatchObject({
     reason: "column-evaluation",
     message: `${prefix}"digest": unknown function: application_digest(); "field": malformed JSON`,
@@ -434,6 +434,106 @@ it("attributes compile and row evaluation errors to each failing generated colum
       ],
     ],
     truncated: true,
+  });
+});
+
+const createApplicationDatabase = async (
+  sql: string,
+  edit?: (bytes: Buffer) => void,
+): Promise<string> => {
+  const workspace = await createTestWorkspace("rea-sqlite-evaluation-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const path = workspace.path("private.db");
+  const producer = new DatabaseSync(path);
+  try {
+    // The producing application supplies a function REA's connection lacks.
+    producer.function("application_digest", { deterministic: true }, (value) =>
+      String(value),
+    );
+    producer.exec(sql);
+  } finally {
+    producer.close();
+  }
+  if (edit !== undefined) {
+    const bytes = await readFile(path);
+    edit(bytes);
+    await writeFile(path, bytes);
+  }
+  return path;
+};
+
+it("never recommends a selected column whose own probe fails for another reason", async () => {
+  const path = await createApplicationDatabase(`
+    CREATE TABLE t(
+      id INTEGER,
+      digest TEXT GENERATED ALWAYS AS (application_digest(id)) VIRTUAL,
+      payload BLOB GENERATED ALWAYS AS (zeroblob(72 * 1024 * 1024)) VIRTUAL
+    );
+    INSERT INTO t(id) VALUES (1);
+  `);
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "t",
+      columns: ["payload", "digest", "id"],
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      reason: "column-evaluation",
+      message: `SQLite cannot evaluate selected column(s) of table "t" on REA's read-only connection: "payload": string or blob too big; "digest": unknown function: application_digest()`,
+      readableColumns: ["id"],
+    }),
+  );
+});
+
+it("recommends stored columns outside an inventory-scope selection without decoding malformed names", async () => {
+  const path = await createApplicationDatabase(
+    `
+    CREATE TABLE t(
+      id INTEGER,
+      "col" TEXT,
+      payload TEXT,
+      digest TEXT GENERATED ALWAYS AS (application_digest(payload)) VIRTUAL
+    );
+    INSERT INTO t(id, "col", payload) VALUES (1, 'kept', 'value');
+  `,
+    (bytes) => {
+      const marker = Buffer.from('"col"');
+      const offset = bytes.indexOf(marker);
+      if (offset < 0 || bytes.indexOf(marker, offset + 1) !== -1)
+        throw new Error("Expected unique authored column marker");
+      bytes[offset + 1] = 0xff;
+    },
+  );
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "t",
+      schema_scope: "inventory",
+      columns: ["digest"],
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      reason: "column-evaluation",
+      message: `SQLite cannot evaluate selected column(s) of table "t" on REA's read-only connection: "digest": unknown function: application_digest()`,
+      readableColumns: ["id", "payload"],
+    }),
+  );
+  // The recommended stored columns are themselves selectable in the same scope.
+  expect(
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "t",
+      schema_scope: "inventory",
+      columns: ["id", "payload"],
+    }).rows,
+  ).toMatchObject({
+    values: [
+      [
+        { type: "integer", value: "1" },
+        { type: "text", value: "value" },
+      ],
+    ],
   });
 });
 
