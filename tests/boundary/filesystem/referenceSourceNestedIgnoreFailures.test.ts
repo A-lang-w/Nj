@@ -71,6 +71,17 @@ const expectUnenteredSubtree = (
     }),
   );
   expect(
+    error.partial?.entries.filter(({ path }) => path === "nested"),
+  ).toEqual([
+    {
+      status: "failed",
+      kind: "directory",
+      path: "nested",
+      code: error.code,
+      message: error.message,
+    },
+  ]);
+  expect(
     error.partial?.entries.some(({ path }) => path.startsWith("nested/")),
   ).toBe(false);
   expect(
@@ -87,6 +98,7 @@ describe.skipIf(process.platform === "win32")(
       "fails closed for a nested %s policy before reading its children",
       async (condition) => {
         const { root, policy, excluded, sourceBytes } = await fixture();
+        await symlink("nested/excluded.ts", join(root, "alias.ts"));
         const resources = new ArtifactResourceScope();
         const denied = Object.assign(
           new Error("controlled nested policy EACCES"),
@@ -138,6 +150,15 @@ describe.skipIf(process.platform === "win32")(
           if (condition === "unreadable file")
             expect(result.error.cause).toBe(denied);
           expectUnenteredSubtree(result.error, sourceBytes, excluded);
+          expect(result.error.partial?.entries).toContainEqual(
+            expect.objectContaining({
+              path: "alias.ts",
+              status: "failed",
+              kind: "symlink",
+              code: "io",
+              message: expect.stringContaining('directory "nested"'),
+            }),
+          );
           expect(externalReads).toBe(0);
           expect(resources.hasPending).toBe(false);
         } finally {

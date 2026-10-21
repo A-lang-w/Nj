@@ -330,7 +330,9 @@ If a nested policy's entry kind cannot be determined, sensitive patterns are
 checked against both file and directory forms. A match skips the policy read;
 inventory records unknown entry kind if metadata remains unavailable.
 Other child ignore files must be readable regular UTF-8 files. A policy-read failure
-stops the import and retains the inventory already captured.
+stops the import and retains the inventory already captured. CLI `partial.entries`
+includes the observed directory's failed state; files read before failure retain
+`bytes` as JSON `{ "type": "Buffer", "data": [...] }`.
 Default exclusions for common generated and dependency paths such as
 `node_modules/`, `dist/`, and `*.log` still apply after project rules, followed by
 caller exclusions. Pattern-based exclusions record the

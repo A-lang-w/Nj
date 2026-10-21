@@ -85,6 +85,13 @@ export const traverseDirectory = async (
         if (!prepared.ok) result = prepared;
         else if (isAborted(state.signal)) result = err(cancelled());
         else directory = { path: current.path, exclusions: prepared.value };
+        if (!result.ok)
+          recordDirectoryFailure(
+            state,
+            current.path,
+            result.error.code === "invalid-root" ? "io" : result.error.code,
+            result.error.message,
+          );
       }
       while (result.ok) {
         let child: Dirent | null;
