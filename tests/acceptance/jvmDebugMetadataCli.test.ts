@@ -212,6 +212,8 @@ cliTest(
     expect(found.evidence).toMatchObject({
       normalized_result: { selected_entry: { entry: "é.class" } },
     });
+    // The name was decoded as UTF-8, so no CP437 fallback note applies.
+    expect(JSON.stringify(found.evidence)).not.toContain("CP437");
     // An unflagged CP437 0x82 ("é") is invalid UTF-8: JarFile refuses the
     // whole archive ("invalid CEN header (bad entry name or comment)"), so
     // the valid sibling is not selectable either.

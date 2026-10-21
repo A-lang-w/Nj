@@ -352,16 +352,27 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
-      ...legacyNameLimitations(entry),
+      ...legacyNameLimitations(entry, names),
     ],
     adapterKey: `zip-entry:${index}`,
     ...(path === storedName ? {} : { storedPath: storedName }),
   };
 };
 
-/** Preserve source bytes when an unflagged legacy name may use another code page. */
-const legacyNameLimitations = (entry: Entry): readonly string[] => {
-  if (entry.filenameUTF8 || entry.extraFieldUnicodePath?.valid === true)
+/**
+ * Preserve source bytes when an unflagged legacy name may use another code
+ * page. A reader taking the JDK's view decoded the name as strict UTF-8, so no
+ * CP437 fallback happened.
+ */
+const legacyNameLimitations = (
+  entry: Entry,
+  names: ZipEntryNameCharset,
+): readonly string[] => {
+  if (
+    names === "utf-8" ||
+    entry.filenameUTF8 ||
+    entry.extraFieldUnicodePath?.valid === true
+  )
     return [];
   const bytes = entry.rawFilename;
   if (!bytes.some((byte) => byte >= 0x80)) return [];
