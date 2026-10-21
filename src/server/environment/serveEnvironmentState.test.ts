@@ -698,11 +698,62 @@ describe("state data plane response budget", () => {
             typeof value === "object" &&
             value !== null &&
             "result" in value &&
+            typeof (value as { result?: unknown }).result === "object" &&
             (value as { id?: unknown }).id === 3,
         ),
       ).toBe(false);
     } finally {
       stringify.mockRestore();
+    }
+  });
+});
+
+describe("repeated state reads", () => {
+  it("reuses the encoded size of a state for refused repeated data/get calls", async () => {
+    const plane = dataPlane();
+    const document = renamedDocument();
+    const large = {
+      rea_state: {
+        ...document.rea_state,
+        entities: document.rea_state.entities.map((entity) =>
+          entity.type === "/api/users" && entity.id === "2"
+            ? {
+                ...entity,
+                fields: { ...entity.fields, large: "x".repeat(1024 * 1024) },
+              }
+            : entity,
+        ),
+      },
+    };
+    await plane.add({ kind: "data", data: large });
+    const fields = plane.store
+      .snapshot()
+      .rea_state.entities.find((entity) => entity.id === "2")?.fields;
+    if (fields === undefined) throw new Error("Expected the loaded entity");
+
+    const originalKeys = Object.keys;
+    let fieldEnumerations = 0;
+    const keys = vi.spyOn(Object, "keys").mockImplementation((value) => {
+      if (value === fields) fieldEnumerations += 1;
+      return originalKeys(value);
+    });
+    try {
+      const batch = await plane.post(
+        Array.from({ length: 100 }, (_, index) => ({
+          jsonrpc: "2.0",
+          id: index + 1,
+          method: "data/get",
+        })),
+      );
+      expect(
+        (batch.json as { error?: unknown }[]).filter((reply) => reply.error),
+      ).not.toHaveLength(0);
+      expect(fieldEnumerations).toBeLessThan(65);
+      expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
+        MAX_RPC_RESPONSE_BYTES,
+      );
+    } finally {
+      keys.mockRestore();
     }
   });
 });

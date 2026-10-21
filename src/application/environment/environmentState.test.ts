@@ -418,6 +418,30 @@ describe("EnvironmentStateStore", () => {
   });
 });
 
+describe("caller-owned state replacement", () => {
+  it("does not retain mutable data from a caller-owned replacement", () => {
+    const store = new EnvironmentStateStore(state);
+    const document = documentWith((value) => {
+      const entity = value.rea_state.entities.find((item) => item.id === "2");
+      if (!entity) throw new Error("Expected the user entity");
+      entity.fields = { ...(entity.fields as object), login: "renamed" };
+    });
+    expect(store.replace(document).ok).toBe(true);
+    const callerEntity = document.rea_state.entities.find(
+      (entity) => entity.id === "2",
+    );
+    if (!callerEntity) throw new Error("Expected the caller's user entity");
+    (callerEntity.fields as Record<string, unknown>).login = "later edit";
+
+    expect(store.snapshot().rea_state.entities).toContainEqual(
+      expect.objectContaining({
+        id: "2",
+        fields: expect.objectContaining({ login: "renamed" }),
+      }),
+    );
+  });
+});
+
 describe("rea-state/v1 validation", () => {
   it.each([
     [

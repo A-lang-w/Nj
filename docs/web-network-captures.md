@@ -120,6 +120,8 @@ HTTP fields and ordered duplicate headers are retained, with stored body bytes
 in binary sidecars. Bodies are not dechunked or decompressed. Metadata is an
 XML node tree; optional `_w.txt` and `_g.txt` files retain opaque WebSocket and
 gRPC message bytes. Missing members remain null, distinct from empty bodies.
+A zero-byte `_c.txt` or `_s.txt` member, which Fiddler writes for a session
+without that message, is also null and adds a record limitation.
 See Telerik's [SAZ format reference](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
 
 ## Protobuf and gRPC bodies
@@ -178,6 +180,9 @@ sanitized source even with explicit sensitivity options. If that source pass
 is interrupted, unchecked bodies are not published as partial Evidence.
 Framing overrides apply only to format-owned body coordinates and preserve
 exclusions for the transport declared in MIME metadata.
+Explicitly excluded or conflicting MIME metadata is not treated as absent:
+automatic framing leaves such a non-empty body uninterpreted, adds a record
+limitation and keeps `protobuf_coverage` partial unless `framing` is selected.
 Unknown or explicitly excluded HTTP coding metadata is not treated as absent:
 SAZ/native bodies remain opaque until identity coding is established. Raw
 header values and retained body bytes remain available in source Evidence.

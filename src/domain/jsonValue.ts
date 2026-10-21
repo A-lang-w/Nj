@@ -187,6 +187,13 @@ export const jsonValueSchema = z
   .transform(preserveJsonValue);
 jsonValueSchema._zod.toJSONSchema = () => ({});
 
+/** Validate JSON that the current boundary exclusively owns, without a second full-tree copy. */
+export const ownedJsonValueSchema = z
+  .unknown()
+  .nonoptional()
+  .pipe(validatedJsonValue);
+ownedJsonValueSchema._zod.toJSONSchema = () => ({});
+
 const objectValidation = z.custom<Record<string, JsonValue>>(
   isRecord,
   "Expected JSON object",

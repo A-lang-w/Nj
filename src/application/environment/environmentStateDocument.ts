@@ -17,7 +17,11 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { canonicalJson } from "../../domain/comparisonSemantics.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { EnvironmentState } from "./environmentState.js";
@@ -38,37 +42,42 @@ export interface StateContent {
   readonly documents: readonly HeldDocument[];
 }
 
-const fieldsSchema = z.record(z.string(), jsonValueSchema);
-const ordinalSchema = z.number().int().nonnegative();
+const stateDocumentSchemaFor = (jsonValue: z.ZodType<JsonValue, unknown>) => {
+  const fieldsSchema = z.record(z.string(), jsonValue);
+  const ordinalSchema = z.number().int().nonnegative();
 
-const stateDocumentSchema = z.strictObject({
-  rea_state: z.strictObject({
-    version: z.literal(1),
-    // `data/get` reports these; accepting them back lets its output be loaded unchanged.
-    state_evidence_id: z.string().optional(),
-    types: z.array(jsonValueSchema).optional(),
-    entities: z.array(
-      z.strictObject({
-        type: z.string(),
-        collection: z.string(),
-        id: z.string(),
-        fields: fieldsSchema,
-        view_fields: z
-          .array(z.strictObject({ tool: z.string(), fields: fieldsSchema }))
-          .optional(),
-        record_ordinals: z.array(ordinalSchema).optional(),
-      }),
-    ),
-    documents: z.array(
-      z.strictObject({
-        tool: z.string(),
-        path: z.string(),
-        value: jsonValueSchema,
-        record_ordinal: ordinalSchema.optional(),
-      }),
-    ),
-  }),
-});
+  return z.strictObject({
+    rea_state: z.strictObject({
+      version: z.literal(1),
+      // `data/get` reports these; accepting them back lets its output be loaded unchanged.
+      state_evidence_id: z.string().optional(),
+      types: z.array(jsonValue).optional(),
+      entities: z.array(
+        z.strictObject({
+          type: z.string(),
+          collection: z.string(),
+          id: z.string(),
+          fields: fieldsSchema,
+          view_fields: z
+            .array(z.strictObject({ tool: z.string(), fields: fieldsSchema }))
+            .optional(),
+          record_ordinals: z.array(ordinalSchema).optional(),
+        }),
+      ),
+      documents: z.array(
+        z.strictObject({
+          tool: z.string(),
+          path: z.string(),
+          value: jsonValue,
+          record_ordinal: ordinalSchema.optional(),
+        }),
+      ),
+    }),
+  });
+};
+
+const stateDocumentSchema = stateDocumentSchemaFor(jsonValueSchema);
+const ownedStateDocumentSchema = stateDocumentSchemaFor(ownedJsonValueSchema);
 
 type ParsedDocument = z.output<typeof stateDocumentSchema>["rea_state"];
 type ParsedEntity = ParsedDocument["entities"][number];
@@ -417,9 +426,12 @@ const heldContent = (
 export const parseStateDocument = (
   state: EnvironmentState,
   value: unknown,
+  owned = false,
 ): Result<StateContent, AnalysisInputError> => {
   const prototype = prototypeMemberPath(value);
-  const parsed = stateDocumentSchema.safeParse(value);
+  const parsed = (
+    owned ? ownedStateDocumentSchema : stateDocumentSchema
+  ).safeParse(value);
   const initial = new Map(
     state.entities.map((entity) => [entityKey(entity), entity]),
   );
