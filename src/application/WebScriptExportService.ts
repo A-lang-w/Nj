@@ -178,7 +178,8 @@ const mapExportFailure = (
   signal: AbortSignal | undefined,
 ): AnalysisError => {
   if (cause instanceof WebScriptExportError) return cause;
-  if (cause instanceof AnalysisCancelledError) return cause;
+  if (cause instanceof AnalysisCancelledError && cause !== signal?.reason)
+    return cause;
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
     return analysisErrorWithCleanupFailure(
       new WebScriptExportError(

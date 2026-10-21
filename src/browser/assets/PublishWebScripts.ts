@@ -135,14 +135,17 @@ export const publishWebScripts = async (
             tree.published && result !== undefined
               ? ({ kind: "web-script-export", result } as const)
               : undefined;
-          if (options.signal?.aborted === true)
-            throw new AnalysisCancelledError(OPERATION, {
+          if (options.signal?.aborted === true) {
+            const cancelled = new AnalysisCancelledError(OPERATION, {
               cause: options.signal.reason,
               cleanup: { reason: diagnostic, resources: [tree.outputRoot] },
               ...(partialObservation === undefined
                 ? {}
                 : { partialObservation }),
             });
+            cleanup.lease.bindCleanupError(cancelled);
+            throw cancelled;
+          }
           const error = new WebScriptExportError(
             cause instanceof ArtifactReaderFailure ? cause.reason : "io",
             tree.outputRoot,
@@ -151,6 +154,7 @@ export const publishWebScripts = async (
           );
           if (partialObservation !== undefined)
             error.retainPartialObservation(partialObservation);
+          cleanup.lease.bindCleanupError(error);
           throw error;
         }
 

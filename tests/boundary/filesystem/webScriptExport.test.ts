@@ -25,6 +25,7 @@ import {
 
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
@@ -549,6 +550,49 @@ describe("captured script cancellation finalization", () => {
     }
   });
 
+  it("wraps a caller-owned cancellation reason under the export operation", async () => {
+    const { input, resources } = await setup(
+      scriptScenarioFixture([
+        {
+          url: "https://fixture.test/first.js",
+          bytes: Buffer.from("export const a = 1;"),
+        },
+      ]),
+    );
+    const controller = new AbortController();
+    const reason = new AnalysisCancelledError("upstream_workflow", {
+      cause: { request: "stop upstream" },
+    });
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        const write = tree.write.bind(tree);
+        vi.spyOn(tree, "write").mockImplementationOnce(async (...writeArgs) => {
+          controller.abort(reason);
+          return write(...writeArgs);
+        });
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).not.toBe(reason);
+      if (!(result.error instanceof AnalysisCancelledError))
+        throw new Error("Expected AnalysisCancelledError");
+      expect(result.error.operation).toBe("export_web_scripts");
+      expect(result.error.cause).toBe(reason);
+    } finally {
+      createSpy.mockRestore();
+      await resources.close();
+    }
+  });
+});
+
+describe("captured script final commit cancellation", () => {
   it("reports cancellation with the completed output when abort lands during final commit", async () => {
     const { input, resources } = await setup();
     const controller = new AbortController();
