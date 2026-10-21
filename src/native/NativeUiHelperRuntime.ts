@@ -30,6 +30,8 @@ export const createNativeUiHelperRuntime = (
   const selectedEnvironment = snapshotEnvironment(environment);
   const deadlineSignal = AbortSignal.timeout(deadlineMs);
   const operations = new ArtifactResourceScope();
+  // Both helper stages share the selected deadline. A shorter fixed exec
+  // timeout would fail the subprocess before that deadline and hide it.
   let root: string | undefined;
   let preparation: Promise<string> | undefined;
   const cleanupLease = new AnalysisCleanupLease(async () => {
@@ -70,7 +72,7 @@ export const createNativeUiHelperRuntime = (
         output,
       ],
       {
-        timeout: 60_000,
+        timeout: deadlineMs,
         maxBuffer: 1024 * 1024,
         stopSignal: SWIFTC_INTERRUPT,
         env: { ...selectedEnvironment, TMPDIR: compilerTemporary },
@@ -91,7 +93,7 @@ export const createNativeUiHelperRuntime = (
         executable,
         [JSON.stringify(parameters)],
         {
-          timeout: 30_000,
+          timeout: deadlineMs,
           maxBuffer: NATIVE_UI_HELPER_MAX_BUFFER,
           stopSignal: "SIGTERM",
           env: selectedEnvironment,

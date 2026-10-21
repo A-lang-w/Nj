@@ -110,6 +110,28 @@ it("names the file-size cap when SIGXFSZ has no reported limit", () => {
   expect(projected.remediation.action).not.toContain("3221225472");
 });
 
+it("names memory in the marker recovery for an allocation failure", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new OwnedCommandFailure("process", "allocation", {
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: 75,
+        signal: null,
+      }),
+      "decoder",
+      "/selected",
+      "/python",
+      { marker: { resource: "memory", failure: null } },
+    ),
+  );
+  expect(projected.code).toBe("resource_constraint");
+  expect(projected.details).toMatchObject({ resource: "memory" });
+  expect(projected.remediation.action).toContain("memory");
+  expect(projected.remediation.action).toContain("address-space");
+  expect(projected.remediation.action).toContain("3221225472");
+});
+
 it("retains legacy owner causes without guessing cancellation from error text", () => {
   const reason = { stop: "legacy" };
   const result = pwntoolsDecoderFailure(

@@ -56,6 +56,22 @@ export class NativeUiInterruptionControl {
     }
   }
 
+  /**
+   * A helper subprocess reached the selected deadline before the abort signal
+   * settled. Caller cancellation already recorded on this control stays primary.
+   */
+  deadlineFailure(
+    operation: string,
+    partialObservation?: AnalysisPartialObservation,
+  ): AnalysisTimeoutError | AnalysisCancelledError {
+    if (this.#interruption === undefined)
+      this.#interrupt("deadline", this.#deadline.reason);
+    const error = this.error(operation, partialObservation);
+    if (error === undefined)
+      throw new Error("UI deadline failure requires an interruption.");
+    return error;
+  }
+
   error(
     operation: string,
     partialObservation?: AnalysisPartialObservation,

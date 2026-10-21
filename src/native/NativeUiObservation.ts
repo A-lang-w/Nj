@@ -223,6 +223,12 @@ const observeWithHelper = async (
       return ok(response.result);
     } catch (cause: unknown) {
       if (cause instanceof AnalysisError) return err(cause);
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        cause.code === "ETIMEDOUT"
+      )
+        return err(interruption.deadlineFailure(operation));
       return err(
         cause instanceof ExecFileOutputCancelledError
           ? ((signal.aborted && cause.cause === signal.reason

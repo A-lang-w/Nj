@@ -194,7 +194,7 @@ export const pwntoolsDecoderFailure = (
         limitReport?.limits ?? null,
         {
           ...outputOptions,
-          remediationAction: fixedPwntoolsBudgets,
+          remediationAction: `Review the reported worker memory limits and available host memory. ${fixedPwntoolsBudgets}`,
         },
       );
   }

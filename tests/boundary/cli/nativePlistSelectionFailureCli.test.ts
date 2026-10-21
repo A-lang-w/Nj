@@ -310,7 +310,7 @@ describe.skipIf(process.platform !== "darwin")(
           retryable: false,
           remediation: {
             action: expect.stringContaining(
-              "Select a suitable complete artifact within the fixed 64 MiB native plist input allowance.",
+              "Select a suitable complete artifact within the fixed 64 MiB (67108864-byte) native plist input allowance (no runtime override).",
             ),
           },
           details: {

@@ -1360,9 +1360,17 @@ const translateCommandFailure = (
       preparation.cancellation === undefined
         ? new ProviderAdapterError(IDENTITY.id, operation, options)
         : failure.reason === "timeout"
-          ? new AnalysisTimeoutError(operation, NATIVE_COMMAND_TIMEOUT_MS, {
+          ? new AnalysisTimeoutError(operation, timeoutMs, {
               ...options,
               cause: preparation.cancellation.reason,
+              ...nativeDeadlineRecovery({
+                timeoutMs,
+                setting: "native_command_timeout_ms",
+                cliFlag: "--native-command-timeout-ms",
+                defaultMs: NATIVE_COMMAND_TIMEOUT_MS,
+                phase: "macOS native command deadline",
+                unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
+              }),
             })
           : new AnalysisCancelledError(operation, {
               ...options,

@@ -322,7 +322,8 @@ it.runIf(!unsupportedHost).each([
     );
     const result = await provider.inspect({ path });
     if (result.ok) throw new Error("Expected resource failure");
-    expect(projectAnalysisError(result.error)).toMatchObject({
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
       code: "resource_constraint",
       category: "resource_constraint",
       details: {
@@ -334,6 +335,8 @@ it.runIf(!unsupportedHost).each([
         },
       },
     });
+    expect(projected.remediation.action).toContain("memory");
+    expect(projected.remediation.action).toContain("address-space");
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
   },

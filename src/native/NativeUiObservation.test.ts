@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 import { observeNativeUi } from "./NativeUiObservation.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -403,6 +404,40 @@ describe("native UI deadline execution", () => {
     });
     expect(calls).toBe(1);
   });
+});
+
+it("classifies a helper subprocess timeout as the selected UI deadline", async () => {
+  const result = await observeNativeUi(
+    target,
+    "observe_native_ui",
+    { ...scope, native_ui_deadline_ms: 2_500 },
+    {
+      environment: {},
+      runtime: {
+        signal: new AbortController().signal,
+        deadlineMs: 2_500,
+        invoke: async () => ({ ok: true, result: snapshot }),
+        cleanupLease: new AnalysisCleanupLease(async () => undefined),
+        close: async () => undefined,
+        resources: () => [],
+      },
+      invoke: async () => {
+        throw Object.assign(new Error("helper subprocess timed out"), {
+          code: "ETIMEDOUT",
+        });
+      },
+    },
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected helper deadline timeout");
+  expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe("provider_timeout");
+  expect(projected.message).toContain("of 2500 ms");
+  expect(projected.message).toContain("native_ui_deadline_ms");
+  expect(projected.remediation.action).toContain("above 2500");
+  expect(projected.message).not.toContain("of 30000 ms");
+  expect(projected.message).not.toContain("of 60000 ms");
 });
 
 describe("native UI interruption provenance", () => {
