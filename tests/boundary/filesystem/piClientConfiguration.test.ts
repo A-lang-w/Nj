@@ -331,3 +331,87 @@ describe("Pi strict JSON parsing", () => {
     expect(() => parseClientConfiguration("\uFEFF", "pi")).toThrow();
   });
 });
+
+describe("Pi caller-owned server settings", () => {
+  const callerSettings = {
+    timeout: 600,
+    enabled: false,
+    exposure: "codemode",
+    toolExposure: "codemode",
+    cwd: "/caller/work",
+    description: "Caller-written description",
+  };
+
+  it("keeps them when setup rewrites the launcher and its environment", async () => {
+    const { client } = await piClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          other: { command: "other-server" },
+          rea: {
+            type: "stdio",
+            command: "/previous/rea",
+            args: ["mcp"],
+            env: { CALLER_OVERRIDE: "kept" },
+            ...callerSettings,
+            unknownSetting: true,
+          },
+        },
+      }),
+    );
+
+    expect(
+      await configureClientConfiguration(client, { GHIDRA_INSTALL_DIR: "/g" }, [
+        "/current/rea",
+        "mcp",
+      ]),
+    ).toMatchObject({ status: "configured" });
+    const servers = async () =>
+      JSON.parse(await readFile(client.configPath, "utf8")).mcpServers;
+    // Setup owns the launcher and its environment; Pi's caller-owned server
+    // settings survive, and settings Pi does not define are dropped.
+    expect(await servers()).toEqual({
+      other: { command: "other-server" },
+      rea: {
+        type: "stdio",
+        command: "/current/rea",
+        args: ["mcp"],
+        env: { CALLER_OVERRIDE: "kept", GHIDRA_INSTALL_DIR: "/g" },
+        ...callerSettings,
+      },
+    });
+    expect(
+      await configureClientConfiguration(client, { GHIDRA_INSTALL_DIR: "/g" }, [
+        "/current/rea",
+        "mcp",
+      ]),
+    ).toEqual({ status: "unchanged" });
+  });
+
+  it("replaces a foreign transport instead of carrying its settings over", async () => {
+    const { client } = await piClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: { url: "https://example.test/mcp", timeout: 600 },
+        },
+      }),
+    );
+
+    expect(
+      await configureClientConfiguration(client, {}, ["/current/rea", "mcp"]),
+    ).toMatchObject({ status: "configured" });
+    expect(
+      JSON.parse(await readFile(client.configPath, "utf8")).mcpServers,
+    ).toEqual({
+      rea: {
+        type: "stdio",
+        command: "/current/rea",
+        args: ["mcp"],
+        timeout: 600,
+      },
+    });
+  });
+});

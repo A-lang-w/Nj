@@ -205,6 +205,12 @@ using a relative override. Pi has no profiles: `OMP_PROFILE`, `PI_PROFILE`,
 Pi registration. Doctor accepts an omitted `type` for stdio but reports a
 non-stdio type as invalid; `enabled: false` stays disabled.
 
+Setup owns the launcher, its arguments, and its environment. Pi's caller-owned
+server settings in the same entry, `timeout`, `enabled`, `exposure`,
+`toolExposure`, `cwd`, and `description`, survive every rewrite, so a later
+`rea setup` neither re-enables a server you disabled nor restores Pi's default
+timeout. Settings Pi does not define are dropped.
+
 REA configures only the user scope. Pi also reads `.pi/mcp.json` in trusted
 projects; a same-name project entry can replace the user entry or override its
 enabled state and exposure. Check that file if the user registration is aligned
