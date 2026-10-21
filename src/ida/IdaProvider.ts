@@ -302,18 +302,19 @@ export class IdaProvider implements AnalysisProviderCandidate {
     options: AnalysisProviderInspectionOptions,
   ): Promise<ProviderTargetSupport> {
     const base = this.inspectTargetSupport(target);
-    if (base.status === "unsupported") return base;
-    if (target.kind === "database") {
-      const config = await this.#configuration(options);
-      // Only a Hex-Rays lease opens a private database copy; attached GUIs and
-      // database supervisors have no verified route for an existing database.
-      if (!config.ok)
-        return {
-          status: "unknown",
-          code: null,
-          reason: "IDA protocol could not be resolved from the registration.",
-          diagnostics: base.diagnostics,
-        };
+    // Only IDA databases and universal Mach-O depend on the registration.
+    if (base.status !== "unknown") return base;
+    const config = await this.#configuration(options);
+    if (!config.ok)
+      return {
+        status: "unknown",
+        code: null,
+        reason: "IDA registration could not be resolved.",
+        diagnostics: base.diagnostics,
+      };
+    // Only a Hex-Rays lease opens a private database copy; attached GUIs and
+    // database supervisors have no verified route for an existing database.
+    if (target.kind === "database")
       return config.value.protocol === "hexrays"
         ? {
             status: "supported",
@@ -328,19 +329,9 @@ export class IdaProvider implements AnalysisProviderCandidate {
               'Opening an existing IDA database requires the "hexrays" headless registration. Select the original input binary with this registration.',
             diagnostics: base.diagnostics,
           };
-    }
-    if (target.format !== "mach-o-universal") return base;
     // Attached identity is the recorded whole-input digest, which every slice
     // of a universal file shares, so it cannot prove the GUI loaded the slice
     // admission selected. Headless mode thins that slice into its own input.
-    const config = await this.#configuration(options);
-    if (!config.ok)
-      return {
-        status: "unknown",
-        code: null,
-        reason: "IDA mode could not be resolved from the registration.",
-        diagnostics: base.diagnostics,
-      };
     if (config.value.mode === "attached")
       return {
         status: "unsupported",
