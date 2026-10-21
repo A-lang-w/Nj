@@ -18,13 +18,19 @@ against the whole collection, and a create's insert rule may be retried on it, a
 their recorded members. Without such a line, or when every line is one, the view is unchanged and the member is absent,
 so existing states keep their values.
 
+A whole line's read checks the collection, so it exercises every write that changed the collection since it was last
+read. A write whose entity a read has since shown absent, for example a create an unmodelled delete removed and a 404
+then showed gone, no longer counts there, as when a modelled delete replaces it. Otherwise a whole list taken after the
+entity was gone would confirm a create it cannot show.
+
 `numberOfElements` and similar number-of-items members (`number` with `elements`, `entries`, `items` or `results`)
 count the listed entities, so a whole line's counter follows the state as `totalElements` does.
 
 ## Acceptance
 
 - Domain: a tool with a whole line and a filtered line names the whole one; a create the whole line later lists is
-  confirmed; a tool whose lines are all whole, or none, names none.
+  confirmed; a tool whose lines are all whole, or none, names none; a whole list taken after a read showed the created
+  entity gone confirms no create.
 - Serving: after a served create, the whole line lists the created entity with its counters, and the filtered line
   keeps its recorded members.
 - Measured: the six published environments compared with the application before and after, on the probes of the

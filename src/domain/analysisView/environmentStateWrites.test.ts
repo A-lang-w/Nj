@@ -513,6 +513,21 @@ describe("list lines", () => {
     });
   });
 
+  it("confirms no create by a whole list taken after a read showed its entity gone", () => {
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      // A redirected delete is not modelled; the read after it shows the book gone.
+      ["DELETE", "/api/books/3", "", 302],
+      ["GET", "/api/books/3", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+    });
+  });
+
   it("names no line when every line lists its whole collection, or none does", () => {
     const listOf = (rows: readonly TimedCaptureRow[]) =>
       stateOf(rows).views.find((view) => view.tool === "get_books");

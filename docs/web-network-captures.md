@@ -634,8 +634,9 @@ with its recording as the read plans are, as the whole response it would serve:
 the entity or list rendered into the envelope of the item view's or the line's
 base recording, with the members the state still holds. A 400, 404 or 410 (or a
 `null` body) agrees with an entity the copy does not hold. A match confirms
-the writes that changed its entity or collection since it was last read; a
-mismatch contradicts them, or, when an unmodelled write came after them, is
+the writes that changed its entity or collection since it was last read, less
+those whose entity a read since showed absent, which no longer count for the
+collection; a mismatch contradicts them, or, when an unmodelled write came after them, is
 checked only on the members they sent; a mismatch no write explains marks the related writes since as
 `side-effect`. A plan is `served` when a read confirmed it and none
 contradicted it; otherwise its `reason` is the first of its build reason

@@ -177,6 +177,18 @@ export class WriteEffects {
     this.#members.delete(key);
   }
 
+  /** A read showed the entity absent: no write's effect on it remains, so a write left with no entity drops from the collection. */
+  removed(touched: TouchedTargets, entity: string, collection: string): void {
+    this.#changed.delete(entity);
+    const byTool = this.#members.get(collection);
+    if (byTool === undefined) return;
+    for (const [tool, entities] of byTool) {
+      if (!entities.delete(entity) || entities.size > 0) continue;
+      byTool.delete(tool);
+      touched.get(collection)?.delete(tool);
+    }
+  }
+
   supersede(
     touched: TouchedTargets,
     writer: string,

@@ -271,6 +271,11 @@ export class EnvironmentStateWriteSimulation {
     this.#touched.delete(target);
     if (isAbsence(record.status)) {
       this.#state.remove(entity);
+      this.#effects.removed(
+        this.#touched,
+        target,
+        collectionTarget(entity.type, entity.collection),
+      );
       return;
     }
     const object = this.#input.io.withBody(record.ordinal, (body) =>
