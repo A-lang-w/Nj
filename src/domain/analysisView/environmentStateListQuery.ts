@@ -386,6 +386,21 @@ const listsAsRecorded = (
   );
 };
 
+/** A filter that keeps every entity of the line's collection shows nothing a flag would not: it stays inert for that value. */
+const withoutIdleFilters = (
+  line: QueryLine,
+  chosen: Record<string, QueryParameter>,
+): Record<string, QueryParameter> =>
+  Object.fromEntries(
+    Object.entries(chosen).map(([name, role]) => {
+      const value = line.values.get(name)!;
+      return role.role === "filter" &&
+        line.entities.every((entity) => holds(entity.fields[role.field], value))
+        ? [name, { role: "inert", values: [value] }]
+        : [name, role];
+    }),
+  );
+
 /** The first combination of roles, most specific first, that lists exactly what the line recorded. */
 export const explainLine = (
   line: QueryLine,
@@ -398,7 +413,9 @@ export const explainLine = (
   ): Record<string, QueryParameter> | undefined => {
     if (index === options.length) {
       tried += 1;
-      return listsAsRecorded(line, chosen) ? chosen : undefined;
+      return listsAsRecorded(line, chosen)
+        ? withoutIdleFilters(line, chosen)
+        : undefined;
     }
     const [name, choices] = options[index]!;
     for (const choice of choices) {

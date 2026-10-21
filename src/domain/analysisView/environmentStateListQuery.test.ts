@@ -36,7 +36,7 @@ const BOOKS = [
     tags: ["sea"],
     url: "https://x/kelp-tide",
   },
-].map(entity);
+].map((book) => entity({ ...book, active: true }));
 
 /** A line as the gate reads it: its query, and the books it listed in order. */
 const line = (
@@ -132,6 +132,12 @@ describe("explaining a recorded line", () => {
       includeDeleted: { role: "inert", values: ["true"] },
     });
     expect(ids("?includeDeleted=false", explained!)).toBeUndefined();
+  });
+
+  it("keeps a filter that excludes nothing inert, as a flag", () => {
+    expect(explainLine(line("?active=true", [1, 2, 3, 4]))).toEqual({
+      active: { role: "inert", values: ["true"] },
+    });
   });
 
   it("explains nothing that the collection cannot reproduce", () => {
