@@ -61,6 +61,8 @@ const installLauncher = (): void => {
     }
     decodeTimeouts.push(limits.timeoutMs);
     outputBudgets.push(limits.diagnosticBytes);
+    // Projects the deadline sentence only. A real launcher expiry and its
+    // process-tree cleanup are covered by apktoolDecodeDeadline.test.ts.
     if (
       limits.timeoutMs === 200 ||
       limits.timeoutMs === MAX_APKTOOL_DECODE_TIMEOUT_MS
