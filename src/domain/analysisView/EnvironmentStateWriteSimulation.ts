@@ -27,12 +27,16 @@ import {
   withBodies,
   writtenFieldChecks,
   SimulatedState,
-  WriteEffects,
   type CheckOutcome,
   type CheckedLines,
-  type TouchedTargets,
   type ServedLine,
 } from "./environmentStateWriteChecks.js";
+import {
+  touchTarget,
+  WriteEffects,
+  type PendingTargets,
+  type TouchedTargets,
+} from "./environmentStateWriteAttribution.js";
 import { applyCreate } from "./environmentStateWriteCreate.js";
 import {
   applyDelete,
@@ -91,8 +95,8 @@ export class EnvironmentStateWriteSimulation {
   readonly #touched: TouchedTargets = new Map();
   readonly #effects = new WriteEffects();
   readonly #lastCheck = new Map<string, number>();
-  /** The earliest modelled write to each target since its last check. */
-  readonly #touchedSince = new Map<string, number>();
+  /** The earliest modelled write to each target since its last check, and when the latest of them ended. */
+  readonly #touchedSince: PendingTargets = new Map();
   /** Timeline indexes of writes the gate does not model. */
   readonly #unmodelledAt: number[] = [];
   readonly #log: {
@@ -207,6 +211,7 @@ export class EnvironmentStateWriteSimulation {
       index,
       tool: tool.name,
       path: record.path,
+      end: record.end,
     });
   }
 
@@ -217,6 +222,7 @@ export class EnvironmentStateWriteSimulation {
       readonly index: number;
       readonly tool: string;
       readonly path: string;
+      readonly end: number;
     },
   ): void {
     if (result.kind === "unknown") {
@@ -239,17 +245,10 @@ export class EnvironmentStateWriteSimulation {
         if (target === result.targets[0]) this.#touched.delete(target);
         continue;
       }
-      if (!this.#touchedSince.has(target))
-        this.#touchedSince.set(target, write.index);
-      const tools = this.#touched.get(target) ?? new Map();
-      const before = tools.get(write.tool);
-      tools.set(
-        write.tool,
-        result.fields === undefined || before === null
-          ? null
-          : [...new Set([...(before ?? []), ...result.fields])],
-      );
-      this.#touched.set(target, tools);
+      touchTarget(this.#touched, this.#touchedSince, target, {
+        ...write,
+        fields: result.fields,
+      });
     }
     if (result.kind !== "applied") return;
     this.#log.push(write);
@@ -357,7 +356,10 @@ export class EnvironmentStateWriteSimulation {
     const outcome = this.#check(view, record);
     if (outcome === undefined) return;
     const keys = [...outcome.targets, ...outcome.unheld];
-    if (keys.some((key) => this.#taint.tainted(key))) return;
+    // A read made while a write to its targets was still running may show either state, so it checks nothing.
+    const running = (key: string) =>
+      (this.#touchedSince.get(key)?.until ?? -Infinity) > record.start;
+    if (keys.some((key) => this.#taint.tainted(key) || running(key))) return;
     const exercised = new Set<string>();
     for (const key of keys)
       for (const name of this.#touched.get(key)?.keys() ?? [])
@@ -392,7 +394,7 @@ export class EnvironmentStateWriteSimulation {
   /** Whether a write the gate does not model came after the earliest modelled write a failed check exercised. */
   #interfered(keys: readonly string[]): boolean {
     const since = Math.min(
-      ...keys.map((key) => this.#touchedSince.get(key) ?? Infinity),
+      ...keys.map((key) => this.#touchedSince.get(key)?.since ?? Infinity),
     );
     return this.#unmodelledAt.some((index) => index > since);
   }

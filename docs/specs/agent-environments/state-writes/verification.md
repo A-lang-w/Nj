@@ -258,3 +258,19 @@ A ninth round made a create prefer a collection the state holds over an equally
 fitting spelling known only from the Evidence, so a create after a load lands in
 the loaded collection and reads back. Its test fails on the previous head; the
 verdicts and the smoke are unchanged and the gates passed again.
+
+A tenth round settled six findings Greptile raised on the list-lines branch
+against this branch's code:
+
+- a read with no query on a whole list is checked on the paging line serving
+  answers it from, and a line whose query repeats a name is never checked;
+- a read made while a write to its targets was still running checks nothing;
+- a later call that stores a member otherwise than the plan refuses the plan;
+- a create keeps the spelling of a collection the capture listed empty;
+- a wide array no longer overflows the stack while checking path-dependent
+  values;
+- the guide counts served write tools among the catalog's.
+
+Each new test fails on the previous head. The verdicts over the 50 captures
+are unchanged plan by plan, the smoke applies all 31 served write tools, and
+the gates passed again.

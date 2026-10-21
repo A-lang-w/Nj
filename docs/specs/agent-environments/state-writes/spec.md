@@ -112,7 +112,9 @@ explained as one of:
 Any other change is `unexplained-change`. An increment or a slug applies to
 every call that could take it, so the plan is also `unexplained-change` when
 such a rule would give a call of the tool another value than the one it
-recorded.
+recorded, or when a later call treats a member otherwise than the plan: one
+call echoes it and another stores something else, or the two rule it
+differently.
 
 **Deletes.** A delete removes the entity. Its response is the exemplar's
 response, with the entity re-rendered when the response carries it.
@@ -177,7 +179,13 @@ from the state:
   chosen as replay chooses the line for the read's call: each path parameter
   the read's value verbatim or once percent-decoded, preferring verbatim
   spellings, then recorded order, and the query values decoded, in any order.
-  A list is compared as served from the collection of that line.
+  A read with no query on a whole list falls back, as serving does, on a
+  checked line that only pages it. A line whose query repeats a name is never
+  chosen, since no call's arguments can name it. A list is compared as served
+  from the collection of that line.
+- A read made while a modelled write to its entity or collection was still
+  running, starting before that write ended, checks nothing: it may show the
+  state before or after the write.
 
 **Comparison.** The read's answer is the full response serving would give from
 the copy: an item read's entity rendered into its item view's base recording,
@@ -269,9 +277,10 @@ recording instead.
 A create in a collection held under more than one spelling (`acme1` and
 `%61cme1`) goes to the one the call spells verbatim, as item calls choose their
 entity; a collection keeps its spelling after its last entity is deleted. A
-reset or load knows the spellings of the Evidence's state and of the state it
-installs, never those of a state it replaced; when two spellings fit a call
-equally, the one holding entities wins. `data/add` refuses a document that `data/get` would write back past the
+reset or load knows the spellings of the Evidence's state, of the state it
+installs and of the type's checked list lines (so a collection the capture
+listed empty keeps its spelling), never those of a state it replaced. When two
+spellings fit a call equally, the one holding entities wins. `data/add` refuses a document that `data/get` would write back past the
 32 MiB intake limit once it adds the members a document may omit, such as
 `types` and the state Evidence id.
 

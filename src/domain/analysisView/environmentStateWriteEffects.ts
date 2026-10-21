@@ -251,6 +251,26 @@ const refineUpdate = (
   ];
 };
 
+/** Whether a later call treats a member or field otherwise than the plan: echoed in one and stored as something else in the other, or ruled differently. */
+const conflictsWithPlan = (
+  plan: WriteDraft["plan"],
+  explained: ReturnType<typeof explainUpdate>,
+): boolean => {
+  const body = plan.body!;
+  const fixed = new Set(body.fixed.map((entry) => entry.member));
+  const rules = new Map(plan.rules.map((rule) => [rule.field, rule]));
+  return (
+    explained.body.accepted.some((member) => fixed.has(member)) ||
+    explained.body.fixed.some((entry) =>
+      body.accepted.includes(entry.member),
+    ) ||
+    explained.rules.some((rule) => {
+      const held = rules.get(rule.field);
+      return held !== undefined && !same(held, rule);
+    })
+  );
+};
+
 /** Whether a rule changes its field on calls that do not send it: serving applies it to every call that could. */
 const unsentChange = (rule: FieldRule): boolean =>
   rule.rule === "increment" || rule.rule === "slug";
@@ -376,7 +396,8 @@ export const applyUpdate = (
   if (
     built(draft) &&
     !unknown &&
-    contradictsEarlierCalls(draft, explained.rules)
+    (contradictsEarlierCalls(draft, explained.rules) ||
+      conflictsWithPlan(draft.plan, explained))
   ) {
     refuse(draft, step, "unexplained-change");
     return recorded();

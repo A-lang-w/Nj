@@ -5,7 +5,8 @@ environment: an MCP server whose tools answer from what one retained web
 network capture observed, plus the environment card the agentenv framework
 reads to discover it. By default the server derives the
 [state the capture observed](#the-state-a-capture-observed) at startup and
-answers read tools from it; `--replay-only` replays the capture's records
+answers read tools from it, and the write tools whose effect the capture
+confirmed by changing it; `--replay-only` replays the capture's records
 instead. Nothing is fetched from the recorded application; every answer comes
 from retained Evidence. `rea environment-export` writes the same pair as a
 bundle folder `agent-env run` builds and runs; see
@@ -271,11 +272,11 @@ document, with the same signal exit status.
 
 Three routes are served:
 
-| Route                             | Answer                                                                                                                                                         |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /mcp`                       | The MCP server: from the state, one tool per read tool, answering from the state where it backs them; in replay, one tool per manifest tool, replaying records |
-| `GET /.well-known/agent-env.json` | The environment card                                                                                                                                           |
-| `POST /agentenv`                  | From the state, `data/reset`, `data/add` and `data/get`; in replay, JSON-RPC `-32601 method not found: <method>` for every method                              |
+| Route                             | Answer                                                                                                                                                                                                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /mcp`                       | The MCP server: from the state, one tool per read tool, answering from the state where it backs them, and one per write tool whose effect the capture confirmed, applying it to the state; in replay, one tool per manifest tool, replaying records |
+| `GET /.well-known/agent-env.json` | The environment card                                                                                                                                                                                                                                |
+| `POST /agentenv`                  | From the state, `data/reset`, `data/add` and `data/get`; in replay, JSON-RPC `-32601 method not found: <method>` for every method                                                                                                                   |
 
 Numeric JSON-RPC IDs outside JavaScript's safe range or whose precision would
 be lost are refused as invalid requests with a null ID. They are never echoed
@@ -667,8 +668,8 @@ name from Python sources the image does not have.
 
 `verify.py` is the framework's `async def verify(mcp_url)` shape over its
 Python MCP client: it lists the tools and checks the count equals the number
-the bundle serves (the manifest's read tools from the state, every manifest
-tool in replay), calls one tool with no arguments and checks the call did not
+the bundle serves (from the state, the manifest's read tools and the write
+tools whose effect the capture confirmed; every manifest tool in replay), calls one tool with no arguments and checks the call did not
 fail and its `status` is the expected one, and returns one `serve` result
 whose description reports both checks. The tool is the first served `GET` tool
 without path parameters whose answer to no arguments is not an error, and the
