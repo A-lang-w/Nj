@@ -11,6 +11,11 @@ import {
 } from "../../../src/application/SetupClientConfiguration.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import {
+  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+  DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+} from "../../../src/config/providerStartupTimeout.js";
+import { recommendedMcpToolTimeoutSeconds } from "../../../src/mcpStartupPolicy.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -20,6 +25,13 @@ import {
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
+
+// Setup writes REA's recommended per-request deadline for Pi, mirroring Codex.
+const RECOMMENDED_TIMEOUT_SECONDS = recommendedMcpToolTimeoutSeconds({
+  analysisProvider: "auto",
+  ghidraStartupTimeoutMs: DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+  hopperStartupTimeoutMs: DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+});
 
 const piPath = (
   home: string,
@@ -153,6 +165,7 @@ describe("Pi registration semantics", () => {
           type: "stdio",
           command: "npx",
           args: NPX_REGISTRATION_COMMAND.slice(1),
+          timeout: RECOMMENDED_TIMEOUT_SECONDS,
         },
       },
       enabledServers: ["other"],
@@ -293,6 +306,7 @@ describe("Pi strict JSON parsing", () => {
           type: "stdio",
           command: "npx",
           args: NPX_REGISTRATION_COMMAND.slice(1),
+          timeout: RECOMMENDED_TIMEOUT_SECONDS,
         },
       },
     });
@@ -387,6 +401,36 @@ describe("Pi caller-owned server settings", () => {
         "mcp",
       ]),
     ).toEqual({ status: "unchanged" });
+  });
+
+  it("writes REA's recommended request timeout when the caller set none", async () => {
+    const { client } = await piClient();
+    expect(
+      await configureClientConfiguration(client, { GHIDRA_INSTALL_DIR: "/g" }, [
+        "/current/rea",
+        "mcp",
+      ]),
+    ).toMatchObject({ status: "configured" });
+    const servers = async () =>
+      JSON.parse(await readFile(client.configPath, "utf8")).mcpServers;
+    // Pi's 60 second default cannot cover a cold Ghidra analysis, so setup
+    // writes the same recommendation Codex and Kimi receive.
+    expect((await servers()).rea.timeout).toBe(RECOMMENDED_TIMEOUT_SECONDS);
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: { ...(await servers()).rea, timeout: 45 },
+        },
+      }),
+    );
+    expect(
+      await configureClientConfiguration(client, { GHIDRA_INSTALL_DIR: "/g" }, [
+        "/current/rea",
+        "mcp",
+      ]),
+    ).toEqual({ status: "unchanged" });
+    expect((await servers()).rea.timeout).toBe(45);
   });
 
   it("replaces a foreign transport instead of carrying its settings over", async () => {

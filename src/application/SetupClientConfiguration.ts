@@ -783,9 +783,9 @@ const clientConfigurationDesired = async (
   )
     registration.enabledTools = previous.enabledTools;
   // Pi keeps REA's launcher and the caller's server settings in one entry.
-  // Setup owns the launcher and its environment, so a rewrite preserves the
-  // caller's timeout, enablement, exposure, working directory, and description
-  // instead of resetting them to Pi's defaults.
+  // Setup owns the launcher, its environment, and its recommended request
+  // timeout, so a rewrite preserves the caller's enablement, exposure, working
+  // directory, and description while the caller's timeout override still wins.
   if (format === "pi" && isClientServerObject(previous))
     for (const key of PI_CALLER_SETTINGS)
       if (Object.hasOwn(previous, key))
@@ -808,6 +808,15 @@ const clientConfigurationDesired = async (
             recommendedMcpToolTimeoutSeconds(validated.value.timeoutInputs),
         }
       : {}),
+    // Pi names its per-request deadline `timeout` in seconds; a cold Ghidra
+    // analysis alone may run for minutes, so write REA's recommended budget.
+    ...(client.name === "pi"
+      ? {
+          timeout:
+            positiveTimeout(previous, "timeout") ??
+            recommendedMcpToolTimeoutSeconds(validated.value.timeoutInputs),
+        }
+      : {}),
     ...(client.name === "kimi"
       ? {
           startupTimeoutMs:
@@ -823,7 +832,6 @@ const clientConfigurationDesired = async (
 
 /** Pi server settings setup does not own, in the order Pi documents them. */
 const PI_CALLER_SETTINGS = [
-  "timeout",
   "enabled",
   "exposure",
   "toolExposure",
