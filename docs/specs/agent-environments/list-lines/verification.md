@@ -82,3 +82,10 @@ four findings Greptile raised here against its code. Its page cap applies on eve
 collection: a call naming such a page that the collection has outgrown answers from its recording, and the gate skips
 such reads. Over the 50 captures no view or write plan changed and served write tools stay at 31; the six environments
 compare exactly as before.
+
+A third round merged the write-plan branch at 264ce410. Greptile's finding here, that a `_start`–`_end` range escaped
+the page cap, was in that branch's code and was fixed there: the range's width bounds a page as `limit` does, so a
+whole line naming a range the collection has outgrown answers from its recording, and the gate checks nothing by it.
+The merge also brings that branch's other fixes: unseen writes stay pending, later creates follow their sequences, and
+later document writes stay at their object. Over the 50 captures no view or write plan changed and served write tools
+stay at 31; the six environments compare exactly as before.
