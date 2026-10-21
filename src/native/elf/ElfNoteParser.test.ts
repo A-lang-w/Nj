@@ -313,6 +313,46 @@ it("rejects an extended section count stored in section zero", () => {
   );
 });
 
+const repeatedNotes = (count: number, notes: Buffer): Buffer => {
+  const headers = Buffer.alloc(56 * count);
+  const offset = 64 + headers.length;
+  for (let index = 0; index < count; index += 1) {
+    const at = index * 56;
+    headers.writeUInt32LE(4, at);
+    headers.writeBigUInt64LE(BigInt(offset), at + 8);
+    headers.writeBigUInt64LE(BigInt(notes.length), at + 32);
+    headers.writeBigUInt64LE(4n, at + 48);
+  }
+  return Buffer.concat([elf64({ phoff: 64, phnum: count }), headers, notes]);
+};
+
+it("reuses one descriptor hash and GNU NUL scan across note headers", () => {
+  const payload = Buffer.alloc(400);
+  const hashed = parse(repeatedNotes(6, elfNote("X", 1, payload)));
+  expect(hashed.entries).toHaveLength(6);
+  expect(
+    new Set(hashed.entries.map((entry) => entry.descriptor.sha256)).size,
+  ).toBe(1);
+  const gold = parse(repeatedNotes(6, elfNote("GNU", 4, payload)));
+  expect(gold.entries).toHaveLength(6);
+  expect(gold.entries.every((entry) => entry.gnu?.gold_version === "")).toBe(
+    true,
+  );
+  const distinct = Buffer.concat([
+    elfNote("X", 1, payload),
+    elfNote("X", 1, Buffer.alloc(400, 1)),
+  ]);
+  expect(() =>
+    parse(
+      elfNoteFixture({ ownership: "program", notes: distinct }),
+      inspectElfNotesInputSchema.parse({
+        path: defaults.path,
+        max_file_bytes: payload.length + 160,
+      }),
+    ),
+  ).toThrow(/byte budget/u);
+});
+
 it("decodes a GNU gold version by scanning trailing NULs", () => {
   const trailing = elfNote("GNU", 4, Buffer.from("gold\0\0x\0", "latin1"));
   expect(

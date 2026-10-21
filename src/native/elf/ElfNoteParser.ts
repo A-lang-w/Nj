@@ -18,24 +18,32 @@ const HEX_DESCRIPTOR_LIMIT = 64;
 interface TextBudget {
   readonly limit: number;
   used: number;
+  hashed: number;
+  scanned: number;
+  readonly hashes: Map<string, string>;
+  readonly scans: Map<string, number>;
 }
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
 };
 
-const chargeText = (budget: TextBudget, bytes: number): void => {
+const chargeText = (
+  budget: TextBudget,
+  bytes: number,
+  field: "used" | "hashed" | "scanned" = "used",
+): void => {
   if (
     !Number.isSafeInteger(bytes) ||
     bytes < 0 ||
-    bytes > budget.limit - budget.used
+    bytes > budget.limit - budget[field]
   )
     throw new ArtifactReaderFailure(
       "limit",
       `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
       { boundary: "memory" },
     );
-  budget.used += bytes;
+  budget[field] += bytes;
 };
 
 const sha256 = (bytes: Buffer): string =>
@@ -243,8 +251,14 @@ const decodeGnu = (
     };
   }
   if (type === 4) {
-    let end = descriptor.length;
-    while (end > 0 && descriptor[end - 1] === 0) end -= 1;
+    const range = `${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
+    let end = text.scans.get(range);
+    if (end === undefined) {
+      chargeText(text, descriptor.length, "scanned");
+      end = descriptor.length;
+      while (end > 0 && descriptor[end - 1] === 0) end -= 1;
+      text.scans.set(range, end);
+    }
     chargeText(text, end);
     return {
       build_id_hex: null,
@@ -302,6 +316,10 @@ export const parseElfNotes = (
   const text: TextBudget = {
     limit: Math.min(bytes.length, input.max_file_bytes),
     used: 0,
+    hashed: 0,
+    scanned: 0,
+    hashes: new Map(),
+    scans: new Map(),
   };
   let shstrtab: Buffer | null = null;
   if (shnum !== 0 && shstrndx !== 0) {
@@ -402,6 +420,13 @@ const toEntry = (
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const gnuOwner = note.owner === "GNU";
+  const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
+  let digest = text.hashes.get(range);
+  if (digest === undefined) {
+    chargeText(text, note.descriptor.length, "hashed");
+    digest = sha256(note.descriptor);
+    text.hashes.set(range, digest);
+  }
   return {
     table_kind: tableKind,
     table_index: tableIndex,
@@ -415,7 +440,7 @@ const toEntry = (
     descriptor: {
       location: { offset: note.descriptor_offset, bytes: note.descsz },
       bytes: note.descsz,
-      sha256: sha256(note.descriptor),
+      sha256: digest,
       hex:
         note.descsz <= HEX_DESCRIPTOR_LIMIT
           ? note.descriptor.toString("hex")
