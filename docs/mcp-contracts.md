@@ -95,9 +95,10 @@ optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
 do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
-the operation and the REA server/provider deadline; inspect session/provider
-state before retrying, and raise the MCP client's tool deadline only when the
-client ended the call before REA returned this response. These hints never
+the operation and the REA server/provider deadline; inspect partial Evidence
+and reported cleanup state, then follow producer-specific remediation or reduce
+supported work. Generic errors do not assume adjustable timeout controls. Raising
+only the MCP client's deadline cannot extend this budget. These hints never
 include the complete catalog or caller arguments.
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
@@ -239,6 +240,23 @@ delivery for responses that fit that buffer and Node's single-string limit.
 It does not change the client's buffer, analysis coverage, or retained content.
 Ordinary responses keep their existing complete result contract.
 
+### Error recovery and deadline ownership
+
+Initialization instructions and the static JavaScript tool description teach
+recovery before a host can discard a tool response. Invalid input calls should be corrected from the connected schema
+(refresh `tools/list` only if stale), not retried unchanged. REA's returned
+`provider_timeout` describes its server/provider deadline; provider-authored
+remediation names the applicable controls and preserves partial Evidence and
+cleanup uncertainty.
+
+A host timeout without a REA result is different: execution and cleanup remain
+unknown. Increasing an advertised `analysis_timeout_ms` cannot fix a shorter
+client deadline. Configure the client's tool timeout with execution, cleanup
+and delivery headroom, or report that change is needed when not authorized.
+Session status does not establish that all target-free work stopped. Detailed
+host settings and bounded retry guidance live in the shipped skill's
+[recovery reference](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/references/connection-and-recovery.md#distinguish-client-and-server-deadlines).
+
 ### Untrusted target content
 
 Strings, symbols, decompiled code and pseudocode, page text, script bodies,
@@ -337,7 +355,9 @@ page size or export retained Evidence if the view is too large.
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
 counts separately from available record counts, observed entry kinds, inventory
-Evidence IDs and inspection coverage. An inventory view selects `nodes`,
+Evidence IDs, the inventory producer's traversal `source_coverage` and
+inspection coverage. Inspection coverage is `partial` when that traversal
+coverage is unknown. An inventory view selects `nodes`,
 `occurrences`, `edges`, or `integrity_contradictions`, with `offset` and `limit`
 defaulting to 0 and 64. For occurrences, optional `logical_paths` matches exact
 recorded strings: omission selects all available records; `[]` selects none.
@@ -509,6 +529,17 @@ concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
+
+`open_bundle_resources` selects a separate read-only app resource session
+without resolving `CFBundleExecutable`, including when it is absent or
+unresolvable. `binary_session` reports `session_kind: "bundle_resources"` and the
+caller and canonical resource-root paths; it does not report a binary target or
+deep-provider binding. `inspect_plist`, `decode_interface_builder`,
+`inspect_asset_catalog`, and `inspect_keyed_archive` retain resource-root
+provenance and use a null Evidence subject when executable identity is unknown.
+Binary-only operations and binary analysis snapshots do not apply in this
+session. `open_binary` can switch back to executable analysis, and
+`close_binary` retires either session kind.
 
 Each provider client receives `binary_session.analysis_run.run_id` before any
 provider startup, including clients whose startup fails. `process_lineage` is
@@ -776,13 +807,13 @@ auto-analysis, bridge connection, and health readiness before returning analysis
 
 These deadlines have different owners:
 
-| Deadline             | Owner and effect                                                                                                                                                                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MCP initialize       | The client bounds transport/REA connection startup, before any target query.                                                                                                                                                        |
-| Hopper startup       | REA allows 120,000 ms by default; `REA_HOPPER_STARTUP_TIMEOUT_MS` accepts decimal integers from 1–2,147,483,647 ms. Invalid values fail configuration validation. Startup failure is reported by the first provider query.          |
-| Ghidra startup       | REA allows 330,000 ms by default; `REA_GHIDRA_STARTUP_TIMEOUT_MS` accepts decimal integers from 1–2,147,483,647 ms. Invalid supplied values fail configuration validation. Startup failure is reported by the first provider query. |
-| Darwin swiftc helper | REA allows 120,000 ms by default for ownership-helper compilation; `REA_SWIFTC_COMPILE_TIMEOUT_MS` accepts decimal integers from 1–2,147,483,647 ms. Invalid values fail configuration validation.                                  |
-| Individual tool call | The client bounds its wait, including cold engine startup. The pinned client SDK 2.3.1 defaults to 60,000 ms and can cancel earlier than REA's startup deadline.                                                                    |
+| Deadline             | Owner and effect                                                                                                                                                                                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP initialize       | The client bounds transport/REA connection startup, before any target query.                                                                                                                                                                                                                                        |
+| Hopper startup       | REA allows 120,000 ms by default; `REA_HOPPER_STARTUP_TIMEOUT_MS` accepts decimal integers from 1–2,147,483,647 ms. Invalid values fail configuration validation. Startup failure is reported by the first provider query.                                                                                          |
+| Ghidra startup       | REA allows 330,000 ms by default; `REA_GHIDRA_STARTUP_TIMEOUT_MS` accepts decimal integers from 1–2,147,483,647 ms. Invalid supplied values fail configuration validation. Startup failure is reported by the first provider query.                                                                                 |
+| Darwin swiftc helper | REA allows 120,000 ms by default for ownership-helper compilation; `REA_SWIFTC_COMPILE_TIMEOUT_MS` accepts decimal integers from 1–2,147,483,647 ms. Invalid values fail configuration validation. Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value. |
+| Individual tool call | The client bounds its wait, including cold engine startup. The pinned client SDK 2.3.1 defaults to 60,000 ms and can cancel earlier than REA's startup deadline.                                                                                                                                                    |
 
 For [Codex and Kimi registrations](client-configuration.md), setup supplies
 missing tool deadlines from the known provider allowance plus 120 seconds of

@@ -105,7 +105,7 @@ export class JavaScriptAnalysisWorker {
   #parentCapacityExhausted = false;
   #sourcesRemaining: number | undefined;
   #deadline: ProviderStartupDeadline | undefined;
-  readonly #resultBudgetBytes: number;
+  #resultBudgetBytes = 0;
   /** Null when the runtime enforces the V8 heap flags instead. */
   readonly #processMemoryLimitBytes: number | null;
   readonly #onStdout = (chunk: Buffer | string): void => {
@@ -179,8 +179,50 @@ export class JavaScriptAnalysisWorker {
     this.#processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
       limits.heapMb,
     );
-    // Reserve host-side control, schema/Evidence work and a maximum record's
-    // transient copies. Admission also accounts for retained earlier files.
+    this.#refreshResultBudget();
+  }
+
+  /**
+   * Whether this idle process can analyze another application. A failed,
+   * cancelled, or still-open job must not be reused.
+   */
+  canReuse(): boolean {
+    return (
+      this.#ready &&
+      this.#activeJobId === undefined &&
+      this.#primaryFailure === undefined &&
+      this.#lastFailure === undefined &&
+      this.#frames.length === 0 &&
+      this.#pending === "" &&
+      this.#runtime.inputFailure === undefined &&
+      !this.#runtime.hasPendingCleanup &&
+      this.#runtime.supervisor !== undefined
+    );
+  }
+
+  /**
+   * Reset per-analysis admission for one idle process. The worker heap limit
+   * stays the one selected at launch; callers must not reuse across limits.
+   */
+  prepareForAnotherAnalysis(sourceCount: number): boolean {
+    if (!this.canReuse()) return false;
+    if (!Number.isSafeInteger(sourceCount) || sourceCount < 0)
+      throw new RangeError(
+        "JavaScript worker source count must be a nonnegative safe integer",
+      );
+    this.#sourcesRemaining = sourceCount;
+    this.#estimatedRetainedBytes = 0;
+    this.#parentCapacityExhausted = false;
+    this.#applicationProjectionFailure = undefined;
+    this.#refreshResultBudget();
+    return true;
+  }
+
+  /**
+   * Reserve host-side control, schema/Evidence work, and a maximum record's
+   * transient copies. Admission also accounts for retained earlier files.
+   */
+  #refreshResultBudget(): void {
     this.#resultBudgetBytes = Math.max(
       0,
       Math.floor(
@@ -936,6 +978,9 @@ export class JavaScriptAnalysisWorker {
     return deadline.interruption === "timeout"
       ? new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
           capturedOutput: this.#captured(),
+          userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
+          remediationAction:
+            "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
         })
       : new AnalysisCancelledError(OPERATION, {
           cause: deadline.signal.reason,
