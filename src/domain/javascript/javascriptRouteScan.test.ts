@@ -341,3 +341,26 @@ it("retains dynamic destinations of recognized navigation calls without treating
     ),
   ).toBe(true);
 });
+
+it("retains pathless grouping nodes in ordinary inferred route ancestry", () => {
+  const facts = analyze(
+    `const routes=[{path:'/a',children:[{children:[{path:'b',element:B}]}]}];unknown(routes);`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/a", "/a/b"]);
+});
+it("does not attach an independent typed tree to ordinary children ancestry", () => {
+  const facts = analyze(
+    `const wrapper={children:[{_$:'typed',detail:{_$:'detail'}}]};unknown(wrapper);`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/typed",
+    "/typed/detail",
+  ]);
+  const ordinary = analyze(
+    `const typed={_$:'typed',children:[{path:'/foreign',element:F}]};unknown(typed);`,
+  );
+  expect(ordinary.candidates.map(({ path }) => path).sort()).toEqual([
+    "/foreign",
+    "/typed",
+  ]);
+});

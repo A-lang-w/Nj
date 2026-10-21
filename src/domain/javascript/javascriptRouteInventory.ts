@@ -489,9 +489,11 @@ export function* buildJavaScriptRouteInventorySteps(
   const prefixPath = (
     path: string,
     source: JavaScriptRouteInventorySource,
+    applicationRelative: boolean,
   ): string => {
     const base = source.base_path?.value;
-    return base === undefined || path === base || path.startsWith(`${base}/`)
+    return base === undefined ||
+      (!applicationRelative && (path === base || path.startsWith(`${base}/`)))
       ? path
       : path === "/"
         ? base
@@ -502,10 +504,13 @@ export function* buildJavaScriptRouteInventorySteps(
   const applicationRoot = (
     path: string,
     source: JavaScriptRouteInventorySource,
+    applicationRelative: boolean,
   ): string => {
     const base = source.base_path?.value;
     const start =
-      base !== undefined && (path === base || path.startsWith(`${base}/`))
+      !applicationRelative &&
+      base !== undefined &&
+      (path === base || path.startsWith(`${base}/`))
         ? base.length + 1
         : 1;
     const end = path.indexOf("/", start);
@@ -515,12 +520,16 @@ export function* buildJavaScriptRouteInventorySteps(
   for (const { input, source, metadataPath } of contexts) {
     yield;
     if (metadataPath !== undefined) {
-      const root = applicationRoot(metadataPath, source);
+      const root = applicationRoot(metadataPath, source, true);
       if (root) roots.add(root);
     }
     for (const candidate of input.facts?.candidates ?? [])
       if (candidate.mechanism !== "route-string-constant") {
-        const root = applicationRoot(candidate.path, source);
+        const root = applicationRoot(
+          candidate.path,
+          source,
+          candidate.mechanism === "next-app-chunk",
+        );
         if (root) roots.add(root);
       }
   }
@@ -532,10 +541,13 @@ export function* buildJavaScriptRouteInventorySteps(
     origin: JavaScriptRouteOccurrence["origin"],
   ): void => {
     if (capacity !== null) return;
-    const path = prefixPath(candidate.path, source);
+    // Next module paths are already application-relative. Other source
+    // destinations may include the deployment base themselves.
+    const applicationRelative = candidate.mechanism === "next-app-chunk";
+    const path = prefixPath(candidate.path, source, applicationRelative);
     if (
       candidate.mechanism === "route-string-constant" &&
-      !roots.has(applicationRoot(candidate.path, source))
+      !roots.has(applicationRoot(candidate.path, source, applicationRelative))
     ) {
       unanchored++;
       return;

@@ -304,7 +304,7 @@ export class JavaScriptRouteScan {
     }
     // Only router children establish path ancestry. Ordinary object wrappers
     // can contain routes without contributing URL segments.
-    if (hasPath || hasView || hasIndex) {
+    if (!typed && (hasPath || hasChildren || hasView || hasIndex)) {
       for (const property of node.properties) {
         if (
           !t.isObjectProperty(property) ||
@@ -359,7 +359,7 @@ export class JavaScriptRouteScan {
       yield;
       let root = candidate.node,
         owned = this.#claimed.has(root);
-      while (!owned) {
+      while (!owned && !candidate.typed) {
         const parent = this.#routeParents.get(root);
         if (parent === undefined) break;
         root = parent;

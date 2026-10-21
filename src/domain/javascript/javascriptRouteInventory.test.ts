@@ -281,3 +281,41 @@ it.each(["/app/reports", "/reports"])(
     );
   },
 );
+
+it("keeps filename and module-derived anchors application-relative when a deployment base matches an application segment", () => {
+  const result = build([
+    source(
+      "page",
+      "",
+      "https://example.test/app/_next/static/chunks/app/app/page-abc.js",
+    ),
+    source(
+      "root-runtime",
+      "globalThis.TURBOPACK=[];const paths=['/app/settings','/noise'];",
+      "https://example.test/_next/static/chunks/root.js",
+    ),
+    source(
+      "module-runtime",
+      "globalThis.TURBOPACK=[];const modulePath='app/app/page.js';",
+      "https://example.test/app/_next/static/chunks/runtime.js",
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual([
+    "/app/app",
+    "/app/settings",
+  ]);
+  const page = result.routes.find(({ path }) => path === "/app/app")!;
+  expect(page.source_count).toBe(2);
+  for (const origin of ["source-url", "source-syntax"])
+    expect(result.occurrences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          route_id: page.id,
+          origin,
+          unprefixed_path: "/app",
+          inferred_base_path: "/app",
+        }),
+      ]),
+    );
+  expect(result.statistics.unanchored_literals_excluded).toBe(1);
+});
