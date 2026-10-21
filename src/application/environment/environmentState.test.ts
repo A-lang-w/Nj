@@ -570,3 +570,36 @@ describe("rea-state/v1 validation", () => {
     ).toMatchObject({ path: "rea_state/version" });
   });
 });
+
+describe("wide state value validation", () => {
+  it("preserves a wide caller value through the state replacement boundary", () => {
+    const wide = Array.from({ length: 200_000 }, (_, index) => index % 10);
+    const wideObject = Object.fromEntries(
+      Array.from({ length: 20_000 }, (_, index) => [
+        `field_${String(index)}`,
+        index,
+      ]),
+    );
+    const document = documentWith((value) => {
+      const fields = value.rea_state.entities[0]!.fields as Record<
+        string,
+        unknown
+      >;
+      value.rea_state.entities[0]!.fields = {
+        ...fields,
+        caller_wide: wide,
+        caller_wide_object: wideObject,
+      };
+    });
+    const store = new EnvironmentStateStore(state);
+
+    expect(store.replace(document).ok).toBe(true);
+    const retained = store.snapshot().rea_state.entities[0]?.fields.caller_wide;
+    if (!Array.isArray(retained)) throw new Error("Expected the wide value");
+    expect(retained).toHaveLength(wide.length);
+    expect(retained.at(-1)).toBe(wide.at(-1));
+    const retainedObject =
+      store.snapshot().rea_state.entities[0]?.fields.caller_wide_object;
+    expect(retainedObject).toEqual(wideObject);
+  });
+});
