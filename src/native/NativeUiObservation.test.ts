@@ -275,6 +275,53 @@ describe("native UI capture selection and budgets", () => {
 });
 
 describe("native UI deadline execution", () => {
+  it("states the selected deadline and the fixed wait-step cap", async () => {
+    const result = await observeNativeUi(
+      target,
+      "capture_native_ui_scenario",
+      {
+        ...scope,
+        native_ui_deadline_ms: 2_500,
+        steps: [{ kind: "wait", milliseconds: 0 }],
+      },
+      {
+        environment: {},
+        runtime: {
+          signal: new AbortController().signal,
+          deadlineMs: 2_500,
+          invoke: async () => ({ ok: true, result: snapshot }),
+          cleanupLease: new AnalysisCleanupLease(async () => undefined),
+          close: async () => undefined,
+          resources: () => [],
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected a completed scenario");
+    const limitation = result.value.limitations.join("\n");
+    expect(limitation).toContain("selected native_ui_deadline_ms of 2500 ms");
+    expect(limitation).toContain("omitted means 180000");
+    expect(limitation).toContain(
+      "One wait step stays capped at 180000 ms and that cap has no runtime override.",
+    );
+    expect(limitation).not.toContain("180-second");
+  });
+
+  it("states the omitted 180000 ms deadline separately from the wait-step cap", async () => {
+    const result = await observeNativeUi(target, "observe_native_ui", scope, {
+      environment: {},
+      invoke: async () => ({ ok: true, result: snapshot }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected a completed observation");
+    const limitation = result.value.limitations.join("\n");
+    expect(limitation).toContain("selected native_ui_deadline_ms of 180000 ms");
+    expect(limitation).toContain(
+      "One wait step stays capped at 180000 ms and that cap has no runtime override.",
+    );
+    expect(limitation).not.toContain("180-second");
+  });
+
   it("reports the owned deadline as a timeout during helper execution", async () => {
     const deadline = new AbortController();
     const reason = new DOMException("deadline elapsed", "TimeoutError");

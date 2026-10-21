@@ -30,6 +30,11 @@ export class NativeUiInterruptionControl {
     this.#interrupt("deadline", this.#deadline.reason);
   };
 
+  /** Selected `native_ui_deadline_ms`, including the omitted default. */
+  get deadlineMs(): number {
+    return this.#deadlineMs;
+  }
+
   constructor(
     caller: AbortSignal | undefined,
     deadline: AbortSignal,

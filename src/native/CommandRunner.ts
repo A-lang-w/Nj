@@ -155,6 +155,8 @@ export type NativeToolResolver = (
   tool: string,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
+  /** Selected command deadline. Omitted uses `NATIVE_COMMAND_TIMEOUT_MS`. */
+  timeoutMs?: number,
 ) => Promise<Result<ResolvedTool, NativeCommandFailure>>;
 
 /** Run allowlisted Xcode tools directly without a shell. */
@@ -167,8 +169,12 @@ export class XcrunCommandRunner implements NativeCommandRunner {
   #cleanupAttempt: Promise<readonly NativeCommandCleanupFailure[]> | undefined;
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly resolveTool: NativeToolResolver = (tool, signal) =>
-      resolveXcrunTool(tool, this.environment, signal, this.launcher),
+    private readonly resolveTool: NativeToolResolver = (
+      tool,
+      signal,
+      launcher,
+      timeoutMs,
+    ) => resolveXcrunTool(tool, this.environment, signal, launcher, timeoutMs),
     private readonly launcher?: NativeCommandLauncher,
   ) {
     this.environment = snapshotEnvironment(environment);
@@ -208,6 +214,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       tool,
       options.signal,
       this.launcher,
+      options.timeoutMs,
     );
     if (!resolved.ok) {
       return err(this.#retainCleanupOwner(resolved.error));
@@ -369,12 +376,16 @@ export const resolveXcrunTool = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
+  timeoutMs?: number,
 ): Promise<Result<ResolvedTool, NativeCommandFailure>> => {
   const found = await captureProcess(
     "/usr/bin/xcrun",
     ["--find", tool],
     "xcrun",
-    signal === undefined ? {} : { signal },
+    {
+      ...(signal === undefined ? {} : { signal }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    },
     environment,
     launcher,
   );

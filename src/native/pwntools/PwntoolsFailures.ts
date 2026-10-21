@@ -40,6 +40,17 @@ export interface PwntoolsFailureContext {
 }
 
 const fixedPwntoolsBudgets = `cpuSeconds is ${String(PWNTOOLS_LIMITS.cpuSeconds)}. The output allowance is ${String(PWNTOOLS_LIMITS.outputBytes)} bytes, the diagnostic allowance is ${String(PWNTOOLS_LIMITS.diagnosticBytes)} bytes, and the address-space allowance is ${String(PWNTOOLS_LIMITS.addressSpaceBytes)} bytes. This release has no runtime override for those budgets. pwntools_timeout_ms does not raise them. Artifact admission stays REA_PWNTOOLS_MAX_INPUT_BYTES (default ${String(PWNTOOLS_LIMITS.inputBytes)} bytes).`;
+
+/** Name the file-size cap and any reported effective limit, not address space. */
+const fileSizeAllowance = (reportedBytes: number | undefined): string => {
+  const cap = String(PWNTOOLS_LIMITS.outputBytes);
+  const inherited =
+    "A tighter inherited limit is retained. This release has no runtime override. pwntools_timeout_ms does not raise the file-size allowance.";
+  return reportedBytes === undefined
+    ? `The file-size cap is ${cap} bytes (outputBytes). The effective file_size_bytes limit was not reported. ${inherited}`
+    : `The effective file-size allowance is ${String(reportedBytes)} bytes (file_size_bytes). The file-size cap is ${cap} bytes (outputBytes). ${inherited}`;
+};
+
 const DEFAULT_CONTEXT = {
   operation: "inspect_binary_layout",
   providerId: PWNTOOLS_PROVIDER_IDENTITY.id,
@@ -132,7 +143,8 @@ export const pwntoolsDecoderFailure = (
         (failureEvidence.marker?.resource === "file-size" &&
           cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
           cause.snapshot.signal === null))
-    )
+    ) {
+      const allowance = fileSizeAllowance(limitReport?.limits?.file_size_bytes);
       return new AnalysisResourceConstraintError(
         context.operation,
         "file-size",
@@ -142,13 +154,14 @@ export const pwntoolsDecoderFailure = (
           (limitReport?.failure === null || limitReport === undefined
             ? ""
             : ` Effective limit report unavailable: ${limitReport.failure}`) +
-          " This release has no runtime override for the file-size allowance.",
+          ` ${allowance}`,
         limitReport?.limits ?? null,
         {
           ...outputOptions,
-          remediationAction: `Review the reported worker file-size limits and write failure. The address-space allowance is ${String(PWNTOOLS_LIMITS.addressSpaceBytes)} bytes. This release has no runtime override. pwntools_timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
+          remediationAction: `Review the reported worker file-size limits and write failure. ${allowance} Repeating the unchanged request fails the same way.`,
         },
       );
+    }
     if (cause.reason === "process" && cause.snapshot?.signal === "SIGXCPU")
       return new AnalysisResourceConstraintError(
         context.operation,

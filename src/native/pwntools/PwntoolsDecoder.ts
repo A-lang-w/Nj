@@ -99,6 +99,8 @@ export interface PwntoolsDecoderProfile<
     readonly diagnostics: AnalysisCapturedOutput;
     readonly options: ExecutionOptions | undefined;
     readonly runCommand: PwntoolsCommand;
+    /** Effective `pwntools_timeout_ms`, including the omitted default. */
+    readonly timeoutMs: number;
   }) => Report | Promise<Report>;
 }
 
@@ -476,6 +478,7 @@ export class PwntoolsDecoder<
           options,
           runCommand: (spawn, classifyFailure) =>
             this.#runCommand(timeoutMs, spawn, options, classifyFailure),
+          timeoutMs,
         }),
       );
     } catch (cause: unknown) {

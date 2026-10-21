@@ -6,6 +6,10 @@ import {
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
+  DEFAULT_NATIVE_UI_DEADLINE_MS,
+  NATIVE_UI_WAIT_STEP_MAX_MS,
+} from "../domain/native/nativeDeadlines.js";
+import {
   nativeUiObservationInputSchema,
   nativeUiScenarioInputSchema,
   nativeUiSnapshotSchema,
@@ -281,7 +285,7 @@ const observeWithHelper = async (
       "Click uses AXPress; scroll uses AXIncrement/AXDecrement; key-entry sets the selected element's AXValue. Unsupported elements fail without global event fallback.",
       "Each completed action is followed immediately by capture; delayed UI changes require explicit wait steps. A failed after-capture can follow a completed action, so failure does not prove absence of application effects.",
       "Scenarios can change app data, cause app network activity and persist changes. The caller explicitly chooses leave-as-is; automatic restoration is unsupported.",
-      "Window matching uses exact PID and window ID for screenshots and unique accessibility geometry. Accessibility paths can change as the UI changes; stale or ambiguous paths fail. Screenshots are scaled to at most 2048 pixels; scenario output is budgeted at 64 MiB and execution has a 180-second deadline.",
+      `Window matching uses exact PID and window ID for screenshots and unique accessibility geometry. Accessibility paths can change as the UI changes; stale or ambiguous paths fail. Screenshots are scaled to at most 2048 pixels; scenario output is budgeted at 64 MiB. Execution uses the selected native_ui_deadline_ms of ${String(interruption.deadlineMs)} ms (omitted means ${String(DEFAULT_NATIVE_UI_DEADLINE_MS)}). One wait step stays capped at ${String(NATIVE_UI_WAIT_STEP_MAX_MS)} ms and that cap has no runtime override.`,
     ],
   });
   return terminalFailure === undefined

@@ -86,6 +86,15 @@ it.runIf(!unsupportedHost).each([
     expect(projected.remediation.action).toContain(
       resource === "cpu" ? "CPU" : "file-size",
     );
+    if (resource === "file-size") {
+      expect(projected.remediation.action).toContain("outputBytes");
+      expect(projected.remediation.action).toContain("67108864");
+      expect(projected.remediation.action).toContain("file_size_bytes");
+      expect(projected.remediation.action).not.toContain("address-space");
+      expect(projected.remediation.action).not.toContain("3221225472");
+      if (scenario === "reported")
+        expect(projected.remediation.action).toContain("1024");
+    }
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
