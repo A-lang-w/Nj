@@ -13,10 +13,133 @@ import { err, ok, type Result } from "../domain/result.js";
 
 const MATCHING_DEADLINE_MS = 5_000;
 const WORKER_HEAP_MIB = 128;
-/** Shared capability text for the supervised ECMAScript matching boundary. */
-export const REGEX_MATCHING_LIMITATION = `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${String(MATCHING_DEADLINE_MS / 1000)}-second matching deadline and a ${String(WORKER_HEAP_MIB)} MiB worker heap. This release has no runtime override for either cap; matching failure leaves the service available.`;
+/**
+ * Node's Worker `resourceLimits.maxOldGenerationSizeMb` request. A positive
+ * `--max-old-space-size` on the process that starts REA, including
+ * `NODE_OPTIONS`, overrides it. A zero or empty value leaves this request
+ * in effect. `NODE_OPTIONS` is applied before `process.execArgv`, and the
+ * last flag wins. That environment value is not copied into `execArgv`.
+ */
+const OLD_SPACE_FLAG = /^--max[-_]old[-_]space[-_]size(?:=(.*))?$/u;
 
-/** Fixed regex deadline. The worker heap and this deadline are separate caps. */
+/** Old-generation heap the regex worker will actually hit. */
+export type RegexWorkerHeapLimit =
+  | {
+      readonly kind: "effective";
+      readonly mib: number;
+      /** True when a positive `--max-old-space-size` overrides the 128 MiB request. */
+      readonly overridden: boolean;
+    }
+  | { readonly kind: "unknown" };
+
+const requestedHeap = {
+  kind: "effective",
+  mib: WORKER_HEAP_MIB,
+  overridden: false,
+} as const satisfies RegexWorkerHeapLimit;
+
+/** Node's `ParseNodeOptionsEnvVar`: quotes group tokens and are not part of them. */
+const nodeOptionsArgv = (
+  nodeOptions: string,
+): readonly string[] | undefined => {
+  const argv: string[] = [];
+  let inString = false;
+  let startNew = true;
+  for (let index = 0; index < nodeOptions.length; index += 1) {
+    let character = nodeOptions.charAt(index);
+    if (character === "\\" && inString) {
+      if (index + 1 >= nodeOptions.length) return undefined;
+      index += 1;
+      character = nodeOptions.charAt(index);
+    } else if (character === " " && !inString) {
+      startNew = true;
+      continue;
+    } else if (character === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (startNew) {
+      argv.push(character);
+      startNew = false;
+    } else {
+      const last = argv.length - 1;
+      argv[last] = `${argv[last] ?? ""}${character}`;
+    }
+  }
+  return inString ? undefined : argv;
+};
+
+const parsedOldSpaceMiB = (
+  token: string,
+): number | "absent" | "unrecognized" => {
+  const match = OLD_SPACE_FLAG.exec(token);
+  if (match === null) return "absent";
+  const raw = match[1];
+  if (raw === undefined) return "unrecognized";
+  if (raw === "") return 0;
+  if (!/^\+?\d+$/u.test(raw)) return "unrecognized";
+  const mib = Number(raw);
+  return Number.isSafeInteger(mib) ? mib : "unrecognized";
+};
+
+/**
+ * Derive the worker old-generation heap from the launch flags Node already
+ * applied. The raw `NODE_OPTIONS` string is not retained.
+ */
+export const resolveRegexWorkerHeap = (
+  execArgv: readonly string[],
+  nodeOptions: string | undefined,
+): RegexWorkerHeapLimit => {
+  const fromEnvironment =
+    nodeOptions === undefined ? [] : nodeOptionsArgv(nodeOptions);
+  let limit: RegexWorkerHeapLimit =
+    fromEnvironment === undefined ? { kind: "unknown" } : requestedHeap;
+  for (const token of [...(fromEnvironment ?? []), ...execArgv]) {
+    const parsed = parsedOldSpaceMiB(token);
+    if (parsed === "absent") continue;
+    if (parsed === "unrecognized") {
+      limit = { kind: "unknown" };
+      continue;
+    }
+    limit =
+      parsed > 0
+        ? { kind: "effective", mib: parsed, overridden: true }
+        : requestedHeap;
+  }
+  return limit;
+};
+
+/** Launch flags are fixed for this process; a later `NODE_OPTIONS` edit does not change them. */
+const launchRegexWorkerHeap = resolveRegexWorkerHeap(
+  process.execArgv,
+  process.env.NODE_OPTIONS,
+);
+
+const heapBound = (heap: RegexWorkerHeapLimit): string => {
+  if (heap.kind === "unknown")
+    return "The worker requests 128 MiB. A launch --max-old-space-size is set and the effective old-generation heap was not established.";
+  const override =
+    "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the 128 MiB worker request";
+  return heap.overridden
+    ? `${override} and sets this process's effective heap to ${String(heap.mib)} MiB.`
+    : `${override}. This process has no positive override, so the effective heap is ${String(heap.mib)} MiB.`;
+};
+
+/** Capability text for the supervised ECMAScript matching boundary. */
+export const regexMatchingLimitation = (heap: RegexWorkerHeapLimit): string => {
+  const preface =
+    heap.kind === "effective"
+      ? `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${String(MATCHING_DEADLINE_MS / 1000)}-second matching deadline and an effective ${String(heap.mib)} MiB old-generation heap.`
+      : `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${String(MATCHING_DEADLINE_MS / 1000)}-second matching deadline.`;
+  return `${preface} This release has no runtime override for the deadline. ${heapBound(heap)} Matching failure leaves the service available.`;
+};
+
+/** Shared capability text for the supervised ECMAScript matching boundary. */
+export const REGEX_MATCHING_LIMITATION = regexMatchingLimitation(
+  launchRegexWorkerHeap,
+);
+
+/** Fixed regex deadline. The worker heap is a separate, launch-flag-sensitive cap. */
 export const regexMatchingDeadlineError = (
   operation: string,
 ): AnalysisResourceConstraintError =>
@@ -30,19 +153,27 @@ export const regexMatchingDeadlineError = (
     },
   );
 
-/** Fixed regex worker heap. Inherited limits and host memory do not raise it. */
+/** Regex worker heap at the effective old-generation limit, which a launch flag can change. */
 export const regexWorkerHeapError = (
   operation: string,
   cause: Error,
+  heap: RegexWorkerHeapLimit = launchRegexWorkerHeap,
 ): AnalysisResourceConstraintError =>
   new AnalysisResourceConstraintError(
     operation,
     "memory",
-    `Regex worker exhausted its ${String(WORKER_HEAP_MIB)} MiB heap budget. This release has no runtime override.`,
-    { worker_heap_mib: WORKER_HEAP_MIB },
+    heap.kind === "effective"
+      ? `Regex worker exhausted its effective ${String(heap.mib)} MiB old-generation heap.`
+      : "Regex worker exhausted its old-generation heap. The effective heap was not established.",
+    heap.kind === "effective"
+      ? {
+          worker_heap_mib: heap.mib,
+          requested_worker_heap_mib: WORKER_HEAP_MIB,
+        }
+      : { requested_worker_heap_mib: WORKER_HEAP_MIB },
     {
       cause,
-      remediationAction: `The regex worker heap is ${String(WORKER_HEAP_MIB)} MiB and this release has no runtime override. Inherited limits and additional host memory do not raise it. Simplify the pattern or use literal mode.`,
+      remediationAction: `${heapBound(heap)} Restart REA after changing --max-old-space-size. Simplify the pattern or use literal mode.`,
     },
   );
 const replySchema = z.discriminatedUnion("status", [

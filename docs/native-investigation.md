@@ -202,10 +202,12 @@ Function dossiers retain this same string evidence. Native call edges retain
 Hopper's partial `CallReference` classification and exact endpoints; detailed
 reference flags remain unavailable rather than being invented.
 Regex searches use ECMAScript Unicode syntax in a cancellable worker with a
-five-second matching deadline and a 128 MiB worker heap. Deadline or
+five-second matching deadline and a worker old-generation heap. Deadline or
 cancellation stops matching while leaving the Hopper API available. This
-release has no runtime override for that deadline or heap. Literal mode
-retains Unicode casefold matching.
+release has no runtime override for that deadline. The worker requests 128
+MiB. A positive Node.js `--max-old-space-size` on the process that starts
+REA, including `NODE_OPTIONS`, overrides that request and sets the effective
+heap. Literal mode retains Unicode casefold matching.
 
 ## Bounded static traces
 
