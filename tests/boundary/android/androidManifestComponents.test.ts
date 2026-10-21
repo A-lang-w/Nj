@@ -382,6 +382,20 @@ it("does not let the first component bypass the resolved-name byte budget", () =
   );
 });
 
+it("measures resolved names in UTF-8 bytes before concatenating them", () => {
+  const multibytePackage = "界".repeat(400_000);
+  const inventory = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${multibytePackage}"><application><activity android:name=".Main"/></application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]?.name).toBe(".Main");
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "resolved-name byte budget",
+  );
+});
+
 it("marks the inventory partial when nameless declarations are dropped", () => {
   const inventory = parseAndroidManifestComponents(
     `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><activity /><activity android:name=".Real" /></application></manifest>`,
