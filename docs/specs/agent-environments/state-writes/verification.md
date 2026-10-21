@@ -310,3 +310,50 @@ A thirteenth round settled seven findings Greptile raised on this branch, the fi
 
 Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
 applies all 31 served write tools, and the gates passed again.
+
+A fourteenth round settled two findings Greptile raised on the list-queries branch against this branch's code:
+
+- the type's identity field never becomes a constant: an update whose id member the application ignored no longer
+  writes the exemplar's id into the entity another call names;
+- a page size of zero bounds nothing, so a whole line recorded with `limit=0` answers from the state.
+
+Both tests fail on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke applies
+all 31 served write tools, and the gates passed again.
+
+A fifteenth round settled nine findings Greptile raised on this branch, the fidelity branch and the list-lines branch,
+five of them on the previous rounds' own changes:
+
+- an entity field whose name looks like a pointer is matched by name; only a document's pointers cover the members
+  under them;
+- a failed read contradicts each exercised write no unmodelled write came after, rather than skipping all of them
+  when the oldest pending write came before one;
+- an item read, update or delete names its entity as serving does, decoding the id once, so `book%2531` no longer
+  reaches `book1`;
+- a plan whose calls use a member both as the identity and as a fixed member, or fix it at different values, is
+  refused;
+- a size of zero bounds nothing only on a line whose recording listed items under it;
+- an update whose observation drops a field the entity held is refused;
+- a later create whose clock takes another format, or whose unique value is not a UUID, is refused;
+- a derived state `data/get` would write past 32 MiB is not served.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.
+
+A sixteenth round settled four findings Greptile raised on the fifteenth round's changes, here and on the fidelity,
+list-lines and list-queries branches:
+
+- a size of zero is no bound only by itself: a range or another size on the same line still bounds the page;
+- an update is refused for a dropped field only when a later read shows it dropped, since a write's own response may
+  leave fields out;
+- interference is weighed against a tool's latest call on the read's entity or collection, not its latest call
+  anywhere.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.
+
+A seventeenth round settled two more findings Greptile raised on the list-queries branch against this branch's
+interference rule: an unmodelled write counts against a tool when it followed the tool's call on any target the read
+covers, so a later call on another entity does not hide it; and a failed item read contradicts the writes no
+unmodelled write followed, checking only the others on their members. Both tests fail on the previous head. The
+verdicts over the 50 captures are unchanged plan by plan, the smoke applies all 31 served write tools, and the gates
+passed again.

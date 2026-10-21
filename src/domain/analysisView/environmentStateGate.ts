@@ -7,7 +7,6 @@ import {
   isObject,
   lastSegmentValue,
   listItems,
-  pagesOnly,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -20,6 +19,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { pagesOnly } from "./environmentStatePaging.js";
 import { readClock, type ClockFormat } from "./environmentStateWriteValues.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 

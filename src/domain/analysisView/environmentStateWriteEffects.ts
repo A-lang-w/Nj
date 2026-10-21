@@ -122,8 +122,10 @@ export type EffectResult =
       readonly kind: "applied";
       readonly targets: readonly string[];
       readonly entity?: WrittenEntity;
-      /** The fields an update wrote; a create writes the whole entity. */
+      /** The fields an update wrote, or the pointers a document write wrote; a create writes the whole entity. */
       readonly fields?: readonly string[];
+      /** Set when the fields are a document's pointers, each covering the members under it. */
+      readonly pointers?: boolean;
       /** The fields an update sent or changed, derived ones included, and those of them its increments add to. */
       readonly changed?: {
         readonly fields: readonly string[];
@@ -393,6 +395,7 @@ export const applyUpdate = (
     idField,
     id,
     startMs: startOf(context, step),
+    read: after.ordinal !== step.record.ordinal,
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");

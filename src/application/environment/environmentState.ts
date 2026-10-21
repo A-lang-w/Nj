@@ -8,9 +8,9 @@ import {
 } from "../../domain/analysisView/environmentStateRules.js";
 import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type {
-  AnalysisInputIssue,
+import {
   AnalysisResourceConstraintError,
+  type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -23,6 +23,8 @@ import {
   type EnvironmentManifestTool,
   type EnvironmentSource,
 } from "./environmentSource.js";
+import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
+import { initialStateBytes } from "./environmentStateStore.js";
 import { describeWrite } from "./environmentStateWriteDescription.js";
 import {
   environmentToolDefinitions,
@@ -238,6 +240,29 @@ export interface PreparedState extends ServedState {
   >;
 }
 
+/** The derived state, unless data/get would write it past what data/add loads back, so its own report could not be restored. */
+export const admitServedState = (
+  state: EnvironmentState,
+  operation: string,
+): Result<EnvironmentState, AnalysisResourceConstraintError> => {
+  const bytes = initialStateBytes(state);
+  return bytes > STATE_INTAKE_LIMIT_BYTES
+    ? err(
+        new AnalysisResourceConstraintError(
+          operation,
+          "capacity",
+          "The derived state is larger than data/add loads, so it cannot be served",
+          { max_state_bytes: STATE_INTAKE_LIMIT_BYTES, state_bytes: bytes },
+          {
+            retryable: false,
+            remediationAction:
+              "Capture fewer or smaller responses, or serve the environment as replay only.",
+          },
+        ),
+      )
+    : ok(state);
+};
+
 const unavailable = (error: AnalysisError): PreparedState => {
   const { code, message } = projectAnalysisError(error);
   return {
@@ -262,6 +287,8 @@ export const prepareServedState = (
   if (!reads.ok) return unavailable(reads.error);
   const derived = deriveEnvironmentState(source, captureValue, operation);
   if (!derived.ok) return unavailable(derived.error);
+  const admitted = admitServedState(derived.value, operation);
+  if (!admitted.ok) return unavailable(admitted.error);
   // Served write tools join the catalog, so the whole catalog is admitted again.
   const catalog = servedCatalog(source, derived.value, name, operation);
   return catalog.ok

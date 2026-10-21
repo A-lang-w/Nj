@@ -85,6 +85,29 @@ describe("served creates", () => {
 });
 
 describe("served updates and deletes", () => {
+  it("keeps an entity's identity when the application ignored the id an update sent", () => {
+    const renamed = renamedBook(FIRST_BOOK, "Renamed Book", 3);
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        renamed,
+        200,
+        { id: 999, name: "Renamed Book" },
+      ],
+      ["GET", "/api/books/1", renamed],
+    ]);
+    const answer = books.answer("patch_books_by_id", {
+      id: "2",
+      body: { id: 999, name: "Second Edition" },
+    });
+    expect(answer.body).toMatchObject({ id: 2, name: "Second Edition" });
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toMatchObject({
+      id: 2,
+    });
+  });
+
   const SECOND_EDITION = renamedBook(SECOND_BOOK, "Second Edition", 13);
   const RENAME_SECOND = { id: "2", body: { name: "Second Edition" } };
 
@@ -683,6 +706,58 @@ describe("paged lines", () => {
     expect(books.answer("get_books")).toMatchObject({
       body: [FIRST_BOOK, SECOND_BOOK, created],
       state: { source: "state", membership: "all", listed: 3 },
+    });
+  });
+
+  it("answers a whole list a zero limit names from the state, as zero lists every match", () => {
+    const books = servedFrom([
+      ["GET", "/api/books?limit=0", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+    ]);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books", { limit: "0" })).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK, created],
+      state: { source: "state", membership: "all", listed: 3 },
+    });
+  });
+
+  it("answers a zero limit a whole line recorded empty from that recording once a create fills its collection", () => {
+    const alpha = { id: 1, name: "Alpha", org: "1" };
+    const beta = { id: 2, name: "Beta", org: "2" };
+    const books = servedFrom([
+      ["GET", "/api/orgs/1/books", [alpha]],
+      ["GET", "/api/orgs/1/books/1", alpha],
+      ["GET", "/api/orgs/2/books?limit=0", []],
+      ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+      ["GET", "/api/orgs/2/books/2", beta],
+    ]);
+    books.answer("post_orgs_books_by_id", { id: "2", body: { name: "Gamma" } });
+    // Only a recording that listed items under it shows that zero lists every entity.
+    expect(
+      books.answer("get_orgs_books_by_id", { id: "2", limit: "0" }),
+    ).toMatchObject({
+      body: [],
+      state: { source: "recording", reason: "page-exceeded" },
+    });
+  });
+
+  it("keeps a range's bound beside a zero size its recording shows unbounded", () => {
+    const books = servedFrom([
+      ["GET", "/api/books?limit=0&_start=0&_end=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+    ]);
+    books.answer("post_books", CREATE_NEW_BOOK);
+    expect(
+      books.answer("get_books", { limit: "0", _start: "0", _end: "2" }),
+    ).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK],
+      state: { source: "recording", reason: "page-exceeded" },
     });
   });
 

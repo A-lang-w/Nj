@@ -88,7 +88,7 @@ export class EnvironmentStateWriteSimulation {
   readonly #touched: TouchedTargets = new Map();
   readonly #effects = new WriteEffects();
   readonly #lastCheck = new Map<string, number>();
-  /** The earliest modelled write to each target since its last check, and when the latest of them ended. */
+  /** When the latest modelled write to each target since its last check ended. */
   readonly #touchedSince: PendingTargets = new Map();
   /** Timeline indexes of writes the gate does not model. */
   readonly #unmodelledAt: number[] = [];
@@ -168,12 +168,8 @@ export class EnvironmentStateWriteSimulation {
       io: this.#input.io,
       records: this.#input.records,
       timed: this.#input.timed,
-      viewOf: (ordinal) => {
-        const tool = this.#toolOf.get(ordinal);
-        return tool === undefined
-          ? undefined
-          : this.#input.views.get(tool.name);
-      },
+      viewOf: (ordinal) =>
+        this.#input.views.get(this.#toolOf.get(ordinal)?.name ?? ""),
       idField: (type) => this.#types.get(type)!.id_field,
       observed: (ordinal) =>
         this.#observations.set(
@@ -236,22 +232,18 @@ export class EnvironmentStateWriteSimulation {
         result.entity.collection,
         result.entity.id,
       );
-    if (result.kind === "applied")
-      this.#effects.supersede(this.#touched, write.tool, result);
-    if (result.kind === "observed")
+    if (result.kind === "observed") {
       this.#effects.observed(this.#touched, result.targets);
-    for (const target of result.targets) {
       // A recorded outcome replaces the entity's values, not its collection's membership.
-      if (result.kind === "observed") {
-        if (target === result.targets[0]) this.#touched.delete(target);
-        continue;
-      }
+      this.#touched.delete(result.targets[0]!);
+      return;
+    }
+    this.#effects.supersede(this.#touched, write.tool, result);
+    for (const target of result.targets)
       touchTarget(this.#touched, this.#touchedSince, target, {
         ...write,
         fields: result.fields,
       });
-    }
-    if (result.kind !== "applied") return;
     this.#log.push(write);
     if (result.inserted !== undefined)
       this.#inserted.set(result.inserted, write.tool);
@@ -362,7 +354,7 @@ export class EnvironmentStateWriteSimulation {
       return;
     const exercised = exercisedBy(this.#touched, keys, borrowers);
     if (borrowers !== undefined) {
-      this.#contradictOthers(outcome.pass, keys, exercised, record);
+      if (!outcome.pass) this.#contradictOthers(keys, exercised, record);
       return;
     }
     const pass =
@@ -372,11 +364,17 @@ export class EnvironmentStateWriteSimulation {
       ? this.#confirm(view, record, keys, exercised)
       : undefined;
     if (!pass) {
-      if (!this.#interfered(keys))
+      const interfered = new Set(
+        [...exercised].filter((name) => this.#interferedWith(name, keys)),
+      );
+      if (interfered.size === 0)
         this.#mismatch({ record, index, keys, exercised, view });
-      // An unmodelled write since these writes may explain the difference: check their own members only.
-      else if (view.shape === "item") this.#checkMembers(view, record);
-      else for (const key of keys) this.#taint.fail(key);
+      else {
+        // An unmodelled write after some of these writes may explain the difference: those are checked on their own members only.
+        this.#contradictOthers(keys, exercised, record);
+        if (view.shape === "item") this.#checkMembers(view, record, interfered);
+        else for (const key of keys) this.#taint.fail(key);
+      }
       if (view.shape === "item") this.#adopt(view, record);
     }
     const pending = {
@@ -390,16 +388,15 @@ export class EnvironmentStateWriteSimulation {
     }
   }
 
-  /** A read a write's effect was learned from checks nothing of that write, yet still contradicts the others. */
+  /** A failed read contradicts the writes it exercised that no unmodelled write came after, as a read a write's effect was learned from still does the others. */
   #contradictOthers(
-    pass: boolean,
     keys: readonly string[],
     exercised: ReadonlySet<string>,
     record: StateRecordFacts,
   ): void {
-    if (pass || this.#interfered(keys)) return;
     for (const name of exercised)
-      this.#drafts.get(name)!.contradictedBy ??= record.ordinal;
+      if (!this.#interferedWith(name, keys))
+        this.#drafts.get(name)!.contradictedBy ??= record.ordinal;
   }
 
   /** A passing read confirms the writes it exercised that it shows something of, and names, per target, those it shows nothing of. */
@@ -426,24 +423,27 @@ export class EnvironmentStateWriteSimulation {
     this.#unmodelledAt.push(index);
   }
 
-  /** Whether a write the gate does not model came after the earliest modelled write a failed check exercised. */
-  #interfered(keys: readonly string[]): boolean {
-    const since = Math.min(
-      ...keys.map((key) => this.#touchedSince.get(key)?.since ?? Infinity),
-    );
-    return this.#unmodelledAt.some((index) => index > since);
+  /** Whether a write the gate does not model came after a tool's latest call on one of these targets, so it may explain what a read shows there. */
+  #interferedWith(tool: string, keys: readonly string[]): boolean {
+    return keys.some((key) => {
+      const at = this.#touchedSince.get(key)?.at.get(tool);
+      return at !== undefined && this.#unmodelledAt.some((index) => index > at);
+    });
   }
 
   /** Check the writes to an item read's entity on the members they sent, as a resynchronising read does. */
   #checkMembers(
     view: Extract<StateView, { shape: "item" }>,
     record: StateRecordFacts,
+    only: ReadonlySet<string>,
   ): void {
     const { collection, id } = itemTarget(this.#state, view.type, record);
     const entity = this.#state.entity(view.type, collection, id);
     if (entity === undefined) return;
     const target = entityTarget(entity.type, entity.collection, entity.id);
-    this.#checkFields(view, record, entity, this.#touched.get(target));
+    const writes = [...(this.#touched.get(target) ?? [])];
+    const checked = new Map(writes.filter(([name]) => only.has(name)));
+    this.#checkFields(view, record, entity, checked);
   }
 
   /** Check the writes to an entity on the fields each wrote against an item read; the read's object, when it shows one. */

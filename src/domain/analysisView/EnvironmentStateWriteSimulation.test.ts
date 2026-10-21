@@ -983,3 +983,273 @@ describe("what a later call must follow", () => {
     });
   });
 });
+
+describe("what a write's effect keeps", () => {
+  it("keeps an entity member a later write's other member does not cover, though both names look like pointers", () => {
+    const flat = (id: number, prefs: string, lang: string) => ({
+      id,
+      name: `Book ${String(id)}`,
+      "/prefs": prefs,
+      "/prefs/lang": lang,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [flat(1, "x", "en"), flat(2, "x", "en")]],
+      ["GET", "/api/books/1", flat(1, "x", "en")],
+      ["GET", "/api/books/2", flat(2, "x", "en")],
+      [
+        "PATCH",
+        "/api/books/1",
+        flat(1, "x", "fr"),
+        200,
+        { "/prefs/lang": "fr" },
+      ],
+      ["PUT", "/api/books/1", flat(1, "y", "fr"), 200, { "/prefs": "y" }],
+      ["GET", "/api/books/1", flat(1, "y", "fr")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  const subtitled = (id: number, name: string, subtitle?: string) =>
+    subtitle === undefined ? { id, name } : { id, name, subtitle };
+  const summaries = (first: string): TimedCaptureRow => [
+    "GET",
+    "/api/books",
+    [subtitled(1, first), subtitled(2, "B")],
+  ];
+
+  it("refuses an update a later read shows dropped a field serving would keep", () => {
+    const rows: TimedCaptureRow[] = [
+      summaries("A"),
+      ["GET", "/api/books/1", subtitled(1, "A", "s")],
+      ["GET", "/api/books/2", subtitled(2, "B", "t")],
+      ["PATCH", "/api/books/1", "", 204, { name: "Z" }],
+      ["GET", "/api/books/1", subtitled(1, "Z")],
+      summaries("Z"),
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it("keeps an update whose partial response leaves out a field a later read still shows", () => {
+    const rows: TimedCaptureRow[] = [
+      summaries("A"),
+      ["GET", "/api/books/1", subtitled(1, "A", "s")],
+      ["GET", "/api/books/2", subtitled(2, "B", "t")],
+      ["PATCH", "/api/books/1", subtitled(1, "Z"), 200, { name: "Z" }],
+      ["GET", "/api/books/1", subtitled(1, "Z", "s")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+});
+
+describe("what an unmodelled write explains", () => {
+  it("weighs an unmodelled write against a tool's call on the entity a read checks, not its latest call elsewhere", () => {
+    const tagged = (id: number, name: string, tag: string) => ({
+      id,
+      name,
+      tag,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [tagged(1, "A", "x"), tagged(2, "B", "x")]],
+      ["GET", "/api/books/1", tagged(1, "A", "x")],
+      ["GET", "/api/books/2", tagged(2, "B", "x")],
+      ["PATCH", "/api/books/1", tagged(1, "A2", "x"), 200, { name: "A2" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["PATCH", "/api/books/2", tagged(2, "B2", "x"), 200, { name: "B2" }],
+      // The export came after book 1's rename, so it may explain the changed tag; the rename itself shows.
+      ["GET", "/api/books/1", tagged(1, "A2", "y")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+      checked_record_ordinals: [6],
+    });
+  });
+
+  it("lets an unmodelled write explain a list's change to an entity a tool made before it, whatever the tool did after", () => {
+    const fourth = book(4, "Fourth Book", bookClock(5));
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["POST", "/api/books", fourth, 201, { name: "Fourth Book" }],
+      ["GET", "/api/books/4", fourth],
+      // The export came after the third book was made, so it may explain the third book's other name.
+      [
+        "GET",
+        "/api/books",
+        [FIRST_BOOK, SECOND_BOOK, { ...THIRD_BOOK, name: "Retitled" }, fourth],
+      ],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+    });
+  });
+
+  it("contradicts by a failed item read the writes no unmodelled write came after, checking only the others' members", () => {
+    const enveloped = (data: Record<string, JsonValue>, revision: string) => ({
+      data,
+      revision,
+    });
+    const full = (name: string, description: string) => ({
+      id: 1,
+      name,
+      description,
+    });
+    const summary = [
+      { id: 1, name: "A" },
+      { id: 2, name: "B" },
+    ];
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary],
+      ["GET", "/api/books/1", enveloped(full("A", "x"), "r1")],
+      [
+        "GET",
+        "/api/books/2",
+        enveloped({ id: 2, name: "B", description: "y" }, "r1"),
+      ],
+      ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
+      ["GET", "/api/books", summary],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      // The rename sends the name alone, so the earlier description patch stays pending.
+      ["PUT", "/api/books/1", full("Z", "new"), 200, { name: "Z" }],
+      // The rename shows, but the envelope serving would answer with does not.
+      ["GET", "/api/books/1", enveloped(full("Z", "new"), "r2")],
+    ];
+    expect(gated(rows, "put_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 7,
+    });
+  });
+
+  it("contradicts a write made after an unmodelled one, though an earlier pending write came before it", () => {
+    const summary = (name: string) => [
+      { id: 1, name },
+      { id: 2, name: "B" },
+    ];
+    const full = (name: string, description: string) => ({
+      id: 1,
+      name,
+      description,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary("A")],
+      ["GET", "/api/books/1", full("A", "x")],
+      ["GET", "/api/books/2", { id: 2, name: "B", description: "y" }],
+      ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
+      ["GET", "/api/books", summary("A")],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      [
+        "PUT",
+        "/api/books/1",
+        full("Z", "new"),
+        200,
+        { name: "Z", description: "new" },
+      ],
+      ["GET", "/api/books/1", full("Z", "new")],
+      // The export came before the rename, so it cannot explain the list showing the old name.
+      ["GET", "/api/books", summary("A")],
+    ];
+    expect(gated(rows, "put_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 8,
+    });
+  });
+});
+
+describe("what later calls must keep consistent", () => {
+  it("refuses an update one call sends an ignored id with and another the path's id", () => {
+    const renamed = (at: Book, name: string) => ({ ...at, name });
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        renamed(FIRST_BOOK, "B"),
+        200,
+        { id: 999, name: "B" },
+      ],
+      ["GET", "/api/books/1", renamed(FIRST_BOOK, "B")],
+      [
+        "PATCH",
+        "/api/books/2",
+        renamed(SECOND_BOOK, "C"),
+        200,
+        { id: 2, name: "C" },
+      ],
+      ["GET", "/api/books/2", renamed(SECOND_BOOK, "C")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it("refuses a create whose later call records a clock in another format", () => {
+    const epoch = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+    const fourth = {
+      ...book(4, "Fourth Book", bookClock(5)),
+      created_at: epoch(bookClock(5)),
+      updated_at: epoch(bookClock(5)),
+    };
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["POST", "/api/books", fourth, 201, { name: "Fourth Book" }],
+      ["GET", "/api/books/4", fourth],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it("names no entity by a delete whose path id decodes to it only twice, as serving would not", () => {
+    const uid = (key: string) => ({ uid: key, name: key });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [uid("book1"), uid("book2")]],
+      ["GET", "/api/books/uid/book1", uid("book1")],
+      ["GET", "/api/books/uid/book2", uid("book2")],
+      ["DELETE", "/api/books/uid/book%2531", "", 204],
+      ["GET", "/api/books/uid/book1", BOOK_NOT_FOUND, 404],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "after-uid-literal",
+    ]);
+    expect(writes.find((plan) => plan.effect === "delete")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("checks nothing by a whole line recorded empty under a zero limit once a create fills its collection", () => {
+    const alpha = { id: 1, name: "Alpha", org: "1" };
+    const beta = { id: 2, name: "Beta", org: "2" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/1/books", [alpha]],
+      ["GET", "/api/orgs/1/books/1", alpha],
+      ["GET", "/api/orgs/2/books?limit=0", []],
+      ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+      ["GET", "/api/orgs/2/books/2", beta],
+      // An empty recording does not show that zero lists every entity.
+      ["GET", "/api/orgs/2/books?limit=0", []],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
+    expect(writes.find((plan) => plan.effect === "create")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+});
