@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
+import {
+  HopperCancelledError,
+  HopperProcessError,
+} from "../../../../src/domain/hopperErrors.js";
 import { ok } from "../../../../src/domain/result.js";
 import type {
   BridgeLauncher,
@@ -25,6 +28,30 @@ class ObservedExitLauncher implements BridgeLauncher {
       this.#notified = true;
       setImmediate(() => this.onExit());
     });
+    return Promise.resolve(
+      ok({
+        process: child,
+        ownsProcessLifetime: true as const,
+        providerLifetime: "launcher-process" as const,
+        shutdownMode: "bridge-request" as const,
+      }),
+    );
+  }
+}
+
+class AbortBeforeExitLauncher implements BridgeLauncher {
+  constructor(readonly onSpawn: () => void) {}
+
+  launch(_session: BridgeSession, options?: { readonly signal?: AbortSignal }) {
+    const child = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => process.exit(3), 5000)"],
+      { stdio: ["ignore", "ignore", "ignore"] },
+    );
+    options?.signal?.addEventListener("abort", () => child.kill("SIGTERM"), {
+      once: true,
+    });
+    child.once("spawn", this.onSpawn);
     return Promise.resolve(
       ok({
         process: child,
@@ -69,5 +96,26 @@ describe("Hopper startup failure priority", () => {
   it("reports the same launcher exit without any cancellation", async () => {
     const error = await start("never");
     expect(error._tag).toBe("HopperProcessError");
+  }, 30_000);
+
+  it("keeps cancellation first when its abort handler causes the later launcher exit", async () => {
+    const controller = new AbortController();
+    const reason = { caller: "abort-before-exit" };
+    const client = new HopperClient({
+      launcher: new AbortBeforeExitLauncher(() => controller.abort(reason)),
+      startupTimeoutMs: 5_000,
+    });
+    try {
+      const started = await client.start(controller.signal);
+      expect(started).toMatchObject({
+        ok: false,
+        error: { _tag: "HopperCancelledError" },
+      });
+      if (started.ok) throw new Error("Expected startup cancellation");
+      expect(started.error).toBeInstanceOf(HopperCancelledError);
+      expect(started.error.cause).toBe(reason);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   }, 30_000);
 });
