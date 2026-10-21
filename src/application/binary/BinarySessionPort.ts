@@ -13,6 +13,7 @@ import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
+import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 
 import type {
   AnalysisExecution,
@@ -76,6 +77,11 @@ export interface BinarySessionPort
       readonly providerId?: AnalysisProviderSelector;
     },
   ): Promise<Result<BinaryTarget, AnalysisError>>;
+  /** Open a resource-only app root without selecting or inventing an executable target. */
+  openBundleResources(
+    path: string,
+    options?: Pick<ExecutionOptions, "signal">,
+  ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>>;
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;
@@ -87,7 +93,7 @@ export interface BinarySessionPort
     overwrite: boolean,
     options?: Pick<ExecutionOptions, "progress">,
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
-  status(): JsonValue;
+  status(options?: { readonly signal?: AbortSignal }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
   exportAnalysisSnapshot(): Result<AnalysisSnapshot, AnalysisError>;
   importAnalysisSnapshot(

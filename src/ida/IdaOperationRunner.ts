@@ -5,7 +5,6 @@ import {
   nativeCalleesSchema,
   nativeXrefsSchema,
   nativeLiteralSearchPattern,
-  nativeStringsSchema,
 } from "./IdaNativeProtocol.js";
 import {
   analysisSearchPredicate,
@@ -37,6 +36,7 @@ import {
   disassemblySchema,
   idaAddressSchema,
   idaFunctionSchema,
+  idaStringsPageSchema,
   legacyCalleesSchema,
   legacyPageSchema,
   legacyStringSchema,
@@ -47,7 +47,6 @@ import {
   modernLookupSchema,
   modernLookupBatchSchema,
   modernPageSchema,
-  modernStringsSchema,
   modernXrefsSchema,
   nextOffset,
   surveySegmentsSchema,
@@ -323,9 +322,7 @@ export class IdaOperationRunner {
         }
         offset = page.next_offset;
       } else {
-        const page = (
-          this.protocol === "native" ? nativeStringsSchema : modernStringsSchema
-        ).parse(
+        const page = idaStringsPageSchema.parse(
           await this.call("find_regex", {
             pattern:
               this.protocol === "native"
@@ -335,6 +332,10 @@ export class IdaOperationRunner {
             limit: 100,
           }),
         );
+        if (page.error !== undefined && page.error !== null)
+          throw new AnalysisProtocolError(
+            `${this.protocol === "native" ? "Native IDA" : "IDA"} string search failed: ${page.error}`,
+          );
         result.push(
           ...page.matches.map((s) => ({ address: s.addr, value: s.string })),
         );

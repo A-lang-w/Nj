@@ -9,6 +9,8 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { inspectWasmArtifactInputSchema } from "../domain/wasm/wasmArtifact.js";
 
 /** Resolve all caller-selected artifact paths through the shared workflow. */
 export const registerWasmCommands = (
@@ -46,6 +48,7 @@ export const registerWasmCommands = (
       path: z.string().describe("Local WASM artifact"),
     }),
     options: z.object({
+      commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
       glue_paths: z
         .array(z.string())
         .optional()
@@ -56,15 +59,16 @@ export const registerWasmCommands = (
         .describe("Explicit local WASM candidates"),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            wasmArtifactModule.cliCommand,
-            async () => {
-              const result = await service.inspect(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, wasmArtifactModule.cliCommand, () =>
+          finishAnalysisCommand(
+            () =>
+              service.inspect(
                 {
                   path: absoluteCallerPath(args.path),
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
                   glue_paths: options.glue_paths?.map((path) =>
                     absoluteCallerPath(path),
                   ),
@@ -73,15 +77,13 @@ export const registerWasmCommands = (
                   ),
                 },
                 { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
+              ),
+            service,
+            "wabt-artifact",
+            "inspect_wasm_artifact",
+            signal,
+          ),
+        ),
+      ),
   });
 };
