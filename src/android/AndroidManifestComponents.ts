@@ -63,7 +63,7 @@ export interface AndroidManifestComponent {
   readonly foreground_service_type: string | null;
   /** Declared android:authorities on providers, split on ";". */
   readonly authorities: readonly string[] | null;
-  /** Declared android:targetActivity on activity-alias. */
+  /** Exact declared android:targetActivity on activity-alias; malformed references remain raw and make the inventory partial. */
   readonly target_activity: string | null;
 }
 
@@ -148,6 +148,9 @@ const hasSupportedJavaBinaryClassNameSyntax = (name: string): boolean => {
   }
   return !segmentStart;
 };
+
+const hasSupportedJavaPackageNameSyntax = (name: string): boolean =>
+  !name.startsWith(".") && hasSupportedJavaBinaryClassNameSyntax(name);
 
 const containsUnresolvedToken = (value: string): boolean =>
   value.includes("@") || value.includes("?") || value.includes("${");
@@ -290,6 +293,10 @@ export const parseAndroidManifestComponents = (
     rawPackageName !== null && rawPackageName !== rawPackageName.trim();
   const packageHasUnresolvedToken =
     packageName !== null && containsUnresolvedToken(packageName);
+  const packageHasUnsupportedClassNameSyntax =
+    packageName !== null &&
+    !packageHasUnresolvedToken &&
+    !hasSupportedJavaPackageNameSyntax(packageName);
   const packageNameBytes =
     packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
@@ -301,6 +308,7 @@ export const parseAndroidManifestComponents = (
   let nonliteralExported = 0;
   let unresolvedNames = 0;
   let unresolvedPackages = 0;
+  let unresolvedTargetActivities = 0;
   let unresolvedTokens = 0;
   let invalidNames = 0;
   let providerPermissionOverridesUnknown = 0;
@@ -374,7 +382,8 @@ export const parseAndroidManifestComponents = (
         (!needsPackage ||
           (packageName !== null &&
             !packageHasInvalidWhitespace &&
-            !packageHasUnresolvedToken));
+            !packageHasUnresolvedToken &&
+            !packageHasUnsupportedClassNameSyntax));
       const declaredBytes = Buffer.byteLength(declared);
       const resolvedBytes =
         needsPackage && packageKnown
@@ -469,6 +478,31 @@ export const parseAndroidManifestComponents = (
           ? providerExportedDefault(targetSdk)
           : null;
       const declaredExported = androidAttribute(component, "exported");
+      const targetActivity =
+        component.nodeName === "activity-alias"
+          ? androidAttribute(component, "targetActivity")
+          : null;
+      if (targetActivity !== null) {
+        const targetName = targetActivity.trim();
+        const targetNeedsPackage =
+          targetName.startsWith(".") || !targetName.includes(".");
+        const targetUnresolved = containsUnresolvedToken(targetName);
+        const targetInvalid =
+          targetName.length === 0 ||
+          targetName !== targetActivity ||
+          (!targetUnresolved &&
+            !hasSupportedJavaBinaryClassNameSyntax(targetName));
+        if (
+          targetInvalid ||
+          targetUnresolved ||
+          (targetNeedsPackage &&
+            (packageName === null ||
+              packageHasInvalidWhitespace ||
+              packageHasUnresolvedToken ||
+              packageHasUnsupportedClassNameSyntax))
+        )
+          unresolvedTargetActivities += 1;
+      }
       const exportedLiteral =
         declaredExported === "true"
           ? true
@@ -525,10 +559,7 @@ export const parseAndroidManifestComponents = (
             ? trimmed(component, "foregroundServiceType")
             : null,
         authorities,
-        target_activity:
-          component.nodeName === "activity-alias"
-            ? trimmed(component, "targetActivity")
-            : null,
+        target_activity: targetActivity,
       });
     }
   }
@@ -555,6 +586,12 @@ export const parseAndroidManifestComponents = (
     );
     truncated = true;
   }
+  if (packageHasUnsupportedClassNameSyntax) {
+    limitations.push(
+      "The manifest package does not fit the supported Java binary class-name syntax; package-relative component names were not resolved against it.",
+    );
+    truncated = true;
+  }
   if (providerPermissionOverridesUnknown > 0) {
     limitations.push(
       `${String(providerPermissionOverridesUnknown)} provider(s) declare android:readPermission or android:writePermission; operation-specific permission overrides are retained in the manifest text but are not projected.`,
@@ -571,7 +608,13 @@ export const parseAndroidManifestComponents = (
     );
   if (unresolvedPackages > 0) {
     limitations.push(
-      `${String(unresolvedPackages)} relative component name(s) remain unresolved because the manifest package is absent or contains a resource/placeholder token; the declared name is retained.`,
+      `${String(unresolvedPackages)} package-relative component name(s) remain unresolved because the manifest package is absent or contains a resource/placeholder token, or its syntax is unsupported; the declared name is retained.`,
+    );
+    truncated = true;
+  }
+  if (unresolvedTargetActivities > 0) {
+    limitations.push(
+      `${String(unresolvedTargetActivities)} activity-alias targetActivity value(s) are empty, malformed, contain an unresolved resource/placeholder, or cannot be resolved against the manifest package; each exact declared value is retained.`,
     );
     truncated = true;
   }

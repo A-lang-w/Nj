@@ -414,6 +414,43 @@ it("does not trim malformed package names into resolved component identities", (
   );
 });
 
+it("does not resolve package-relative names against malformed package syntax", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com..example"><application><activity android:name=".Foo"/><service android:name="Worker"/><receiver android:name="org.other.Valid"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(
+    inventory.items.map(({ declared_name, name }) => [declared_name, name]),
+  ).toEqual([
+    [".Foo", ".Foo"],
+    ["Worker", "Worker"],
+    ["org.other.Valid", "org.other.Valid"],
+  ]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "does not fit the supported Java binary class-name syntax",
+  );
+  expect(inventory.limitations.join(" ")).toContain(
+    "package-relative component name(s) remain unresolved",
+  );
+});
+
+it("preserves exact activity-alias targets and marks malformed references unknown", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity-alias android:name=".Whitespace" android:targetActivity=" .Target "/><activity-alias android:name=".Empty" android:targetActivity=""/><activity-alias android:name=".Valid" android:targetActivity=".Target"/><activity-alias android:name=".Missing"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.items.map(({ target_activity }) => target_activity)).toEqual(
+    [" .Target ", "", ".Target", null],
+  );
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "activity-alias targetActivity value(s)",
+  );
+});
+
 it("does not call resource and manifest placeholder names resolved identities", () => {
   const inventory = parseAndroidManifestComponents(
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="@string/component_class"/><service android:name="${applicationId}.Worker"/></application></manifest>',
