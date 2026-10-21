@@ -1,3 +1,4 @@
+import { rustBinarySchema } from "../../../src/domain/rust/rustBinary.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -45,7 +46,10 @@ mcpTest(
       const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
         response.structuredContent,
       );
-      expect(evidence.normalized_result.auditable_metadata?.packages).toEqual([
+      expect(
+        rustBinarySchema.parse(evidence.normalized_result).auditable_metadata
+          ?.packages,
+      ).toEqual([
         expect.objectContaining({ name: "itoa", version: "1.0.18" }),
         expect.objectContaining({
           name: "sample",
@@ -66,7 +70,10 @@ mcpTest(
       const absentEvidence = toolContract(
         "inspect_rust_binary",
       ).outputSchema.parse(absent.structuredContent);
-      expect(absentEvidence.normalized_result.auditable_metadata).toBeNull();
+      expect(
+        rustBinarySchema.parse(absentEvidence.normalized_result)
+          .auditable_metadata,
+      ).toBeNull();
       // The listed tools let the client check WebAssembly's null word size
       // against the advertised output schema, not only the source contract.
       const module = join(root, "sample.wasm");
@@ -77,9 +84,11 @@ mcpTest(
       });
       expect(wasm.isError, JSON.stringify(wasm.content)).not.toBe(true);
       expect(
-        toolContract("inspect_rust_binary").outputSchema.parse(
-          wasm.structuredContent,
-        ).normalized_result,
+        rustBinarySchema.parse(
+          toolContract("inspect_rust_binary").outputSchema.parse(
+            wasm.structuredContent,
+          ).normalized_result,
+        ),
       ).toMatchObject({
         format: "wasm",
         bits: null,

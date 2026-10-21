@@ -1,3 +1,4 @@
+import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import { readFile, writeFile } from "node:fs/promises";
@@ -87,7 +88,9 @@ cliTest(
     const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
       result.json,
     );
-    expect(evidence.normalized_result.auditable_metadata).toMatchObject({
+    expect(
+      rustBinarySchema.parse(evidence.normalized_result).auditable_metadata,
+    ).toMatchObject({
       section_name: "__DATA,.dep-v0",
       format_version: 1,
       root_package_index: 1,
@@ -164,8 +167,9 @@ cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
   const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
     result.json,
   );
-  expect(evidence.normalized_result.auditable_metadata).toBeNull();
-  expect(evidence.normalized_result.limitations.join("\n")).toContain(
+  const report = rustBinarySchema.parse(evidence.normalized_result);
+  expect(report.auditable_metadata).toBeNull();
+  expect(report.limitations.join("\n")).toContain(
     "does not mean the binary has no dependencies",
   );
 });
@@ -189,13 +193,12 @@ cliTest(
     const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
       result.json,
     );
-    expect(evidence.normalized_result.auditable_metadata?.format_version).toBe(
-      4,
-    );
-    expect(evidence.normalized_result.limitations.join("\n")).toContain(
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(report.auditable_metadata?.format_version).toBe(4);
+    expect(report.limitations.join("\n")).toContain(
       "highest known preceding revision (1)",
     );
-    expect(evidence.normalized_result.limitations.join("\n")).toContain(
+    expect(report.limitations.join("\n")).toContain(
       "this specific revision has not been independently verified",
     );
   },
