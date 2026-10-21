@@ -34,7 +34,8 @@ export interface AndroidManifestComponent {
   readonly declared_name: string;
   /**
    * Fully qualified name with the manifest package applied, or the declared
-   * name unchanged when the resolved-name byte budget was exhausted.
+   * name unchanged when it cannot be resolved or its syntax is not
+   * established.
    */
   readonly name: string;
   /**
@@ -118,6 +119,36 @@ const trimmed = (element: Element, name: string): string | null => {
   return value === undefined || value.length === 0 ? null : value;
 };
 
+const javaIdentifierStart = /^(?:\p{L}|\p{Nl}|\p{Sc}|\p{Pc})$/u;
+const javaIdentifierPart =
+  /^(?:\p{L}|\p{Nl}|\p{Sc}|\p{Pc}|\p{Mn}|\p{Mc}|\p{Nd}|\p{Cf})$/u;
+
+/**
+ * Android class names use Java binary-name syntax after the manifest's
+ * relative-name expansion. This accepts the Java identifier character
+ * categories and the separators between binary-name segments. Unrecognized
+ * characters remain source evidence instead of becoming a class identity.
+ */
+const hasSupportedJavaBinaryClassNameSyntax = (name: string): boolean => {
+  let segmentStart = true;
+  let first = true;
+  for (const character of name) {
+    if (first && character === ".") {
+      first = false;
+      continue;
+    }
+    first = false;
+    if (character === ".") {
+      if (segmentStart) return false;
+      segmentStart = true;
+    } else if (segmentStart) {
+      if (!javaIdentifierStart.test(character)) return false;
+      segmentStart = false;
+    } else if (!javaIdentifierPart.test(character)) return false;
+  }
+  return !segmentStart;
+};
+
 const containsUnresolvedToken = (value: string): boolean =>
   value.includes("@") || value.includes("?") || value.includes("${");
 
@@ -175,7 +206,7 @@ const intentValues = (
       const element = member as Element;
       if (element.nodeName !== "action" && element.nodeName !== "category")
         continue;
-      const value = trimmed(element, "name");
+      const value = androidAttribute(element, "name");
       if (value === null) continue;
       const target = element.nodeName === "action" ? actions : categories;
       if (target.includes(value)) continue;
@@ -287,7 +318,15 @@ export const parseAndroidManifestComponents = (
     const element = node as Element;
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
-    const applicationPermission = trimmed(element, "permission");
+    const declaredApplicationPermission = androidAttribute(
+      element,
+      "permission",
+    );
+    const applicationPermission =
+      declaredApplicationPermission === null ||
+      declaredApplicationPermission.length === 0
+        ? null
+        : declaredApplicationPermission;
     const applicationPermissionHasUnresolvedToken =
       applicationPermission !== null &&
       containsUnresolvedToken(applicationPermission);
@@ -312,6 +351,7 @@ export const parseAndroidManifestComponents = (
         continue;
       }
       const declared = rawDeclaredName.trim();
+      const unresolvedName = containsUnresolvedToken(declared);
       const filters = childNodes(component).filter(
         (entry): entry is Element =>
           entry.nodeType === 1 && entry.nodeName === "intent-filter",
@@ -324,8 +364,9 @@ export const parseAndroidManifestComponents = (
       // A huge manifest package would be copied into every resolved name;
       // once the byte budget is spent, later names keep their declared form.
       const invalidDeclaredName =
-        declared.length === 0 || declared !== rawDeclaredName;
-      const unresolvedName = containsUnresolvedToken(declared);
+        declared.length === 0 ||
+        declared !== rawDeclaredName ||
+        (!unresolvedName && !hasSupportedJavaBinaryClassNameSyntax(declared));
       const needsPackage = declared.startsWith(".") || !declared.includes(".");
       const packageKnown =
         !invalidDeclaredName &&
@@ -382,7 +423,9 @@ export const parseAndroidManifestComponents = (
           ? component.nodeName === "activity-alias"
             ? null
             : applicationPermission
-          : declaredPermission.trim() || null;
+          : declaredPermission.length === 0
+            ? null
+            : declaredPermission;
       const permissionSource =
         permissionValue === null
           ? "none"
@@ -502,7 +545,7 @@ export const parseAndroidManifestComponents = (
   }
   if (invalidNames > 0) {
     limitations.push(
-      `${String(invalidNames)} component name value(s) are empty or have surrounding whitespace; the raw declaration is retained without resolving it as an identity.`,
+      `${String(invalidNames)} component name value(s) are empty, have surrounding whitespace, or do not fit the supported Java binary class-name syntax; the raw declaration is retained without resolving it as an identity.`,
     );
     truncated = true;
   }

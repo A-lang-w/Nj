@@ -105,6 +105,70 @@ it("inherits an application permission when a component omits its own", () => {
   expect(inventory.items[4]?.permission_source).toBe("component");
 });
 
+it("preserves exact action, category, and effective permission strings", () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission=" P "><activity android:name=".Open"><intent-filter><action android:name=" OPEN "/><category android:name=" "/></intent-filter></activity><service android:name=".Worker" android:permission=" C "/></application></manifest>';
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(inventory.items.map(({ permission }) => permission)).toEqual([
+    " P ",
+    " C ",
+  ]);
+  expect(inventory.items[0]).toMatchObject({
+    actions: [" OPEN "],
+    categories: [" "],
+    permission_source: "application",
+  });
+  expect(inventory.status).toBe("complete");
+
+  const whitespacePermission = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission=" "><activity android:name=".Open"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(whitespacePermission.items[0]).toMatchObject({
+    permission: " ",
+    permission_source: "application",
+  });
+});
+
+it.each([
+  ".Bad/Main",
+  ".Bad//Main",
+  "com.example.Bad/Name",
+  "com..example.Bad",
+  "com.example.9Bad",
+])(
+  "retains malformed component class name %s without resolving it",
+  (declaredName) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="${declaredName}"/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory.items[0]).toMatchObject({
+      declared_name: declaredName,
+      name: declaredName,
+    });
+    expect(inventory.status).toBe("partial");
+    expect(inventory.limitations.join(" ")).toContain(
+      "do not fit the supported Java binary class-name syntax",
+    );
+  },
+);
+
+it("accepts Java nested and Unicode class identifiers", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Outer$Inner"/><activity android:name=".Δelta"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.items.map(({ name }) => name)).toEqual([
+    "com.example.Outer$Inner",
+    "com.example.Δelta",
+  ]);
+  expect(inventory.status).toBe("complete");
+});
+
 it("does not inherit application permission through an explicit empty override", () => {
   const manifest =
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="com.example.APP"><activity android:name=".Open" android:permission=""/></application></manifest>';
