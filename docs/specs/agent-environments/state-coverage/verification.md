@@ -110,3 +110,14 @@ and `fields-differ` is 9 to 10.
 
 Not covered here: serving from the state, the AgentEnv data plane and write
 effects, which are later increments.
+
+## After the squash onto main
+
+The branch was squashed onto main once the state-serve branch merged (166fb082). Against a merge of the previous head
+into that main, the squash keeps both sides of every conflict and drops nothing of this branch. Two tests then failed
+on it and were refitted with the oversized-document fix in 2a926a0a: the bundle test of a state catalog over the
+discovery budget uses 300 read tools, inside the window where the state's catalog is refused and replay's, with its
+response summaries, still fits (280–320 by a probe), and the rea-state validation test names the pushed document by
+the count of documents the state holds. The replay-only card test pinned main's 11,131-byte card; it now pins this
+branch's 12,818-byte card, whose descriptions name each tool's recorded responses. The branch then merged main at
+d7ca93cc without conflicts.
