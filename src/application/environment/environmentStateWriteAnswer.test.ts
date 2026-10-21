@@ -10,10 +10,12 @@ import {
   BOOK_ROWS,
   DELETE_NOT_FOUND,
   FIRST_BOOK,
+  LIST_LINE_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
   book,
   bookClock,
+  bookPage,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
@@ -356,6 +358,21 @@ describe("paged list lines", () => {
     expect(paged.answer("get_books", { limit: "10" })).toMatchObject({
       body: [FIRST_BOOK, SECOND_BOOK],
       state: { source: "recording", reason: "unrecorded-request" },
+    });
+  });
+});
+
+describe("list lines", () => {
+  it("lists a created book on the line that lists every book, while a filtered line keeps its recorded members", () => {
+    const books = servedFrom(LIST_LINE_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books")).toMatchObject({
+      body: bookPage([FIRST_BOOK, SECOND_BOOK, created]),
+      state: { source: "state", membership: "all", listed: 3 },
+    });
+    expect(books.answer("get_books", { name: "First Book" })).toMatchObject({
+      body: bookPage([FIRST_BOOK]),
+      state: { source: "state", membership: "recorded", listed: 1 },
     });
   });
 });
