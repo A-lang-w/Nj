@@ -421,6 +421,16 @@ it("withholds rejected mixed configuration data from every automatic interpretat
   }
 });
 
+it("does not recycle route-field initializers or writes as independent Next constants", () => {
+  const facts = analyze(
+    `globalThis.TURBOPACK=[];createBrowserRouter([{path:'/reports'}]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);const independent='/reports/help';`,
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/reports",
+    "/reports/help",
+  ]);
+});
+
 it("owns structured navigation fragments without leaking partial destinations", () => {
   const facts = analyze(
     `createBrowserRouter([{path:'/users'}]);router.push({pathname:'/users/' + id});router.navigate(['/users/',id]);router.push({path:suffix + ['/users/',id]});`,

@@ -86,6 +86,8 @@ const navigationReceivers = new Set([
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
   typed ? !key.startsWith("_") && !key.startsWith("$") : key === "children";
+const isRouteSegmentKey = (key: string | undefined): boolean =>
+  key === "path" || key === "route" || key === "_$";
 
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
 export class JavaScriptRouteScan {
@@ -164,6 +166,17 @@ export class JavaScriptRouteScan {
       return;
     }
     if (this.#result.capacity !== null) return;
+    if (
+      t.isAssignmentExpression(node) &&
+      t.isMemberExpression(node.left) &&
+      isRouteSegmentKey(
+        semanticStaticPropertyName(node.left.property, node.left.computed),
+      )
+    ) {
+      this.#propertyValues.add(node.right);
+      if (stringValue(node.right) === undefined)
+        this.#ownDynamicValue(node.right, false);
+    }
     if (!this.#nextRuntime && t.isIdentifier(node) && nextNames.has(node.name))
       this.#nextRuntime = true;
     if (t.isStringLiteral(node) || t.isTemplateLiteral(node)) {
@@ -229,11 +242,12 @@ export class JavaScriptRouteScan {
       const value = stringValue(node.value);
       if (value !== undefined)
         this.onLegacyRoute?.({ node, value, mechanism: `property:${name}` });
-      if (this.#result.capacity === null) this.#propertyValues.add(node.value);
     }
+    if (this.#result.capacity === null && isRouteSegmentKey(name))
+      this.#propertyValues.add(node.value);
     if (
       this.#result.capacity === null &&
-      (name === "path" || name === "route" || name === "_$") &&
+      isRouteSegmentKey(name) &&
       !this.#dynamicValues.has(node) &&
       !this.#dynamicValues.has(node.value) &&
       stringValue(node.value) === undefined
