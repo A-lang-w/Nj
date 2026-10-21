@@ -215,7 +215,7 @@ class ArtifactClient implements AnalysisClient {
     try {
       const targetRefusal = artifactTargetRefusal(operation, this.target);
       if (targetRefusal !== undefined)
-        throw this.unsupportedTarget(operation, targetRefusal);
+        throw this.unsupportedTarget(operation, targetRefusal.reason);
       if (operation === "inspect_artifact") {
         const inspected = await this.inspectArtifact(parameters, options);
         return inspected;

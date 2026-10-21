@@ -679,6 +679,7 @@ it("discovers artifact target prerequisites and preserves typed MCP refusals", a
   header.writeUInt32LE(3, 8);
   header.writeUInt32LE(2, 12);
   await writeFile(join(root, "standalone"), header);
+  await writeFile(join(root, "Tool.app"), header);
   const contents = join(root, "Fixture.app", "Contents");
   await mkdir(join(contents, "MacOS"), { recursive: true });
   await writeFile(join(contents, "MacOS", "Fixture"), header);
@@ -726,6 +727,7 @@ it("discovers artifact target prerequisites and preserves typed MCP refusals", a
       "plain.plist",
       "keyed.plist",
       "standalone",
+      "Tool.app",
       "Fixture.app",
     ]) {
       expect(
@@ -741,7 +743,8 @@ it("discovers artifact target prerequisites and preserves typed MCP refusals", a
         const supported =
           filename === "Fixture.app" ||
           (filename.endsWith(".plist") && name === "inspect_keyed_archive") ||
-          (filename === "standalone" && name === "trace_dylib_resolution");
+          (["standalone", "Tool.app"].includes(filename) &&
+            name === "trace_dylib_resolution");
         const group = groups.find((entry) => entry.names.includes(name));
         expect(group, `${filename} ${name}`).toMatchObject({
           available: supported,

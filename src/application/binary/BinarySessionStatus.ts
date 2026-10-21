@@ -71,8 +71,8 @@ export const binarySessionStatus = async ({
         return {
           ...descriptor,
           available: false as const,
-          availabilityCode: "target_kind_unsupported" as const,
-          reason: targetRefusal,
+          availabilityCode: targetRefusal.code,
+          reason: targetRefusal.reason,
         };
       const unavailable = runtimeUnavailability.get(descriptor.operation);
       return unavailable === undefined
