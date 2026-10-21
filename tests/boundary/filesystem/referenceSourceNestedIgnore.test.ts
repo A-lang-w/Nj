@@ -686,6 +686,8 @@ describe.skipIf(process.platform === "win32")(
       { nested: false, pattern: "foo/**/" },
       { nested: true, pattern: "foo/**" },
       { nested: true, pattern: "foo/**/" },
+      { nested: false, pattern: "foo/**\n!foo/**" },
+      { nested: true, pattern: "foo/**\n!foo/**" },
     ])(
       "preserves Git file and directory semantics for $pattern (nested=$nested)",
       async ({ nested, pattern }) => {
