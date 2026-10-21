@@ -404,7 +404,8 @@ A state that is unavailable does not stop the server: it logs a warning naming
 the error `code` and message before it binds, then serves replay. The state is
 unavailable when it cannot be derived, such as from a
 `capture_browser_scenario` capture that selected header values but no response
-bodies or over the view's budget, and when its catalog under the served name
+bodies or over the view's budget, when `data/get` would write it past the 32 MiB
+`data/add` intake limit, and when its catalog under the served name
 exceeds the [discovery reservation](#what-a-manifest-is). That check runs
 first, so no state is derived for it, and replay is then admitted exactly as
 with `--replay-only`. `--replay-only`

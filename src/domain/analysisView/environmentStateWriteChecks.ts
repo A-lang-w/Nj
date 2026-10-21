@@ -6,11 +6,9 @@ import {
 } from "../unicodeCodePointOrder.js";
 import {
   at,
-  collectionPathOf,
   decodedSegment,
   isObject,
   isParam,
-  lastSegmentValue,
   listsAll,
   listItems,
   missingRequiredFields,
@@ -29,7 +27,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { pagesOnly, pageSize } from "./environmentStatePaging.js";
+import { pageBound, pagesOnly } from "./environmentStatePaging.js";
 import { insertIndex } from "./environmentStateWriteExplain.js";
 import type { InsertRule } from "./environmentStateWriteRules.js";
 
@@ -276,35 +274,48 @@ interface ReadBodies {
 }
 
 /** An item read: the answer the held entity renders into the served envelope must equal the recording; a recorded 404 or 410 agrees with none held. */
+/** How many of a held collection's segments match a path's verbatim, or undefined when one matches neither verbatim nor once percent-decoded. */
+const segmentMatch = (
+  held: readonly string[],
+  read: readonly string[],
+): number | undefined => {
+  if (held.length !== read.length) return undefined;
+  let verbatim = 0;
+  for (const [index, segment] of held.entries())
+    if (segment === read[index]) verbatim += 1;
+    else if (decodedSegment(segment) !== read[index]) return undefined;
+  return verbatim;
+};
+
 /**
- * The entity an item read names, resolved as serving resolves an item call: its collection and id as written, else a
- * held collection whose path matches once percent-decoded and an id tried decoded, then as written.
+ * The entity an item read or write names, as serving names it: in a held collection its path matches, verbatim
+ * spellings first, the id percent-decoded once, then as written; else the collection and decoded id as written.
  */
 export const itemTarget = (
   state: SimulatedState,
   type: string,
   record: Pick<StateRecordFacts, "path">,
 ): { readonly collection: string; readonly id: string } => {
-  const collection = collectionPathOf(record, true);
-  const id = lastSegmentValue(record.path);
-  if (state.entity(type, collection, id) !== undefined)
-    return { collection, id };
-  const read = segmentsOf(collection);
-  const ids = [decodedSegment(id), id];
-  for (const candidate of ids)
-    for (const entity of state.ofType(type)) {
-      const held = segmentsOf(entity.collection);
-      if (
-        entity.id === candidate &&
-        held.length === read.length &&
-        held.every(
-          (segment, index) =>
-            segment === read[index] || decodedSegment(segment) === read[index],
-        )
-      )
-        return { collection: entity.collection, id: entity.id };
-    }
-  return { collection, id };
+  const read = segmentsOf(record.path);
+  const raw = read.pop() ?? "";
+  const ids = [...new Set([decodedSegment(raw), raw])];
+  const written = `/${read.join("/")}`;
+  for (const id of ids)
+    if (state.entity(type, written, id) !== undefined)
+      return { collection: written, id };
+  const collections = [
+    ...new Set(state.ofType(type).map((entity) => entity.collection)),
+  ]
+    .flatMap((collection) => {
+      const verbatim = segmentMatch(segmentsOf(collection), read);
+      return verbatim === undefined ? [] : [{ collection, verbatim }];
+    })
+    .sort((left, right) => right.verbatim - left.verbatim);
+  for (const { collection } of collections)
+    for (const id of ids)
+      if (state.entity(type, collection, id) !== undefined)
+        return { collection, id };
+  return { collection: written, id: ids[0]! };
 };
 
 export const checkItemRead = (
@@ -431,18 +442,18 @@ export const checkListRead = (
   },
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
+  const { body, base } = check;
+  const baseItems =
+    base === undefined ? undefined : listItems(base, view.pointer);
+  if (body === undefined || base === undefined || baseItems === undefined)
+    return undefined;
   // Serving answers a page too small for the collection from its recording, so such a read checks nothing.
-  const size = pageSize(record.query);
+  const size = pageBound(record.query, baseItems.length);
   if (
     check.all &&
     size !== undefined &&
     state.members(view.type, check.collection).length > size
   )
-    return undefined;
-  const { body, base } = check;
-  const baseItems =
-    base === undefined ? undefined : listItems(base, view.pointer);
-  if (body === undefined || base === undefined || baseItems === undefined)
     return undefined;
   // A usable body that no longer holds the list is not what serving answers on this line.
   const items = listItems(body, view.pointer);

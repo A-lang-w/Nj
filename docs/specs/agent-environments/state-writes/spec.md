@@ -105,7 +105,11 @@ the value a recorded call sent it with, and then stores the value that call
 recorded (its `constant` rule carries it). The type's identity field never
 takes a rule: sent as the path's id it is the identity member, sent as another
 value the application ignored it is accepted with that value and stores
-nothing, and a stored id that changed is `unexplained-change`.
+nothing, and a stored id that changed is `unexplained-change`. A plan whose
+calls use a member both as the identity and as a fixed member, or fix it at
+different values, is `unexplained-change`, as serving could not take every
+recorded call. So is an update whose observation drops a field the entity
+held, since serving keeps every field an update does not write.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
@@ -159,9 +163,10 @@ the initial state.
 **Writes.** Only a 2xx write is modelled. A modelled write applies its effect, using the values it recorded
 for generated fields and the stored values for fields it transformed. A
 modelled write whose call the plan does not explain brings its entity to the
-recorded outcome instead, without attribution. A later create whose sequence
-fields hold another value than serving would generate makes the plan
-`unexplained-change`; identities are left to the id mapping. An update or
+recorded outcome instead, without attribution. A later create whose generated
+values take another form than serving gives them (a sequence value out of
+order, a clock in another format, a non-UUID unique value) makes the plan
+`unexplained-change`; integer identities are left to the id mapping. An update or
 delete names its entity as an item read does (below).
 
 Any other write that may have changed state, including a redirected or
@@ -183,8 +188,9 @@ members they sent.
 from the state:
 
 - an item read of a state-backed item view, of the entity serving would name:
-  the read's collection and id as written, else a held collection whose path
-  matches once percent-decoded;
+  in a held collection the read's path matches, each segment verbatim or once
+  percent-decoded and verbatim spellings first, the id percent-decoded once,
+  then as written;
 - a list or document read on one of its view's checked request lines,
   chosen as replay chooses the line for the read's call: each path parameter
   the read's value verbatim or once percent-decoded, preferring verbatim
@@ -194,7 +200,8 @@ from the state:
   different values is never chosen, since no call's arguments can name it; one
   repeating a name with one value is, as a call naming it matches both. A list
   is compared as served from the collection of that line. A read on a page
-  (`limit`, `size`, `per_page` and the like, a size of zero bounding nothing, or a `_start`–`_end` range) of a
+  (`limit`, `size`, `per_page` and the like, or a `_start`–`_end` range; a size
+  of zero bounds nothing on a line whose recording listed items under it) of a
   whole list checks nothing once the collection holds more entities than the
   page, which serving then answers from its recording.
 - A read made while a modelled write to its entity or collection was still
@@ -224,15 +231,17 @@ refuses to answer with.
   instead), a recorded outcome every field, and a create or delete the whole
   entity. A document write's effect is the members it merged at its
   object, or everything under the object it replaces, the whole document at the
-  root. A write with nothing left on an entity no
+  root; an entity's fields match by name only, whatever their names look like. A write with nothing left on an entity no
   longer counts there, nor in a collection where no entity it changed keeps any
   of its effect. A mismatch contradicts them. A pass confirms those it shows
   something of: a create's or delete's membership, or a changed field the
   read's view shows and does not treat as volatile; a read that shows none of
   an update's changes confirms nothing of it, and leaves it for a later check
   of that entity or collection.
-- A mismatch after an unmodelled write that followed those writes is checked
-  only on the members they sent: such a write may explain the rest.
+- A mismatch contradicts each exercised write that no unmodelled write came
+  after, whatever earlier write is still pending. When an unmodelled write
+  followed some of them, an item read checks those only on the members they
+  sent and a list is not checked again: such a write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,
   as `side-effect`, the modelled writes since that previous check whose paths
   are segment-prefix related to the read's path.
@@ -305,7 +314,9 @@ installs and of the type's checked list lines (so a collection the capture
 listed empty keeps its spelling), never those of a state it replaced. When two
 spellings fit a call equally, the one holding entities wins. `data/add` refuses a document that `data/get` would write back past the
 32 MiB intake limit once it adds the members a document may omit, such as
-`types` and the state Evidence id.
+`types` and the state Evidence id. A derived state `data/get` would write
+past that limit is not served: the environment serves replay and reports the
+state `unavailable`.
 
 **Clock and generators.** The store's clock starts at `write_clock` and
 advances one second before each served write; clock fields take its value in

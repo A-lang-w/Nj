@@ -17,8 +17,8 @@ export const shownFields = (
 /** Modelled writes per target since its last check, with the fields each wrote (null: all). */
 export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
 
-/** Per target, the earliest modelled write since its last check and when the latest of them ended. */
-export type PendingTargets = Map<string, { since: number; until: number }>;
+/** Per target, when the latest modelled write since its last check ended. */
+export type PendingTargets = Map<string, { until: number }>;
 
 /** Whether a modelled write to the target was still running when a read began at `start`, so the read may show either state. */
 export const runningAt = (
@@ -40,22 +40,19 @@ export const exercisedBy = (
   return exercised;
 };
 
-/** Record a modelled write on a target: the fields it wrote (undefined: all), when it began and when it ended. */
+/** Record a modelled write on a target: the fields it wrote (undefined: all) and when it ended. */
 export const touchTarget = (
   touched: TouchedTargets,
   pending: PendingTargets,
   target: string,
   write: {
-    readonly index: number;
     readonly tool: string;
     readonly end: number;
     readonly fields: readonly string[] | undefined;
   },
 ): void => {
-  const since = pending.get(target);
   pending.set(target, {
-    since: since?.since ?? write.index,
-    until: Math.max(since?.until ?? -Infinity, write.end),
+    until: Math.max(pending.get(target)?.until ?? -Infinity, write.end),
   });
   const tools = touched.get(target) ?? new Map();
   const before = tools.get(write.tool);
@@ -75,14 +72,17 @@ type ChangedFields = readonly string[] | null;
 interface Overwrite {
   readonly whole: boolean;
   readonly fields: ReadonlySet<string> | "all";
+  readonly pointers: boolean;
 }
 
-/** Whether a write's fields cover a field: the same one, or, for a document, a pointer above it. */
-const covers = (fields: ReadonlySet<string>, field: string): boolean =>
-  fields.has(field) ||
-  [...fields].some(
-    (over) => over.startsWith("/") && field.startsWith(`${over}/`),
+/** Whether a write's fields cover a field: the same one, or, for a document's pointers, one above it. */
+const covers = (write: Overwrite, field: string): boolean => {
+  const { fields } = write;
+  if (fields === "all" || fields.has(field)) return true;
+  return (
+    write.pointers && [...fields].some((over) => field.startsWith(`${over}/`))
   );
+};
 
 /** What an earlier effect keeps after a write: nothing once every field it holds is overwritten; an update leaves a create's or delete's whole effect. */
 const remaining = (
@@ -91,9 +91,8 @@ const remaining = (
 ): ChangedFields | undefined => {
   if (write.whole) return undefined;
   if (claim === null) return null;
-  const { fields } = write;
-  if (fields === "all") return undefined;
-  const left = claim.filter((field) => !covers(fields, field));
+  if (write.fields === "all") return undefined;
+  const left = claim.filter((field) => !covers(write, field));
   return left.length > 0 ? left : undefined;
 };
 
@@ -185,6 +184,8 @@ export class WriteEffects {
         readonly fields: readonly string[];
         readonly accumulated: readonly string[];
       };
+      /** Set when the fields are a document's pointers. */
+      readonly pointers?: boolean;
     },
   ): void {
     const [entity, collection] = effect.targets as [string, string?];
@@ -200,6 +201,7 @@ export class WriteEffects {
             (field) => !effect.changed?.accumulated.includes(field),
           ),
         ),
+        pointers: effect.pointers === true,
       },
     );
     this.#changed.set(
@@ -221,7 +223,7 @@ export class WriteEffects {
     this.#overwrite(
       touched,
       { entity, collection, writer: undefined },
-      { whole: false, fields: "all" },
+      { whole: false, fields: "all", pointers: false },
     );
   }
 
