@@ -84,6 +84,8 @@ const DIRECTIONS = new Set(["asc", "desc"]);
 const IDENTIFYING = ["id", "slug", "name"];
 /** At most this many role combinations are tried for one line. */
 const MAX_COMBINATIONS = 256;
+/** A line with more query parameters than this is left unexplained, which bounds the search's depth and work. */
+const MAX_QUERY_NAMES = 12;
 
 /** A request's query values, decoded, or undefined when a parameter repeats. */
 export const queryValues = (
@@ -167,7 +169,7 @@ const ascending = (
     return left - right;
   const a = textOf(left) ?? JSON.stringify(left);
   const b = textOf(right) ?? JSON.stringify(right);
-  return compare(a.toLowerCase(), b.toLowerCase()) || compare(a, b);
+  return compare(a.toLowerCase(), b.toLowerCase());
 };
 
 const integer = (value: string): number | undefined =>
@@ -189,7 +191,9 @@ const readCall = (
 ): QueryCall | undefined => {
   const call: QueryCall = { selections: [], offset: 0 };
   for (const [name, value] of values) {
-    const parameter = parameters[name];
+    const parameter = Object.hasOwn(parameters, name)
+      ? parameters[name]
+      : undefined;
     const number = integer(value);
     if (parameter === undefined) return undefined;
     if (parameter.role === "filter")
@@ -223,7 +227,8 @@ const sorted = (
   entities: readonly StateEntity[],
   call: QueryCall,
 ): StateEntity[] | undefined => {
-  if (call.sort === undefined) return [...matched];
+  // Nothing to order: an emptied collection answers no entities rather than a recording.
+  if (call.sort === undefined || matched.length === 0) return [...matched];
   const names = [
     ...new Set(entities.flatMap((entity) => Object.keys(entity.fields))),
   ];
@@ -298,7 +303,9 @@ export const answerQuery = (
         whole:
           result.page.length === result.total &&
           [...values.keys()].every((name) => {
-            const role = query.parameters[name]?.role;
+            const role = Object.hasOwn(query.parameters, name)
+              ? query.parameters[name]!.role
+              : undefined;
             return role !== "filter" && role !== "search" && role !== "inert";
           }),
       };
@@ -358,8 +365,11 @@ const choicesFor = (
   else if (OFFSET.has(key)) choices.push({ role: "offset" });
   else if (key === "page")
     choices.push({ role: "page", first: 1 }, { role: "page", first: 0 });
-  else if (SEARCH.has(key))
-    choices.push({ role: "search", fields: searchFields(items, value) });
+  else if (SEARCH.has(key)) {
+    // An empty or unmatched term shows no searchable field, so it stays inert until a term matches one.
+    const fields = searchFields(items, value);
+    if (fields.length > 0) choices.push({ role: "search", fields });
+  }
   if (choices.length === 0 || SEARCH.has(key))
     for (const field of filterFields(items, name, value))
       choices.push({ role: "filter", field });
@@ -372,7 +382,12 @@ export const lineChoices = (
   values: ReadonlyMap<string, string>,
   items: readonly JsonObject[],
 ): [string, QueryParameter[]][] =>
-  [...values].map(([name, value]) => [name, choicesFor(name, value, items)]);
+  values.size > MAX_QUERY_NAMES
+    ? []
+    : [...values].map(([name, value]) => [
+        name,
+        choicesFor(name, value, items),
+      ]);
 
 const listsAsRecorded = (
   line: QueryLine,
@@ -436,39 +451,48 @@ const mergeRoles = (
   for (const parameters of explained)
     for (const [name, role] of Object.entries(parameters))
       roles.set(name, [...(roles.get(name) ?? []), role]);
-  const merged: Record<string, QueryParameter> = {};
+  // Entries become own members even for names such as `__proto__`, which assignment would treat as the prototype.
+  const merged: [string, QueryParameter][] = [];
   for (const [name, seen] of roles) {
     const active = seen.filter((role) => role.role !== "inert");
     if (active.length === 0) {
-      merged[name] = {
-        role: "inert",
-        values: [
-          ...new Set(
-            seen.flatMap((role) => (role.role === "inert" ? role.values : [])),
-          ),
-        ].sort(compare),
-      };
+      merged.push([
+        name,
+        {
+          role: "inert",
+          values: [
+            ...new Set(
+              seen.flatMap((role) =>
+                role.role === "inert" ? role.values : [],
+              ),
+            ),
+          ].sort(compare),
+        },
+      ]);
       continue;
     }
     const [first] = active;
     if (first!.role === "search") {
       if (active.every((role) => role.role === "search"))
-        merged[name] = {
-          role: "search",
-          fields: [
-            ...new Set(
-              active.flatMap((role) =>
-                role.role === "search" ? role.fields : [],
+        merged.push([
+          name,
+          {
+            role: "search",
+            fields: [
+              ...new Set(
+                active.flatMap((role) =>
+                  role.role === "search" ? role.fields : [],
+                ),
               ),
-            ),
-          ].sort(compare),
-        };
+            ].sort(compare),
+          },
+        ]);
       continue;
     }
     if (active.every((role) => JSON.stringify(role) === JSON.stringify(first)))
-      merged[name] = first!;
+      merged.push([name, first!]);
   }
-  return merged;
+  return Object.fromEntries(merged);
 };
 
 /** The query model that lists exactly what each explained line recorded, or undefined when none does. */

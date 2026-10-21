@@ -135,7 +135,7 @@ export const queryLine = (
     query === undefined ||
     segments === undefined ||
     [...callQuery(tool, args).keys()].some(
-      (name) => query.parameters[name] === undefined,
+      (name) => !Object.hasOwn(query.parameters, name),
     )
   )
     return undefined;

@@ -61,3 +61,38 @@ The first census learned Komga's `unpaged=false` as a filter on a field that is 
 have emptied the list. A filter that excludes nothing is now inert, and a parameter filters only where a line shows it
 excluding something: 37 of the census's 64 filters became inert values this way. A `-name` sort value matched the field loosely before its sign was read, so it sorted ascending;
 the sign is now read first.
+
+## Review round
+
+The branch merged the list-lines branch at de13b0c5, which carries the write-plan branch through 43d98ea9 and main
+d8a9673f. The gate's line selection, moved here to `environmentStateCheckedLines.ts`, takes the newer rules there, and
+serving answers a whole line's outgrown page from its recording before the query selection. It also fixed seven
+findings Greptile raised on this branch:
+
+- a sort of an emptied collection answers no entities;
+- an empty or unmatched search term stays inert;
+- the gate checks a read with new query values as serving answers it;
+- a recorded-member line keeps its recorded totals in the gate;
+- a line with more than 12 query parameters is left unexplained, bounding the search;
+- `__proto__` and similar names stay the query's own members;
+- case-only ties sort in state order.
+
+Each new test fails on the previous head. The partial-page counter test from the list-lines branch now expects the
+page, a query line here, to answer from the state with the state's total.
+
+The census on this head, with the fidelity branch's compare command merged in as before, at first served 29 of 183
+writes, two fewer than at d5a07e7a. Airbyte's `GET /sources?workspaceIds=…` names a workspace no line recorded, so the
+gate now checked it on the other workspace's line, whose `next` link names that workspace. The read listed the right
+sources, but with no write exercised the failure marked the create and patch before it as side effects, and tainted
+the created source so the read after its delete went unchecked. A read on a line it did not name is now compared in
+its own envelope, which a test that fails on the previous head covers. The census again serves 31 of 183, every
+verdict as at d5a07e7a. Its 160 query views (161 before) differ from d5a07e7a only as the findings intend:
+
+- empty search terms are inert in Keycloak, PhotoPrism's albums and labels, Tandoor's keywords and Umami;
+- Gitea, Grafana and Tandoor's units drop a search term that matched no shown field, with the line that carried it
+  (Tandoor's units keep no query);
+- PhotoPrism's photo query leaves line 199 and its 17 parameters unexplained, and learns lines 225 and 226 instead;
+- the list-lines merge adds Bookstack's `total` and Linkding's `count` counters.
+
+The six environments compare as before: NetBox 472 of 479 steps, Komga 549/600, Mealie 422/449, n8n 199/278, Shlink
+176/202 and Sentry 91/372.

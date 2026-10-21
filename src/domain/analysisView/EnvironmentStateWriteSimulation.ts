@@ -343,7 +343,7 @@ export class EnvironmentStateWriteSimulation {
       };
       return item
         ? checkItemRead(this.#state, view, record, check)
-        : checkListRead(this.#state, view, record, { ...check, line: base });
+        : checkListRead(this.#state, view, record, { ...check, line: line! });
     });
   }
 

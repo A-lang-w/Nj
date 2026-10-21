@@ -584,3 +584,74 @@ describe("list queries", () => {
     });
   });
 });
+
+describe("list reads with query values no line recorded", () => {
+  it("serves no create that a filtered read on a new value omits, as serving would list it", () => {
+    const third = { ...book(3, "Third Book", bookClock(7)), shelf: "b" };
+    const rows: TimedCaptureRow[] = [
+      ...QUERY_ROWS.slice(0, 7),
+      ["POST", "/api/books", third, 201, { name: "Third Book", shelf: "b" }],
+      ["GET", "/api/books/3", third],
+      // Serving evaluates `shelf=b` over the state, which lists the created book; the recording does not.
+      ["GET", "/api/books?shelf=b", [QUERY_ROWS[6]![2] as Book]],
+    ];
+    // The item read confirmed the book, so the failing filtered read blames the related create as a side effect.
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: false,
+      reason: "side-effect",
+    });
+  });
+
+  it("checks what the state answers on a line the read did not name, not the envelope that line's own call recorded", () => {
+    const first = { ...FIRST_BOOK, shelf: "a" };
+    const second = { ...SECOND_BOOK, shelf: "b" };
+    const third = { ...book(3, "Third Book", bookClock(4)), shelf: "c" };
+    // Each page links the next under its own query.
+    const page = (query: string, books: readonly Book[]) => ({
+      data: [...books],
+      next: `/api/books?${query}offset=20`,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", page("", [first, second])],
+      ["GET", "/api/books?shelf=a", page("shelf=a&", [first])],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["POST", "/api/books", third, 201, { name: "Third Book", shelf: "c" }],
+      // Serving lists `shelf=c` from the state in the `shelf=a` line's envelope, whose link names shelf a.
+      ["GET", "/api/books?shelf=c", page("shelf=c&", [third])],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("checks a recorded-member line with the total it recorded, as serving answers it", () => {
+    const envelope = (books: readonly Book[]) => ({
+      items: [...books],
+      total: 3,
+    });
+    const renamed = renamedBook(SECOND_BOOK, "Renamed Second", 6);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", envelope([FIRST_BOOK, SECOND_BOOK, THIRD_BOOK])],
+      ["GET", "/api/books?limit=1", envelope([FIRST_BOOK])],
+      // A cursor no role explains keeps its recorded member and total.
+      ["GET", "/api/books?cursor=abc", envelope([FIRST_BOOK])],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["PATCH", "/api/books/2", renamed, 200, { name: "Renamed Second" }],
+      ["GET", "/api/books/2", renamed],
+      ["GET", "/api/books?cursor=abc", envelope([FIRST_BOOK])],
+      // Failing that read would taint book 1 and leave its confirmed delete unserved.
+      ["DELETE", "/api/books/1", "", 204],
+      ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+    ];
+    const state = stateOf(rows);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({ served: true });
+    expect(planOf(state, "delete_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [10],
+    });
+  });
+});

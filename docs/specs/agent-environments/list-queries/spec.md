@@ -21,15 +21,18 @@ the line recorded, from the collection's initial entities, explains it:
 - `filter` on a field every listed item holds the value in: equal as text, or in an array directly or as an object's
   `id`, `slug` or `name`;
 - `search` over the string fields the term matched in the listed items, ignoring case (URL fields only for an item
-  nothing else matched); an empty term matches everything;
+  nothing else matched); an empty term matches everything, and a term that matched no field leaves the parameter inert
+  until another line's term does;
 - `sort` by the field the value names, with `-` or an `asc`/`desc` suffix, and `direction` for a separate `asc`/`desc`
-  parameter: numbers by value, text ignoring case, null last ascending, ties in state order;
+  parameter: numbers by value, text ignoring case, null last ascending, ties (case-only differences included) in state
+  order; an empty selection needs no sort;
 - `limit`, `offset` and `page` (counted from 1 or 0, whichever explains the line) for paging; zero or a negative limit
   lists every match;
 - `inert` for a parameter that changes nothing, valid only for the values it recorded.
 
 Parameter names decide which roles are tried (`sort` for `orderBy`, `search` for `q`), and any parameter may be a
-filter or inert. The lines' roles merge: lines that disagree drop the parameter, inert values gather, search fields
+filter or inert. A line with more than 12 query parameters is left unexplained, which bounds the search; names such as
+`__proto__` are kept as the query's own members. The lines' roles merge: lines that disagree drop the parameter, inert values gather, search fields
 unite. The merged query keeps the lines it reproduces, envelope and fields included; any other line keeps its
 recorded members. The view's `query` names the roles, those lines, and the envelope members that count every match
 before paging (`totals`); a `number`-of-items member such as `numberOfElements` counts the page.
@@ -41,10 +44,14 @@ before paging (`totals`); a `number`-of-items member such as `numberOfElements` 
   line of its collection, with counters at the number listed and totals at the number matched. The answer's state
   provenance says `membership: "query"`.
 - A value an inert parameter never recorded, or a parameter without a role, replays its recording as before.
-- The write gate checks a read on a query line against the query over its copy of the state. Only a line whose
+- The write gate checks a read on a query line, or one whose every query parameter has a role on a line it did not
+  name, against the query over its copy of the state, as serving answers it. Only a line whose
   parameters all sort or page, and whose answer holds every match, covers the collection; any other covers the
   entities it lists and those the line or the read listed that the state no longer holds, so a filtered list shows
-  whether a delete or create took effect without speaking for the rest of the collection.
+  whether a delete or create took effect without speaking for the rest of the collection. A read on a line that keeps
+  its recorded members is compared with the totals it recorded, as serving answers it. A read on a line it did not
+  name is compared in its own envelope: that line's envelope, such as a `next` link naming the line's own values, comes
+  from another call, so it says nothing of a write.
 
 The roles are inferences from recorded behaviour and are stated as such. Nothing changes for a list whose lines all
 list the whole collection, or that no role explains.

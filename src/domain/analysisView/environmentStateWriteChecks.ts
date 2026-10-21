@@ -28,6 +28,7 @@ import {
   queryValues,
   renderQueryList,
 } from "./environmentStateListQuery.js";
+import type { ServedLine } from "./environmentStateCheckedLines.js";
 import { insertIndex } from "./environmentStateWriteExplain.js";
 import type { InsertRule } from "./environmentStateWriteRules.js";
 
@@ -236,7 +237,8 @@ const listCheck = (
   view: StateListView,
   check: ListBodies,
   members: readonly StateEntity[],
-  total = members.length,
+  /** The matches a whole or query answer counts; undefined for recorded members, whose totals stay as recorded. */
+  total: number | undefined,
 ): boolean => {
   if (
     members.some(
@@ -252,7 +254,7 @@ const listCheck = (
     renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
   );
   const answer =
-    view.query === undefined
+    view.query === undefined || total === undefined
       ? renderStateList(view, check.base, rendered)
       : renderQueryList(
           { ...view, query: view.query },
@@ -322,7 +324,7 @@ const checkAllList = (
   const members = state.members(view.type, collection);
   const held = new Set(members.map((entity) => entity.id));
   return {
-    pass: listCheck(view, check, members),
+    pass: listCheck(view, check, members, members.length),
     targets: [
       collectionTarget(view.type, collection),
       ...members.map((entity) =>
@@ -349,7 +351,7 @@ const checkRecordedList = (
     return entity === undefined ? [] : [entity];
   });
   return {
-    pass: listCheck(view, check, members),
+    pass: listCheck(view, check, members, undefined),
     ...listedTargets(state, view, check),
   };
 };
@@ -363,15 +365,17 @@ export const checkListRead = (
     readonly idField: string;
     readonly collection: string;
     /** The checked line serving answers the read on. */
-    readonly line: number;
+    readonly line: ServedLine;
   },
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
+  const { line } = check;
   // The line lists every entity of its collection, or its query selects them.
-  const all = listsAll(view, check.line);
-  const query = view.query?.record_ordinals.includes(check.line)
-    ? queryValues(record.query)
-    : undefined;
+  const query =
+    line.queried === true || view.query?.record_ordinals.includes(line.ordinal)
+      ? queryValues(record.query)
+      : undefined;
+  const all = query === undefined && listsAll(view, line.ordinal);
   // Serving answers a page too small for the collection from its recording, so such a read checks nothing.
   const size = pageSize(record.query);
   if (
@@ -387,12 +391,21 @@ export const checkListRead = (
     return undefined;
   // A usable body that no longer holds the list is not what serving answers on this line.
   const items = listItems(body, view.pointer);
-  const bodies = { ...check, body, base, items: items ?? [], baseItems };
-  const outcome = all
-    ? checkAllList(state, view, bodies)
-    : query === undefined
-      ? checkRecordedList(state, view, bodies)
-      : checkQueryList(state, view, bodies, query);
+  // A line the read did not name keeps its own call's envelope, such as a link naming that call's values, which no write changes.
+  const envelope = line.named || items === undefined ? base : body;
+  const bodies = {
+    ...check,
+    body,
+    base: envelope,
+    items: items ?? [],
+    baseItems,
+  };
+  const outcome =
+    query !== undefined
+      ? checkQueryList(state, view, bodies, query)
+      : all
+        ? checkAllList(state, view, bodies)
+        : checkRecordedList(state, view, bodies);
   if (outcome === undefined) return undefined;
   return items === undefined ? { ...outcome, pass: false } : outcome;
 };

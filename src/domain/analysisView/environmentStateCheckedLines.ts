@@ -4,6 +4,7 @@ import {
 } from "../unicodeCodePointOrder.js";
 import { iterateUrlQueryParameters } from "../recordedTransportUrl.js";
 import {
+  allLines,
   decodedSegment,
   isParam,
   listsAll,
@@ -37,13 +38,24 @@ export interface CheckedLines {
   readonly byQuery: ReadonlyMap<string, readonly CheckedLine[]>;
   /** The lines listing their whole collection that only page it, which serving answers a call supplying no query from. */
   readonly unfiltered: readonly CheckedLine[];
+  /** For a list with a query: the names with a learned role, and the query and whole lines serving evaluates new values on. */
+  readonly query?: {
+    readonly roles: ReadonlySet<string>;
+    readonly lines: readonly CheckedLine[];
+  };
 }
 
 /** The line a read's call is answered from, and the collection serving lists for it. */
 export interface ServedLine {
   readonly ordinal: number;
   readonly collection: string;
+  /** Whether the read's query names the line; serving answers a read on any other line in that line's envelope. */
+  readonly named: boolean;
+  /** Set when serving evaluates the read's own query values on a line it did not name. */
+  readonly queried?: boolean;
 }
+
+type LineMatch = Pick<ServedLine, "ordinal" | "collection">;
 
 /** Each list or document view's checked lines. */
 export const checkedLines = (input: {
@@ -80,7 +92,26 @@ export const checkedLines = (input: {
         isParam(segment) ? [index] : [],
       ),
     );
-    byView.set(view.tool, { params, byQuery, unfiltered });
+    const query =
+      view.shape === "list" && view.query !== undefined
+        ? {
+            roles: new Set(Object.keys(view.query.parameters)),
+            lines: [...view.query.record_ordinals, ...allLines(view)].flatMap(
+              (ordinal) => {
+                const record = byOrdinal.get(ordinal);
+                return record === undefined
+                  ? []
+                  : [{ ordinal, segments: segmentsOf(record.path) }];
+              },
+            ),
+          }
+        : undefined;
+    byView.set(view.tool, {
+      params,
+      byQuery,
+      unfiltered,
+      ...(query === undefined ? {} : { query }),
+    });
   }
   return byView;
 };
@@ -97,21 +128,31 @@ export const servedLine = (
 ): ServedLine | undefined => {
   const key = queryKey(record.query);
   if (lines === undefined || key === undefined) return undefined;
-  return (
-    bestLine(lines, lines.byQuery.get(key) ?? [], record) ??
-    ([...iterateUrlQueryParameters(record.query ?? "")].length === 0
-      ? bestLine(lines, lines.unfiltered, record)
-      : undefined)
+  const names = [...iterateUrlQueryParameters(record.query ?? "")].map(
+    ([name]) => name,
   );
+  const named = bestLine(lines, lines.byQuery.get(key) ?? [], record);
+  if (named !== undefined) return { ...named, named: true };
+  const unfiltered =
+    names.length === 0 ? bestLine(lines, lines.unfiltered, record) : undefined;
+  if (unfiltered !== undefined) return { ...unfiltered, named: false };
+  if (lines.query === undefined) return undefined;
+  // As serving does, a read whose every query name has a role answers on a query or whole line, on its own values.
+  const { roles } = lines.query;
+  if (!names.every((name) => roles.has(name))) return undefined;
+  const line = bestLine(lines, lines.query.lines, record);
+  return line === undefined
+    ? undefined
+    : { ...line, named: false, queried: names.length > 0 };
 };
 
 const bestLine = (
   lines: CheckedLines,
   candidates: readonly CheckedLine[],
   record: StateRecordFacts,
-): ServedLine | undefined => {
+): LineMatch | undefined => {
   const read = segmentsOf(record.path);
-  let best: { line: ServedLine; verbatim: number } | undefined;
+  let best: { line: LineMatch; verbatim: number } | undefined;
   for (const { ordinal, segments } of candidates) {
     if (segments.length !== read.length) continue;
     let verbatim = 0;

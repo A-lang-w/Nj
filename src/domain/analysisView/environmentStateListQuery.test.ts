@@ -171,3 +171,55 @@ describe("learning a list's query", () => {
     expect(queryValues("?a=1&a=2")).toBeUndefined();
   });
 });
+
+describe("queries the state can always answer", () => {
+  it("sorts case-only ties in state order, ignoring case", () => {
+    const named = [
+      entity({ id: 10, name: "alpha" }),
+      entity({ id: 11, name: "Alpha" }),
+    ];
+    const order = (entities: readonly StateEntity[]) =>
+      evaluateQuery(
+        { sort: { role: "sort" } },
+        queryValues("?sort=name")!,
+        entities,
+      )?.page.map((entry) => entry.id);
+    expect(order(named)).toEqual(["10", "11"]);
+    expect(order([...named].reverse())).toEqual(["11", "10"]);
+  });
+
+  it("answers a sort of an emptied collection with no entities rather than giving up", () => {
+    expect(
+      evaluateQuery({ sort: { role: "sort" } }, queryValues("?sort=-id")!, []),
+    ).toEqual({ page: [], total: 0 });
+  });
+
+  it("learns no search from a term that matched no field, keeping it inert", () => {
+    const learned = learnQuery([line("?q=", [1, 2, 3, 4], 20)]);
+    expect(learned?.parameters["q"]).toEqual({ role: "inert", values: [""] });
+  });
+
+  it("explains no line with more query names than it can search, without exhausting the stack", () => {
+    const values = new Map(
+      Array.from({ length: 5_000 }, (_, index) => [`p${String(index)}`, "x"]),
+    );
+    const choices = lineChoices(
+      values,
+      BOOKS.map((entry) => entry.fields),
+    );
+    expect(choices).toEqual([]);
+    expect(
+      explainLine({ ordinal: 0, values, listed: [], choices, entities: BOOKS }),
+    ).toBeUndefined();
+  });
+
+  it("keeps a parameter named like an object's prototype as its own role", () => {
+    const learned = learnQuery([line("?__proto__=x&shelf=a", [1, 3], 30)]);
+    expect(Object.keys(learned!.parameters)).toContain("__proto__");
+    const round = JSON.parse(JSON.stringify(learned!.parameters)) as object;
+    expect(Object.getOwnPropertyDescriptor(round, "__proto__")?.value).toEqual({
+      role: "inert",
+      values: ["x"],
+    });
+  });
+});
