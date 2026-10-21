@@ -834,6 +834,7 @@ describe("application workflow CLI parity", () => {
       }),
       "--json",
     ]);
+    await assertSourceFileView(sourceCompared);
     expect(sourceCompared).toMatchObject({
       operation: "compare_source_to_bundle",
       predicate_type: "rea.source-to-bundle-comparison",
@@ -1848,4 +1849,47 @@ const runCliWithRequestFile = async (
   const requestPath = join(root, "request.json");
   await writeFile(requestPath, JSON.stringify(request));
   return runCli([command, requestPath, "--json"]);
+};
+
+const assertSourceFileView = async (sourceCompared: unknown) => {
+  const sourceViewRoot = await createTestTempDirectory("rea-cli-source-view-");
+  const referencePath = join(sourceViewRoot, "reference.json");
+  const sourceComparisonPath = join(sourceViewRoot, "comparison.json");
+  await writeFile(
+    referencePath,
+    JSON.stringify(SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference),
+  );
+  expect(
+    await runCli([
+      "compare-source-to-bundle",
+      JSON.stringify({
+        reference: { kind: "file", path: referencePath },
+        application: JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
+      }),
+      "--json",
+    ]),
+  ).toEqual(sourceCompared);
+  await writeFile(sourceComparisonPath, JSON.stringify(sourceCompared));
+  const selectedSource = await runCli([
+    "inspect-analysis-view",
+    JSON.stringify({
+      source: { kind: "evidence-file", path: sourceComparisonPath },
+      view: {
+        kind: "source-to-bundle",
+        collection: "mappings",
+        source_paths: ["src/main.ts"],
+        fields: ["status"],
+      },
+    }),
+    "--json",
+  ]);
+  expect(selectedSource).toMatchObject({
+    normalized_result: {
+      parent_operation: "compare_source_to_bundle",
+      items: [
+        { source_path: "src/main.ts", source_index: 0, status: "removed" },
+      ],
+      coverage: { total: 1, exhausted: true },
+    },
+  });
 };
