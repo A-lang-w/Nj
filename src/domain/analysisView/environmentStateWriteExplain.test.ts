@@ -63,6 +63,7 @@ const updated = (
   method: "PATCH",
   idField: "id",
   id: "42",
+  read: false,
   startMs: START,
   others: [],
   ...context,

@@ -7,7 +7,6 @@ import {
   isObject,
   lastSegmentValue,
   listItems,
-  pagesOnly,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -20,6 +19,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { pagesOnly } from "./environmentStatePaging.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** A read tool whose recordings locate entities of one type at one pointer. */

@@ -266,6 +266,8 @@ export interface UpdateEvidence {
   readonly idField: string;
   readonly id: string;
   readonly startMs: number | undefined;
+  /** Whether a read, not the write's own response, observed the entity, so a field it lacks was removed rather than left out. */
+  readonly read: boolean;
   /** The type's other entities, none of which may hold a value the update generated. */
   readonly others: readonly JsonObject[];
 }
@@ -374,12 +376,16 @@ export const explainUpdate = (
   const { body } = evidence.call;
   const rules: FieldRule[] = [];
   const echoed = new Set<string>();
+  const unexplained: string[] = [];
   // A member the application replaces with a value it generates is accepted with any value.
   const generated = new Set<string>();
   let identity: string | null = null;
   for (const [member, sent] of Object.entries(body)) {
-    if (member === evidence.idField && scalarText(sent) === evidence.id) {
-      identity = member;
+    // The identity is the entity's key: the path's id repeated is the identity member; another value is one the application ignored, or used to re-key the entity, which no rule models.
+    if (member === evidence.idField) {
+      if (scalarText(sent) === evidence.id) identity = member;
+      else if (!same(evidence.after[member], evidence.before[member]))
+        unexplained.push(member);
       continue;
     }
     if (!Object.hasOwn(evidence.after, member)) continue;
@@ -396,7 +402,10 @@ export const explainUpdate = (
         value: evidence.after[member]!,
       });
   }
-  const unexplained: string[] = [];
+  // Serving keeps every field an update does not write, so one a read shows the update removed is a change no rule models.
+  if (evidence.read)
+    for (const field of Object.keys(evidence.before))
+      if (!Object.hasOwn(evidence.after, field)) unexplained.push(field);
   for (const field of Object.keys(evidence.after)) {
     if (
       Object.hasOwn(body, field) ||
@@ -544,13 +553,19 @@ export const conflictsWithPlan = (
   explained: ReturnType<typeof explainUpdate>,
 ): boolean => {
   const body = plan.body!;
-  const fixed = new Set(body.fixed.map((entry) => entry.member));
+  const fixed = new Map(body.fixed.map((entry) => [entry.member, entry.sent]));
   const rules = new Map(plan.rules.map((rule) => [rule.field, rule]));
+  const { identity } = explained.body;
+  // Serving checks a call's identity member before its fixed values, so a member both cannot take every recorded call.
   return (
     explained.body.accepted.some((member) => fixed.has(member)) ||
-    explained.body.fixed.some((entry) =>
-      body.accepted.includes(entry.member),
+    explained.body.fixed.some(
+      (entry) =>
+        body.accepted.includes(entry.member) ||
+        entry.member === body.identity ||
+        (fixed.has(entry.member) && !same(fixed.get(entry.member), entry.sent)),
     ) ||
+    (identity !== null && fixed.has(identity)) ||
     explained.rules.some((rule) => {
       const held = rules.get(rule.field);
       return held !== undefined && !same(held, rule);

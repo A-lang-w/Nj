@@ -37,6 +37,27 @@ const itemsBytes = (items: readonly unknown[]): number =>
   items.reduce<number>((sum, item) => sum + jsonBytes(item), 0) +
   Math.max(0, items.length - 1);
 
+/** What `data/get` reports for some content of a state. */
+const snapshotOf = (
+  state: EnvironmentState,
+  entities: readonly StateEntity[],
+  documents: readonly HeldDocument[],
+): StateSnapshot => ({
+  rea_state: {
+    version: 1,
+    state_evidence_id: state.evidenceId,
+    types: state.types,
+    entities,
+    documents,
+  },
+});
+
+/** What `data/get` writes for a state as the Evidence holds it, in UTF-8 bytes, summed item by item. */
+export const initialStateBytes = (state: EnvironmentState): number =>
+  jsonBytes(snapshotOf(state, [], [])) +
+  itemsBytes(state.entities) +
+  itemsBytes(state.documents);
+
 /**
  * The live state one served environment answers from, shared by every MCP
  * session and the data plane. Mutations are synchronous and swap the whole
@@ -74,8 +95,8 @@ export class EnvironmentStateStore {
     );
     this.#clockStart =
       state.writeClock === null ? 0 : Date.parse(state.writeClock);
-    this.#frameBytes = jsonBytes(this.#snapshotOf([], []));
-    this.#initialBytes = this.#contentBytes(state);
+    this.#frameBytes = jsonBytes(snapshotOf(state, [], []));
+    this.#initialBytes = initialStateBytes(state);
     this.reset();
   }
 
@@ -303,27 +324,16 @@ export class EnvironmentStateStore {
   }
 
   snapshot(): StateSnapshot {
-    return this.#snapshotOf(this.#content.entities, this.#content.documents);
+    return snapshotOf(
+      this.state,
+      this.#content.entities,
+      this.#content.documents,
+    );
   }
 
   /** What `data/get` writes for the current state, in UTF-8 bytes. */
   byteLength(): number {
     return this.#bytes;
-  }
-
-  #snapshotOf(
-    entities: readonly StateEntity[],
-    documents: readonly HeldDocument[],
-  ): StateSnapshot {
-    return {
-      rea_state: {
-        version: 1,
-        state_evidence_id: this.state.evidenceId,
-        types: this.state.types,
-        entities,
-        documents,
-      },
-    };
   }
 
   /** What `data/get` writes for some content, summed item by item so the whole state is never one string. */
