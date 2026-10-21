@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { HopperStartError } from "../../domain/hopperErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { err, ok as resultOk } from "../../domain/result.js";
+import { err, ok as resultOk, type Result } from "../../domain/result.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisExecution } from "../AnalysisProvider.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
@@ -202,5 +205,106 @@ describe("a provider that a retry released", () => {
     const settled = await opening;
     expect(settled.ok).toBe(false);
     expect(closes).toBe(2);
+  });
+});
+
+/**
+ * A failed start does not restore a target into a closed slot.
+ *
+ * The cleanup of a failed start restores the target the open replaced, and a
+ * forced close retired that slot while the start was in flight. A target
+ * restored into a closed slot would take the slot back from the target that
+ * replaced it, so the cleanup leaves the closed slot closed.
+ */
+describe("a failed start that unwinds after a forced close", () => {
+  it("does not restore the target the closed slot held", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const health = createDeferred<Result<AnalysisExecution, AnalysisError>>();
+    let clients = 0;
+    let closes = 0;
+    const session = createTestBinarySession(() => {
+      clients += 1;
+      const client = clients;
+      return {
+        execute: () =>
+          client === 2 ? health.promise : Promise.resolve(observed(null)),
+        close: () => {
+          closes += 1;
+          return Promise.resolve(resultOk(null));
+        },
+      };
+    });
+
+    expect((await session.open(first)).ok).toBe(true);
+
+    // The replacement starts a provider that never settles.
+    const replacing = session.open(second);
+    await vi.waitFor(() => expect(clients).toBe(2));
+
+    // The forced close retires the slot while the start is in flight.
+    const closed = await session.closeWithoutTransition(
+      {},
+      { clearRecords: true, closeOwnedProviderResources: true },
+    );
+    expect(closed.ok).toBe(true);
+    expect(closes).toBe(2);
+
+    // The start fails after the close.
+    health.resolve(err(new HopperStartError()));
+    const settled = await replacing;
+    expect(settled.ok).toBe(false);
+
+    // The closed slot holds no target, and no client was created to restore
+    // the one it held before the failed open.
+    expect(session.activeTarget()).toBeUndefined();
+    expect(clients).toBe(2);
+  });
+
+  it("does not bind the restored target when the slot closes while the restoration waits", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const failing = createDeferred<Result<AnalysisExecution, AnalysisError>>();
+    const restoring =
+      createDeferred<Result<AnalysisExecution, AnalysisError>>();
+    let clients = 0;
+    let closes = 0;
+    const session = createTestBinarySession(() => {
+      clients += 1;
+      const client = clients;
+      return {
+        execute: () => {
+          if (client === 2) return failing.promise;
+          if (client === 3) return restoring.promise;
+          return Promise.resolve(observed(null));
+        },
+        close: () => {
+          closes += 1;
+          return Promise.resolve(resultOk(null));
+        },
+      };
+    });
+
+    expect((await session.open(first)).ok).toBe(true);
+
+    const replacing = session.open(second);
+    await vi.waitFor(() => expect(clients).toBe(2));
+
+    // The start fails, so the cleanup restores the target the open replaced.
+    failing.resolve(err(new HopperStartError()));
+    await vi.waitFor(() => expect(clients).toBe(3));
+
+    // The slot is closed while the restoration waits for its client.
+    const closed = await session.closeWithoutTransition(
+      {},
+      { clearRecords: true, closeOwnedProviderResources: true },
+    );
+    expect(closed.ok).toBe(true);
+
+    // The restoration answers, but the slot it would bind is closed.
+    restoring.resolve(observed(null));
+    const settled = await replacing;
+    expect(settled.ok).toBe(false);
+    expect(session.activeTarget()).toBeUndefined();
+    // The restored client is released instead of bound to a closed slot.
+    expect(closes).toBe(3);
   });
 });

@@ -258,6 +258,12 @@ export interface ProviderStartAdmission {
    * retry. The cleanup runs under the same limit, so the limit counts the
    * provider while it may still be running. A start without a cleanup gives
    * the limit back when the start settles.
+   *
+   * The admission runs the cleanup for every failure it reports, including a
+   * start it could not attempt because the limit could not be acquired: the
+   * open still owns a client it created and a target it replaced, and the
+   * cleanup is what releases them. The admission reports the failure the
+   * cleanup answered with.
    */
   run<Value>(
     start: () => Promise<Result<Value, AnalysisError>>,

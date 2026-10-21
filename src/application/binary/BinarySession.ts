@@ -99,6 +99,22 @@ interface CleanupFailureTracker {
   readonly onFailure: (failure: AnalysisError) => void;
 }
 
+/**
+ * The failure of a start, and the lifecycle it belongs to.
+ *
+ * The generation names the open the failed start belongs to. A forced close
+ * advances the generation, so a cleanup that finds a newer generation
+ * restores nothing into the slot that was closed.
+ */
+interface FailedStartFailure {
+  /** The failure the failed start reports to its caller. */
+  readonly failure: AnalysisError;
+  /** The lifecycle generation of the open that owns the failed start. */
+  readonly generation: number;
+  /** Report each owned cleanup failure as soon as its owner observes it. */
+  readonly onCleanupFailure?: (failure: AnalysisError) => void;
+}
+
 const trackCleanupFailures = (
   signal: AbortSignal | undefined,
   operation: string,
@@ -674,6 +690,7 @@ export class BinarySession
           new AnalysisCancelledError("open_binary", {
             cause: options.signal?.reason,
           }),
+          generation,
         ),
       );
     const runId = randomUUID();
@@ -687,20 +704,34 @@ export class BinarySession
     });
     const run: SessionRun = { client, route, runId, released: false };
     this.#pendingStart = run;
+    // The cleanup of a failed start owns the client it started and the target
+    // it replaced. It runs once: the admission runs it under the start limit,
+    // and the failure the admission reports keeps that answer.
+    let failedStart: ProviderStartCleanup | undefined;
+    const cleanup = async (
+      failure: AnalysisError,
+    ): Promise<ProviderStartCleanup> => {
+      if (failedStart !== undefined) return failedStart;
+      failedStart = await this.#failedStart(run, previous, {
+        failure,
+        generation,
+      });
+      return failedStart;
+    };
     // A provider start that rejects instead of returning an error must still
     // release its client. The rejection would otherwise skip the failure path
     // that owns the cleanup and leave the provider process running.
-    const started = await this.#startClient(run, options, (failure) =>
-      this.#failedStart(run, previous, failure),
-    ).catch((cause: unknown) =>
-      err(
-        new ProviderAdapterError(route.identity.id, "health", {
-          cause,
-          diagnostics: {
-            reason: "the provider start rejected instead of returning an error",
-          },
-        }),
-      ),
+    const started = await this.#startClient(run, options, cleanup).catch(
+      (cause: unknown) =>
+        err(
+          new ProviderAdapterError(route.identity.id, "health", {
+            cause,
+            diagnostics: {
+              reason:
+                "the provider start rejected instead of returning an error",
+            },
+          }),
+        ),
     );
     if (this.#pendingStart === run) this.#pendingStart = undefined;
     if (generation !== this.#lifecycleGeneration) {
@@ -712,19 +743,21 @@ export class BinarySession
     }
     if (!started.ok) {
       // The failed start already ran its cleanup: the client it started was
-      // released, or the cleanup kept it for a later retry. The admission
-      // reports the failure the cleanup answered with.
-      return err(started.error);
+      // released, or the cleanup kept it for a later retry. A failure the
+      // admission reported without running that cleanup runs it here, so the
+      // client the open created is released and the target it replaced is
+      // restored either way.
+      const failed = await cleanup(started.error);
+      return err(failed.error);
     }
     if (isAborted(options.signal)) {
       return err(
-        await this.#failedOpen(
-          run,
-          previous,
-          new AnalysisCancelledError("open_binary", {
+        await this.#failedOpen(run, previous, {
+          failure: new AnalysisCancelledError("open_binary", {
             cause: options.signal?.reason,
           }),
-        ),
+          generation,
+        }),
       );
     }
     const cleanupFailures = trackCleanupFailures(options.signal, "open_binary");
@@ -737,12 +770,11 @@ export class BinarySession
       );
       if (!retiredResources.ok) {
         const primary = cleanupFailures.error ?? retiredResources.error;
-        const failed = await this.#failedOpen(
-          run,
-          previous,
-          primary,
-          cleanupFailures.onFailure,
-        );
+        const failed = await this.#failedOpen(run, previous, {
+          failure: primary,
+          generation,
+          onCleanupFailure: cleanupFailures.onFailure,
+        });
         return err(cleanupFailures.error ?? failed);
       }
     }
@@ -750,12 +782,11 @@ export class BinarySession
       const cancelled = new AnalysisCancelledError("open_binary", {
         cause: options.signal?.reason,
       });
-      const failed = await this.#failedOpen(
-        run,
-        previous,
-        cancelled,
-        cleanupFailures.onFailure,
-      );
+      const failed = await this.#failedOpen(run, previous, {
+        failure: cancelled,
+        generation,
+        onCleanupFailure: cleanupFailures.onFailure,
+      });
       return err(cleanupFailures.error ?? failed);
     }
     const profilelessWorkflowProfile =
@@ -779,7 +810,12 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) {
         this.#active = undefined;
-        return err(await this.#failedOpen(run, previous, imported.error));
+        return err(
+          await this.#failedOpen(run, previous, {
+            failure: imported.error,
+            generation,
+          }),
+        );
       }
     }
     return ok(target);
@@ -802,7 +838,9 @@ export class BinarySession
    *
    * A failed start leaves a provider behind, and the cleanup of that failed
    * start runs under the same limit: the limit counts the provider while it
-   * may still be running.
+   * may still be running. Every failure of the start sequence runs that
+   * cleanup, so the client the open created is released under the limit that
+   * counted its provider.
    */
   async #startClient(
     run: SessionRun,
@@ -820,13 +858,19 @@ export class BinarySession
         run.client.execute("health", {}, options);
       return this.#runAdmittedStart(probe, run, options, cleanup);
     }
-    const health = await run.client.execute("health", {}, options);
-    if (!health.ok) return health;
-    if (options.startProvider !== true) return health;
-    const start = (): Promise<Result<null, AnalysisError>> =>
-      providerStart(options);
-    const started = await this.#runAdmittedStart(start, run, options, cleanup);
-    return started.ok ? health : err(started.error);
+    // The client starts the provider it selected, so the probe and that start
+    // belong to one window: a probe that fails runs the cleanup of the failed
+    // open under the limit that counts the provider the probe left behind.
+    const start = async (): Promise<
+      Result<AnalysisExecution, AnalysisError>
+    > => {
+      const health = await run.client.execute("health", {}, options);
+      if (!health.ok) return health;
+      if (options.startProvider !== true) return health;
+      const started = await providerStart(options);
+      return started.ok ? health : err(started.error);
+    };
+    return this.#runAdmittedStart(start, run, options, cleanup);
   }
 
   /**
@@ -1261,16 +1305,10 @@ export class BinarySession
   async #failedOpen(
     run: SessionRun,
     previous: SessionBinding | undefined,
-    primary: AnalysisError,
-    onCleanupFailure?: (failure: AnalysisError) => void,
+    failed: FailedStartFailure,
   ): Promise<AnalysisError> {
-    const failed = await this.#failedStart(
-      run,
-      previous,
-      primary,
-      onCleanupFailure,
-    );
-    return failed.error;
+    const cleanup = await this.#failedStart(run, previous, failed);
+    return cleanup.error;
   }
 
   /**
@@ -1282,6 +1320,11 @@ export class BinarySession
    * still be running, so the caller can keep counting that provider against
    * the analysis limit.
    *
+   * The cleanup restores the target the open replaced, and only while this
+   * slot still owns it: a forced close retired the slot while the start was
+   * in flight, and a target restored into a closed slot would take the slot
+   * back from the target that replaced it.
+   *
    * A cleanup that rejects instead of answering is reported as a failure
    * that left the provider behind: the client stays owned by this session,
    * so a later close retries the cleanup.
@@ -1289,9 +1332,9 @@ export class BinarySession
   async #failedStart(
     run: SessionRun,
     previous: SessionBinding | undefined,
-    primary: AnalysisError,
-    onCleanupFailure?: (failure: AnalysisError) => void,
+    failed: FailedStartFailure,
   ): Promise<ProviderStartCleanup> {
+    const { failure, generation, onCleanupFailure } = failed;
     try {
       const closed = await this.#retireClient(
         run,
@@ -1300,7 +1343,7 @@ export class BinarySession
       if (!closed.ok)
         return {
           error: analysisErrorWithCleanupFailure(
-            primary,
+            failure,
             closed.error,
             "open_binary",
           ),
@@ -1308,7 +1351,11 @@ export class BinarySession
           providerAlive: true,
         };
       return {
-        error: await this.#restoreAfterFailedOpen(previous, primary),
+        error: await this.#restoreAfterFailedOpen(
+          previous,
+          failure,
+          generation,
+        ),
         providerAlive: false,
       };
     } catch (cause: unknown) {
@@ -1329,8 +1376,9 @@ export class BinarySession
   async #restoreAfterFailedOpen(
     previous: SessionBinding | undefined,
     primary: AnalysisError,
+    generation: number,
   ): Promise<AnalysisError> {
-    const restored = await this.#restore(previous);
+    const restored = await this.#restore(previous, generation);
     return restored.ok
       ? primary
       : analysisErrorWithCleanupFailure(primary, restored.error, "open_binary");
@@ -1835,10 +1883,22 @@ export class BinarySession
     }
   }
 
+  /**
+   * Restore the target an open replaced.
+   *
+   * The restoration belongs to the slot that still owns the target: a forced
+   * close retired that slot while the open was in flight, and a target
+   * restored into a closed slot would take the slot back from the target that
+   * replaced it. The check holds through the wait for the restored client,
+   * because a close that runs while the restoration waits closes the slot the
+   * restoration would bind.
+   */
   async #restore(
     previous: SessionBinding | undefined,
+    generation: number,
   ): Promise<Result<null, AnalysisError>> {
     if (previous === undefined) return ok(null);
+    if (generation !== this.#lifecycleGeneration) return ok(null);
     const runId = randomUUID();
     const client = previous.route.createClient(previous.target, {
       runId,
@@ -1851,6 +1911,12 @@ export class BinarySession
     };
     const started = await client.execute("health", {});
     if (started.ok) {
+      if (generation !== this.#lifecycleGeneration) {
+        // The slot was closed while the restoration waited, so the restored
+        // client is released instead of bound to a closed slot.
+        const released = await this.#retireClient(run);
+        return released.ok ? ok(null) : err(released.error);
+      }
       this.#active = {
         target: previous.target,
         profile: previous.profile,

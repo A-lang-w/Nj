@@ -981,6 +981,12 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    * hands the permit to the retained cleanup, which gives it back when the
    * provider is gone.
    *
+   * A start the admission could not attempt, because the permit could not be
+   * acquired, runs the cleanup as well: the open still owns a client it
+   * created and a target it replaced, and the cleanup is what releases them.
+   * No provider was started under that permit, so a provider the cleanup
+   * could not release is counted by a permit of its own.
+   *
    * The permit belongs to the slot that runs the start: a close that gave up
    * on a start that never unwound gives it back, and a close that could not
    * release the provider keeps it.
@@ -994,7 +1000,20 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           signal,
           permit,
         );
-        if (!acquired.ok) return err(acquired.error);
+        if (!acquired.ok) {
+          // The start never ran, so no provider was started under this
+          // permit. The cleanup of the failed open still owns the client the
+          // open created and the target it replaced, so it runs here.
+          if (cleanup === undefined) return err(acquired.error);
+          const failed = await cleanup(acquired.error);
+          if (failed.providerAlive) {
+            // The provider may still be running, so the retained cleanup
+            // owns a permit of its own and gives it back when the provider
+            // is gone.
+            this.#retainProviderPermit(slot);
+          }
+          return err(failed.error);
+        }
         slot.startPermits.add(permit);
         try {
           const started = await start();
@@ -2065,14 +2084,26 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       // The start settled while the close was running and gave the permit
       // back, but the provider it started may still be alive. The retained
       // cleanup takes a permit of its own.
-      slot.retainedPermits.add({ held: true, retained: true });
-      this.#activeStarts += 1;
+      this.#retainProviderPermit(slot);
       return;
     }
     for (const permit of outstanding) {
       permit.retained = true;
       slot.retainedPermits.add(permit);
     }
+  }
+
+  /**
+   * Count a provider that may still be running against the analysis limit.
+   *
+   * A cleanup that could not release its provider leaves that provider
+   * behind, so the limit has to count it until the retained cleanup releases
+   * it. The permit is one of its own, because the start it belonged to gave
+   * its permit back.
+   */
+  #retainProviderPermit(slot: TargetSlot): void {
+    slot.retainedPermits.add({ held: true, retained: true });
+    this.#activeStarts += 1;
   }
 
   /** Give back the permits a retained cleanup owns. */

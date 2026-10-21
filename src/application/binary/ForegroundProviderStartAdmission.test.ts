@@ -1,15 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
 import { ok as resultOk, err } from "../../domain/result.js";
 import { HopperStartError } from "../../domain/hopperErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createDeferred,
+  createTestBinarySession,
   createTestBinaryTargetRegistry,
   createTestComposedBinaryTargetRegistry,
 } from "../../../tests/fixtures/binarySession.js";
+import type { ProviderStartAdmission } from "../AnalysisProvider.js";
+
+/** Write one more target beside the targets the fixture created. */
+const createTarget = async (beside: string, name: string): Promise<string> => {
+  const path = join(dirname(beside), `${name}.hop`);
+  await writeFile(path, name);
+  return path;
+};
 
 /**
  * The production route is a composite, so the provider it selected starts
@@ -133,6 +146,182 @@ describe("a reopen that waits for an earlier call", () => {
     starts[0]?.resolve(observed(null));
     await expect(call).resolves.toMatchObject({ ok: true });
     await expect(reopening).resolves.toMatchObject({ ok: true });
+  });
+});
+
+/**
+ * An open that cannot start still owns a client it created and a target it
+ * replaced.
+ *
+ * The admission reports the failure it could not acquire a permit for. The
+ * cleanup of that failed open releases the client and restores the target, so
+ * a cancelled open does not lose the target it replaced and does not leave the
+ * client it created running.
+ */
+describe("an open whose start admission reports a failure", () => {
+  it("releases the client it created and restores the target it replaced", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    let clients = 0;
+    let closes = 0;
+    const session = createTestBinarySession(() => {
+      clients += 1;
+      return {
+        execute: () => Promise.resolve(observed(null)),
+        close: () => {
+          closes += 1;
+          return Promise.resolve(resultOk(null));
+        },
+      };
+    });
+
+    expect((await session.open(first)).ok).toBe(true);
+
+    // The admission reports the failure it could not acquire a permit for
+    // without running the cleanup of the failed open.
+    const admission: ProviderStartAdmission = {
+      run: async () => err(new AnalysisCancelledError("open_binary")),
+    };
+
+    const cancelled = await session.open(second, { startAdmission: admission });
+    expect(cancelled.ok).toBe(false);
+    if (cancelled.ok) return;
+    expect(cancelled.error).toBeInstanceOf(AnalysisCancelledError);
+
+    // The client the cancelled open created is released, and the target it
+    // replaced is restored.
+    expect(closes).toBe(2);
+    expect(clients).toBe(3);
+    expect(session.activeTarget()?.path).toBe(first);
+  });
+});
+
+/**
+ * An open that is cancelled while it waits for a start permit owns a client
+ * it created.
+ *
+ * The permit could not be acquired, so the start never ran and the provider
+ * was never started. The client the open created is still released, and a
+ * client that could not be released keeps counting against the limit until
+ * the cleanup that owns it releases it.
+ */
+describe("an open that is cancelled while it waits for the start permit", () => {
+  it("releases the client it created", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const third = await createTarget(first, "third");
+    const holding = createDeferred<ReturnType<typeof observed>>();
+    let clients = 0;
+    let closes = 0;
+    const registry = createTestBinaryTargetRegistry(
+      () => {
+        clients += 1;
+        const client = clients;
+        return {
+          execute: () =>
+            client === 2 ? holding.promise : Promise.resolve(observed(null)),
+          close: () => {
+            closes += 1;
+            return Promise.resolve(resultOk(null));
+          },
+        };
+      },
+      {},
+      { maxConcurrentAnalyses: 1 },
+    );
+
+    // The first target holds the primary slot.
+    expect((await registry.open(first)).ok).toBe(true);
+
+    // The second target starts a provider that never settles, so it holds the
+    // start permit.
+    const starting = registry.open(second, { keepOthersOpen: true });
+    await vi.waitFor(() => expect(clients).toBe(2));
+
+    // The third target waits for that permit and is cancelled while it waits.
+    const controller = new AbortController();
+    const opening = registry.open(third, {
+      keepOthersOpen: true,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(clients).toBe(3));
+    controller.abort();
+
+    const settled = await opening;
+    expect(settled.ok).toBe(false);
+    if (settled.ok) return;
+    expect(settled.error).toBeInstanceOf(AnalysisCancelledError);
+
+    // The client the cancelled open created is released.
+    expect(closes).toBe(1);
+
+    holding.resolve(observed(null));
+    await starting;
+  });
+
+  it("keeps counting a provider it could not release", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const third = await createTarget(first, "third");
+    const fourth = await createTarget(first, "fourth");
+    const holding = createDeferred<ReturnType<typeof observed>>();
+    let clients = 0;
+    let starts = 0;
+    const registry = createTestBinaryTargetRegistry(
+      () => {
+        clients += 1;
+        const client = clients;
+        return {
+          execute: () => {
+            if (client === 2) return holding.promise;
+            starts += 1;
+            return Promise.resolve(observed(null));
+          },
+          close: () =>
+            Promise.resolve(
+              client === 3
+                ? err(
+                    new ProviderCleanupError("fixture", ["provider-client"], {
+                      reason: "the provider could not be released",
+                    }),
+                  )
+                : resultOk(null),
+            ),
+        };
+      },
+      {},
+      { maxConcurrentAnalyses: 1 },
+    );
+
+    expect((await registry.open(first)).ok).toBe(true);
+    const starting = registry.open(second, { keepOthersOpen: true });
+    await vi.waitFor(() => expect(clients).toBe(2));
+
+    const controller = new AbortController();
+    const opening = registry.open(third, {
+      keepOthersOpen: true,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(clients).toBe(3));
+    controller.abort();
+
+    const settled = await opening;
+    expect(settled.ok).toBe(false);
+    if (settled.ok) return;
+    expect(settled.error.cleanupIncomplete).toBe(true);
+
+    // The slot that still owns the provider keeps its registration and is
+    // reported as retained, so a later close can retry that cleanup.
+    const status = (await registry.status()) as Record<string, unknown>;
+    expect(status.retained_target_ids as string[]).toHaveLength(1);
+
+    holding.resolve(observed(null));
+    await starting;
+
+    // The provider that could not be released keeps counting against the
+    // limit, so the next start waits for the cleanup that owns it.
+    const later = registry.open(fourth, { keepOthersOpen: true });
+    await vi.waitFor(() => expect(clients).toBe(4));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(starts).toBe(1);
+    void later;
   });
 });
 
