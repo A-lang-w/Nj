@@ -281,6 +281,89 @@ it("keeps a worker parked while a limit change closes the previous process", asy
   }
 });
 
+it("does not start a replacement when closing the previous worker fails", async () => {
+  const scope = new ArtifactResourceScope();
+  const launches: number[] = [];
+  const exited = new Set<number>();
+  const exits = new Map<number, Promise<void>>();
+  const launcher: typeof spawnOwnedProviderProcess = async (request) => {
+    const previous = launches.at(-1);
+    if (previous !== undefined) await exits.get(previous);
+    const spawned = await spawnOwnedProviderProcess(request);
+    const pid = spawned.process.pid;
+    if (pid === undefined)
+      throw new Error("Owned analyzer has no observed PID");
+    exits.set(
+      pid,
+      new Promise((resolve) => {
+        spawned.process.once("exit", () => {
+          exited.add(pid);
+          resolve();
+        });
+      }),
+    );
+    launches.push(pid);
+    return spawned;
+  };
+  const limits = { heapMb: 128, timeoutMs: 30_000 };
+  const file = source("replaced.mjs", "export const observed = 1;");
+  const originalClose = JavaScriptAnalysisWorker.prototype.close;
+  let closeCalls = 0;
+  try {
+    const initial = await createJavaScriptSourceAnalysis(limits, 1, {
+      scope,
+      launcher,
+    });
+    const first = await initial.analyze(file, { nodes: 100, unknowns: 100 });
+    if (!first.ok) throw first.error.error;
+    await initial.close();
+    const replacedPid = launches[0];
+    if (replacedPid === undefined)
+      throw new Error("Replaced analyzer has no observed PID");
+
+    JavaScriptAnalysisWorker.prototype.close = async function (
+      this: JavaScriptAnalysisWorker,
+    ) {
+      closeCalls += 1;
+      if (closeCalls === 1) throw new Error("worker still owned");
+      return originalClose.call(this);
+    };
+    await expect(
+      createJavaScriptSourceAnalysis({ heapMb: 256, timeoutMs: 30_000 }, 1, {
+        scope,
+        launcher,
+      }),
+    ).rejects.toThrow("worker still owned");
+    expect(launches).toEqual([replacedPid]);
+    expect(exited.has(replacedPid)).toBe(false);
+
+    JavaScriptAnalysisWorker.prototype.close = originalClose;
+    const replacement = await createJavaScriptSourceAnalysis(
+      { heapMb: 256, timeoutMs: 30_000 },
+      1,
+      { scope, launcher },
+    );
+    try {
+      const result = await replacement.analyze(file, {
+        nodes: 100,
+        unknowns: 100,
+      });
+      if (!result.ok) throw result.error.error;
+    } finally {
+      await replacement.close();
+    }
+    expect(launches).toHaveLength(2);
+    expect(exited.has(replacedPid)).toBe(true);
+    const replacementPid = launches[1];
+    if (replacementPid === undefined)
+      throw new Error("Replacement analyzer has no observed PID");
+    expect(exited.has(replacementPid)).toBe(false);
+  } finally {
+    JavaScriptAnalysisWorker.prototype.close = originalClose;
+    await scope.close();
+  }
+});
+
 it("reports an actual startup deadline and closes its owned resources before subsequent analysis", async () => {
   const file = source("app.mjs", "export const observed = 7;");
   const expired = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 1 });

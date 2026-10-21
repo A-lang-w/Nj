@@ -60,7 +60,27 @@ const checkoutJavaScriptSourceAnalysis = async (
       return new ScopeJavaScriptSourceAnalysis(scope, current.worker);
     }
     retained.delete(scope);
-    await releaseReplacedJavaScriptWorker(scope, current.worker);
+    try {
+      await current.worker.close();
+    } catch (cause) {
+      // The old process is still alive. Keep it owned and fail this request
+      // before another worker is constructed, including on MCP where the
+      // analysis result is returned without a later cleanup retry.
+      if (retained.get(scope) === undefined) {
+        retained.set(scope, {
+          worker: current.worker,
+          limits: current.limits,
+          busy: false,
+        });
+      } else {
+        scope.retain({
+          kind: "lease",
+          resource: "replaced JavaScript source analyzer",
+          lease: { release: () => current.worker.close() },
+        });
+      }
+      throw cause;
+    }
   }
   const worker = new JavaScriptAnalysisWorker(limits, launcher, sourceCount);
   // A concurrent analysis may have parked another healthy worker while the
@@ -69,23 +89,6 @@ const checkoutJavaScriptSourceAnalysis = async (
   if (retained.get(scope) === undefined)
     retained.set(scope, { worker, limits, busy: true });
   return new ScopeJavaScriptSourceAnalysis(scope, worker);
-};
-
-/** Stop a worker that cannot be reused before its replacement starts. */
-const releaseReplacedJavaScriptWorker = async (
-  scope: ArtifactResourceScope,
-  replaced: JavaScriptAnalysisWorker,
-): Promise<void> => {
-  try {
-    await replaced.close();
-  } catch {
-    // The replacement may proceed. The scope still owns the old process.
-    scope.retain({
-      kind: "lease",
-      resource: "replaced JavaScript source analyzer",
-      lease: { release: () => replaced.close() },
-    });
-  }
 };
 
 const registerJavaScriptSourceAnalysisClose = (
