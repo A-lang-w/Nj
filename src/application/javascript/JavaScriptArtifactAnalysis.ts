@@ -18,9 +18,10 @@ import {
 import type { SourceMapLeaf } from "../../domain/sourceMapEnvelope.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import { failedJavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
-import type {
-  JavaScriptArtifactFile,
-  JavaScriptArtifactFileSet,
+import {
+  type JavaScriptArtifactFile,
+  type JavaScriptArtifactFileSet,
+  unavailableJavaScriptSourceReason,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
@@ -171,6 +172,13 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
           },
         });
         await completeJavaScriptAnalysisSteps(steps, signal);
+        if (file.kind === "javascript" && !file.text.included)
+          projection.recordUnavailableFile(
+            file,
+            unavailableJavaScriptSourceReason(file.text.reason),
+            null,
+            "incomplete-module",
+          );
         continue;
       }
       const result = await worker.analyze(
@@ -302,6 +310,16 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
     for (const file of fileSet.files) {
       if (analyzedPaths.has(file.path)) continue;
       if (classifyOutsideAnalysisScope(file, state, projection)) continue;
+      if (file.kind === "javascript" && !file.text.included) {
+        state.files.push({ file, javascript: null, semantic: null });
+        projection.recordUnavailableFile(
+          file,
+          unavailableJavaScriptSourceReason(file.text.reason),
+          null,
+          "incomplete-module",
+        );
+        continue;
+      }
       const scope = javascriptArtifactAnalysisScopes[file.kind];
       let unavailable = scope === null ? undefined : failures.get(scope);
       if (scope !== null && unavailable === undefined) {
@@ -452,7 +470,7 @@ const classifyOutsideAnalysisScope = <
   state.files.push({ file, javascript: null, semantic: null });
   projection?.recordUnavailableFile(
     file,
-    "Source was not analyzed because it is outside the caller-selected source_paths.",
+    unavailableJavaScriptSourceReason(file.text.reason),
     null,
     "incomplete-module",
   );

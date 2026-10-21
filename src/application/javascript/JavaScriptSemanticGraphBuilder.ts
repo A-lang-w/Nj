@@ -19,7 +19,10 @@ import type {
 import { sourceRangesEqual as rangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import {
+  type JavaScriptArtifactFile,
+  unavailableJavaScriptSourceReason,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   projectSemanticEvents,
   projectSemanticTimers,
@@ -155,13 +158,10 @@ export const buildJavaScriptSemanticGraph = ({
         analyzed.semantic.ir,
         analyzed.javascript?.electron.call_paths,
       );
-    else if (
-      !analyzed.file.text.included &&
-      analyzed.file.text.reason === "outside-analysis-scope"
-    )
+    else if (!analyzed.file.text.included)
       projection.recordUnavailableFile(
         analyzed.file,
-        "Source was not analyzed because it is outside the caller-selected source_paths.",
+        unavailableJavaScriptSourceReason(analyzed.file.text.reason),
         null,
         "incomplete-module",
       );
