@@ -111,3 +111,8 @@ line selection now imports. It also fixed three findings in this branch's gate:
 
 Each new test fails on the previous head. Over the 50 captures every view and write verdict is as on the previous head,
 and the six environments compare exactly as before.
+
+It then merged the list-lines branch at ed4b6dbb, which carries the write-plan branch through 466ed8b4: entities named
+as serving names them, interference weighed per write, a zero page size bounding nothing only where a recording listed
+items under it, and the other fixes of that branch's fifteenth round. Over the 50 captures every view and write verdict
+is again as before, and the six environments compare exactly as before.
