@@ -116,31 +116,43 @@ describe("BinaryTargetRegistry", () => {
 
   it("queues concurrent starts beyond the analysis cap", async () => {
     const [first, second] = await createBinarySessionTargets();
-    const firstHealth = createDeferred<ReturnType<typeof observed>>();
-    const secondHealth = createDeferred<ReturnType<typeof observed>>();
-    let clientsCreated = 0;
+    const healths: Array<
+      ReturnType<typeof createDeferred<ReturnType<typeof observed>>>
+    > = [];
+    let starts = 0;
     const registry = createTestBinaryTargetRegistry(
       () => {
-        clientsCreated += 1;
-        return new ControllableAnalysisClient(
-          clientsCreated === 1 ? firstHealth.promise : secondHealth.promise,
-        );
+        const health = createDeferred<ReturnType<typeof observed>>();
+        healths.push(health);
+        return {
+          execute: (operation: string) => {
+            // The health probe of a client that starts its provider with its
+            // first call is that start.
+            if (operation === "health") {
+              starts += 1;
+              return health.promise;
+            }
+            return Promise.resolve(observed(null));
+          },
+          close: () => Promise.resolve(resultOk(null)),
+        };
       },
       {},
       { maxConcurrentAnalyses: 1 },
     );
 
     const openingFirst = registry.open(first, { keepOthersOpen: true });
-    await vi.waitFor(() => expect(clientsCreated).toBe(1));
+    await vi.waitFor(() => expect(starts).toBe(1));
     const openingSecond = registry.open(second, { keepOthersOpen: true });
     await Promise.resolve();
 
-    expect(clientsCreated).toBe(1);
-    firstHealth.resolve(observed(null));
+    // The cap holds the second start in the queue; only one provider starts.
+    expect(starts).toBe(1);
+    healths[0]?.resolve(observed(null));
     expect((await openingFirst).ok).toBe(true);
 
-    await vi.waitFor(() => expect(clientsCreated).toBe(2));
-    secondHealth.resolve(observed(null));
+    await vi.waitFor(() => expect(starts).toBe(2));
+    healths[1]?.resolve(observed(null));
     expect((await openingSecond).ok).toBe(true);
     expect(registry.targets()).toHaveLength(2);
   });
@@ -182,15 +194,26 @@ describe("BinaryTargetRegistry", () => {
 describe("BinaryTargetRegistry background starts", () => {
   it("queues a background start beyond the analysis cap", async () => {
     const [first, second] = await createBinarySessionTargets();
-    const firstHealth = createDeferred<ReturnType<typeof observed>>();
-    const secondHealth = createDeferred<ReturnType<typeof observed>>();
-    let clientsCreated = 0;
+    const healths: Array<
+      ReturnType<typeof createDeferred<ReturnType<typeof observed>>>
+    > = [];
+    let starts = 0;
     const registry = createTestBinaryTargetRegistry(
       () => {
-        clientsCreated += 1;
-        return new ControllableAnalysisClient(
-          clientsCreated === 1 ? firstHealth.promise : secondHealth.promise,
-        );
+        const health = createDeferred<ReturnType<typeof observed>>();
+        healths.push(health);
+        return {
+          execute: (operation: string) => {
+            // The health probe of a client that starts its provider with its
+            // first call is that start.
+            if (operation === "health") {
+              starts += 1;
+              return health.promise;
+            }
+            return Promise.resolve(observed(null));
+          },
+          close: () => Promise.resolve(resultOk(null)),
+        };
       },
       {},
       { maxConcurrentAnalyses: 1 },
@@ -204,7 +227,7 @@ describe("BinaryTargetRegistry background starts", () => {
         })
       ).ok,
     ).toBe(true);
-    await vi.waitFor(() => expect(clientsCreated).toBe(1));
+    await vi.waitFor(() => expect(starts).toBe(1));
 
     expect(
       (
@@ -216,11 +239,11 @@ describe("BinaryTargetRegistry background starts", () => {
     ).toBe(true);
     // The cap holds the second start in the queue; only one provider starts.
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(clientsCreated).toBe(1);
+    expect(starts).toBe(1);
 
-    firstHealth.resolve(observed(null));
-    await vi.waitFor(() => expect(clientsCreated).toBe(2));
-    secondHealth.resolve(observed(null));
+    healths[0]?.resolve(observed(null));
+    await vi.waitFor(() => expect(starts).toBe(2));
+    healths[1]?.resolve(observed(null));
     await vi.waitFor(() =>
       expect(registry.analysisState()).toMatchObject({ state: "ready" }),
     );
@@ -231,15 +254,26 @@ describe("BinaryTargetRegistry background starts", () => {
     const thirdRoot = await createTestTempDirectory("rea-binary-third-");
     const third = join(thirdRoot, "third.hop");
     await writeFile(third, "three");
-    const firstHealth = createDeferred<ReturnType<typeof observed>>();
-    const thirdHealth = createDeferred<ReturnType<typeof observed>>();
-    let clientsCreated = 0;
+    const healths: Array<
+      ReturnType<typeof createDeferred<ReturnType<typeof observed>>>
+    > = [];
+    let starts = 0;
     const registry = createTestBinaryTargetRegistry(
       () => {
-        clientsCreated += 1;
-        return new ControllableAnalysisClient(
-          clientsCreated === 1 ? firstHealth.promise : thirdHealth.promise,
-        );
+        const health = createDeferred<ReturnType<typeof observed>>();
+        healths.push(health);
+        return {
+          execute: (operation: string) => {
+            // The health probe of a client that starts its provider with its
+            // first call is that start.
+            if (operation === "health") {
+              starts += 1;
+              return health.promise;
+            }
+            return Promise.resolve(observed(null));
+          },
+          close: () => Promise.resolve(resultOk(null)),
+        };
       },
       {},
       { maxConcurrentAnalyses: 1 },
@@ -249,7 +283,7 @@ describe("BinaryTargetRegistry background starts", () => {
       analysisMode: "background",
       keepOthersOpen: true,
     });
-    await vi.waitFor(() => expect(clientsCreated).toBe(1));
+    await vi.waitFor(() => expect(starts).toBe(1));
     await registry.open(second, {
       analysisMode: "background",
       keepOthersOpen: true,
@@ -260,16 +294,16 @@ describe("BinaryTargetRegistry background starts", () => {
 
     // Closing the queued target cancels its start before it takes a permit.
     expect((await registry.close({ targetId: queuedId! })).ok).toBe(true);
-    expect(clientsCreated).toBe(1);
+    expect(starts).toBe(1);
 
-    firstHealth.resolve(observed(null));
+    healths[0]?.resolve(observed(null));
     await registry.open(third, {
       analysisMode: "background",
       keepOthersOpen: true,
     });
     // The cancelled start never consumed the permit the third start needs.
-    await vi.waitFor(() => expect(clientsCreated).toBe(2));
-    thirdHealth.resolve(observed(null));
+    await vi.waitFor(() => expect(starts).toBe(2));
+    healths[1]?.resolve(observed(null));
   });
 });
 

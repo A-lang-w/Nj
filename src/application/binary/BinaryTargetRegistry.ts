@@ -95,14 +95,22 @@ interface TargetSlot {
   /** The target identity the current handle was minted for. */
   handleTarget: BinaryTarget | undefined;
   /**
-   * The start permit a retained cleanup owns.
+   * The start permits the starts this slot runs hold.
+   *
+   * A permit is held while a provider start runs. A close that gave up on a
+   * start that never unwound gives the permit back, and a close that could
+   * not release the provider keeps it.
+   */
+  readonly startPermits: Set<StartPermit>;
+  /**
+   * The start permits a retained cleanup owns.
    *
    * A close that gave up on a start that never unwound cannot release the
    * provider, and that provider may still be running. The retained cleanup
    * keeps the start permit until it succeeds, so the analysis cap keeps
    * counting the provider that is still alive.
    */
-  retainedPermit: StartPermit | undefined;
+  readonly retainedPermits: Set<StartPermit>;
 }
 
 type AnalysisJobState = "starting" | "ready" | "failed" | "cancelled";
@@ -133,8 +141,6 @@ interface AnalysisJob {
   readonly controller: AbortController;
   readonly startedAt: number;
   readonly mode: "background" | "auto";
-  /** The shared start permit this job holds, released exactly once. */
-  readonly permit: StartPermit;
   state: AnalysisJobState;
   error: AnalysisError | undefined;
   /** Completion time of a terminal job; undefined while the job is starting. */
@@ -173,16 +179,21 @@ interface OpenAnswer {
 /**
  * One shared start permit.
  *
- * A permit is taken before a provider start and given back when the start
+ * A permit is taken around a provider start and given back when the start
  * settles. A start that never settles keeps its permit until the close that
  * gave up on it releases it, so a later start is never queued behind a start
  * that will never finish. A close that could not release the provider keeps
  * the permit: the provider may still be running, so the analysis cap has to
  * count it. The retained cleanup gives the permit back when it succeeds.
+ *
+ * The permit is never held across a wait that another request needs it for:
+ * an open that waits for the calls that ran before it may be one of the
+ * requests that waits for a permit, so holding the permit there would let
+ * two requests wait for each other forever.
  */
 interface StartPermit {
   held: boolean;
-  /** True once a retained cleanup owns this permit instead of its job. */
+  /** True once a retained cleanup owns this permit instead of its start. */
   retained: boolean;
 }
 
@@ -445,7 +456,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           startProvider: true,
           // A provider the client still defers starts under the admission, so
           // the shared start limit covers that start as well.
-          startAdmission: this.#startAdmission(),
+          startAdmission: this.#startAdmission(slot.value),
         }),
       options,
     );
@@ -485,7 +496,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           startProvider: true,
           // A provider the client still defers starts under the admission, so
           // the shared start limit covers that start as well.
-          startAdmission: this.#startAdmission(),
+          startAdmission: this.#startAdmission(slot.value),
         }),
       options,
     );
@@ -711,7 +722,6 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       controller,
       startedAt,
       mode,
-      permit: { held: false, retained: false },
       state: "starting",
       error: undefined,
       finishedAt: undefined,
@@ -736,12 +746,16 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   }
 
   /**
-   * Run one job under the shared start permit.
+   * Run one job and let the session start its provider under the limit.
    *
    * The permit bounds simultaneous provider starts for background jobs exactly
    * as it does for foreground opens, and the queue is FIFO. The job owns the
    * start signal, so cancelling a queued start through `close_binary` releases
    * the queue entry without ever consuming a permit.
+   *
+   * The permit is taken around the provider start the session runs, not
+   * around the whole open: the open waits for the calls that ran before it,
+   * and one of those calls may be the request that waits for the permit.
    */
   async #runJob(
     job: AnalysisJob,
@@ -749,15 +763,6 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       signal: AbortSignal,
     ) => Promise<Result<OpenedTarget, AnalysisError>>,
   ): Promise<void> {
-    const permit = await this.#acquireStartPermit(
-      "open_binary",
-      job.controller.signal,
-      job.permit,
-    );
-    if (!permit.ok) {
-      this.#finishJob(job, "cancelled", permit.error);
-      return;
-    }
     try {
       const result = await start(job.controller.signal);
       if (job.controller.signal.aborted) {
@@ -781,10 +786,6 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           ? cause
           : new AnalysisCancelledError("open_binary"),
       );
-    } finally {
-      // A retained cleanup owns the permit when the provider it started may
-      // still be running, and only that cleanup may give the permit back.
-      if (!job.permit.retained) this.#releaseStartPermit(job.permit);
     }
   }
 
@@ -925,27 +926,13 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? ok({ slot, target: job.target })
         : err(job.error ?? new AnalysisCancelledError("open_binary"));
     }
-    const permit: StartPermit = { held: false, retained: false };
-    const acquired = await this.#acquireStartPermit(
-      "open_binary",
-      options?.signal,
-      permit,
-    );
-    if (!acquired.ok) {
-      this.#releaseReservation(slot);
-      return err(acquired.error);
-    }
-    try {
-      const opened = await slot.session.open(path, {
-        ...options,
-        // The client starts the provider it defers under this admission, so
-        // the shared start limit covers that start too.
-        startAdmission: this.#startAdmission(),
-      });
-      return this.#finishOpen(slot, opened);
-    } finally {
-      this.#releaseStartPermit(permit);
-    }
+    const opened = await slot.session.open(path, {
+      ...options,
+      // The client starts the provider it defers under this admission, so
+      // the shared start limit covers that start too.
+      startAdmission: this.#startAdmission(slot),
+    });
+    return this.#finishOpen(slot, opened);
   }
 
   async #openResolvedInSlot(
@@ -960,39 +947,35 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? ok({ slot, target: job.target })
         : err(job.error ?? new AnalysisCancelledError("open_binary"));
     }
-    const permit: StartPermit = { held: false, retained: false };
-    const acquired = await this.#acquireStartPermit(
-      "open_binary",
-      options?.signal,
-      permit,
-    );
-    if (!acquired.ok) {
-      this.#releaseReservation(slot);
-      return err(acquired.error);
-    }
-    try {
-      const opened = await slot.session.openResolvedTarget(resolved, {
-        ...options,
-        // The client starts the provider it defers under this admission, so
-        // the shared start limit covers that start too.
-        startAdmission: this.#startAdmission(),
-      });
-      return this.#finishOpen(slot, opened);
-    } finally {
-      this.#releaseStartPermit(permit);
-    }
+    const opened = await slot.session.openResolvedTarget(resolved, {
+      ...options,
+      // The client starts the provider it defers under this admission, so
+      // the shared start limit covers that start too.
+      startAdmission: this.#startAdmission(slot),
+    });
+    return this.#finishOpen(slot, opened);
   }
 
   /**
-   * The admission that bounds a provider start the client defers.
+   * The admission that bounds a provider start.
    *
-   * A composed client starts the provider it selected with the first call
-   * that needs it, so that call runs under this admission: the shared start
-   * limit covers the real start and not only the open that resolved the
-   * target. The permit is taken for the call and given back when it
-   * settles, so a start that never begins holds nothing.
+   * A composed client starts the provider it defers with the first call that
+   * needs it, and an open starts the provider it selected, so both run under
+   * this admission: the shared start limit covers the real starts and not
+   * only the opens that resolved a target. The permit is taken around the
+   * start and given back when the start settles, so a start that never
+   * begins holds nothing.
+   *
+   * The permit is taken after the calls that ran before the start have
+   * drained. An open that holds a permit while it waits for those calls
+   * would wait for a request that waits for that same permit, and the two
+   * would wait for each other forever.
+   *
+   * The permit belongs to the slot that runs the start: a close that gave up
+   * on a start that never unwound gives it back, and a close that could not
+   * release the provider keeps it.
    */
-  #startAdmission(): ProviderStartAdmission {
+  #startAdmission(slot: TargetSlot): ProviderStartAdmission {
     return {
       run: async (start, operation, signal) => {
         const permit: StartPermit = { held: false, retained: false };
@@ -1002,10 +985,14 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           permit,
         );
         if (!acquired.ok) return err(acquired.error);
+        slot.startPermits.add(permit);
         try {
           return await start();
         } finally {
-          this.#releaseStartPermit(permit);
+          slot.startPermits.delete(permit);
+          // A retained cleanup owns the permit when the provider it started
+          // may still be running, and only that cleanup may give it back.
+          if (!permit.retained) this.#releaseStartPermit(permit);
         }
       },
     };
@@ -1154,13 +1141,13 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       // The provider could not be released, so it may still be running. The
       // retained cleanup keeps the start permit: the analysis cap has to
       // count that provider until the cleanup succeeds.
-      this.#retainJobPermit(slot);
+      this.#retainSlotPermits(slot);
       return closed;
     }
     // The start that never unwound still holds the shared start permit. The
     // close gives it back, so a later open is not queued behind a start that
     // will never finish.
-    this.#releaseJobPermit(slot);
+    this.#releaseSlotPermits(slot);
     return closed;
   }
 
@@ -1683,7 +1670,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       id: randomUUID(),
       session,
       handleTarget: undefined,
-      retainedPermit: undefined,
+      startPermits: new Set(),
+      retainedPermits: new Set(),
     };
     session.onAvailabilityChanged(() => this.#emitAvailabilityChanged());
     session.onAnalysisSnapshotChanged(() => this.#emitSnapshotChanged());
@@ -2018,47 +2006,46 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   }
 
   /**
-   * Give back the permit a wedged job still holds.
+   * Give back the permits the starts of a slot still hold.
    *
    * A start that ignored its abort never settles, so its permit would never
    * be released. The close that gave up on the start releases it, so a later
    * open is not queued behind a start that will never finish.
    */
-  #releaseJobPermit(slot: TargetSlot): void {
-    const job = this.#jobs.get(slot.id);
-    if (job === undefined) return;
-    this.#releaseStartPermit(job.permit);
+  #releaseSlotPermits(slot: TargetSlot): void {
+    for (const permit of slot.startPermits) this.#releaseStartPermit(permit);
+    slot.startPermits.clear();
   }
 
   /**
-   * Keep the permit of a job whose provider could not be released.
+   * Keep the permits of the starts a slot runs.
    *
    * The provider may still be running, so the analysis cap has to count it
-   * until the retained cleanup releases it. The job may no longer give the
+   * until the retained cleanup releases it. The start may no longer give the
    * permit back, so the cleanup owns it from here.
    */
-  #retainJobPermit(slot: TargetSlot): void {
-    const job = this.#jobs.get(slot.id);
-    if (job === undefined) return;
-    if (slot.retainedPermit !== undefined) return;
-    if (!job.permit.held) {
+  #retainSlotPermits(slot: TargetSlot): void {
+    if (slot.retainedPermits.size > 0) return;
+    const outstanding = [...slot.startPermits];
+    slot.startPermits.clear();
+    if (outstanding.length === 0) {
       // The start settled while the close was running and gave the permit
       // back, but the provider it started may still be alive. The retained
       // cleanup takes a permit of its own.
-      slot.retainedPermit = { held: true, retained: true };
+      slot.retainedPermits.add({ held: true, retained: true });
       this.#activeStarts += 1;
       return;
     }
-    job.permit.retained = true;
-    slot.retainedPermit = job.permit;
+    for (const permit of outstanding) {
+      permit.retained = true;
+      slot.retainedPermits.add(permit);
+    }
   }
 
-  /** Give back the permit a retained cleanup owns. */
+  /** Give back the permits a retained cleanup owns. */
   #releaseRetainedPermit(slot: TargetSlot): void {
-    const permit = slot.retainedPermit;
-    if (permit === undefined) return;
-    slot.retainedPermit = undefined;
-    this.#releaseStartPermit(permit);
+    for (const permit of slot.retainedPermits) this.#releaseStartPermit(permit);
+    slot.retainedPermits.clear();
   }
 
   /**
@@ -2094,7 +2081,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   async #runRetainedCleanupRetry(): Promise<void> {
     const slots = new Set<TargetSlot>([...this.#slots.values(), this.#primary]);
     for (const slot of slots) {
-      if (slot.retainedPermit === undefined) continue;
+      if (slot.retainedPermits.size === 0) continue;
       const released = await slot.session.releasePendingProvider();
       if (!released.ok) continue;
       // The provider is gone, so the analysis cap stops counting it and the

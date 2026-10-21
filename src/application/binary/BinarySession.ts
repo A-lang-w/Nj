@@ -789,17 +789,40 @@ export class BinarySession
    * child, so an open that reports the target as started asks the client to
    * start the provider it selected. The start belongs to this window, so a
    * close that gives up on it still owns the client it started.
+   *
+   * A start that runs under the shared admission is bounded by the analysis
+   * cap. The admission takes the limit around the start itself, after the
+   * calls that ran before it have drained: an open that held the limit while
+   * it waited for those calls would wait for a request that waits for that
+   * same limit.
    */
   async #startClient(
     run: SessionRun,
-    options: Pick<BinarySessionOpenOptions, "signal" | "startProvider">,
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "startProvider" | "startAdmission"
+    >,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const admission = options.startAdmission;
+    const providerStart = run.client.startProvider;
+    if (providerStart === undefined) {
+      // The client starts its provider with its first call, so the health
+      // probe is that start.
+      const probe = (): Promise<Result<AnalysisExecution, AnalysisError>> =>
+        run.client.execute("health", {}, options);
+      return admission === undefined
+        ? await probe()
+        : await admission.run(probe, "open_binary", options.signal);
+    }
     const health = await run.client.execute("health", {}, options);
     if (!health.ok) return health;
     if (options.startProvider !== true) return health;
-    const start = run.client.startProvider;
-    if (start === undefined) return health;
-    const started = await start(options);
+    const start = (): Promise<Result<null, AnalysisError>> =>
+      providerStart(options);
+    const started =
+      admission === undefined
+        ? await start()
+        : await admission.run(start, "open_binary", options.signal);
     return started.ok ? health : err(started.error);
   }
 

@@ -10,10 +10,10 @@ import {
 
 /**
  * The production route is a composite, so the provider it selected starts
- * with the first call that needs it rather than with the open. A foreground
- * open releases its own start permit when the open returns, so the import
- * that follows has to run under the shared start limit: without that, two
- * foreground targets start two imports beside each other.
+ * with the first call that needs it rather than with the open. The shared
+ * start limit covers that deferred start, so the import that follows has to
+ * run under it: without that, two foreground targets start two imports
+ * beside each other.
  */
 describe("a foreground open on a composed route", () => {
   it("starts the provider under the shared start limit", async () => {
@@ -77,5 +77,58 @@ describe("a foreground open on a composed route", () => {
 
     starts[1]?.resolve(observed(null));
     await expect(secondCall).resolves.toMatchObject({ ok: true });
+  });
+});
+
+/**
+ * The start permit is taken around the provider start, not around the open
+ * that waits for the calls that ran before it.
+ *
+ * A reopen waits for the calls of the slot it opens. A call that waits for
+ * the start permit waits for the reopen when the reopen holds that permit,
+ * and the reopen waits for that call: the two would wait for each other
+ * forever, and every later start would stay queued behind them.
+ */
+describe("a reopen that waits for an earlier call", () => {
+  it("does not hold the start permit the earlier call waits for", async () => {
+    const [first] = await createBinarySessionTargets();
+    const starts: Array<
+      ReturnType<typeof createDeferred<ReturnType<typeof observed>>>
+    > = [];
+    let calls = 0;
+    const registry = createTestComposedBinaryTargetRegistry(
+      () => {
+        const start = createDeferred<ReturnType<typeof observed>>();
+        starts.push(start);
+        return {
+          execute: (operation: string) => {
+            if (operation === "health") return Promise.resolve(observed(null));
+            calls += 1;
+            return start.promise;
+          },
+          close: () => Promise.resolve(resultOk(null)),
+        };
+      },
+      {},
+      { maxConcurrentAnalyses: 1 },
+    );
+
+    const opened = await registry.open(first, { keepOthersOpen: true });
+    expect(opened.ok).toBe(true);
+    const handle = registry.targets()[0]?.target_id;
+    if (handle === undefined) throw new Error("expected an open target");
+
+    // The call needs the provider, so it waits for the start permit.
+    const call = registry.execute("address_name", {}, { targetId: handle });
+    // The reopen waits for the call that ran before it.
+    const reopening = registry.open(first, { keepOthersOpen: true });
+
+    // The call reaches the provider start: the reopen does not hold the start
+    // permit while it waits for that call.
+    await vi.waitFor(() => expect(calls).toBe(1));
+
+    starts[0]?.resolve(observed(null));
+    await expect(call).resolves.toMatchObject({ ok: true });
+    await expect(reopening).resolves.toMatchObject({ ok: true });
   });
 });

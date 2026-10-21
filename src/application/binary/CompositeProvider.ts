@@ -271,7 +271,7 @@ export class CompositeProvider implements AnalysisProvider {
         if (closed) return err(clientClosedError(this.#identity.id));
         if (selected === undefined) return ok(null);
         // The explicit start is the caller's own admitted start: the caller
-        // holds the start limit while the open runs.
+        // runs it under the shared start limit.
         const result = await clientFor(selected).execute("health", {}, options);
         if (result.ok) started.add(selected);
         return result.ok ? ok(null) : err(result.error);

@@ -240,9 +240,10 @@ export interface AnalysisClient extends AnalysisOperationPort {
 /**
  * The shared admission that bounds a provider start.
  *
- * A client that defers its start runs it under this admission, so a limit
- * that counts provider starts counts the real ones instead of only the
- * opens that resolved a target. The admission takes the limit for the
+ * A client that defers its start runs it under this admission, and an open
+ * that starts the provider it selected runs that start under it too, so a
+ * limit that counts provider starts counts the real ones instead of only the
+ * opens that resolved a target. The admission takes the limit around the
  * start and gives it back when the start settles.
  */
 export interface ProviderStartAdmission {
