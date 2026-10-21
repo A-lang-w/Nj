@@ -451,10 +451,12 @@ it("keeps shutdown registered when a failed initial open retains session cleanup
   const openFailure = new AnalysisTimeoutError("health", 1_000);
   let closeFails = true;
   let clientCloses = 0;
+  const closeOptions: unknown[] = [];
   const session = createTestBinarySession((): AnalysisClient => ({
     execute: async () => err(openFailure),
-    close: async () => {
+    close: async (options) => {
       clientCloses += 1;
+      closeOptions.push(options);
       return closeFails
         ? err(new AnalysisOutputError("close", "fixture close failed"))
         : ok(null);
@@ -497,6 +499,10 @@ it("keeps shutdown registered when a failed initial open retains session cleanup
     cleanup_pending: false,
   });
   expect(unregistrations).toEqual(["shutdown"]);
+  // Every retry keeps the failed open's policy: provider documents close.
+  expect(closeOptions).not.toContainEqual(
+    expect.objectContaining({ retainDocument: true }),
+  );
 });
 
 it("closes the session and unregisters when startup throws unexpectedly", async () => {

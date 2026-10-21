@@ -39,16 +39,17 @@ export const createShutdown = (input: {
   readonly shutdown: () => Promise<void>;
   readonly request: () => void;
   readonly finish: () => Promise<0 | 1>;
+  readonly finishFailedOpen: () => Promise<0 | 1>;
   readonly release: () => Promise<void>;
 } => {
   const { session, dependencies, serverLogger } = input;
   const requested = new AbortController();
   let shutdownAttempt: Promise<void> | undefined;
+  // Process shutdown keeps provider documents; a failed initial open's
+  // retained cleanup keeps its own policy, which closes them.
+  let retainProviderDocuments = true;
   const cleanupOwners = [
-    cleanupOwner(async () => {
-      const closed = await session.close({ retainProviderDocuments: true });
-      if (!closed.ok) throw closed.error;
-    }),
+    sessionCleanupOwner(session, () => retainProviderDocuments),
   ];
   // The attached transport's barrier before shared owners close.
   let prepareShutdown: (() => Promise<void>) | undefined;
@@ -97,6 +98,15 @@ export const createShutdown = (input: {
   const settleInFlight = async (): Promise<void> => {
     await shutdownAttempt?.catch(() => undefined);
   };
+  // Complete a requested shutdown, including owners attached after it began.
+  // A reported failure with no newer owner keeps its handlers for a retry.
+  const finish = async (): Promise<0 | 1> => {
+    await settleInFlight();
+    startupSettled = true;
+    if (lastAttemptFailed && cleanupOwners.every(({ attempted }) => attempted))
+      return 1;
+    return reportShutdown();
+  };
   unregisterShutdown = dependencies.registerShutdown(requestShutdown);
   return {
     signal: requested.signal,
@@ -117,17 +127,12 @@ export const createShutdown = (input: {
     },
     shutdown,
     request: requestShutdown,
-    // Complete a requested shutdown, including owners attached after it began.
-    // A reported failure with no newer owner keeps its handlers for a retry.
-    finish: async () => {
-      await settleInFlight();
-      startupSettled = true;
-      if (
-        lastAttemptFailed &&
-        cleanupOwners.every(({ attempted }) => attempted)
-      )
-        return 1;
-      return reportShutdown();
+    finish,
+    // A failed initial open whose cleanup the session still retains: retry it
+    // with that open's non-retaining policy, here and on any later request.
+    finishFailedOpen: () => {
+      retainProviderDocuments = false;
+      return finish();
     },
     // Startup failed and closed its own resources; stop handling process events
     // unless a shutdown that raced it failed and retains owners for a retry.
@@ -138,6 +143,18 @@ export const createShutdown = (input: {
     },
   };
 };
+
+/** Close the session under the retention policy current at each attempt. */
+const sessionCleanupOwner = (
+  session: BinarySession,
+  retainProviderDocuments: () => boolean,
+): ShutdownCleanupOwner =>
+  cleanupOwner(async () => {
+    const closed = await session.close(
+      retainProviderDocuments() ? { retainProviderDocuments: true } : {},
+    );
+    if (!closed.ok) throw closed.error;
+  });
 
 const cleanupOwner = (close: () => Promise<void>): ShutdownCleanupOwner => ({
   close,
