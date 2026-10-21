@@ -49,12 +49,12 @@ it("binds omitted provider subjects to the selected target", async () => {
     expect(execution.ok).toBe(true);
     if (!execution.ok || !opened.ok) return;
     expect(execution.value.subject).toEqual({
-      path: opened.value.path,
-      sha256: opened.value.sha256,
-      format: opened.value.format,
-      ...(opened.value.architecture === undefined
+      path: opened.value.target.path,
+      sha256: opened.value.target.sha256,
+      format: opened.value.target.format,
+      ...(opened.value.target.architecture === undefined
         ? {}
-        : { architecture: opened.value.architecture }),
+        : { architecture: opened.value.target.architecture }),
     });
   } finally {
     await session.close();

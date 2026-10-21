@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 import { createServer } from "../../../src/server/createServer.js";
@@ -104,6 +104,56 @@ const connectBackground = async () => {
     health,
     first,
     close: async () => {
+      await Promise.allSettled([client.close(), server.close()]);
+      await registry.closeAll();
+    },
+  };
+};
+
+/**
+ * A session whose first target never finishes starting.
+ *
+ * Only the first client's start is pending, so the second open answers while
+ * the first one waits for its own analysis.
+ */
+const connectOverlapping = async () => {
+  const [first, second] = await createBinarySessionTargets();
+  const health = createDeferred<ReturnType<typeof observed>>();
+  let clients = 0;
+  const registry = createTestBinaryTargetRegistry(
+    () => {
+      clients += 1;
+      const pending = clients === 1;
+      return {
+        execute: (operation: string) =>
+          operation === "health" && pending
+            ? health.promise
+            : Promise.resolve(observed(operation)),
+        close: () => Promise.resolve(resultOk(null)),
+      };
+    },
+    {},
+    // The fixture's start ignores its abort, so the close must not wait long
+    // for it to unwind.
+    { jobSettleTimeoutMs: 100 },
+  );
+  const server = createServer(
+    { kind: "session", session: registry },
+    { logger: silentLogger },
+  );
+  const client = new Client({ name: "overlapping-targets", version: "1.0.0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return {
+    client,
+    registry,
+    health,
+    first,
+    second,
+    close: async () => {
+      health.resolve(observed(null));
       await Promise.allSettled([client.close(), server.close()]);
       await registry.closeAll();
     },
@@ -251,6 +301,55 @@ describe("multi-target MCP session", () => {
         arguments: { wait_ms: 10 },
       });
       expect(refused.isError).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+/**
+ * An open reply names the target it opened.
+ *
+ * An open that waits for its analysis can be overtaken by another open, so
+ * the reply of the first one is written while a different target is the
+ * current one. The reply has to name the target the open produced, or the
+ * follow-up calls it invites address another binary.
+ */
+describe("an overlapping open", () => {
+  it("names the target it opened when another open becomes the current one", async () => {
+    const harness = await connectOverlapping();
+    try {
+      const opening = harness.client.callTool({
+        name: "open_binary",
+        arguments: {
+          path: harness.first,
+          analysis_mode: "auto",
+          auto_background_after_ms: 200,
+        },
+      });
+      // The first target is open and its analysis is still starting.
+      await vi.waitFor(() =>
+        expect(harness.registry.targets()).toHaveLength(1),
+      );
+      const firstId = harness.registry.targets()[0]?.target_id;
+      expect(firstId).toBeDefined();
+
+      // Another open becomes the current target while the first one waits.
+      const openedSecond = await harness.client.callTool({
+        name: "open_binary",
+        arguments: { path: harness.second, keep_others_open: true },
+      });
+      expect(openedSecond.isError).not.toBe(true);
+      const secondId = targetId(openedSecond);
+      expect(secondId).not.toBe(firstId);
+
+      // The first open's wait expires, and its reply names its own target.
+      const openedFirst = await opening;
+      expect(openedFirst.isError).not.toBe(true);
+      expect(targetId(openedFirst)).toBe(firstId);
+      expect(
+        (openedFirst.structuredContent as { result?: unknown }).result,
+      ).toMatchObject({ analysis: { state: "starting" } });
     } finally {
       await harness.close();
     }

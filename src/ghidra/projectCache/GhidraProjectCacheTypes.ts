@@ -46,7 +46,9 @@ export type GhidraProjectCacheFailureReason =
   | "io"
   | "busy"
   | "capacity"
-  | "disabled";
+  | "disabled"
+  /** The cache root itself is not a directory REA may read or remove in. */
+  | "root";
 
 /**
  * Expected store failure. Carries the reason and the affected path so a caller

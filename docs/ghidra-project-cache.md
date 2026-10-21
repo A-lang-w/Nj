@@ -100,6 +100,12 @@ replays in the later session.
   name is moved aside and compared with the one the session observed, so a
   directory another session created after that observation is put back
   instead of being removed with the copy or the lock it holds.
+- The cache root is admitted before the store lists or removes what it holds,
+  so a root that another principal replaced with a link is refused instead of
+  followed. `cache-list`, `cache-verify`, `cache-prune`, and `cache-remove`
+  report that refusal, and they never remove what the linked directory holds.
+  A root that does not exist holds no stored project, so the maintenance
+  commands report an empty cache instead of creating one.
 - **Miss** imports writable into a private runtime project; when the session
   closes after a clean, complete, mutation-free analysis the saved project is
   copied into the cache and published by an atomic rename under a per-key lock.

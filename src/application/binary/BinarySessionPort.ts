@@ -22,6 +22,7 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
+  ProviderStartAdmission,
 } from "../AnalysisProvider.js";
 
 /** Receipt for an atomically saved snapshot followed by provider cleanup. */
@@ -36,9 +37,50 @@ export interface SavedAnalysisSnapshot {
   readonly evidence_records: number;
 }
 
+/**
+ * The check that a request still addresses the binding it was admitted for.
+ *
+ * The registry owns the handles, so it owns this check: it reports the
+ * refusal the caller sees when the handle no longer names the target the
+ * request was admitted for.
+ */
+export type BinaryBindingGuard = () => Result<undefined, AnalysisError>;
+
+/**
+ * A target an open produced, with the handle and the state that belong to it.
+ *
+ * The handle names the target the open produced and the analysis state
+ * belongs to it. Reading the current target after the open can name a
+ * different target when another open replaced it in the meantime, so the
+ * open reports its own handle and state with the target it opened.
+ */
+export interface OpenedTarget {
+  readonly target: BinaryTarget;
+  /** The handle that names this target; absent when the adapter has no handles. */
+  readonly target_id?: string;
+  /** The background-analysis state of this target; absent when none is tracked. */
+  readonly analysis?: JsonValue;
+}
+
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
+  /**
+   * The check that a request still addresses the binding it was admitted for.
+   *
+   * A target transition can replace the binding while a request waits for it,
+   * so a request that waited behind a replacement would run against the
+   * target that took the place of the one it addressed. The check runs under
+   * the same lifecycle admission that protects the execution, and it reports
+   * the refusal instead of the execution.
+   */
+  execute(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions & {
+      readonly bindingGuard?: BinaryBindingGuard;
+    },
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
   /** Execute only against a positively ready, already-created provider client. */
   executeIfProviderReady(
     operation: AnalysisOperation,
@@ -90,11 +132,13 @@ export interface BinarySessionPort
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       /** Start the selected provider as part of this open. */
       readonly startProvider?: boolean;
+      /** The admission that bounds a start the client defers. */
+      readonly startAdmission?: ProviderStartAdmission;
       readonly keepOthersOpen?: boolean;
       readonly analysisMode?: "foreground" | "background" | "auto";
       readonly autoBackgroundAfterMs?: number;
     },
-  ): Promise<Result<BinaryTarget, AnalysisError>>;
+  ): Promise<Result<OpenedTarget, AnalysisError>>;
   open(
     path: string,
     options?: {
@@ -106,6 +150,8 @@ export interface BinarySessionPort
       readonly snapshot?: AnalysisSnapshot;
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly providerId?: AnalysisProviderSelector;
+      /** The admission that bounds a start the client defers. */
+      readonly startAdmission?: ProviderStartAdmission;
       /** Keep other open targets instead of replacing them (default false). */
       readonly keepOthersOpen?: boolean;
       /** Foreground (default), background, or experimental auto promotion. */
@@ -113,7 +159,7 @@ export interface BinarySessionPort
       /** Auto mode promotion threshold; defaults to the registry setting. */
       readonly autoBackgroundAfterMs?: number;
     },
-  ): Promise<Result<BinaryTarget, AnalysisError>>;
+  ): Promise<Result<OpenedTarget, AnalysisError>>;
   /** Open a resource-only app root without selecting or inventing an executable target. */
   openBundleResources(
     path: string,

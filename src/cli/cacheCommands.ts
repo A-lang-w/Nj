@@ -159,6 +159,19 @@ const cacheErrorEnvelope = (
         },
         details,
       };
+    case "root":
+      return {
+        error: label,
+        code: "unreadable_output",
+        category: "execution_failure",
+        message: error.message,
+        retryable: false,
+        remediation: {
+          action:
+            "Point REA_GHIDRA_PROJECT_CACHE_DIR at a real directory that is not a link, then retry.",
+        },
+        details,
+      };
     default:
       return {
         error: label,

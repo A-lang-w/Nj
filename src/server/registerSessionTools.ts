@@ -214,16 +214,21 @@ const registerOpenLifecycleTool = (
               }),
         }),
       );
-      const targetId = session.currentTargetId?.();
-      const analysis = session.analysisState?.();
+      // The open reports the handle and the analysis state of the target it
+      // opened. Reading the current target after the open can name a
+      // different target when another open replaced it in the meantime.
       return opened.ok
         ? server.delivery.toCallToolResult(
             {
               ok: true,
               value: {
-                ...binaryTargetSummary(opened.value),
-                ...(targetId === undefined ? {} : { target_id: targetId }),
-                ...(analysis === undefined ? {} : { analysis }),
+                ...binaryTargetSummary(opened.value.target),
+                ...(opened.value.target_id === undefined
+                  ? {}
+                  : { target_id: opened.value.target_id }),
+                ...(opened.value.analysis === undefined
+                  ? {}
+                  : { analysis: opened.value.analysis }),
               },
             },
             openContract,

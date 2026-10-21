@@ -14,6 +14,7 @@ import {
   createTestBinaryTargetRegistry,
 } from "../../../tests/fixtures/binarySession.js";
 import type { BinaryTargetRegistry } from "./BinaryTargetRegistry.js";
+import type { OpenedTarget } from "./BinarySessionPort.js";
 
 /** Open one target as a background job and require the open to succeed. */
 const openInBackground = async (
@@ -42,9 +43,9 @@ const reopenWhileTheSlotChanges = async (
   reopen: (
     registry: BinaryTargetRegistry,
     target: BinaryTarget,
-  ) => Promise<Result<BinaryTarget, AnalysisError>>,
+  ) => Promise<Result<OpenedTarget, AnalysisError>>,
 ): Promise<{
-  readonly answered: Result<BinaryTarget, AnalysisError>;
+  readonly answered: Result<OpenedTarget, AnalysisError>;
   readonly requested: string;
 }> => {
   const closing = createDeferred<void>();
@@ -284,7 +285,7 @@ describe("a reused background target", () => {
     // that took the slot over while the request waited.
     expect(answered.ok).toBe(true);
     if (!answered.ok) return;
-    expect(answered.value.sha256).toBe(requested);
+    expect(answered.value.target.sha256).toBe(requested);
   });
 
   /**
@@ -312,7 +313,7 @@ describe("a reused background target", () => {
 
     expect(answered.ok).toBe(true);
     if (!answered.ok) return;
-    expect(answered.value.sha256).toBe(requested);
+    expect(answered.value.target.sha256).toBe(requested);
   });
 });
 

@@ -237,9 +237,38 @@ export interface AnalysisClient extends AnalysisOperationPort {
   ): Promise<Result<null, AnalysisError>>;
 }
 
+/**
+ * The shared admission that bounds a provider start.
+ *
+ * A client that defers its start runs it under this admission, so a limit
+ * that counts provider starts counts the real ones instead of only the
+ * opens that resolved a target. The admission takes the limit for the
+ * start and gives it back when the start settles.
+ */
+export interface ProviderStartAdmission {
+  /**
+   * Run one provider start under the shared start limit.
+   *
+   * The admission reports the start's own failure. It never starts a
+   * provider twice and never runs the start without the limit.
+   */
+  run<Value>(
+    start: () => Promise<Result<Value, AnalysisError>>,
+    operation: string,
+    signal?: AbortSignal,
+  ): Promise<Result<Value, AnalysisError>>;
+}
+
 /** Per-client identity allocated before any provider side effect starts. */
 export interface AnalysisClientContext {
   readonly runId: string;
+  /**
+   * The admission that bounds a start this client defers.
+   *
+   * A client that starts its provider with a later call runs that call
+   * under this admission, so the shared start limit covers the real start.
+   */
+  readonly startAdmission?: ProviderStartAdmission;
 }
 
 /** One lifecycle owner for retained resources and abortable inspection work. */

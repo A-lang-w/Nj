@@ -361,7 +361,7 @@ const runAnalysis = async (
       const evidenceProfile = analysisProfileForEvidence(session, tool);
       const { output, evidence, cachePolicy } = await executeAnalysisTool({
         session,
-        openedTarget: opened.value,
+        openedTarget: opened.value.target,
         tool,
         arguments: arguments_,
         signal,

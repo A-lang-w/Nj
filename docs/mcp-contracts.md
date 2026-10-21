@@ -474,17 +474,25 @@ unchanged: opening another target closes the current one. Pass
 constraint. `REA_MAX_CONCURRENT_ANALYSES` (default 2) bounds simultaneous
 starts; additional starts wait in FIFO order. The cap covers background starts
 exactly as it covers foreground opens, so a server never starts more provider
-processes than the limit allows.
+processes than the limit allows. A composed route starts its provider with the
+first query that needs it, and that start waits for the cap the same way.
+
+The reply of an open names the target that open produced: its `target_id` and
+its `analysis` state belong to it even when another open became the current
+target while the open was waiting.
 
 Every official analysis tool accepts an optional `target_id`. Omit it to address
 the current target, which keeps single-target transcripts compatible. An unknown
 or closed handle returns `target_not_open` with the open ids, never target
 paths. An explicit handle never falls back to another target: the provider
 identity, analysis profile, and snapshot of a handle that is not open are not
-reported. Each slot keeps its own provider process, lifecycle lock, cancellation
-scope, and analysis snapshot; Evidence records remain session-wide and stay
-bound to each target's digest. `close_binary` accepts `target_id`; without one it
-closes the current target.
+reported. A call that names a handle is checked under the same lifecycle
+admission that runs it, so a call that waited behind a replacement runs against
+the target its handle named or is refused with `target_not_open`. Each slot
+keeps its own provider process, lifecycle lock, cancellation scope, and analysis
+snapshot; Evidence records remain session-wide and stay bound to each target's
+digest. `close_binary` accepts `target_id`; without one it closes the current
+target.
 
 ### Background analysis
 

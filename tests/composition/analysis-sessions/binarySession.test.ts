@@ -1239,20 +1239,20 @@ describe("active client replacement", () => {
     expect(second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
 
-    expect(second.value.sha256).not.toBe(first.value.sha256);
-    expect(session.activeTarget()?.sha256).toBe(second.value.sha256);
+    expect(second.value.target.sha256).not.toBe(first.value.target.sha256);
+    expect(session.activeTarget()?.sha256).toBe(second.value.target.sha256);
     expect(await session.execute("binary_overview", {})).toMatchObject({
       ok: true,
-      value: { result: second.value.sha256 },
+      value: { result: second.value.target.sha256 },
     });
     expect(clients).toMatchObject([
       {
-        targetSha256: first.value.sha256,
+        targetSha256: first.value.target.sha256,
         calls: ["health"],
         closed: 1,
       },
       {
-        targetSha256: second.value.sha256,
+        targetSha256: second.value.target.sha256,
         calls: ["health", "binary_overview"],
         closed: 0,
       },

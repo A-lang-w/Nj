@@ -26,6 +26,8 @@ import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.j
 import { ENHANCED_TOOL_CONTRACTS } from "../../contracts/enhancedToolContracts.js";
 import type {
   BinarySessionPort,
+  BinaryBindingGuard,
+  OpenedTarget,
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import {
@@ -517,7 +519,7 @@ export class BinarySession
   open(
     path: string,
     options: BinarySessionOpenOptions = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<Result<OpenedTarget, AnalysisError>> {
     return this.#open(
       (admitted) =>
         resolveSessionOpen({
@@ -529,7 +531,7 @@ export class BinarySession
             this.matchesSnapshot(target, profile),
         }),
       options,
-    );
+    ).then((opened) => (opened.ok ? ok({ target: opened.value }) : opened));
   }
 
   /** Open a previewed target without repeating parsing or provider profile discovery. */
@@ -537,9 +539,13 @@ export class BinarySession
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: Pick<
       BinarySessionOpenOptions,
-      "signal" | "snapshot" | "loadSnapshot" | "startProvider"
+      | "signal"
+      | "snapshot"
+      | "loadSnapshot"
+      | "startProvider"
+      | "startAdmission"
     > = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<Result<OpenedTarget, AnalysisError>> {
     return this.#open(
       () =>
         Promise.resolve(
@@ -552,7 +558,7 @@ export class BinarySession
           }),
         ),
       options,
-    );
+    ).then((opened) => (opened.ok ? ok({ target: opened.value }) : opened));
   }
 
   #open(
@@ -594,7 +600,7 @@ export class BinarySession
     resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: Pick<
       BinarySessionOpenOptions,
-      "signal" | "snapshot" | "startProvider"
+      "signal" | "snapshot" | "startProvider" | "startAdmission"
     >,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     const generation = this.#lifecycleGeneration;
@@ -672,6 +678,11 @@ export class BinarySession
     const runId = randomUUID();
     const client = route.createClient(target, {
       runId,
+      // The client starts a provider it defers under this admission, so the
+      // shared start limit covers that start.
+      ...(options.startAdmission === undefined
+        ? {}
+        : { startAdmission: options.startAdmission }),
     });
     const run: SessionRun = { client, route, runId, released: false };
     this.#pendingStart = run;
@@ -1286,7 +1297,9 @@ export class BinarySession
   execute(
     name: Parameters<AnalysisOperationPort["execute"]>[0],
     arguments_: Readonly<Record<string, JsonValue>>,
-    options?: Pick<ExecutionOptions, "signal" | "selectorOrigin">,
+    options?: Pick<ExecutionOptions, "signal" | "selectorOrigin"> & {
+      readonly bindingGuard?: BinaryBindingGuard;
+    },
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const generation = this.#transitionGeneration;
     const admission = this.#admission();
@@ -1334,6 +1347,7 @@ export class BinarySession
     operation: (analysis: AnalysisOperationPort) => Promise<Value>,
     _targetId?: string,
     _waitMs?: number,
+    bindingGuard?: BinaryBindingGuard,
   ): Promise<Result<Value, AnalysisError>> {
     const generation = this.#transitionGeneration;
     const transition = this.#admission();
@@ -1344,6 +1358,11 @@ export class BinarySession
         transition,
       );
       if (!admission.ok) return admission;
+      // The check runs under the admission that protects the execution, so a
+      // request that waited behind a replacement never runs against the
+      // target that took the place of the one it addressed.
+      const guarded = bindingGuard?.();
+      if (guarded !== undefined && !guarded.ok) return guarded;
       return ok(
         await operation({
           execute: (name, arguments_, options) =>
@@ -1365,7 +1384,11 @@ export class BinarySession
   async #execute(
     name: Parameters<AnalysisOperationPort["execute"]>[0],
     arguments_: Readonly<Record<string, JsonValue>>,
-    options: Pick<ExecutionOptions, "signal" | "selectorOrigin"> | undefined,
+    options:
+      | (Pick<ExecutionOptions, "signal" | "selectorOrigin"> & {
+          readonly bindingGuard?: BinaryBindingGuard;
+        })
+      | undefined,
     admission: TransitionAdmission,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const transitioned = await this.#waitForTransition(
@@ -1374,6 +1397,11 @@ export class BinarySession
       admission,
     );
     if (!transitioned.ok) return transitioned;
+    // The check runs under the admission that protects the execution, so a
+    // request that waited behind a replacement never runs against the
+    // target that took the place of the one it addressed.
+    const guarded = options?.bindingGuard?.();
+    if (guarded !== undefined && !guarded.ok) return guarded;
     const resources = this.#activeBundleResources;
     if (resources !== undefined) {
       if (!BUNDLE_RESOURCE_OPERATIONS.has(name))
@@ -1410,7 +1438,9 @@ export class BinarySession
     // A failed reply cannot prove that a dispatched metadata write rolled back.
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
-    const call = active.client.execute(name, arguments_, options);
+    // The binding check belongs to this session, not to the provider.
+    const { bindingGuard: _bindingGuard, ...providerOptions } = options ?? {};
+    const call = active.client.execute(name, arguments_, providerOptions);
     const result = await call;
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),

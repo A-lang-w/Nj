@@ -686,6 +686,46 @@ const ensureWindowsRoot = async (
 };
 
 /**
+ * What a maintenance operation found at the cache root.
+ *
+ * A root that does not exist holds no stored project, so a maintenance
+ * operation has nothing to list or remove. A root that is not a real
+ * directory names another directory, and the operation would list or remove
+ * what that directory holds.
+ */
+export type GhidraProjectCacheRootAdmission =
+  | { readonly status: "ready" }
+  | { readonly status: "missing" };
+
+/**
+ * Admit the cache root for a maintenance operation.
+ *
+ * The cache root is the one directory REA owns, and it is the path the
+ * caller chose, so a parent another principal can write can hold a link at
+ * its name. The operations that list or remove what the root holds follow
+ * that link, so the link is refused instead of followed.
+ *
+ * The admission does not create or rebuild the root: a maintenance
+ * operation reports what the root holds and never changes it.
+ */
+export const admitGhidraProjectCacheRoot = async (
+  root: string,
+): Promise<GhidraProjectCacheRootAdmission> => {
+  const stats = await lstat(root).catch((cause: unknown) => {
+    if (isNotFound(cause)) return undefined;
+    throw cause;
+  });
+  if (stats === undefined) return { status: "missing" };
+  if (!stats.isDirectory() || stats.isSymbolicLink())
+    throw new GhidraProjectCacheError(
+      "root",
+      "Ghidra project cache root must be a directory, not a link",
+      root,
+    );
+  return { status: "ready" };
+};
+
+/**
  * Prepare the cache root for the platform that holds it.
  *
  * A POSIX root is created owner-only and an existing widened root is

@@ -768,7 +768,9 @@ describe("GhidraProjectStore resilience", () => {
     });
     const listed = await store.list();
     expect(listed.ok).toBe(false);
-    expect(!listed.ok && listed.error.reason).toBe("io");
+    // The root is not a directory REA may read, so the store refuses it
+    // before it reads anything.
+    expect(!listed.ok && listed.error.reason).toBe("root");
   });
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(

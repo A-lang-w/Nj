@@ -24,6 +24,7 @@ import {
 } from "./GhidraProjectCacheTypes.js";
 import { ghidraProjectCacheKey } from "./GhidraProjectCacheKey.js";
 import {
+  admitGhidraProjectCacheRoot,
   ensureGhidraProjectCacheRoot,
   reclaimGhidraProjectCacheRootRepairs,
   type GhidraProjectCacheRootHost,
@@ -245,6 +246,19 @@ export class GhidraProjectStore {
         ),
       );
     try {
+      // The publish writes into the root and prunes it, so the root is
+      // admitted first. A root that is a link names another directory, and
+      // the copy would land in that directory.
+      const rootAdmitted = await this.#admitRoot();
+      if (!rootAdmitted.ok) return rootAdmitted;
+      if (!rootAdmitted.value)
+        return err(
+          new GhidraProjectCacheError(
+            "root",
+            "Ghidra project cache root does not exist",
+            this.#root,
+          ),
+        );
       return await this.#withLock(
         input.reservation.key,
         input.signal,
@@ -327,8 +341,13 @@ export class GhidraProjectStore {
 
   /** Discard a reserved staging slot without publishing (failure/cancel). */
   async abandon(reservation: GhidraProjectReservation): Promise<void> {
-    if (reservation.stagingPath !== undefined)
-      await this.#discard(reservation.stagingPath);
+    if (reservation.stagingPath === undefined) return;
+    // The discard removes what the root holds, so the root is admitted
+    // first. A root that is a link names another directory, and the copy
+    // would be removed from that directory.
+    const admitted = await this.#admitRoot();
+    if (!admitted.ok || !admitted.value) return;
+    await this.#discard(reservation.stagingPath);
   }
 
   /** Remove one stored entry by key. Returns whether an entry was removed. */
@@ -343,6 +362,11 @@ export class GhidraProjectStore {
       );
     const entryPath = this.#entryPath(key);
     try {
+      // The removal deletes what the root holds, so the root is admitted
+      // before the entry is looked up.
+      const admitted = await this.#admitRoot();
+      if (!admitted.ok) return admitted;
+      if (!admitted.value) return ok(false);
       if (await this.#isLeased(key))
         return err(
           new GhidraProjectCacheError(
@@ -373,6 +397,11 @@ export class GhidraProjectStore {
   ): Promise<
     Result<readonly GhidraProjectVerification[], GhidraProjectCacheError>
   > {
+    // The verification reports what the root holds, so the root is admitted
+    // before it is read.
+    const admitted = await this.#admitRoot();
+    if (!admitted.ok) return admitted;
+    if (!admitted.value) return ok([]);
     const keys = await this.#entryKeys(signal);
     if (!keys.ok) return keys;
     const results: GhidraProjectVerification[] = [];
@@ -497,6 +526,12 @@ export class GhidraProjectStore {
   ): Promise<
     Result<readonly GhidraProjectManifest[], GhidraProjectCacheError>
   > {
+    // The listing reports what the root holds, so the root is admitted
+    // before it is read. A root that is a link names another directory, and
+    // the listing would report that directory's entries as this cache's.
+    const admitted = await this.#admitRoot();
+    if (!admitted.ok) return admitted;
+    if (!admitted.value) return ok([]);
     const keys = await this.#entryKeys(signal);
     if (!keys.ok) return keys;
     const manifests: GhidraProjectManifest[] = [];
@@ -505,6 +540,27 @@ export class GhidraProjectStore {
       if (entry.ok) manifests.push(entry.value.manifest);
     }
     return ok(manifests);
+  }
+
+  /**
+   * Admit the cache root before the store reads or removes what it holds.
+   *
+   * The root is the path the caller chose, so a parent another principal can
+   * write can hold a link at its name. The operations that list or remove
+   * what the root holds follow that link, so a linked root is refused
+   * instead of followed. A root that does not exist holds no stored
+   * project, so the store is empty.
+   */
+  async #admitRoot(): Promise<Result<boolean, GhidraProjectCacheError>> {
+    try {
+      const admission = await admitGhidraProjectCacheRoot(this.#root);
+      return ok(admission.status === "ready");
+    } catch (cause: unknown) {
+      if (cause instanceof GhidraProjectCacheError) return err(cause);
+      return err(
+        this.#io("Ghidra project cache root is unreadable", this.#root, cause),
+      );
+    }
   }
 
   /**
@@ -537,6 +593,12 @@ export class GhidraProjectStore {
   async #prune(
     signal?: AbortSignal,
   ): Promise<Result<GhidraProjectPruneResult, GhidraProjectCacheError>> {
+    // The prune removes what the root holds, so the root is admitted before
+    // anything is listed or removed. A root that is a link names another
+    // directory, and the prune would remove that directory's children.
+    const admitted = await this.#admitRoot();
+    if (!admitted.ok) return admitted;
+    if (!admitted.value) return ok({ removed: [], bytes: 0 });
     const keys = await this.#entryKeys(signal);
     if (!keys.ok) return keys;
     await this.#pruneStaging(signal);

@@ -2,6 +2,7 @@ import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { ProviderStartAdmission } from "../AnalysisProvider.js";
 import {
   snapshotMatchesBinding,
   snapshotMatchesTarget,
@@ -50,6 +51,15 @@ export interface BinarySessionOpenOptions {
    * limits that window carries.
    */
   readonly startProvider?: boolean;
+  /**
+   * The admission that bounds a start the client defers.
+   *
+   * A composed client starts the provider it selected with the first call
+   * that needs it, so that call runs under this admission: the shared start
+   * limit covers the real start and not only the open that resolved the
+   * target.
+   */
+  readonly startAdmission?: ProviderStartAdmission;
 }
 
 interface CurrentOpenBinding {

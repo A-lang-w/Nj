@@ -3,11 +3,15 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
+import type { Result } from "../../domain/result.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,
+  AnalysisExecution,
+  AnalysisOperation,
   AnalysisProviderBoundClientFactory,
   AnalysisProvider,
   CapabilityDescriptor,
@@ -16,6 +20,7 @@ import type {
   ProviderRequestActivitySnapshot,
   ProviderRuntimeLineageSnapshot,
 } from "../AnalysisProvider.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -191,6 +196,14 @@ export class CompositeProvider implements AnalysisProvider {
     context?: AnalysisClientContext,
   ): AnalysisClient {
     const clients = new Map<AnalysisProvider, AnalysisClient>();
+    /**
+     * The children whose provider is up.
+     *
+     * A child that starts its provider with its first call starts it inside
+     * that call, so the first call is the start and the later ones are not.
+     */
+    const started = new Set<AnalysisProvider>();
+    const admission = context?.startAdmission;
     const clientFor = (provider: AnalysisProvider): AnalysisClient => {
       const existing = clients.get(provider);
       if (existing !== undefined) return existing;
@@ -203,6 +216,31 @@ export class CompositeProvider implements AnalysisProvider {
           : provider.createClient(target, providerProfile, context);
       clients.set(provider, created);
       return created;
+    };
+    /**
+     * Run one call against a child.
+     *
+     * The first call of a child starts that child's provider, so it runs
+     * under the shared start admission: the start limit covers the real
+     * start and not only the open that resolved the target. A child that is
+     * already up needs no limit.
+     */
+    const childCall = async (
+      provider: AnalysisProvider,
+      operation: AnalysisOperation,
+      parameters: Readonly<Record<string, JsonValue>>,
+      options: ExecutionOptions | undefined,
+    ): Promise<Result<AnalysisExecution, AnalysisError>> => {
+      const client = clientFor(provider);
+      if (started.has(provider))
+        return client.execute(operation, parameters, options);
+      const call = () => client.execute(operation, parameters, options);
+      const result =
+        admission === undefined
+          ? await call()
+          : await admission.run(call, operation, options?.signal);
+      if (result.ok) started.add(provider);
+      return result;
     };
     let closed = false;
     const closeClients = closeCompositeClients(this.#identity, clients);
@@ -232,12 +270,11 @@ export class CompositeProvider implements AnalysisProvider {
       startProvider: async (options) => {
         if (closed) return err(clientClosedError(this.#identity.id));
         if (selected === undefined) return ok(null);
-        const started = await clientFor(selected).execute(
-          "health",
-          {},
-          options,
-        );
-        return started.ok ? ok(null) : err(started.error);
+        // The explicit start is the caller's own admitted start: the caller
+        // holds the start limit while the open runs.
+        const result = await clientFor(selected).execute("health", {}, options);
+        if (result.ok) started.add(selected);
+        return result.ok ? ok(null) : err(result.error);
       },
       execute: async (operation, parameters, options) => {
         if (closed) return err(clientClosedError(this.#identity.id, operation));
@@ -254,7 +291,7 @@ export class CompositeProvider implements AnalysisProvider {
                 ),
               ),
             )
-          : clientFor(provider).execute(operation, parameters, options);
+          : childCall(provider, operation, parameters, options);
       },
       runtimeLineageSnapshots: () => compositeRuntimeLineage(clients),
       requestActivitySnapshots: () => compositeRequestActivity(clients),
