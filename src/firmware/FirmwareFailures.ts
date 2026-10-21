@@ -1,5 +1,7 @@
 import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { SafeOutputTreeAdmissionFailure } from "../artifacts/SafeOutputTreeAdmissionFailure.js";
+import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
@@ -8,6 +10,7 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
+  AnalysisInputError,
   AnalysisTimeoutError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
@@ -130,6 +133,21 @@ export const firmwareFailure = (
       deadline,
       publication,
     );
+  const admission =
+    cause instanceof SafeOutputTreeAdmissionFailure
+      ? cause
+      : cause instanceof SafeOutputTreeCreationFailure &&
+          cause.cause instanceof SafeOutputTreeAdmissionFailure
+        ? cause.cause
+        : undefined;
+  if (admission !== undefined)
+    return new AnalysisInputError(operation, { cause }, [
+      {
+        path: ["output_directory"],
+        reason: "invalid_value",
+        message: admission.message,
+      },
+    ]);
   if (cause instanceof z.ZodError)
     return new AnalysisOutputError(
       operation,

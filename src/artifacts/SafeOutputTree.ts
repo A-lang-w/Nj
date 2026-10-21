@@ -20,6 +20,7 @@ import {
 } from "./ArtifactPaths.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { SafeOutputTreeAdmissionFailure } from "./SafeOutputTreeAdmissionFailure.js";
 import { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.js";
 import { hashOutputFile } from "./SafeOutputTreeReadback.js";
 import { removeOwnedTree } from "./SafeOutputTreeCleanup.js";
@@ -42,6 +43,8 @@ export interface SafeOutputFile {
   readonly sha256: string;
   readonly bytesWritten: number;
 }
+
+export { SafeOutputTreeAdmissionFailure } from "./SafeOutputTreeAdmissionFailure.js";
 
 /** Cleanup state established while rolling back an uncommitted tree. */
 export type SafeOutputCleanup =
@@ -95,7 +98,7 @@ export class SafeOutputTree {
     options: { readonly acceptExistingEmpty?: boolean } = {},
   ): Promise<SafeOutputTree> {
     if (!isAbsolute(outputRoot))
-      throw new ArtifactReaderFailure(
+      throw new SafeOutputTreeAdmissionFailure(
         "path",
         "Extraction output root must be absolute",
       );
@@ -103,10 +106,13 @@ export class SafeOutputTree {
     const requested = absoluteCallerPath(outputRoot);
     const name = basename(requested);
     if (name === "." || name === "..")
-      throw new ArtifactReaderFailure("path", "Invalid extraction output root");
+      throw new SafeOutputTreeAdmissionFailure(
+        "path",
+        "Invalid extraction output root",
+      );
     const parent = await realpath(dirname(requested)).catch(
       (cause: unknown) => {
-        throw new ArtifactReaderFailure(
+        throw new SafeOutputTreeAdmissionFailure(
           "unavailable",
           "Extraction output parent is unavailable",
           { cause },
@@ -121,7 +127,7 @@ export class SafeOutputTree {
         created = false;
         return;
       }
-      throw new ArtifactReaderFailure(
+      throw new SafeOutputTreeAdmissionFailure(
         "path",
         "Extraction output root already exists",
         { cause },
@@ -133,7 +139,7 @@ export class SafeOutputTree {
       const rootIdentity = await readDirectoryIdentity(canonicalOutput);
       tree.#rootIdentity = rootIdentity;
       if (!created && (await readdir(canonicalOutput)).length > 0)
-        throw new ArtifactReaderFailure(
+        throw new SafeOutputTreeAdmissionFailure(
           "path",
           "Output directory is not empty",
         );
