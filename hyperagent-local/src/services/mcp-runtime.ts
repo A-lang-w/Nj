@@ -274,7 +274,7 @@ export async function probeEnabledMcpServers(
       transportType: server.transportType,
       ok: false,
       tools: [],
-      error: `${server.transportType} tool probing is not implemented in local mode; configure stdio for live tools/list`,
+      error: `${server.transportType} tool probing is not implemented in local mode; use stdio for live tools/list`,
     });
   }
   return results;

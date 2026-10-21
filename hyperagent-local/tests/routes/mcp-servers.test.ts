@@ -206,7 +206,7 @@ describe("mcp-servers route CRUD", () => {
     expect(sseProbe.status).toBe(200);
     const sseBody = await sseProbe.json();
     expect(sseBody.ok).toBe(false);
-    expect(sseBody.error).toContain("not implemented");
+    expect(sseBody.error).toMatch(/not implemented.*stdio/i);
 
     const missing = await authed("/mcp-servers/999999/probe", {
       method: "POST",

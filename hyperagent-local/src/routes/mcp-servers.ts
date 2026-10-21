@@ -158,7 +158,7 @@ mcpServersRouter.post("/:id/probe", async (c) => {
         serverName: server.name,
         transportType: server.transportType,
         tools: [],
-        error: `${server.transportType} probing is not implemented; use stdio`,
+        error: `${server.transportType} probing is not implemented in local mode; use stdio for live Test`,
       },
       200,
     );

@@ -27,6 +27,29 @@ const SAVE_FEEDBACK_DURATION_MS = 2000;
 type Tab = "profile" | "usage" | "mcp-servers";
 type TransportType = "stdio" | "sse" | "streamable-http";
 
+const DEFAULT_STDIO_CONFIG = `{
+  "command": "node",
+  "args": ["-e", "console.error('replace with an MCP stdio server')"]
+}`;
+
+function probeButtonLabel(
+  state:
+    | { status: "idle" | "running" | "ok" | "error"; detail?: string }
+    | undefined,
+  transportType: TransportType,
+): string {
+  if (!state || state.status === "idle") {
+    return transportType === "stdio" ? "Test" : "Test (stdio only)";
+  }
+  if (state.status === "running") return "Testing…";
+  if (state.status === "ok") return `OK · ${state.detail ?? "Connected"}`;
+  const detail = state.detail?.trim();
+  if (!detail) return "Failed";
+  return detail.length > 48
+    ? `Failed · ${detail.slice(0, 45)}…`
+    : `Failed · ${detail}`;
+}
+
 const TABS = [
   { id: "profile", label: "Profile", icon: UserIcon },
   { id: "usage", label: "Usage", icon: BarChart3 },
@@ -233,8 +256,9 @@ function UsageSection() {
         </h2>
         <p className="mb-4 text-sm" style={{ color: COLORS.textSecondary }}>
           Plan <span className="font-medium">{status.plan}</span>
-          {status.localMode ? " · local mode" : ""} · session counters reset on
-          server restart.
+          {status.localMode ? " · local mode" : ""}. In-process token counters
+          for this machine; they reset when the API restarts. Cloud billing,
+          credits, and referrals are not part of local mode.
         </p>
         <dl className="grid grid-cols-3 gap-4 text-sm">
           <div>
@@ -510,7 +534,7 @@ function McpServersSection() {
   const [formData, setFormData] = useState({
     name: "",
     transportType: "stdio" as "stdio" | "sse" | "streamable-http",
-    config: "{}",
+    config: DEFAULT_STDIO_CONFIG,
     isEnabled: true,
   });
 
@@ -561,7 +585,7 @@ function McpServersSection() {
       setFormData({
         name: "",
         transportType: "stdio",
-        config: "{}",
+        config: DEFAULT_STDIO_CONFIG,
         isEnabled: true,
       });
       loadServers();
@@ -697,12 +721,20 @@ function McpServersSection() {
               <select
                 id="mcp-transport-type"
                 value={formData.transportType}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    transportType: e.target.value as TransportType,
-                  })
-                }
+                onChange={(e) => {
+                  const transportType = e.target.value as TransportType;
+                  setFormData((prev) => ({
+                    ...prev,
+                    transportType,
+                    // Seed a stdio command shape when switching into stdio with
+                    // an empty or placeholder object so Test has something to run.
+                    config:
+                      transportType === "stdio" &&
+                      (prev.config.trim() === "" || prev.config.trim() === "{}")
+                        ? DEFAULT_STDIO_CONFIG
+                        : prev.config,
+                  }));
+                }}
                 className="mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 style={{
                   borderColor: COLORS.border,
@@ -710,10 +742,21 @@ function McpServersSection() {
                   color: COLORS.textPrimary,
                 }}
               >
-                <option value="stdio">stdio</option>
-                <option value="sse">SSE</option>
-                <option value="streamable-http">Streamable HTTP</option>
+                <option value="stdio">stdio (live Test)</option>
+                <option value="sse">SSE (saved only)</option>
+                <option value="streamable-http">
+                  Streamable HTTP (saved only)
+                </option>
               </select>
+              {formData.transportType !== "stdio" && (
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: COLORS.textSecondary }}
+                >
+                  Live Test and chat tool discovery only work for stdio in local
+                  mode. SSE and Streamable HTTP configs are stored for later.
+                </p>
+              )}
             </div>
             <div>
               <label
@@ -738,6 +781,18 @@ function McpServersSection() {
                   color: COLORS.textPrimary,
                 }}
               />
+              {formData.transportType === "stdio" && (
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: COLORS.textSecondary }}
+                >
+                  Requires <code className="font-mono">command</code> (and
+                  optional <code className="font-mono">args</code>,{" "}
+                  <code className="font-mono">cwd</code>,{" "}
+                  <code className="font-mono">env</code>). Test runs tools/list
+                  over stdio.
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -806,7 +861,7 @@ function McpServersSection() {
             setFormData({
               name: "",
               transportType: "stdio",
-              config: "{}",
+              config: DEFAULT_STDIO_CONFIG,
               isEnabled: true,
             });
             setEditingId(null);
@@ -817,6 +872,10 @@ function McpServersSection() {
           <Plus className="h-4 w-4" /> Add Server
         </button>
       </div>
+      <p className="text-sm" style={{ color: COLORS.textSecondary }}>
+        Stdio servers support live Test (tools/list) and chat tool rounds. SSE
+        and Streamable HTTP entries can be saved but are not probed yet.
+      </p>
       {deleteError && (
         <p
           role="alert"
@@ -843,7 +902,11 @@ function McpServersSection() {
           }
         />
       ) : servers.length === 0 ? (
-        <EmptyState icon={Server} title="No MCP servers configured" />
+        <EmptyState
+          icon={Server}
+          title="No MCP servers configured"
+          description="Add a stdio server with a command, then use Test to list tools."
+        />
       ) : (
         <div className="space-y-3">
           {servers.map((server) => (
@@ -920,20 +983,25 @@ function McpServersSection() {
                       onClick={() => void handleProbe(server)}
                       disabled={probeState[server.id]?.status === "running"}
                       aria-label={`Test ${server.name}`}
-                      className="rounded px-2 py-1 text-xs font-medium min-h-11 hover:opacity-80 disabled:opacity-50"
+                      className="max-w-[14rem] truncate rounded px-2 py-1 text-xs font-medium min-h-11 hover:opacity-80 disabled:opacity-50"
                       style={{
-                        color: COLORS.textSecondary,
+                        color:
+                          probeState[server.id]?.status === "error"
+                            ? "#b91c1c"
+                            : COLORS.textSecondary,
                         border: `1px solid ${COLORS.border}`,
                       }}
-                      title={probeState[server.id]?.detail}
+                      title={
+                        probeState[server.id]?.detail ??
+                        (server.transportType === "stdio"
+                          ? "Run tools/list over stdio"
+                          : "Live Test requires stdio transport")
+                      }
                     >
-                      {probeState[server.id]?.status === "running"
-                        ? "Testing…"
-                        : probeState[server.id]?.status === "ok"
-                          ? `OK · ${probeState[server.id]?.detail}`
-                          : probeState[server.id]?.status === "error"
-                            ? "Failed"
-                            : "Test"}
+                      {probeButtonLabel(
+                        probeState[server.id],
+                        server.transportType,
+                      )}
                     </button>
                     <button
                       onClick={() => handleEdit(server)}
