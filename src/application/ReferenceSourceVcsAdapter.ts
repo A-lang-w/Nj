@@ -63,7 +63,7 @@ export const readReferenceSourceVcs = async (
       }
       let ignoreCase: boolean | null = null;
       try {
-        ignoreCase = await readIgnoreCase(repository, signal);
+        ignoreCase = await readIgnoreCase(repository, resources, signal);
         const head = await resolveSourceHead(repository, resources, signal);
         if (isAborted(signal))
           return ok({ info: unknownVcs(), ignoreCase: null });
@@ -93,38 +93,179 @@ const unknownVcs = (): ReferenceSourceVcsInfo => ({
 
 const readIgnoreCase = async (
   repository: string,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<boolean | null> => {
   try {
-    signal?.throwIfAborted();
-    const { getConfig, getConfigAll } = await import("isomorphic-git");
-    const value = await getConfig({
-      fs,
-      dir: repository,
-      path: "core.ignoreCase",
-    });
-    // The pinned library reads only local config and does not evaluate
-    // include/includeIf. A local include can override this value, while a
-    // missing local value leaves system/global config in play.
-    const [includes, conditionalIncludes] = await Promise.all([
-      getConfigAll({ fs, dir: repository, path: "include.path" }),
-      getConfigAll({ fs, dir: repository, path: "includeIf.path" }),
-    ]);
-    signal?.throwIfAborted();
-    if (
-      value === undefined ||
-      includes.length > 0 ||
-      conditionalIncludes.length > 0
-    )
-      return null;
-    if (value === true || value === false) return value;
-    if (typeof value === "string") {
-      if (/^(?:true|yes|on|1)$/iu.test(value)) return true;
-      if (/^(?:false|no|off|0)$/iu.test(value)) return false;
+    const configPath = await gitConfigPath(repository, resources, signal);
+    if (configPath === undefined) return null;
+    const configText = await readOwnedMetadataText(
+      configPath,
+      resources,
+      signal,
+    );
+    return parseEffectiveIgnoreCase(configText);
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
+    return null;
+  }
+};
+
+/** Resolve the effective local config file for both ordinary and linked worktrees. */
+const gitConfigPath = async (
+  root: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string | undefined> => {
+  const dotgit = join(root, ".git");
+  let gitdir = dotgit;
+  const metadata = await lstat(dotgit);
+  if (!metadata.isDirectory()) {
+    const pointer = (
+      await readOwnedMetadataText(dotgit, resources, signal)
+    ).trim();
+    const match = /^gitdir:\s*(.+)$/iu.exec(pointer);
+    if (match?.[1] === undefined) return undefined;
+    gitdir = resolve(root, match[1]);
+  }
+  try {
+    const common = (
+      await readOwnedMetadataText(join(gitdir, "commondir"), resources, signal)
+    ).trim();
+    gitdir = resolve(gitdir, common);
+  } catch (cause: unknown) {
+    if (errorCode(cause) !== "ENOENT") throw cause;
+  }
+  return join(gitdir, "config");
+};
+
+/** Read Git's section/subsection syntax without flattening includeIf identities. */
+const parseEffectiveIgnoreCase = (text: string): boolean | null => {
+  let section: string | undefined;
+  let subsection: string | undefined;
+  const values: string[] = [];
+  for (const rawLine of text.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+    const header =
+      /^\[\s*([A-Za-z][A-Za-z0-9-]*)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\](?:\s*[#;].*)?$/u.exec(
+        line,
+      );
+    if (header !== null) {
+      section = header[1]?.toLowerCase();
+      subsection = header[2]?.replace(/\\([\\"])/gu, "$1");
+      if (section === "include" || section === "includeif") return null;
+      continue;
     }
-    return null;
-  } catch {
-    return null;
+    if (section === undefined) return null;
+    const variable = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/u.exec(line);
+    if (variable === null) return null;
+    const name = variable[1]?.toLowerCase();
+    const sourceValue = variable[2];
+    if (section !== "core" || subsection !== undefined || name !== "ignorecase")
+      continue;
+    if (sourceValue === undefined) {
+      values.push("true");
+      continue;
+    }
+    const parsedValue = parseGitConfigValue(sourceValue);
+    if (parsedValue === undefined) return null;
+    values.push(parsedValue);
+  }
+  const value = values.at(-1)?.toLowerCase();
+  if (value === "true" || value === "yes" || value === "on" || value === "1")
+    return true;
+  if (value === "false" || value === "no" || value === "off" || value === "0")
+    return false;
+  return null;
+};
+
+const parseGitConfigValue = (source: string): string | undefined => {
+  let value = "";
+  let quoted = false;
+  let escaped = false;
+  for (const character of source.trim()) {
+    if (escaped) {
+      if (character !== "\\" && character !== '"') return undefined;
+      value += character;
+      escaped = false;
+    } else if (character === "\\" && quoted) {
+      escaped = true;
+    } else if (character === '"') {
+      quoted = !quoted;
+    } else if (!quoted && (character === "#" || character === ";")) {
+      break;
+    } else {
+      value += character;
+    }
+  }
+  return quoted || escaped ? undefined : value.trim();
+};
+
+const readOwnedMetadataText = async (
+  path: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string> =>
+  (await readOwnedMetadataBytes(path, resources, signal)).toString("utf8");
+
+const readOwnedMetadataBytes = async (
+  path: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  try {
+    return await readRegularFile(path, { signal });
+  } catch (cause: unknown) {
+    if (signal?.aborted === true && cause === signal.reason)
+      throw new ArtifactReaderFailure(
+        "cancelled",
+        "Git metadata read cancelled",
+        {
+          cause,
+          cancellation: { reason: signal.reason },
+        },
+      );
+    if (!(cause instanceof RegularFileCleanupFailure)) {
+      if (isAborted(signal))
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Git metadata read cancelled",
+          {
+            cause: signal?.reason,
+            cancellation: { reason: signal?.reason },
+          },
+        );
+      throw cause;
+    }
+    const retry = await retryRegularFileCleanup(cause, resources, signal);
+    if (retry.cleanup !== undefined || retry.outcome.kind === "failed") {
+      const primary =
+        retry.outcome.kind === "failed"
+          ? retry.outcome.cause
+          : cause.cleanupCause;
+      throw new ArtifactReaderFailure(
+        isAborted(signal) ? "cancelled" : "io",
+        `Git metadata could not be read safely: ${errorMessage(primary)}`,
+        {
+          cause: primary,
+          ...(isAborted(signal)
+            ? { cancellation: { reason: signal?.reason } }
+            : {}),
+          ...(retry.cleanup === undefined ? {} : { cleanup: retry.cleanup }),
+        },
+      );
+    }
+    if (isAborted(signal))
+      throw new ArtifactReaderFailure(
+        "cancelled",
+        "Git metadata read cancelled",
+        {
+          cause: signal?.reason,
+          cancellation: { reason: signal?.reason },
+        },
+      );
+    return retry.outcome.value;
   }
 };
 
@@ -139,34 +280,14 @@ const resolveSourceHead = async (
   const cleanupFailures: ArtifactReaderFailure[] = [];
   const readMetadataBytes = async (path: string): Promise<Buffer> => {
     try {
-      return await readRegularFile(path, { signal });
+      return await readOwnedMetadataBytes(path, resources, signal);
     } catch (cause: unknown) {
-      if (signal?.aborted === true && cause === signal.reason) throw cause;
-      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-      const retry = await retryRegularFileCleanup(cause, resources, signal);
-      if (
-        retry.outcome.kind === "failed" &&
-        errorCode(retry.outcome.cause) !== "ENOENT"
-      )
-        failedRead ??= { cause: retry.outcome.cause };
-      if (
-        retry.cleanup === undefined &&
-        retry.outcome.kind === "failed" &&
-        !isAborted(signal)
-      )
-        throw retry.outcome.cause;
-      const primary =
-        retry.outcome.kind === "failed"
-          ? retry.outcome.cause
-          : cause.cleanupCause;
-      throw new ArtifactReaderFailure(
-        isAborted(signal) ? "cancelled" : "io",
-        `Git metadata could not be read safely: ${errorMessage(primary)}`,
-        {
-          cause: primary,
-          ...(retry.cleanup === undefined ? {} : { cleanup: retry.cleanup }),
-        },
-      );
+      if (cause instanceof ArtifactReaderFailure) {
+        if (cause.reason !== "cancelled" && errorCode(cause.cause) !== "ENOENT")
+          failedRead ??= { cause: cause.cause };
+        throw cause;
+      }
+      throw cause;
     }
   };
   const readMetadataText = async (path: string): Promise<string> =>

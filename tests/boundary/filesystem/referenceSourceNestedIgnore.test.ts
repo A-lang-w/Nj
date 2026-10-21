@@ -25,11 +25,17 @@ const testUnknownIncludedGitIgnoreCase = async () => {
     spawnSync("git", ["init", "--quiet", root], { encoding: "utf8" }).status,
   ).toBe(0);
   await writeFile(included, "[core]\n\tignoreCase = true\n");
-  expect(
-    spawnSync("git", ["-C", root, "config", "include.path", included], {
-      encoding: "utf8",
-    }).status,
-  ).toBe(0);
+  await writeFile(
+    join(root, ".git", "config"),
+    `[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n[includeIf "gitdir:${root}/"]\n\tpath = ${included}\n`,
+  );
+  const configured = spawnSync(
+    "git",
+    ["-C", root, "config", "--get", "core.ignoreCase"],
+    { encoding: "utf8" },
+  );
+  expect(configured.status, configured.stderr).toBe(0);
+  expect(configured.stdout.trim()).toBe("true");
   const git = spawnSync(
     "git",
     ["-C", root, "check-ignore", "--no-index", "pkg/Generated/keep.ts"],
