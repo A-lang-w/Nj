@@ -2300,5 +2300,102 @@
       }
     },
     "included_in_performance_cohorts": false
+  },
+  "cli_identity_followup": {
+    "source_derived_root_cause": "Direct CLI status omitted the selected catalog, triggering a compact fallback even for explicit full. Parsed output profile was also discarded by AppConfig.",
+    "structural_change": "CLI status derives both input/output profiles from parsed config. Runtime identity requires a caller-supplied catalog; both production callers pass it explicitly. No ambient config reinterpretation at the identity owner.",
+    "actual_public_entrypoints": [
+      "stdio binary_session",
+      "rea capabilities --json",
+      "rea providers --json"
+    ],
+    "profile_cases": [
+      "default compact/full",
+      "full/full",
+      "compact/full",
+      "full/off",
+      "compact/off"
+    ],
+    "executed_runs": [
+      {
+        "log": "cli-profile-mcpDoctor.log",
+        "log_sha256": "7f5c79d2dfd1589a47041eeb4886858858560fc8cfc0860cfa496aef7b860dde",
+        "passed_tests": 14,
+        "elapsed_seconds": 83.973,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-d7bf0512b44140cf91635a1a692ff825.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 821163,
+          "remaining_processes": [821163],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 100650679,
+            "user_usec": 87453243,
+            "system_usec": 13197435,
+            "nr_periods": 834,
+            "nr_throttled": 10,
+            "throttled_usec": 4235,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 1524985856,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-d7bf0512b44140cf91635a1a692ff825.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        }
+      },
+      {
+        "log": "cli-profile-serverIdentity.log",
+        "log_sha256": "aa75647dd78a6b4df22dc2d0f2816991b941800d7af72664b57c973950084d1f",
+        "passed_tests": 11,
+        "elapsed_seconds": 49.302,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-8f537b501576473b9b5e32f0e7627f6b.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 823954,
+          "remaining_processes": [823954],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 54311975,
+            "user_usec": 50014222,
+            "system_usec": 4297752,
+            "nr_periods": 492,
+            "nr_throttled": 1,
+            "throttled_usec": 3981,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 1885233152,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-8f537b501576473b9b5e32f0e7627f6b.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        }
+      }
+    ],
+    "included_in_performance_cohorts": false
   }
 }

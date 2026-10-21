@@ -199,3 +199,12 @@ remaining Godot inventory advertisement assertion failing. That workflow now
 runs under both full and compact, preserving canonical invalid-field refusal
 and retained facts after source removal. Its three local tests passed within
 the same resource limits, including encrypted-directory unknown coverage.
+
+A further review found that CLI status relied on an implicit default catalog,
+so explicit full input advertised a different identity through CLI and MCP.
+CLI status now derives input/output presentation from parsed configuration;
+configuration retains the output profile too. Runtime identity requires an
+explicit catalog from each caller. Two suites passed 25 tests, including real
+production stdio, `capabilities` and `providers` comparisons for default, full,
+compact and both output-off combinations. This target-free verification is
+separate from real artifact measurements and does not qualify native engines.

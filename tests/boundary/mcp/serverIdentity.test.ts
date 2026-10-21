@@ -194,12 +194,14 @@ describe("server and catalog identity", () => {
 
   it("reports unknown without a live comparison and distinguishes aligned from stale", () => {
     const unknown = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: normalizeEntrypointPath(""),
     });
     expect(unknown.alignment.state).toBe("unknown");
     expect(unknown.server.command_path).toBeNull();
     const aligned = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: "/packaged/rea.mjs",
       expected: {
@@ -210,6 +212,7 @@ describe("server and catalog identity", () => {
     });
     expect(aligned.alignment).toMatchObject({ state: "aligned", reasons: [] });
     const stale = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: "/packaged/rea.mjs",
       expected: {
@@ -225,6 +228,7 @@ describe("server and catalog identity", () => {
 
   it("keeps registration alignment unknown when the server entrypoint is absent", () => {
     const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: undefined,
       expected: { server_path: "/registered/rea.mjs" },
