@@ -54,10 +54,11 @@ export interface WriteDraft {
   contradictedBy: number | undefined;
   sideEffect: boolean;
   calls: number;
-  /** The scalar values each modelled update call showed and sent, which later rules must reproduce. */
+  /** The scalar values each modelled update call showed and sent, and the fields it kept, which later rules must reproduce. */
   readonly updates: {
     readonly shown: ReadonlyMap<string, JsonValue>;
     readonly sent: ReadonlyMap<string, JsonValue>;
+    readonly kept: readonly string[];
   }[];
   /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
   readonly sequences: Map<string, number>;
@@ -283,6 +284,34 @@ export const retainFixed = (
 const unsentChange = (rule: FieldRule): boolean =>
   rule.rule === "increment" || rule.rule === "slug";
 
+/** Whether serving gives a rule's field a new value on every call, so no call may have kept it. */
+const regenerates = (rule: FieldRule): boolean =>
+  rule.rule === "unique" || rule.rule === "renewed";
+
+/** The fields a call showed as they were before it. */
+const keptFields = (before: JsonObject, after: JsonObject): string[] =>
+  Object.keys(after).filter(
+    (field) =>
+      Object.hasOwn(before, field) && same(before[field], after[field]),
+  );
+
+/** Whether a plan's rules give a recorded call another value than it showed, or one of them regenerates a field the call kept. */
+const disagreesWithCall = (
+  rules: readonly FieldRule[],
+  call: {
+    readonly written: JsonObject;
+    readonly after: JsonObject;
+    readonly kept: readonly string[];
+  },
+): boolean =>
+  rules.some(
+    (rule) =>
+      (unsentChange(rule) &&
+        Object.hasOwn(call.after, rule.field) &&
+        !same(call.written[rule.field], call.after[rule.field])) ||
+      (regenerates(rule) && call.kept.includes(rule.field)),
+  );
+
 /** A call's scalar members by name, as much of it as later rules are checked against. */
 const scalars = (object: JsonObject): Map<string, JsonValue> =>
   new Map(
@@ -299,9 +328,10 @@ const contradictsEarlierCalls = (
   const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
   return rules.some(
     (rule) =>
-      unsentChange(rule) &&
+      (unsentChange(rule) || regenerates(rule)) &&
       !ruled.has(rule.field) &&
-      draft.updates.some(({ shown, sent }) => {
+      draft.updates.some(({ shown, sent, kept }) => {
+        if (regenerates(rule)) return kept.includes(rule.field);
         // An unruled field an earlier call showed is one it left as it was.
         const value = shown.get(rule.field);
         if (value === undefined) return false;
@@ -421,20 +451,20 @@ export const applyUpdate = (
     { ...call, id },
     (rule) => after.object[rule.field] ?? null,
   );
+  const kept = keptFields(entity.fields, after.object);
   const disagrees =
     written.ok &&
-    draft.plan.rules.some(
-      (rule) =>
-        unsentChange(rule) &&
-        Object.hasOwn(after.object, rule.field) &&
-        !same(written.value[rule.field], after.object[rule.field]),
-    );
+    disagreesWithCall(draft.plan.rules, {
+      written: written.value,
+      after: after.object,
+      kept,
+    });
   if (!written.ok || (disagrees && !unknown))
     refuse(draft, step, "unexplained-change");
   if (!written.ok || disagrees || unknown) return recorded();
-  const facts = { shown: scalars(after.object), sent: scalars(body) };
+  const facts = { shown: scalars(after.object), sent: scalars(body), kept };
   context.io.retain(
-    64 + JSON.stringify([...facts.shown, ...facts.sent]).length * 2,
+    64 + JSON.stringify([...facts.shown, ...facts.sent, kept]).length * 2,
   );
   draft.updates.push(facts);
   context.io.retain(64 + JSON.stringify(written.value).length * 2);

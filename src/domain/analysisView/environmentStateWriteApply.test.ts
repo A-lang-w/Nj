@@ -282,11 +282,15 @@ const AFTER: JsonObject = {
   revision: "10",
 };
 
-const update = (body: JsonObject | undefined, plan = UPDATE_PLAN) => {
+const update = (
+  body: JsonObject | undefined,
+  plan = UPDATE_PLAN,
+  before = BEFORE,
+) => {
   const { asked, generate } = generator();
   const result = updatedFields(
     plan,
-    { before: BEFORE, observed: AFTER },
+    { before, observed: AFTER },
     { ...callWith(body, { item: "42" }), id: "42" },
     generate,
   );
@@ -312,18 +316,20 @@ it("applies a constant from the recorded update only when the call sends it", ()
   );
 });
 
+const RENEWING_PLAN: Plan = {
+  rules: [
+    ...UPDATE_PLAN.rules,
+    { field: "versionId", rule: "unique" },
+    { field: "steps", rule: "renewed", pointers: ["/*"] },
+  ],
+  body: { ...UPDATE_PLAN.body!, accepted: ["title", "notes", "versionId"] },
+};
+
 it("takes an update's unique and renewed values from the generator, whether or not the call sends them", () => {
-  const plan: Plan = {
-    rules: [
-      ...UPDATE_PLAN.rules,
-      { field: "versionId", rule: "unique" },
-      { field: "steps", rule: "renewed" },
-    ],
-    body: { ...UPDATE_PLAN.body!, accepted: ["title", "notes", "versionId"] },
-  };
   const { asked, result } = update(
     { title: "New Title", versionId: "stale" },
-    plan,
+    RENEWING_PLAN,
+    { ...BEFORE, steps: ["step-1"] },
   );
   expect(result).toEqual(
     ok({
@@ -340,6 +346,12 @@ it("takes an update's unique and renewed values from the generator, whether or n
     "unique",
     "renewed",
   ]);
+});
+
+it("renews no child rows on an entity that holds none", () => {
+  const { asked, result } = update({ title: "New Title" }, RENEWING_PLAN);
+  expect(result.ok && result.value).not.toHaveProperty("steps");
+  expect(asked.map((rule) => rule.rule)).toEqual(["clock", "unique"]);
 });
 
 it.each<[string, JsonObject | undefined, string]>([
@@ -548,20 +560,53 @@ it("drops view-specific values of the fields an update changed and cites no reco
 const RENEW_ID = (n: number): string =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-it("renews every distinct UUID once and keeps everything else", () => {
+it("renews the UUIDs at the renewed pointers alone, and keeps every other value", () => {
   const renewed = renewUuids(
     {
       first: RENEW_ID(1),
-      again: RENEW_ID(1),
-      rows: [{ id: RENEW_ID(2), text: "Step 0" }],
+      rows: [
+        { id: RENEW_ID(1), author: RENEW_ID(3), text: "Step 0" },
+        { id: RENEW_ID(2), author: RENEW_ID(3), text: "Step 1" },
+      ],
       note: "kept",
     },
-    (uuid, index) => `${uuid}:${String(index)}`,
+    ["/first", "/rows/*/id"],
+    (uuid) => `${uuid}:new`,
   );
   expect(renewed).toEqual({
-    first: `${RENEW_ID(1)}:0`,
-    again: `${RENEW_ID(1)}:0`,
-    rows: [{ id: `${RENEW_ID(2)}:1`, text: "Step 0" }],
+    first: `${RENEW_ID(1)}:new`,
+    rows: [
+      { id: `${RENEW_ID(1)}:new`, author: RENEW_ID(3), text: "Step 0" },
+      { id: `${RENEW_ID(2)}:new`, author: RENEW_ID(3), text: "Step 1" },
+    ],
     note: "kept",
   });
+});
+
+it("checks a member stored only under another name against the type of the field it is copied into", () => {
+  const plan: Plan = {
+    rules: [
+      { field: "title", rule: "echo" },
+      { field: "code", rule: "copy", from: "/handle" },
+    ],
+    body: {
+      accepted: ["title", "handle"],
+      fixed: [],
+      required: [],
+      identity: null,
+    },
+  };
+  const observed = { id: "id-1", title: "Old", code: "old-handle" };
+  const created = (handle: JsonValue) =>
+    createdFields(
+      plan,
+      observed,
+      callWith({ title: "New", handle }),
+      generator().generate,
+    );
+  expect(created("new-handle")).toEqual(
+    ok({ id: "id-1", title: "New", code: "new-handle" }),
+  );
+  expect(created({ not: "a string" }).ok).toBe(false);
+  expect(created(null).ok).toBe(false);
 });

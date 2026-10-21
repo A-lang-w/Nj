@@ -352,6 +352,7 @@ it("explains child rows an update rewrote with new UUIDs as renewed, and other c
   expect(ruleFor(renewed.rules, "steps")).toEqual({
     field: "steps",
     rule: "renewed",
+    pointers: ["/*/id"],
   });
   const edited = explainUpdate(
     updated(
@@ -684,12 +685,13 @@ const steps = (...ids: number[]): JsonValue =>
   ids.map((id, index) => ({ id: ID(id), text: `Step ${String(index)}` }));
 
 it("finds the UUIDs a value renewed when nothing else in it changed", () => {
-  expect(renewedUuids(steps(1, 2), steps(3, 4))).toEqual(
-    new Map([
+  expect(renewedUuids(steps(1, 2), steps(3, 4))).toEqual({
+    uuids: new Map([
       [ID(2), ID(4)],
       [ID(1), ID(3)],
     ]),
-  );
+    pointers: ["/*/id"],
+  });
   expect(renewedUuids(steps(1, 2), steps(1, 2))).toBeUndefined();
   // Another text, another length, a UUID moved to another row, one UUID renewed twice.
   expect(
@@ -698,4 +700,106 @@ it("finds the UUIDs a value renewed when nothing else in it changed", () => {
   expect(renewedUuids(steps(1, 2), steps(3))).toBeUndefined();
   expect(renewedUuids(steps(1, 2), steps(2, 1))).toBeUndefined();
   expect(renewedUuids([ID(1), ID(1)], [ID(3), ID(4)])).toBeUndefined();
+});
+
+it("renews no UUID kept elsewhere, moved from elsewhere or kept at a pointer it renewed", () => {
+  expect(
+    renewedUuids(
+      { current: ID(1), fallback: ID(2) },
+      { current: ID(2), fallback: ID(2) },
+    ),
+  ).toBeUndefined();
+  expect(renewedUuids([ID(1), ID(1)], [ID(2), ID(1)])).toBeUndefined();
+  expect(renewedUuids([ID(1), ID(2)], [ID(3), ID(2)])).toBeUndefined();
+  expect(renewedUuids([ID(1), ID(2)], [ID(3), ID(3)])).toBeUndefined();
+  // A reference kept beside renewed ids stays outside the renewal.
+  expect(
+    renewedUuids(
+      [{ id: ID(1), author: ID(9) }],
+      [{ id: ID(2), author: ID(9) }],
+    ),
+  ).toEqual({ uuids: new Map([[ID(1), ID(2)]]), pointers: ["/*/id"] });
+});
+
+it("explains no renewed field whose new UUIDs another entity holds, or that renews a shared UUID otherwise than another field", () => {
+  const before = { id: "42", owner: { id: ID(1) }, toc: [{ ref: ID(5) }] };
+  const after = { id: "42", owner: { id: ID(2) }, toc: [{ ref: ID(5) }] };
+  expect(
+    explainUpdate(
+      updated(
+        before,
+        after,
+        {},
+        { others: [{ id: "7", owner: { id: ID(2) } }] },
+      ),
+    ).unexplained,
+  ).toEqual(["owner"]);
+  expect(
+    ruleFor(explainUpdate(updated(before, after, {})).rules, "owner"),
+  ).toEqual({ field: "owner", rule: "renewed", pointers: ["/id"] });
+  const shared = { id: "42", rows: [{ id: ID(1) }], toc: [{ ref: ID(1) }] };
+  expect(
+    explainUpdate(
+      updated(
+        shared,
+        { id: "42", rows: [{ id: ID(2) }], toc: [{ ref: ID(3) }] },
+        {},
+      ),
+    ).unexplained,
+  ).toEqual(["toc"]);
+  expect(
+    explainUpdate(
+      updated(
+        shared,
+        { id: "42", rows: [{ id: ID(2) }], toc: [{ ref: ID(2) }] },
+        {},
+      ),
+    ).unexplained,
+  ).toEqual([]);
+});
+
+it("does not accept a member a create stores otherwise under its own name, though it also copies it", () => {
+  const result = explainCreate(
+    created(
+      { id: 7, title: "QUARTERLY REPORT", label: "Quarterly Report" },
+      { title: "Quarterly Report" },
+    ),
+  );
+  expect(ruleFor(result.rules, "label")).toEqual({
+    field: "label",
+    rule: "copy",
+    from: "/title",
+  });
+  expect(result.body.accepted).not.toContain("title");
+});
+
+it("builds no template from a copy of an echoed value", () => {
+  const result = explainCreate(
+    created(
+      {
+        id: 7,
+        markdown: "Weekly planning notes",
+        text: "Weekly planning notes",
+        html: "<p>Weekly planning notes</p>",
+      },
+      { markdown: "Weekly planning notes" },
+    ),
+  );
+  expect(ruleFor(result.rules, "html")).toBeUndefined();
+});
+
+it("explains a sent UUID stored in another letter case as stored otherwise, not as one the application generated", () => {
+  const result = explainUpdate(
+    updated(
+      { id: "42", assignee: ID(1) },
+      { id: "42", assignee: ID(2).replace("4000", "4abc") },
+      { assignee: ID(2).replace("4000", "4ABC") },
+    ),
+  );
+  expect(ruleFor(result.rules, "assignee")).toEqual({
+    field: "assignee",
+    rule: "constant",
+    value: ID(2).replace("4000", "4abc"),
+  });
+  expect(result.body.accepted).toEqual([]);
 });

@@ -10,9 +10,13 @@ import {
   BOOK_ROWS,
   DELETE_NOT_FOUND,
   FIRST_BOOK,
+  AUTHORED_ROWS,
+  CHAPTER_AUTHOR,
+  CONTENTS_ROWS,
   HANDLE_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
+  UNCHAPTERED_ROWS,
   VERSIONED_ROWS,
   book,
   bookClock,
@@ -211,6 +215,53 @@ describe("values the application assigns", () => {
     }
     expect(second.version_id).not.toBe(first.version_id);
     expect(books.answer("get_books_by_id", { id: "2" }).body).toEqual(second);
+  });
+
+  it("renews chapter ids alone, keeping the author each chapter names", () => {
+    const answer = servedFrom(AUTHORED_ROWS).answer("patch_books_by_id", {
+      id: "2",
+      body: { name: "Second Edition", version_id: "any version" },
+    }).body as Book;
+    expect(answer.chapters).toEqual([
+      {
+        id: expect.not.stringMatching(numberedUuid(4)),
+        title: "Opening",
+        author_id: CHAPTER_AUTHOR,
+      },
+    ]);
+  });
+
+  it("renews a chapter id alike wherever an update renews it", () => {
+    const answer = servedFrom(CONTENTS_ROWS).answer("patch_books_by_id", {
+      id: "2",
+      body: { name: "Second Edition", version_id: "any version" },
+    }).body as {
+      chapters: [{ id: string }];
+      contents: [{ chapter_id: string }];
+    };
+    expect(answer.chapters[0].id).not.toBe(numberedUuid(4));
+    expect(answer.contents[0].chapter_id).toBe(answer.chapters[0].id);
+  });
+
+  it("gives no chapter rows to a book the state holds without them", () => {
+    const books = servedFrom(UNCHAPTERED_ROWS);
+    const before = books.snapshot();
+    expect(
+      books.refusal("patch_books_by_id", {
+        id: "2",
+        body: { name: "Second Edition", version_id: "any version" },
+      }).message,
+    ).toContain("lacks chapters");
+    expect(books.snapshot()).toBe(before);
+  });
+
+  it("refuses a handle of another JSON type than the code it is stored as", () => {
+    const books = servedFrom(HANDLE_ROWS);
+    for (const handle of [{ not: "a string" }, null])
+      expect(
+        books.refusal("post_books", { body: { name: "Fifth Book", handle } })
+          .message,
+      ).toContain("Member handle must be a JSON string");
   });
 
   it("stores a sent handle as the code and rebuilds the link around it", () => {

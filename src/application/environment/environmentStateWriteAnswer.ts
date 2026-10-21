@@ -10,6 +10,7 @@ import {
   type GenerateValue,
 } from "../../domain/analysisView/environmentStateWriteApply.js";
 import { insertIndex } from "../../domain/analysisView/environmentStateWriteExplain.js";
+import { callRenewal } from "../../domain/analysisView/environmentStateWriteGenerated.js";
 import {
   pathValuesOf,
   type GeneratedRule,
@@ -166,6 +167,9 @@ const generator = (
   // A sequence never reuses a value the state started with, even after its entity was deleted.
   const started = store.startedWith(request.plan.target ?? "");
   const startedIn = started.filter((held) => held.collection === target.name);
+  const renewed = callRenewal(
+    `${store.state.evidenceId}:${request.tool.name}:renewed:${String(write.count)}`,
+  );
   const unused = (field: string, make: (attempt: number) => string): string => {
     const held = new Set(
       ofType.map((entity) => scalarText(entity.fields[field])),
@@ -202,8 +206,9 @@ const generator = (
         );
       case "renewed":
         return renewUuids(
-          target.current?.[rule.field] ?? exemplar,
-          (uuid, index) => seededUuid(`${seed(0)}:${String(index)}`, uuid),
+          target.current?.[rule.field] ?? null,
+          rule.pointers,
+          renewed,
         );
       case "identity":
         if (rule.generator === "sequence")

@@ -16,6 +16,8 @@ import {
   THIRD_BOOK,
   VERSIONED_ROWS,
   book,
+  numberedUuid,
+  versionedBook,
   bookClock,
   environmentStateViewOf,
   rawCaptureEvidence,
@@ -162,9 +164,52 @@ describe("values the application assigns", () => {
       body: { accepted: ["name", "version_id"], fixed: [] },
       rules: expect.arrayContaining([
         { field: "version_id", rule: "unique" },
-        { field: "chapters", rule: "renewed" },
+        { field: "chapters", rule: "renewed", pointers: ["/*/id"] },
       ]),
     });
+  });
+
+  it("serves no update whose renewed values another recorded call kept, before or after the calls that renewed them", () => {
+    const kept = renamedBook(
+      versionedBook(FIRST_BOOK, 7, 8),
+      "Kept Version",
+      7,
+    );
+    const keeping: TimedCaptureRow[] = [
+      ["PATCH", "/api/books/1", kept, 200, { name: "Kept Version" }],
+      ["GET", "/api/books/1", kept],
+    ];
+    expect(
+      planOf(stateOf([...VERSIONED_ROWS, ...keeping]), "patch_books_by_id"),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+    const first = renamedBook(
+      versionedBook(FIRST_BOOK, 1, 2),
+      "Kept Version",
+      3,
+    );
+    const renamed = versionedBook(
+      renamedBook(FIRST_BOOK, "Renamed Book", 5),
+      5,
+      6,
+    );
+    expect(
+      planOf(
+        stateOf([
+          ...VERSIONED_ROWS.slice(0, 3),
+          ["PATCH", "/api/books/1", first, 200, { name: "Kept Version" }],
+          ["GET", "/api/books/1", first],
+          [
+            "PATCH",
+            "/api/books/1",
+            renamed,
+            200,
+            { name: "Renamed Book", version_id: numberedUuid(1) },
+          ],
+          ["GET", "/api/books/1", renamed],
+        ]),
+        "patch_books_by_id",
+      ),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
   });
 
   it("serves creates that store a sent member under another name and embed it in a link", () => {

@@ -3,6 +3,7 @@ import { err, ok, type Result } from "../result.js";
 import {
   at,
   isObject,
+  pointerTo,
   pointerTokens,
   replaceAt,
   same,
@@ -26,25 +27,27 @@ import {
   spelledLike,
 } from "./environmentStateWriteValues.js";
 
-/** The value with every UUID inside it replaced by `fresh(uuid, index)`, one replacement per distinct UUID. */
+/** The value with each UUID at the pointers (`*` for any array index) replaced by `fresh(uuid)`, others kept. */
 export const renewUuids = (
   value: JsonValue,
-  fresh: (uuid: string, index: number) => string,
+  pointers: readonly string[],
+  fresh: (uuid: string) => string,
 ): JsonValue => {
-  const renewed = new Map<string, string>();
-  const renew = (item: JsonValue): JsonValue => {
-    if (isUuid(item)) {
-      if (!renewed.has(item)) renewed.set(item, fresh(item, renewed.size));
-      return renewed.get(item)!;
-    }
-    if (Array.isArray(item)) return item.map(renew);
+  const renewed = new Set(pointers);
+  const renew = (item: JsonValue, pointer: string): JsonValue => {
+    if (isUuid(item)) return renewed.has(pointer) ? fresh(item) : item;
+    if (Array.isArray(item))
+      return item.map((child) => renew(child, `${pointer}/*`));
     return isObject(item)
       ? Object.fromEntries(
-          Object.entries(item).map(([key, child]) => [key, renew(child)]),
+          Object.entries(item).map(([key, child]) => [
+            key,
+            renew(child, `${pointer}${pointerTo(key)}`),
+          ]),
         )
       : item;
   };
-  return renew(value);
+  return renew(value, "");
 };
 
 /** The value a generated rule takes: recorded values in the gate, the store's generators when served. */
@@ -193,6 +196,20 @@ const derive = (
   }
 };
 
+/** Members stored only under another name, with the value of the field each is copied whole into, for type checks. */
+const copiedShapes = (
+  rules: readonly FieldRule[],
+  observed: JsonObject,
+): JsonObject =>
+  Object.fromEntries(
+    rules.flatMap((rule): [string, JsonValue][] => {
+      if (rule.rule !== "copy" || !Object.hasOwn(observed, rule.field))
+        return [];
+      const tokens = pointerTokens(rule.from);
+      return tokens.length === 1 ? [[tokens[0]!, observed[rule.field]!]] : [];
+    }),
+  );
+
 /** The fields of a created entity: the observed entity with every ruled field taken from the call or generated. */
 export const createdFields = (
   plan: Pick<StateWritePlan, "rules" | "body">,
@@ -201,7 +218,9 @@ export const createdFields = (
   generate: GenerateValue,
 ): Applied<JsonObject> => {
   if (plan.body === null) return err("The tool has no modelled body.");
-  const problem = bodyProblem(plan.body, call, { entity: observed });
+  const problem = bodyProblem(plan.body, call, {
+    entity: { ...copiedShapes(plan.rules, observed), ...observed },
+  });
   if (problem !== undefined) return err(problem);
   const written: JsonObject = { ...observed };
   for (const rule of plan.rules) {
@@ -246,11 +265,10 @@ export const updatedFields = (
       const was = integerOf(before[rule.field]);
       if (was !== undefined)
         written[rule.field] = spelledLike(before[rule.field]!, was + 1);
-    } else if (
-      rule.rule === "clock" ||
-      rule.rule === "unique" ||
-      rule.rule === "renewed"
-    )
+    } else if (rule.rule === "clock" || rule.rule === "unique")
+      written[rule.field] = generate(rule);
+    // Child rows are renewed only on an entity that holds them.
+    else if (rule.rule === "renewed" && Object.hasOwn(before, rule.field))
       written[rule.field] = generate(rule);
   }
   derive(

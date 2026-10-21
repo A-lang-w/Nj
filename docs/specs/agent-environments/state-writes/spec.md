@@ -85,7 +85,8 @@ identity the client sends is an echo:
 9. **Template.** A string containing a generated value, or else a copied
    value, as a delimited token (for example a URL that ends in the new id or in
    a slug the call sent under another name). It is rebuilt around the new
-   value. An echoed value is not a token: it may recur in unrelated text.
+   value. An echoed value is not a token, nor is a copy of one: it may recur in
+   unrelated text.
 10. **Constant.** Otherwise the exemplar's value.
 
 When a constant, or the text a template keeps, contains a path value of the
@@ -95,8 +96,9 @@ naming the exemplar's collection.
 **Body members of a create.** A member is either accepted or not:
 
 - **Accepted.** An echoed member, a member copied whole into a field of another
-  name, or the identity field's value. Every member the exemplar sent is
-  required.
+  name and stored under none of its own, or the identity field's value. A
+  member copied whole must have the JSON type of the field it is copied into.
+  Every member the exemplar sent is required.
 - **Not accepted.** A member the application stored with a different value
   (transformed), or one it did not show. A call that sends such a member is a
   tool error naming the accepted members.
@@ -113,7 +115,8 @@ different values, is `unexplained-change`, as serving could not take every
 recorded call. So is an update a later read shows dropped a field the
 entity held, since serving keeps every field an update does not write; a write's
 own response may leave fields out. A member the application replaced
-with a fresh UUID (`unique`, below) is accepted with any value.
+with a fresh UUID (`unique`, below) is accepted with any value; a UUID stored
+as sent in another letter case is the sent value, not a fresh one.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
@@ -124,12 +127,17 @@ explained as one of:
 - `unique`: a UUID in place of another UUID, that no other entity of the type
   holds (a version the application assigns on every update);
 - `renewed`: an array or object whose only changes are UUIDs replaced by ones
-  it did not hold, as child rows an update rewrites are.
+  that neither it nor another entity of the type held, as child rows an update
+  rewrites are. The rule names the pointers it renewed at (`*` for any array
+  index): every UUID at them is new, each old UUID by a single new one, and
+  UUIDs elsewhere, such as a row's references, are kept. One call renews a
+  UUID alike in every field.
 
 Any other change is `unexplained-change`. An increment or a slug applies to
-every call that could take it, so the plan is also `unexplained-change` when
-such a rule would give a call of the tool another value than the one it
-recorded, or when a later call treats a member otherwise than the plan: one
+every call that could take it, and `unique` and `renewed` to every call, so the
+plan is also `unexplained-change` when such a rule would give a call of the
+tool another value than the one it recorded, a recorded call kept a `unique` or
+`renewed` field, or a later call treats a member otherwise than the plan: one
 call echoes it and another stores something else, or the two rule it
 differently.
 
@@ -338,8 +346,11 @@ their recorded format.
   sequences do not reuse values.
 - **UUIDs and tokens:** derived from a SHA-256 of the state Evidence id, the
   tool, the field and a write counter, skipping values the type already holds.
-- **Renewed fields:** the entity's current value with each distinct UUID inside
-  it replaced by one derived the same way.
+- **Renewed fields:** the entity's current value with each UUID at the rule's
+  pointers replaced by one derived from a SHA-256 of the state Evidence id, the
+  tool, the write counter and the UUID's order in the call, the same
+  replacement wherever the call renews that UUID; held values are not skipped.
+  An entity without the field is left without it.
 
 `data/reset` and `data/add` restart the clock, the counter and the
 sequences.

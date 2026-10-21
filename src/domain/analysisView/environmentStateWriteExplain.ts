@@ -25,7 +25,11 @@ import {
   readClock,
   slugOf,
 } from "./environmentStateWriteValues.js";
-import { renewedUuids } from "./environmentStateWriteGenerated.js";
+import {
+  disagreeingRenewals,
+  renewedRule,
+  uuidsIn,
+} from "./environmentStateWriteGenerated.js";
 
 /** A clock value counts as written by the request when it lies this close to the request's start. */
 const CLOCK_WINDOW_MS = 10 * 60_000;
@@ -181,16 +185,20 @@ const GENERATED: ReadonlySet<FieldRule["rule"]> = new Set([
   "unique",
 ]);
 
-/** Body members the entity stores as sent, under their own name (echo) or another (a copy of the whole member). */
-const storedMembers = (rules: readonly FieldRule[]): Set<string> =>
+/** Body members the entity stores as sent, under their own name (echo) or only another (a copy of the whole member). */
+const storedMembers = (
+  rules: readonly FieldRule[],
+  entity: JsonObject,
+): Set<string> =>
   new Set(
-    rules.flatMap((rule) =>
-      rule.rule === "echo"
-        ? [rule.field]
-        : rule.rule === "copy" && pointerTokens(rule.from).length === 1
-          ? pointerTokens(rule.from)
-          : [],
-    ),
+    rules.flatMap((rule) => {
+      if (rule.rule === "echo") return [rule.field];
+      const tokens = rule.rule === "copy" ? pointerTokens(rule.from) : [];
+      // A member also stored otherwise under its own name is not stored as sent.
+      return tokens.length === 1 && !Object.hasOwn(entity, tokens[0]!)
+        ? tokens
+        : [];
+    }),
   );
 
 /** Body members the application stored as sent, and the others with what they were sent. */
@@ -224,10 +232,19 @@ export const explainCreate = (
     if (rule === undefined) unexplained.push(field);
     else rules.push(rule);
   }
-  // Generated values first, then copies: an echoed value may recur in unrelated text, a copied one is the call's own.
+  // Generated values first, then copies: an echoed value may recur in unrelated text, a copied one is the call's own unless also echoed.
+  const echoed = new Set(
+    rules.flatMap((rule) =>
+      rule.rule === "echo" ? [scalarText(evidence.entity[rule.field])] : [],
+    ),
+  );
   const sources = [
     ...rules.filter((rule) => GENERATED.has(rule.rule)),
-    ...rules.filter((rule) => rule.rule === "copy"),
+    ...rules.filter(
+      (rule) =>
+        rule.rule === "copy" &&
+        !echoed.has(scalarText(evidence.entity[rule.field])),
+    ),
   ];
   const constants: string[] = [];
   for (const field of unexplained) {
@@ -242,7 +259,7 @@ export const explainCreate = (
     rules,
     body: bodyOf(
       evidence.call.body,
-      storedMembers(rules),
+      storedMembers(rules, evidence.entity),
       Object.keys(evidence.call.body),
     ),
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
@@ -272,7 +289,7 @@ export interface UpdateEvidence {
   readonly others: readonly JsonObject[];
 }
 
-/** A UUID the update put where another UUID was, that the call did not send and no other entity holds. */
+/** A UUID the update put where another UUID was, that the call did not send and no other entity holds, in any letter case. */
 const freshUuid = (
   evidence: UpdateEvidence,
   field: string,
@@ -280,12 +297,12 @@ const freshUuid = (
 ): boolean => {
   const before = evidence.before[field];
   const after = evidence.after[field];
+  if (!isUuid(before) || !isUuid(after)) return false;
+  const fresh = after.toLowerCase();
   return (
-    isUuid(before) &&
-    isUuid(after) &&
-    before !== after &&
-    after !== sent &&
-    evidence.others.every((other) => other[field] !== after)
+    before.toLowerCase() !== fresh &&
+    !uuidsIn(sent).has(fresh) &&
+    !uuidsIn(evidence.others.map((other) => other[field] ?? null)).has(fresh)
   );
 };
 
@@ -301,11 +318,11 @@ const changeRule = (
     return { field, rule: "clock", format: readClock(after)!.format };
   if (freshUuid(evidence, field, undefined)) return { field, rule: "unique" };
   // Child rows only: a single UUID that changed is a reference or a generated value, judged above.
-  if (
-    (Array.isArray(before) || isObject(before)) &&
-    renewedUuids(before, after) !== undefined
-  )
-    return { field, rule: "renewed" };
+  const renewed =
+    Array.isArray(before) || isObject(before)
+      ? renewedRule(field, { before, after }, evidence.others)
+      : undefined;
+  if (renewed !== undefined) return renewed;
   const was = integerOf(before);
   if (was !== undefined && integerOf(after) === was + 1)
     return { field, rule: "increment" };
@@ -370,6 +387,10 @@ export const explainUpdate = (
     if (rule === undefined) unexplained.push(field);
     else rules.push(rule);
   }
+  // Serving renews one UUID alike in every field, so the call must have.
+  unexplained.push(
+    ...disagreeingRenewals(rules, evidence.before, evidence.after),
+  );
   const shaped = bodyOf(
     Object.fromEntries(
       Object.entries(body).filter(([member]) => member !== identity),

@@ -13,28 +13,31 @@ still left writes unserved where the application stored a value in a way the wri
   version it read;
 - an update that rewrites child rows with new UUIDs: Mealie gives a recipe's instructions new ids on every update.
 
-These writes are now explained and served.
+These writes are now explained, and served where every recorded call agrees with the explanation.
 
 ## Rules
 
-- **Creates.** A member copied whole into a field of another name is accepted with any value. A string that contains
-  a copied value as a delimited token is a template of the copying field and is rebuilt around the new value; the
-  copied value has the copy rule's 8 characters at least. Echoed values make no templates, since an echoed name may
-  recur in unrelated text.
+- **Creates.** A member copied whole into a field of another name, and stored under none of its own, is accepted with
+  any value of that field's JSON type. A string that contains a copied value as a delimited token is a template of
+  the copying field and is rebuilt around the new value; the copied value has the copy rule's 8 characters at least.
+  Echoed values, and copies of them, make no templates, since an echoed name may recur in unrelated text.
 - **Updates.**
-  - `unique`: a field that held a UUID and now holds another, which the call did not send and no other entity of
-    the type holds. A sent member replaced this way is accepted with any value.
-  - `renewed`: an array or object whose only changes are UUIDs replaced by ones it did not hold, each old UUID by a
-    single new one. A lone UUID is never renewed: it is either `unique` or unexplained.
+  - `unique`: a field that held a UUID and now holds another, which the call did not send (in any letter case) and
+    no other entity of the type holds. A sent member replaced this way is accepted with any value.
+  - `renewed`: an array or object whose only changes are UUIDs replaced by ones neither it nor another entity of the
+    type held, at the pointers the rule names (`*` for any array index): every UUID there is new, each old UUID by a
+    single new one, and UUIDs elsewhere are kept. A lone UUID is never renewed: it is either `unique` or unexplained.
 - **Serving.** A `unique` field gets a UUID derived as for creates. A `renewed` field keeps the entity's current
-  value with each distinct UUID inside it replaced by one derived the same way.
+  value with each UUID at the rule's pointers replaced by one seeded by the call, the same replacement wherever the
+  call renews that UUID; an entity without the field stays without it.
 
-The gate takes the recorded values for both, as for other generated fields, and a later call must rule a field the
-same way.
+The gate takes the recorded values for both, as for other generated fields. A later call must rule a field the same
+way, and no recorded call may keep a `unique` or `renewed` field, since serving changes it on every call.
 
 ## Acceptance
 
-- The pilot recordings' Shlink create, n8n update and Mealie update are served, and no other verdict changes.
+- The pilot recordings' Shlink create and n8n update are served. Mealie's update stays unserved: one recorded call keeps
+  the ingredient ids the gate's copy of the recipe shows renewed, and no other verdict changes.
 - The 50 published captures keep every verdict; only Shlink's unserved create plan changes, accepting
   `customSlug` and templating `shortUrl`.
 - Every served write tool of the 50 captures still applies.

@@ -107,43 +107,70 @@ export const versionedBook = (
   chapters: [{ id: numberedUuid(chapter), title: "Opening" }],
 });
 
-const RENAMED_ONCE = versionedBook(
-  renamedBook(FIRST_BOOK, "Renamed Book", 3),
-  5,
-  6,
-);
-const RENAMED_TWICE = versionedBook(
-  renamedBook(FIRST_BOOK, "Renamed Again", 5),
-  7,
-  8,
-);
+/** Two renames of the first book, each sending the version it was read with; each gets a new version and the child rows `make` renews. */
+const renamingRows = (
+  make: (entity: Book, version: number, chapter: number) => Book,
+  second: Book = make(SECOND_BOOK, 3, 4),
+): TimedCaptureRow[] => {
+  const once = make(renamedBook(FIRST_BOOK, "Renamed Book", 3), 5, 6);
+  const twice = make(renamedBook(FIRST_BOOK, "Renamed Again", 5), 7, 8);
+  return [
+    ["GET", "/api/books", [make(FIRST_BOOK, 1, 2), second]],
+    ["GET", "/api/books/1", make(FIRST_BOOK, 1, 2)],
+    ["GET", "/api/books/2", second],
+    [
+      "PATCH",
+      "/api/books/1",
+      once,
+      200,
+      { name: "Renamed Book", version_id: numberedUuid(1) },
+    ],
+    ["GET", "/api/books/1", once],
+    [
+      "PATCH",
+      "/api/books/1",
+      twice,
+      200,
+      { name: "Renamed Again", version_id: numberedUuid(1) },
+    ],
+    ["GET", "/api/books/1", twice],
+  ];
+};
 
 /** Two renames of the first book, each sending the version it was read with; each gets a new version and chapter ids. */
-export const VERSIONED_ROWS: readonly TimedCaptureRow[] = [
-  [
-    "GET",
-    "/api/books",
-    [versionedBook(FIRST_BOOK, 1, 2), versionedBook(SECOND_BOOK, 3, 4)],
-  ],
-  ["GET", "/api/books/1", versionedBook(FIRST_BOOK, 1, 2)],
-  ["GET", "/api/books/2", versionedBook(SECOND_BOOK, 3, 4)],
-  [
-    "PATCH",
-    "/api/books/1",
-    RENAMED_ONCE,
-    200,
-    { name: "Renamed Book", version_id: numberedUuid(1) },
-  ],
-  ["GET", "/api/books/1", RENAMED_ONCE],
-  [
-    "PATCH",
-    "/api/books/1",
-    RENAMED_TWICE,
-    200,
-    { name: "Renamed Again", version_id: numberedUuid(1) },
-  ],
-  ["GET", "/api/books/1", RENAMED_TWICE],
-];
+export const VERSIONED_ROWS: readonly TimedCaptureRow[] =
+  renamingRows(versionedBook);
+
+/** The author every chapter row names, which no renewal changes. */
+export const CHAPTER_AUTHOR = numberedUuid(99);
+
+/** As VERSIONED_ROWS, with chapter rows that also name their author. */
+export const AUTHORED_ROWS: readonly TimedCaptureRow[] = renamingRows(
+  (entity, version, chapter) => ({
+    ...versionedBook(entity, version, chapter),
+    chapters: [
+      {
+        id: numberedUuid(chapter),
+        title: "Opening",
+        author_id: CHAPTER_AUTHOR,
+      },
+    ],
+  }),
+);
+
+/** As VERSIONED_ROWS, with contents naming each chapter row by its id. */
+export const CONTENTS_ROWS: readonly TimedCaptureRow[] = renamingRows(
+  (entity, version, chapter) => ({
+    ...versionedBook(entity, version, chapter),
+    contents: [{ chapter_id: numberedUuid(chapter), page: 1 }],
+  }),
+);
+
+/** As VERSIONED_ROWS, with the second book known only without chapter rows. */
+export const UNCHAPTERED_ROWS: readonly TimedCaptureRow[] = renamingRows(
+  versionedBook,
+  { ...SECOND_BOOK, version_id: numberedUuid(3) },
+);
 
 /** A book whose sent handle the application stores as its code and embeds in its link. */
 export const handledBook = (entity: Book, handle: string): Book => ({
