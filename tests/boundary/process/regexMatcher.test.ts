@@ -44,11 +44,13 @@ worker.once("error", (error) => {
 const probeWorkerHeap = (
   args: readonly string[],
   nodeOptions: string | undefined,
+  cwd?: string,
 ): { readonly resourceOld: number; readonly heap: number } => {
   const env = { ...process.env };
   if (nodeOptions === undefined) delete env.NODE_OPTIONS;
   else env.NODE_OPTIONS = nodeOptions;
   const result = spawnSync(process.execPath, [...args, "-e", workerHeapProbe], {
+    cwd,
     env,
     encoding: "utf8",
   });
@@ -179,6 +181,59 @@ it("does not report the 128 MiB request for NODE_OPTIONS supplied by an env file
     expect(
       resolveRegexWorkerHeap([`--env-file=${file}`], "--max-old-space-size=64"),
     ).toEqual({ kind: "effective", mib: 64, overridden: true });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("does not report the 128 MiB request for a heap percentage in a Node config file", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rea-regex-config-file-"));
+  const file = join(directory, "heap.config.json");
+  const config = '{"nodeOptions":{"max-old-space-size-percentage":"1"}}\n';
+  writeFileSync(file, config);
+  writeFileSync(join(directory, "node.config.json"), config);
+  try {
+    const fromFile = probeWorkerHeap(
+      [`--experimental-config-file=${file}`],
+      undefined,
+    );
+    const split = probeWorkerHeap(
+      ["--experimental-config-file", file],
+      undefined,
+    );
+    const withAbsolute = probeWorkerHeap(
+      [`--experimental-config-file=${file}`, "--max-old-space-size=256"],
+      undefined,
+    );
+    const fromDefault = probeWorkerHeap(
+      ["--experimental-default-config-file"],
+      undefined,
+      directory,
+    );
+    const baseline = probeWorkerHeap([], undefined);
+    expect(fromFile.resourceOld).toBe(128);
+    expect(split.resourceOld).toBe(128);
+    expect(withAbsolute.resourceOld).toBe(128);
+    expect(fromDefault.resourceOld).toBe(128);
+    expect(fromFile.heap).toBeLessThan(baseline.heap);
+    expect(split.heap).toBe(fromFile.heap);
+    expect(withAbsolute.heap).toBe(fromFile.heap);
+    expect(fromDefault.heap).toBe(fromFile.heap);
+    for (const execArgv of [
+      [`--experimental-config-file=${file}`],
+      ["--experimental-config-file", file],
+      [`--experimental-config-file=${file}`, "--max-old-space-size=64"],
+      ["--experimental-default-config-file"],
+    ])
+      expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
+        kind: "unknown",
+      });
+    expect(
+      resolveRegexWorkerHeap(
+        ["--experimental-config-file=node.config.json"],
+        "--max-old-space-size=64",
+      ),
+    ).toEqual({ kind: "unknown" });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

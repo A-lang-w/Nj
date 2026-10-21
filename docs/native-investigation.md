@@ -222,6 +222,12 @@ underscore form and launch `NODE_OPTIONS` on Node versions that allow it,
 sets the total heap rather than the old generation and can be lower than the
 128 MiB request. The effective old generation stays unestablished while that
 value is in effect. A zero or empty value clears it.
+`--experimental-config-file` or `--experimental-default-config-file` can set
+`nodeOptions`, including a heap percentage, from a file that is not read
+back. The effective heap stays unestablished when either flag is present,
+including when an absolute `--max-old-space-size` is also on the command
+line or in the recovered `NODE_OPTIONS`. Node accepts the config path as
+`=` or the next argument.
 Literal mode retains Unicode casefold matching.
 
 ## Bounded static traces

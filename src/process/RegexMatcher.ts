@@ -40,6 +40,13 @@ const WORKER_HEAP_MIB = 128;
  * when an old-space flag is also present. The old generation stays
  * unestablished while that value is in effect. Zero or empty clears it.
  * Node 24 and later also accept the flag in `NODE_OPTIONS`.
+ *
+ * `--experimental-config-file` and `--experimental-default-config-file` can
+ * set `nodeOptions`, including a heap percentage, from a file. That file is
+ * not launch provenance, and it can add heap options when `NODE_OPTIONS` was
+ * already set. Either flag leaves the old generation unestablished. Node
+ * accepts the config path as `=` or the next argument. Underscore spellings
+ * are not these flags.
  */
 const OLD_SPACE_FLAG = /^--max[-_]old[-_]space[-_]size(?:=(.*))?$/u;
 const OLD_SPACE_PERCENT_FLAG =
@@ -51,6 +58,8 @@ const MAX_HEAP_FLAG = /^--max[-_]heap[-_]size(?:=(.*))?$/u;
  * later read is not the startup contents. Underscore spellings are not this flag.
  */
 const ENV_FILE_FLAG = /^--env-file(?:-if-exists)?(?:=.*)?$/u;
+/** Path form and the boolean default-file flag. The file itself is not read. */
+const CONFIG_FILE_FLAG = /^--experimental-(?:default-)?config-file(?:=.*)?$/u;
 
 /** Old-generation heap the regex worker will actually hit. */
 export type RegexWorkerHeapLimit =
@@ -127,9 +136,12 @@ export const resolveRegexWorkerHeap = (
   const tokens = [...(fromEnvironment ?? []), ...execArgv];
   // An absent NODE_OPTIONS lets the env file supply one, including a percentage
   // that beats a later absolute flag. The file's text is not launch provenance.
+  // A Node config file can inject nodeOptions even when NODE_OPTIONS was
+  // recovered. The file is not read back.
   if (
-    nodeOptions === undefined &&
-    tokens.some((token) => ENV_FILE_FLAG.test(token))
+    tokens.some((token) => CONFIG_FILE_FLAG.test(token)) ||
+    (nodeOptions === undefined &&
+      tokens.some((token) => ENV_FILE_FLAG.test(token)))
   )
     return { kind: "unknown" };
   let limit: RegexWorkerHeapLimit =
@@ -239,7 +251,7 @@ const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
 
 const heapBound = (heap: RegexWorkerHeapLimit): string => {
   if (heap.kind === "unknown")
-    return "The worker requests 128 MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size, --max-old-space-size-percentage, --max-heap-size, --env-file, and --env-file-if-exists can change that request.";
+    return "The worker requests 128 MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size, --max-old-space-size-percentage, --max-heap-size, --env-file, --env-file-if-exists, --experimental-config-file, and --experimental-default-config-file can change that request.";
   const override =
     "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the 128 MiB worker request";
   return heap.overridden

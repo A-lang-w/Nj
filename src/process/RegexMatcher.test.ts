@@ -196,6 +196,45 @@ it.each([
     heap: effective(128, false),
   },
   {
+    name: "leaves a config-file percentage source unestablished",
+    execArgv: ["--experimental-config-file=node.config.json"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "leaves a default config-file launch unestablished",
+    execArgv: ["--experimental-default-config-file"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "recognizes a config-file flag split from its path",
+    execArgv: ["--experimental-config-file", "node.config.json"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not let an absolute flag hide a config-file heap option",
+    execArgv: [
+      "--experimental-config-file=node.config.json",
+      "--max-old-space-size=64",
+    ],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not let a recovered NODE_OPTIONS hide a config-file heap option",
+    execArgv: ["--experimental-default-config-file"],
+    nodeOptions: "--max-old-space-size=64",
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "leaves a config-file flag in recovered NODE_OPTIONS unestablished",
+    execArgv: ["--max-old-space-size=256"],
+    nodeOptions: "--experimental-config-file=node.config.json",
+    heap: { kind: "unknown" } as const,
+  },
+  {
     name: "leaves a positive --max-heap-size unestablished instead of the 128 MiB request",
     execArgv: ["--max-heap-size=64"],
     nodeOptions: undefined,
@@ -318,7 +357,11 @@ it("describes the effective heap and keeps the deadline fixed", () => {
       expect(limitation).toContain("was not established");
       expect(limitation).toContain("--max-old-space-size-percentage");
       expect(limitation).toContain("--max-heap-size");
+      expect(limitation).toContain("--experimental-config-file");
       expect(projected.remediation.action).toContain("--max-heap-size");
+      expect(projected.remediation.action).toContain(
+        "--experimental-default-config-file",
+      );
       expect(projected.message).toContain("was not established");
       expect(projected.details).toMatchObject({
         reported_limits: { requested_worker_heap_mib: 128 },
