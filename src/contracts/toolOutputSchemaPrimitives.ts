@@ -1,11 +1,9 @@
+import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 
 import {
-  procedureClassificationSchema,
   procedureIdentitySchema,
-  localVariableSchema,
   functionDossierSchema,
-  functionBodySchema,
 } from "../domain/hopperValues.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
@@ -25,6 +23,7 @@ import {
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { ZIP_PACKAGE_FORMATS } from "../domain/zipPackageFormat.js";
+import { objcClassImportIdentitySchema } from "../domain/native/objcSwiftMetadata.js";
 
 /** Specialize the single normalized result inside a complete Evidence record. */
 export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
@@ -598,18 +597,7 @@ export const segmentOutput = evidenceResultOf(
   z.array(memoryRegionOutput.extend({ sections: z.array(memoryRegionOutput) })),
 );
 
-export const procedureInfoOutput = evidenceResultOf(
-  z.object({
-    name: z.string(),
-    entrypoint: z.string(),
-    basicblock_count: z.number().int().min(0),
-    length: z.number().min(0),
-    signature: nullableText,
-    locals: z.array(localVariableSchema),
-    classification: procedureClassificationSchema.nullable(),
-    body: functionBodySchema,
-  }),
-);
+export const procedureInfoOutput = evidenceResultOf(procedureInfoSchema);
 
 export const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
   evidenceResultOf(
@@ -618,6 +606,32 @@ export const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
       [property]: z.array(addressedEntry),
     }),
   );
+
+export const objcClassDiscoveryOutput = evidenceResultOf(
+  z.object({
+    count: z.number().int().min(0),
+    classes: z.array(
+      addressedEntry.extend({
+        binding_identity: objcClassImportIdentitySchema
+          .extend({
+            slot_addresses: z.array(z.string().min(1)).min(1),
+          })
+          .optional(),
+      }),
+    ),
+    identity_coverage: z.strictObject({
+      status: z.enum([
+        "complete",
+        "partial",
+        "unsupported",
+        "not_requested",
+        "unknown",
+        "not_applicable",
+      ]),
+      reason: z.string().nullable(),
+    }),
+  }),
+);
 
 export const graphNode = z.discriminatedUnion("status", [
   z.object({
