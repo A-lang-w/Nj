@@ -172,3 +172,63 @@ and host contention remain uncontrolled. The Windows CLI rerun completed in
 Main CI independently reproduced the browser termination and WASM optional-input
 assertion failures without GPU changes. Cancelled fail-fast shards are not
 counted as passing. Those baseline failures are outside this feature's fixes.
+
+## Target declaration and CUDA ABI qualification
+
+The latest code `f5be46f` is based on main `f801b2f`. Inventory and payload
+target declarations remain separate, with typed consistency and inspection
+coverage preserved in object pages even with selected fields. A mismatched
+outer/inner base target remains partial and annotates affected kernels; CUDA
+base-only agreement does not establish agreement on a feature profile. Target
+filters select inventory declarations, and unexamined inner targets stay unknown.
+
+Standalone and unknown-ID bundled AMDGPU files use the same bounded target
+discovery owner before filtering. Portable controls wrap the same real Clang
+ELF with two-separator, one-separator and opaque HIP IDs. All three inventory
+then exact-target CLI workflows retain the verified kernel. They are alternate
+wrapper controls, not verification of an actual legacy compiler producer.
+
+The shared fixed ELF header owner now retains OS ABI. NVIDIA's released CUBINs
+include distinct `0x33` and `0x41` flag layouts. The earlier low-byte-only
+interpretation falsely produced `sm_2` for 55 modern payloads; that attempted
+target-check implementation and its timings are superseded diagnostic evidence,
+not a correctness-qualified benchmark. The ABI-qualified decoder retains raw
+flags and exact fixed-header coordinates, and leaves unrecognized patterns unknown.
+Header ownership is checked when importing portable Evidence.
+
+All 165 released Windows CUBIN targets and header values were checked against
+cuobjdump-extracted files: 110 use OS ABI `0x33`, 55 use `0x41`; no false conflicts
+remain. All 3,968 corrected kernel facts and 10 PTX byte identities match the
+prior independent oracle. The nine real producer artifacts retain complete
+payload coverage. Unsupported layout controls retain their headers and make
+unknown target discovery partial in the default MCP summary.
+
+After the shared-header change, 251 cases in nine files passed, including
+Go/Rust/IL2CPP consumers, GPU CLI/MCP and provenance forgery. The last uncertainty
+propagation check passed 46 public/boundary cases. The separate SDK-converted
+canonical schema suite passed all 15 cases on the current base.
+
+The latest qualified complete/selected pair retains the same sm_100 question,
+answer and six-call workflow. It runs at `21eaa0d`, before the final unresolved-
+discovery-only guard.
+
+| Cost                                                      | Complete report | Selected page |
+| --------------------------------------------------------- | --------------: | ------------: |
+| Used input declarations + primary calls, estimated tokens |         418,967 |        26,653 |
+| All input declarations + primary calls, estimated tokens  |         648,242 |       255,928 |
+| Full catalog + all six calls, estimated tokens            |       1,493,041 |     1,100,727 |
+| Process-family elapsed seconds                            |          21.307 |        24.604 |
+| Process-family CPU seconds                                |          23.538 |        26.454 |
+| Peak family RSS bytes                                     |   1,146,519,552 | 1,341,333,504 |
+
+Selected replies save context but do not establish faster analysis. The latest
+pair used more elapsed/CPU time and peak memory for selected delivery; variability
+is visible across the preserved trials. Fresh process lifetime is controlled;
+OS caches, frequency and unrelated load are not. A same-code diagnostic timing
+repeat varied substantially, and no cause or persistent speedup is inferred.
+The tokenizer/client scope and omitted initialization costs remain as above.
+
+The final Windows CLI task took 5.446 seconds / 5.916 CPU seconds / 498,192,384
+peak family RSS bytes. The six HIP wrapper CLI tasks took 15.696 seconds /
+16.427 CPU seconds / 382,410,752 peak family RSS bytes. All completed tasks stayed
+within the 8 GiB family guard.

@@ -1066,5 +1066,508 @@
       "PTX register totals are source declarations, independently counted from cuobjdump-extracted text; physical allocation remains outside this oracle.",
       "Main CI browser termination and wasm optional-commandTimeoutMs assertions failed identically without the GPU changes; fail-fast cancelled shards remain unverified."
     ]
+  },
+  "target_consistency_and_cuda_abi": {
+    "source_revision": "f5be46f9b3b01d04feb778bdafe288b666bd283c",
+    "source_tree": "8243a36743a332f3f4f37a9fb46a04b547872d4e",
+    "measurement_revision": "21eaa0d8f0195f182c06a6d85378cbdf99fb43bb",
+    "measurement_tree": "fcf82a374a9d268b5a34a9b62f07c7722a568c46",
+    "base_revision": "f801b2fbfd28f4e3713adefddc7bd73db44c284c",
+    "qualification": {
+      "shared_header_gpu_native_focused_passed": 251,
+      "latest_unknown_summary_and_gpu_boundary_passed": 46,
+      "sdk_schema_passed": 15
+    },
+    "oracle": {
+      "source_revision": "21eaa0d8f0195f182c06a6d85378cbdf99fb43bb",
+      "windows_kernel_facts_equal_prior_corrected_oracle": 3968,
+      "independent_cubin_target_and_header_checks": 165,
+      "os_abi_counts": {
+        "65": 55,
+        "51": 110
+      },
+      "false_conflicts": 0,
+      "ptx_byte_identities": 10,
+      "independent_virtual_register_totals": "248 PTX kernels verified at prior corrected stage; PTX facts unchanged",
+      "nine_real_producer_artifacts": "complete payload coverage"
+    },
+    "hip_controls": {
+      "oracle": "Same real Clang 14 device ELF, independently checked with llvm-readelf; portable alternate wrappers, not a real legacy producer claim",
+      "cases": [
+        {
+          "wrapper": "double",
+          "sha256": "34d7fce938cbaa2bdc55300d522698ccf6b4d71694573045378e5e4f39766f16",
+          "selected_target": "gfx900",
+          "payload_target": "amdgcn-amd-amdhsa--gfx900",
+          "target_consistency": "consistent",
+          "kernel": {
+            "name": "add_one",
+            "parameter_count": 2,
+            "parameter_bytes": 12,
+            "registers": {
+              "physical": null,
+              "sgpr": 6,
+              "vgpr": 2,
+              "agpr": null,
+              "virtual": []
+            }
+          }
+        },
+        {
+          "wrapper": "single",
+          "sha256": "a46f62836fcc7f9ed93a0ea1e4b35305dc69839a5b1bf65028dd86bba1df444b",
+          "selected_target": "gfx900",
+          "payload_target": "amdgcn-amd-amdhsa--gfx900",
+          "target_consistency": "consistent",
+          "kernel": {
+            "name": "add_one",
+            "parameter_count": 2,
+            "parameter_bytes": 12,
+            "registers": {
+              "physical": null,
+              "sgpr": 6,
+              "vgpr": 2,
+              "agpr": null,
+              "virtual": []
+            }
+          }
+        },
+        {
+          "wrapper": "opaque",
+          "sha256": "12c7e35d38844f8129991fc87e99f43458173dbcb4a4830d68c296ce6f4027c2",
+          "selected_target": "amdgcn-amd-amdhsa--gfx900",
+          "payload_target": "amdgcn-amd-amdhsa--gfx900",
+          "target_consistency": "single-source",
+          "kernel": {
+            "name": "add_one",
+            "parameter_count": 2,
+            "parameter_bytes": 12,
+            "registers": {
+              "physical": null,
+              "sgpr": 6,
+              "vgpr": 2,
+              "agpr": null,
+              "virtual": []
+            }
+          }
+        }
+      ]
+    },
+    "tasks": {
+      "cuda-abi-focused": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "npm",
+            "run",
+            "test:focused",
+            "--",
+            "tests/acceptance/gpuCodeObjectsCli.test.ts",
+            "tests/boundary/gpu/codeObjects.test.ts",
+            "tests/process-global/gpuFileLifetime.test.ts",
+            "src/domain/elfFixedHeader.test.ts",
+            "tests/boundary/go/goBinaryMappings.test.ts",
+            "tests/boundary/go/goBinaryImage.test.ts",
+            "tests/boundary/rust/rustBinaryImage.test.ts",
+            "src/rust/RustAuditableReader.test.ts",
+            "tests/boundary/il2cpp/il2cppBinaryFile.test.ts"
+          ],
+          "exit_code": 0,
+          "wall_s": 111.51468113699957,
+          "cpu_s": 182.05457199999998,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 3498504192,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      "unknown-target-focused": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "npm",
+            "run",
+            "test:focused",
+            "--",
+            "tests/acceptance/gpuCodeObjectsCli.test.ts",
+            "tests/boundary/gpu/codeObjects.test.ts"
+          ],
+          "exit_code": 0,
+          "wall_s": 131.12109861799763,
+          "cpu_s": 216.183547,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 3476627456,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      "final-abi-schema": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "npm",
+            "run",
+            "test:focused",
+            "--",
+            "tests/boundary/mcp/toolSchemaValidity.test.ts"
+          ],
+          "exit_code": 0,
+          "wall_s": 114.20525343700137,
+          "cpu_s": 175.515544,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 3491016704,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      "final-abi-windows": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "scripts/rea.mjs",
+            "inspect-gpu-code-objects",
+            "/home/yann/yann/rea-5345-lab/fixtures/nvjpeg64_12.dll",
+            "--analysis",
+            "kernels",
+            "--detail",
+            "summary",
+            "--view",
+            "{\"collection\":\"targets\"}",
+            "--evidence_output",
+            "/home/yann/yann/rea-5345-lab/final-abi-windows-evidence.json",
+            "--json"
+          ],
+          "exit_code": 0,
+          "wall_s": 5.44585134999943,
+          "cpu_s": 5.915798000000001,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 498192384,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      "final-abi-full": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-5345-lab/bench.mjs",
+            "/home/yann/yann/rea-5345-gpu-code-objects",
+            "final-abi-full",
+            "full"
+          ],
+          "exit_code": 0,
+          "wall_s": 21.306950419002533,
+          "cpu_s": 23.537641,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1146519552,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "task_receipt": {
+          "runtime": "/home/yann/yann/rea-5345-gpu-code-objects",
+          "label": "final-abi-full",
+          "mode": "full",
+          "target": "/home/yann/yann/rea-5345-lab/fixtures/libnvjpeg.so.12.4.0.76",
+          "task": "Read sm_100 parameter layout, physical registers and shared memory for the named kernel, retain source Evidence and repeat the historical query three times",
+          "answer": [
+            {
+              "name": "_ZN6nvjpeg33dctQuantInvJpegKernelMultiChannelI7ushort2Li1ELi32ELi8EEEvNS_24InvDctParamsMultiChannelE",
+              "n": 1,
+              "bytes": 168,
+              "parameters": [
+                {
+                  "ordinal": 0,
+                  "name": null,
+                  "offset": 0,
+                  "size": 168,
+                  "type": null,
+                  "hidden": null
+                }
+              ],
+              "registers": {
+                "physical": 31,
+                "sgpr": null,
+                "vgpr": null,
+                "agpr": null,
+                "virtual": []
+              },
+              "shared": 9216
+            }
+          ],
+          "objects": 176,
+          "kernels": 248,
+          "coverage": {
+            "discovery": "complete",
+            "discovery_scope": "supported-section-names-and-standalone-formats",
+            "examined_sections": 33,
+            "payloads": "partial",
+            "unknown_section_names": 0
+          },
+          "used_input_declarations_plus_primary_estimated_tokens": 418967,
+          "all_input_declarations_plus_primary_estimated_tokens": 648242,
+          "catalog_and_all_calls_estimated_tokens": 1493041,
+          "token_accounting": "tokenx estimates of advertised declarations, arguments and full SDK replies; initialize and JSON-RPC envelopes omitted; not actual model usage",
+          "task_wall_s": 20.560803566,
+          "call_times_ms": [
+            {
+              "name": "inspect_gpu_code_objects",
+              "wall_ms": 11339.654018000001
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 638.0042919999978
+            },
+            {
+              "name": "export_evidence_bundle",
+              "wall_ms": 74.49857999999949
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 27.067176999997173
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 23.736125999999786
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 23.241156000000046
+            }
+          ]
+        }
+      },
+      "final-abi-selected": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-5345-lab/bench.mjs",
+            "/home/yann/yann/rea-5345-gpu-code-objects",
+            "final-abi-selected",
+            "selected"
+          ],
+          "exit_code": 0,
+          "wall_s": 24.60369418600021,
+          "cpu_s": 26.454144,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1341333504,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "task_receipt": {
+          "runtime": "/home/yann/yann/rea-5345-gpu-code-objects",
+          "label": "final-abi-selected",
+          "mode": "selected",
+          "target": "/home/yann/yann/rea-5345-lab/fixtures/libnvjpeg.so.12.4.0.76",
+          "task": "Read sm_100 parameter layout, physical registers and shared memory for the named kernel, retain source Evidence and repeat the historical query three times",
+          "answer": [
+            {
+              "name": "_ZN6nvjpeg33dctQuantInvJpegKernelMultiChannelI7ushort2Li1ELi32ELi8EEEvNS_24InvDctParamsMultiChannelE",
+              "n": 1,
+              "bytes": 168,
+              "parameters": [
+                {
+                  "ordinal": 0,
+                  "name": null,
+                  "offset": 0,
+                  "size": 168,
+                  "type": null,
+                  "hidden": null
+                }
+              ],
+              "registers": {
+                "physical": 31,
+                "sgpr": null,
+                "vgpr": null,
+                "agpr": null,
+                "virtual": []
+              },
+              "shared": 9216
+            }
+          ],
+          "objects": 176,
+          "kernels": 248,
+          "coverage": {
+            "discovery": "complete",
+            "discovery_scope": "supported-section-names-and-standalone-formats",
+            "examined_sections": 33,
+            "payloads": "partial",
+            "unknown_section_names": 0
+          },
+          "used_input_declarations_plus_primary_estimated_tokens": 26653,
+          "all_input_declarations_plus_primary_estimated_tokens": 255928,
+          "catalog_and_all_calls_estimated_tokens": 1100727,
+          "token_accounting": "tokenx estimates of advertised declarations, arguments and full SDK replies; initialize and JSON-RPC envelopes omitted; not actual model usage",
+          "task_wall_s": 23.815860039,
+          "call_times_ms": [
+            {
+              "name": "inspect_gpu_code_objects",
+              "wall_ms": 13581.298396999999
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 586.4171619999979
+            },
+            {
+              "name": "export_evidence_bundle",
+              "wall_ms": 146.93752499999755
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 21.25048599999718
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 20.08134400000199
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 18.104333999999653
+            }
+          ]
+        }
+      },
+      "final-abi-hip": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "python3",
+            "/home/yann/yann/rea-5345-lab/hip-roundtrip.py"
+          ],
+          "exit_code": 0,
+          "wall_s": 15.695726638998167,
+          "cpu_s": 16.426953,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 382410752,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      "final-abi-producers": {
+        "resource_receipt": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "--import",
+            "tsx",
+            "/home/yann/yann/rea-5345-lab/probe.mts"
+          ],
+          "exit_code": 0,
+          "wall_s": 0.7437617239993415,
+          "cpu_s": 0.6657989999999927,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 125800448,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      }
+    },
+    "superseded_diagnostics": {
+      "revision": "6dd8f0dad26e677118f08dfe407c8d01c3dced34",
+      "outcome": "Process tasks completed, but 55 modern CUDA objects received false target-conflict facts. These runs are not correctness-qualified performance evidence. The ABI-qualified producer replaces the low-byte-only interpretation.",
+      "same_code_timing_variability": "The selected diagnostic run used 33.803 CPU s, while its repeat used 18.043 CPU s. No causal attribution or general speedup is established.",
+      "receipts": {
+        "target-full": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-5345-lab/bench.mjs",
+            "/home/yann/yann/rea-5345-gpu-code-objects",
+            "target-full",
+            "full"
+          ],
+          "exit_code": 0,
+          "wall_s": 30.42589916200086,
+          "cpu_s": 33.988588,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1337733120,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "target-selected": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-5345-lab/bench.mjs",
+            "/home/yann/yann/rea-5345-gpu-code-objects",
+            "target-selected",
+            "selected"
+          ],
+          "exit_code": 0,
+          "wall_s": 29.977477751999686,
+          "cpu_s": 33.803096,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1163767808,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "control-before-selected": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-5345-lab/bench.mjs",
+            "/home/yann/yann/rea-5345-perf-before",
+            "control-before-selected",
+            "selected"
+          ],
+          "exit_code": 0,
+          "wall_s": 16.23110394300238,
+          "cpu_s": 18.834853000000003,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1337622528,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "control-after-selected": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-5345-lab/bench.mjs",
+            "/home/yann/yann/rea-5345-gpu-code-objects",
+            "control-after-selected",
+            "selected"
+          ],
+          "exit_code": 0,
+          "wall_s": 15.375846307000756,
+          "cpu_s": 18.043155,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1186308096,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      }
+    },
+    "limitations": [
+      "Raw OS ABI and flags plus header provenance remain retained. Recognized ABI/layout predicates produce base architecture declarations; unsupported patterns remain unknown/partial. No hardware compatibility or feature-profile proof is claimed.",
+      "Alternate HIP wrappers contain the same real Clang ELF; they do not establish behavior of a legacy compiler producer.",
+      "Final normal-workflow measurements precede the last guard that exposes failed target discovery as partial; this guard only changes unresolved observations.",
+      "Baseline browser and WASM CLI-schema CI failures remain separately reproduced on unmodified main."
+    ]
   }
 }
