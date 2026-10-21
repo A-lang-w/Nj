@@ -519,6 +519,40 @@ describe("compiled CLI output boundary", () => {
   );
 });
 
+describe("compiled CLI numeric option validation", () => {
+  workspaceCliTest(
+    "keeps numeric bounds in field diagnostics under the documented guidance",
+    async ({ cli, workspace }) => {
+      const target = workspace.path("target");
+      await mkdir(target);
+      const result = await cli.run({
+        arguments: [
+          "inspect-desktop-application",
+          target,
+          "--max_entries",
+          "100001",
+          "--json",
+        ],
+      });
+      expect(result).toMatchObject({
+        exitCode: 1,
+        json: {
+          code: "VALIDATION_ERROR",
+          message: CLI_ARGUMENT_VALIDATION_GUIDANCE,
+          fieldErrors: [
+            {
+              path: "max_entries",
+              code: "too_big",
+              message: expect.stringContaining("<=100000"),
+            },
+          ],
+        },
+      });
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
+
 describe("compiled CLI artifact diagnostics", () => {
   workspaceCliTest(
     "preserves artifact diagnostics in JSON output",
