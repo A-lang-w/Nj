@@ -78,15 +78,17 @@ export const analyzeScript = (
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
   const { receivers } = index;
-  const routeScan = new JavaScriptRouteScan(({ node, value, mechanism }) =>
-    addFinding({
-      collection: accumulator.routes,
-      script,
-      rawValue: value,
-      mechanism,
-      node,
-      accumulator,
-    }),
+  const routeScan = completeSemanticSteps(
+    JavaScriptRouteScan.createSteps(file, index, ({ node, value, mechanism }) =>
+      addFinding({
+        collection: accumulator.routes,
+        script,
+        rawValue: value,
+        mechanism,
+        node,
+        accumulator,
+      }),
+    ),
   );
   const openReceiverFacts = receivers.openReceivers;
   let mutationFactsIndexed = false;
@@ -135,7 +137,7 @@ export const analyzeScript = (
       });
   if (index.bindings.returnedReferenceWidenings.size > 0)
     accumulator.widenedScripts.push(script.script_key);
-  return completeSemanticSteps(routeScan.finishSteps(index));
+  return completeSemanticSteps(routeScan.finishSteps());
 };
 
 const inspectNode = (

@@ -19,13 +19,15 @@ const analyze = (source: string, budget?: number) => {
     indexJavaScriptBindingsWithReceiversSteps(file.program),
   );
   complete(index.indexAmbientWritesSteps());
-  const scan = new JavaScriptRouteScan(undefined, budget);
+  const scan = complete(
+    JavaScriptRouteScan.createSteps(file, index, undefined, budget),
+  );
   traverseJavaScriptAst(file, {
     enter: (node, parent) => {
       scan.inspect(node, parent);
     },
   });
-  return complete(scan.finishSteps(index));
+  return complete(scan.finishSteps());
 };
 
 it("joins router children and preserves each segment's source", () => {
@@ -667,5 +669,121 @@ it.each(["app/(.)photo/_private/page.tsx", "app/_private/(.)photo/page.tsx"])(
   "keeps private pages excluded before interpreting %s",
   (value) => {
     expect(classifyNextAppRoutePath(value)).toBeUndefined();
+  },
+);
+
+it("keeps the already-covered aliased binary fragment excluded", () => {
+  const facts = analyze(
+    "createBrowserRouter([{path:'/users'}]);const target={pathname:'/users/'+id};router.push(target);",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
+  expect(facts.unresolved).toHaveLength(1);
+});
+it.each([
+  [
+    "createBrowserRouter([{path:'/users'}]);const prefix='/users/';const target={pathname:prefix+id};router.push(target);",
+    ["/users"],
+  ],
+  [
+    "createBrowserRouter([{path:'/users'}]);const target=['/users/',id];router.navigate(target);",
+    ["/users"],
+  ],
+  [
+    "const target={pathname:'/users',query:{path:'/download/file',component:'preview',href:'/query-data',module:'app/fake/page.tsx'}};router.push(target);",
+    ["/users"],
+  ],
+  [
+    "const query={path:'/download/file',component:'preview',href:'/query-data'};const target={pathname:'/users',query};router.push(target);",
+    ["/users"],
+  ],
+  ["const target='/reports';router.push(target);", ["/reports"]],
+  [
+    "const pathname='/reports';const target={pathname};router.push(target);",
+    ["/reports"],
+  ],
+] as const)(
+  "owns aliased navigation values before interpreting their data: %s",
+  (source, paths) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(paths);
+  },
+);
+it("keeps two alias use sites distinct with initializer segment provenance", () => {
+  const facts = analyze(
+    "const target='/reports';router.push(target);router.replace(target);",
+  );
+  expect(facts.candidates).toHaveLength(2);
+  expect(facts.candidates[0]!.location).not.toEqual(
+    facts.candidates[1]!.location,
+  );
+  expect(facts.candidates[0]!.segments).toEqual(facts.candidates[1]!.segments);
+});
+it("keeps callable bodies independent of aliased navigation data", () => {
+  const facts = analyze(
+    "const query={render:()=>({path:'/component',element:View})};const target={pathname:'/users',query};router.push(target);",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/users",
+    "/component",
+  ]);
+});
+it("leaves cyclic navigation aliases explicitly unknown", () => {
+  const facts = analyze(
+    "const first=second;const second=first;router.push(first);",
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toHaveLength(1);
+});
+
+it("preserves explicitly selected routes that also supply navigation query data", () => {
+  const facts = analyze(
+    "const route={path:'/selected',component:View};createBrowserRouter([route]);router.push({pathname:'/users',query:route});",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/users",
+    "/selected",
+  ]);
+});
+it("keeps reassigned alias values unknown instead of selecting an initializer", () => {
+  const facts = analyze("let target='/old';target='/new';router.push(target);");
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toHaveLength(1);
+});
+it("does not resolve a shadowed navigation parameter to an outer binding", () => {
+  const facts = analyze(
+    "const target='/outer';function render(target){router.push(target);}",
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toHaveLength(1);
+});
+it("accounts for long navigation alias resolution before exceeding its work budget", () => {
+  const chain = Array.from(
+    { length: 256 },
+    (_, i) => `const item${i}=${i === 0 ? "'/users'" : `item${i - 1}`};`,
+  ).join("");
+  const facts = analyze(chain + "router.push(item255);", 2048);
+  expect(facts.capacity?.kind).toBe("route-work-or-facts");
+  expect(facts.candidates).toEqual([]);
+});
+
+it("does not trust a selected route after an earlier opaque navigation escape", () => {
+  const facts = analyze(
+    "const route={path:'/selected',component:View};router.push({pathname:'/users',query:route});createBrowserRouter([route]);",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
+  expect(facts.unresolved.length).toBeGreaterThan(0);
+});
+
+it.each([
+  "const registry={route:{path:'/independent',component:View},make(){return {};}};router.push({pathname:'/users',query:registry.make()});",
+  "const registry={route:{path:'/independent',component:View},query:{value:1}};router.push({pathname:'/users',query:registry.query});",
+])(
+  "does not own unrelated data in a navigation callee or projection: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/users",
+      "/independent",
+    ]);
   },
 );

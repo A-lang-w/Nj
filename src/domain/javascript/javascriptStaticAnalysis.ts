@@ -112,11 +112,13 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronAppPathChangePossible: electronIdentity.mayChangeAppPath,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
-  const routeScan = new JavaScriptRouteScan((fact) =>
-    addEndpoint(findings, { ...fact, kind: "route" }),
+  const routeScan = yield* JavaScriptRouteScan.createSteps(
+    file,
+    index,
+    (fact) => addEndpoint(findings, { ...fact, kind: "route" }),
   );
   yield* traverseStaticSourceSteps(file, findings, bindings, routeScan);
-  const routes = yield* routeScan.finishSteps(index);
+  const routes = yield* routeScan.finishSteps();
   yield* finishElectronBrowserWindowsSteps(findings, index);
   if (accumulator.pendingModuleRequireCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();
