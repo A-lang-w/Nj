@@ -772,6 +772,37 @@ it("discovers artifact target prerequisites and preserves typed MCP refusals", a
       }
       await client.callTool({ name: "close_binary", arguments: {} });
     }
+    await writeFile(
+      join(contents, "state.plist"),
+      await readFile(join(root, "keyed.plist")),
+    );
+    for (const format of ["raw-binary", "dos-com"] as const) {
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: {
+          path: join(root, "Fixture.app"),
+          format,
+          ...(format === "raw-binary"
+            ? { architecture: "x86_64", entry_point: "0x0" }
+            : {}),
+        },
+      });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const groups = await availability();
+      for (const name of operations.filter(
+        (name) => name !== "trace_dylib_resolution",
+      ))
+        expect(
+          groups.find((group) => group.names.includes(name)),
+          `${format} ${name}`,
+        ).toMatchObject({ available: true });
+      const inspected = await client.callTool({
+        name: "inspect_keyed_archive",
+        arguments: { path: "Contents/state.plist" },
+      });
+      expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+      await client.callTool({ name: "close_binary", arguments: {} });
+    }
   } finally {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   }
