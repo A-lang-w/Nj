@@ -348,7 +348,7 @@ export const readFirmwareCommandReport = async (context: {
         cause,
         diagnostics,
         userMessage: `${engine} exited successfully but left no usable report (${reportFailure}), so ${operation} produced no Evidence. A successful exit status is not an empty or complete result.`,
-        remediationAction: `Review diagnostics.report_state, the exit status and captured stdout/stderr. REA did not retry or substitute an empty result. Rerun the same request to check whether this is intermittent; if it recurs, run diagnostics.command directly with the same arguments on a copy of the input under the same resource limits and confirm that it writes the requested report. \`rea doctor\` checks configuration only and cannot recover this report.`,
+        remediationAction: `Review diagnostics.report_state, the exit status and captured stdout/stderr. REA did not retry or substitute an empty result. diagnostics.command and diagnostics.args record what ran; their workspace paths are REA-private and removed after the attempt, so they cannot be replayed as-is. Rerun the same REA request to check whether this is intermittent; each attempt uses a fresh workspace. If it recurs, copy the selected input bytes into a new directory and run diagnostics.command with the same flags, replacing every private path with your copy and a new report path, under the documented firmware resource limits; confirm that it writes the requested report. \`rea doctor\` checks configuration only and cannot recover this report.`,
       },
     );
   }
