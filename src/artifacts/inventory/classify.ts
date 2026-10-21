@@ -15,8 +15,7 @@ import {
   hasZipSignature,
   locateTrailingZipArchive,
   isZipPackageFormat,
-  zipPackageFormatForPath,
-  type ZipPackageFormat,
+  zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
@@ -258,12 +257,6 @@ const readRootFatSliceHeaders = async (
   }
   return { header, sliceHeadersByOffset };
 };
-
-/** App Pack is a verified ZIP root role; nested .app members retain their observed format. */
-const zipRootPackageFormat = (lower: string): ZipPackageFormat =>
-  lower.endsWith(".app")
-    ? "app-pack"
-    : (zipPackageFormatForPath(lower) ?? "zip");
 
 const hasKolyTrailer = async (
   handle: FileHandle,

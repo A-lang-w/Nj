@@ -184,50 +184,47 @@ describe("nested container family", () => {
   );
 });
 
+const SCRIPT_STUB = Buffer.from("#!/bin/sh\nexit 0\n");
+
+const memberZip = async (): Promise<Buffer> => {
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("a.txt", new TextReader("hello world\n"));
+  await writer.add("d/b.txt", new TextReader("x\n"));
+  return Buffer.from(await writer.close());
+};
+
+/** Prepend bytes; optionally shift stored offsets as `zip -A` does. */
+const withLeadingBytes = (
+  zip: Buffer,
+  leading: Buffer,
+  adjustOffsets: boolean,
+): Buffer => {
+  const bytes = Buffer.concat([leading, zip]);
+  if (!adjustOffsets) return bytes;
+  const end = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const directory = bytes.readUInt32LE(end + 16) + leading.length;
+  bytes.writeUInt32LE(directory, end + 16);
+  for (let at = directory; at < end;) {
+    bytes.writeUInt32LE(bytes.readUInt32LE(at + 42) + leading.length, at + 42);
+    at +=
+      46 +
+      bytes.readUInt16LE(at + 28) +
+      bytes.readUInt16LE(at + 30) +
+      bytes.readUInt16LE(at + 32);
+  }
+  return bytes;
+};
+
+/** Members by content-derived identity and verification state. */
+const members = async (path: string) => {
+  const inventory = await inventoryArtifact(path);
+  return ["a.txt", "d/b.txt"].map((member) => {
+    const occurrence = artifactOccurrenceAt(inventory, member);
+    return [member, occurrence.hash_status, occurrence.artifact_id];
+  });
+};
+
 describe("ZIP archives after leading bytes", () => {
-  const SCRIPT_STUB = Buffer.from("#!/bin/sh\nexit 0\n");
-
-  const memberZip = async (): Promise<Buffer> => {
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("a.txt", new TextReader("hello world\n"));
-    await writer.add("d/b.txt", new TextReader("x\n"));
-    return Buffer.from(await writer.close());
-  };
-
-  /** Prepend bytes; optionally shift stored offsets as `zip -A` does. */
-  const withLeadingBytes = (
-    zip: Buffer,
-    leading: Buffer,
-    adjustOffsets: boolean,
-  ): Buffer => {
-    const bytes = Buffer.concat([leading, zip]);
-    if (!adjustOffsets) return bytes;
-    const end = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-    const directory = bytes.readUInt32LE(end + 16) + leading.length;
-    bytes.writeUInt32LE(directory, end + 16);
-    for (let at = directory; at < end;) {
-      bytes.writeUInt32LE(
-        bytes.readUInt32LE(at + 42) + leading.length,
-        at + 42,
-      );
-      at +=
-        46 +
-        bytes.readUInt16LE(at + 28) +
-        bytes.readUInt16LE(at + 30) +
-        bytes.readUInt16LE(at + 32);
-    }
-    return bytes;
-  };
-
-  /** Members by content-derived identity and verification state. */
-  const members = async (path: string) => {
-    const inventory = await inventoryArtifact(path);
-    return ["a.txt", "d/b.txt"].map((member) => {
-      const occurrence = artifactOccurrenceAt(inventory, member);
-      return [member, occurrence.hash_status, occurrence.artifact_id];
-    });
-  };
-
   it.each([
     { style: "offsets that include the leading bytes", adjust: true },
     { style: "offsets written before the bytes were prepended", adjust: false },
@@ -258,6 +255,22 @@ describe("ZIP archives after leading bytes", () => {
       expect(await members(prefixed)).toEqual(expected);
     },
   );
+
+  it("keeps the root App Pack family for a ZIP after a script stub", async () => {
+    const root = await createTestTempDirectory("rea-zip-leading-app-pack-");
+    const path = join(root, "Example.app");
+    await writeFile(
+      path,
+      withLeadingBytes(await memberZip(), SCRIPT_STUB, false),
+    );
+    expect(
+      (await classifyAndHashRoot(path, false, await lstat(path))).format,
+    ).toBe("app-pack");
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "app-pack" },
+    });
+  });
 
   it.each([
     { family: "ELF", leading: Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1, 1, 1]) },

@@ -43,7 +43,7 @@ import {
   hasZipSignature,
   locateTrailingZipArchive,
   isZipPackageFormat,
-  zipPackageFormatForPath,
+  zipRootPackageFormat,
 } from "../domain/zipPackageFormat.js";
 
 import {
@@ -239,7 +239,7 @@ export const parseBinaryTarget = async (
             sourcePath,
             sha256: await sha256Handle(handle, path, metadata, signal),
             kind: "archive",
-            format: zipPackageFormatForPath(path.toLowerCase()) ?? "zip",
+            format: zipRootPackageFormat(path),
           });
         return err(
           new BinaryTargetError(path, detected.error, {
@@ -378,12 +378,8 @@ const detectArtifactFormat = async (
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
-  if (hasZipSignature(magic.subarray(0, observed.bytesRead))) {
-    // The HarmonyOS App Pack suffix `.app` is a root-input concept; a nested
-    // ZIP member ending in `.app` keeps the generic zip classification.
-    if (lower.endsWith(".app")) return "app-pack";
-    return zipPackageFormatForPath(lower) ?? "zip";
-  }
+  if (hasZipSignature(magic.subarray(0, observed.bytesRead)))
+    return zipRootPackageFormat(lower);
   if (hasGodotPckHeader(magic.subarray(0, observed.bytesRead)))
     return "godot-pck";
   // Binary plists, including keyed archives, often use other extensions.

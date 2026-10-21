@@ -125,6 +125,18 @@ export const zipPackageFormatForPath = (
   return undefined;
 };
 
+/**
+ * Classify a verified ZIP root input by its path. The HarmonyOS App Pack
+ * suffix `.app` applies only to root inputs; a nested ZIP member ending in
+ * `.app` keeps its observed format.
+ */
+export const zipRootPackageFormat = (path: string): ZipPackageFormat => {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".app")
+    ? "app-pack"
+    : (zipPackageFormatForPath(lower) ?? "zip");
+};
+
 /** Inventory lists entries, not all bytes surrounding the central directory. */
 export const ZIP_NON_ENTRY_LIMITATION =
   "ZIP inventory lists central-directory entries only. Non-entry bytes, including leading bytes before the first entry such as a self-extractor stub, an APK Signing Block before the central directory or a ZIP comment after it, are not occurrences.";
