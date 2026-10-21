@@ -229,10 +229,12 @@ const claudeFolderProbes = (
     const remaining = ROAMING_ENTRY_LIMIT - entryBudget.inspected;
     if (remaining <= 0) return [];
     const names = fileSystem.readdir(join(privateRoaming, "Claude"), remaining);
+    // The filesystem has already materialized these names. Debit all returned
+    // entries before selecting a handful of candidates so the budget covers
+    // enumeration and sorting work as well as lstat calls.
+    entryBudget.inspected += names.length;
     const probes: string[] = [];
     for (const name of names) {
-      if (entryBudget.inspected >= ROAMING_ENTRY_LIMIT) break;
-      entryBudget.inspected += 1;
       if (isPrivateFile(fileSystem, privateRoaming, join("Claude", name))) {
         probes.push(join("Claude", name));
         if (probes.length === PROCESS_VIEW_PROBES) break;
@@ -275,12 +277,14 @@ const roamingProbes = (
     if (directory === undefined) break;
     let names: readonly string[];
     try {
-      names = [
-        ...fileSystem.readdir(
-          join(privateRoaming, directory.path),
-          ROAMING_ENTRY_LIMIT - entryBudget.inspected,
-        ),
-      ].sort();
+      const enumerated = fileSystem.readdir(
+        join(privateRoaming, directory.path),
+        ROAMING_ENTRY_LIMIT - entryBudget.inspected,
+      );
+      // `readdir` and sorting have already processed every returned name, even
+      // when queue/file limits mean only a prefix can be inspected below.
+      entryBudget.inspected += enumerated.length;
+      names = [...enumerated].sort();
     } catch (cause: unknown) {
       // An unreadable folder cannot be compared; the others still can.
       void cause;
@@ -292,12 +296,7 @@ const roamingProbes = (
       const wantsFolder =
         directory.depth < ROAMING_DEPTH_LIMIT &&
         listed + queue.length < ROAMING_DIRECTORY_LIMIT - 1;
-      if (
-        (!wantsFile && !wantsFolder) ||
-        entryBudget.inspected === ROAMING_ENTRY_LIMIT
-      )
-        break;
-      entryBudget.inspected += 1;
+      if (!wantsFile && !wantsFolder) break;
       const path = join(directory.path, name);
       const entry = entryKind(fileSystem, join(privateRoaming, path));
       if (entry === "file" && wantsFile) {

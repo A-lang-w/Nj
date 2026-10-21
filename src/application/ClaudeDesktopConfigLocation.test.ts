@@ -301,18 +301,26 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
 });
 
 describe("Claude Desktop roaming enumeration budget", () => {
+  const entryLimit = 1024;
   it("stops inspecting entries once its budget is spent", () => {
     const folders = Array.from({ length: 1500 }, (_, index) =>
       join(`folder-${String(index).padStart(4, "0")}`, "file"),
     );
     const fileSystem = roamingFileSystem(folders, (path) => path);
+    let enumerated = 0;
     let inspected = 0;
     const requested: (number | undefined)[] = [];
     const view = viewOf({
       ...fileSystem,
       readdir: (path, limit) => {
         if (path === privateRoaming) requested.push(limit);
-        return fileSystem.readdir(path, limit);
+        const names = fileSystem.readdir(path, limit);
+        if (
+          path === privateRoaming ||
+          path.startsWith(`${privateRoaming}${sep}`)
+        )
+          enumerated += names.length;
+        return names;
       },
       lstat: (path) => {
         if (dirname(path) === privateRoaming) inspected += 1;
@@ -321,9 +329,46 @@ describe("Claude Desktop roaming enumeration budget", () => {
     });
     // The root lists only folders, so the budget runs out before any file.
     expect(view).toBe("unknown");
+    expect(enumerated).toBe(1024);
     expect(inspected).toBe(1024);
     // The listing itself stops at the budget instead of reading all 1500 names.
     expect(requested).toEqual([1024]);
+  });
+
+  it("charges names materialized from an early queued leaf directory", () => {
+    const files = Array.from({ length: 64 * 1000 }, (_, index) =>
+      join(
+        `folder-${String(Math.floor(index / 1000)).padStart(2, "0")}`,
+        `file-${String(index % 1000).padStart(4, "0")}`,
+      ),
+    );
+    const base = roamingFileSystem(files, (path) => path);
+    let enumerated = 0;
+    const requests: Array<{ path: string; limit: number | undefined }> = [];
+    const view = viewOf({
+      ...base,
+      readdir: (path, limit) => {
+        const names = base.readdir(path, limit);
+        if (
+          path === privateRoaming ||
+          path.startsWith(`${privateRoaming}${sep}`)
+        ) {
+          enumerated += names.length;
+          requests.push({ path, limit });
+        }
+        return names;
+      },
+    });
+
+    expect(view).toBe("direct");
+    expect(enumerated).toBe(entryLimit);
+    expect(requests).toEqual([
+      { path: privateRoaming, limit: entryLimit },
+      {
+        path: join(privateRoaming, "folder-00"),
+        limit: entryLimit - 64,
+      },
+    ]);
   });
 
   it("bounds the preferred Claude folder before selecting its probes", () => {
