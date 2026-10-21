@@ -94,21 +94,29 @@ setTimeout(() => process.exit(99), 20000);
           { timeout: 10_000 },
         )
         .toBe(true);
-      const observed = z
-        .strictObject({
-          pid: z.number().int().positive(),
-          // Ownership tokens are opaque. The JADX probe publishes a UUID; the
-          // Kuna version probe publishes `rea-kuna-version-<uuid>`.
-          runId: z.string().min(1).optional(),
-        })
-        .parse(JSON.parse(await readFile(ready, "utf8")));
+      const readyRecord: unknown = JSON.parse(await readFile(ready, "utf8"));
+      // JADX publishes a UUID. Kuna publishes an opaque
+      // `rea-kuna-version-<uuid>` token. Both are required: JSON.stringify
+      // drops an undefined REA_PROCESS_RUN_ID, and that omission must fail.
+      const observed =
+        provider === "jadx"
+          ? z
+              .strictObject({
+                pid: z.number().int().positive(),
+                runId: z.string().uuid(),
+              })
+              .parse(readyRecord)
+          : z
+              .strictObject({
+                pid: z.number().int().positive(),
+                runId: z.string().min(1),
+              })
+              .parse(readyRecord);
       if (provider === "jadx") {
-        const runId = z.string().uuid().safeParse(observed.runId);
-        if (!runId.success) throw new Error("Missing JADX run token");
         ownership = {
           leaderPid: observed.pid,
           processGroupId: observed.pid,
-          runId: runId.data,
+          runId: observed.runId,
         };
       }
       child.kill(signal);
