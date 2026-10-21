@@ -1,14 +1,14 @@
 # Verification
 
-Executed on macOS with Node v22.23.1 on this branch, whose base is the write-plan branch's head `325c128f`.
+Executed on macOS with Node v22.23.1 on this branch, whose base is the write-plan branch's head `ad8f674d`.
 
 ## Gates
 
 - `npm run build:cached`, `npm run check:fast` (typecheck and lint, no new warnings in the changed files),
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
-- `npm run jscpd`: 3.43% duplicated lines over 3754 files.
-- `npx vitest run --project domain --project services`: 7757 passed, 5 pre-existing skips.
+- `npm run jscpd`: 3.45% duplicated lines over 3776 files.
+- `npx vitest run --project domain --project services`: 7800 passed, 5 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 79 passed.
@@ -25,11 +25,11 @@ Executed on macOS with Node v22.23.1 on this branch, whose base is the write-pla
   replays with the reason `projection` while other calls answer from the state; creates take the next number in the
   held value's digit groups.
 - Unit: a digit-group value reads as a sequence and a date does not; the next value keeps the groups, overflow leading.
-- The gate, serving and manifest tests fail on `325c128f`.
+- The gate, serving and manifest tests fail on `ad8f674d`.
 
 ## Published captures
 
-Over the 50 published captures, against `325c128f`:
+Over the 50 published captures, against `ad8f674d`:
 
 - Write groups excluded as `non-json` go from 13 in five captures to none. Directus, Jellyfin, Keycloak, Miniflux and
   Shlink gain those tools, so their manifests change.
