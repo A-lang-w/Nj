@@ -5,7 +5,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
 import { openCdpEndpoint } from "../../../src/browser/CdpTargetSession.js";
+import { PlaywrightScenarioServiceWorkers } from "../../../src/browser/PlaywrightScenarioServiceWorkers.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
+import { CDP_DISCOVERY_RESPONSE_TIMEOUT_MS } from "../../../src/domain/browserDeadline.js";
 import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
@@ -332,6 +334,87 @@ it("keeps a short command deadline off HTTP discovery and names Page.getFrameTre
   } finally {
     await provider.close();
     await browser.close();
+  }
+});
+
+it("gives browser-socket attach its own command deadline after the handshake", async () => {
+  const commandTimeoutMs = 80;
+  const browser = await startFakeCdpBrowser({
+    handshakeDelayMs: 50,
+    hangOnMethod: "Target.attachToTarget",
+  });
+  const provider = new CdpWebRuntimeProvider();
+  try {
+    const pending = provider.observeExecution(
+      observeWebExecutionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 1,
+        command_timeout_ms: commandTimeoutMs,
+      }),
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    await vi.waitFor(
+      () =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          "Target.attachToTarget",
+        ),
+      { timeout: 5_000 },
+    );
+    expect(activeTimers(commandTimeoutMs)).toHaveLength(1);
+    expireTimer(commandTimeoutMs);
+    const result = await pending;
+    if (result.ok) throw new Error("Expected an attach deadline");
+    const text = `${result.error.userMessage ?? ""}\n${result.error.message}`;
+    expect(text).toContain(
+      `CDP command Target.attachToTarget exceeded its ${String(commandTimeoutMs)} ms command_timeout_ms`,
+    );
+    expect(text).not.toContain("WebSocket handshake exceeded");
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  } finally {
+    await provider.close();
+    await browser.close();
+  }
+});
+
+it("keeps blocked service-worker attachment outside the discovery deadline", async () => {
+  const commandTimeoutMs = 25_000;
+  const browser = await startFakeCdpBrowser({
+    hangOnMethod: "Target.attachToTarget",
+  });
+  const frame = {
+    evaluate: async () => null,
+    isDetached: () => false,
+    url: () => `${browser.allowedOrigin}/app`,
+  };
+  const workers = new PlaywrightScenarioServiceWorkers(
+    {
+      frames: () => [frame],
+      isClosed: () => false,
+      mainFrame: () => frame,
+    } as unknown as ConstructorParameters<
+      typeof PlaywrightScenarioServiceWorkers
+    >[0],
+    browser.endpoint,
+    "allowed-page",
+    commandTimeoutMs,
+  );
+  const pending = workers.initialize();
+  try {
+    await vi.waitFor(
+      () =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          "Target.attachToTarget",
+        ),
+      { timeout: 5_000 },
+    );
+    expect(activeTimers(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)).toHaveLength(0);
+    expect(activeTimers(commandTimeoutMs)).toHaveLength(1);
+  } finally {
+    const closing = workers.close().catch(() => undefined);
+    await browser.close();
+    await closing;
+    await pending.catch(() => undefined);
   }
 });
 

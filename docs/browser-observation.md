@@ -441,7 +441,9 @@ Neither has a runtime override. `list_browser_targets` accepts no
 the socket closes without a later command. Other CDP tools use
 `command_timeout_ms` (default 20000) for each WebSocket handshake and command
 response, separate from the caller-selected observation window, discovery, and
-the 5000 ms cleanup grace. A stalled handshake or command reports
+the 5000 ms cleanup grace. A browser-level socket's handshake and the following
+`Target.attachToTarget` each receive that full deadline; they do not share one
+budget. A stalled handshake or command reports
 `provider_timeout` and names `command_timeout_ms` only when that operation
 accepts it; caller cancellation still reports cancellation. WebSocket messages
 remain subject to the [64 MiB limit](#request-boundary), which has no runtime

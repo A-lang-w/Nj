@@ -63,8 +63,9 @@ export class CdpRuntimeSession {
     const commandTimeoutMs = selectedCdpCommandTimeoutMs(
       input.command_timeout_ms,
     );
-    // HTTP discovery keeps its own fixed deadline. A short command budget
-    // starts at the WebSocket handshake, not at /json/version or /json/list.
+    // HTTP discovery keeps its own fixed deadline. The WebSocket handshake
+    // and a browser-level Target.attachToTarget each get commandTimeoutMs.
+    // One deadline around both would expire a valid attach after a slow handshake.
     const discovery = await discoverCdpEndpoint(
       input.cdp_endpoint,
       operation,
@@ -75,23 +76,16 @@ export class CdpRuntimeSession {
       input,
       operation,
     );
-    const transport = await runtimeDeadline(
+    const transport = await openCdpTargetSession(
+      discovery,
+      target,
       operation,
       options.signal,
-      (signal) =>
-        openCdpTargetSession(
-          discovery,
-          target,
-          operation,
-          signal,
-          {
-            maxPayloadBytes: WEB_RUNTIME_LIMITS.protocolBytes,
-            commandTimeoutMs,
-          },
-          owner,
-        ),
-      commandTimeoutMs,
-      "handshake",
+      {
+        maxPayloadBytes: WEB_RUNTIME_LIMITS.protocolBytes,
+        commandTimeoutMs,
+      },
+      owner,
     );
     try {
       const tree = runtimeFrameTreeSchema.parse(

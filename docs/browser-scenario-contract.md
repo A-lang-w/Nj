@@ -32,7 +32,9 @@ including replies from attached child targets. Set it in the scenario JSON.
 It does not change action `timeout_ms`, `wait_for_timeout.duration_ms`, or
 navigation. Service-worker restoration keeps a fixed 5000 ms grace and does
 not inherit a raised `command_timeout_ms`. CDP discovery stays on its own
-fixed deadline. `capture.limits` controls retained event and network-content
+fixed deadline. When service workers are blocked, that deadline covers
+endpoint discovery only. The following WebSocket handshake and
+`Target.attachToTarget` each use `command_timeout_ms`. `capture.limits` controls retained event and network-content
 budgets; it does not change those liveness deadlines.
 
 ## Minimal launch example

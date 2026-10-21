@@ -74,47 +74,48 @@ export class PlaywrightScenarioServiceWorkers {
   }
 
   private async install(): Promise<void> {
-    this.#session = await withCdpDiscoveryDeadline(
+    await withPlaywrightExecutionBoundary(
+      () => this.assertBlocked(),
+      undefined,
+      this.#setup.signal,
+    );
+    // Discovery stays on its fixed deadline. The following handshake and
+    // Target.attachToTarget each use command_timeout_ms.
+    const opened = await withCdpDiscoveryDeadline(
       OPERATION,
       this.#setup.signal,
-      async (signal) => {
-        await withPlaywrightExecutionBoundary(
-          () => this.assertBlocked(),
-          undefined,
-          signal,
-        );
-        const opened = await openCdpEndpoint(
+      (signal) =>
+        openCdpEndpoint(
           browserObservationEndpointSchema.parse(this.endpoint),
           OPERATION,
           signal,
           undefined,
           undefined,
           this.commandTimeoutMs,
-        );
-        const target = opened.discovery.targets.find(
-          ({ id }) => id === this.targetId,
-        );
-        if (target === undefined) {
-          await opened.connection?.close();
-          throw new BrowserObservationError(OPERATION, "target_not_found");
-        }
-        const connection =
-          opened.connection ??
-          (await CdpConnection.connect(
-            opened.discovery.webSocket.url,
-            OPERATION,
-            signal,
-            { commandTimeoutMs: this.commandTimeoutMs },
-          ));
-        if (this.#closed)
-          connection.beginCleanupGrace(POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS);
-        return await attachCdpTargetSession(
-          connection,
-          target,
-          OPERATION,
-          signal,
-        );
-      },
+        ),
+    );
+    const target = opened.discovery.targets.find(
+      ({ id }) => id === this.targetId,
+    );
+    if (target === undefined) {
+      await opened.connection?.close();
+      throw new BrowserObservationError(OPERATION, "target_not_found");
+    }
+    const transport =
+      opened.connection ??
+      (await CdpConnection.connect(
+        opened.discovery.webSocket.url,
+        OPERATION,
+        this.#setup.signal,
+        { commandTimeoutMs: this.commandTimeoutMs },
+      ));
+    if (this.#closed)
+      transport.beginCleanupGrace(POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS);
+    this.#session = await attachCdpTargetSession(
+      transport,
+      target,
+      OPERATION,
+      this.#setup.signal,
     );
     const connection = this.#session.connection;
     this.#removeListener = connection.onEvent((event) => {
