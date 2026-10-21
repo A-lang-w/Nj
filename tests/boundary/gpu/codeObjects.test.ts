@@ -314,6 +314,37 @@ it("retains unknown PTX virtual counts and partial payload coverage", async () =
     count: null,
   });
 });
+it.each([
+  ["parameter", ".u64 output", ".u64 .ptr .global output"],
+  ["shared", "scratch[32]", "scratch[]"],
+] as const)(
+  "marks unknown PTX %s declarations partial while retaining known facts",
+  async (kind, from, to) => {
+    const bytes = Buffer.from(ptxFixture.replace(from, to));
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    expect(result.value.objects[0]!.inspection).toBe("partial");
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.ptx_artifacts[0]!.text).toBe(bytes.toString());
+    const kernel = result.value.kernels[0]!;
+    expect(kernel.registers.virtual[0]).toEqual({ type: ".b32", count: 9 });
+    expect(kernel.limitations.join(" ")).toContain(`PTX ${kind} declarations`);
+    if (kind === "parameter") {
+      expect(kernel.parameter_count).toBe(2);
+      expect(kernel.parameter_bytes).toBeNull();
+      expect(
+        kernel.parameters.map(({ size, offset }) => [size, offset]),
+      ).toEqual([
+        [null, null],
+        [4, null],
+      ]);
+      expect(kernel.shared_bytes).toBe(32);
+    } else {
+      expect(kernel.parameter_bytes).toBe(12);
+      expect(kernel.shared_bytes).toBeNull();
+    }
+  },
+);
 it.each(["whitespace", "comment"] as const)(
   "recognizes standalone PTX after more than 64 KiB of leading %s",
   async (kind) => {

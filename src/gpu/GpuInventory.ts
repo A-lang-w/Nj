@@ -60,7 +60,7 @@ export class GpuInventory {
   examined_sections = 0;
   unknown_section_names = 0;
   #factBytes = 0;
-  #decodedBytes = 0;
+  #workBytes = 0;
   readonly #outerTargets = new WeakMap<GpuObject, string | null>();
   readonly #selectedObjects: ReadonlySet<string> | undefined;
   readonly #selectedTargets: ReadonlySet<string> | undefined;
@@ -97,17 +97,19 @@ export class GpuInventory {
     this.#retain(messages);
     row.limitations.push(...messages);
   }
-  #budgetDecoded(size: number): void {
+  /** Reserve input/output work atomically, before any payload allocation or read. */
+  #budgetWork(...sizes: number[]): void {
+    const total = sizes.reduce((sum, size) => sum + size, 0);
     if (
-      size > GPU_OBJECT_BYTES ||
-      size > 512 * 1024 * 1024 - this.#decodedBytes
+      sizes.some((size) => size > GPU_OBJECT_BYTES) ||
+      total > 512 * 1024 * 1024 - this.#workBytes
     )
       throw new BinaryResourceFailure(
         "structure",
         GPU_OBJECT_BYTES,
-        "GPU decoding exceeds 128 MiB per object or 512 MiB per inspection",
+        "GPU reads/decoding exceed 128 MiB per buffer or 512 MiB per inspection",
       );
-    this.#decodedBytes += size;
+    this.#workBytes += total;
   }
   #selected(row: GpuObject): boolean {
     return (
@@ -300,19 +302,23 @@ export class GpuInventory {
           GPU_REPORT_BYTES,
           "PTX text exceeds the 16 MiB retained report budget",
         );
+      const compression = row.compression;
+      const compressed =
+        compression === "zstd" ||
+        compression === "zlib" ||
+        compression === "lz4";
+      if (compressed && row.decoded_size === null)
+        rejectGpu("Compressed GPU object has no decoded length");
+      this.#budgetWork(
+        row.location.size,
+        ...(compressed ? [row.decoded_size!] : []),
+      );
       let bytes = await source.read(row.location.offset, row.location.size);
-      if (
-        row.compression === "zstd" ||
-        row.compression === "zlib" ||
-        row.compression === "lz4"
-      ) {
-        if (row.decoded_size === null)
-          rejectGpu("Compressed GPU object has no decoded length");
+      if (compressed) {
         try {
-          this.#budgetDecoded(row.decoded_size!);
           bytes = await decodeGpuPayload(
             bytes,
-            row.compression,
+            compression,
             row.decoded_size!,
             this.signal,
           );
@@ -324,7 +330,7 @@ export class GpuInventory {
             "GPU payload decompression failed",
           );
         }
-      } else this.#budgetDecoded(bytes.length);
+      }
       this.#decoded(row, gpuSha256(bytes), bytes.length);
       const decoded = new GpuBufferSource(bytes, row.id);
       if (row.kind === "ptx") {
@@ -362,10 +368,9 @@ export class GpuInventory {
         };
         this.#retain(artifact);
         this.ptx_artifacts.push(artifact);
-        for (const kernel of parsed) {
+        for (const { kernel, coverage: kernelCoverage } of parsed) {
           if (conflict !== undefined) kernel.limitations.push(conflict);
-          if (kernel.registers.virtual.some((r) => r.count === null))
-            coverage = "partial";
+          if (kernelCoverage === "partial") coverage = "partial";
           this.#retain(kernel);
           this.kernels.push(kernel);
         }
@@ -432,7 +437,7 @@ export class GpuInventory {
       containerId: row.id,
       read: (offset, size) => {
         checkGpuRange(row.location.size, offset, size);
-        this.#budgetDecoded(size);
+        this.#budgetWork(size);
         return source.read(row.location.offset + offset, size);
       },
     };
@@ -538,7 +543,7 @@ export class GpuInventory {
         this.discovery = "partial";
       } else
         try {
-          this.#budgetDecoded(decoded);
+          this.#budgetWork(total - width, decoded);
           const data = await decodeGpuPayload(
             await source.read(base + width, total - width),
             row.compression,

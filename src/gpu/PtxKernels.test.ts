@@ -8,10 +8,13 @@ it("recognizes directives outside comments and strings and preserves UTF-8 byte 
   expect(readPtxTarget(text)).toBe("sm_80");
   const rows = [...readPtxKernels(text, "object")];
   expect(rows).toHaveLength(1);
-  expect(rows[0]!.location.offset).toBe(
+  expect(rows[0]!.coverage).toBe("complete");
+  expect(rows[0]!.kernel.location.offset).toBe(
     Buffer.byteLength(prefix + ".visible "),
   );
-  expect(rows[0]!.registers.virtual).toEqual([{ type: ".b32", count: 3 }]);
+  expect(rows[0]!.kernel.registers.virtual).toEqual([
+    { type: ".b32", count: 3 },
+  ]);
 });
 it("derives vector/array parameter declarations and leaves unknown qualifiers unresolved", () => {
   const rows = [
@@ -20,15 +23,19 @@ it("derives vector/array parameter declarations and leaves unknown qualifiers un
       "object",
     ),
   ];
-  expect(rows[0]!.parameters.map(({ offset, size }) => [offset, size])).toEqual(
-    [
-      [0, 8],
-      [16, 32],
-      [null, null],
-    ],
+  expect(
+    rows[0]!.kernel.parameters.map(({ offset, size }) => [offset, size]),
+  ).toEqual([
+    [0, 8],
+    [16, 32],
+    [null, null],
+  ]);
+  expect(rows[0]!.kernel.parameter_bytes).toBeNull();
+  expect(rows[0]!.coverage).toBe("partial");
+  expect(rows[0]!.kernel.limitations.join(" ")).toContain(
+    "parameter declarations",
   );
-  expect(rows[0]!.parameter_bytes).toBeNull();
-  expect(rows[0]!.parameter_count).toBe(3);
+  expect(rows[0]!.kernel.parameter_count).toBe(3);
 });
 it("keeps dynamic and compound shared declarations unknown", () => {
   const [row] = [
@@ -37,8 +44,9 @@ it("keeps dynamic and compound shared declarations unknown", () => {
       "object",
     ),
   ];
-  expect(row!.shared_bytes).toBeNull();
-  expect(row!.representation).toBe("ptx-declarations");
+  expect(row!.kernel.shared_bytes).toBeNull();
+  expect(row!.coverage).toBe("partial");
+  expect(row!.kernel.representation).toBe("ptx-declarations");
 });
 it("sums bare names and every register range while preserving unsupported totals as unknown", () => {
   const [row] = [
@@ -47,12 +55,12 @@ it("sums bare names and every register range while preserving unsupported totals
       "object",
     ),
   ];
-  expect(row!.registers.virtual).toEqual([
+  expect(row!.kernel.registers.virtual).toEqual([
     { type: ".b32", count: 14 },
     { type: ".u32", count: null },
     { type: ".pred", count: 3 },
   ]);
-  expect(row!.limitations.join(" ")).toContain("count unknown");
+  expect(row!.kernel.limitations.join(" ")).toContain("count unknown");
 });
 it("does not round overflowing register totals or accept truncated ranges", () => {
   for (const declaration of [
@@ -67,7 +75,9 @@ it("does not round overflowing register totals or accept truncated ranges", () =
         "object",
       ),
     ];
-    expect(row!.registers.virtual).toEqual([{ type: ".b32", count: null }]);
+    expect(row!.kernel.registers.virtual).toEqual([
+      { type: ".b32", count: null },
+    ]);
   }
 });
 it.each([

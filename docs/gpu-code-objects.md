@@ -83,7 +83,9 @@ Kernel representations have different meanings:
   shared memory, dynamic allocation or physical device resources.
   Scalar register declarations count each bare or percent-prefixed name and
   each parameterized range. Unsupported declaration forms or overflowing totals
-  retain an unknown count and partial decoding coverage.
+  retain an unknown count and partial decoding coverage. Unsupported parameter
+  layouts and unknown shared-memory declarations likewise retain their known
+  facts, explicit limitations and partial coverage through retained pages.
 - CUBIN identifies CUDA entry symbols and reads numeric `nv.info` records and
   native section declarations. Global register declarations also cover compiler
   versions that leave the older text-section register field empty.
@@ -137,8 +139,10 @@ hashing workflow.
 CUDA raw LZ4 blocks and Zstd, and CCOB zlib/Zstd are supported. Unknown versions
 or codecs retain declarations with explicit limitations. Lengths are checked
 before decoding, and CCOB's truncated MD5 is verified against decoded bytes.
-Resource limits are one active inspection, 128 MiB per decoded object, 512 MiB
-of decoded work per inspection, and 16 MiB retained facts including selected PTX.
+Resource limits are one active inspection, 128 MiB per input/output buffer,
+512 MiB of payload input, decoded output and AMD note-read work per inspection,
+and 16 MiB retained facts including selected PTX. Payload work is reserved before
+reading or allocating; a capacity refusal does not reread an aliased payload.
 Native tables and decoded section names each have a 16 MiB structural budget;
 AMDGPU ELF note discovery admits at most 8 MiB of source note bytes, with
 bounded depth and container/string allocations. Standalone AMD targets are read

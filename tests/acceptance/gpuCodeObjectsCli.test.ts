@@ -102,6 +102,8 @@ it("preserves incomplete decoder coverage through MCP target and object pages", 
     "symbols",
     "later-amd-note",
     "target-conflict",
+    "ptx-parameter",
+    "ptx-shared",
   ]) {
     const bytes =
         missing === "later-amd-note"
@@ -114,7 +116,13 @@ it("preserves incomplete decoder coverage through MCP target and object pages", 
                   bytes: cubinFixture({ architecture: 90 }),
                 },
               ])
-            : cubinFixture(),
+            : missing === "ptx-parameter"
+              ? Buffer.from(
+                  ptxFixture.replace(".u64 output", ".u64 .ptr .global output"),
+                )
+              : missing === "ptx-shared"
+                ? Buffer.from(ptxFixture.replace("scratch[32]", "scratch[]"))
+                : cubinFixture(),
       path = join(root, missing);
     if (missing === "section-names") bytes.writeUInt16LE(0, 62);
     else if (missing === "symbols")

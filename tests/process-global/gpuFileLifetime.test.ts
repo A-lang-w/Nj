@@ -9,7 +9,7 @@ import {
   gpuCodeObjectsSchema,
 } from "../../src/domain/gpu/gpuCodeObjects.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cudaFixture } from "../fixtures/gpu/codeObjects.js";
+import { amdFixture, cudaFixture } from "../fixtures/gpu/codeObjects.js";
 type ReadFile = (
   buffer: Buffer,
   offset: number,
@@ -52,6 +52,64 @@ const interceptClose = (
     restoreHandle?.();
   };
 };
+it("reserves the inspection work budget before reading aliased HIP payloads", async () => {
+  const root = await createTestTempDirectory("rea-gpu-aliased-hip-"),
+    path = join(root, "aliased-hip"),
+    payload = amdFixture(),
+    payloadSize = 128 * 1024 * 1024,
+    id = Buffer.from("hipv4-amdgcn-amd-amdhsa--gfx900"),
+    count = 12,
+    start = 32 + count * (24 + id.length),
+    directory = Buffer.alloc(start);
+  directory.write("__CLANG_OFFLOAD_BUNDLE__");
+  directory.writeBigUInt64LE(BigInt(count), 24);
+  for (let index = 0; index < count; index++) {
+    const at = 32 + index * (24 + id.length);
+    directory.writeBigUInt64LE(BigInt(start), at);
+    directory.writeBigUInt64LE(BigInt(payloadSize), at + 8);
+    directory.writeBigUInt64LE(BigInt(id.length), at + 16);
+    id.copy(directory, at + 24);
+  }
+  const file = await open(path, "w+");
+  try {
+    await file.write(directory, 0, directory.length, 0);
+    await file.write(payload, 0, payload.length, start);
+    await file.truncate(start + payloadSize);
+  } finally {
+    await file.close();
+  }
+  const handle = await open(path, "r"),
+    prototype = Object.getPrototypeOf(handle) as { read: ReadFile };
+  await handle.close();
+  const read = prototype.read;
+  let payloadReads = 0;
+  const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: FileHandle,
+    ...args: Parameters<ReadFile>
+  ) {
+    if (args[3] === start && args[2] === payloadSize) payloadReads++;
+    return read.apply(this, args);
+  });
+  const provider = new GpuCodeObjectsProvider();
+  try {
+    const result = await provider.inspect({ path, analysis: "kernels" });
+    if (!result.ok) throw result.error;
+    expect(payloadReads).toBe(4);
+    expect(result.value.objects.map((row) => row.inspection)).toEqual([
+      ...Array<string>(4).fill("complete"),
+      ...Array<string>(8).fill("capacity"),
+    ]);
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels).toHaveLength(4);
+    expect(result.value.objects[4]!.sha256).toBeNull();
+    expect(result.value.objects[4]!.limitations.join(" ")).toContain(
+      "512 MiB per inspection",
+    );
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});
 it("retains completed PTX facts and unknown root identity when a later payload is cancelled", async () => {
   const { path, bytes, prototype, provider } = await fixture();
   const controller = new AbortController(),

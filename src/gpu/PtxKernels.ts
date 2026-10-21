@@ -162,7 +162,7 @@ const declaration = (
 export function* readPtxKernels(
   text: string,
   objectId: string,
-): Generator<GpuKernel> {
+): Generator<{ kernel: GpuKernel; coverage: "complete" | "partial" }> {
   if (Buffer.byteLength(text) > GPU_REPORT_BYTES)
     throw new BinaryResourceFailure(
       "structure",
@@ -333,17 +333,32 @@ export function* readPtxKernels(
         "PTX registers are virtual declarations, not physical allocations. Parameter offsets/sizes and entry-local static shared bytes are derived from supported declarations; module shared bytes, dynamic allocation, device ABI and runtime allocation were not verified.",
       ],
     };
-    if (kernel.registers.virtual.some((row) => row.count === null))
+    let coverage: "complete" | "partial" = "complete";
+    if (parameterBytes === null) {
+      coverage = "partial";
+      kernel.limitations.push(
+        "Unsupported PTX parameter declarations or overflowing layouts leave parameter sizes/offsets and the total byte count unknown.",
+      );
+    }
+    if (shared === null) {
+      coverage = "partial";
+      kernel.limitations.push(
+        "Unsupported, dynamic or overflowing PTX shared declarations, or an absent entry body, leave entry-local static shared bytes unknown.",
+      );
+    }
+    if (kernel.registers.virtual.some((row) => row.count === null)) {
+      coverage = "partial";
       kernel.limitations.push(
         "Unsupported PTX register declarations or overflowing totals leave the affected virtual register count unknown.",
       );
+    }
     if (++kernelCount > 65536)
       throw new BinaryResourceFailure(
         "structure",
         65536,
         "PTX kernel count exceeds the facts budget",
       );
-    yield kernel;
+    yield { kernel, coverage };
   }
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
