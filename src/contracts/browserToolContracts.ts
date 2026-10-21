@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
+import { javaScriptRoutesViewResultSchema } from "../domain/analysisView/analysisView.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,
@@ -35,7 +38,28 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(webPageInspectionSchema);
-const bundleOutputSchema = evidenceResultOf(webBundleAnalysisSchema);
+export const analyzeWebBundleRequestSchema = analyzeWebBundleInputSchema
+  .extend({
+    ...javaScriptRoutesDeliverySchema.shape,
+  })
+  .superRefine((input, context) => {
+    if (input.detail === "summary" && input.view === undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["view"],
+        message:
+          "Web-bundle summary delivery requires an explicit javascript-routes view.",
+      });
+    if (input.view !== undefined && input.detail !== "summary")
+      context.addIssue({
+        code: "custom",
+        path: ["view"],
+        message: "A route view requires detail summary.",
+      });
+  });
+const bundleOutputSchema = evidenceResultOf(
+  z.union([webBundleAnalysisSchema, javaScriptRoutesViewResultSchema]),
+);
 const observationSessionOutputSchema = evidenceResultOf(
   webObservationSessionSchema,
 );
@@ -174,9 +198,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "analyze_web_bundle",
     ...toolContractMetadata("analyze_web_bundle"),
     description:
-      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed.",
+      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed. Select detail summary and an explicit javascript-routes view for filtered route patterns, occurrences, sources, unknowns or summary counts; complete Evidence remains retained for later views. Static candidates do not establish reachability or a complete application route denominator.",
     kind: "browser-provider",
-    inputSchema: analyzeWebBundleInputSchema,
+    inputSchema: analyzeWebBundleRequestSchema,
     outputSchema: bundleOutputSchema,
     examples: [
       {

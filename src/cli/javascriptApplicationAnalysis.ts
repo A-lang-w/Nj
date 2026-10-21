@@ -1,3 +1,5 @@
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
+import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../application/InvestigationProviders.js";
 import { createProgressReporter } from "../application/ProgressReporter.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -47,6 +49,11 @@ export const closeCliJavaScriptResources = (): Promise<void> => {
 export const runCliJavaScriptApplicationAnalysis = async (
   input: unknown,
   signal?: AbortSignal,
+  delivery?: {
+    readonly detail: "complete" | "summary";
+    readonly evidenceOutput: string | undefined;
+    readonly view?: AnalysisViewRequest;
+  },
 ): Promise<JsonValue> => {
   const { analyzeJavaScriptApplication } =
     await import("../application/javascript/JavaScriptApplicationService.js");
@@ -85,7 +92,15 @@ export const runCliJavaScriptApplicationAnalysis = async (
           ),
     );
   }
-  return result.ok ? result.value : cliError(result.error);
+  const value = result.ok ? result.value : cliError(result.error);
+  return delivery === undefined
+    ? value
+    : publishCliAnalysisEvidence(value, {
+        ...delivery,
+        providerId: JAVASCRIPT_APPLICATION_PROVIDER.id,
+        operation: "analyze_javascript_application",
+        signal: signal ?? new AbortController().signal,
+      });
 };
 
 const cliError = (

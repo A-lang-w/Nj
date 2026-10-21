@@ -1,3 +1,4 @@
+import { javascriptRouteDeliveryOptions } from "./cli/javascriptRouteDelivery.js";
 import { z } from "incur";
 import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
@@ -61,6 +62,7 @@ export const electronPageInspectionOptions = z.object({
 });
 
 export const javascriptApplicationOptions = z.object({
+  ...javascriptRouteDeliveryOptions,
   maxSemanticNodes:
     javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes,
   maxSemanticNodesPerFile:

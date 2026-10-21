@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
@@ -183,6 +184,7 @@ export type WebSourceMaps = z.infer<typeof webSourceMapsSchema>;
 
 /** Provider-neutral result of JavaScript bundle reverse engineering. */
 export const webBundleAnalysisSchema = z.object({
+  route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
     scripts_observed: z.number().int().min(0),

@@ -152,6 +152,6 @@ export const publishCliAnalysisEvidence = async (
     signal,
   );
   return isEvidence(delivered) && detail === "summary"
-    ? { summary: delivered, evidence_bundle: receipt }
+    ? { summary: delivered, evidence_bundle: receipt ?? null }
     : delivered;
 };
