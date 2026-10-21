@@ -42,17 +42,13 @@ export const registerWasmCommands = (
       ),
   });
   const service = wasmArtifactModule.create(environment);
-  const commandTimeoutSchema =
-    inspectWasmArtifactInputSchema.shape.command_timeout_ms;
   cli.command(wasmArtifactModule.cliCommand, {
     description: "Inspect an explicit local WASM artifact with WABT",
     args: z.object({
       path: z.string().describe("Local WASM artifact"),
     }),
     options: z.object({
-      commandTimeoutMs: commandTimeoutSchema
-        .optional()
-        .meta(commandTimeoutSchema.meta() ?? {}),
+      commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
       glue_paths: z
         .array(z.string())
         .optional()
