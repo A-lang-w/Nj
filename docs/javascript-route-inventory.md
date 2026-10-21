@@ -72,8 +72,8 @@ URL segments. Intercepted routes remain unresolved. A prefix before `/_next/`
 is an **inferred** routing base: [assetPrefix](https://nextjs.org/docs/app/api-reference/config/next-config-js/assetPrefix)
 can differ from the routing base. Every affected occurrence keeps
 `unprefixed_path`, `inferred_base_path`, and low confidence. `system` classification
-is explicitly a path-name heuristic; `page` means page-file or router-config
-support, and other cases remain `unknown`.
+is explicitly a path-name heuristic; `page` uses page-file or structured/typed configuration support. Name-only
+`route`/`addRoute` calls remain `unknown` because they can also register server APIs.
 
 Counts describe deduplicated patterns in the provided code sources. They are
 not a denominator for complete application or capture coverage. In particular,
@@ -82,7 +82,10 @@ server-only, lazy, inaccessible, or unselected sources may be missing.
 enumeration have their own completeness. Static work and fact admission share
 the existing 8 MiB per-source transfer ceiling, and the root inventory has an
 8 MiB admission budget. Exhaustion preserves a prefix with explicit capacity;
-these are accounting bounds, not a claim that total process memory is 8 MiB.
+the serialization owner also admits route facts within the actual space left by
+legacy facts. `result-bytes` capacity preserves an earlier work-capacity reason;
+if even that envelope cannot fit, the optional route facet remains unmeasured.
+These are accounting bounds, not a claim that total process memory is 8 MiB.
 
 Projection only reduces delivery, not analysis work. Retained immutable Evidence
 can reuse validated tables through a weak cache with the snapshot's lifetime;

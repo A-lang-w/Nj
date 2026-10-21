@@ -159,3 +159,35 @@ it("retains a bounded prefix with explicit capacity and counts only retained fac
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(8192);
   expect(() => build(inputs, 1)).toThrow(RangeError);
 });
+
+it("anchors generic constants before applying an inferred asset base", () => {
+  const result = build([
+    source(
+      "prefixed.js",
+      `globalThis.TURBOPACK=[];createBrowserRouter([{path:'/reports'}]);const paths=['/reports/:id','/noise'];`,
+      "https://example.test/app/_next/static/chunks/one.js",
+    ),
+  ]);
+  expect(result.routes.map((row) => row.path)).toEqual([
+    "/app/reports",
+    "/app/reports/:id",
+  ]);
+  expect(result.statistics.unanchored_literals_excluded).toBe(1);
+});
+it("classifies typed page configuration while generic server route calls remain unknown", () => {
+  const result = build([
+    source(
+      "typed.js",
+      `defineRoutes({reports:{_$:'reports',settings:{_$:'settings'}}});app.route('/api/users');`,
+    ),
+  ]);
+  expect(
+    result.routes
+      .filter((row) => row.classification === "page")
+      .map((row) => row.path),
+  ).toEqual(["/reports", "/reports/settings"]);
+  expect(result.routes.find((row) => row.path === "/api/users")).toMatchObject({
+    classification: "unknown",
+    classification_basis: "unknown",
+  });
+});

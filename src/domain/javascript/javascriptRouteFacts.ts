@@ -40,6 +40,12 @@ export const javaScriptRouteCandidateSchema = z.strictObject({
   location: javaScriptRouteRangeSchema,
   segments: z.array(javaScriptRouteSegmentSchema),
 });
+export const javaScriptRouteWorkCapacitySchema = z.strictObject({
+  kind: z.literal("route-work-or-facts"),
+  limit_bytes: z.number().int().nonnegative(),
+  accounted_fact_bytes: z.number().int().nonnegative(),
+  accounted_work_bytes: z.number().int().nonnegative(),
+});
 export const javaScriptRouteSourceFactsSchema = z.strictObject({
   candidates: z.array(javaScriptRouteCandidateSchema),
   unresolved: z.array(
@@ -50,12 +56,14 @@ export const javaScriptRouteSourceFactsSchema = z.strictObject({
     }),
   ),
   capacity: z
-    .strictObject({
-      kind: z.literal("route-work-or-facts"),
-      limit_bytes: z.number().int().nonnegative(),
-      accounted_fact_bytes: z.number().int().nonnegative(),
-      accounted_work_bytes: z.number().int().nonnegative(),
-    })
+    .discriminatedUnion("kind", [
+      javaScriptRouteWorkCapacitySchema,
+      z.strictObject({
+        kind: z.literal("result-bytes"),
+        limit_bytes: z.number().int().nonnegative(),
+        preceding_work_capacity: javaScriptRouteWorkCapacitySchema.nullable(),
+      }),
+    ])
     .nullable(),
 });
 export type JavaScriptRouteCandidate = z.infer<

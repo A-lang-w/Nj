@@ -290,7 +290,10 @@ const classify = (
     };
   if (mechanisms.includes("next-app-chunk"))
     return { classification: "page", classification_basis: "next-app-page" };
-  if (mechanisms.includes("nested-route-object"))
+  if (
+    mechanisms.includes("nested-route-object") ||
+    mechanisms.includes("typed-route-tree")
+  )
     return {
       classification: "page",
       classification_basis: "router-configuration",
@@ -439,7 +442,9 @@ export function* buildJavaScriptRouteInventorySteps(
       gap(
         source,
         "capacity",
-        `Source route work/facts reached ${input.facts.capacity.limit_bytes} accounted bytes; additional candidates remain unknown.`,
+        input.facts.capacity.kind === "result-bytes"
+          ? `Route facts exceeded the ${input.facts.capacity.limit_bytes}-byte remaining serialized-result budget; additional candidates remain unknown.`
+          : `Source route work/facts reached ${input.facts.capacity.limit_bytes} accounted bytes; additional candidates remain unknown.`,
       );
     }
     for (const unknown of input.facts?.unresolved ?? []) {
@@ -460,12 +465,11 @@ export function* buildJavaScriptRouteInventorySteps(
   for (const { input, source, metadataPath } of contexts) {
     yield;
     if (metadataPath !== undefined) {
-      const path = prefixPath(metadataPath, source);
-      if (path.split("/")[1]) roots.add(path.split("/")[1]!);
+      if (metadataPath.split("/")[1]) roots.add(metadataPath.split("/")[1]!);
     }
     for (const candidate of input.facts?.candidates ?? [])
       if (candidate.mechanism !== "route-string-constant") {
-        const root = prefixPath(candidate.path, source).split("/")[1];
+        const root = candidate.path.split("/")[1];
         if (root) roots.add(root);
       }
   }
@@ -480,7 +484,7 @@ export function* buildJavaScriptRouteInventorySteps(
     const path = prefixPath(candidate.path, source);
     if (
       candidate.mechanism === "route-string-constant" &&
-      !roots.has(path.split("/")[1]!)
+      !roots.has(candidate.path.split("/")[1]!)
     ) {
       unanchored++;
       return;
