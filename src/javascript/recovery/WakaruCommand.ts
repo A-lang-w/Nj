@@ -63,9 +63,12 @@ export const resolveWakaruCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
 ) => {
   const configured = environment.REA_WAKARU_COMMAND;
+  const allowNonLinux =
+    environment.REA_ALLOW_NON_LINUX === "1" ||
+    environment.REA_ALLOW_NON_LINUX === "true";
   if (
-    process.platform !== "linux" ||
-    process.arch !== "x64" ||
+    ((process.platform !== "linux" || process.arch !== "x64") &&
+      !allowNonLinux) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
