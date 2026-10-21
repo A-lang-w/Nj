@@ -3,8 +3,8 @@
   "issue": 4772,
   "date": "2026-10-21",
   "base_commit": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
-  "implementation_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
-  "implementation_tree": "fc1297fe69ffdeee9d3da318395681448300f77d",
+  "implementation_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d",
+  "implementation_tree": "3b699d0dfcbca2abc3dace7e553ed0cd029270b8",
   "host": {
     "platform": "linux",
     "arch": "x64",
@@ -26,7 +26,7 @@
     "Same implementation compared with complete vs selected delivery; no claim of faster underlying source analysis.",
     "SDK cost measurements explicitly use full input advertisements. New main defaults to compact advertisements; those default costs are not measured here.",
     "Dynamic push/replace receiver recognition uses navigation naming conventions, not framework instance/type resolution. Arbitrary aliases and application reachability remain unknown.",
-    "62/67 jobs completed and 63 retained route facts; all configured deadlines/unavailable results explicit. Fresh full workers at the current qualified runtime, with no conditional source-fact reuse."
+    "Full67-worker corpus is pinned to c86fc9d31:62 completed jobs,63 retained route checkpoints and5 deadlines. Current filename-owner classification is revalidated against every saved input and exact inventories are replayed. Current public/worker fixtures, SDK and Chromium are freshly executed; no current full67-worker run claimed."
   ],
   "corpus": [
     {
@@ -2646,7 +2646,7 @@
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "complete",
-      "label": "real-full-partial",
+      "label": "real-full-intercept",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2686,46 +2686,46 @@
       "used_input_declarations_plus_primary_estimated_tokens": 1911155,
       "all_catalog_plus_primary_estimated_tokens": 3002848,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 26.868492954,
+      "task_wall_s": 16.094278185,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 9450.341877000003,
+          "wall_ms": 4986.5657870000005,
           "estimated_reply_tokens": 1879209,
           "reply_bytes": 6203541
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 4028.8941830000003,
+          "wall_ms": 2756.279700000001,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 45.09274699999878,
+          "wall_ms": 38.38315899999907,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 40.0522979999987,
+          "wall_ms": 21.664804999998523,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 33.37481800000023,
+          "wall_ms": 19.587784999999712,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 191.40270899999814,
+          "wall_ms": 122.6387880000002,
           "estimated_reply_tokens": 122,
-          "reply_bytes": 318
+          "reply_bytes": 322
         }
       ],
-      "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
+      "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d",
       "profile": {
         "command": [
           "taskset",
@@ -2734,13 +2734,13 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "complete",
-          "real-full-partial"
+          "real-full-intercept"
         ],
         "exit_code": 0,
-        "wall_s": 28.848851907998323,
-        "cpu_s": 36.48525,
+        "wall_s": 18.023229526006617,
+        "cpu_s": 23.560044,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1524150272,
+        "peak_family_rss_bytes": 1757306880,
         "sample_ms": 20,
         "guard_stop": null
       },
@@ -2751,7 +2751,7 @@
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "selected",
-      "label": "real-selected-partial",
+      "label": "real-selected-intercept",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2791,40 +2791,40 @@
       "used_input_declarations_plus_primary_estimated_tokens": 11319,
       "all_catalog_plus_primary_estimated_tokens": 1123595,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 19.558445899,
+      "task_wall_s": 15.458332227,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 5835.646649000001,
+          "wall_ms": 4387.513523,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 2698.285927000001,
+          "wall_ms": 2925.528495999999,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 46.081748000000516,
+          "wall_ms": 104.65885300000082,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 33.049189000001206,
+          "wall_ms": 20.455995000000257,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 97.43439500000022,
+          "wall_ms": 138.54167100000086,
           "estimated_reply_tokens": 124,
-          "reply_bytes": 326
+          "reply_bytes": 330
         }
       ],
-      "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
+      "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d",
       "profile": {
         "command": [
           "taskset",
@@ -2833,13 +2833,13 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "selected",
-          "real-selected-partial"
+          "real-selected-intercept"
         ],
         "exit_code": 0,
-        "wall_s": 20.669866279000416,
-        "cpu_s": 25.323023,
+        "wall_s": 16.68561620899709,
+        "cpu_s": 21.529690000000002,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1333301248,
+        "peak_family_rss_bytes": 1333936128,
         "sample_ms": 20,
         "guard_stop": null
       },
@@ -2897,7 +2897,7 @@
         "base_path": null
       }
     ],
-    "elapsed_s": 10.797362111999998,
+    "elapsed_s": 10.607951675,
     "authority_limits": [
       "Not a live published-page or application execution test",
       "No reachability, route loading or full application route denominator proof"
@@ -2909,21 +2909,21 @@
         "-c",
         "0,1",
         "node",
-        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-partial.mjs"
+        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-intercept.mjs"
       ],
       "exit_code": 0,
-      "wall_s": 12.112360582992551,
-      "cpu_s": 14.704590000000053,
+      "wall_s": 11.996921757992823,
+      "cpu_s": 14.942009999999996,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2171883520,
+      "peak_family_rss_bytes": 2175156224,
       "sample_ms": 20,
       "guard_stop": null
     },
-    "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+    "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d"
   },
   "checks": [
     {
-      "name": "route-partial-final-source-tests",
+      "name": "route-intercept-final-source-tests",
       "command": [
         "taskset",
         "-c",
@@ -2948,16 +2948,16 @@
         "src/contracts/toolInputReferences.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 24.724477756011765,
-      "cpu_s": 40.4584,
+      "wall_s": 23.74725635399227,
+      "cpu_s": 38.360945,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1943232512,
+      "peak_family_rss_bytes": 1838612480,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+      "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d"
     },
     {
-      "name": "route-partial-final-public-tests",
+      "name": "route-intercept-final-public-tests",
       "command": [
         "taskset",
         "-c",
@@ -2980,38 +2980,38 @@
         "tests/boundary/browser/cdpObservationWindowScope.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 172.30377666201093,
-      "cpu_s": 299.849287,
+      "wall_s": 175.6214632170013,
+      "cpu_s": 303.569955,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 3184508928,
+      "peak_family_rss_bytes": 3159977984,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+      "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d"
     },
     {
-      "name": "route-partial-final-checkfast",
+      "name": "route-intercept-final-checkfast",
       "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
       "exit_code": 0,
-      "wall_s": 13.954710200006957,
-      "cpu_s": 24.626704,
+      "wall_s": 11.504172752000159,
+      "cpu_s": 20.893881999999998,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1550221312,
+      "peak_family_rss_bytes": 1529921536,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+      "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d"
     },
     {
-      "name": "route-partial-final-docs-check",
+      "name": "route-intercept-final-docs-check",
       "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
       "exit_code": 0,
-      "wall_s": 14.393551697998191,
-      "cpu_s": 18.222063,
+      "wall_s": 25.528758137006662,
+      "cpu_s": 31.626178999999997,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 806252544,
+      "peak_family_rss_bytes": 811589632,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
-      "scope": "Runtime and preceding verification documents; this receipt added afterward, with final unchanged proof checked again before commit."
+      "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d",
+      "scope": "Runtime and preceding verification documents; receipt added afterward, with final unchanged proof checked again before commit."
     }
   ],
   "failed_attempts": [
@@ -3672,7 +3672,8 @@
     "56dda3b9f: use nullable exact property keys in effective fields and configuration ownership; unknown computed children cannot revive stale roots. Restrict hashed Next page names to compiled chunk paths. Share one erased-wrapper edge parser with linear expression-parent ownership. Reserve sealing digest bytes before page admission.",
     "414bacc62: typed child ownership and traversal share the same wrapper-aware shape predicate before binding resolution, retaining literal/identifier child ancestry rather than inferring detached roots.",
     "658a5bd1ed4c3d414567335f44568b2c2a9276cf: canonical delivery unions shared by CLI/MCP; opted-in JSON Schema discriminator conditionals preserve valid delivery combinations without root unions or duplicating the view schema. Named-parent addRoute configurations retain unknown ancestry; erased navigation wrappers use the shared normalization owner.",
-    "c86fc9d318f56c28e3678c2dfbdca08a20a258cb: explicitly retain unknown ancestry separately from a known root; absolute segments reset it and known descendants survive. Every selected typed child reaches the walker, unsupported configurations retain gaps and rejected argument data cannot revive as automatic roots. Navigation data ownership is checked before root/ancestry discovery; callable bodies stay independent."
+    "c86fc9d318f56c28e3678c2dfbdca08a20a258cb: explicitly retain unknown ancestry separately from a known root; absolute segments reset it and known descendants survive. Every selected typed child reaches the walker, unsupported configurations retain gaps and rejected argument data cannot revive as automatic roots. Navigation data ownership is checked before root/ancestry discovery; callable bodies stay independent.",
+    "55f82eaf35fd007b7acbce2e9383fe13aa31498d: one Next filename owner distinguishes known pages, unsupported interception context and non-pages; scanner and inventory preserve explicit gaps/provenance. Private folders exclude the whole path before context interpretation/decoding. Removed the superseded scalar-only helper instead of adding adapter parsers."
   ],
   "result_budget_regression": {
     "source": "12000 literal route registrations, 1452889 UTF-8 bytes",
@@ -4720,6 +4721,327 @@
           "scope": "Runtime plus the preceding verification documents. This receipt entry was added afterward; final unchanged proof content is checked again before commit."
         }
       ]
+    },
+    {
+      "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
+      "record_commit": "34036de4f73bf1a8723aaba2f244e09256200bf6",
+      "scope": "485 source /70 compiled public checks, fresh67-worker corpus, SDK/Chromium before intercepted-Next-path uncertainty propagation.",
+      "checks": [
+        {
+          "name": "route-partial-final-source-tests",
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "npm",
+            "run",
+            "test:local",
+            "--",
+            "src/domain/javascript/javascriptRouteScan.test.ts",
+            "src/domain/javascript/javascriptRouteInventory.test.ts",
+            "src/domain/javascript/javascriptRouteResultBudget.test.ts",
+            "src/domain/analysisView/javascriptRoutesView.test.ts",
+            "src/domain/webBundleAnalyzer.test.ts",
+            "src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.test.ts",
+            "src/application/analysisView/AnalysisViewService.test.ts",
+            "src/domain/javascript/javascriptStaticAnalysis.routeProperties.test.ts",
+            "src/domain/javascript/javascriptAstValues.test.ts",
+            "src/domain/javascript/javascriptSemanticExpressionShapes.test.ts",
+            "src/domain/javascript/electronWrappedCallPaths.test.ts",
+            "src/domain/javascript/javascriptVitePreloadDependencies.test.ts",
+            "src/contracts/javascriptRouteDeliveryContracts.test.ts",
+            "src/contracts/toolInputReferences.test.ts"
+          ],
+          "exit_code": 0,
+          "wall_s": 24.724477756011765,
+          "cpu_s": 40.4584,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1943232512,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+        },
+        {
+          "name": "route-partial-final-public-tests",
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "npm",
+            "run",
+            "test:focused",
+            "--",
+            "tests/boundary/javascript/javascriptSourceAnalysisWorker.test.ts",
+            "src/browser/WebBundleAnalysisWorkerServer.test.ts",
+            "tests/acceptance/javascriptRoutesCli.test.ts",
+            "tests/acceptance/browser/webBundleSchemaCoverageCliMcp.test.ts",
+            "tests/boundary/mcp/javascriptSourceSelection.test.ts",
+            "tests/boundary/filesystem/javascript-applications/javascriptRouteFinalization.test.ts",
+            "tests/boundary/mcp/javascriptAnalysisCancellation.test.ts",
+            "tests/boundary/mcp/sourceToBundleViewsMcp.test.ts",
+            "tests/boundary/javascript/javascriptSelectedPathEvidence.test.ts",
+            "tests/boundary/mcp/toolSchemaValidity.test.ts",
+            "tests/conformance/contracts/mcpInputSchemaProfile.test.ts",
+            "tests/boundary/browser/cdpObservationWindowScope.test.ts"
+          ],
+          "exit_code": 0,
+          "wall_s": 172.30377666201093,
+          "cpu_s": 299.849287,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 3184508928,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+        },
+        {
+          "name": "route-partial-final-checkfast",
+          "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
+          "exit_code": 0,
+          "wall_s": 13.954710200006957,
+          "cpu_s": 24.626704,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1550221312,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+        },
+        {
+          "name": "route-partial-final-docs-check",
+          "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
+          "exit_code": 0,
+          "wall_s": 14.393551697998191,
+          "cpu_s": 18.222063,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 806252544,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
+          "scope": "Runtime and preceding verification documents; this receipt added afterward, with final unchanged proof checked again before commit."
+        }
+      ],
+      "workflows": [
+        {
+          "runtime": "/home/yann/yann/rea-4772-route-inventory",
+          "mode": "complete",
+          "label": "real-full-partial",
+          "parameters": {
+            "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+            "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+            "max_semantic_nodes": 1,
+            "max_heap_mb": 512,
+            "analysis_timeout_ms": 15000
+          },
+          "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+          "answer": [
+            "/docs",
+            "/docs/ai-elements",
+            "/docs/changelog",
+            "/docs/cli",
+            "/docs/components",
+            "/docs/components/aria/code-block",
+            "/docs/components/aria/trace",
+            "/docs/components/base/code-block",
+            "/docs/components/base/trace",
+            "/docs/components/radix/code-block",
+            "/docs/components/radix/trace",
+            "/docs/forms",
+            "/docs/installation",
+            "/docs/mcp",
+            "/docs/registry",
+            "/docs/rtl",
+            "/docs/skills",
+            "/docs/theming"
+          ],
+          "source_coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "primary_calls": 2,
+          "primary_estimated_tokens": 1888155,
+          "used_input_declarations_plus_primary_estimated_tokens": 1911155,
+          "all_catalog_plus_primary_estimated_tokens": 3002848,
+          "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+          "task_wall_s": 26.868492954,
+          "calls": [
+            {
+              "name": "analyze_javascript_application",
+              "wall_ms": 9450.341877000003,
+              "estimated_reply_tokens": 1879209,
+              "reply_bytes": 6203541
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 4028.8941830000003,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 45.09274699999878,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 40.0522979999987,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 33.37481800000023,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "export_evidence_bundle",
+              "wall_ms": 191.40270899999814,
+              "estimated_reply_tokens": 122,
+              "reply_bytes": 318
+            }
+          ],
+          "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
+          "profile": {
+            "command": [
+              "taskset",
+              "-c",
+              "0,1",
+              "node",
+              "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
+              "complete",
+              "real-full-partial"
+            ],
+            "exit_code": 0,
+            "wall_s": 28.848851907998323,
+            "cpu_s": 36.48525,
+            "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+            "peak_family_rss_bytes": 1524150272,
+            "sample_ms": 20,
+            "guard_stop": null
+          },
+          "all_calls_estimated_tokens": 1914875,
+          "used_input_declarations_plus_all_calls_estimated_tokens": 1938095,
+          "full_catalog_plus_all_calls_estimated_tokens": 3029568
+        },
+        {
+          "runtime": "/home/yann/yann/rea-4772-route-inventory",
+          "mode": "selected",
+          "label": "real-selected-partial",
+          "parameters": {
+            "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+            "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+            "max_semantic_nodes": 1,
+            "max_heap_mb": 512,
+            "analysis_timeout_ms": 15000
+          },
+          "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+          "answer": [
+            "/docs",
+            "/docs/ai-elements",
+            "/docs/changelog",
+            "/docs/cli",
+            "/docs/components",
+            "/docs/components/aria/code-block",
+            "/docs/components/aria/trace",
+            "/docs/components/base/code-block",
+            "/docs/components/base/trace",
+            "/docs/components/radix/code-block",
+            "/docs/components/radix/trace",
+            "/docs/forms",
+            "/docs/installation",
+            "/docs/mcp",
+            "/docs/registry",
+            "/docs/rtl",
+            "/docs/skills",
+            "/docs/theming"
+          ],
+          "source_coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "primary_calls": 1,
+          "primary_estimated_tokens": 8902,
+          "used_input_declarations_plus_primary_estimated_tokens": 11319,
+          "all_catalog_plus_primary_estimated_tokens": 1123595,
+          "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+          "task_wall_s": 19.558445899,
+          "calls": [
+            {
+              "name": "analyze_javascript_application",
+              "wall_ms": 5835.646649000001,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 2698.285927000001,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 46.081748000000516,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 33.049189000001206,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "export_evidence_bundle",
+              "wall_ms": 97.43439500000022,
+              "estimated_reply_tokens": 124,
+              "reply_bytes": 326
+            }
+          ],
+          "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
+          "profile": {
+            "command": [
+              "taskset",
+              "-c",
+              "0,1",
+              "node",
+              "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
+              "selected",
+              "real-selected-partial"
+            ],
+            "exit_code": 0,
+            "wall_s": 20.669866279000416,
+            "cpu_s": 25.323023,
+            "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+            "peak_family_rss_bytes": 1333301248,
+            "sample_ms": 20,
+            "guard_stop": null
+          },
+          "all_calls_estimated_tokens": 35625,
+          "used_input_declarations_plus_all_calls_estimated_tokens": 58845,
+          "full_catalog_plus_all_calls_estimated_tokens": 1150318
+        }
+      ],
+      "corpus_profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/probe-partial-routes.mjs"
+        ],
+        "exit_code": 0,
+        "wall_s": 283.79173442600586,
+        "cpu_s": 421.69425700000005,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 495742976,
+        "sample_ms": 20,
+        "guard_stop": null,
+        "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
+      }
     }
   ],
   "input_schema_profile_integration": {
@@ -4800,10 +5122,10 @@
     "unmeasured": "Separate cost of the controlled before-fix run was not profiled."
   },
   "superseded_ci": {
-    "head_commit": "275a180e7a9bdf0bfb9fe396e2c06cd802e460a3",
-    "run_id": 39676054781,
+    "head_commit": "34036de4f73bf1a8723aaba2f244e09256200bf6",
+    "run_id": 39679514951,
     "conclusion": "cancelled",
-    "reason": "Cancelled after current-head review found absolute-child loss, skipped dynamic typed children and query-data automatic roots; no passing CI claim for that head."
+    "reason": "Cancelled for actual intercepted-page uncertainty bug; no passing current-CI claim."
   },
   "main_integration": {
     "main_commit": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
@@ -4861,7 +5183,9 @@
       "sample_ms": 20,
       "guard_stop": null,
       "runtime_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb"
-    }
+    },
+    "record_commit": "34036de4f73bf1a8723aaba2f244e09256200bf6",
+    "current_classifier_validation_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d"
   },
   "typed_child_regression": {
     "before_runtime_commit": "5295ca016e90277a0e1ccbf706bd349955f8e197",
@@ -5765,6 +6089,12 @@
       "run_id": 39653695647,
       "conclusion": "cancelled",
       "reason": "Cancelled when review found a stale-data bug; no passing technical CI claim for that head."
+    },
+    {
+      "head_commit": "275a180e7a9bdf0bfb9fe396e2c06cd802e460a3",
+      "run_id": 39676054781,
+      "conclusion": "cancelled",
+      "reason": "Cancelled after current-head review found absolute-child loss, skipped dynamic typed children and query-data automatic roots; no passing CI claim for that head."
     }
   ],
   "partial_route_review_regressions": {
@@ -5773,5 +6103,544 @@
     "navigation": "After those two corrections, two navigation-data regressions failed (2/76) before root-discovery ownership was fixed; the callable-body compatibility control passed.",
     "verification": "485 source/owner and70 compiled public checks, including real-worker absolute routes/typed gaps and full/compact SDK historical queries proving query data is absent after source deletion.",
     "unmeasured": "Before-fix timings were not separately profiled."
+  },
+  "current_classifier_qualification": {
+    "runtime_commit": "55f82eaf35fd007b7acbce2e9383fe13aa31498d",
+    "source_worker_qualification_commit": "c86fc9d318f56c28e3678c2dfbdca08a20a258cb",
+    "source_worker_record_commit": "34036de4f73bf1a8723aaba2f244e09256200bf6",
+    "method": "Rehash and parse every saved source with the current parser. Compare old/current classification for every literal/template value (a superset of scanner inputs) and all original URL/path variants. Require zero newly unknown inputs and identical known paths; replay all retained source facts through the current inventory owner and require exact complete-inventory equality. No new full-worker corpus run is claimed.",
+    "positive_controls": {
+      "intercepted": "unknown",
+      "private": "excluded",
+      "ordinary": "/reports"
+    },
+    "probes": [
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/2v5zh6m00lfum.js",
+        "sha256": "cbc64e16e8c3dfb6ecead560a58abf7bb4c7454c409209fd37626d7ac819c2a2",
+        "literal_inputs_compared": 328,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/3yp820osdt9kv.js",
+        "sha256": "1841558a199e41795777b48bbd652f92c6d3ec1b121a879b9fc2d41d5cc89b3a",
+        "literal_inputs_compared": 409,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+        "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+        "literal_inputs_compared": 1390,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/3-f__u1tgqe9w.js",
+        "sha256": "a4a7db369b41c7cfc3457bd620c6cd50740171f02ddf369fe9caf704a400170b",
+        "literal_inputs_compared": 193,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/2qd4c3xjf-y8d.js",
+        "sha256": "e5ac180193cdf48fac1a0eb5e5ad3480514b2a8d558fdb79a002a8ddbd38708d",
+        "literal_inputs_compared": 693,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/273-kz7ddae_j.js",
+        "sha256": "2dbef264004178186358965a30a7a258b94d78cebed47b24e9cf0815aa30d8f6",
+        "literal_inputs_compared": 2081,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/32p67covm5twm.js",
+        "sha256": "4e12d2301bf2930ee285e85256d032b3e4c6761f5abe71cf1055b4c1665eac96",
+        "literal_inputs_compared": 356,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/turbopack-22zuhxnmsa7m2.js",
+        "sha256": "96860acf83d42ba7a295c65d2e1cdeaf582c98156ce0d520a1ff29739580ba38",
+        "literal_inputs_compared": 102,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/3u1m4t0vzjnq5.js",
+        "sha256": "b7fd67b519b0d95aa5ae8d36b13e22dbd7179a0ff3c18f136c18be1c1e3bb009",
+        "literal_inputs_compared": 179,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/23ugu0wxt5byy.js",
+        "sha256": "891442341e2a100908efcf600375e37e9332167307c8a3290c28c4673957df37",
+        "literal_inputs_compared": 1788,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/2vko3i5lac74l.js",
+        "sha256": "9433ca68eb2a81002868f259c1e289868fc8777f51c289fa35144080bad4d349",
+        "literal_inputs_compared": 641,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/2q6evjwm-565v.js",
+        "sha256": "d43801f5709cc869420aea453dde724024c1a18db85e0b76b2bc4f4de674e9d3",
+        "literal_inputs_compared": 1312,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/2e29l35axy4-8.js",
+        "sha256": "8280034a9a1300b9b91e451598b66a0d5fa94ea76a400a6393952084d0c8dd64",
+        "literal_inputs_compared": 382,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/12l-srcvwshyf.js",
+        "sha256": "309a744a98f828c8ff1d43ba167e8985f98196fd76638fdc7fa5fe2a6f1023cf",
+        "literal_inputs_compared": 460,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/39by9zrhsjvv9.js",
+        "sha256": "7f0ae6d793b3869905b717fff49d78aee9f93c56443fa164e297c2991290ded9",
+        "literal_inputs_compared": 613,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/3q448jj_u0oex.js",
+        "sha256": "3c5852456fb053661ced69e9e2961c73047f7fd3d6279c5fbf86d5459fdc4acb",
+        "literal_inputs_compared": 1829,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/1gv06lcrn7q_b.js",
+        "sha256": "f64bbf866ceebf36a5ea5c07a8d93f34429f9746191ff443df90bf5287fad672",
+        "literal_inputs_compared": 530,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/03vn7c31403r9.js",
+        "sha256": "a71e547f16a1b0a835c0883dbc7a0643ac2b80a77c55c56e7e22ccc030d7f177",
+        "literal_inputs_compared": 229,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/3gvo0zcvrtjwi.js",
+        "sha256": "133f95790a428bd7fedfd3fc4b0d6e660047e9c9a1061812226bd3b8aca4c77d",
+        "literal_inputs_compared": 503,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/25mr3s4f3688g.js",
+        "sha256": "303051d28d05d91216ff155bc89d345ebe31b69ceb1ec04e24a5d3cde1aaf074",
+        "literal_inputs_compared": 240,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/26u0yg3-gdc6a.js",
+        "sha256": "4386a5dfdba681bae7a1acf0ce954ffd11ba43e613a464f9078e9c26eec6f064",
+        "literal_inputs_compared": 300,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/2hcdffj5-as7m.js",
+        "sha256": "0b496440052a9e3b776adc98912281dae83af1d265616b858a7570cc86646a82",
+        "literal_inputs_compared": 350,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/2s_r_zifx54q7.js",
+        "sha256": "cff7962e92655f31b1a6967324bf70901a3180820f93c0dcc8c2c2a573130e0c",
+        "literal_inputs_compared": 279,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/3vbktf2fq69e_.js",
+        "sha256": "bdcacca9362e043fa8956ea79b78ae2d1611901f5a4092b14509bff5c9a9070d",
+        "literal_inputs_compared": 559,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/1hhc4p_d_log3.js",
+        "sha256": "6cd04c781348aee469a5846ba6ff16f63332b5a2943c14125e2e4e8b22df3bb6",
+        "literal_inputs_compared": 397,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/39v8wpwthko65.js",
+        "sha256": "ff659151c718ac93fe4aac58904de1a91b1e84ec496e7ca66013268b04cd06be",
+        "literal_inputs_compared": 133,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/0-yckxn3tleyi.js",
+        "sha256": "814aafb54addac626276c42edf7f73ef4d7baf92f73211ebce3e8e522e695c35",
+        "literal_inputs_compared": 426,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/13ajf8_l__lm4.js",
+        "sha256": "6ab51219f8db4578126c1175565f1b8bc175d982975e5982e40cd23cd01e1910",
+        "literal_inputs_compared": 274,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://nextjs.org/_next/static/immutable/chunks/0u3yva3kyrgqf.js",
+        "sha256": "5ad2ddfbca95282f194a22faccc41c3ea0cd3c3ee84a43785f0ace287c3b1a6a",
+        "literal_inputs_compared": 348,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0bzde7pyy-uc5.js",
+        "sha256": "38938218385869bf08e5b6c7d026c5a1e0d62685f221e3756d83f6c4e3ca919f",
+        "literal_inputs_compared": 325,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3iszc0bk6o3mv.js",
+        "sha256": "1f3bb0c524de6c2340e019e2108f4e1992c4d00169a3581e4e19e2ae3b117714",
+        "literal_inputs_compared": 805,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+        "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+        "literal_inputs_compared": 1390,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23m56m87a3yx7.js",
+        "sha256": "37c2fca661e00c47550fb5f8bc460b9dc0f4029e5eb0a73ffcdde2b2e675d7ca",
+        "literal_inputs_compared": 179,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23nleunmqp_r5.js",
+        "sha256": "63624774d85bee57c8668b48187750fc39be932a66bdf728cf89ff7b6cfb4fc8",
+        "literal_inputs_compared": 2079,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qdtj-d25cuf4.js",
+        "sha256": "c5320611932b281e9fb664cce6483a5c7b6751c9fbe2b5040729ceafe04634be",
+        "literal_inputs_compared": 1037,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/turbopack-0yl1_dp50rscn.js",
+        "sha256": "bd458733371ffbc8cfcbcd0ad964cce213058ee64fc263581f89046131e909ad",
+        "literal_inputs_compared": 88,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3vmj7ocz3f6c-.js",
+        "sha256": "d95f555eb4e2ca74af4a1135f52b5f0c40936e984cf6f1613bc06b8e85f7a9b0",
+        "literal_inputs_compared": 97,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/02ile3fpmk_64.js",
+        "sha256": "b1563d3335bf031f3ffa57d8297275af96f7cbfd2fd2afc86286d0f4409760e6",
+        "literal_inputs_compared": 329,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1eknqc3un535f.js",
+        "sha256": "bd82e6b3568595fc03463500565d9304139a7c653e915f2a09bfd5214f5c6152",
+        "literal_inputs_compared": 132,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/20e6u600s15u3.js",
+        "sha256": "6dac9d7a5b48860dca231879845b2f5278e860ff366549fcecd42a449668ec38",
+        "literal_inputs_compared": 179,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0d52eigre8lfp.js",
+        "sha256": "da905ab3585c069fcc033211f1922d49f4722b714f4a053b66420075d414d61d",
+        "literal_inputs_compared": 238,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0gq0axdizcqnp.js",
+        "sha256": "593c0a7b61bcdb6f5178ef466f402ce6b8b052652ff67b32110192d20303136c",
+        "literal_inputs_compared": 493,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qkrpqots048e.js",
+        "sha256": "ea78347c01aed982f1a1d973d6949bf94410548d9f4587ccb3529a3f13e989fd",
+        "literal_inputs_compared": 277,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/18c383c4nzwlc.js",
+        "sha256": "553e3f8d0069ddf70e28369f464ee5cd08495fa46b7706d90d996c82e3aaff10",
+        "literal_inputs_compared": 8435,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/00k0993h3uuc4.js",
+        "sha256": "2c7ca6b7f6d4f8f6b7ac614a4699fc6db117141dff0be7f1c94bd147f49800e3",
+        "literal_inputs_compared": 309,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c55ckxmkcevb.js",
+        "sha256": "4424e6c091a01fe7e45c110f6f1d43e8097e558a1e64a4411023dfef567fb399",
+        "literal_inputs_compared": 249,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/43wayr98w3lhg.js",
+        "sha256": "e39d55ddef9f548af8e27c1672e6e7c48bd519f728860ca6757672aee95aaff7",
+        "literal_inputs_compared": 442,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1wjr7w9_jqiiu.js",
+        "sha256": "41bf09a71d4399d14b45afa756736eac0a7b3aa7240c085275e73bb24d6edbd7",
+        "literal_inputs_compared": 565,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1v6j29bbqu5y0.js",
+        "sha256": "842e03ef5d938ddeca91cabc2c4265d2397b887b0a7f35ff8781bf3296c0a798",
+        "literal_inputs_compared": 270,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3ld4clt1d2k47.js",
+        "sha256": "8214b0df0b2e427c0db7004967f0d1ebaad853f6cd1f6fe9aeaf9528cd90957c",
+        "literal_inputs_compared": 313,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/03ki0f1f-yupw.js",
+        "sha256": "4b7b9af0d669b07aa3c6f24bb33006d508f49d97327cc433657250e15fbfc77f",
+        "literal_inputs_compared": 12,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1m0zang2tqwnj.js",
+        "sha256": "ac2ef7bdd908caab5fa4037ef623a6422b1f70a6e44af4103c4d5f35dbcee310",
+        "literal_inputs_compared": 204,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/032aaa86n1dh1.js",
+        "sha256": "b6083400902148dd72ee7dcda8d1733b0c01ad9af86ac5e1e15e457c39370ef0",
+        "literal_inputs_compared": 220,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/25hee-gw8eskv.js",
+        "sha256": "14e8098e503692aa6984203a877b56db953fc299fcbac9bc0cb08f209bf8cca6",
+        "literal_inputs_compared": 407,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1bxvn5ukbs28_.js",
+        "sha256": "882dcb46f71627625e996d73b3965a0ae3748285cafcdf6311a763971b1e1abf",
+        "literal_inputs_compared": 137,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/28sh6u5tuq4f2.js",
+        "sha256": "3eb374d220a43deeae0687ba9bfa457ae5f0cd4da8f6cd904c47537d898e9ef9",
+        "literal_inputs_compared": 520,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+        "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+        "literal_inputs_compared": 1114,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1gx2dkwg9qo3e.js",
+        "sha256": "3d23ccde3326aaae7bb8ec23ba081355e9d3bcfd123fa628b740cf44b653c846",
+        "literal_inputs_compared": 3566,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0rckdzguc6bi2.js",
+        "sha256": "3c5182cdb82f3aa47605c2e01a6de83ee1d9db8186bdd5df966851d3767648a6",
+        "literal_inputs_compared": 162,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1vi-2xkk1cejt.js",
+        "sha256": "bd12a2497de25f2f826503077a7eed583036caeb38d6a90de4f36fd7b9b8e299",
+        "literal_inputs_compared": 358,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/39c74mlpxrrci.js",
+        "sha256": "9951ee056ed51b64d6cc4401910ef83f3725d84498d84e4113481ea042817d8d",
+        "literal_inputs_compared": 493,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2b-ga_ylsrfwf.js",
+        "sha256": "19ba5ae9ac9db38212b0ba5c7ec84fbacffaa96fdebaab522c06386851f4647f",
+        "literal_inputs_compared": 292,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2xa04daxqn3ln.js",
+        "sha256": "600399ed13801d06a12df3beabb741c71e97877333e9308d28f58d7e6d2e795b",
+        "literal_inputs_compared": 343,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3cg9j5-faot60.js",
+        "sha256": "80c6ec39463dea1c936736900b0f33367cda44c9b85b2b7869cd6d39b530d816",
+        "literal_inputs_compared": 5964,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2gsm7afyxcat9.js",
+        "sha256": "5ec7ed2fb6f59d49deaa6b840217a6f958b28c0b1d10d6b84cafd5684e4cb7c4",
+        "literal_inputs_compared": 662,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/26m-fiew9hcdx.js",
+        "sha256": "89b660e8860e0249b9581b1fcc90fc5b6a8583602af40383f9f76bc9b790c115",
+        "literal_inputs_compared": 640,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      },
+      {
+        "url": "https://ui.shadcn.com/_next/static/immutable/chunks/10ilc_hrifu7p.js",
+        "sha256": "f44a77042232b99d85d2aa3f92632273beb5603799659c109f76d544c931bd07",
+        "literal_inputs_compared": 164,
+        "metadata_inputs_compared": 4,
+        "known_results": 0
+      }
+    ],
+    "newUnknowns": [],
+    "mismatches": [],
+    "replays": [
+      {
+        "site": "nextjs-org",
+        "retained_source_rows": 29,
+        "inventory_identical": true,
+        "statistics": {
+          "sources_seen": 29,
+          "sources_retained": 29,
+          "route_patterns": 0,
+          "occurrences": 0,
+          "unanchored_literals_excluded": 115
+        }
+      },
+      {
+        "site": "shadcn-ui",
+        "retained_source_rows": 38,
+        "inventory_identical": true,
+        "statistics": {
+          "sources_seen": 38,
+          "sources_retained": 38,
+          "route_patterns": 18,
+          "occurrences": 31,
+          "unanchored_literals_excluded": 37
+        }
+      }
+    ],
+    "profile": {
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "node",
+        "/home/yann/yann/rea-4772-lab/probe-intercept-classifier-reuse.mjs"
+      ],
+      "exit_code": 0,
+      "wall_s": 2.1201340690022334,
+      "cpu_s": 2.676636,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 296652800,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    "runtime_owners_changed": [
+      "src/domain/javascript/javascriptRouteInventory.ts",
+      "src/domain/javascript/javascriptRoutePaths.ts",
+      "src/domain/javascript/javascriptRouteScan.ts"
+    ],
+    "scope": "The only runtime changes classify Next filenames and propagate newly unknown results. Every saved scanner-input literal and all metadata variants retain identical known classification and produce no new unknowns; exact current-inventory replay matches both retained corpora. Full-worker timing/status remains pinned to c86, not this runtime."
+  },
+  "intercepted_page_regression": {
+    "before_runtime_commit": "34036de4f73bf1a8723aaba2f244e09256200bf6",
+    "before": "Four regressions failed before the fix (4/97): relative/rooted module literals, local page filename and compiled-page URL metadata. Two private-folder precedence controls keep known non-pages excluded.",
+    "verification": "491 source /70 compiled public checks. A real TSX file supplies filename-only uncertainty; full/compact SDK unknown views retain reason, partial enumeration and exact source SHA after source deletion.",
+    "reference": "https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes",
+    "unmeasured": "Before-fix timing was not separately profiled."
   }
 }

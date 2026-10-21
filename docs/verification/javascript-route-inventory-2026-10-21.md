@@ -1,10 +1,12 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`c86fc9d318f56c28e3678c2dfbdca08a20a258cb`, tree `fc1297fe69ffdeee9d3da318395681448300f77d`,
-on main `3dbe314ada9f6dcc994ca4655dc0faf082503847`. All current source-worker, public interface,
-SDK and Chromium measurements below use this runtime. Verification-only commits
-change this report, not the runtime. Exact inputs, commands, profiles, historical
+`55f82eaf35fd007b7acbce2e9383fe13aa31498d`, tree `3b699d0dfcbca2abc3dace7e553ed0cd029270b8`,
+on main `3dbe314ada9f6dcc994ca4655dc0faf082503847`. Current public interface, worker fixtures,
+SDK and Chromium measurements use this runtime. Full-worker corpus measurements
+remain pinned to `c86fc9d318f56c28e3678c2dfbdca08a20a258cb`, with current filename-owner
+revalidation and exact inventory replay described below. Verification-only
+commits change this report, not the runtime. Exact inputs, commands, profiles, historical
 controls and meaningful failed attempts are retained in the
 [verification record](javascript-route-inventory-2026-10-21.json).
 
@@ -12,18 +14,19 @@ controls and meaningful failed attempts are retained in the
 
 The saved homepage references contain 29 nextjs.org scripts (1,533,098 bytes)
 and 38 ui.shadcn.com scripts (2,465,078 bytes). Original URLs, byte counts and
-SHA-256 are preserved. Each source was freshly rehashed and analyzed through
-production isolated workers, with one semantic projection node, a selected
-512 MiB worker old-space limit and the existing 15-second per-source deadline.
-No previous source facts were reused for this qualification. Sources were read
-as data; their application code was not executed.
+SHA-256 are preserved. At full-worker runtime c86fc9d31, every source was freshly
+rehashed and analyzed through production isolated workers with one semantic
+projection node, a selected 512 MiB worker old-space limit and the existing
+15-second per-source deadline. Sources were read as data; their application code
+was not executed. That version's retained facts are reused only after the
+current format-owner and inventory checks below.
 
 | Supplied capture | Scripts |     Bytes | Completed jobs | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | -------------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
 | shadcn-ui        |      38 | 2,465,078 |             34 |                35 |              18 |
 
-The complete 67-worker task took **283.792 s elapsed**,
+At c86fc9d31, the complete 67-worker task took **283.792 s elapsed**,
 **421.694 CPU s** and **495,742,976 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
@@ -45,15 +48,27 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **12.112 s elapsed**,
-**14.705 CPU s** and **2,171,883,520 bytes** sampled
+cleanup succeeded. This task took **11.997 s elapsed**,
+**14.942 CPU s** and **2,175,156,224 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
-The earlier658 corpus and narrow old-owner/current-owner deadline comparison
-remain pinned to that historical runtime in JSON. Those controls do not qualify
-this newer scanner. Current whole-corpus results above come from a fresh full
-run. The captures and narrow controls establish no general performance equivalence
-or code-specific cause for timing/deadline variation.
+At the current runtime, all 67 original sources were rehashed and parsed. The
+new/old filename owners were compared on every literal/template value (a superset
+of scanner inputs) and four URL/path metadata variants per file. Positive controls
+verify the new unknown branch and private exclusion. No captured input enters
+the new interception branch, and every known classification is identical. The
+current inventory owner then exactly reproduces both complete retained inventories.
+This check took **2.120 s elapsed**,
+**2.677 CPU s** and
+**296,652,800 bytes** sampled
+peak family RSS. It requalifies retained route facts for this narrow format change;
+no new full 67-worker run or current underlying-analysis speedup is claimed.
+Public fixtures, SDK and Chromium below are freshly executed on the current runtime.
+
+The earlier 658 narrow old-owner/current-owner deadline comparison remains pinned
+to that historical runtime in JSON; it does not qualify this newer scanner.
+Captures and narrow controls establish no general performance equivalence or
+code-specific cause for timing/deadline variation.
 
 ## Equivalent delivery workflows
 
@@ -68,9 +83,9 @@ performed three historical view reads and exported complete Evidence.
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
 | Estimated tokens: used input declarations and all calls/replies |                          1,938,095 |                      58,845 |
 | Estimated tokens: entire catalog and all calls/replies          |                          3,029,568 |                   1,150,318 |
-| Elapsed seconds, including startup and cleanup                  |                             28.849 |                      20.670 |
-| CPU seconds, process family                                     |                             36.485 |                      25.323 |
-| Peak sampled process-family RSS bytes                           |                      1,524,150,272 |               1,333,301,248 |
+| Elapsed seconds, including startup and cleanup                  |                             18.023 |                      16.686 |
+| CPU seconds, process family                                     |                             23.560 |                      21.530 |
+| Peak sampled process-family RSS bytes                           |                      1,757,306,880 |               1,333,936,128 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -106,7 +121,13 @@ Dynamic/ambiguous/mutated/cyclic parents and incomplete capture remain gaps.
 Recognized local navigation objects expose literal pathnames while owning their
 query/search/hash data. Ownership is checked before discovering automatic roots
 or ancestry edges, preventing query objects from becoming pages. Independent
-callable/component bodies keep their own context.
+callable/component bodies keep their own context. One Next filename classifier
+returns known paths, unknown interception context or non-pages. Both AST scanning
+and metadata inventory retain interception gaps with precise or null ranges,
+respectively. Private folders exclude the entire page before interception and
+decoding; percent-encoded public underscores stay supported. Full/compact SDK
+queries retain a real TSX file's gap, partial coverage and exact SHA after deleting
+its source. See the [Next interception convention](https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes).
 
 Canonical discriminated delivery contracts share the domain shapes used by CLI.
 Optional complete input is dispatched before its default, preserving omission
@@ -128,7 +149,7 @@ inventory finalization, and owned worker cleanup/retry remains covered.
 
 ## Executed checks and limits
 
-**485/485 source/owner regressions** and **70/70 compiled
+**491/491 source/owner regressions** and **70/70 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
@@ -136,9 +157,10 @@ The public suite exercises exported-Evidence reads after source deletion,
 large bounded facts, source selection, retention, cancellation, SDK recovery,
 source-to-bundle integration and every advertised tool schema.
 
-The record preserves six ancestry/typed-child regressions failing before this
-correction and two navigation-data cases failing before ownership was applied to
-root discovery. A callable-body compatibility control passes. Earlier delivery,
+Four intercepted-page regressions failed before the current correction; two
+private-folder precedence controls and existing ordinary/parallel/group path cases
+pass. Earlier six ancestry/typed-child failures and two navigation-data failures,
+plus the callable-body compatibility control, remain recorded. Earlier delivery,
 wrapped-navigation, corrected-oracle and failed-control records remain pinned
 to their actual runtimes. Earlier capacity, cleanup, malformed
 input, cancellation and matched main/runtime deadline controls remain pinned
