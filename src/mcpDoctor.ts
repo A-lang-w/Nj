@@ -113,6 +113,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       deadline,
       controller.signal,
       catalog,
+      budgetMs,
     );
   } catch (cause: unknown) {
     result = {
@@ -199,6 +200,7 @@ const inspectProductionMcpSession = async (
   deadline: number,
   signal: AbortSignal,
   catalog: ReturnType<typeof createCatalogIdentity>,
+  budgetMs: number,
 ) => {
   const request = requestOptions(deadline, signal);
   const [tools, prompts] = await Promise.all([
@@ -215,7 +217,10 @@ const inspectProductionMcpSession = async (
       },
     )
     .then(ok, (cause: unknown) =>
-      err({ kind: "request-flow" as const, detail: errorMessage(cause) }),
+      err({
+        kind: "request-flow" as const,
+        detail: doctorTransportDetail(cause, budgetMs),
+      }),
     );
   const inventory = {
     tools: compareInventory(

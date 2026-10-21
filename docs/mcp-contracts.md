@@ -238,9 +238,10 @@ count. This setting must be a safe decimal integer at least 10485760 (10 MiB);
 REA reserves 1024 bytes for the envelope. The value is read when the REA
 process starts, so a change requires a restart and a matching client receive
 buffer. Raising it restores complete inline delivery for responses that fit
-that buffer. It does not raise Node's separate single-string ceiling, and it
-does not change analysis coverage or retained content. Ordinary responses keep
-their existing complete result contract.
+that buffer. It does not raise REA's reserved single-string limit, which is
+1024 UTF-16 code units below Node's single-string ceiling, and it does not
+raise that Node ceiling. It does not change analysis coverage or retained
+content. Ordinary responses keep their existing complete result contract.
 
 ### Error recovery and deadline ownership
 

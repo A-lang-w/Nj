@@ -27,7 +27,10 @@ import {
   ToolResultDelivery,
 } from "../../../src/server/toolResult.js";
 import { MINIMUM_RESPONSE_BYTES } from "../../../src/config/mcpResponseBudget.js";
-import { MCP_RESULT_STRING_LIMIT } from "../../../src/server/toolResultEncoding.js";
+import {
+  MCP_RESULT_STRING_LIMIT,
+  NODE_MAX_STRING_LENGTH,
+} from "../../../src/server/toolResultEncoding.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { encodeToolResult } from "../../../src/server/toolResultEncoding.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -116,7 +119,19 @@ describe("MCP response budget recovery", () => {
     expect(projected.reason).toContain("restarting the REA process");
     expect(projected.reason).toContain("does not raise");
     expect(projected.reason).toContain("no runtime override");
-    expect(projected.reason).toContain(String(MCP_RESULT_STRING_LIMIT));
+    expect(NODE_MAX_STRING_LENGTH - MCP_RESULT_STRING_LIMIT).toBe(1024);
+    expect(projected.reason).toContain(
+      `REA's reserved single-string limit of ${String(MCP_RESULT_STRING_LIMIT)} UTF-16 code units`,
+    );
+    expect(projected.reason).toContain(
+      `Node's single-string ceiling of ${String(NODE_MAX_STRING_LENGTH)} UTF-16 code units`,
+    );
+    expect(projected.reason).not.toContain(
+      `Node's single-string ceiling of ${String(MCP_RESULT_STRING_LIMIT)}`,
+    );
+    expect(projected.reason).not.toContain(
+      `Node's single-string ceiling is ${String(MCP_RESULT_STRING_LIMIT)}`,
+    );
     expect(projected.remediationAction).toContain("REA_MCP_MAX_RESPONSE_BYTES");
     expect(projected.remediationAction).not.toContain(
       "set REA_MCP_MAX_RESPONSE_BYTES above Node",
@@ -130,15 +145,64 @@ describe("MCP response budget recovery", () => {
       effectiveResponseBytes: MINIMUM_RESPONSE_BYTES * 2,
       nextStep: "Use complete CLI JSON output when the analysis completed.",
     });
-    expect(projected.reason).toContain("single-string representation limit");
+    expect(projected.reason).toContain("REA's reserved single-string limit");
     expect(projected.reason).toContain(
-      "REA_MCP_MAX_RESPONSE_BYTES does not raise it",
+      `REA's reserved single-string limit is ${String(MCP_RESULT_STRING_LIMIT)} UTF-16 code units`,
+    );
+    expect(projected.reason).toContain(
+      `below Node's single-string ceiling of ${String(NODE_MAX_STRING_LENGTH)} UTF-16 code units`,
+    );
+    expect(projected.reason).not.toContain(
+      `Node's single-string ceiling is ${String(MCP_RESULT_STRING_LIMIT)}`,
+    );
+    expect(projected.reason).not.toContain(
+      `Node's single-string ceiling of ${String(MCP_RESULT_STRING_LIMIT)}`,
+    );
+    expect(projected.reason).toContain(
+      "REA_MCP_MAX_RESPONSE_BYTES does not raise them",
     );
     expect(projected.reason).toContain("no runtime override");
     expect(projected.reason).not.toContain("floor 10485760");
     expect(projected.remediationAction).toContain(
-      "REA_MCP_MAX_RESPONSE_BYTES does not raise it",
+      "REA_MCP_MAX_RESPONSE_BYTES does not raise them",
     );
+  });
+
+  it("keeps summary discovery when a complete evidence bundle exceeds the budget", () => {
+    const tight = new ToolResultDelivery(2048);
+    const delivered = tight.toCallToolResult(
+      ok({ records: "x".repeat(1500) }),
+      toolContract("get_evidence_bundle"),
+    );
+    expect(delivered.isError).toBe(true);
+    const action = z
+      .object({
+        error: z.object({ remediation: z.object({ action: z.string() }) }),
+      })
+      .parse(delivered.structuredContent).error.remediation.action;
+    expect(action).toContain("get_evidence_bundle and detail: summary");
+    expect(action).toContain("REA_MCP_MAX_RESPONSE_BYTES");
+    expect(action).toContain(
+      `Node's single-string ceiling of ${String(NODE_MAX_STRING_LENGTH)}`,
+    );
+  });
+
+  it("does not repeat summary discovery when the summary itself exceeds the budget", () => {
+    const tight = new ToolResultDelivery(2048);
+    const delivered = tight.toCallToolResult(
+      ok({
+        kind: "evidence-bundle-summary",
+        records: "x".repeat(1500),
+      }),
+      toolContract("get_evidence_bundle"),
+    );
+    const action = z
+      .object({
+        error: z.object({ remediation: z.object({ action: z.string() }) }),
+      })
+      .parse(delivered.structuredContent).error.remediation.action;
+    expect(action).not.toContain("get_evidence_bundle and detail: summary");
+    expect(action).toContain("Use complete CLI JSON output");
   });
 });
 

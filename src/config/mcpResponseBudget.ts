@@ -11,19 +11,26 @@ export const MINIMUM_RESPONSE_BYTES = 10 * 1024 * 1024;
 /**
  * Facts for a completed or failed MCP result that exceeded the stdio receive
  * budget. The effective value is the configured receive buffer, including the
- * envelope reservation, not Node's separate string ceiling.
+ * envelope reservation. REA's reserved string limit is separate from, and
+ * lower than, Node's single-string ceiling. This setting raises neither.
  */
 export const stdioResponseBudgetRecovery = (
   effectiveResponseBytes: number,
-  stringCeilingCodeUnits: number,
+  reservedStringCodeUnits: number,
+  nodeStringCeilingCodeUnits: number,
 ): string =>
-  `The effective REA_MCP_MAX_RESPONSE_BYTES value is ${String(effectiveResponseBytes)} bytes (floor ${String(MINIMUM_RESPONSE_BYTES)} bytes, 10 MiB). A change requires restarting the REA process and a matching client receive buffer. It does not raise Node's separate single-string ceiling of ${String(stringCeilingCodeUnits)} UTF-16 code units, which has no runtime override.`;
+  `The effective REA_MCP_MAX_RESPONSE_BYTES value is ${String(effectiveResponseBytes)} bytes (floor ${String(MINIMUM_RESPONSE_BYTES)} bytes, 10 MiB). A change requires restarting the REA process and a matching client receive buffer. It does not raise REA's reserved single-string limit of ${String(reservedStringCodeUnits)} UTF-16 code units or Node's single-string ceiling of ${String(nodeStringCeilingCodeUnits)} UTF-16 code units. This release has no runtime override for either limit.`;
 
-/** Facts for the Node string ceiling. This setting is not REA_MCP_MAX_RESPONSE_BYTES. */
+/**
+ * Facts for a result that exceeded REA's reserved string limit.
+ * `reservedStringCodeUnits` is that REA limit. `nodeStringCeilingCodeUnits`
+ * is Node's own ceiling and is not the same number.
+ */
 export const nodeStringCeilingRecovery = (
-  stringCeilingCodeUnits: number,
+  reservedStringCodeUnits: number,
+  nodeStringCeilingCodeUnits: number,
 ): string =>
-  `Node's single-string ceiling is ${String(stringCeilingCodeUnits)} UTF-16 code units. This release has no runtime override, and REA_MCP_MAX_RESPONSE_BYTES does not raise it.`;
+  `REA's reserved single-string limit is ${String(reservedStringCodeUnits)} UTF-16 code units, below Node's single-string ceiling of ${String(nodeStringCeilingCodeUnits)} UTF-16 code units. This release has no runtime override for either limit, and REA_MCP_MAX_RESPONSE_BYTES does not raise them.`;
 
 /** Optional stdio response budget, including room for the protocol envelope. */
 export const mcpResponseBudgetSchema = z
