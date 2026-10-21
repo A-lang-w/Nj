@@ -797,6 +797,23 @@ describe("paged lines", () => {
     });
   });
 
+  it("keeps a range's bound beside a zero size its recording shows unbounded", () => {
+    const books = servedFrom([
+      ["GET", "/api/books?limit=0&_start=0&_end=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+    ]);
+    books.answer("post_books", CREATE_NEW_BOOK);
+    expect(
+      books.answer("get_books", { limit: "0", _start: "0", _end: "2" }),
+    ).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK],
+      state: { source: "recording", reason: "page-exceeded" },
+    });
+  });
+
   it("answers a range the collection has outgrown from its recording", () => {
     const books = servedFrom([
       ["GET", "/api/books?_start=0&_end=2", [FIRST_BOOK, SECOND_BOOK]],

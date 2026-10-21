@@ -245,6 +245,8 @@ export interface UpdateEvidence {
   readonly idField: string;
   readonly id: string;
   readonly startMs: number | undefined;
+  /** Whether a read, not the write's own response, observed the entity, so a field it lacks was removed rather than left out. */
+  readonly read: boolean;
 }
 
 /** The rule a field the update changed without sending follows, if any. */
@@ -301,9 +303,10 @@ export const explainUpdate = (
         value: evidence.after[member]!,
       });
   }
-  // Serving keeps every field an update does not write, so one the update removed is a change no rule models.
-  for (const field of Object.keys(evidence.before))
-    if (!Object.hasOwn(evidence.after, field)) unexplained.push(field);
+  // Serving keeps every field an update does not write, so one a read shows the update removed is a change no rule models.
+  if (evidence.read)
+    for (const field of Object.keys(evidence.before))
+      if (!Object.hasOwn(evidence.after, field)) unexplained.push(field);
   for (const field of Object.keys(evidence.after)) {
     if (
       Object.hasOwn(body, field) ||

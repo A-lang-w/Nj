@@ -338,3 +338,15 @@ five of them on the previous rounds' own changes:
 
 Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
 applies all 31 served write tools, and the gates passed again.
+
+A sixteenth round settled four findings Greptile raised on the fifteenth round's changes, here and on the fidelity,
+list-lines and list-queries branches:
+
+- a size of zero is no bound only by itself: a range or another size on the same line still bounds the page;
+- an update is refused for a dropped field only when a later read shows it dropped, since a write's own response may
+  leave fields out;
+- interference is weighed against a tool's latest call on the read's entity or collection, not its latest call
+  anywhere.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.
