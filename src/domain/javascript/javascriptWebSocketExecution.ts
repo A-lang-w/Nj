@@ -9,6 +9,7 @@ import {
   semanticGeneratorReadAfterYield,
   semanticIteratorAcquisitionAlwaysFails,
   semanticPatternCompletion,
+  semanticPatternCompletionBeforeTarget,
   semanticGeneratorBindingPhase,
 } from "./javascriptGeneratorConsumerPhases.js";
 
@@ -207,21 +208,22 @@ const webSocketFreshMethodSelection = (
     t.isObjectMethod(property) &&
     property.kind === "get"
   ) {
-    const consumer = state.parentsByNode.get(object);
+    const result = webSocketOuterExpression(literal, state, true);
+    const consumer = state.parentsByNode.get(result);
     const pattern =
-      t.isVariableDeclarator(consumer) && consumer.init === object
+      t.isVariableDeclarator(consumer) && consumer.init === result
         ? consumer.id
         : t.isAssignmentExpression(consumer, { operator: "=" }) &&
-            consumer.right === object
+            consumer.right === result
           ? consumer.left
           : undefined;
     if (t.isObjectPattern(pattern)) {
       const selected = pattern.properties.find(
-        (property): property is t.ObjectProperty =>
-          t.isObjectProperty(property) &&
-          semanticStaticPropertyKey(property.key, property.computed) === key,
+        (item) =>
+          t.isObjectProperty(item) &&
+          semanticStaticPropertyKey(item.key, item.computed) === key,
       );
-      if (selected !== undefined)
+      if (t.isObjectProperty(selected))
         // Getter entry follows the selected pattern key. Returning the RHS
         // literal here would incorrectly place the getter before an awaited
         // computed key has finished evaluating.
@@ -389,6 +391,7 @@ const webSocketStoredCallTarget = (
   capture: t.Node,
   parameters: ReadonlyMap<string, readonly t.Function[]>,
   checkInitialization = true,
+  checkHelperIntegrity = true,
 ): t.Node | undefined => {
   let current = unwrapJavaScriptExpression(raw).node;
   if (t.isMemberExpression(current) || t.isOptionalMemberExpression(current)) {
@@ -423,6 +426,7 @@ const webSocketStoredCallTarget = (
         }
       }
       if (
+        checkHelperIntegrity &&
         !webSocketInvocationHelperIntact(
           current.object,
           method,
@@ -455,6 +459,7 @@ const webSocketStoredCallTarget = (
         semanticStaticPropertyName(callee.property, callee.computed) === "bind"
       ) {
         if (
+          checkHelperIntegrity &&
           !webSocketInvocationHelperIntact(
             callee.object,
             "bind",
@@ -760,6 +765,7 @@ const webSocketStoredCalls = (
         state,
         call,
         noCallbackParameters,
+        false,
         false,
       );
       const targetBinding = t.isIdentifier(rawTarget)
@@ -1596,6 +1602,13 @@ const webSocketImmediateCaller = (
     // by webSocketStoredCallTarget above. Pruning this subtree is important
     // for chains such as `promise.then(...).then(...)`: otherwise each outer
     // call rescans every earlier receiver and callback.
+    if (node !== call && t.isNewExpression(node)) {
+      // A fresh literal class receiver still owns its selected method/setter.
+      // Its constructor arguments cannot identify the outer invocation.
+      const selected = unwrapJavaScriptExpression(node.callee).node;
+      if (t.isClass(selected)) pending.push(selected);
+      continue;
+    }
     if (
       node !== call &&
       (t.isCallExpression(node) ||
@@ -1746,38 +1759,42 @@ const webSocketSinglePatternConsumer = (
   | { readonly pattern: t.ArrayPattern; readonly read: t.Identifier }
   | undefined => {
   let cached = generatorPatternConsumers.get(state);
-  if (cached === undefined)
-    generatorPatternConsumers.set(state, (cached = new Map()));
-  if (cached.has(bindingId)) return cached.get(bindingId) ?? undefined;
-  const reads: t.Identifier[] = [];
-  const pending: t.Node[] = [state.program];
-  while (pending.length > 0) {
-    const node = pending.pop();
-    if (node === undefined) break;
-    if (t.isIdentifier(node)) {
-      const binding = resolveSemanticBindingState(state, node, node.name);
-      if (binding?.bindingId === bindingId) {
+  if (cached === undefined) {
+    cached = new Map();
+    const reads = new Map<string, t.Identifier | null>();
+    const pending: t.Node[] = [state.program];
+    while (pending.length > 0) {
+      const node = pending.pop();
+      if (node === undefined) break;
+      if (t.isIdentifier(node)) {
+        const binding = resolveSemanticBindingState(state, node, node.name);
         const parent = state.parentsByNode.get(node);
-        if (!(t.isVariableDeclarator(parent) && parent.id === node))
-          reads.push(node);
+        if (
+          binding !== undefined &&
+          !(t.isVariableDeclarator(parent) && parent.id === node)
+        )
+          reads.set(
+            binding.bindingId,
+            reads.has(binding.bindingId) ? null : node,
+          );
       }
+      pending.push(...childNodes(node));
     }
-    pending.push(...childNodes(node));
+    for (const [id, read] of reads) {
+      const parent = read === null ? undefined : state.parentsByNode.get(read);
+      cached.set(
+        id,
+        read !== null &&
+          t.isVariableDeclarator(parent) &&
+          parent.init === read &&
+          t.isArrayPattern(parent.id)
+          ? { pattern: parent.id, read }
+          : null,
+      );
+    }
+    generatorPatternConsumers.set(state, cached);
   }
-  if (reads.length !== 1) {
-    cached.set(bindingId, null);
-    return undefined;
-  }
-  const consumer = reads[0]!;
-  const parent = state.parentsByNode.get(consumer);
-  const selected =
-    t.isVariableDeclarator(parent) &&
-    parent.init === consumer &&
-    t.isArrayPattern(parent.id)
-      ? { pattern: parent.id, read: consumer }
-      : undefined;
-  cached.set(bindingId, selected ?? null);
-  return selected;
+  return cached.get(bindingId) ?? undefined;
 };
 
 /** Direct iteration, literal parameters and iterable spreads resume a fresh generator in-turn. */
@@ -1792,6 +1809,7 @@ const webSocketGeneratorResume = (
   | t.ArrayPattern
   | t.YieldExpression
   | WebSocketParameterResume
+  | { readonly pattern: t.ArrayPattern; readonly read: t.Identifier }
   | undefined => {
   const result = webSocketOuterExpression(invocation, state, true);
   const member = state.parentsByNode.get(result);
@@ -1840,7 +1858,7 @@ const webSocketGeneratorResume = (
           readContexts: webSocketExecutionContexts(consumer.read, state),
         }) === true
       )
-        return consumer.pattern;
+        return consumer;
     }
   }
   const parameter = webSocketParameterResume(result, state);
@@ -2131,7 +2149,11 @@ const webSocketGeneratorConsumerPhase = (
     return resume === undefined
       ? "unknown"
       : webSocketGeneratorConsumerPhase(
-          "parameter" in resume ? resume.parameter : resume,
+          "parameter" in resume
+            ? resume.parameter
+            : "pattern" in resume
+              ? resume.pattern
+              : resume,
           read,
           owner.body,
           state,
@@ -2511,12 +2533,15 @@ const webSocketExecutionContextsForCalls = (
         parent.generator;
       const generatorInvocation = invocation;
       let parameterConsumer: t.ArrayPattern | undefined;
+      let storedConsumerRead: t.Identifier | undefined;
       if (
         generatorBody &&
         invocation !== undefined &&
         !t.isNewExpression(invocation)
       ) {
         const resume = webSocketGeneratorResume(invocation, state);
+        storedConsumerRead =
+          resume !== undefined && "pattern" in resume ? resume.read : undefined;
         parameterConsumer =
           resume !== undefined && "parameter" in resume
             ? resume.parameter
@@ -2524,7 +2549,9 @@ const webSocketExecutionContextsForCalls = (
         invocation =
           resume !== undefined && "parameter" in resume
             ? resume.invocation
-            : resume;
+            : resume !== undefined && "pattern" in resume
+              ? resume.pattern
+              : resume;
       }
       if (invocation === undefined) return contexts;
       const decoratedClass = t.isDecorator(invocation)
@@ -2574,7 +2601,28 @@ const webSocketExecutionContextsForCalls = (
       ) {
         // A pattern key finishes before Get, while defaults and nested binding
         // work in the value occur only after the getter has returned.
-        if (invocation.computed) suspendedAfter(invocation.key);
+        const pattern = state.parentsByNode.get(invocation);
+        const consumer =
+          pattern === undefined ? undefined : state.parentsByNode.get(pattern);
+        const value = t.isVariableDeclarator(consumer)
+          ? consumer.init
+          : t.isAssignmentExpression(consumer)
+            ? consumer.right
+            : undefined;
+        if (t.isObjectPattern(pattern) && value != null) {
+          const phase = semanticPatternCompletionBeforeTarget(
+            pattern,
+            value,
+            invocation,
+            state,
+            (operand) =>
+              webSocketCompletedSuspension(operand, state) !== undefined,
+            (node) => webSocketExecutionContexts(node, state, true),
+          );
+          if (phase === "suspended" || phase === "suspended-unproven")
+            suspendedOwner = webSocketSuspensionOwner(invocation, state);
+          else if (phase === "unproven") return contexts;
+        }
       } else if (!t.isArrayPattern(invocation)) {
         suspendedAfter(
           t.isForOfStatement(invocation)
@@ -2627,7 +2675,11 @@ const webSocketExecutionContextsForCalls = (
           !webSocketExecutorSettlesAfterRead(parent, node, state)
           ? contexts
           : [...contexts, ...webSocketWaitingContexts(invocation, state)];
-      point = invocation;
+      point = storedConsumerRead ?? invocation;
+      if (storedConsumerRead !== undefined) {
+        current = storedConsumerRead;
+        continue;
+      }
       // A returned callable executes outside its producer's completed activation.
       if (
         webSocketReturnedOwner(parent, state) !== undefined ||

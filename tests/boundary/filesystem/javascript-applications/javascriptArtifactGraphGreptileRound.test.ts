@@ -12,6 +12,29 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "stored-after-wait.js",
+    endpoint: "wss://example.test/stored-after-wait",
+    source:
+      '(async()=>{const values=(function*(){new Socket("wss://example.test/stored-after-wait");yield 0})();await 0;const [x]=values})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "assigned-later-getter.js",
+    source:
+      'let unused,run;({unused,run}={get run(){new Socket("wss://example.test/assigned-getter")}});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "earlier-getter-key-wait.js",
+    endpoint: "wss://example.test/earlier-key",
+    source:
+      '(async()=>{const{[await 0]:unused,run}={get run(){new Socket("wss://example.test/earlier-key")}}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "early-callback-helper.js",
+    source:
+      '((run)=>run.call(null))(()=>new Socket("wss://example.test/early-callback"));const Socket=globalThis.WebSocket;',
+  },
+
+  {
     file: "finally-0.mjs",
     source:
       'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/finally-0")})();await pending.finally(()=>{});const Socket=globalThis.WebSocket;',

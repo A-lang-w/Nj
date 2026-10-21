@@ -26,8 +26,11 @@ import {
 } from "./javascriptSemanticLiteralProjection.js";
 import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
 import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
-import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticArrayIndex,
+  semanticPropertyPathKeyMatches,
+  semanticPrototypeLookupMayChange,
+} from "./javascriptSemanticPropertyPaths.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 
 interface PatternWaitCache {
@@ -221,6 +224,42 @@ const nullishPatternValue = (
   (value.known &&
     value.node !== undefined &&
     t.isNullLiteral(patternValueNode(value.node)));
+
+/** A string's native iterator cannot be credited after a visible lookup change. */
+const patternStringIterationIntact = (
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): boolean => {
+  state.memberMutationFactsPhase ??= "requested";
+  const prefix = ["global", "String", "prototype"];
+  return !state.ambientReferenceEffects.some(({ path, node }) => {
+    if (
+      !path
+        .slice(0, prefix.length)
+        .every((key, index) =>
+          semanticPropertyPathKeyMatches(key, prefix[index] ?? ""),
+        )
+    )
+      return false;
+    if (
+      path.length > prefix.length &&
+      !semanticPrototypeLookupMayChange(path.slice(prefix.length), "@@iterator")
+    )
+      return false;
+    if (semanticEffectTiming(capture, node, state) === "after") return false;
+    const frames =
+      executionFrames?.(capture).filter(
+        ({ owner }) => owner === state.program,
+      ) ?? [];
+    return (
+      frames.length === 0 ||
+      !frames.every(
+        ({ point }) => semanticEffectTiming(point, node, state) === "after",
+      )
+    );
+  });
+};
 
 /** Proven primitive failures and an own null prototype cannot acquire an iterator. */
 const noniterablePatternValue = (
@@ -454,6 +493,9 @@ const patternCompletedSuspension = (
     return patternExpressionCompletion(pattern, suspended);
   if (t.isAssignmentPattern(pattern)) {
     const selectsDefault = undefinedPatternValue(value, state);
+    // An unknown inherited slot may select its awaited default. It proves
+    // neither an early synchronous getter entry nor a completed later wait.
+    if (!value.known && suspended(pattern.right)) return "unproven";
     const prefix = selectsDefault
       ? patternExpressionCompletion(pattern.right, suspended)
       : "completed";
@@ -531,6 +573,8 @@ const patternCompletedSuspension = (
           patternExpressionCompletion(property.key, suspended),
         );
       if (patternStopped(phase)) return phase;
+      // A selected getter is entered after this key, before Get/default/value work.
+      if (property === target) return phase;
       const key = semanticStaticPropertyKey(property.key, property.computed);
       if (key === null) unknownExclusion = true;
       else excluded.add(String(key));
@@ -557,21 +601,10 @@ const patternCompletedSuspension = (
     if (value.known && value.node !== undefined) {
       const iterable = patternValueNode(value.node);
       const literal = readExactJavaScriptLiteral(iterable);
-      const stringIteratorChanged = state.ambientReferenceEffects.some(
-        ({ path, node: effect }) =>
-          path.length <= 4 &&
-          path.every((key, index) =>
-            semanticPropertyPathKeyMatches(
-              key,
-              ["global", "String", "prototype", "@@iterator"][index] ?? "",
-            ),
-          ) &&
-          semanticEffectTiming(pattern, effect, state) !== "after",
-      );
       if (
         literal.found &&
         typeof literal.value === "string" &&
-        stringIteratorChanged
+        !patternStringIterationIntact(pattern, state, executionFrames)
       )
         return "unproven";
       // A visible boxed-primitive iterator prevents a definite acquisition
