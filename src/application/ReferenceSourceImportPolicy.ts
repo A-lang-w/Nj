@@ -74,7 +74,11 @@ const scopedPattern = (
 ): string | undefined => {
   // A U+FEFF remaining in a rule is a literal character, not a file signature.
   // Protect it from ignore's per-rule BOM and whitespace normalization.
-  const pattern = sourcePattern.replace(/^(!?)\uFEFF/u, "$1[\uFEFF]");
+  // A terminal directory globstar must consume a descendant. ignore otherwise
+  // lets its zero-depth match include the named parent, including for negations.
+  const pattern = sourcePattern
+    .replace(/^(!?)\uFEFF/u, "$1[\uFEFF]")
+    .replace(/(^!?|\/)\*\*\/(?=\s*$)/u, "$1**/*/");
   if (prefix === undefined) return pattern;
   if (pattern.trim() === "" || pattern.startsWith("#")) return undefined;
   const negative = pattern.startsWith("!");
@@ -128,8 +132,8 @@ const addMarkedPatterns = (
     }
   }
   // This directory has already been admitted by the inherited policy.
-  // A zero-depth **/ match must not exclude the policy's own directory and,
-  // through ignore's parent checks, all of its otherwise included children.
+  // Scoped wildcards must not exclude it retroactively and block descendant
+  // negations through ignore's parent checks.
   if (prefix !== undefined) matcher.add(`!/${prefix}/`);
 };
 
