@@ -409,6 +409,18 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       members.push(member);
       byRelease.set(candidate.release, members);
     }
+    // The full stored-name scan found no member for the entry at any
+    // release, so no manifest can make one selectable: the entry is
+    // definitely absent, even when the manifest itself is unreadable.
+    if (byRelease.size === 0)
+      return err(
+        this.#selectionError(
+          { reason: "not-found", available: [] },
+          jar,
+          entry,
+          requestedRelease,
+        ),
+      );
     // Without a requested release, a present base entry is selected whatever
     // the manifest says, so an unreadable manifest must not block it. A
     // versioned spelling of the entry needs it to know what the member means.

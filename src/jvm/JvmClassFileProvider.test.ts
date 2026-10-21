@@ -465,6 +465,34 @@ describe("JvmClassFileProvider manifest member attributes", () => {
     expect(result.error.message).toContain("multi-release JAR is unknown");
   });
 
+  // The stored-name scan already proves no release holds the entry, so an
+  // unreadable manifest cannot turn a definite absence into an unknown.
+  it.each([
+    ["without a release", undefined],
+    ["with a release", 17],
+  ])(
+    "reports a missing entry as not found %s, whatever an unreadable manifest says",
+    async (_label, release) => {
+      const result = await provider.inspect({
+        path: await jarWithManifestAttributes("symlink-manifest-missing.jar", {
+          externalFileAttributes: 0o120777 * 0x10000,
+        }),
+        entry: "com/example/Missing.class",
+        ...(release === undefined ? {} : { release }),
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect((result.error as AnalysisInputError).issues).toEqual([
+        expect.objectContaining({
+          path: ["entry"],
+          message: expect.stringContaining(
+            "No class entry com/example/Missing.class exists",
+          ),
+        }),
+      ]);
+    },
+  );
+
   it("refuses a symlink-moded class member as unavailable, not absent", async () => {
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(ENTRY, new Uint8ArrayReader(minimalClass(52)), {
