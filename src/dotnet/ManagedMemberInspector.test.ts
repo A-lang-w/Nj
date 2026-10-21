@@ -568,6 +568,33 @@ describe("managed nominal CIL operands", () => {
   );
 });
 
+describe("managed operand identity budget", () => {
+  it("charges the bytes an operand identity hashes", () => {
+    // Literal reading is off, so only the operand identity reads #US text.
+    const reserved = (text: string): number => {
+      const { heap, tokens } = fixtureUserStringHeap([text]);
+      const bytes = buildManagedPeFixture({
+        userStringHeap: heap,
+        ilBody: ldstrBody([tokens[0] ?? ""]),
+      });
+      const reserve = vi.spyOn(ManagedDecodeBudget.prototype, "reserve");
+      try {
+        inspectManagedMembersBytes(bytes, managedPeFixtureTarget(bytes), {
+          userStrings: false,
+        });
+        return reserve.mock.calls.reduce((total, [bytes]) => total + bytes, 0);
+      } finally {
+        reserve.mockRestore();
+      }
+    };
+
+    // 4,096 more UTF-16 code units are 8,192 more hashed bytes.
+    expect(reserved("x".repeat(4_097)) - reserved("x")).toBeGreaterThanOrEqual(
+      8_192,
+    );
+  });
+});
+
 describe("managed TypeRef resolution scopes", () => {
   it.each([
     // AssemblyRef 9 does not exist.

@@ -46,14 +46,24 @@ const CACHED_IDENTITY_BYTES = 128;
 
 /**
  * Hash a kind tag, then each part behind its 32-bit length, so no identity's
- * preimage is another kind's and no part can run into the next.
+ * preimage is another kind's and no part can run into the next. Each part is
+ * charged to the representation budget before it is encoded and hashed:
+ * distinct tokens can name overlapping heap items or share one long name, so
+ * cached entries alone do not bound the bytes an inspection hashes.
  */
 const framed = (
+  layout: ManagedMetadataLayout,
   kind: string,
   ...parts: readonly (Buffer | string)[]
 ): Buffer => {
+  const budget = managedDecodeBudget(layout);
   const hash = createHash("sha256").update(kind).update(KIND_SEPARATOR);
   for (const part of parts) {
+    // A UTF-16 code unit encodes to at most three UTF-8 bytes.
+    budget.reserve(
+      typeof part === "string" ? part.length * 3 : part.length,
+      null,
+    );
     const bytes = typeof part === "string" ? Buffer.from(part, "utf8") : part;
     const length = Buffer.alloc(4);
     length.writeUInt32LE(bytes.length);
@@ -110,7 +120,7 @@ const typeIdentity = (
   const name = context.signatureTypeName(
     row * 4 + (table === TYPE_DEF ? 0 : 1),
   );
-  return name === null ? null : framed("type", name);
+  return name === null ? null : framed(context.layout, "type", name);
 };
 
 const typeSpecIdentity = (
@@ -121,7 +131,7 @@ const typeSpecIdentity = (
     metadataRowCursor(context.bytes, context.layout, TYPE_SPEC, row),
     "type",
   );
-  return spec === null ? null : framed("typespec", spec);
+  return spec === null ? null : framed(context.layout, "typespec", spec);
 };
 
 /** A field or method definition, named after its declaring TypeDef. */
@@ -146,7 +156,9 @@ const definitionIdentity = (
   cursor.readUInt16();
   const name = stringColumn(context, cursor);
   const signature = context.resolvedBlob(cursor, "signature");
-  return signature === null ? null : framed("member", parent, name, signature);
+  return signature === null
+    ? null
+    : framed(context.layout, "member", parent, name, signature);
 };
 
 /** A member reference, named after its parent's identity. */
@@ -160,11 +172,12 @@ const memberRefIdentity = (
   const parent = context.identity(tokenNumber(reference.parent_token));
   return signature === null || parent === null
     ? null
-    : framed("member", parent, reference.name, signature);
+    : framed(context.layout, "member", parent, reference.name, signature);
 };
 
 const moduleRefIdentity = (context: IdentityContext, row: number): Buffer =>
   framed(
+    context.layout,
     "moduleref",
     stringColumn(
       context,
@@ -193,7 +206,7 @@ const methodSpecIdentity = (
     method === null ? null : context.identity(tokenNumber(method));
   return generic === null || instantiation === null
     ? null
-    : framed("methodspec", generic, instantiation);
+    : framed(context.layout, "methodspec", generic, instantiation);
 };
 
 const standAloneSigIdentity = (
@@ -204,7 +217,9 @@ const standAloneSigIdentity = (
     metadataRowCursor(context.bytes, context.layout, STAND_ALONE_SIG, row),
     "signature",
   );
-  return signature === null ? null : framed("standalonesig", signature);
+  return signature === null
+    ? null
+    : framed(context.layout, "standalonesig", signature);
 };
 
 const ROW_IDENTITIES: ReadonlyMap<
@@ -230,6 +245,7 @@ const resolve = (
   // A user string is a #US heap offset, not a table row.
   if (table === USER_STRING)
     return framed(
+      context.layout,
       "string",
       metadataUserStringUnits(
         context.bytes,
@@ -305,6 +321,9 @@ export const managedCilOperandIdentities = (
         index,
         sources.layout.blob.size,
       );
+      // Blobs at distinct indexes can overlap, so each one's hashed bytes
+      // are charged as the parts of an identity are.
+      managedDecodeBudget(sources.layout).reserve(blob.length, null);
       return digestBytes(
         form === "signature"
           ? resolvedSignatureSha256(

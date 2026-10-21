@@ -277,8 +277,8 @@ const userStringItem = (
 /**
  * The UTF-16LE code units of a `0x70` user-string token's #US item, exactly
  * as stored and without its terminal flag byte. Nothing is decoded or
- * admitted, so a caller that only needs the literal's identity spends no
- * representation budget on its text.
+ * admitted here, so a caller that only needs the literal's identity charges
+ * only the bytes it hashes rather than the decoded text.
  */
 export const metadataUserStringUnits = (
   bytes: Buffer,

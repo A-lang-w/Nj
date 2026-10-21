@@ -141,7 +141,10 @@ The static provider admits regular input files up to 128 MiB before retaining
 their bytes. Reads remain bounded if a file grows after admission. Metadata,
 CIL decoding, and projected inspection records have a separate conservative
 64 MiB representation budget; shared heap strings are cached, but repeated
-output occurrences still consume that budget. These are inspection resource
+output occurrences still consume that budget. Nominal CIL operand identities
+charge every byte they hash, including each distinct token's literal, member
+name, and blob, so overlapping heap items and shared long names stay within
+that budget. These are inspection resource
 policies, not PE format limits or a hard bound on total V8 heap use.
 
 Path-based member comparison uses the same per-input snapshot policy and
