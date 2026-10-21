@@ -16,6 +16,7 @@ import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 
 // Keep real socket scheduling; expire only a timer whose owning phase is ready.
@@ -480,7 +481,7 @@ it("reschedules a raised command deadline onto the fixed cleanup grace", async (
 
 it("keeps runtime cleanup on the fixed grace when command_timeout_ms is shorter", async () => {
   const commandTimeoutMs = 250;
-  const browser = await startFakeCdpBrowser({
+  const browser = await startRuntimeBrowser({
     hangOnMethod: "Profiler.disable",
   });
   const provider = new CdpWebRuntimeProvider();
@@ -526,7 +527,7 @@ it("keeps runtime cleanup on the fixed grace when command_timeout_ms is shorter"
 
 it("names the fixed cleanup grace when runtime restoration stalls", async () => {
   const commandTimeoutMs = 250;
-  const browser = await startFakeCdpBrowser({
+  const browser = await startRuntimeBrowser({
     hangOnMethod: "Profiler.disable",
   });
   const provider = new CdpWebRuntimeProvider();
@@ -552,8 +553,7 @@ it("names the fixed cleanup grace when runtime restoration stalls", async () => 
     const result = await pending;
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cleanup grace failure");
-    const failures = result.error.diagnostics?.["cleanup_failures"];
-    const text = JSON.stringify(failures);
+    const text = JSON.stringify(result.error.diagnostics);
     expect(text).toContain("5000 ms");
     expect(text).toContain("no runtime override");
     expect(text).not.toContain(
