@@ -2384,7 +2384,7 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
       );
     }
     if (
-      !/^\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)(?:\s+[^<>;&|\r\n]+)*\s*$/u.test(
+      !/^\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)(?:\s+[^<>;&|\s]+)*\s*$/u.test(
         inputPath,
       )
     )
