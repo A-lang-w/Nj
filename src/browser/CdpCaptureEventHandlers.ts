@@ -441,7 +441,7 @@ export const handleConsoleAPICalled = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const topFrame = topCallFrame(recordValue(params.stackTrace));
+  const topFrame = topCallFrame(params.stackTrace);
   if (!topFrame.ok) {
     state.completeness.exclude("console_events", "invalid_protocol_value");
     return;

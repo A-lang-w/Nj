@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { webPageInspectionSchema } from "../../../src/domain/browserObservationSchemas.js";
+import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import {
   startFakeCdpBrowser,
   type FakeOptions,
@@ -42,7 +44,7 @@ const inspect = async (
 
 const inspectConsole = async (
   fields: Record<string, unknown>,
-  callFrames?: (origin: string) => readonly unknown[],
+  stackTrace?: (origin: string) => unknown,
 ) =>
   inspect((command, origin) =>
     command.method === "Runtime.enable"
@@ -51,8 +53,8 @@ const inspectConsole = async (
             type: "log",
             timestamp: 1,
             ...fields,
-            stackTrace: {
-              callFrames: callFrames?.(origin) ?? [
+            stackTrace: stackTrace?.(origin) ?? {
+              callFrames: [
                 { url: `${origin}/app.js`, lineNumber: 0, columnNumber: 0 },
               ],
             },
@@ -140,17 +142,29 @@ describe("CdpBrowserProvider: console argument inventory", () => {
     },
   );
 
-  it("does not attribute a console call to a frame below a malformed top frame", async () => {
-    const { inspection } = await inspectConsole({ args: [] }, (origin) => [
-      null,
-      { url: `${origin}/app.js`, lineNumber: 4, columnNumber: 2 },
-    ]);
+  it.each([
+    [
+      "a malformed top frame",
+      (origin: string) => ({
+        callFrames: [
+          null,
+          { url: `${origin}/app.js`, lineNumber: 4, columnNumber: 2 },
+        ],
+      }),
+    ],
+    ["a non-array frame inventory", () => ({ callFrames: "invalid" })],
+    ["a non-object stack", () => "invalid"],
+  ])(
+    "does not attribute a console call through %s",
+    async (_label, stackTrace) => {
+      const { inspection } = await inspectConsole({ args: [] }, stackTrace);
 
-    expect(inspection.console.events).toEqual([]);
-    expect(inspection.completeness.excluded).toContainEqual(
-      invalidConsoleValue,
-    );
-  });
+      expect(inspection.console.events).toEqual([]);
+      expect(inspection.completeness.excluded).toContainEqual(
+        invalidConsoleValue,
+      );
+    },
+  );
 
   it("does not attribute a request initiator to a frame below a malformed top frame", async () => {
     const { browser, inspection } = await inspect((command, origin) =>
@@ -190,5 +204,75 @@ describe("CdpBrowserProvider: console argument inventory", () => {
       reason: "invalid_protocol_value",
       count: 1,
     });
+  });
+});
+
+describe("CdpBrowserProvider: WebMCP registration stacks", () => {
+  const discover = async (
+    stackTrace: (origin: string) => JsonValue | undefined,
+  ) => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      webMcpStackTrace: stackTrace,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    return { discovery: result.value };
+  };
+  const invalidToolValue = expect.objectContaining({
+    section: "webmcp_tools",
+    reason: "invalid_protocol_value",
+  });
+
+  it.each<[string, (origin: string) => JsonValue]>([
+    [
+      "a malformed top frame",
+      (origin) => ({
+        callFrames: [
+          null,
+          { url: `${origin}/app.js`, lineNumber: 12, columnNumber: 4 },
+        ],
+      }),
+    ],
+    ["a non-array frame inventory", () => ({ callFrames: "invalid" })],
+    ["a non-object stack", () => "invalid"],
+  ])(
+    "keeps the tool but reports %s as incomplete",
+    async (_label, stackTrace) => {
+      const { discovery } = await discover(stackTrace);
+
+      expect(discovery.tools.items).toEqual([
+        expect.objectContaining({
+          name: "search_orders",
+          registration_source: null,
+        }),
+      ]);
+      expect(discovery.completeness.excluded).toContainEqual(invalidToolValue);
+    },
+  );
+
+  it.each<[string, JsonValue | undefined]>([
+    ["an omitted", undefined],
+    ["an empty", { callFrames: [] }],
+  ])("reports %s registration stack as having no source", async (_l, stack) => {
+    const { discovery } = await discover(() => stack);
+
+    expect(discovery.tools.items).toEqual([
+      expect.objectContaining({
+        name: "search_orders",
+        registration_source: null,
+      }),
+    ]);
+    expect(discovery.completeness.excluded).not.toContainEqual(
+      invalidToolValue,
+    );
   });
 });

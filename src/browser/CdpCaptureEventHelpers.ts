@@ -146,13 +146,16 @@ const malformedCallFrame: MalformedCdpCallFrame = {
 };
 
 /**
- * The call site is the frame at position zero. A malformed top frame stays
- * unknown rather than promoting its caller to the call site.
+ * The call site is the frame at position zero. An omitted stack has no call
+ * site; a malformed stack or top frame stays unknown rather than promoting a
+ * caller to the call site.
  */
 export const topCallFrame = (
-  stack: UnknownRecord | undefined,
+  value: unknown,
 ): Result<UnknownRecord | undefined, MalformedCdpCallFrame> => {
-  if (stack === undefined) return ok(undefined);
+  if (value === undefined) return ok(undefined);
+  const stack = recordValue(value);
+  if (stack === undefined) return err(malformedCallFrame);
   const frames = admitRecords(stack.callFrames);
   if (frames === undefined) return err(malformedCallFrame);
   if (frames.length === 0) return ok(undefined);
@@ -163,11 +166,11 @@ export const topCallFrame = (
 export const initiatorLocation = (
   initiator: UnknownRecord | undefined,
 ): Result<UnknownRecord | undefined, MalformedCdpCallFrame> => {
-  let stack = recordValue(initiator?.stack);
+  let stack = initiator?.stack;
   for (let depth = 0; depth < 32 && stack !== undefined; depth += 1) {
     const frame = topCallFrame(stack);
     if (!frame.ok || frame.value !== undefined) return frame;
-    stack = recordValue(stack.parent);
+    stack = recordValue(stack)?.parent;
   }
   return ok(
     cdpStringValue(initiator?.url) === undefined ? undefined : initiator,

@@ -468,6 +468,9 @@ const normalizeTool = (
   if (!declaration.success)
     completeness.exclude("webmcp_tools", "invalid_protocol_value");
   const schema = declaration.success ? declaration.data : null;
+  const registrationFrame = topCallFrame(value.stackTrace);
+  if (!registrationFrame.ok)
+    completeness.exclude("webmcp_tools", "invalid_protocol_value");
   return {
     tool_key: toolKey(frame.url, frameId, name),
     name,
@@ -490,7 +493,7 @@ const normalizeTool = (
       autosubmit: annotation("autosubmit"),
     },
     registration_source: registrationSource(
-      recordValue(value.stackTrace),
+      registrationFrame.ok ? registrationFrame.value : undefined,
       new Set(input.allowed_origins),
     ),
     trust: "page-declared-untrusted",
@@ -498,11 +501,9 @@ const normalizeTool = (
 };
 
 const registrationSource = (
-  stack: UnknownRecord | undefined,
+  frame: UnknownRecord | undefined,
   allowedOrigins: ReadonlySet<string>,
 ): WebMcpDiscovery["tools"]["items"][number]["registration_source"] => {
-  const topFrame = topCallFrame(stack);
-  const frame = topFrame.ok ? topFrame.value : undefined;
   const url = allowedSanitizedUrl(frame?.url, allowedOrigins);
   return frame === undefined || url === undefined
     ? null
