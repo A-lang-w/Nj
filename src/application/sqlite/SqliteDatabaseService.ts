@@ -37,10 +37,9 @@ const matchesSelectedDatabase = (
   subject.path === input.path &&
   subject.sha256 === report.artifact.sha256 &&
   subject.format === "file" &&
-  (report.worker_timeout_ms === undefined
-    ? input.worker_timeout_ms === undefined
-    : report.worker_timeout_ms ===
-      (input.worker_timeout_ms ?? DEFAULT_SQLITE_WORKER_TIMEOUT_MS)) &&
+  // Fresh executions must report known settings; only historical parsing permits omission.
+  report.worker_timeout_ms ===
+    (input.worker_timeout_ms ?? DEFAULT_SQLITE_WORKER_TIMEOUT_MS) &&
   (report.wal === null || report.wal.path === `${input.path}-wal`) &&
   report.schema.scope === sqliteSchemaScope(input) &&
   (report.schema.scope !== "selected_table" ||
