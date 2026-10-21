@@ -118,8 +118,17 @@ export abstract class BinarySessionRecords {
   }
 
   /** Read one snapshot while retaining failed descriptors under this session. */
-  readAnalysisSnapshot(path: string, signal?: AbortSignal) {
-    return readSnapshotFile(path, signal, this.fileResources);
+  readAnalysisSnapshot(
+    path: string,
+    signal?: AbortSignal,
+    operation?: string,
+  ) {
+    return readSnapshotFile(
+      path,
+      signal,
+      this.fileResources,
+      operation,
+    );
   }
 
   /** Persist one provider-neutral snapshot under this session's resource owner. */

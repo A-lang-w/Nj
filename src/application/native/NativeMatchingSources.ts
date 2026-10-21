@@ -7,7 +7,10 @@ import {
   resolveEvidenceInput,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
-import type { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
+import {
+  unrecognizedEvidenceField,
+  type NativeMatchingAdmission,
+} from "./NativeMatchingAdmission.js";
 
 const INVENTORY_OPERATIONS = ["list_procedures"] as const;
 const OBSERVATION_OPERATIONS = [
@@ -53,6 +56,12 @@ export const resolveNativeMatchingSources = async (
     path: readonly (string | number)[],
     operations: readonly string[],
   ): Promise<Evidence> => {
+    const unrecognized = unrecognizedEvidenceField(
+      admission.operation,
+      path,
+      raw,
+    );
+    if (unrecognized !== undefined) throw unrecognized;
     const evidence = await resolve(raw);
     if (
       evidence.predicate_type !== "rea.analysis" ||

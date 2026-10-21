@@ -642,6 +642,7 @@ export const missingRequiredFields = (
 /**
  * A list response rendered from `base`: its array replaced by `items`, and set to their number each counter that
  * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value.
+ * A counter recorded as a digit string keeps its spelling when its value already equals the item count.
  */
 export const renderStateList = (
   view: Pick<StateListView, "pointer" | "counters">,
@@ -650,10 +651,19 @@ export const renderStateList = (
 ): JsonValue => {
   const listed = listItems(base, view.pointer)?.length;
   return view.counters.reduce(
-    (body, name) =>
-      at(base, pointerTo(name)) === listed
-        ? replaceAt(body, pointerTo(name), items.length)
-        : body,
+    (body, name) => {
+      const recorded = at(base, pointerTo(name));
+      const recordedCount =
+        typeof recorded === "string" && /^\d+$/u.test(recorded)
+          ? Number(recorded)
+          : recorded;
+      if (recordedCount !== listed) return body;
+      if (typeof recorded !== "string")
+        return replaceAt(body, pointerTo(name), items.length);
+      return Number(recorded) === items.length
+        ? body
+        : replaceAt(body, pointerTo(name), String(items.length));
+    },
     replaceAt(base, view.pointer, [...items]),
   );
 };

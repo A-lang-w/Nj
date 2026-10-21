@@ -100,6 +100,7 @@ export const readJsonFileWithSource = (
 /** Read selected JSON members through the same regular-file error boundary. */
 export const readJsonObjectMembersFile = (
   path: string,
+  operation: string,
   scans: readonly ReadonlyMap<string, JsonObjectMemberReader>[],
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
@@ -112,14 +113,9 @@ export const readJsonObjectMembersFile = (
   readJsonFileInput(
     path,
     (selected) =>
-      readJsonObjectFile(
-        selected,
-        "read_evidence_file",
-        scans,
-        signal,
-        resources,
-      ),
+      readJsonObjectFile(selected, operation, scans, signal, resources),
     signal,
+    operation,
   );
 
 type JsonFileReadFailure =

@@ -284,7 +284,7 @@ const listFacts = (
       );
       counting.set(
         record.ordinal,
-        counted.filter((name) => parent[name] === items.length),
+        counted.filter((name) => countOf(parent[name]) === items.length),
       );
       // Only a line that pages at most can hold its whole collection; a total that differs from
       // the number listed, or a next page, shows it is partial.

@@ -1,6 +1,22 @@
 import { setImmediate } from "node:timers/promises";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
+
+/** Name a request field that holds neither an Evidence record nor a retained reference; a malformed record keeps its integrity failure. */
+export const unrecognizedEvidenceField = (
+  operation: string,
+  path: readonly (string | number)[],
+  value: unknown,
+): AnalysisInputError | undefined => {
+  if (typeof value === "object" && value !== null) return undefined;
+  const message = "Expected Evidence or a retained Evidence reference";
+  return new AnalysisInputError(operation, { userMessage: message }, [
+    { path, reason: "invalid_value", message },
+  ]);
+};
 
 const NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 

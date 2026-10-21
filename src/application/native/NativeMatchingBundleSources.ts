@@ -12,7 +12,10 @@ import { retainedEvidenceReferenceSchema } from "../../domain/evidenceReference.
 import type { MatchNativeFunctionsInput } from "../../contracts/native/functionMatchingContracts.js";
 import { readImmutableEvidenceBundle } from "../EvidenceBundleFiles.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
-import type { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
+import {
+  unrecognizedEvidenceField,
+  type NativeMatchingAdmission,
+} from "./NativeMatchingAdmission.js";
 
 interface SourceEntry {
   readonly file: number;
@@ -61,15 +64,26 @@ export const loadNativeMatchingBundleSources = async ({
   const records = new Map<string, Evidence>(),
     index = new Map<string, SourceEntry>();
   const rootIds: string[] = [];
-  for (const value of [
-    input.left,
-    input.right,
-    ...input.left_observations,
-    ...input.right_observations,
-  ]) {
+  const roots: (readonly [readonly (string | number)[], unknown])[] = [
+    [["left"], input.left],
+    [["right"], input.right],
+    ...input.left_observations.map(
+      (value, position) => [["left_observations", position], value] as const,
+    ),
+    ...input.right_observations.map(
+      (value, position) => [["right_observations", position], value] as const,
+    ),
+  ];
+  for (const [path, value] of roots) {
     const parsed = retainedEvidenceReferenceSchema.safeParse(value);
     if (parsed.success) rootIds.push(parsed.data.evidence_id);
     else {
+      const unrecognized = unrecognizedEvidenceField(
+        admission.operation,
+        path,
+        value,
+      );
+      if (unrecognized !== undefined) throw unrecognized;
       await admission.admit(value);
       const checked = readImmutableEvidence(value);
       if (!checked.ok) throw checked.error;
