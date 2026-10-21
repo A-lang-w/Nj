@@ -1,3 +1,4 @@
+import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -196,6 +197,29 @@ it.each(["extra diagnostic", "foreign executable", "slice diagnostic"])(
       ok: false,
       error: { _tag: "ProviderAdapterError" },
     });
+    if (kind === "slice diagnostic" && !result.ok) {
+      const partial = inspectSignatureSchema.parse(
+        result.error.partialObservation,
+      );
+      expect(partial).toMatchObject({
+        signed: true,
+        identifier: "com.example.fixture",
+        entitlements: { "com.apple.security.app-sandbox": true },
+        designated_requirement: null,
+        limitations: expect.arrayContaining([
+          expect.stringContaining("Partial signature coverage"),
+          expect.stringContaining("did not complete"),
+        ]),
+      });
+      expect(partial.provenance).toHaveLength(4);
+      expect(partial.provenance[0]?.command).toContain("--verbose=4");
+      expect(partial.provenance[1]?.command).toContain("-r-");
+      expect(partial.provenance[2]?.command).toContain("--entitlements");
+      expect(partial.provenance[3]).toMatchObject({
+        command: expect.arrayContaining(["-a", "x86_64"]),
+        exit: { code: 1, signal: null },
+      });
+    }
   },
 );
 

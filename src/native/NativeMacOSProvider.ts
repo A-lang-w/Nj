@@ -746,47 +746,56 @@ class NativeMacOSClient implements AnalysisClient {
           binding.snapshotPath,
           executablePaths,
         ));
+    const observation = () =>
+      inspectSignatureSchema.parse({
+        ...parsed,
+        designated_requirement: requirementText,
+        entitlements: entitlementValue.value,
+        provenance: captures.map((capture) =>
+          invocation(capture, binding.snapshotPath),
+        ),
+        limitations,
+      });
     if (mixedSigning) {
+      limitations.push(
+        "Partial signature coverage: aggregate signing metadata describes codesign’s default slice; Mach-O slices have mixed signing states.",
+      );
       const slices = await this.#inspectMixedSignatureSlices(
         binding,
         parsed.format,
         executablePaths,
+        captures,
         {
           requirements: requirements.value.exitCode,
           entitlements: entitlements.value.exitCode,
         },
         signal,
       );
-      if (!slices.ok) return slices;
-      captures.push(...slices.value.captures);
-      limitations.push(...slices.value.limitations);
+      if (!slices.ok) {
+        limitations.push(
+          "Architecture-specific signature inspection did not complete; remaining slice signing states are unknown.",
+        );
+        return err(slices.error.retainPartialObservation(observation()));
+      }
+      limitations.push(...slices.value);
     }
-    const provenance = captures.map((capture) =>
-      invocation(capture, binding.snapshotPath),
-    );
     const version = await verifySignatureTarget(this.target, binding, signal);
-    if (!version.ok) return version;
-    const result = inspectSignatureSchema.parse({
-      ...parsed,
-      designated_requirement: requirementText,
-      entitlements: entitlementValue.value,
-      provenance,
-      limitations,
-    });
-    return ok(result);
+    if (!version.ok)
+      return err(version.error.retainPartialObservation(observation()));
+    return ok(observation());
   }
 
   async #inspectMixedSignatureSlices(
     binding: SignatureTargetBinding,
     format: string | null,
     executablePaths: readonly string[],
+    captures: NativeCommandCapture[],
     aggregateExits: Readonly<{
       requirements: number | null;
       entitlements: number | null;
     }>,
     signal?: AbortSignal,
-  ): Promise<Result<MixedSignatureSlices, AnalysisError>> {
-    const captures: NativeCommandCapture[] = [];
+  ): Promise<Result<readonly string[], AnalysisError>> {
     const unsigned: string[] = [];
     for (const architecture of codeSignArchitectures(format, this.target)) {
       const slice = await this.#captureSignature(
@@ -806,7 +815,6 @@ class NativeMacOSClient implements AnalysisClient {
       unsigned.push(architecture);
     }
     const limitations = [
-      "Partial signature coverage: aggregate signing metadata describes codesign’s default slice; Mach-O slices have mixed signing states.",
       unsigned.length > 0
         ? `Unsigned Mach-O slices: ${unsigned.join(", ")}.`
         : "One or more Mach-O slices are unsigned, but their architectures could not be classified.",
@@ -819,7 +827,7 @@ class NativeMacOSClient implements AnalysisClient {
       limitations.push(
         "The aggregate entitlements are unavailable because Mach-O slices have mixed signing states.",
       );
-    return ok({ captures, limitations });
+    return ok(limitations);
   }
 
   async #captureSignature(
@@ -1148,11 +1156,6 @@ interface NativeObservation {
   readonly result: JsonValue;
   readonly limitations: readonly string[];
   readonly locations: readonly EvidenceLocation[];
-}
-
-interface MixedSignatureSlices {
-  readonly captures: readonly NativeCommandCapture[];
-  readonly limitations: readonly string[];
 }
 
 const isNativeOperation = (
