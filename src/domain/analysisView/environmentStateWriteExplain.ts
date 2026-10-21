@@ -301,6 +301,9 @@ export const explainUpdate = (
         value: evidence.after[member]!,
       });
   }
+  // Serving keeps every field an update does not write, so one the update removed is a change no rule models.
+  for (const field of Object.keys(evidence.before))
+    if (!Object.hasOwn(evidence.after, field)) unexplained.push(field);
   for (const field of Object.keys(evidence.after)) {
     if (
       Object.hasOwn(body, field) ||
@@ -448,13 +451,19 @@ export const conflictsWithPlan = (
   explained: ReturnType<typeof explainUpdate>,
 ): boolean => {
   const body = plan.body!;
-  const fixed = new Set(body.fixed.map((entry) => entry.member));
+  const fixed = new Map(body.fixed.map((entry) => [entry.member, entry.sent]));
   const rules = new Map(plan.rules.map((rule) => [rule.field, rule]));
+  const { identity } = explained.body;
+  // Serving checks a call's identity member before its fixed values, so a member both cannot take every recorded call.
   return (
     explained.body.accepted.some((member) => fixed.has(member)) ||
-    explained.body.fixed.some((entry) =>
-      body.accepted.includes(entry.member),
+    explained.body.fixed.some(
+      (entry) =>
+        body.accepted.includes(entry.member) ||
+        entry.member === body.identity ||
+        (fixed.has(entry.member) && !same(fixed.get(entry.member), entry.sent)),
     ) ||
+    (identity !== null && fixed.has(identity)) ||
     explained.rules.some((rule) => {
       const held = rules.get(rule.field);
       return held !== undefined && !same(held, rule);

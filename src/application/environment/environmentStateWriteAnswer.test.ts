@@ -777,6 +777,26 @@ describe("paged lines", () => {
     });
   });
 
+  it("answers a zero limit a whole line recorded empty from that recording once a create fills its collection", () => {
+    const alpha = { id: 1, name: "Alpha", org: "1" };
+    const beta = { id: 2, name: "Beta", org: "2" };
+    const books = servedFrom([
+      ["GET", "/api/orgs/1/books", [alpha]],
+      ["GET", "/api/orgs/1/books/1", alpha],
+      ["GET", "/api/orgs/2/books?limit=0", []],
+      ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+      ["GET", "/api/orgs/2/books/2", beta],
+    ]);
+    books.answer("post_orgs_books_by_id", { id: "2", body: { name: "Gamma" } });
+    // Only a recording that listed items under it shows that zero lists every entity.
+    expect(
+      books.answer("get_orgs_books_by_id", { id: "2", limit: "0" }),
+    ).toMatchObject({
+      body: [],
+      state: { source: "recording", reason: "page-exceeded" },
+    });
+  });
+
   it("answers a range the collection has outgrown from its recording", () => {
     const books = servedFrom([
       ["GET", "/api/books?_start=0&_end=2", [FIRST_BOOK, SECOND_BOOK]],

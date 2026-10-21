@@ -9,6 +9,7 @@ import {
   type JsonObject,
   type StateEntity,
   type StateListView,
+  type StateView,
 } from "./environmentStateRules.js";
 
 /** What one list query parameter does to a list, learned from the recorded lines it explains. */
@@ -99,11 +100,13 @@ export const queryValues = (
   return values;
 };
 
-/** Whether a list read's answer keeps the state's order: no sort its query learned applies to the read's values. */
-export const keepsStateOrder = (
-  query: ListQuery | undefined,
+/** Whether a passing read shows where a create placed its entity: a list read whose answer keeps the state's order, as no sort its query learned applies to the read's values. */
+export const placesCreates = (
+  view: StateView,
   call: string | undefined,
 ): boolean => {
+  if (view.shape !== "list") return false;
+  const { query } = view;
   const values = queryValues(call);
   return (
     query === undefined ||

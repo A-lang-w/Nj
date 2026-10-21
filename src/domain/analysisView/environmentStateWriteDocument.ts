@@ -134,6 +134,6 @@ export const applyDocument = (
   return {
     kind: "applied",
     targets: [documentTarget(tool)],
-    ...(fields === undefined ? {} : { fields }),
+    ...(fields === undefined ? {} : { fields, pointers: true }),
   };
 };

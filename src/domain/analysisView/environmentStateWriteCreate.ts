@@ -40,7 +40,7 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
-import { integerOf } from "./environmentStateWriteValues.js";
+import { integerOf, isUuid, readClock } from "./environmentStateWriteValues.js";
 
 /** The id a response names alone: a scalar body, or an object's id field or single scalar member. */
 const respondedId = (
@@ -186,6 +186,25 @@ const followsSequences = (
     return integerOf(created.fields[rule.field]) === next;
   });
 
+/** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values and UUID identities as UUIDs, and sequences in order. */
+const followsGenerated = (
+  context: EffectContext,
+  draft: WriteDraft,
+  created: Pick<StateEntity, "type" | "collection" | "fields">,
+): boolean =>
+  draft.plan.rules.every((rule) => {
+    const value = created.fields[rule.field];
+    if (rule.rule === "clock")
+      return (
+        JSON.stringify(readClock(value)?.format) === JSON.stringify(rule.format)
+      );
+    return (
+      (rule.rule !== "unique" &&
+        (rule.rule !== "identity" || rule.generator !== "uuid")) ||
+      isUuid(value)
+    );
+  }) && followsSequences(context, draft, created);
+
 /** Record the values a create's sequences took, which the next call follows. */
 const takeSequences = (
   draft: WriteDraft,
@@ -275,7 +294,7 @@ export const applyCreate = (
     id === undefined ||
     context.state.entity(type, collection, id) !== undefined ||
     (later &&
-      !followsSequences(context, draft, {
+      !followsGenerated(context, draft, {
         type,
         collection,
         fields: fields.value,

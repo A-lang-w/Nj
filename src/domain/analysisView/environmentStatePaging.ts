@@ -42,12 +42,19 @@ export const pageSize = (query: string | undefined): number | undefined => {
   for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
     const key = name.toLowerCase();
     if (!/^\d+$/u.test(value)) continue;
-    // A size of zero bounds nothing: applications read it as no limit, as a whole line naming it shows.
-    if (PAGE_SIZE_PARAMETERS.has(key)) {
-      if (Number(value) > 0) size = Math.min(size, Number(value));
-    } else if (key === "_start") range.start = Number(value);
+    if (PAGE_SIZE_PARAMETERS.has(key)) size = Math.min(size, Number(value));
+    else if (key === "_start") range.start = Number(value);
     else if (key === "_end") range.end = Number(value);
   }
   const width = Math.min(size, Math.max(range.end - range.start, 0));
   return Number.isFinite(width) ? width : undefined;
+};
+
+/** The most items a line's call lists: its page size, but none for a size of zero the line's own recording listed items under, as an application reading zero as no limit does. */
+export const pageBound = (
+  query: string | undefined,
+  recorded: number,
+): number | undefined => {
+  const size = pageSize(query);
+  return size === 0 && recorded > 0 ? undefined : size;
 };
