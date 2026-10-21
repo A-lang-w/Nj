@@ -1,6 +1,5 @@
 import { getHeapStatistics } from "node:v8";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Authentication clones parsed JSON and hashes its canonical commitment. */
@@ -36,7 +35,7 @@ export const requireAuthenticationHeadroom = (
     readonly description: string;
     readonly availableBytes?: number;
   },
-): Result<void, AnalysisError> => {
+): Result<void, AnalysisResourceConstraintError> => {
   const availableBytes =
     options.availableBytes ?? getHeapStatistics().total_available_size;
   const valueBytes = estimateJsonValueBytes(value);

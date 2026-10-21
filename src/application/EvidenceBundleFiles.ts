@@ -1,3 +1,4 @@
+import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 import {
@@ -78,6 +79,13 @@ const readBundle = async (
         cause: signal.reason,
       }),
     );
+  const headroom = requireAuthenticationHeadroom(loaded.value, {
+    operation: "import_evidence_bundle",
+    path: absoluteCallerPath(path),
+    description:
+      "Insufficient heap headroom to authenticate the Evidence bundle",
+  });
+  if (!headroom.ok) return headroom;
   let bundle: EvidenceBundle;
   try {
     bundle = parseBundle(loaded.value);
@@ -128,7 +136,11 @@ export const writeEvidenceBundle = async (
   >
 > => {
   if (signal?.aborted === true)
-    return err(new AnalysisCancelledError("export_evidence_bundle"));
+    return err(
+      new AnalysisCancelledError("export_evidence_bundle", {
+        cause: signal.reason,
+      }),
+    );
   let checked: EvidenceBundle;
   try {
     checked = parseEvidenceBundle(bundle);

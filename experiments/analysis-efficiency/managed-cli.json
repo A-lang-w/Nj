@@ -1,0 +1,1078 @@
+{
+  "status": "passed",
+  "tokenizer": "tiktoken==0.12.0/cl100k_base; estimates, not model usage",
+  "context_scope": "Question, supplied command recipe, actual selected-command help, all logical CLI argv and all stdout. No model invoked; reasoning, framing, irrelevant tool discovery and actual native-agent usage unmeasured.",
+  "cache_scope": "cold disables Node compile cache; warm primes the identical workflow once per runtime/mode before timing. Fresh processes and isolated HOME each trial; OS page cache uncontrolled.",
+  "resource_scope": "Whole task driver plus all CLI children; includes bundle publication/authentication, help, extra calls and local answer/oracle checking. Kernel cgroup peak includes file cache; not sampled RSS. Download/build/oracle preparation and priming excluded.",
+  "acquisition": {
+    "url": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg",
+    "package_bytes": 2441966,
+    "package_sha256": "872fc189e638ab1056555b03aaa38f68bcb54286e221aa646eb1129babf63c77",
+    "selected_member": "lib/net6.0/Newtonsoft.Json.dll",
+    "assembly_bytes": 712464,
+    "assembly_sha256": "22c649f75fce5be7c7ccda8880473b634ef69ecf33f5d1ab8ad892caf47d5a07",
+    "target_execution": false
+  },
+  "measurement_inputs": {
+    "baseline_revision": "0583fc69beccc03b46bc702348a4dd0bf783af95",
+    "feature_parent_revision": "0583fc69beccc03b46bc702348a4dd0bf783af95",
+    "merged_original_revision": "7b3ed4d025edd24d062cde0327a53bd311e174fc",
+    "feature_tracked_patch_sha256": "998f3f6f5b462b6d9c7b7279472bc31a0d4c71a0cb936ea1a2edaa4f2c04737d",
+    "untracked_source_sha256": {
+      "tests/process-global/managedBundleReadGuards.test.ts": "f53b26e85267a851a549cd76b59cc56851777b270a6a846d39366c3a32277d9e"
+    },
+    "node": "v24.18.0",
+    "npm": "11.16.0",
+    "oracle_packages": {
+      "dnfile": "0.18.0",
+      "pefile": "2024.8.26"
+    },
+    "no_overlapping_build_or_test": true,
+    "production_sources_sha256": {
+      "src/application/DirectAnalysis.ts": "abbb2ff38880c80ba0a42c36cf495985727f632c56ab32b24229e311b6bdde3d",
+      "src/application/EvidenceBundleCommands.ts": "c55d0a98c36f3a2543219eec78889beeee737f3fdcc7c643a896b4602cd48c6d",
+      "src/application/EvidenceBundleFiles.ts": "212df8168be9e9b1a864a84a7f332160211183d23722935f9159e64bc8a11e75",
+      "src/application/EvidenceInputResolver.test.ts": "96c1bf405fd7ae492da75959bb9285ec91c2f6abc2f161316057e1fd8efee5aa",
+      "src/application/EvidenceInputResolver.ts": "7b676ec2f70ad55b97c9a635dce51468101eca964e7a1205f9ce9633ec946f89",
+      "src/application/JsonAuthenticationHeadroom.ts": "a75a161ce5feee4d9d91ec184f608a1d79a07bb411abe7d9970c57b5a4dc20b1",
+      "src/cli/analysisViewCommands.ts": "5ec2dbfb72fc0dff3a3b3e83a865c74b86e1b7a2402fa5c9a342abb1a8a0bb98",
+      "src/cli/managedCommands.ts": "4bca27702452f426efeeb7a034fa78613c2db458eac7b3f1c0afca3b144d4700",
+      "src/composition/directAnalysis.ts": "d6d8002818fdb2d05d33d79563dd31dbe27e2d330a080ba9a9c64a99e9732006",
+      "src/domain/analysisErrorPresentation.ts": "293685c9dd89c107aabe63fb2fa7242c2fd0f42101683722badcdf8b2eb7e24c",
+      "src/dotnet/ManagedPe.fixture.ts": "710af895b190f3b5dbdb17d922c87d3ee699b99c4c5fb46d1f3601fad97bb1a5"
+    }
+  },
+  "summary": {
+    "cold": {
+      "complete": {
+        "wall_seconds": {
+          "median": 4.853,
+          "min": 4.852,
+          "max": 5.155
+        },
+        "cpu_seconds": {
+          "median": 4.651809,
+          "min": 4.622884,
+          "max": 4.912672
+        },
+        "peak_process_family_bytes_including_page_cache": {
+          "median": 406011904,
+          "min": 405032960,
+          "max": 407793664
+        },
+        "whole_task_tokens_estimated": [451373, 451373, 451373]
+      },
+      "selected": {
+        "wall_seconds": {
+          "median": 11.094,
+          "min": 10.994,
+          "max": 11.4
+        },
+        "cpu_seconds": {
+          "median": 10.858032,
+          "min": 10.821124,
+          "max": 11.123881
+        },
+        "peak_process_family_bytes_including_page_cache": {
+          "median": 409088000,
+          "min": 406396928,
+          "max": 410722304
+        },
+        "whole_task_tokens_estimated": [13078, 13078, 13078]
+      }
+    },
+    "warm": {
+      "complete": {
+        "wall_seconds": {
+          "median": 4.449,
+          "min": 4.349,
+          "max": 4.449
+        },
+        "cpu_seconds": {
+          "median": 4.23562,
+          "min": 4.165469,
+          "max": 4.279598
+        },
+        "peak_process_family_bytes_including_page_cache": {
+          "median": 409948160,
+          "min": 407953408,
+          "max": 411746304
+        },
+        "whole_task_tokens_estimated": [451373, 451373, 451373]
+      },
+      "selected": {
+        "wall_seconds": {
+          "median": 9.987,
+          "min": 9.885,
+          "max": 10.188
+        },
+        "cpu_seconds": {
+          "median": 9.804365,
+          "min": 9.662018,
+          "max": 9.954889
+        },
+        "peak_process_family_bytes_including_page_cache": {
+          "median": 415199232,
+          "min": 414998528,
+          "max": 416137216
+        },
+        "whole_task_tokens_estimated": [13078, 13078, 13078]
+      }
+    }
+  },
+  "runs": [
+    {
+      "case": "pair-cold-1-complete",
+      "mode": "complete",
+      "cache": "cold",
+      "wall_seconds": 5.155,
+      "cpu_seconds": 4.912672,
+      "peak_process_family_bytes_including_page_cache": 406011904,
+      "tokens_estimated": {
+        "question_and_recipe": 58,
+        "arguments": 50,
+        "help_and_replies": 451265,
+        "whole_task": 451373
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 2009.364312,
+          "stdout_bytes": 1134,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "complete",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--json"
+          ],
+          "elapsed_ms": 2755.6209650000005,
+          "stdout_bytes": 1374919,
+          "stdout_file": "complete.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-cold-1-selected",
+      "mode": "selected",
+      "cache": "cold",
+      "wall_seconds": 11.4,
+      "cpu_seconds": 11.123881,
+      "peak_process_family_bytes_including_page_cache": 410722304,
+      "tokens_estimated": {
+        "question_and_recipe": 93,
+        "arguments": 330,
+        "help_and_replies": 12655,
+        "whole_task": 13078
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1848.494177,
+          "stdout_bytes": 1487,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "help-view",
+          "arguments": ["rea", "inspect-analysis-view", "--help"],
+          "elapsed_ms": 1814.565518,
+          "stdout_bytes": 1219,
+          "stdout_file": "help-view.stdout"
+        },
+        {
+          "label": "summary",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--detail",
+            "summary",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2767.660519,
+          "stdout_bytes": 6940,
+          "stdout_file": "summary.stdout"
+        },
+        {
+          "label": "methods",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"methods\",\"offset\":0,\"limit\":8}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2563.1630350000005,
+          "stdout_bytes": 20274,
+          "stdout_file": "methods.stdout"
+        },
+        {
+          "label": "member_refs",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"member_refs\",\"offset\":0,\"limit\":16}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2043.434797,
+          "stdout_bytes": 13803,
+          "stdout_file": "member_refs.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-cold-2-complete",
+      "mode": "complete",
+      "cache": "cold",
+      "wall_seconds": 4.853,
+      "cpu_seconds": 4.651809,
+      "peak_process_family_bytes_including_page_cache": 405032960,
+      "tokens_estimated": {
+        "question_and_recipe": 58,
+        "arguments": 50,
+        "help_and_replies": 451265,
+        "whole_task": 451373
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1853.9194479999999,
+          "stdout_bytes": 1134,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "complete",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--json"
+          ],
+          "elapsed_ms": 2661.0237169999996,
+          "stdout_bytes": 1374919,
+          "stdout_file": "complete.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-cold-2-selected",
+      "mode": "selected",
+      "cache": "cold",
+      "wall_seconds": 10.994,
+      "cpu_seconds": 10.821124,
+      "peak_process_family_bytes_including_page_cache": 409088000,
+      "tokens_estimated": {
+        "question_and_recipe": 93,
+        "arguments": 330,
+        "help_and_replies": 12655,
+        "whole_task": 13078
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1846.855646,
+          "stdout_bytes": 1487,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "help-view",
+          "arguments": ["rea", "inspect-analysis-view", "--help"],
+          "elapsed_ms": 1879.2491530000002,
+          "stdout_bytes": 1219,
+          "stdout_file": "help-view.stdout"
+        },
+        {
+          "label": "summary",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--detail",
+            "summary",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2758.397931,
+          "stdout_bytes": 6940,
+          "stdout_file": "summary.stdout"
+        },
+        {
+          "label": "methods",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"methods\",\"offset\":0,\"limit\":8}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2104.1857419999997,
+          "stdout_bytes": 20274,
+          "stdout_file": "methods.stdout"
+        },
+        {
+          "label": "member_refs",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"member_refs\",\"offset\":0,\"limit\":16}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2120.3994349999994,
+          "stdout_bytes": 13803,
+          "stdout_file": "member_refs.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-cold-3-complete",
+      "mode": "complete",
+      "cache": "cold",
+      "wall_seconds": 4.852,
+      "cpu_seconds": 4.622884,
+      "peak_process_family_bytes_including_page_cache": 407793664,
+      "tokens_estimated": {
+        "question_and_recipe": 58,
+        "arguments": 50,
+        "help_and_replies": 451265,
+        "whole_task": 451373
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1866.052567,
+          "stdout_bytes": 1134,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "complete",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--json"
+          ],
+          "elapsed_ms": 2617.6381309999997,
+          "stdout_bytes": 1374919,
+          "stdout_file": "complete.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-cold-3-selected",
+      "mode": "selected",
+      "cache": "cold",
+      "wall_seconds": 11.094,
+      "cpu_seconds": 10.858032,
+      "peak_process_family_bytes_including_page_cache": 406396928,
+      "tokens_estimated": {
+        "question_and_recipe": 93,
+        "arguments": 330,
+        "help_and_replies": 12655,
+        "whole_task": 13078
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1884.884267,
+          "stdout_bytes": 1487,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "help-view",
+          "arguments": ["rea", "inspect-analysis-view", "--help"],
+          "elapsed_ms": 1937.2820480000003,
+          "stdout_bytes": 1219,
+          "stdout_file": "help-view.stdout"
+        },
+        {
+          "label": "summary",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--detail",
+            "summary",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2713.657254,
+          "stdout_bytes": 6940,
+          "stdout_file": "summary.stdout"
+        },
+        {
+          "label": "methods",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"methods\",\"offset\":0,\"limit\":8}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2104.0250909999995,
+          "stdout_bytes": 20274,
+          "stdout_file": "methods.stdout"
+        },
+        {
+          "label": "member_refs",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"member_refs\",\"offset\":0,\"limit\":16}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2123.2294039999997,
+          "stdout_bytes": 13803,
+          "stdout_file": "member_refs.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-warm-1-complete",
+      "mode": "complete",
+      "cache": "warm",
+      "wall_seconds": 4.449,
+      "cpu_seconds": 4.279598,
+      "peak_process_family_bytes_including_page_cache": 409948160,
+      "tokens_estimated": {
+        "question_and_recipe": 58,
+        "arguments": 50,
+        "help_and_replies": 451265,
+        "whole_task": 451373
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1733.299172,
+          "stdout_bytes": 1134,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "complete",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--json"
+          ],
+          "elapsed_ms": 2405.6920569999997,
+          "stdout_bytes": 1374919,
+          "stdout_file": "complete.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-warm-1-selected",
+      "mode": "selected",
+      "cache": "warm",
+      "wall_seconds": 10.188,
+      "cpu_seconds": 9.954889,
+      "peak_process_family_bytes_including_page_cache": 415199232,
+      "tokens_estimated": {
+        "question_and_recipe": 93,
+        "arguments": 330,
+        "help_and_replies": 12655,
+        "whole_task": 13078
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1680.236487,
+          "stdout_bytes": 1487,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "help-view",
+          "arguments": ["rea", "inspect-analysis-view", "--help"],
+          "elapsed_ms": 1723.9427949999997,
+          "stdout_bytes": 1219,
+          "stdout_file": "help-view.stdout"
+        },
+        {
+          "label": "summary",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--detail",
+            "summary",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2553.828363,
+          "stdout_bytes": 6940,
+          "stdout_file": "summary.stdout"
+        },
+        {
+          "label": "methods",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"methods\",\"offset\":0,\"limit\":8}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 1963.741774,
+          "stdout_bytes": 20274,
+          "stdout_file": "methods.stdout"
+        },
+        {
+          "label": "member_refs",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"member_refs\",\"offset\":0,\"limit\":16}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 1909.21339,
+          "stdout_bytes": 13803,
+          "stdout_file": "member_refs.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-warm-2-complete",
+      "mode": "complete",
+      "cache": "warm",
+      "wall_seconds": 4.449,
+      "cpu_seconds": 4.23562,
+      "peak_process_family_bytes_including_page_cache": 411746304,
+      "tokens_estimated": {
+        "question_and_recipe": 58,
+        "arguments": 50,
+        "help_and_replies": 451265,
+        "whole_task": 451373
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1727.280892,
+          "stdout_bytes": 1134,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "complete",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--json"
+          ],
+          "elapsed_ms": 2372.5166259999996,
+          "stdout_bytes": 1374919,
+          "stdout_file": "complete.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-warm-2-selected",
+      "mode": "selected",
+      "cache": "warm",
+      "wall_seconds": 9.987,
+      "cpu_seconds": 9.804365,
+      "peak_process_family_bytes_including_page_cache": 416137216,
+      "tokens_estimated": {
+        "question_and_recipe": 93,
+        "arguments": 330,
+        "help_and_replies": 12655,
+        "whole_task": 13078
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1682.414739,
+          "stdout_bytes": 1487,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "help-view",
+          "arguments": ["rea", "inspect-analysis-view", "--help"],
+          "elapsed_ms": 1683.210489,
+          "stdout_bytes": 1219,
+          "stdout_file": "help-view.stdout"
+        },
+        {
+          "label": "summary",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--detail",
+            "summary",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2464.181373,
+          "stdout_bytes": 6940,
+          "stdout_file": "summary.stdout"
+        },
+        {
+          "label": "methods",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"methods\",\"offset\":0,\"limit\":8}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 1948.6225210000002,
+          "stdout_bytes": 20274,
+          "stdout_file": "methods.stdout"
+        },
+        {
+          "label": "member_refs",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"member_refs\",\"offset\":0,\"limit\":16}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 1913.9987530000008,
+          "stdout_bytes": 13803,
+          "stdout_file": "member_refs.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-warm-3-complete",
+      "mode": "complete",
+      "cache": "warm",
+      "wall_seconds": 4.349,
+      "cpu_seconds": 4.165469,
+      "peak_process_family_bytes_including_page_cache": 407953408,
+      "tokens_estimated": {
+        "question_and_recipe": 58,
+        "arguments": 50,
+        "help_and_replies": 451265,
+        "whole_task": 451373
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1721.2835779999998,
+          "stdout_bytes": 1134,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "complete",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--json"
+          ],
+          "elapsed_ms": 2307.073857,
+          "stdout_bytes": 1374919,
+          "stdout_file": "complete.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "case": "pair-warm-3-selected",
+      "mode": "selected",
+      "cache": "warm",
+      "wall_seconds": 9.885,
+      "cpu_seconds": 9.662018,
+      "peak_process_family_bytes_including_page_cache": 414998528,
+      "tokens_estimated": {
+        "question_and_recipe": 93,
+        "arguments": 330,
+        "help_and_replies": 12655,
+        "whole_task": 13078
+      },
+      "calls": [
+        {
+          "label": "help-members",
+          "arguments": ["rea", "inspect-managed-members", "--help"],
+          "elapsed_ms": 1648.121179,
+          "stdout_bytes": 1487,
+          "stdout_file": "help-members.stdout"
+        },
+        {
+          "label": "help-view",
+          "arguments": ["rea", "inspect-analysis-view", "--help"],
+          "elapsed_ms": 1638.4212550000002,
+          "stdout_bytes": 1219,
+          "stdout_file": "help-view.stdout"
+        },
+        {
+          "label": "summary",
+          "arguments": [
+            "rea",
+            "inspect-managed-members",
+            "/tmp/rea-perf-managed-cli-20261021/Newtonsoft.Json.dll",
+            "--type",
+            "Newtonsoft.Json.JsonConvert",
+            "--detail",
+            "summary",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 2484.736107,
+          "stdout_bytes": 6940,
+          "stdout_file": "summary.stdout"
+        },
+        {
+          "label": "methods",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"methods\",\"offset\":0,\"limit\":8}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 1871.56308,
+          "stdout_bytes": 20274,
+          "stdout_file": "methods.stdout"
+        },
+        {
+          "label": "member_refs",
+          "arguments": [
+            "rea",
+            "inspect-analysis-view",
+            "{\"source\":{\"kind\":\"retained-evidence\",\"evidence_id\":\"ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af\"},\"view\":{\"kind\":\"managed-members\",\"collection\":\"member_refs\",\"offset\":0,\"limit\":16}}",
+            "--evidence-bundle",
+            "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
+            "--json"
+          ],
+          "elapsed_ms": 1890.1908640000001,
+          "stdout_bytes": 13803,
+          "stdout_file": "member_refs.stdout"
+        }
+      ],
+      "parent_evidence_id": "ev_fd7bfb9b0a4c0b856f03511a9af2809b22cdb4be0d03acd0f1e72931199577af",
+      "parent_semantic_sha256": "bdb3ecd208b39fac03dd1dadf6b65ee0f35f69bc7e10f9ebca0d0cd91a024c87",
+      "answer_sha256": "5185257209a53a252eee3eede05abfbbec9c3f5ee1b313c8ffa0df89a43c7397",
+      "oracle_verified": {
+        "all_selected_method_metadata": 72,
+        "returned_methods": 8,
+        "returned_member_refs": 16
+      },
+      "cleanup_verified": true,
+      "resource_events": {
+        "memory.events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "pids.events": {
+          "max": 0
+        }
+      }
+    }
+  ],
+  "existing_native_control": {
+    "runtime": "unchanged baseline",
+    "repetitions": 1,
+    "tokens_estimated_script_plus_help_plus_answer": 10345,
+    "token_scope": "Projection source, original CLI help and returned answer; excludes shared question and launcher argv. No actual model usage measured.",
+    "wall_seconds": 4.859,
+    "cpu_seconds": 4.614887,
+    "peak_process_family_bytes_including_page_cache": 394600448,
+    "answer_matches": true,
+    "cleanup_verified": true
+  }
+}
