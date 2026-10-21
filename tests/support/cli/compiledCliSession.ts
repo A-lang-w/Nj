@@ -6,6 +6,7 @@ import { z } from "zod";
 import { waitForExit } from "../process/processFixture.js";
 
 const START_TIMEOUT_MS = 20_000;
+const REQUEST_TIMEOUT_MS = 20_000;
 const STOP_TIMEOUT_MS = 1_000;
 const STDERR_TAIL_CHARS = 4_000;
 const workerPath = fileURLToPath(
@@ -38,6 +39,9 @@ interface SessionState {
   stderr: string;
   closed: boolean;
   ready: boolean;
+  readonly requestTimeoutMs: number;
+  readonly stopTimeoutMs: number;
+  readonly spawnWorker: () => ChildProcessWithoutNullStreams;
 }
 
 /** One warm compiled CLI process serving production JSON commands. */
@@ -46,16 +50,42 @@ export interface CompiledCliSession {
   close(): Promise<void>;
 }
 
+/** Limits and process factory for session tests. Production callers omit them. */
+export interface CompiledCliSessionOptions {
+  readonly spawnWorker?: () => ChildProcessWithoutNullStreams;
+  readonly requestTimeoutMs?: number;
+  readonly stopTimeoutMs?: number;
+}
+
 /** Start a session that loads the compiled CLI once and reuses that process. */
-export const startCompiledCliSession = (): CompiledCliSession => {
-  const state = createSessionState();
+export const startCompiledCliSession = (
+  options: CompiledCliSessionOptions = {},
+): CompiledCliSession => {
+  const state = createSessionState(options);
   return {
     run: (args) => enqueue(state, () => dispatch(state, args)),
     close: () => closeSession(state),
   };
 };
 
-const createSessionState = (): SessionState => ({
+const positiveMilliseconds = (
+  value: number | undefined,
+  fallback: number,
+): number =>
+  value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : fallback;
+
+const defaultSpawnWorker = (): ChildProcessWithoutNullStreams =>
+  spawn(process.execPath, [workerPath], {
+    cwd: process.cwd(),
+    env: { ...process.env, REA_LOG_LEVEL: "silent" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+const createSessionState = (
+  options: CompiledCliSessionOptions,
+): SessionState => ({
   child: undefined,
   starting: undefined,
   buffer: "",
@@ -65,6 +95,12 @@ const createSessionState = (): SessionState => ({
   stderr: "",
   closed: false,
   ready: false,
+  requestTimeoutMs: positiveMilliseconds(
+    options.requestTimeoutMs,
+    REQUEST_TIMEOUT_MS,
+  ),
+  stopTimeoutMs: positiveMilliseconds(options.stopTimeoutMs, STOP_TIMEOUT_MS),
+  spawnWorker: options.spawnWorker ?? defaultSpawnWorker,
 });
 
 const enqueue = (
@@ -101,11 +137,43 @@ const request = (
   args: readonly string[],
 ): Promise<CliResponse> =>
   new Promise((resolve, reject) => {
-    state.pending.set(id, { resolve, reject });
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settle = (finish: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      state.pending.delete(id);
+      finish();
+    };
+    timer = setTimeout(() => {
+      settle(() => {
+        reject(
+          new Error(
+            `Compiled CLI command did not respond within ${String(state.requestTimeoutMs)} ms`,
+          ),
+        );
+        retireChild(state, child);
+      });
+    }, state.requestTimeoutMs);
+    timer.unref();
+    state.pending.set(id, {
+      resolve: (response) => {
+        settle(() => {
+          resolve(response);
+        });
+      },
+      reject: (cause) => {
+        settle(() => {
+          reject(cause);
+        });
+      },
+    });
     child.stdin.write(`${JSON.stringify({ id, args })}\n`, (cause) => {
       if (cause === undefined || cause === null) return;
-      state.pending.delete(id);
-      reject(cause);
+      settle(() => {
+        reject(cause);
+      });
     });
   });
 
@@ -126,11 +194,7 @@ const ensureStarted = (state: SessionState): Promise<void> => {
 
 const launch = (state: SessionState): Promise<void> =>
   new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [workerPath], {
-      cwd: process.cwd(),
-      env: { ...process.env, REA_LOG_LEVEL: "silent" },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = state.spawnWorker();
     state.child = child;
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -145,10 +209,14 @@ const launch = (state: SessionState): Promise<void> =>
       clearTimeout(timer);
       reject(cause instanceof Error ? cause : new Error(String(cause)));
     };
+    const currentChild = (): boolean => state.child === child;
     child.once("error", fail);
     child.once("exit", (code, signal) => {
+      if (!currentChild()) return;
       state.child = undefined;
       state.ready = false;
+      state.starting = undefined;
+      state.buffer = "";
       const cause = new Error(
         `Compiled CLI session exited (${String(code)}, ${String(signal)})\n${state.stderr}`,
       );
@@ -157,10 +225,12 @@ const launch = (state: SessionState): Promise<void> =>
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
+      if (!currentChild()) return;
       state.stderr = `${state.stderr}${chunk}`.slice(-STDERR_TAIL_CHARS);
     });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
+      if (!currentChild()) return;
       state.buffer += chunk;
       drainLines(state, () => {
         clearTimeout(timer);
@@ -169,6 +239,19 @@ const launch = (state: SessionState): Promise<void> =>
       });
     });
   });
+
+const retireChild = (
+  state: SessionState,
+  child: ChildProcessWithoutNullStreams,
+): void => {
+  if (state.child === child) {
+    state.child = undefined;
+    state.ready = false;
+    state.starting = undefined;
+    state.buffer = "";
+  }
+  child.kill("SIGKILL");
+};
 
 const drainLines = (state: SessionState, onReady: () => void): void => {
   let newline = state.buffer.indexOf("\n");
@@ -233,12 +316,14 @@ const closeSession = async (state: SessionState): Promise<void> => {
   if (child === undefined) return;
   rejectPending(state, sessionClosed());
   child.stdin.end();
-  if (await waitForExit(child, STOP_TIMEOUT_MS)) return;
+  if (await waitForExit(child, state.stopTimeoutMs)) return;
   child.kill("SIGTERM");
-  if (await waitForExit(child, STOP_TIMEOUT_MS)) return;
-  child.kill("SIGKILL");
-  if (!(await waitForExit(child, STOP_TIMEOUT_MS)))
-    throw new Error("Compiled CLI session stayed running after SIGKILL");
+  if (!(await waitForExit(child, state.stopTimeoutMs))) {
+    child.kill("SIGKILL");
+    if (!(await waitForExit(child, state.stopTimeoutMs)))
+      throw new Error("Compiled CLI session stayed running after SIGKILL");
+  }
+  throw new Error("Compiled CLI session did not exit after stdin closed");
 };
 
 const sessionClosed = (): Error => new Error("Compiled CLI session is closed");

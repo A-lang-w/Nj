@@ -46,48 +46,59 @@ const resetOutput = () => {
 };
 
 const runCommand = async (args) => {
+  const previousExitCode = process.exitCode;
   process.exitCode = undefined;
   resetOutput();
-  const cliArgs = normalizeCliArguments(args);
-  const outputArguments = validateCliOutputArguments(cliArgs);
-  if (!outputArguments.ok)
-    return {
-      exitCode: 1,
-      stdout: renderCliOutputArgumentError(outputArguments),
-    };
-  const configurationError = cliConfigurationError(process.env);
-  if (configurationError !== undefined)
-    return { exitCode: 1, stdout: "", error: configurationError };
-
-  let wroteOutput = false;
-  let exitCode = 0;
   try {
-    await cli.serve(cliArgs, {
-      stdout: (output) => {
-        if (resultOutput?.handled) return;
-        if (output.length === 0) return;
-        wroteOutput = true;
-        destination.write(output);
-      },
-      exit: (code) => {
-        exitCode = code;
-      },
-    });
-  } catch (cause) {
-    process.exitCode = undefined;
+    const cliArgs = normalizeCliArguments(args);
+    const outputArguments = validateCliOutputArguments(cliArgs);
+    if (!outputArguments.ok)
+      return {
+        exitCode: 1,
+        stdout: renderCliOutputArgumentError(outputArguments),
+      };
+    const configurationError = cliConfigurationError(process.env);
+    if (configurationError !== undefined)
+      return { exitCode: 1, stdout: "", error: configurationError };
+
+    let wroteOutput = false;
+    let explicitExit;
+    try {
+      await cli.serve(cliArgs, {
+        stdout: (output) => {
+          if (resultOutput?.handled) return;
+          if (output.length === 0) return;
+          wroteOutput = true;
+          destination.write(output);
+        },
+        exit: (code) => {
+          explicitExit = code;
+        },
+      });
+    } catch (cause) {
+      return {
+        exitCode: 1,
+        stdout: outputParts.join(""),
+        error:
+          cause instanceof Error
+            ? (cause.stack ?? cause.message)
+            : String(cause),
+      };
+    }
+    if (!wroteOutput && !resultOutput?.handled) {
+      const empty = renderEmptyFilteredCliOutput(cliArgs);
+      if (empty !== undefined) destination.write(empty);
+    }
+    // logCliCommand reports some failures only through process.exitCode.
     return {
-      exitCode: 1,
+      exitCode:
+        explicitExit ??
+        (typeof process.exitCode === "number" ? process.exitCode : 0),
       stdout: outputParts.join(""),
-      error:
-        cause instanceof Error ? (cause.stack ?? cause.message) : String(cause),
     };
+  } finally {
+    process.exitCode = previousExitCode;
   }
-  if (!wroteOutput && !resultOutput?.handled) {
-    const empty = renderEmptyFilteredCliOutput(cliArgs);
-    if (empty !== undefined) destination.write(empty);
-  }
-  process.exitCode = undefined;
-  return { exitCode, stdout: outputParts.join("") };
 };
 
 const acceptRequest = async (line) => {
