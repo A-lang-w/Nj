@@ -7,5 +7,5 @@
 - [x] Serve query lines and calls with new values from the state.
 - [x] Add unit, domain and serving tests.
 - [x] Document list queries.
-- [ ] Measure the published captures and the six environments before and after.
-- [ ] Run static, formatting, duplication, documentation and test gates.
+- [x] Measure the published captures and the six environments before and after.
+- [x] Run static, formatting, duplication, documentation and test gates.
