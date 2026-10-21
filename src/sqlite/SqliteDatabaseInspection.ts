@@ -10,8 +10,13 @@ import {
 } from "../domain/sqlite/sqliteDatabase.js";
 import {
   SQLITE_DATABASE_LIMITS,
+  SqliteColumnEvaluationFailure,
   SqliteInspectionFailure,
+  sqlitePrimaryResultCode,
 } from "./SqliteDatabaseLimits.js";
+
+/** SQLite's generic SQL error, raised while compiling or evaluating an expression. */
+const SQLITE_ERROR = 1;
 
 const natural = z
   .bigint()
@@ -419,6 +424,60 @@ const readSchema = (
   return { schema, selectedTable };
 };
 
+/**
+ * Attribute an SQL error from selected cells to the virtual generated columns
+ * that raise it on this connection. Only those cells evaluate expressions when
+ * read; any other cause keeps its original classification.
+ */
+const columnEvaluationFailure = (
+  db: DatabaseSync,
+  cause: unknown,
+  selection: {
+    readonly table: SelectedTableFacts;
+    readonly columns: readonly string[];
+    readonly source: string;
+    readonly limit: number;
+  },
+): unknown => {
+  if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
+  const { table, columns, source, limit } = selection;
+  const generated = new Set(
+    table.columns
+      .filter((column) => column.hidden === 2)
+      .map((column) => column.name),
+  );
+  const failed = new Map<string, string>();
+  for (const name of new Set(columns)) {
+    if (!generated.has(name)) continue;
+    try {
+      // The aggregate evaluates the expression for exactly the sampled rows.
+      db.prepare(
+        `SELECT count(typeof(${quoteIdentifier(name)})) FROM (SELECT ${quoteIdentifier(name)} FROM ${source} LIMIT ?)`,
+      ).get(limit);
+    } catch (probe: unknown) {
+      if (sqlitePrimaryResultCode(probe) === SQLITE_ERROR)
+        failed.set(
+          name,
+          probe instanceof Error ? probe.message : String(probe),
+        );
+    }
+  }
+  if (failed.size === 0) return cause;
+  const remaining = columns.filter((name) => !failed.has(name));
+  return new SqliteColumnEvaluationFailure(
+    `SQLite cannot evaluate selected generated column(s) of table ${JSON.stringify(table.name)} on REA's read-only connection: ${[
+      ...failed,
+    ]
+      .map(([name, reason]) => `${JSON.stringify(name)}: ${reason}`)
+      .join("; ")}`,
+    remaining.length > 0
+      ? remaining
+      : table.columns
+          .filter((column) => column.hidden === 0 || column.hidden === 3)
+          .map((column) => column.name),
+  );
+};
+
 const readRows = (
   db: DatabaseSync,
   input: InspectSqliteDatabaseInput,
@@ -460,19 +519,6 @@ const readRows = (
     })
     .join(", ");
   const source = `main.${quoteIdentifier(input.table)} NOT INDEXED`;
-  const lengths = db.prepare(
-    `SELECT ${columns
-      .map((name) => {
-        const column = quoteIdentifier(name);
-        return `CASE typeof(${column}) WHEN 'text' THEN length(CAST(${column} AS BLOB)) WHEN 'blob' THEN length(${column}) ELSE 0 END`;
-      })
-      .join(", ")} FROM ${source} LIMIT ?`,
-  );
-  lengths.setReturnArrays(true);
-  for (const raw of lengths.iterate(limit))
-    budget.beforeProjection(cellByteLengths.parse(raw));
-  const statement = db.prepare(`SELECT ${projection} FROM ${source} LIMIT ?`);
-  statement.setReturnArrays(true);
   const rows: NonNullable<SqliteDatabase["rows"]> = {
     table: input.table,
     columns,
@@ -482,13 +528,32 @@ const readRows = (
     truncated: false,
     order: "unspecified",
   };
-  for (const raw of statement.iterate(limit)) {
-    const rawRow = arrayRow.parse(raw);
-    // Hex expansion already belongs to the retained-output budget, before decoding/copying cells.
-    budget.beforeDecode(rawRow);
-    const values = rawRow.map((value) => cell(value, encoding));
-    budget.retain(values);
-    rows.values.push(values);
+  // SQLite compiles and evaluates only selected cells, so an SQL error here is
+  // attributed to the selected generated expressions rather than the file.
+  try {
+    const lengths = db.prepare(
+      `SELECT ${columns
+        .map((name) => {
+          const column = quoteIdentifier(name);
+          return `CASE typeof(${column}) WHEN 'text' THEN length(CAST(${column} AS BLOB)) WHEN 'blob' THEN length(${column}) ELSE 0 END`;
+        })
+        .join(", ")} FROM ${source} LIMIT ?`,
+    );
+    lengths.setReturnArrays(true);
+    for (const raw of lengths.iterate(limit))
+      budget.beforeProjection(cellByteLengths.parse(raw));
+    const statement = db.prepare(`SELECT ${projection} FROM ${source} LIMIT ?`);
+    statement.setReturnArrays(true);
+    for (const raw of statement.iterate(limit)) {
+      const rawRow = arrayRow.parse(raw);
+      // Hex expansion already belongs to the retained-output budget, before decoding/copying cells.
+      budget.beforeDecode(rawRow);
+      const values = rawRow.map((value) => cell(value, encoding));
+      budget.retain(values);
+      rows.values.push(values);
+    }
+  } catch (cause: unknown) {
+    throw columnEvaluationFailure(db, cause, { table, columns, source, limit });
   }
   rows.returned_rows = rows.values.length;
   rows.truncated =

@@ -39,7 +39,7 @@ const {
   ...inspectionShape
 } = sqliteDatabaseSchema.shape;
 const inspectionSchema = z.strictObject(inspectionShape);
-const replySchema = z.discriminatedUnion("ok", [
+const replySchema = z.union([
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
   z.strictObject({
     ok: z.literal(false),
@@ -53,6 +53,12 @@ const replySchema = z.discriminatedUnion("ok", [
       "memory",
     ]),
     message: z.string(),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    reason: z.literal("column-evaluation"),
+    message: z.string(),
+    readable_columns: z.array(z.string()),
   }),
 ]);
 /** Replaceable launcher retains the shared owned-process supervision boundary. */
@@ -80,6 +86,23 @@ const rejectedReply = (
       reply.message,
       { capturedOutput, userMessage: reply.message },
     );
+  if (reply.reason === "column-evaluation") {
+    const readable = reply.readable_columns;
+    return new AnalysisCapabilityUnavailableError(
+      "sqlite",
+      operation,
+      reply.message,
+      {
+        capturedOutput,
+        userMessage: reply.message,
+        remediationAction: `The database is readable; only these computed values failed. REA's SQLite connection loads no extensions or application functions and disables schema trust. ${
+          readable.length === 0
+            ? "Select other stored columns explicitly"
+            : `Select the remaining columns: columns: ${JSON.stringify(readable)} (CLI: ${readable.map((name) => `--column ${JSON.stringify(name)}`).join(" ")})`
+        }, or omit table and use schema_scope: database to read the generation expressions without evaluating rows. Obtaining these values needs a SQLite connection able to evaluate their expressions. Do not repeat the unchanged request.`,
+      },
+    );
+  }
   if (reply.reason === "memory")
     return new AnalysisResourceConstraintError(
       operation,
