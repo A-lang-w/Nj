@@ -1,5 +1,8 @@
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactTraversalOptions,
+} from "../artifacts/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { chmod, open } from "node:fs/promises";
 import { join } from "node:path";
@@ -143,7 +146,12 @@ export class ApktoolWorkspace {
     path: string,
     budget: number,
     signal?: AbortSignal,
-  ): Promise<{ text: string | null; truncated: boolean }> {
+  ): Promise<{
+    text: string | null;
+    truncated: boolean;
+    /** Raw bytes represented by the retained prefix, before UTF-8 decoding. */
+    sourceBytes: number;
+  }> {
     let admitted = false;
     try {
       return await withArtifactRegularFile(
@@ -172,13 +180,15 @@ export class ApktoolWorkspace {
               `Apktool output changed while being read: ${path}`,
             );
           const truncated = length > budget;
+          const sourceBytes = Math.min(length, budget);
           try {
             return {
               text: new TextDecoder("utf-8", { fatal: true }).decode(
-                bytes.subarray(0, Math.min(length, budget)),
+                bytes.subarray(0, sourceBytes),
                 { stream: truncated },
               ),
               truncated,
+              sourceBytes,
             };
           } catch (cause) {
             throw new AnalysisProtocolError(
@@ -195,21 +205,26 @@ export class ApktoolWorkspace {
         "code" in cause &&
         cause.code === "ENOENT"
       )
-        return { text: null, truncated: false };
+        return { text: null, truncated: false, sourceBytes: 0 };
       throw cause;
     }
   }
 
-  async *entries(path: string, signal?: AbortSignal, maximumEntries?: number) {
+  async *entries(
+    path: string,
+    signal?: AbortSignal,
+    maximumEntries?: number,
+    onOmission?: ArtifactTraversalOptions["onOmission"],
+  ) {
     const reader = new DirectoryArtifactReader(path);
     const owner = { kind: "reader" as const, resource: path, reader };
     this.#files.retain(owner);
     let failed: { cause: unknown } | undefined;
     try {
-      yield* reader.entries(
-        signal,
-        maximumEntries === undefined ? undefined : { maximumEntries },
-      );
+      yield* reader.entries(signal, {
+        ...(maximumEntries === undefined ? {} : { maximumEntries }),
+        ...(onOmission === undefined ? {} : { onOmission }),
+      });
     } catch (cause) {
       failed = { cause };
       throw cause;

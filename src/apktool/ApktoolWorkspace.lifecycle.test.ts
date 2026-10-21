@@ -16,12 +16,17 @@ import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
-  return { ...actual, open: vi.fn(actual.open) };
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    opendir: vi.fn(actual.opendir),
+  };
 });
 const actual =
   await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 afterEach(() => {
   vi.mocked(fs.open).mockImplementation(actual.open);
+  vi.mocked(fs.opendir).mockImplementation(actual.opendir);
 });
 
 it.each(["source", "snapshot", "output"] as const)(
@@ -144,7 +149,7 @@ it("records cancellation observed during a successful output descriptor close", 
     expect(failure.fileCancellation.reason).toBe(reason);
     expect(failure.fileCancellation.outcome).toEqual({
       kind: "completed",
-      value: { text: "<resources/>", truncated: false },
+      value: { text: "<resources/>", truncated: false, sourceBytes: 12 },
     });
   } finally {
     await workspace.close();
@@ -245,18 +250,152 @@ it.skipIf(process.platform === "win32")(
         undefined,
         3,
       );
-      expect(result.capped).toBe(true);
-      expect(result.count).toBeLessThanOrEqual(2);
+      if (!result.ok) throw result.error.cause;
+      expect(result.value.capped).toBe(true);
+      expect(result.value.count).toBeLessThanOrEqual(2);
       const complete = await countDecodedFiles(
         workspace,
         root.path,
         undefined,
         6,
       );
-      expect(complete).toEqual({ count: 2, capped: false, locales: [] });
+      if (!complete.ok) throw complete.error.cause;
+      expect(complete.value).toEqual({
+        count: 2,
+        capped: false,
+        locales: [],
+        otherStringsTables: [],
+        unreadableStringsTables: [],
+      });
     } finally {
       await workspace.close();
       await commands.close();
     }
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "inventories only observed regular tables and discloses non-regular and unknown entries",
+  async () => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-apktool-tables-test-",
+    });
+    const commands = new ApktoolCommandCleanup();
+    const workspace = new ApktoolWorkspace(root, commands);
+    const regular = ["de", "en-rUS-v21", "mcc310-fr", "night", "pt-BR", ""];
+    const nonRegular = ["fr", "it", "es"];
+    try {
+      for (const suffix of [...regular, ...nonRegular, "ja"])
+        await fs.mkdir(join(root.path, "res", `values-${suffix}`), {
+          recursive: true,
+        });
+      for (const suffix of regular)
+        await fs.writeFile(
+          join(root.path, "res", `values-${suffix}`, "strings.xml"),
+          "<resources/>",
+        );
+      await fs.symlink(
+        join(root.path, "res/values-de/strings.xml"),
+        join(root.path, "res/values-fr/strings.xml"),
+      );
+      await promisify(execFile)("mkfifo", [
+        join(root.path, "res/values-it/strings.xml"),
+      ]);
+      await fs.mkdir(join(root.path, "res/values-es/strings.xml"));
+      const result = await countDecodedFiles(
+        workspace,
+        root.path,
+        undefined,
+        100,
+      );
+      if (!result.ok) throw result.error.cause;
+      expect(result.value).toEqual({
+        count: regular.length,
+        capped: false,
+        locales: ["de"],
+        otherStringsTables: [
+          "values-",
+          "values-en-rUS-v21",
+          "values-mcc310-fr",
+          "values-night",
+          "values-pt-BR",
+        ],
+        unreadableStringsTables: [
+          { path: "res/values-es/strings.xml", kind: "directory" },
+          { path: "res/values-fr/strings.xml", kind: "symlink" },
+          { path: "res/values-it/strings.xml", kind: "fifo" },
+        ],
+      });
+    } finally {
+      await workspace.close();
+      await commands.close();
+    }
+  },
+);
+
+it("preserves a directory inspection failure instead of treating its locale table as absent", async () => {
+  const root = await PrivateRuntimeRoot.create({
+    prefix: "rea-apktool-tables-test-",
+  });
+  const commands = new ApktoolCommandCleanup();
+  const workspace = new ApktoolWorkspace(root, commands);
+  const blocked = join(root.path, "res/values-fr");
+  try {
+    await fs.mkdir(blocked, { recursive: true });
+    await fs.writeFile(join(root.path, "known.txt"), "completed");
+    await fs.writeFile(join(blocked, "strings.xml"), "<resources/>");
+    vi.mocked(fs.opendir).mockImplementation(async (path, options) => {
+      if (String(path) === blocked)
+        throw Object.assign(new Error("authored directory inspection denial"), {
+          code: "EACCES",
+        });
+      return actual.opendir(path, options);
+    });
+    await expect(
+      countDecodedFiles(workspace, root.path, undefined, 100),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        partial: { count: 1 },
+        cause: {
+          reason: "io",
+          message: expect.stringContaining(
+            "authored directory inspection denial",
+          ),
+        },
+      },
+    });
+  } finally {
+    await workspace.close();
+    await commands.close();
+  }
+});
+
+it("reports raw retained-prefix bytes when UTF-8 decoding removes a BOM", async () => {
+  const root = await PrivateRuntimeRoot.create({
+    prefix: "rea-apktool-source-bytes-",
+  });
+  const commands = new ApktoolCommandCleanup();
+  const workspace = new ApktoolWorkspace(root, commands);
+  const output = join(root.path, "strings.xml");
+  const bytes = Buffer.from("\uFEFF<resources/>", "utf8");
+  try {
+    await fs.writeFile(output, bytes);
+    await expect(workspace.readText(output, 100)).resolves.toEqual({
+      text: "<resources/>",
+      truncated: false,
+      sourceBytes: bytes.length,
+    });
+    await expect(workspace.readText(output, 5)).resolves.toEqual({
+      text: "<r",
+      truncated: true,
+      sourceBytes: 5,
+    });
+    await expect(
+      workspace.readText(join(root.path, "missing.xml"), 100),
+    ).resolves.toEqual({ text: null, truncated: false, sourceBytes: 0 });
+  } finally {
+    await workspace.close();
+    await commands.close();
+  }
+});
