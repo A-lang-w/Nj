@@ -80,7 +80,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   writeStdout(result.output);
   process.exitCode = result.exitCode;
 } else {
-  const { cliConfigurationError, createCli } =
+  const { cliConfigurationError, closeCliJavaScriptResources, createCli } =
     await import("../dist/cli-runtime/cli.js");
   const { createCliResultOutput } =
     await import("../dist/cli-runtime/cliResultOutput.js");
@@ -117,7 +117,14 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           writeStdout(output);
         },
         // A command failure caused by the closed pipe keeps the pipe's status.
-        exit: (code) => process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : code),
+        exit: (code) => {
+          const status = stdoutClosed ? SIGPIPE_EXIT_STATUS : code;
+          // Incur exits the process from this callback. Stop the retained
+          // JavaScript worker first so its private root is not left behind.
+          void closeCliJavaScriptResources().finally(() =>
+            process.exit(status),
+          );
+        },
       });
     } catch (cause) {
       if (wroteOutput) throw cause;
@@ -135,6 +142,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     if (!wroteOutput && !resultOutput?.handled)
       writeStdout(renderEmptyFilteredCliOutput(cliArgs) ?? "");
   }
+  await closeCliJavaScriptResources();
 }
 
 /** True when the first positional command is `doctor`, after global output flags. */

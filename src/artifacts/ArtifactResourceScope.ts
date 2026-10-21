@@ -95,6 +95,8 @@ export class ArtifactResourceScope {
   >();
   readonly #active = new Set<Promise<unknown>>();
   #draining: Promise<void> | undefined;
+  #closeInFlight: Promise<void> | undefined;
+  #closeHook: (() => Promise<void>) | undefined;
   #closed = false;
 
   get hasPending(): boolean {
@@ -203,10 +205,47 @@ export class ArtifactResourceScope {
     return this.#draining;
   }
 
+  /**
+   * Run after retained owners are released. The hook stays registered so a
+   * later close retries it. Concurrent closes share one in-flight attempt.
+   */
+  addCloseHook(hook: () => Promise<void>): void {
+    const previous = this.#closeHook;
+    this.#closeHook =
+      previous === undefined
+        ? hook
+        : async () => {
+            await previous();
+            await hook();
+          };
+  }
+
   /** Stop admission, wait for active operations, and retry every retained owner. */
   close(): Promise<void> {
     this.#closed = true;
-    return this.retryCleanup();
+    if (this.#closeInFlight !== undefined) return this.#closeInFlight;
+    const attempt = this.#finishClose();
+    let published: Promise<void>;
+    published = attempt.finally(() => {
+      if (this.#closeInFlight === published) this.#closeInFlight = undefined;
+    });
+    this.#closeInFlight = published;
+    return published;
+  }
+
+  async #finishClose(): Promise<void> {
+    // A parked analyzer is not a pending owner. Stop it even when another
+    // retained cleanup is still failing, and keep that cleanup as the error.
+    const cleanup = await this.retryCleanup().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    try {
+      await this.#closeHook?.();
+    } catch (hook: unknown) {
+      if (cleanup === undefined) throw hook;
+    }
+    if (cleanup !== undefined) throw cleanup;
   }
 
   async #drainAndRetry(): Promise<void> {
