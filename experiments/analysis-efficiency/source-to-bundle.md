@@ -4,6 +4,9 @@ Issue #6112. Baseline: `main@aa51e4343963fdd0b97ec2ebdc3c41579fd9cb38`.
 Measured implementation: the production-file SHA-256 manifest in
 [source-to-bundle.json](source-to-bundle.json). These are working-tree
 measurements, not a claim that the baseline commit already contains the feature.
+The original cohort predates a CLI-only error-envelope compatibility fix, pinned
+separately in the JSON. Its invalid-application output was checked against the
+baseline and restored exactly; MCP producer/view code is unchanged.
 
 ## Analyst question and correctness
 
@@ -80,6 +83,31 @@ facts agree after excluding expected Evidence lineage. Those single-run
 observations demonstrate question-specific existing task selection, not a new
 semantic-analysis optimization or equal-coverage performance claim.
 
+## Existing output-schema selection
+
+A second six-task cohort explicitly selects the existing
+`REA_MCP_OUTPUT_SCHEMA_PROFILE=off` for **both** workflows, with baseline
+`main@01788bac8`. REA still validates successful results against the canonical
+contracts and returns complete structured content; clients do not receive output
+schemas to compile. This is an explicit caller configuration, not a new default.
+The independent oracle and selected/full fact checks pass in every run.
+
+| Whole task, output profile off         | Full graph/report | Selected facts |
+| -------------------------------------- | ----------------: | -------------: |
+| Total estimated context                |           152,668 |         54,841 |
+| Wall seconds, median                   |            11.597 |         10.890 |
+| Process-family CPU seconds, median     |            11.244 |         10.569 |
+| Kernel process-family peak MiB, median |             628.7 |          626.0 |
+| Candidate query milliseconds           |        not needed |          18–21 |
+
+The context reduction remains approximately 64%. Whole-task ranges overlap
+(complete 10.899–12.215 s; selected 10.802–11.196 s), so the apparent median
+improvement does not establish a stable speedup. Unlike the default full-output
+cohort, this configured workflow avoids the extra cold SDK validator cost and
+has similar task memory/time. Two initial pilot cases are excluded. All six
+observed runs, explicit configuration and implementation hashes are retained in
+[source-to-bundle-output-off.json](source-to-bundle-output-off.json).
+
 ## Existing CLI/code-composition control
 
 The public CLI on the same saved application/reference produces complete Evidence
@@ -127,6 +155,9 @@ uv run --no-project --with tiktoken==0.12.0 python \
 ```
 
 Use a separate output name and `--mode selected --warm-continuation` for the
-validator calibration; exclude it from paired medians. Retain the tarball,
+validator calibration; exclude it from paired medians. For the configured
+cohort, add `--output-profile off`, use new `off-paired-*` directories and the
+01788bac8 control, then run the cost reader with
+`--pattern 'off-paired-*' --output "$LAB/costs-off.json"`. Retain the tarball,
 reference, transcripts, bundles, independent proofs and guard receipts locally.
 Never commit target binaries, dependency trees, credentials or generated builds.

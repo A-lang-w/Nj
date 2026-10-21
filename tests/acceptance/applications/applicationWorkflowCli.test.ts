@@ -1852,6 +1852,18 @@ const runCliWithRequestFile = async (
 };
 
 const assertSourceFileView = async (sourceCompared: unknown) => {
+  const wrongApplication = await runCli([
+    "compare-source-to-bundle",
+    JSON.stringify({
+      reference: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,
+      application: sourceCompared,
+    }),
+    "--json",
+  ]);
+  expect(wrongApplication).toMatchObject({
+    error: "Application workflow failed",
+  });
+
   const sourceViewRoot = await createTestTempDirectory("rea-cli-source-view-");
   const referencePath = join(sourceViewRoot, "reference.json");
   const sourceComparisonPath = join(sourceViewRoot, "comparison.json");

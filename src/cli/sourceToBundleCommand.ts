@@ -43,7 +43,7 @@ export const registerSourceToBundleCommand = (
               ),
             };
           const resources = new ArtifactResourceScope();
-          return finishAnalysisCommand(
+          const result = await finishAnalysisCommand(
             async () => {
               const { resolveSourceToBundleReference } =
                 await import("../application/javascript/SourceToBundleReference.js");
@@ -65,6 +65,9 @@ export const registerSourceToBundleCommand = (
             "compare_source_to_bundle",
             signal,
           );
+          return "evidence_id" in result
+            ? result
+            : { error: "Application workflow failed", ...result };
         }),
       ),
   });

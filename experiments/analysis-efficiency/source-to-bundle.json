@@ -605,5 +605,10 @@
     "cpu_seconds": 13.858723,
     "peak_process_family_bytes_including_page_cache": 993660928,
     "cleanup_verified": true
+  },
+  "subsequent_cli_error_envelope_fix": {
+    "file": "src/cli/sourceToBundleCommand.ts",
+    "sha256": "943ee98cd4abb6674a8f3d90d84d28744ff5a262200a57a45fc1a5b7fba9d105",
+    "scope": "Preserves the previous error: Application workflow failed field around finishAnalysisCommand failures. Original paired MCP measurements predate this CLI-only negative-result fix. Actual CLI wrong-application output now exactly equals the baseline, including all projected diagnostic fields. MCP producer/view implementation is unchanged."
   }
 }

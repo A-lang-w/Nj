@@ -14,6 +14,7 @@ const { values } = parseArgs({
     reference: { type: "string" },
     output: { type: "string" },
     mode: { type: "string" },
+    "output-profile": { type: "string", default: "full" },
     "warm-continuation": { type: "boolean", default: false },
   },
 });
@@ -23,6 +24,7 @@ for (const key of ["runtime", "corpus", "reference", "output"])
     key + " must be absolute",
   );
 assert.ok(["complete", "selected"].includes(values.mode));
+assert.ok(["full", "off"].includes(values["output-profile"]));
 const root = values.corpus,
   runtime = values.runtime,
   output = values.output;
@@ -45,6 +47,7 @@ const transport = new StdioClientTransport({
     PATH: process.env.PATH,
     HOME: output,
     REA_LOG_LEVEL: "silent",
+    REA_MCP_OUTPUT_SCHEMA_PROFILE: values["output-profile"],
     UV_THREADPOOL_SIZE: "1",
     NODE_OPTIONS: "--max-old-space-size=2048",
     NODE_DISABLE_COMPILE_CACHE: "1",
@@ -61,6 +64,7 @@ const report = {
   runtime_revision: revision,
   runtime_worktree_status: sourceState,
   mode: values.mode,
+  output_schema_profile: values["output-profile"],
   reference_sha256: sha(await readFile(values.reference)),
   node_version: process.version,
   calls: [],

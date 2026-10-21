@@ -21,13 +21,22 @@ it.each(["full", "compact"] as const)(
     const full = sourceToBundleComparisonResultSchema.parse(
       parent.normalized_result,
     );
-    expect(full.summary).toMatchObject({ split: 1, unknown: 1 });
+    expect(full.summary).toMatchObject({ split: 1, unknown: 2 });
     expect(
       await call("compare_source_to_bundle", {
         ...inputs,
         reference: { kind: "file", path },
       }),
     ).toEqual(parent);
+    const summary = await call("compare_source_to_bundle", {
+      ...inputs,
+      view: { kind: "summary" },
+    });
+    expect(summary.normalized_result).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: parent.evidence_id,
+      summary: { summary: full.summary, source_coverage: full.coverage },
+    });
     const { tools } = await client.listTools();
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const comparisonTool = tools.find(
@@ -121,6 +130,11 @@ const comparisonFixture = async (profile: "full" | "compact") => {
   const previous = join(root, "previous"),
     current = join(root, "current");
   await mkdir(join(previous, "src"), { recursive: true });
+  await mkdir(join(previous, "src/other"), { recursive: true });
+  await writeFile(
+    join(previous, "src/other/a.js"),
+    "export const unrelated = 3;\n",
+  );
   await mkdir(join(current, "dist"), { recursive: true });
   await writeFile(join(previous, "src/a.js"), "export const value = 1;\n");
   await writeFile(
@@ -259,6 +273,19 @@ const assertRetainedPages = async (
       coverage: { total: 2, next_offset: offset === 0 ? 1 : null },
     });
   }
+  const weak = await view({
+    kind: "source-to-bundle",
+    collection: "candidates",
+    source_paths: ["src/other/a.js"],
+    fields: ["confidence"],
+  });
+  expect(weak).toMatchObject({
+    items: [
+      { source_path: "src/other/a.js", mapped: false, confidence: "low" },
+      { source_path: "src/other/a.js", mapped: false, confidence: "low" },
+    ],
+    coverage: { total: 2, exhausted: true },
+  });
   expect(await view({ kind: "summary" })).toMatchObject({
     summary: {
       summary: full.summary,
