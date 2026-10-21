@@ -6,8 +6,19 @@ import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { readBinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
 import { BinaryNinjaProvider } from "./BinaryNinjaProvider.js";
+import { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import {
+  createBinaryNinjaTarget,
+  RecordingBinaryNinjaMcp,
+} from "../../tests/fixtures/binaryNinjaMcp.js";
 
 const roots: string[] = [];
+const resourceScope = {
+  run: <T>(operation: () => Promise<T>) => operation(),
+  retain: () => {
+    throw new Error("Unexpected retained configuration descriptor");
+  },
+};
 afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
@@ -42,14 +53,15 @@ const pe = (managed: boolean): BinaryTarget => ({
 
 describe("Binary Ninja registration", () => {
   it("accepts the GUI server URL with an optional header, alone or in a client envelope", async () => {
-    const direct = readBinaryNinjaConfiguration(
+    const direct = await readBinaryNinjaConfiguration(
       await registration({ url: "http://127.0.0.1:24642/mcp" }),
+      { resourceScope },
     );
     expect(direct.ok && direct.value).toMatchObject({
       timeoutMs: 300_000,
       headers: {},
     });
-    const envelope = readBinaryNinjaConfiguration(
+    const envelope = await readBinaryNinjaConfiguration(
       await registration({
         mcpServers: {
           "binaryninja-gui": {
@@ -58,6 +70,7 @@ describe("Binary Ninja registration", () => {
           },
         },
       }),
+      { resourceScope },
     );
     expect(envelope.ok).toBe(true);
   });
@@ -76,15 +89,104 @@ describe("Binary Ninja registration", () => {
         },
       },
     ])
-      expect(readBinaryNinjaConfiguration(await registration(value)).ok).toBe(
-        false,
-      );
+      expect(
+        (
+          await readBinaryNinjaConfiguration(await registration(value), {
+            resourceScope,
+          })
+        ).ok,
+      ).toBe(false);
   });
 });
 
 describe("Binary Ninja provider", () => {
-  it("is not configured without a registration, so auto selection stays unambiguous", () => {
-    expect(provider().inspectAvailability()).toMatchObject({
+  it("preserves the reason when profile resolution is already cancelled", async () => {
+    const controller = new AbortController();
+    const reason = new Error("profile cancelled by caller");
+    controller.abort(reason);
+    const result = await provider().resolveAnalysisProfile(pe(false), {
+      signal: controller.signal,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+  });
+  it("observes repaired registrations on a later inspection", async () => {
+    const path = await registration({ url: "http://example.com/mcp" });
+    const candidate = provider(path);
+    expect((await candidate.inspectAvailability()).status).toBe("unavailable");
+    await writeFile(
+      path,
+      JSON.stringify({ url: "http://127.0.0.1:24642/mcp" }),
+    );
+    expect((await candidate.inspectAvailability()).status).toBe("available");
+  });
+
+  it("binds inspected credentials to the selected target/profile and refreshes the next scope", async () => {
+    const { root, target, bytes } = await createBinaryNinjaTarget();
+    roots.push(root);
+    const path = await registration({
+      url: "http://127.0.0.1:24642/mcp",
+      headers: { Authorization: "Bearer initial" },
+    });
+    const config = parseConfig({ REA_BINARY_NINJA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const credentials: string[] = [];
+    const candidate = new BinaryNinjaProvider(config.value, (registration) => {
+      credentials.push(registration.headers.Authorization!);
+      return new RecordingBinaryNinjaMcp(target, bytes);
+    });
+    const scope = new ProviderInspectionScope();
+    await candidate.inspectAvailability({ scope });
+    await writeFile(
+      path,
+      JSON.stringify({
+        url: "http://127.0.0.1:24642/mcp",
+        headers: { Authorization: "Bearer rotated" },
+      }),
+    );
+    const selected = await candidate.resolveAnalysisProfile(target, { scope });
+    if (
+      !selected.ok ||
+      selected.value.profile === null ||
+      selected.value.createClient === undefined
+    )
+      throw new Error("Expected bound profile");
+    const client = selected.value.createClient(target, selected.value.profile);
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    await client.close();
+    expect(credentials).toEqual(["Bearer initial"]);
+    const mismatch = selected.value.createClient(
+      { ...target, sha256: "f".repeat(64) },
+      selected.value.profile,
+    );
+    expect((await mismatch.execute("health", {})).ok).toBe(false);
+    expect(credentials).toHaveLength(1);
+    expect(
+      (
+        await candidate
+          .createClient(target, selected.value.profile)
+          .execute("health", {})
+      ).ok,
+    ).toBe(false);
+    scope.close();
+    const next = await candidate.resolveAnalysisProfile(target, {
+      scope: new ProviderInspectionScope(),
+    });
+    if (
+      !next.ok ||
+      next.value.profile === null ||
+      next.value.createClient === undefined
+    )
+      throw new Error("Expected next bound profile");
+    const nextClient = next.value.createClient(target, next.value.profile);
+    expect(credentials).toEqual(["Bearer initial", "Bearer rotated"]);
+    expect(next.value.profile.digest).toBe(selected.value.profile.digest);
+    await nextClient.close();
+  });
+  it("is not configured without a registration, so auto selection stays unambiguous", async () => {
+    expect(await provider().inspectAvailability()).toMatchObject({
       status: "unavailable",
       code: "not_configured",
     });
@@ -92,7 +194,7 @@ describe("Binary Ninja provider", () => {
 
   it("reports an invalid registration as invalid open options", async () => {
     const path = await registration({ url: "http://example.com/mcp" });
-    expect(provider(path).inspectAvailability()).toMatchObject({
+    expect(await provider(path).inspectAvailability()).toMatchObject({
       status: "unavailable",
       code: "open_options_invalid",
     });

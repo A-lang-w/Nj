@@ -1,6 +1,7 @@
-import { readFileSync, statSync } from "node:fs";
+import { readProviderRegistration } from "../providers/ReadProviderRegistration.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -56,38 +57,32 @@ export const idaProtocol = (config: IdaConfiguration) =>
 /** Read one explicit registration without starting or installing a provider. */
 export const readIdaConfiguration = (
   path: string,
-): Result<IdaConfiguration, ConfigurationError> => {
-  try {
-    if (statSync(path).size > 65_536)
-      return err(
-        idaConfigurationError(
-          "REA_IDA_MCP_CONFIG exceeds the 64 KiB registration size.",
-        ),
+  options: {
+    readonly signal?: AbortSignal;
+    readonly resourceScope: RetainedResourceScope;
+  },
+): Promise<Result<IdaConfiguration, ConfigurationError>> =>
+  readProviderRegistration(path, options, {
+    setting: "REA_IDA_MCP_CONFIG",
+    label: "IDA MCP",
+    operation: "ida:registration",
+    parse: (input) => {
+      const envelope = z
+        .object({ mcpServers: z.object({ "ida-pro-mcp": z.unknown() }) })
+        .safeParse(input);
+      const parsed = registrationSchema.safeParse(
+        envelope.success ? envelope.data.mcpServers["ida-pro-mcp"] : input,
       );
-    const input: unknown = JSON.parse(readFileSync(path, "utf8"));
-    const envelope = z
-      .object({ mcpServers: z.object({ "ida-pro-mcp": z.unknown() }) })
-      .safeParse(input);
-    const parsed = registrationSchema.safeParse(
-      envelope.success ? envelope.data.mcpServers["ida-pro-mcp"] : input,
-    );
-    return parsed.success
-      ? ok(parsed.data)
-      : err(
-          idaConfigurationError(
-            "REA_IDA_MCP_CONFIG must contain an IDA MCP command/args or local url registration; see docs/ida-provider.md.",
-            parsed.error,
-          ),
-        );
-  } catch (cause: unknown) {
-    return err(
-      idaConfigurationError(
-        `Cannot read IDA MCP registration ${path}; provide a readable JSON configuration.`,
-        cause,
-      ),
-    );
-  }
-};
+      return parsed.success
+        ? ok(parsed.data)
+        : err(
+            idaConfigurationError(
+              "REA_IDA_MCP_CONFIG must contain an IDA MCP command/args or local url registration; see docs/ida-provider.md.",
+              parsed.error,
+            ),
+          );
+    },
+  });
 
 /** A REA_IDA_MCP_CONFIG rejection that names the setting it concerns. */
 export const idaConfigurationError = (

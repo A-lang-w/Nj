@@ -7,10 +7,7 @@ import {
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  ArtifactResourceScope,
-  ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   AnalysisError,
@@ -25,6 +22,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -282,11 +280,7 @@ export class ArtifactAnalysisResources {
       },
       { operation, cause },
     );
-    let leases =
-      cause instanceof ArtifactFileCleanupFailure ||
-      cause instanceof ArtifactResourceRetryFailure
-        ? cause.cleanupLeases
-        : undefined;
+    let leases = cause.cleanupLeases;
     if (leases === undefined) {
       // An unreported capability cannot be recovered by observing an empty scope.
       // Retain the unresolved source failure and refuse replacement admission.
@@ -369,7 +363,13 @@ export class ArtifactAnalysisResources {
         "memory",
         cause.message,
         { output_bytes: limits.output_bytes },
-        detail,
+        {
+          ...detail,
+          ...fixedAllowanceOptions(
+            "The retained command-output allowance",
+            "capture",
+          ),
+        },
       );
     if (
       cause.reason === "process" &&

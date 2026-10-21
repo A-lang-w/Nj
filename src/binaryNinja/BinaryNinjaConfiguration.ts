@@ -1,5 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
+import { readProviderRegistration } from "../providers/ReadProviderRegistration.js";
 import { z } from "zod";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -45,49 +46,40 @@ const envelopeSchema = z.object({
   mcpServers: z.record(z.string(), z.unknown()),
 });
 
-/**
- * Read one explicit registration without connecting. A client-style
- * `mcpServers` object is accepted when it names exactly one server.
- */
+/** Read one explicit registration without starting or installing a provider. */
 export const readBinaryNinjaConfiguration = (
   path: string,
-): Result<BinaryNinjaConfiguration, ConfigurationError> => {
-  try {
-    if (statSync(path).size > 65_536)
-      return err(
-        binaryNinjaConfigurationError(
-          "REA_BINARY_NINJA_MCP_CONFIG exceeds the 64 KiB registration size.",
-        ),
-      );
-    const input: unknown = JSON.parse(readFileSync(path, "utf8"));
-    const envelope = envelopeSchema.safeParse(input);
-    const servers = envelope.success
-      ? Object.values(envelope.data.mcpServers)
-      : [input];
-    if (servers.length !== 1)
-      return err(
-        binaryNinjaConfigurationError(
-          "REA_BINARY_NINJA_MCP_CONFIG must name exactly one Binary Ninja MCP server.",
-        ),
-      );
-    const parsed = registrationSchema.safeParse(servers[0]);
-    return parsed.success
-      ? ok(parsed.data)
-      : err(
+  options: {
+    readonly signal?: AbortSignal;
+    readonly resourceScope: RetainedResourceScope;
+  },
+): Promise<Result<BinaryNinjaConfiguration, ConfigurationError>> =>
+  readProviderRegistration(path, options, {
+    setting: "REA_BINARY_NINJA_MCP_CONFIG",
+    label: "Binary Ninja MCP",
+    operation: "binary-ninja:registration",
+    parse: (input) => {
+      const envelope = envelopeSchema.safeParse(input);
+      const servers = envelope.success
+        ? Object.values(envelope.data.mcpServers)
+        : [input];
+      if (servers.length !== 1)
+        return err(
           binaryNinjaConfigurationError(
-            "REA_BINARY_NINJA_MCP_CONFIG must contain the Binary Ninja GUI MCP url and optional Authorization header; see docs/binary-ninja.md.",
-            parsed.error,
+            "REA_BINARY_NINJA_MCP_CONFIG must name exactly one Binary Ninja MCP server.",
           ),
         );
-  } catch (cause: unknown) {
-    return err(
-      binaryNinjaConfigurationError(
-        `Cannot read Binary Ninja MCP registration ${path}; provide a readable JSON configuration.`,
-        cause,
-      ),
-    );
-  }
-};
+      const parsed = registrationSchema.safeParse(servers[0]);
+      return parsed.success
+        ? ok(parsed.data)
+        : err(
+            binaryNinjaConfigurationError(
+              "REA_BINARY_NINJA_MCP_CONFIG must contain the Binary Ninja GUI MCP url and optional Authorization header; see docs/binary-ninja.md.",
+              parsed.error,
+            ),
+          );
+    },
+  });
 
 /** A REA_BINARY_NINJA_MCP_CONFIG rejection that names the setting it concerns. */
 export const binaryNinjaConfigurationError = (

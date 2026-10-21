@@ -213,18 +213,6 @@ export const parseBinaryNinjaFunctionReferences = (
   return references;
 };
 
-/** A rendered byte range "0xSTART-0xEND (N bytes)" with an exclusive end. */
-export const binaryNinjaRangeSchema = z
-  .string()
-  .regex(/^0x[0-9a-f]+-0x[0-9a-f]+ \(\d+ bytes\)$/iu)
-  .transform((value) => {
-    const [start = "", end = ""] = value.split(" ")[0]?.split("-") ?? [];
-    return {
-      start: binaryNinjaAddressSchema.parse(start),
-      end: binaryNinjaAddressSchema.parse(end),
-    };
-  });
-
 /** One BinaryView as reported by view tools. */
 export const binaryNinjaViewSchema = z
   .object({

@@ -1,7 +1,7 @@
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import {
@@ -42,12 +42,11 @@ export const parseBinaryNinjaInput = (
   const parsed = contract?.inputSchema.safeParse(parameters);
   if (parsed?.success !== true)
     return err(
-      new AnalysisInputError(
+      analysisInputErrorFromIssues(
         operation,
+        parsed?.error?.issues ?? [],
+        parameters,
         { cause: parsed?.error },
-        parsed?.error === undefined
-          ? []
-          : projectInputIssues(parsed.error.issues, parameters),
       ),
     );
   if (operation === "xrefs" && typeof parameters.address !== "string")

@@ -42,6 +42,8 @@ rea function 'C:\samples\program.exe' main --json
 
 Select the provider once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider binary-ninja`, or MCP's `open_binary.provider_id`. Without `REA_BINARY_NINJA_MCP_CONFIG` the provider reports `not_configured`, so `auto` selection is unaffected. `rea doctor --provider binary-ninja --json` validates the registration without connecting; server availability and the open file are checked when analysis starts.
 
+Registration reads require a regular JSON file no larger than 64 KiB. They follow REA's provider inspection cancellation and retained-resource contracts. One inspection shares its registration with profile resolution; the resulting client factory binds those settings to that exact target and profile. A later inspection rereads the file, so repairing a registration or rotating its credentials does not require restarting REA. Header values stay outside the serialized profile commitment.
+
 To use it from an agent, add the registration path to REA's own MCP entry, keeping the token in the separate file:
 
 ```json
@@ -71,6 +73,20 @@ Binary Ninja keeps one **active BinaryView** per MCP server, shared by every MCP
 
 The adapter provides procedure inventory and search, string inventory and search, procedure resolution, Pseudo C, assembly, raw instruction lines, callers, callees, address references, the admitted document, and a function dossier. Inventories follow Binary Ninja's `nextOffset` pagination and fail if a total changes while paging.
 
+| REA operations                                     | Binary Ninja producer                                             | Coverage boundary                                                               |
+| -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `list_procedures`, `search_procedures`             | `bn_function_list`, `bn_function_search`                          | Complete producer pages, not proof that Binary Ninja discovered every function. |
+| `list_strings`, `search_strings`                   | `bn_string_list`, `bn_memory_read`                                | Defined strings; unsupported multi-byte encodings remain explicit limitations.  |
+| `procedure_address`                                | Function inventory with exact name or entry-address matching      | No expression evaluation or containing-function inference.                      |
+| `procedure_pseudo_code`                            | `bn_function_decompile`                                           | Producer Pseudo C, not recovered original source.                               |
+| `procedure_assembly`, `read_function_instructions` | `bn_function_disassembly`                                         | Producer disassembly with REA instruction-window contracts.                     |
+| `procedure_callers`, `procedure_callees`           | `bn_function_callers`, `bn_function_callees`, `bn_symbol_list_at` | Resolved relationships; unknown callee targets retain partial coverage.         |
+| `xrefs`                                            | `bn_data_xrefs_to` and function caller sites                      | Always possibly incomplete; no claim of all code references.                    |
+| `analyze_function`                                 | Function metadata plus the readers above                          | Shared REA dossier schema with explicit unavailable facets.                     |
+| `list_documents`                                   | Verified target binding                                           | The admitted document only, not all open GUI files.                             |
+
+The [official Binary Ninja MCP guide](https://docs.binary.ninja/guide/mcp.html) describes a larger interface, including IL, basic blocks, analysis updates, and file management. Those operations are outside this adapter's advertised scope. The installed server's `tools/list` is authoritative for tool signatures; the macOS 6.0.10905 audit checked its function selectors, architecture arguments, view handles, pagination limits, and memory-read arguments against the production requests. Passing this adapter's verifier establishes its declared REA contracts on the tested target, not feature parity with the entire Binary Ninja API.
+
 - **Names** are matched exactly by REA against Binary Ninja's function list. They are never passed to Binary Ninja's expression evaluator, so `main+4` is a missing name rather than an address.
 - **Strings** are decoded from the exact bytes Binary Ninja reports, by string type. Previews Binary Ninja truncated are read in full. UTF-16 and UTF-32 strings are decoded only for little-endian architectures; others are omitted with a limitation.
 - **Callees** reached through import slots are named from the symbol at the slot. Callees with neither a function nor a symbol are omitted and reported as partial coverage.
@@ -88,4 +104,6 @@ The initial real workflow used Binary Ninja Personal 6.0.10601 on Windows 10 x64
 
 A second real workflow passed on macOS ARM64 with Binary Ninja Personal 6.0.10905-Stable and `binaryninja_ui_mcp` 0.1.0. The target was the repository's `tests/conformance/c/fixture.c`, compiled with `clang -arch arm64 -O0 -g -fno-inline` into a thin Mach-O. Verification used `_rea_branch`, second procedure `_rea_entry` with marker `REA_C_ENTRY`, expected string `REA_C_ENTRY`, and expected incoming call site `0x100000660`, independently read from `xcrun otool -tvV`. The tested binary's SHA-256 was `bea51fbecc4774f025002f84dcd6aaec2f4fe8bcb7da38ea14ec6b21b0b0f121`; addresses and digest must be rechecked after rebuilding. Selecting the target's Raw view before verification also exercised restoration of a different shared MCP selection. All eight verifier checks passed with no unverified checks; the target was unchanged and never executed. This validates the existing verifier's scope on this fixture, not complete Binary Ninja feature coverage.
 
-Linux hosts, ELF targets, token-protected real servers, optimized or stripped Mach-O targets, and other Binary Ninja releases remain unverified against a real engine.
+The macOS workflow also passed against the same source compiled with `clang -arch arm64 -O2 -fno-inline`, both with symbols and after `strip`. The optimized target's SHA-256 was `c88fa736c9fa74ec0d284451cdbaa43225dc98feb3ab31a98f63c611f35234cb`; the stripped target's was `ecdfac2a052a54b508df56e7ff73af11bd20ba0c31147c63123ce5e686c1dfbb`. Independent pre-strip `nm` and `otool` observations identified the branch entry at `0x1000005dc`, the second function at `0x1000005e8`, and its tail-call site at `0x100000614`. The stripped run used those entry addresses instead of source function names. Both runs passed all eight checks, including restoration of a selection belonging to another open fixture, with no unverified checks. These runs used the port onto upstream REA 6.7.0.
+
+Linux hosts, ELF targets, token-protected real servers, and other Binary Ninja releases remain unverified against a real engine. The earlier Windows result belongs to the original proposal; it has not been rerun after the upstream port.

@@ -64,9 +64,32 @@ const [
   importBuilt("binaryNinja/BinaryNinjaMcpConnection.js"),
   importBuilt("binaryNinja/BinaryNinjaProtocolValues.js"),
 ]);
-const registration = readBinaryNinjaConfiguration(
-  process.env.REA_BINARY_NINJA_MCP_CONFIG,
+const { ArtifactResourceScope } = await importBuilt(
+  "artifacts/ArtifactResourceScope.js",
 );
+const { AnalysisCleanupLease } = await importBuilt(
+  "artifacts/AnalysisCleanupLease.js",
+);
+const registrationResources = new ArtifactResourceScope();
+let registration;
+try {
+  registration = await readBinaryNinjaConfiguration(
+    process.env.REA_BINARY_NINJA_MCP_CONFIG,
+    {
+      resourceScope: {
+        run: (operation) => registrationResources.run(operation),
+        retain: (owner, resource) =>
+          registrationResources.retain({
+            kind: "lease",
+            resource,
+            lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+          }),
+      },
+    },
+  );
+} finally {
+  await registrationResources.close();
+}
 if (!registration.ok) throw registration.error;
 const config = registration.value;
 const environment = Object.fromEntries(

@@ -1,12 +1,27 @@
 import type { DoctorProviderInspection } from "../application/Doctor.js";
-import { readBinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
+import {
+  readBinaryNinjaConfiguration,
+  type BinaryNinjaConfiguration,
+} from "./BinaryNinjaConfiguration.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { Result } from "../domain/result.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 
 /** Check the registration without connecting, and retain only the configuration file reference. */
-export const inspectBinaryNinjaRegistration = (
+export const inspectBinaryNinjaRegistration = async (
   path: string | undefined,
-): DoctorProviderInspection => {
+  resourceScope: RetainedResourceScope,
+  signal?: AbortSignal,
+  registration?: Promise<Result<BinaryNinjaConfiguration, ConfigurationError>>,
+): Promise<DoctorProviderInspection> => {
   const parsed =
-    path === undefined ? undefined : readBinaryNinjaConfiguration(path);
+    path === undefined
+      ? undefined
+      : await (registration ??
+          readBinaryNinjaConfiguration(path, {
+            resourceScope,
+            ...(signal === undefined ? {} : { signal }),
+          }));
   const valid = parsed?.ok === true;
   return {
     id: "binary-ninja",

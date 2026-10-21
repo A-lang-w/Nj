@@ -1,16 +1,21 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import canonicalize from "canonicalize";
 import type {
   AnalysisClient,
+  AnalysisProviderBoundClientFactory,
+  AnalysisProviderInspectionOptions,
   AnalysisProfileResolutionOptions,
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
+  RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   createAnalysisProfile,
+  analysisProfilesEqual,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -30,12 +35,33 @@ import {
   binaryNinjaCapabilities,
 } from "./BinaryNinjaProviderCapabilities.js";
 import { BinaryNinjaSessionClient } from "./BinaryNinjaSessionClient.js";
+import {
+  ArtifactResourceScope,
+  ArtifactResourceRetryFailure,
+} from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
 
 /** Bring-your-own Binary Ninja GUI MCP candidate; discovery performs no connection. */
 export class BinaryNinjaProvider implements AnalysisProviderCandidate {
-  #registration:
-    | Result<BinaryNinjaConfiguration, ConfigurationError>
-    | undefined;
+  readonly #ownedResources = new ArtifactResourceScope();
+  readonly #inspectionOwner: RetainedResourceScope = {
+    retain: (owner, resource) =>
+      this.#ownedResources.retain({
+        kind: "lease",
+        resource,
+        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+      }),
+    run: (operation) => this.#ownedResources.run(operation),
+  };
+  readonly #registrationByScope = new WeakMap<
+    ProviderInspectionScope,
+    Promise<Result<BinaryNinjaConfiguration, ConfigurationError>>
+  >();
 
   constructor(
     private readonly config: AppConfig,
@@ -52,8 +78,31 @@ export class BinaryNinjaProvider implements AnalysisProviderCandidate {
     return binaryNinjaCapabilities();
   }
 
-  inspectAvailability(): ProviderAvailability {
-    const config = this.#configuration();
+  hasPendingOwnedResources() {
+    return this.#ownedResources.hasPending;
+  }
+
+  async closeOwnedResources() {
+    try {
+      await this.#ownedResources.close();
+      return ok(null);
+    } catch (cause: unknown) {
+      const failure = new ProviderCleanupError(
+        BINARY_NINJA_PROVIDER_IDENTITY.id,
+        this.#ownedResources.cleanupResources,
+        { cause: cause instanceof Error ? cause.message : String(cause) },
+        { cause, operation: "close_owned_resources" },
+      );
+      if (cause instanceof ArtifactResourceRetryFailure)
+        new AnalysisCleanupLeaseGroup(failure, cause.cleanupLeases);
+      return err(failure);
+    }
+  }
+
+  async inspectAvailability(
+    options?: AnalysisProviderInspectionOptions,
+  ): Promise<ProviderAvailability> {
+    const config = await this.#configuration(options);
     return config.ok
       ? {
           status: "available",
@@ -115,62 +164,91 @@ export class BinaryNinjaProvider implements AnalysisProviderCandidate {
   }
 
   async resolveAnalysisProfile(
-    _target: BinaryTarget,
+    target: BinaryTarget,
     options?: AnalysisProfileResolutionOptions,
   ) {
     if (options?.signal?.aborted === true)
-      return err(new AnalysisCancelledError("binary-ninja:profile"));
-    const config = this.#configuration();
+      return err(
+        new AnalysisCancelledError("binary-ninja:profile", {
+          cause: options.signal.reason,
+        }),
+      );
+    const config = await this.#configuration(options);
     if (!config.ok) return config;
     // Header values carry credentials and never enter the commitment.
     const { headers, ...settings } = config.value;
-    return ok({
-      profile: createAnalysisProfile(BINARY_NINJA_PROVIDER_IDENTITY, {
-        version_scope: "rea-binary-ninja-adapter",
-        engine_version: null,
-        mode: "attached-gui",
-        compatibility_profile: "binary-ninja-gui-mcp",
-        database_revision: null,
-        cache_policy: "live",
-        registration_digest: createHash("sha256")
-          .update(
-            canonicalize({
-              ...settings,
-              header_names: Object.keys(headers).sort(),
-            }) ?? "",
-          )
-          .digest("hex"),
-      }),
+    const profile = createAnalysisProfile(BINARY_NINJA_PROVIDER_IDENTITY, {
+      version_scope: "rea-binary-ninja-adapter",
+      engine_version: null,
+      mode: "attached-gui",
+      compatibility_profile: "binary-ninja-gui-mcp",
+      database_revision: null,
+      cache_policy: "live",
+      registration_digest: createHash("sha256")
+        .update(
+          canonicalize({
+            ...settings,
+            header_names: Object.keys(headers).sort(),
+          }) ?? "",
+        )
+        .digest("hex"),
     });
+    if (options?.scope !== undefined)
+      this.#registrationByScope.delete(options.scope);
+    const registration = config.value;
+    const createClient: AnalysisProviderBoundClientFactory = (
+      requestedTarget,
+      requestedProfile,
+    ) =>
+      isDeepStrictEqual(requestedTarget, target) &&
+      analysisProfilesEqual(requestedProfile, profile)
+        ? new BinaryNinjaSessionClient(
+            registration,
+            target,
+            this.connectionFactory(registration),
+            profile,
+          )
+        : this.#unboundClient(
+            "Binary Ninja client factory received a target or profile different from the resolved binding.",
+          );
+    return ok({ profile, createClient });
   }
 
   createClient(
-    target: BinaryTarget,
-    profile?: AnalysisProfileCommitment,
+    _target: BinaryTarget,
+    _profile?: AnalysisProfileCommitment,
   ): AnalysisClient {
-    const config = this.#configuration();
-    if (!config.ok)
-      return {
-        execute: async () => err(config.error),
-        close: async () => ok(null),
-      };
-    return new BinaryNinjaSessionClient(
-      config.value,
-      target,
-      this.connectionFactory(config.value),
-      profile,
+    return this.#unboundClient(
+      "Binary Ninja client creation requires the provider-owned selected profile binding.",
     );
   }
 
-  #configuration() {
-    this.#registration ??=
+  async #configuration(options?: AnalysisProviderInspectionOptions) {
+    const scope = options?.scope;
+    if (scope?.active === true) {
+      const existing = this.#registrationByScope.get(scope);
+      if (existing !== undefined) return existing;
+    }
+    const signal = options?.signal;
+    const pending =
       this.config.binaryNinjaMcpConfigPath === undefined
-        ? err(
-            binaryNinjaConfigurationError(
-              "Set REA_BINARY_NINJA_MCP_CONFIG to a Binary Ninja GUI MCP JSON registration; see docs/binary-ninja.md.",
+        ? Promise.resolve(
+            err(
+              binaryNinjaConfigurationError(
+                "Set REA_BINARY_NINJA_MCP_CONFIG to a Binary Ninja GUI MCP JSON registration; see docs/binary-ninja.md.",
+              ),
             ),
           )
-        : readBinaryNinjaConfiguration(this.config.binaryNinjaMcpConfigPath);
-    return this.#registration;
+        : readBinaryNinjaConfiguration(this.config.binaryNinjaMcpConfigPath, {
+            ...(signal === undefined ? {} : { signal }),
+            resourceScope: options?.resourceScope ?? this.#inspectionOwner,
+          });
+    if (scope?.active === true) this.#registrationByScope.set(scope, pending);
+    return pending;
+  }
+
+  #unboundClient(reason: string): AnalysisClient {
+    const error = binaryNinjaConfigurationError(reason);
+    return { execute: async () => err(error), close: async () => ok(null) };
   }
 }

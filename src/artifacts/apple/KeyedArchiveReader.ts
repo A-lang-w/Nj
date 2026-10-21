@@ -8,7 +8,9 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import {
   negativeZeroRealLimitation,
+  nonFiniteRealLimitation,
   unknownDateLimitation,
+  unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import {
@@ -86,9 +88,10 @@ export const decodeKeyedArchiveBytes = (
         }
       : parseXmlPropertyList(xmlText ?? "");
   const {
-    unknownRealCount,
+    nonFiniteRealCount,
     negativeZeroRealCount,
     unknownDateCount,
+    unknownScalarCount,
     ...graph
   } = projectKeyedArchive(parsed.value, selection);
   const numbers = createPlistNumberProjection(parsed.numberLiterals);
@@ -115,17 +118,18 @@ export const decodeKeyedArchiveBytes = (
       ...(parsed.omittedPrototypeKeys === 0
         ? []
         : [omittedPrototypeKeysLimitation(parsed.omittedPrototypeKeys)]),
-      ...(unknownRealCount === 0
+      ...(nonFiniteRealCount === 0
         ? []
-        : [
-            `${String(unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.`,
-          ]),
+        : [nonFiniteRealLimitation(nonFiniteRealCount)]),
       ...(negativeZeroRealCount === 0
         ? []
         : [negativeZeroRealLimitation(negativeZeroRealCount)]),
       ...(unknownDateCount === 0
         ? []
         : [unknownDateLimitation(unknownDateCount)]),
+      ...(unknownScalarCount === 0
+        ? []
+        : [unknownScalarLimitation(unknownScalarCount)]),
     ],
   };
 };
@@ -148,7 +152,8 @@ const keyedArchiveKindRemediation = (
 /** Read exactly one regular, contained bundle entry without following symlinks. */
 export const inspectBundleKeyedArchive = async (input: {
   bundlePath: string;
-  targetSha256: string;
+  targetSha256: string | null;
+  resourceRoot?: import("../../domain/apple/bundleResourceRoot.js").BundleResourceRoot;
   parameters: unknown;
   signal?: AbortSignal;
   /** Host whose available workflows the remediation names. */
@@ -224,6 +229,9 @@ export const inspectBundleKeyedArchive = async (input: {
     try {
       return keyedArchiveResultSchema.parse({
         target_sha256: input.targetSha256,
+        ...(input.resourceRoot === undefined
+          ? {}
+          : { resource_root: input.resourceRoot }),
         archive_path: entry.path,
         archive_sha256: createHash("sha256").update(bytes).digest("hex"),
         ...decodeKeyedArchiveBytes(bytes, selected),
