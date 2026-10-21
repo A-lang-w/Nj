@@ -523,6 +523,13 @@ it.each([
      }`,
   ],
   [
+    "an arrow function reading its wrapper's new.target",
+    `function register(seed) {
+       const handler = () => new.target;
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+  [
     "a closure returned from a factory of a wrapper parameter",
     `const make = value => () => value;
      function register(seed) {

@@ -132,7 +132,9 @@ const indexIpcFinding = (
     const byLast = facts.reached.get(valueKey) ?? new Map<string, string[][]>();
     facts.reached.set(valueKey, byLast);
     const last = calls.at(-1) ?? "";
-    byLast.set(last, [...(byLast.get(last) ?? []), calls]);
+    const chains = byLast.get(last);
+    if (chains === undefined) byLast.set(last, [calls]);
+    else chains.push(calls);
   }
 };
 
@@ -306,8 +308,8 @@ export const collectElectronWrappedCallPaths = (
       )
         activated.add(env.scopeNode);
     // Scopes from the handler out to the outermost activated function, and
-    // whether the function owning an arrow handler's `this` and `arguments`
-    // lies within them.
+    // whether the function owning an arrow handler's inherited context, such
+    // as `this` and `arguments`, lies within them.
     const enclosing: string[] = [];
     let activatedScopes = 0;
     let contextOwnerActivated = false;
@@ -332,7 +334,11 @@ export const collectElectronWrappedCallPaths = (
     let captures = false;
     t.traverseFast(fn.node, (node) => {
       if (captures) return;
-      if (t.isThisExpression(node)) {
+      if (
+        t.isThisExpression(node) ||
+        t.isSuper(node) ||
+        (t.isMetaProperty(node) && node.meta.name === "new")
+      ) {
         captures =
           contextOwnerActivated && inheritsFunctionContext(node, fn.node);
         return;
@@ -352,8 +358,8 @@ export const collectElectronWrappedCallPaths = (
     return captures;
   };
   /**
-   * Whether `this` or `arguments` at a node belongs to a function enclosing
-   * the handler, as it does through arrow functions.
+   * Whether `this`, `arguments`, `super` or `new.target` at a node belongs to
+   * a function enclosing the handler, as it does through arrow functions.
    */
   const inheritsFunctionContext = (node: t.Node, handler: t.Function) => {
     for (
@@ -597,6 +603,8 @@ export const collectElectronWrappedCallPaths = (
     // traced. Registrations retain invocation identity because handlers compete.
     // An entry nested in another entry's calls traces the same physical call
     // sequence; an identical finding from it adds no invocation.
+    const perInvocationHandler =
+      fn !== undefined && capturesActivationBindings(fn);
     const recorded = ipcAtEndpoint().get(ipcEndpointKey(finding));
     const valueKey = ipcValueKey({
       ...finding,
@@ -610,8 +618,8 @@ export const collectElectronWrappedCallPaths = (
         recorded.invocations.has(ipcInvocationKey(invocationLocation)) ||
         // A closure over this invocation's bindings is its own handler, even
         // when a shorter entry already traced the same calls.
-        (reachedThroughSameCalls(recorded, valueKey, context.calls) &&
-          (fn === undefined || !capturesActivationBindings(fn))));
+        (!perInvocationHandler &&
+          reachedThroughSameCalls(recorded, valueKey, context.calls)));
     const findingGuarded =
       context.conditions.length > 0 || hasConditions(first) || guardedDispatch;
     // Registry facts do not establish every bridge entry's reachability. Only
@@ -666,7 +674,8 @@ export const collectElectronWrappedCallPaths = (
         ipcAtEndpoint(),
         value,
         unresolved !== undefined,
-        context.calls,
+        // Its call chain can never deduplicate a later path.
+        perInvocationHandler ? undefined : context.calls,
       );
       if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
         accumulator.unknownFindings += 1;
