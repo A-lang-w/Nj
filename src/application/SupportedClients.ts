@@ -681,6 +681,16 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "zcode",
   },
   {
+    name: "puku_cli",
+    displayName: "Puku CLI",
+    configPath: ({ home }: ClientPathContext) =>
+      join(home, ".puku-cli", ".mcp.json"),
+    markerPath: ({ home }: ClientPathContext) => join(home, ".puku-cli"),
+    skillPath: ({ home }: ClientPathContext) =>
+      join(home, ".puku-cli", "skills"),
+    format: "json",
+  },
+  {
     name: "dsh",
     displayName: "DeepSeek Harness",
     // The home Cordis patch applies to every profile; the skill directory is
