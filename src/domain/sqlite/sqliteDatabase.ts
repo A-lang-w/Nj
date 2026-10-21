@@ -11,6 +11,10 @@ export const SQLITE_PROVIDER_IDENTITY = {
 
 /** Default ordinary-table sample size when the caller selects a table. */
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
+/** Execution budget, bounded by the runtime's signed 32-bit timer range. */
+export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
+export const MAX_SQLITE_WORKER_TIMEOUT_MS = 2_147_483_647;
+const workerTimeout = z.number().int().min(1).max(MAX_SQLITE_WORKER_TIMEOUT_MS);
 
 const nonnegative = z.number().int().nonnegative();
 const hex = z.string().regex(/^(?:[0-9a-f]{2})*$/);
@@ -27,6 +31,11 @@ export const inspectSqliteDatabaseInputSchema = z
     path: localPathStringSchema.describe(
       "Absolute path to an offline SQLite database snapshot",
     ),
+    worker_timeout_ms: workerTimeout
+      .optional()
+      .describe(
+        `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
+      ),
     table: z
       .string()
       .optional()
@@ -44,7 +53,7 @@ export const inspectSqliteDatabaseInputSchema = z
       .enum(["inventory", "selected_table", "database"])
       .optional()
       .describe(
-        "Default: compact inventory without a table, or detailed selected-table schema with a table. Database explicitly expands all stored declarations and supported columns.",
+        "Default: compact inventory without a table, or detailed selected-table schema with a table. selected_table requires table. Database explicitly expands all stored declarations and supported columns.",
       ),
     row_limit: z
       .number()
@@ -55,6 +64,7 @@ export const inspectSqliteDatabaseInputSchema = z
         "Selected-table sample size, default 20; subject to byte and worker resource limits",
       ),
   })
+  .describe("When schema_scope is selected_table, also provide table.")
   .superRefine((input, context) => {
     if (input.row_limit !== undefined && input.table === undefined)
       context.addIssue({
@@ -113,6 +123,11 @@ export const sqliteDatabaseSchema = z
       name: z.literal("SQLite"),
       version: z.string().min(1),
     }),
+    worker_timeout_ms: workerTimeout
+      .exactOptional()
+      .describe(
+        "Actual parent-supervised worker deadline in milliseconds; absent in historical Evidence means unknown, not the default.",
+      ),
     database_encoding: encoding,
     schema: z.strictObject({
       scope: z.enum(["inventory", "selected_table", "database"]),
@@ -219,6 +234,9 @@ export const sqliteInspectionParameters = (
   input: InspectSqliteDatabaseInput,
 ): Readonly<Record<string, JsonValue>> => ({
   path: input.path,
+  ...(input.worker_timeout_ms === undefined
+    ? {}
+    : { worker_timeout_ms: input.worker_timeout_ms }),
   ...(input.table === undefined ? {} : { table: input.table }),
   ...(input.columns === undefined ? {} : { columns: input.columns }),
   ...(input.schema_scope === undefined
