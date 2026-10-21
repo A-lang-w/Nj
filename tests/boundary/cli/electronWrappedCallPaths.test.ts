@@ -274,12 +274,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       await writeFixtureFiles(root, {
         "index.js": `const e=require("electron");function f(x){${fixture.body}}f(globalThis.blocked);`,
       });
-      const application = await analyzeJavaScriptDirectory(
-        surface,
-        cli,
-        root,
-        connection?.call,
-      );
+      const application = await analyzeJavaScriptDirectory(surface, cli, root, {
+        mcpCall: connection?.call,
+      });
       expect(application.input_path).toBe(root);
       expect(artifacts.has(application.root_artifact_sha256)).toBe(false);
       artifacts.add(application.root_artifact_sha256);
@@ -515,7 +512,7 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
           surface,
           cli,
           root,
-          connection?.call,
+          { mcpCall: connection?.call },
         );
         expect(application.input_path).toBe(root);
         return application;

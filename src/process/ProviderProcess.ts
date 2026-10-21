@@ -19,6 +19,7 @@ import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
+import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -178,6 +179,10 @@ export type ProviderProcessDiagnostic =
       readonly snapshot: ProviderProcessSnapshot;
     }
   | {
+      readonly type: "output-close";
+      readonly snapshot: ProviderProcessSnapshot;
+    }
+  | {
       readonly type: "error";
       readonly message: string;
       readonly cause?: Error;
@@ -295,6 +300,7 @@ export const spawnOwnedProviderProcess = async (
     leaderPid: pid,
     processGroupId: pid,
     expectedParentPid: process.pid,
+    evidenceOwner: new ProcessOwnershipEvidenceOwner(),
     ...(sweepTokenOwnedProcesses
       ? {
           sweepTokenOwnedProcesses: true,
@@ -358,6 +364,11 @@ export class ProviderProcessSupervisor {
   ): void => {
     this.#recordExit(code, signal);
     this.#outputClosed = true;
+    if (!this.#disposed)
+      this.#options.onDiagnostic?.({
+        type: "output-close",
+        snapshot: this.snapshot(),
+      });
     this.#outputClose.resolve(undefined);
   };
   readonly #onError = (cause: Error): void => {
