@@ -5,13 +5,22 @@ import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
-
+/** Default analysis phase budget, excluding queue admission and publication. */
+export const DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS = 120_000;
+/** Largest delay supported without overflowing Node timers. */
+export const MAX_FIRMWARE_TIMEOUT_MS = 2_147_483_647;
+const timeout = z.number().int().min(1).max(MAX_FIRMWARE_TIMEOUT_MS);
 export const MAX_FIRMWARE_STAGING_BYTES = 512 * 1024 * 1024;
 export const MAX_FIRMWARE_STAGING_ENTRIES = 100_000;
 const target = {
   path: absoluteLocalPathStringSchema.describe(
     "Absolute local firmware file; never executed. Relative paths are rejected.",
   ),
+  analysis_timeout_ms: timeout
+    .optional()
+    .describe(
+      "Analysis wall-clock budget in milliseconds (default 120000), from tool resolution through inspection and its final workspace cleanup, or extraction through inventory. Excludes queue admission and extraction publication. Does not raise fixed CPU, memory or byte limits.",
+    ),
 };
 
 /** Explicit firmware inspection and extraction intent, independent of engines. */
@@ -48,12 +57,7 @@ export const firmwareInputSchemas = {
       .max(MAX_FIRMWARE_STAGING_ENTRIES)
       .default(10_000)
       .describe("Staging entry budget, including directories and links"),
-    publication_timeout_ms: z
-      .number()
-      .int()
-      .min(1)
-      // Node timers cannot represent longer delays without overflow.
-      .max(2_147_483_647)
+    publication_timeout_ms: timeout
       .default(120_000)
       .describe(
         "Publication and final cleanup budget in milliseconds, started after extraction and inventory; increase for a slow destination",
@@ -89,6 +93,14 @@ const engine = z.strictObject({
   executable_sha256: digestSchema,
   source_revision: z.null(),
   worker_count: z.literal(1),
+});
+/** Small execution metadata contract; historical omissions remain unknown. */
+export const firmwareExecutionBudgetSchema = z.object({
+  analysis_timeout_ms: timeout
+    .exactOptional()
+    .describe(
+      "Actual analysis phase budget in milliseconds; absent in historical Evidence means unknown",
+    ),
 });
 const selection = z.strictObject({ ...range.shape, sha256: digestSchema });
 const chunk = z.strictObject({
@@ -137,6 +149,7 @@ export interface FirmwarePartialObservation {
 /** Portable results retain reported boundaries, unknowns and extraction lineage. */
 export const firmwareResultSchemas = {
   inspect_firmware_regions: z.strictObject({
+    ...firmwareExecutionBudgetSchema.shape,
     engine,
     input_size: bytes,
     regions: z.array(
@@ -153,6 +166,7 @@ export const firmwareResultSchemas = {
     coverage: z.literal("signature_scan"),
   }),
   extract_firmware: z.strictObject({
+    ...firmwareExecutionBudgetSchema.shape,
     engine,
     selection,
     output_directory: z.string(),
