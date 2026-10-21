@@ -8,11 +8,11 @@ import {
   explainUpdate,
   insertCandidates,
   insertIndex,
-  renewedUuids,
   responseShapeOf,
   type CreateEvidence,
   type UpdateEvidence,
 } from "./environmentStateWriteExplain.js";
+import { renewedUuids } from "./environmentStateWriteGenerated.js";
 import {
   classifyWrite,
   pathValuesOf,

@@ -25,9 +25,9 @@ import {
 import {
   conflictsWithPlan,
   explainUpdate,
-  otherFields,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
+import { otherFields } from "./environmentStateWriteGenerated.js";
 import {
   laterObservation,
   type Observed,
