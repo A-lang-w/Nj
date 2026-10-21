@@ -413,6 +413,7 @@ export class GpuInventory {
     row.cuda_target_header = payload.cudaHeader ?? null;
     row.target_consistency = state;
     if (selectedTarget === null) row.target = payload.value;
+    if (row.target === null) this.discovery = "partial";
     if (state !== "conflict" && payload.limitation === undefined) return;
     const message =
       state === "conflict"
@@ -450,6 +451,7 @@ export class GpuInventory {
         scope: "exact",
       });
       if (!inspected.ok) {
+        this.discovery = "partial";
         if (this.input.analysis === "kernels" && this.#selected(row))
           await this.#elfFacts(child, row, "amdgpu", prepared);
         this.#retainFailure(row, inspected.error.cause);
@@ -457,6 +459,7 @@ export class GpuInventory {
       }
       await this.#payload(source, row, prepared);
     } catch (cause) {
+      this.discovery = "partial";
       this.#retainFailure(row, cause);
     }
   }

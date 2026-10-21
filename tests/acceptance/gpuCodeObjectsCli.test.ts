@@ -167,6 +167,20 @@ it("preserves incomplete decoder coverage through MCP target and object pages", 
   }
 });
 
+it("keeps unknown target discovery visible in the default MCP summary", async () => {
+  const root = await createTestTempDirectory("rea-gpu-unknown-target-"),
+    path = join(root, "cuda");
+  await writeFile(path, cubinFixture({ osAbi: 0x41, flags: 0x06016402 }));
+  const { call } = await connectLocalToolsMcp();
+  const reply = await call("inspect_gpu_code_objects", { path });
+  expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+  const result = gpuCodeObjectsSummaryViewResultSchema.parse(
+    parseEvidence(reply.structuredContent).normalized_result,
+  );
+  expect(result.summary.coverage.discovery).toBe("partial");
+  expect(result.summary.counts).toMatchObject({ objects: 1, targets: 0 });
+});
+
 it("retains selected kernel facts and complete PTX for historical MCP pages after source removal", async () => {
   const root = await createTestTempDirectory("rea-gpu-mcp-"),
     path = join(root, "application");

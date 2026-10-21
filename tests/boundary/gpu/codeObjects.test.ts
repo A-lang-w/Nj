@@ -188,6 +188,12 @@ it("keeps unsupported CUDA flag layouts unknown while retaining raw header evide
   expect(result.value.kernels[0]!.limitations.join(" ")).toContain(
     "target encoding is unknown",
   );
+  const inventory = await inspect(
+    cubinFixture({ osAbi: 0x41, flags: 0x06016402 }),
+    { analysis: "inventory" },
+  );
+  if (!inventory.ok) throw inventory.error;
+  expect(inventory.value.coverage.discovery).toBe("partial");
 });
 it("discovers standalone AMD targets before exact selection", async () => {
   const bytes = amdFixture(),
