@@ -104,6 +104,13 @@ it("forwards build arguments and preserves real type errors and exit status", as
   expect(await readFile(join(root, "output/input.js"), "utf8")).toContain(
     "value = 1",
   );
+  const resourceArgs =
+    resolveTypeScriptCompiler().name === "tsrs"
+      ? ["--checkers", "1", "--maxMemory", "1G"]
+      : ["--checkers", "1"];
+  const checked = execute(launcher, ["-p", root, "--noEmit", ...resourceArgs]);
+  expect(checked.error).toBeUndefined();
+  expect(checked.status, checked.stdout + checked.stderr).toBe(0);
   await writeFile(input, 'export const value: number = "invalid";\n');
   const invalid = execute(launcher, [
     "-p",

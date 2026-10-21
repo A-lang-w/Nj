@@ -55,15 +55,18 @@ const main = async () => {
     throw new Error(
       "Compiler identity is missing or stale. Run Turbo through scripts/run-turbo.mjs.",
     );
-  if (compiler.name === "tsrs")
-    process.argv.splice(
-      2,
-      0,
-      "--checkers",
-      String(Math.min(2, availableParallelism())),
-      "--maxMemory",
-      "3G",
+  if (compiler.name === "tsrs") {
+    const args = process.argv.slice(2);
+    // Rust consumes --maxMemory once; duplicating it becomes an unknown option.
+    // Preserve explicit resource choices rather than injecting another value.
+    const defaults = [
+      ["--checkers", String(Math.min(2, availableParallelism()))],
+      ["--maxMemory", "3G"],
+    ].flatMap(([option, value]) =>
+      args.includes(option) ? [] : [option, value],
     );
+    process.argv.splice(2, 0, ...defaults);
+  }
   // Delegate execution, diagnostics, status and signals to the package's launcher.
   // An unavailable binary on a supported host must fail rather than hide drift.
   await import(pathToFileURL(compiler.launcher).href);
