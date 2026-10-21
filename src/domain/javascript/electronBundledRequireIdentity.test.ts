@@ -286,6 +286,34 @@ describe("Webpack externals with a tampered loader or module object", () => {
         "var o=c[t]={get exports(){return local},set exports(v){}}",
       ),
     ],
+    [
+      "a loader that returns only cached exports",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n),o.exports}",
+        "m[t](o,o.exports,n)}",
+      ),
+    ],
+    [
+      "a loader without returns",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};return m[t](o,o.exports,n),o.exports}",
+        "var o=c[t]={exports:{}};m[t](o,o.exports,n)}",
+      ),
+    ],
+    [
+      "a miss path that returns from one branch",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n),o.exports}",
+        "m[t](o,o.exports,n);if(t)return o.exports}",
+      ),
+    ],
+    [
+      "a return whose catch falls through",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n),o.exports}",
+        "try{return m[t](o,o.exports,n),o.exports}catch(x){}}",
+      ),
+    ],
   ])("keeps %s unresolved", (_name, source) => {
     const electron = electronOf(source);
     expect(electron.browser_windows).toEqual([]);
@@ -323,6 +351,13 @@ describe("Webpack externals with a tampered loader or module object", () => {
       bootstrap(EXTERNAL, CONSUMER).replace(
         "return m[t](o,o.exports,n),o.exports}",
         "return m[t].call(o.exports,o,o.exports,n),o.loaded=!0,o.exports}",
+      ),
+    ],
+    [
+      "exports returned from both branches",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n),o.exports}",
+        "m[t](o,o.exports,n);if(t)return o.exports;else return o.exports}",
       ),
     ],
   ])("still resolves with %s", (_name, source) => {
