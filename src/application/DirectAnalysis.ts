@@ -277,7 +277,9 @@ const runManagedProviderAnalysis = async (
   if (!execution.ok) return execution;
   const value = execution.value;
   return ok(
-    createAnalysisExecutionEvidence(tool, arguments_, value, "observed"),
+    createAnalysisExecutionEvidence(tool, arguments_, value, "observed", {
+      immutable: true,
+    }),
   );
 };
 

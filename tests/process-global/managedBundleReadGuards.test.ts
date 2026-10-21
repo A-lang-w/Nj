@@ -1,3 +1,17 @@
+import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
+import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
+import { parseConfig } from "../../src/config/parseConfig.js";
+import {
+  isImmutableEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../src/domain/evidence.js";
+import { ok } from "../../src/domain/result.js";
+import { observed } from "../fixtures/analysisExecution.js";
+import {
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../fixtures/binarySession.js";
 import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -121,5 +135,76 @@ it("retains completed parent facts when bundle publication cannot admit authenti
   if (result.ok) throw new Error("Expected refused bundle authentication");
   expect(result.error.partialObservation).toBe(evidence);
   expect(createImmutableEvidenceBundle).not.toHaveBeenCalled();
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("projects a rejected managed parent by reference without cloning under low headroom", async () => {
+  const root = await createTestTempDirectory(
+    "rea-managed-low-heap-projection-",
+  );
+  const [target] = await createBinarySessionTargets();
+  const source = {
+    rows: Array.from({ length: 512 }, (_, token) => ({
+      token,
+      name: "member",
+    })),
+  };
+  let closes = 0;
+  const session = () =>
+    createTestBinarySession(() => ({
+      execute: async () => observed(source),
+      close: async () => {
+        closes += 1;
+        return ok(null);
+      },
+    }));
+  const dependencies: DirectAnalysisDependencies = {
+    readConfiguration: () => parseConfig({}),
+    createBinarySession: session,
+    createNativeDispatchBinarySession: session,
+    createArtifactBinarySession: session,
+    createNativeBinarySession: session,
+    createManagedBinarySession: session,
+  };
+  const actual = await vi.importActual<
+    typeof import("../../src/application/JsonAuthenticationHeadroom.js")
+  >("../../src/application/JsonAuthenticationHeadroom.js");
+  let parent: Evidence | undefined;
+  vi.mocked(requireAuthenticationHeadroom).mockImplementationOnce(
+    (value, options) => {
+      parent = parseEvidence(value);
+      expect(isImmutableEvidence(parent)).toBe(true);
+      expect(parent).toBe(value);
+      return actual.requireAuthenticationHeadroom(value, {
+        ...options,
+        availableBytes: 0,
+      });
+    },
+  );
+  const result = await runProviderAnalysis(
+    dependencies,
+    target,
+    "inspect_managed_members",
+    {},
+    undefined,
+    undefined,
+    {
+      detail: "summary",
+      evidenceBundlePath: join(root, "parent.json"),
+    },
+  );
+  expect(result).toMatchObject({
+    code: "resource_constraint",
+    details: { operation: "inspect_managed_members" },
+  });
+  if (typeof result !== "object" || result === null || Array.isArray(result))
+    throw new Error("Expected CLI error");
+  const details = result.details;
+  if (typeof details !== "object" || details === null || Array.isArray(details))
+    throw new Error("Expected CLI error details");
+  expect(details.partial_observation).toBe(parent);
+  expect(parent?.normalized_result).toEqual(source);
+  expect(Object.isFrozen(source.rows[0])).toBe(false);
+  expect(closes).toBe(1);
   expect(await readdir(root)).toEqual([]);
 });

@@ -1,6 +1,6 @@
 # Portable managed CLI member views
 
-Issue #5148 / PR #5167. Baseline `main@0583fc69beccc03b46bc702348a4dd0bf783af95`;
+Issue #5148 / PR #5167. Baseline `main@d2015e94f32a51b898918b5b39b374c134119fd5`;
 feature integrates the original `7b3ed4d025edd24d062cde0327a53bd311e174fc`.
 The measured production-file SHA-256 manifest is in [managed-cli.json](managed-cli.json).
 These are working-tree measurements; subsequent formatting does not add a new
@@ -49,12 +49,12 @@ All trials complete with verified process cleanup and no OOM/resource-stop event
 | Whole task, median                              | Complete | Summary + two pages |
 | ----------------------------------------------- | -------: | ------------------: |
 | Estimated context tokens, both cache conditions |  451,373 |              13,078 |
-| Cold wall seconds                               |    4.853 |              11.094 |
-| Cold family CPU seconds                         |    4.652 |              10.858 |
-| Cold kernel family peak MiB                     |    387.2 |               390.1 |
-| Warm wall seconds                               |    4.449 |               9.987 |
-| Warm family CPU seconds                         |    4.236 |               9.804 |
-| Warm kernel family peak MiB                     |    391.0 |               396.0 |
+| Cold wall seconds                               |    4.953 |              11.096 |
+| Cold family CPU seconds                         |    4.732 |              10.925 |
+| Cold kernel family peak MiB                     |    388.4 |               388.0 |
+| Warm wall seconds                               |    4.552 |              10.491 |
+| Warm family CPU seconds                         |    4.344 |              10.227 |
+| Warm kernel family peak MiB                     |    393.9 |               394.4 |
 
 Context estimates include the question, supplied command recipe, all logical
 argv, actual help and stdout. Tokenizer `tiktoken==0.12.0`, `cl100k_base`.
@@ -64,8 +64,9 @@ The memory counter is the kernel cgroup process-family peak including file
 cache, not sampled RSS. Ranges and individual receipts are in the JSON.
 
 This is an opt-in context/portability improvement with extra latency and CPU,
-not a speed or memory optimization. All complete parsing and full-bundle
-authentication remain. Complete output remains the default and is preferable
+not a speed or memory optimization. Complete provider parsing and full authentication of file-supplied bundles
+remain. Fresh managed Evidence is sealed at its producing factory and reused
+without another payload clone, including low-headroom error projection. Complete output remains the default and is preferable
 for small outputs or questions requiring every row. No cache or parser cap
 was introduced.
 
@@ -74,7 +75,7 @@ was introduced.
 The unchanged baseline can already redirect full stdout to a file and select
 rows in code. [The measured control](managed-cli-local-control.py) returns the
 identical answer and retains the complete original Evidence. One cold run:
-4.859 s wall, 4.615 s family CPU, 376.3 MiB kernel peak. Projection source,
+4.753 s wall, 4.600 s family CPU, 374.7 MiB kernel peak. Projection source,
 original help and returned answer together estimate 10,345 tokens; the shared
 question and launcher argv are excluded. This single-run control does not
 establish stable performance or actual native-agent usage. It does demonstrate
@@ -92,10 +93,19 @@ outputs, provider/publication failures, interrupted publication, cleanup retry,
 and queued SIGINT/SIGTERM during authentication/projection.
 
 Additional producing-boundary regressions verify heap admission before cloning
-and hashing on publication and read, and the paging operation's cancellation identity
-with the exact caller reason. All three fail when their fixes are removed, then pass
-when restored. These are fault-injection tests, not real-provider performance
-measurements. Authentication and projection remain synchronous with cooperative
+and hashing on publication and read, and exact cancellation identity. The first
+three regressions failed when those fixes were removed. Review corrections seal
+the freshly parsed/hashed managed Evidence at its existing factory, so the final
+CLI error projection reuses the same authenticated immutable object when heap
+admission refuses publication. Caller-owned provider input remains mutable and
+independent. The writer receives the caller operation at creation, preserving
+its exact cancellation cause, cleanup primary and lease through successful or
+unresolved retries. Four projection/operation regression cases fail with these
+producer fixes removed and pass when restored. No actual heap exhaustion is
+needed for fault injection; all real tasks remain within the resource guard.
+All 243 focused tests across eleven files, `npm run check` and `npm run docs:check`
+pass for this correction. These are fault-injection tests, not foreign-provider
+measurements. Authentication/projection remains synchronous with cooperative
 cancellation checkpoints between stages, not preemptible work.
 
 ## Reproduction
@@ -133,14 +143,3 @@ uv run --no-project --with tiktoken==0.12.0 python \
 The original issue reporter's executable, foreign operating systems and actual
 model sessions remain unverified. Two setup pilots, including one failed run
 while compiled artifacts were absent after a typecheck failure, are excluded.
-
-## Latest-main integration verification
-
-After merging `main@d2015e94f32a51b898918b5b39b374c134119fd5`, verified runtime
-`f0b797d2f312f673effd82f177c49745eaf67c2b`: all measured feature production-file
-hashes remain unchanged. A fresh selected real-artifact task retains the identical
-full parent and answer, with clean process exit. Its resource observation is
-recorded separately in the JSON; the paired medians above remain bound to the
-original baseline and are not relabeled as new latest-main measurements.
-All 153 focused tests across nine files, `npm run check`, and `npm run docs:check`
-(including five README consistency tests) pass after this integration.

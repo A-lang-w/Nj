@@ -129,6 +129,7 @@ export const writeEvidenceBundle = async (
   overwrite: boolean,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
+  operation = "export_evidence_bundle",
 ): Promise<
   Result<
     { readonly path: string; readonly bytes: number },
@@ -137,7 +138,7 @@ export const writeEvidenceBundle = async (
 > => {
   if (signal?.aborted === true)
     return err(
-      new AnalysisCancelledError("export_evidence_bundle", {
+      new AnalysisCancelledError(operation, {
         cause: signal.reason,
       }),
     );
@@ -156,8 +157,6 @@ export const writeEvidenceBundle = async (
     path,
     overwrite,
     resources,
-    signal === undefined
-      ? undefined
-      : { signal, operation: "export_evidence_bundle" },
+    signal === undefined ? undefined : { signal, operation },
   );
 };

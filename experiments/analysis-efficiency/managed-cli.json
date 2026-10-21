@@ -14,13 +14,11 @@
     "target_execution": false
   },
   "measurement_inputs": {
-    "baseline_revision": "0583fc69beccc03b46bc702348a4dd0bf783af95",
-    "feature_parent_revision": "0583fc69beccc03b46bc702348a4dd0bf783af95",
+    "baseline_revision": "d2015e94f32a51b898918b5b39b374c134119fd5",
+    "feature_parent_revision": "aac3af3a3f7d3e213dad3273f1e39df07b4a073e",
     "merged_original_revision": "7b3ed4d025edd24d062cde0327a53bd311e174fc",
-    "feature_tracked_patch_sha256": "998f3f6f5b462b6d9c7b7279472bc31a0d4c71a0cb936ea1a2edaa4f2c04737d",
-    "untracked_source_sha256": {
-      "tests/process-global/managedBundleReadGuards.test.ts": "f53b26e85267a851a549cd76b59cc56851777b270a6a846d39366c3a32277d9e"
-    },
+    "feature_tracked_patch_sha256": "2b624d936c60d0c72aeaa845d655262bb0f7b1d7e4fbf82cacbb5a2937fc664b",
+    "untracked_source_sha256": {},
     "node": "v24.18.0",
     "npm": "11.16.0",
     "oracle_packages": {
@@ -29,9 +27,10 @@
     },
     "no_overlapping_build_or_test": true,
     "production_sources_sha256": {
-      "src/application/DirectAnalysis.ts": "abbb2ff38880c80ba0a42c36cf495985727f632c56ab32b24229e311b6bdde3d",
-      "src/application/EvidenceBundleCommands.ts": "c55d0a98c36f3a2543219eec78889beeee737f3fdcc7c643a896b4602cd48c6d",
-      "src/application/EvidenceBundleFiles.ts": "212df8168be9e9b1a864a84a7f332160211183d23722935f9159e64bc8a11e75",
+      "src/application/AnalysisProvider.ts": "97a8b6a01b1cbe50f8f0755a807f7ba93697b82705551bd613089a6f95f51f67",
+      "src/application/DirectAnalysis.ts": "42c170ea676fb3c6e99a1ac0b9bac86bd9250cccf3fc1dc1feb4e5afe0296723",
+      "src/application/EvidenceBundleCommands.ts": "5d1c502622ce35019b674e33bf2fdad7f15cc44fd01b6ad9f2f06e0083c4c2b3",
+      "src/application/EvidenceBundleFiles.ts": "9f5f22f1122f14201971bbda85b96469aa38a1cbb856e2d077ea8385fd13a0f6",
       "src/application/EvidenceInputResolver.test.ts": "96c1bf405fd7ae492da75959bb9285ec91c2f6abc2f161316057e1fd8efee5aa",
       "src/application/EvidenceInputResolver.ts": "7b676ec2f70ad55b97c9a635dce51468101eca964e7a1205f9ce9633ec946f89",
       "src/application/JsonAuthenticationHeadroom.ts": "a75a161ce5feee4d9d91ec184f608a1d79a07bb411abe7d9970c57b5a4dc20b1",
@@ -39,44 +38,49 @@
       "src/cli/managedCommands.ts": "4bca27702452f426efeeb7a034fa78613c2db458eac7b3f1c0afca3b144d4700",
       "src/composition/directAnalysis.ts": "d6d8002818fdb2d05d33d79563dd31dbe27e2d330a080ba9a9c64a99e9732006",
       "src/domain/analysisErrorPresentation.ts": "293685c9dd89c107aabe63fb2fa7242c2fd0f42101683722badcdf8b2eb7e24c",
+      "src/domain/evidence.ts": "05c8e6a24eab1c75c90c01529f297c0a20a6d95b2eecc9e9fbf7516888ef8db6",
       "src/dotnet/ManagedPe.fixture.ts": "710af895b190f3b5dbdb17d922c87d3ee699b99c4c5fb46d1f3601fad97bb1a5"
+    },
+    "harness_sha256": {
+      "measured_private_driver": "09a9d40d31883f66968830b5b1bb14a810a529d7d9721c208277757370887dbb",
+      "published_driver": "f4941bd4d0f9e4d9e7c935de5df121561950ff4b7b7592076a056a324c522185"
     }
   },
   "summary": {
     "cold": {
       "complete": {
         "wall_seconds": {
-          "median": 4.853,
-          "min": 4.852,
-          "max": 5.155
+          "median": 4.953,
+          "min": 4.853,
+          "max": 5.053
         },
         "cpu_seconds": {
-          "median": 4.651809,
-          "min": 4.622884,
-          "max": 4.912672
+          "median": 4.731596,
+          "min": 4.696421,
+          "max": 4.820458
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 406011904,
-          "min": 405032960,
-          "max": 407793664
+          "median": 407269376,
+          "min": 405221376,
+          "max": 408268800
         },
         "whole_task_tokens_estimated": [451373, 451373, 451373]
       },
       "selected": {
         "wall_seconds": {
-          "median": 11.094,
-          "min": 10.994,
-          "max": 11.4
+          "median": 11.096,
+          "min": 11.095,
+          "max": 11.198
         },
         "cpu_seconds": {
-          "median": 10.858032,
-          "min": 10.821124,
-          "max": 11.123881
+          "median": 10.925063,
+          "min": 10.92338,
+          "max": 11.033634
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 409088000,
-          "min": 406396928,
-          "max": 410722304
+          "median": 406843392,
+          "min": 402726912,
+          "max": 408944640
         },
         "whole_task_tokens_estimated": [13078, 13078, 13078]
       }
@@ -84,37 +88,37 @@
     "warm": {
       "complete": {
         "wall_seconds": {
-          "median": 4.449,
-          "min": 4.349,
-          "max": 4.449
+          "median": 4.552,
+          "min": 4.45,
+          "max": 4.652
         },
         "cpu_seconds": {
-          "median": 4.23562,
-          "min": 4.165469,
-          "max": 4.279598
+          "median": 4.343659,
+          "min": 4.284199,
+          "max": 4.502427
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 409948160,
-          "min": 407953408,
-          "max": 411746304
+          "median": 413024256,
+          "min": 410075136,
+          "max": 416030720
         },
         "whole_task_tokens_estimated": [451373, 451373, 451373]
       },
       "selected": {
         "wall_seconds": {
-          "median": 9.987,
-          "min": 9.885,
-          "max": 10.188
+          "median": 10.491,
+          "min": 10.091,
+          "max": 10.495
         },
         "cpu_seconds": {
-          "median": 9.804365,
-          "min": 9.662018,
-          "max": 9.954889
+          "median": 10.226657,
+          "min": 9.832251,
+          "max": 10.281566
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 415199232,
-          "min": 414998528,
-          "max": 416137216
+          "median": 413552640,
+          "min": 413007872,
+          "max": 415469568
         },
         "whole_task_tokens_estimated": [13078, 13078, 13078]
       }
@@ -125,9 +129,9 @@
       "case": "pair-cold-1-complete",
       "mode": "complete",
       "cache": "cold",
-      "wall_seconds": 5.155,
-      "cpu_seconds": 4.912672,
-      "peak_process_family_bytes_including_page_cache": 406011904,
+      "wall_seconds": 4.953,
+      "cpu_seconds": 4.731596,
+      "peak_process_family_bytes_including_page_cache": 407269376,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -138,7 +142,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2009.364312,
+          "elapsed_ms": 1890.492753,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -152,7 +156,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2755.6209650000005,
+          "elapsed_ms": 2697.3818069999998,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -184,9 +188,9 @@
       "case": "pair-cold-1-selected",
       "mode": "selected",
       "cache": "cold",
-      "wall_seconds": 11.4,
-      "cpu_seconds": 11.123881,
-      "peak_process_family_bytes_including_page_cache": 410722304,
+      "wall_seconds": 11.095,
+      "cpu_seconds": 10.92338,
+      "peak_process_family_bytes_including_page_cache": 406843392,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -197,14 +201,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1848.494177,
+          "elapsed_ms": 1877.693761,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1814.565518,
+          "elapsed_ms": 1892.314242,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -222,7 +226,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2767.660519,
+          "elapsed_ms": 2753.136028,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -236,7 +240,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2563.1630350000005,
+          "elapsed_ms": 2139.093353000001,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -250,7 +254,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2043.434797,
+          "elapsed_ms": 2131.8753430000015,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -283,8 +287,8 @@
       "mode": "complete",
       "cache": "cold",
       "wall_seconds": 4.853,
-      "cpu_seconds": 4.651809,
-      "peak_process_family_bytes_including_page_cache": 405032960,
+      "cpu_seconds": 4.696421,
+      "peak_process_family_bytes_including_page_cache": 408268800,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -295,7 +299,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1853.9194479999999,
+          "elapsed_ms": 1912.571982,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -309,7 +313,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2661.0237169999996,
+          "elapsed_ms": 2640.981796,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -341,9 +345,9 @@
       "case": "pair-cold-2-selected",
       "mode": "selected",
       "cache": "cold",
-      "wall_seconds": 10.994,
-      "cpu_seconds": 10.821124,
-      "peak_process_family_bytes_including_page_cache": 409088000,
+      "wall_seconds": 11.096,
+      "cpu_seconds": 10.925063,
+      "peak_process_family_bytes_including_page_cache": 408944640,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -354,14 +358,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1846.855646,
+          "elapsed_ms": 1929.146023,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1879.2491530000002,
+          "elapsed_ms": 1904.5144610000002,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -379,7 +383,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2758.397931,
+          "elapsed_ms": 2777.2760169999997,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -393,7 +397,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2104.1857419999997,
+          "elapsed_ms": 2100.135902,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -407,7 +411,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2120.3994349999994,
+          "elapsed_ms": 2086.7454830000006,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -439,9 +443,9 @@
       "case": "pair-cold-3-complete",
       "mode": "complete",
       "cache": "cold",
-      "wall_seconds": 4.852,
-      "cpu_seconds": 4.622884,
-      "peak_process_family_bytes_including_page_cache": 407793664,
+      "wall_seconds": 5.053,
+      "cpu_seconds": 4.820458,
+      "peak_process_family_bytes_including_page_cache": 405221376,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -452,7 +456,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1866.052567,
+          "elapsed_ms": 1913.463862,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -466,7 +470,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2617.6381309999997,
+          "elapsed_ms": 2778.1791260000005,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -498,9 +502,9 @@
       "case": "pair-cold-3-selected",
       "mode": "selected",
       "cache": "cold",
-      "wall_seconds": 11.094,
-      "cpu_seconds": 10.858032,
-      "peak_process_family_bytes_including_page_cache": 406396928,
+      "wall_seconds": 11.198,
+      "cpu_seconds": 11.033634,
+      "peak_process_family_bytes_including_page_cache": 402726912,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -511,14 +515,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1884.884267,
+          "elapsed_ms": 1899.9793319999999,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1937.2820480000003,
+          "elapsed_ms": 1927.590811,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -536,7 +540,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2713.657254,
+          "elapsed_ms": 2799.8931459999994,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -550,7 +554,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2104.0250909999995,
+          "elapsed_ms": 2121.8983210000006,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -564,7 +568,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2123.2294039999997,
+          "elapsed_ms": 2158.309412999999,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -596,9 +600,9 @@
       "case": "pair-warm-1-complete",
       "mode": "complete",
       "cache": "warm",
-      "wall_seconds": 4.449,
-      "cpu_seconds": 4.279598,
-      "peak_process_family_bytes_including_page_cache": 409948160,
+      "wall_seconds": 4.45,
+      "cpu_seconds": 4.284199,
+      "peak_process_family_bytes_including_page_cache": 410075136,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -609,7 +613,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1733.299172,
+          "elapsed_ms": 1720.789389,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -623,7 +627,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2405.6920569999997,
+          "elapsed_ms": 2422.6366219999995,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -655,9 +659,9 @@
       "case": "pair-warm-1-selected",
       "mode": "selected",
       "cache": "warm",
-      "wall_seconds": 10.188,
-      "cpu_seconds": 9.954889,
-      "peak_process_family_bytes_including_page_cache": 415199232,
+      "wall_seconds": 10.491,
+      "cpu_seconds": 10.281566,
+      "peak_process_family_bytes_including_page_cache": 415469568,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -668,14 +672,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1680.236487,
+          "elapsed_ms": 1791.659189,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1723.9427949999997,
+          "elapsed_ms": 1757.3426989999998,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -693,7 +697,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2553.828363,
+          "elapsed_ms": 2634.959924,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -707,7 +711,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 1963.741774,
+          "elapsed_ms": 1985.3071999999993,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -721,7 +725,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 1909.21339,
+          "elapsed_ms": 1996.048640000001,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -753,9 +757,9 @@
       "case": "pair-warm-2-complete",
       "mode": "complete",
       "cache": "warm",
-      "wall_seconds": 4.449,
-      "cpu_seconds": 4.23562,
-      "peak_process_family_bytes_including_page_cache": 411746304,
+      "wall_seconds": 4.652,
+      "cpu_seconds": 4.502427,
+      "peak_process_family_bytes_including_page_cache": 416030720,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -766,7 +770,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1727.280892,
+          "elapsed_ms": 1778.614659,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -780,7 +784,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2372.5166259999996,
+          "elapsed_ms": 2576.533472,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -812,9 +816,9 @@
       "case": "pair-warm-2-selected",
       "mode": "selected",
       "cache": "warm",
-      "wall_seconds": 9.987,
-      "cpu_seconds": 9.804365,
-      "peak_process_family_bytes_including_page_cache": 416137216,
+      "wall_seconds": 10.495,
+      "cpu_seconds": 10.226657,
+      "peak_process_family_bytes_including_page_cache": 413007872,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -825,14 +829,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1682.414739,
+          "elapsed_ms": 1737.934399,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1683.210489,
+          "elapsed_ms": 1734.039528,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -850,7 +854,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2464.181373,
+          "elapsed_ms": 2552.139792,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -864,7 +868,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 1948.6225210000002,
+          "elapsed_ms": 2088.27344,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -878,7 +882,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 1913.9987530000008,
+          "elapsed_ms": 1989.1555900000003,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -910,9 +914,9 @@
       "case": "pair-warm-3-complete",
       "mode": "complete",
       "cache": "warm",
-      "wall_seconds": 4.349,
-      "cpu_seconds": 4.165469,
-      "peak_process_family_bytes_including_page_cache": 407953408,
+      "wall_seconds": 4.552,
+      "cpu_seconds": 4.343659,
+      "peak_process_family_bytes_including_page_cache": 413024256,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -923,7 +927,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1721.2835779999998,
+          "elapsed_ms": 1753.146028,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -937,7 +941,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2307.073857,
+          "elapsed_ms": 2456.404002,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -969,9 +973,9 @@
       "case": "pair-warm-3-selected",
       "mode": "selected",
       "cache": "warm",
-      "wall_seconds": 9.885,
-      "cpu_seconds": 9.662018,
-      "peak_process_family_bytes_including_page_cache": 414998528,
+      "wall_seconds": 10.091,
+      "cpu_seconds": 9.832251,
+      "peak_process_family_bytes_including_page_cache": 413552640,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -982,14 +986,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 1648.121179,
+          "elapsed_ms": 1683.331788,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1638.4212550000002,
+          "elapsed_ms": 1636.6941869999998,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -1007,7 +1011,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2484.736107,
+          "elapsed_ms": 2552.692662,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -1021,7 +1025,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 1871.56308,
+          "elapsed_ms": 1951.9170889999996,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -1035,7 +1039,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 1890.1908640000001,
+          "elapsed_ms": 1885.353099,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -1069,23 +1073,10 @@
     "repetitions": 1,
     "tokens_estimated_script_plus_help_plus_answer": 10345,
     "token_scope": "Projection source, original CLI help and returned answer; excludes shared question and launcher argv. No actual model usage measured.",
-    "wall_seconds": 4.859,
-    "cpu_seconds": 4.614887,
-    "peak_process_family_bytes_including_page_cache": 394600448,
+    "wall_seconds": 4.753,
+    "cpu_seconds": 4.600434,
+    "peak_process_family_bytes_including_page_cache": 392937472,
     "answer_matches": true,
     "cleanup_verified": true
-  },
-  "latest_main_verification": {
-    "revision": "f0b797d2f312f673effd82f177c49745eaf67c2b",
-    "upstream_main": "d2015e94f32a51b898918b5b39b374c134119fd5",
-    "status": "passed",
-    "parent_and_answer_unchanged": true,
-    "all_measured_feature_production_hashes_unchanged": true,
-    "repetitions": 1,
-    "wall_seconds": 11.606,
-    "cpu_seconds": 11.411843,
-    "peak_process_family_bytes_including_page_cache": 412237824,
-    "cleanup_verified": true,
-    "scope": "Post-integration correctness smoke with resource observation, not a new paired cohort."
   }
 }

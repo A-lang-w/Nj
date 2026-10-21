@@ -93,6 +93,7 @@ export const deliverAnalysisEvidence = async (
     outputPath,
     false,
     signal,
+    evidence.operation,
   );
   if (!written.ok) return err(written.error.retainPartialObservation(evidence));
   if (signal?.aborted)
@@ -165,6 +166,7 @@ const persistEvidenceBundleCommand = async (
   outputPath: string,
   overwrite: boolean,
   signal?: AbortSignal,
+  operation?: string,
 ): Promise<Result<PublishedEvidenceFile, AnalysisError>> => {
   const resources = new ArtifactResourceScope();
   const written = await writeEvidenceBundle(
@@ -173,6 +175,7 @@ const persistEvidenceBundleCommand = async (
     overwrite,
     resources,
     signal,
+    operation,
   );
   if (written.ok) return written;
 

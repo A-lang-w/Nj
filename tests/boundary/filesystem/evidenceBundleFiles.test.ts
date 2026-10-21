@@ -214,7 +214,14 @@ describe("evidence bundle export cancellation", () => {
       controller.signal,
     );
     if (result.ok) throw new Error("Cancelled delivery reported success");
-    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: parent.operation,
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      details: { operation: parent.operation },
+    });
     expect(result.error.cause).toBe(reason);
     expect(result.error.partialObservation).toBe(parent);
     expect(await readdir(root)).toEqual([]);
@@ -366,6 +373,9 @@ it.each([1, 2])(
       expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.partialObservation).toBe(parent);
       expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupPrimary).toMatchObject({
+        operation: parent.operation,
+      });
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
       expect(result.error.cleanup?.reason).toBe(cleanupCause.message);
       const incomplete = failedAttempts === 2;
@@ -375,6 +385,7 @@ it.each([1, 2])(
       );
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: incomplete ? "cleanup_incomplete" : "cancelled",
+        details: { operation: parent.operation },
       });
       expect((await readdir(root)).map((entry) => join(root, entry))).toEqual(
         incomplete ? [owner?.directory] : [],
