@@ -1,7 +1,4 @@
-import {
-  spawn,
-  type ChildProcessWithoutNullStreams,
-} from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
@@ -93,8 +90,7 @@ const dispatch = async (
   const id = state.nextId;
   state.nextId += 1;
   const response = await request(state, child, id, args);
-  if (response.exitCode !== 0)
-    throw new Error(failureText(state, response));
+  if (response.exitCode !== 0) throw new Error(failureText(state, response));
   return JSON.parse(response.stdout) as unknown;
 };
 
@@ -245,5 +241,4 @@ const closeSession = async (state: SessionState): Promise<void> => {
     throw new Error("Compiled CLI session stayed running after SIGKILL");
 };
 
-const sessionClosed = (): Error =>
-  new Error("Compiled CLI session is closed");
+const sessionClosed = (): Error => new Error("Compiled CLI session is closed");

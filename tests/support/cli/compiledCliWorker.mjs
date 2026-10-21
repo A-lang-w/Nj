@@ -1,12 +1,10 @@
 import { Writable } from "node:stream";
 import { createInterface } from "node:readline";
 
-const { cliConfigurationError, createCli } = await import(
-  "../../../dist/cli-runtime/cli.js"
-);
-const { createCliResultOutput } = await import(
-  "../../../dist/cli-runtime/cliResultOutput.js"
-);
+const { cliConfigurationError, createCli } =
+  await import("../../../dist/cli-runtime/cli.js");
+const { createCliResultOutput } =
+  await import("../../../dist/cli-runtime/cliResultOutput.js");
 const {
   normalizeCliArguments,
   renderCliOutputArgumentError,
