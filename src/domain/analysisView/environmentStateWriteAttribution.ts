@@ -222,7 +222,18 @@ export class WriteEffects {
       const left = tool === at.writer ? claim : remaining(claim, write);
       if (left !== undefined) {
         own!.set(tool, left);
-        if (tool !== at.writer) touched.get(at.entity)?.set(tool, left);
+        if (tool !== at.writer) {
+          const tools = touched.get(at.entity);
+          const sent = tools?.get(tool);
+          // touched keeps sent members. A members check compares those; a surviving derived field stays on the effect.
+          if (tools !== undefined && sent !== undefined)
+            tools.set(
+              tool,
+              sent !== null && left !== null
+                ? sent.filter((field) => left.includes(field))
+                : left,
+            );
+        }
       } else {
         own!.delete(tool);
         touched.get(at.entity)?.delete(tool);

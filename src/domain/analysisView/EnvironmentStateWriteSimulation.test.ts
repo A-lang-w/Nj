@@ -740,6 +740,60 @@ describe("reads named as serving names them", () => {
     });
   });
 
+  it("confirms a delete by a plain absence of an entity held under the encoded collection", () => {
+    const alpha = orgBook(1, "acme1", "Alpha");
+    const beta = orgBook(2, "beta2", "Beta");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [alpha]],
+      ["GET", "/api/orgs/beta2/books", [beta]],
+      ["GET", "/api/orgs/%61cme1/books/1", alpha],
+      ["GET", "/api/orgs/beta2/books/2", beta],
+      ["DELETE", "/api/orgs/acme1/books/1", "", 204],
+      ["GET", "/api/orgs/acme1/books/1", BOOK_NOT_FOUND, 404],
+      ["DELETE", "/api/orgs/beta2/books/2", "", 204],
+      ["GET", "/api/orgs/beta2/books/2", BOOK_NOT_FOUND, 404],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "delete")).toMatchObject({
+      served: true,
+      checked_record_ordinals: expect.arrayContaining([5]),
+    });
+  });
+
+  it("learns a plain-path update from a later read under the encoded collection", () => {
+    const alpha = orgBook(1, "acme1", "Alpha");
+    const renamed = orgBook(1, "acme1", "Renamed");
+    const beta = orgBook(2, "beta2", "Beta");
+    const renamedBeta = orgBook(2, "beta2", "Renamed Beta");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [alpha]],
+      ["GET", "/api/orgs/beta2/books", [beta]],
+      ["GET", "/api/orgs/%61cme1/books/1", alpha],
+      ["GET", "/api/orgs/beta2/books/2", beta],
+      ["PATCH", "/api/orgs/acme1/books/1", "", 204, { name: "Renamed" }],
+      ["GET", "/api/orgs/%61cme1/books/1", renamed],
+      ["GET", "/api/orgs/%61cme1/books/1", renamed],
+      [
+        "PATCH",
+        "/api/orgs/beta2/books/2",
+        renamedBeta,
+        200,
+        { name: "Renamed Beta" },
+      ],
+      ["GET", "/api/orgs/beta2/books/2", renamedBeta],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "update")).toMatchObject({
+      served: true,
+      observation: { ordinal: 5 },
+      checked_record_ordinals: expect.arrayContaining([6]),
+    });
+  });
+
   it("checks a line whose query repeats a name with one value, which a call still names", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/books?tag=a&tag=a", [FIRST_BOOK]],
@@ -865,6 +919,37 @@ describe("what a check leaves pending", () => {
     ];
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: true,
+      checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
+  it("checks a surviving sent member after a derived field was bumped by an unmodelled write", () => {
+    const entry = (
+      name: string,
+      description: string,
+      version: number,
+    ): Book => ({ id: 1, name, description, version });
+    const other = { id: 2, name: "B", description: "y", version: 1 };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [entry("A", "x", 1), other]],
+      ["GET", "/api/books/1", entry("A", "x", 1)],
+      ["GET", "/api/books/2", other],
+      [
+        "PATCH",
+        "/api/books/1",
+        entry("A2", "new", 2),
+        200,
+        { name: "A2", description: "new" },
+      ],
+      ["PUT", "/api/books/1", entry("A3", "new", 2), 200, { name: "A3" }],
+      ["POST", "/api/books/1/archive", { archived: true }, 204, {}],
+      // The read still shows the description the patch sent. The version bump is not that patch.
+      ["GET", "/api/books/1", entry("A3", "new", 9)],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([{ field: "version", rule: "increment" }]),
       checked_record_ordinals: [6],
       contradicted_by: null,
     });

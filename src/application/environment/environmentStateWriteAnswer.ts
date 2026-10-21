@@ -8,7 +8,10 @@ import {
   writtenResponse,
   type GenerateValue,
 } from "../../domain/analysisView/environmentStateWriteApply.js";
-import { insertIndex } from "../../domain/analysisView/environmentStateWriteExplain.js";
+import {
+  insertIndex,
+  nextInteger,
+} from "../../domain/analysisView/environmentStateWriteExplain.js";
 import {
   pathValuesOf,
   type GeneratedRule,
@@ -17,7 +20,6 @@ import {
 } from "../../domain/analysisView/environmentStateWriteRules.js";
 import {
   formatClock,
-  integerOf,
   isUuid,
   seededToken,
   seededUuid,
@@ -126,13 +128,12 @@ const observedEntity = (
   return isObject(object) ? object : undefined;
 };
 
-/** The largest integer the entities hold in a field, plus one. */
-const nextInteger = (entities: readonly StateEntity[], field: string): number =>
-  entities.reduce(
-    (largest, entity) =>
-      Math.max(largest, integerOf(entity.fields[field]) ?? 0),
-    0,
-  ) + 1;
+/** One past the largest integer these entities hold in the field, or undefined when none holds one. */
+const nextHeld = (entities: readonly StateEntity[], field: string) =>
+  nextInteger(
+    entities.map((entity) => entity.fields),
+    field,
+  );
 
 /**
  * Values one served write generates: its clock instant, sequences one past the largest held
@@ -154,7 +155,7 @@ const generator = (
   const { store } = serving;
   const write = store.pendingWrite();
   const taken = new Map<string, number>();
-  const sequence = (key: string, held: number): number => {
+  const sequence = (key: string, held: number | undefined): number => {
     const value = store.sequenceAfter(key, held);
     taken.set(key, value);
     return value;
@@ -191,7 +192,7 @@ const generator = (
             exemplar,
             sequence(
               `${request.tool.name} ${rule.field} ${rule.scope === "collection" ? target.name : ""}`,
-              nextInteger(
+              nextHeld(
                 rule.scope === "collection"
                   ? [...target.collection, ...startedIn]
                   : [...ofType, ...started],
@@ -211,7 +212,7 @@ const generator = (
               exemplar,
               sequence(
                 `${request.plan.target ?? ""} ${rule.field} ${target.name}`,
-                nextInteger([...target.collection, ...startedIn], rule.field),
+                nextHeld([...target.collection, ...startedIn], rule.field),
               ),
             ),
           );

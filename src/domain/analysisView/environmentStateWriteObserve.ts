@@ -85,6 +85,8 @@ export const laterObservation = (
     readonly id?: string;
     readonly held: (id: string) => boolean;
     readonly isWrite: (record: StateRecordFacts) => boolean;
+    /** An item read matches by this instead of equal collection strings. */
+    readonly sameItem?: (record: StateRecordFacts) => boolean;
   },
 ): Observed | undefined => {
   for (const record of search.records.slice(search.from + 1)) {
@@ -111,12 +113,13 @@ const itemObservation = (
   pointer: string,
   target: Parameters<typeof laterObservation>[1],
 ): Observed | undefined => {
-  const id = lastSegmentValue(record.path);
-  if (
-    collectionPathOf(record, true) !== target.collection ||
-    (target.id !== undefined ? id !== target.id : target.held(id))
-  )
-    return undefined;
+  const pathId = lastSegmentValue(record.path);
+  const named =
+    target.sameItem?.(record) ??
+    (collectionPathOf(record, true) === target.collection &&
+      (target.id === undefined ? !target.held(pathId) : pathId === target.id));
+  if (!named) return undefined;
+  const id = target.id ?? pathId;
   return search.withBody(record.ordinal, (body) => {
     const object =
       body === undefined
