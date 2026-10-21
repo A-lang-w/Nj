@@ -51,6 +51,7 @@ async function invoke(
     apiError?: boolean;
     repository?: string;
     repositoryId?: string;
+    tier?: string;
   } = {},
 ) {
   const directory = await createTestTempDirectory("rea-ci-test-history-");
@@ -92,6 +93,7 @@ async function invoke(
       CI_REPOSITORY: options.repository ?? repository,
       CI_REPOSITORY_ID: options.repositoryId ?? String(repositoryId),
       CI_DEFAULT_BRANCH: "main",
+      CI_TIMING_TIER: options.tier ?? "",
       GITHUB_OUTPUT: output,
     },
   });
@@ -122,8 +124,11 @@ it("selects the latest trusted full run that actually published timing history",
     },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "11" });
-  expect(output).toBe("run-id=11\n");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "11",
+    artifact_name: "test-timings",
+  });
+  expect(output).toBe("run-id=11\nartifact-name=test-timings\n");
   expect(calls).toContain("name=test-timings");
   expect(calls).toContain("per_page=100");
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(3);
@@ -147,14 +152,20 @@ it("rejects expired, foreign, old, and non-full run candidates", async () => {
     },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
 });
 
 it("writes an empty run id when GitHub history is unavailable", async () => {
   const { result, output } = await invoke([], {}, { apiError: true });
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
 });
 
 it("bounds run lookups to five artifacts even when inventory has more", async () => {
@@ -169,7 +180,10 @@ it("bounds run lookups to five artifacts even when inventory has more", async ()
     ),
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
 });
 
@@ -182,7 +196,125 @@ it("returns empty history without querying for an invalid repository identity", 
       repositoryId: "not-an-id",
     },
   );
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
   expect(calls).toBe("");
+});
+
+it("selects a default-branch fast push ahead of legacy full history", async () => {
+  const { result, calls } = await invoke(
+    [
+      artifact(32, {
+        name: "test-timings",
+        created_at: new Date(now - 30_000).toISOString(),
+      }),
+      artifact(31, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 90_000).toISOString(),
+      }),
+      artifact(30, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 20_000).toISOString(),
+        workflow_run: {
+          ...artifact(30).workflow_run,
+          head_branch: "feature",
+        },
+      }),
+    ],
+    {
+      32: run(32, { event: "schedule" }),
+      31: run(31, { event: "push" }),
+    },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "31",
+    artifact_name: "test-timings-fast",
+  });
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toMatch(/(?:^|\s)name=test-timings(?:\s|$)/m);
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
+});
+
+it("rejects pull-request fast history and falls back to legacy timings", async () => {
+  const { result, calls } = await invoke(
+    [
+      artifact(41, { name: "test-timings-fast" }),
+      artifact(40, { name: "test-timings" }),
+    ],
+    {
+      41: run(41, { event: "pull_request" }),
+      40: run(40, { event: "workflow_dispatch" }),
+    },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "40",
+    artifact_name: "test-timings",
+  });
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).toMatch(/(?:^|\s)name=test-timings(?:\s|$)/m);
+});
+
+it("keeps an unqualified fast candidate from being replaced by legacy history", async () => {
+  const fastFailures = [55, 54, 53, 52, 51];
+  const { result, calls } = await invoke(
+    [
+      ...fastFailures.map((id, index) =>
+        artifact(id, {
+          name: "test-timings-fast",
+          created_at: new Date(now - index * 1_000).toISOString(),
+        }),
+      ),
+      artifact(50, { name: "test-timings" }),
+    ],
+    {
+      ...Object.fromEntries(
+        fastFailures.map((id) => [
+          id,
+          run(id, { event: "push", conclusion: "failure" }),
+        ]),
+      ),
+      50: run(50, { event: "schedule" }),
+    },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toMatch(/(?:^|\s)name=test-timings(?:\s|$)/m);
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
+});
+
+it("selects full-tier history without using a newer fast artifact", async () => {
+  const { result } = await invoke(
+    [
+      artifact(61, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 10_000).toISOString(),
+      }),
+      artifact(60, {
+        name: "test-timings-full",
+        created_at: new Date(now - 80_000).toISOString(),
+      }),
+    ],
+    {
+      61: run(61, { event: "push" }),
+      60: run(60, { event: "schedule" }),
+    },
+    { tier: "full" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "60",
+    artifact_name: "test-timings-full",
+  });
 });
