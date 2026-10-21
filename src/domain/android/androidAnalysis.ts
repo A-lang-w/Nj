@@ -131,8 +131,9 @@ const PRE_PROJECTION_COMPONENTS: z.infer<typeof manifestComponents> = {
 
 /**
  * Static component projection of the decoded manifest. The export default is
- * Android's documented rule for an absent android:exported; it is not a
- * merged-manifest or runtime observation.
+ * Android's documented rule for an absent android:exported when one applies;
+ * null also means the default is unknown or an explicit declaration is
+ * required. This is not a merged-manifest or runtime observation.
  */
 const manifestComponents = z.strictObject({
   status: z.enum(["complete", "partial", "unavailable"]),

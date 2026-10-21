@@ -47,7 +47,7 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
 </manifest>`;
 
 it("projects declared components with resolved names and export defaults", () => {
-  const inventory = parseAndroidManifestComponents(MANIFEST, "complete", "33");
+  const inventory = parseAndroidManifestComponents(MANIFEST, "complete", "30");
   expect(inventory.status).toBe("complete");
   expect(inventory.limitations).toEqual([]);
   expect(inventory.items.map(({ kind, name }) => [kind, name])).toEqual([
@@ -93,6 +93,16 @@ it("projects declared components with resolved names and export defaults", () =>
   ]);
 });
 
+it("inherits an application permission when a component omits its own", () => {
+  const manifest = MANIFEST.replace(
+    '<application android:label="Example">',
+    '<application android:label="Example" android:permission="com.example.APP">',
+  );
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(inventory.items[0]?.permission).toBe("com.example.APP");
+  expect(inventory.items[4]?.permission).toBe("com.example.app.SYNC");
+});
+
 it("applies the provider export default from the target SDK", () => {
   // API 16 and below default providers to exported; API 17 and up do not.
   const legacy = parseAndroidManifestComponents(MANIFEST, "complete", "16");
@@ -108,7 +118,24 @@ it("applies the provider export default from the target SDK", () => {
   // The omitted-exported warning path is covered by its own test.
   const unknown = parseAndroidManifestComponents(MANIFEST, "complete", null);
   expect(unknown.items[6]?.exported_default).toBeNull();
-  expect(unknown.limitations).toEqual([]);
+  expect(unknown.limitations.join(" ")).toContain("target SDK is unknown");
+});
+
+it("leaves target-31-or-later filtered components without an inferred export default", () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Filtered"><intent-filter><action android:name="example.OPEN"/></intent-filter></activity></application></manifest>';
+  const modern = parseAndroidManifestComponents(manifest, "complete", "31");
+  expect(modern.items[0]).toMatchObject({
+    exported: null,
+    exported_default: null,
+  });
+  expect(modern.limitations.join(" ")).toContain("requires an explicit value");
+  expect(
+    parseAndroidManifestComponents(manifest, "complete", "30").items[0],
+  ).toMatchObject({ exported_default: true });
+  expect(
+    parseAndroidManifestComponents(manifest, "complete", null).items[0],
+  ).toMatchObject({ exported_default: null });
 });
 
 it("ignores same-local-name attributes from other namespaces", () => {
@@ -143,6 +170,38 @@ it("resolves relative names against the manifest package", () => {
     "org.other.Main",
   );
   expect(resolveAndroidComponentName(null, ".Main")).toBe(".Main");
+});
+
+it("keeps relative names unresolved when the manifest package is absent", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><activity android:name=".Relative"/><activity android:name="Absolute.Name"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.items.map(({ name }) => name)).toEqual([
+    ".Relative",
+    "Absolute.Name",
+  ]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "manifest package is absent",
+  );
+});
+
+it("does not call resource and manifest placeholder names resolved identities", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="@string/component_class"/><service android:name="${applicationId}.Worker"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.items.map(({ name }) => name)).toEqual([
+    "@string/component_class",
+    "${applicationId}.Worker",
+  ]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "unresolved resource or manifest placeholder",
+  );
 });
 
 it("does not establish a component inventory from truncated manifest text", () => {
@@ -223,6 +282,17 @@ it("bounds provider authorities", () => {
   expect(inventory.status).toBe("partial");
 });
 
+it("bounds total authority bytes across providers", () => {
+  const first = "a".repeat(900_000);
+  const second = "b".repeat(200_000);
+  const manifest = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".One" android:authorities="${first}"/><provider android:name=".Two" android:authorities="${second}"/></application></manifest>`;
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(inventory.items[0]?.authorities?.[0]?.length).toBe(900_000);
+  expect(inventory.items[1]?.authorities).toEqual([]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain("total authority bytes");
+});
+
 it("leaves later names declared when the resolved-name budget is spent", () => {
   const hugePackage = "p".repeat(64 * 1024);
   const names = Array.from(
@@ -245,6 +315,23 @@ it("leaves later names declared when the resolved-name budget is spent", () => {
   expect(inventory.limitations.join(" ")).toContain(
     "resolved-name byte budget",
   );
+  expect(inventory.limitations.join(" ")).not.toContain(
+    "component inventory stops at",
+  );
+});
+
+it("does not let the first component bypass the resolved-name byte budget", () => {
+  const hugePackage = "p".repeat(ANDROID_MANIFEST_LIMITS.resolvedNameBytes + 1);
+  const inventory = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${hugePackage}"><application><activity android:name=".First"/></application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]?.name).toBe(".First");
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "resolved-name byte budget",
+  );
 });
 
 it("marks the inventory partial when nameless declarations are dropped", () => {
@@ -257,6 +344,9 @@ it("marks the inventory partial when nameless declarations are dropped", () => {
   expect(inventory.items).toHaveLength(1);
   expect(inventory.limitations.join(" ")).toContain(
     "1 component declaration(s) without android:name",
+  );
+  expect(inventory.limitations.join(" ")).not.toContain(
+    "component inventory stops at",
   );
 });
 

@@ -34,6 +34,28 @@ One-shot CLI output remains complete. Older servers require the existing complet
 request after schema discovery. APK authenticity and runtime behavior remain
 unverified.
 
+## Manifest component projection
+
+`inspect_android_package` also returns a static inventory of declared
+activities, aliases, services, receivers and providers from the decoded
+manifest. `declared_name` preserves the source attribute; `name` resolves a
+relative name only when the manifest package is known and the resolved copy
+fits the UTF-8 byte budget. An unresolved package or exhausted name budget
+retains the declared name and marks the inventory partial. Component
+permissions inherit the application permission when no component permission
+is declared.
+
+`exported` is the declared literal `true` or `false`, otherwise null.
+`exported_default` is the documented default only where it can be established;
+it remains null for unknown provider target SDKs, nonliteral declarations, or
+components with filters targeting API 31 or later that omit the now-required
+explicit declaration. A limitation records the latter validation error.
+Provider authorities and all inventory dimensions are bounded. `status:
+"partial"` and `limitations` identify omitted declarations or values; a
+capacity limitation appears only when an actual collection limit was reached.
+The projection does not merge manifests, expand resource references, or
+observe runtime enabled/export state.
+
 ## Supply tools
 
 Use a **full JDK 17 or newer** (including its compiler module) and

@@ -20,6 +20,7 @@ export const ANDROID_MANIFEST_LIMITS = {
   authorities: 64,
   /** Total bytes of resolved component names, bounding package amplification. */
   resolvedNameBytes: 1024 * 1024,
+  authorityBytes: 1024 * 1024,
 } as const;
 
 /** The attribute namespace every component facet uses. */
@@ -138,10 +139,16 @@ const isComponentKind = (tag: string): tag is AndroidComponentKind =>
 export const providerExportedDefault = (
   targetSdk: string | null,
 ): boolean | null => {
-  if (targetSdk === null) return null;
+  if (targetSdk === null || !/^\d+$/u.test(targetSdk)) return null;
   const level = Number(targetSdk);
-  if (!Number.isInteger(level) || level < 1) return null;
+  if (!Number.isSafeInteger(level) || level < 1) return null;
   return level <= 16;
+};
+
+const androidTargetSdkLevel = (targetSdk: string | null): number | null => {
+  if (targetSdk === null || !/^\d+$/u.test(targetSdk)) return null;
+  const level = Number(targetSdk);
+  return Number.isSafeInteger(level) && level >= 1 ? level : null;
 };
 
 /**
@@ -178,19 +185,35 @@ const intentValues = (
 /** Split a provider authorities declaration within its own bound. */
 const providerAuthorities = (
   declared: string,
-): { authorities: string[]; truncated: boolean } => {
+  byteLimit: number,
+): { authorities: string[]; truncated: boolean; bytes: number } => {
   const authorities: string[] = [];
   let truncated = false;
-  for (const value of declared.split(";")) {
-    const trimmedValue = value.trim();
-    if (trimmedValue.length === 0) continue;
-    if (authorities.length >= ANDROID_MANIFEST_LIMITS.authorities) {
+  let bytes = 0;
+  let start = 0;
+  while (start <= declared.length) {
+    const separator = declared.indexOf(";", start);
+    const end = separator < 0 ? declared.length : separator;
+    const trimmedValue = declared.slice(start, end).trim();
+    if (trimmedValue.length === 0) {
+      if (separator < 0) break;
+      start = separator + 1;
+      continue;
+    }
+    const valueBytes = Buffer.byteLength(trimmedValue);
+    if (
+      authorities.length >= ANDROID_MANIFEST_LIMITS.authorities ||
+      valueBytes > byteLimit - bytes
+    ) {
       truncated = true;
       break;
     }
     authorities.push(trimmedValue);
+    bytes += valueBytes;
+    if (separator < 0) break;
+    start = separator + 1;
   }
-  return { authorities, truncated };
+  return { authorities, truncated, bytes };
 };
 
 /**
@@ -232,12 +255,20 @@ export const parseAndroidManifestComponents = (
   let providerDefaultsUnknown = 0;
   let nonliteralExported = 0;
   let unresolvedNames = 0;
+  let unresolvedPackages = 0;
+  let unresolvedTokens = 0;
+  let invalidExported = 0;
+  let unknownFilteredExportDefaults = 0;
+  let capacityTruncated = false;
   let nameBudget = ANDROID_MANIFEST_LIMITS.resolvedNameBytes;
+  let authorityBudget = ANDROID_MANIFEST_LIMITS.authorityBytes;
+  const targetSdkLevel = androidTargetSdkLevel(targetSdk);
   for (const node of childNodes(root)) {
     if (node.nodeType !== 1) continue;
     const element = node as Element;
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
+    const applicationPermission = trimmed(element, "permission");
     for (const child of childNodes(element)) {
       if (child.nodeType !== 1) continue;
       const component = child as Element;
@@ -246,6 +277,7 @@ export const parseAndroidManifestComponents = (
       // unnamed flood cannot exceed it while still reporting complete.
       if (items.length + unnamed >= ANDROID_MANIFEST_LIMITS.components) {
         truncated = true;
+        capacityTruncated = true;
         break;
       }
       const declared = trimmed(component, "name");
@@ -258,22 +290,46 @@ export const parseAndroidManifestComponents = (
           entry.nodeType === 1 && entry.nodeName === "intent-filter",
       );
       const collected = intentValues(filters);
-      if (collected.truncated) truncated = true;
+      if (collected.truncated) {
+        truncated = true;
+        capacityTruncated = true;
+      }
       // A huge manifest package would be copied into every resolved name;
       // once the byte budget is spent, later names keep their declared form.
-      const resolved = resolveAndroidComponentName(packageName, declared);
-      const name =
-        nameBudget >= resolved.length || items.length === 0
-          ? resolved
-          : declared;
-      if (name !== resolved) unresolvedNames += 1;
-      else nameBudget -= resolved.length;
+      const containsUnresolvedToken =
+        declared.startsWith("@") ||
+        declared.startsWith("?") ||
+        declared.includes("${");
+      const needsPackage = declared.startsWith(".") || !declared.includes(".");
+      const packageKnown =
+        !containsUnresolvedToken && (!needsPackage || packageName !== null);
+      const resolvedBytes = needsPackage
+        ? Buffer.byteLength(packageName ?? "") +
+          (declared.startsWith(".") ? 0 : 1) +
+          Buffer.byteLength(declared)
+        : Buffer.byteLength(declared);
+      const nameFits = packageKnown && resolvedBytes <= nameBudget;
+      const name = nameFits
+        ? resolveAndroidComponentName(packageName, declared)
+        : declared;
+      if (containsUnresolvedToken) unresolvedTokens += 1;
+      else if (!packageKnown) unresolvedPackages += 1;
+      else if (!nameFits) unresolvedNames += 1;
+      else nameBudget -= resolvedBytes;
       let authorities: readonly string[] | null = null;
       if (component.nodeName === "provider") {
         const declaredAuthorities = trimmed(component, "authorities");
         if (declaredAuthorities !== null) {
-          const split = providerAuthorities(declaredAuthorities);
-          if (split.truncated) truncated = true;
+          const split = providerAuthorities(
+            declaredAuthorities,
+            authorityBudget,
+          );
+          if (split.truncated) {
+            truncated = true;
+            capacityTruncated = true;
+          }
+          authorityBudget -= split.bytes;
+          if (authorityBudget < 0) authorityBudget = 0;
           authorities = split.authorities;
         }
       }
@@ -290,6 +346,23 @@ export const parseAndroidManifestComponents = (
             : null;
       const exportedNonliteral =
         declaredExported !== null && exportedLiteral === null;
+      const explicitExportRequired =
+        declaredExported === null &&
+        targetSdkLevel !== null &&
+        targetSdkLevel >= 31 &&
+        filters.length > 0 &&
+        (component.nodeName === "activity" ||
+          component.nodeName === "activity-alias" ||
+          component.nodeName === "service" ||
+          component.nodeName === "receiver");
+      const filteredExportUnknown =
+        declaredExported === null &&
+        targetSdkLevel === null &&
+        filters.length > 0 &&
+        (component.nodeName === "activity" ||
+          component.nodeName === "activity-alias" ||
+          component.nodeName === "service" ||
+          component.nodeName === "receiver");
       // The default only matters when android:exported is absent.
       if (
         component.nodeName === "provider" &&
@@ -298,17 +371,20 @@ export const parseAndroidManifestComponents = (
       )
         providerDefaultsUnknown += 1;
       if (exportedNonliteral) nonliteralExported += 1;
+      if (explicitExportRequired) invalidExported += 1;
+      if (filteredExportUnknown) unknownFilteredExportDefaults += 1;
       items.push({
         kind: component.nodeName,
         declared_name: declared,
         name,
         exported: exportedLiteral,
-        exported_default: exportedNonliteral
-          ? null
-          : component.nodeName === "provider"
-            ? providerDefault
-            : filters.length > 0,
-        permission: trimmed(component, "permission"),
+        exported_default:
+          exportedNonliteral || explicitExportRequired || filteredExportUnknown
+            ? null
+            : component.nodeName === "provider"
+              ? providerDefault
+              : filters.length > 0,
+        permission: trimmed(component, "permission") ?? applicationPermission,
         intent_filter_count: filters.length,
         actions: collected.actions,
         categories: collected.categories,
@@ -343,15 +419,36 @@ export const parseAndroidManifestComponents = (
     limitations.push(
       `${String(nonliteralExported)} component declaration(s) set android:exported to a value other than the literals true or false (for example a resource reference), so their effective export state is unknown and the Android default does not apply.`,
     );
+  if (unresolvedPackages > 0) {
+    limitations.push(
+      `${String(unresolvedPackages)} relative component name(s) remain unresolved because the manifest package is absent; the declared name is retained.`,
+    );
+    truncated = true;
+  }
+  if (unresolvedTokens > 0) {
+    limitations.push(
+      `${String(unresolvedTokens)} component name(s) contain an unresolved resource or manifest placeholder token; the declared name is retained without claiming a resolved identity.`,
+    );
+    truncated = true;
+  }
+  if (invalidExported > 0) {
+    limitations.push(
+      `${String(invalidExported)} component(s) with intent filters target API 31 or later and omit android:exported; Android requires an explicit value, so the inventory does not infer a default.`,
+    );
+  }
+  if (unknownFilteredExportDefaults > 0)
+    limitations.push(
+      `${String(unknownFilteredExportDefaults)} filtered component(s) omit android:exported and the target SDK is unknown, so the applicable export rule is not established.`,
+    );
   if (unresolvedNames > 0) {
     limitations.push(
       `${String(unresolvedNames)} component name(s) keep their declared form because the resolved-name byte budget (${String(ANDROID_MANIFEST_LIMITS.resolvedNameBytes)}) was exhausted.`,
     );
     truncated = true;
   }
-  if (truncated)
+  if (capacityTruncated)
     limitations.push(
-      `The component inventory stops at ${String(ANDROID_MANIFEST_LIMITS.components)} components, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} intent filters per component, ${String(ANDROID_MANIFEST_LIMITS.intentValues)} intent-filter values per component, or ${String(ANDROID_MANIFEST_LIMITS.authorities)} authorities per provider.`,
+      `The component inventory reached a capacity limit: ${String(ANDROID_MANIFEST_LIMITS.components)} declarations, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} filters or ${String(ANDROID_MANIFEST_LIMITS.intentValues)} values per component, ${String(ANDROID_MANIFEST_LIMITS.authorities)} authorities per provider, or ${String(ANDROID_MANIFEST_LIMITS.authorityBytes)} total authority bytes.`,
     );
   return {
     status: truncated ? "partial" : "complete",
