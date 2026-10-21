@@ -6,11 +6,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SWIFTC_INTERRUPT } from "../process/DarwinProcessRunTokenReader.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+} from "../process/ExecFileOutput.js";
+import {
+  awaitBootstrapCompilerProcessFamilyExit,
+  compilerFamilySettlementBudgetMs,
+} from "../process/CompilerProcessFamilySettlement.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import type { NativeUiHelper } from "./NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "./NativeUiOutputBudget.js";
 import { NATIVE_UI_DEADLINE_MS } from "./NativeUiInterruptionControl.js";
+
+const NATIVE_UI_COMPILE_TIMEOUT_MS = 60_000;
 
 export interface NativeUiHelperRuntime {
   readonly invoke: NativeUiHelper;
@@ -29,9 +38,26 @@ export const createNativeUiHelperRuntime = (
   const operations = new ArtifactResourceScope();
   let root: string | undefined;
   let preparation: Promise<string> | undefined;
+  // Track compiler failure metadata for family-exit waiting before cleanup
+  let pendingCompilerFamily:
+    | { leaderPid: number; environment: NodeJS.ProcessEnv }
+    | undefined;
   const cleanupLease = new AnalysisCleanupLease(async () => {
     await operations.close();
     if (root !== undefined) {
+      // Wait for compiler family to exit if output readers were cut off
+      if (pendingCompilerFamily !== undefined) {
+        const cleanupDeadline = AbortSignal.timeout(
+          compilerFamilySettlementBudgetMs(NATIVE_UI_COMPILE_TIMEOUT_MS),
+        );
+        await awaitBootstrapCompilerProcessFamilyExit(
+          pendingCompilerFamily.leaderPid,
+          NATIVE_UI_COMPILE_TIMEOUT_MS,
+          pendingCompilerFamily.environment,
+          cleanupDeadline,
+        );
+        pendingCompilerFamily = undefined;
+      }
       await rm(root, { recursive: true, force: true });
       root = undefined;
       preparation = undefined;
@@ -50,30 +76,49 @@ export const createNativeUiHelperRuntime = (
     // Keep swiftc's intermediate objects inside the removable root.
     const compilerTemporary = join(root, "tmp");
     await mkdir(compilerTemporary);
-    await execFileOutput(
-      "/usr/bin/xcrun",
-      [
-        "swiftc",
-        "-module-cache-path",
-        join(root, "modules"),
-        fileURLToPath(
-          new URL(
-            "../../bridge/native/NativeUIChildren.swift",
-            import.meta.url,
+    const compilerEnvironment = {
+      ...selectedEnvironment,
+      TMPDIR: compilerTemporary,
+    };
+    try {
+      await execFileOutput(
+        "/usr/bin/xcrun",
+        [
+          "swiftc",
+          "-module-cache-path",
+          join(root, "modules"),
+          fileURLToPath(
+            new URL(
+              "../../bridge/native/NativeUIChildren.swift",
+              import.meta.url,
+            ),
           ),
-        ),
-        main,
-        "-o",
-        output,
-      ],
-      {
-        timeout: 60_000,
-        maxBuffer: 1024 * 1024,
-        stopSignal: SWIFTC_INTERRUPT,
-        env: { ...selectedEnvironment, TMPDIR: compilerTemporary },
-        signal,
-      },
-    );
+          main,
+          "-o",
+          output,
+        ],
+        {
+          timeout: NATIVE_UI_COMPILE_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024,
+          stopSignal: SWIFTC_INTERRUPT,
+          env: compilerEnvironment,
+          signal,
+        },
+      );
+    } catch (cause: unknown) {
+      // Track compilation failure with output cutoff for family-exit waiting
+      const failure = execFileOutputFailure(cause);
+      if (
+        failure?.outputReadersCutOff === true &&
+        failure.leaderPid !== undefined
+      ) {
+        pendingCompilerFamily = {
+          leaderPid: failure.leaderPid,
+          environment: compilerEnvironment,
+        };
+      }
+      throw cause;
+    }
     return output;
   };
   const invoke: NativeUiHelper = (parameters, callerSignal) =>

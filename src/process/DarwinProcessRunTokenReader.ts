@@ -18,7 +18,10 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
-import { awaitBootstrapCompilerProcessFamilyExit } from "./CompilerProcessFamilySettlement.js";
+import {
+  awaitBootstrapCompilerProcessFamilyExit,
+  compilerFamilySettlementBudgetMs,
+} from "./CompilerProcessFamilySettlement.js";
 import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
 import type {
   ProcessIdentityObservation,
@@ -532,11 +535,16 @@ export const createDarwinProcessRunTokenReader = (
             commandFailure.leaderPid !== undefined &&
             compilerEnvironment !== undefined
           ) {
+            // Use a separate bounded cleanup signal, not the potentially-aborted
+            // operation signal. Cancellation must not skip the family check.
+            const cleanupDeadline = AbortSignal.timeout(
+              compilerFamilySettlementBudgetMs(compilerTimeoutMs),
+            );
             const settled = await awaitBootstrapCompilerProcessFamilyExit(
               commandFailure.leaderPid,
               compilerTimeoutMs,
               compilerEnvironment,
-              operation.controller.signal,
+              cleanupDeadline,
             );
             if (!settled) {
               throw new ProviderCleanupError(

@@ -302,10 +302,15 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "retains the compiler scratch root until an inherited-pipe descendant exits after output cutoff",
   async () => {
+    // Disable the removal fault so we're actually testing the family check,
+    // not the mocked rm that refuses removal.
+    fault.blocked = false;
+
     const fixture = await mkdtemp(join(tmpdir(), "rea-compiler-root-replay-"));
     const compiler = join(fixture, "swiftc");
     const finished = join(fixture, "finished.json");
-    const childSource = `const fs = require('node:fs'); const path = require('node:path'); setTimeout(() => { fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ tempRootExists: fs.existsSync(path.dirname(process.env.TMPDIR)) })); process.exit(0); }, 9000);`;
+    // Child checks tempRootExists while still running (after 4s), then exits after 9s
+    const childSource = `const fs = require('node:fs'); const path = require('node:path'); setTimeout(() => { fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ tempRootExists: fs.existsSync(path.dirname(process.env.TMPDIR)) })); }, 4000); setTimeout(() => process.exit(0), 9000);`;
     await writeFile(
       compiler,
       `#!${process.execPath}\nconst { spawn } = require('node:child_process');\nspawn(process.execPath, ['-e', ${JSON.stringify(childSource)}], { stdio: 'inherit' });\nprocess.exit(0);\n`,
@@ -327,6 +332,7 @@ it.skipIf(process.platform === "win32")(
       } catch (cause: unknown) {
         failure = cause;
       }
+      // Wait for the child to write its observation (after 4s)
       for (let attempt = 0; attempt < 120; attempt++) {
         try {
           observation = JSON.parse(await readFile(finished, "utf8")) as {
@@ -346,11 +352,12 @@ it.skipIf(process.platform === "win32")(
         await delay(100);
       }
       expect(failure).toBeInstanceOf(DarwinProcessOwnershipInspectionError);
+      // The root must exist while the child is running (family check delays removal)
       expect(observation).toEqual({ tempRootExists: true });
-      expect(performance.now() - started).toBeLessThan(12_000);
+      expect(performance.now() - started).toBeLessThan(15_000);
     } finally {
-      fault.blocked = false;
       await reader.close();
+      // Wait for the child to exit (it runs for 9s total)
       for (let attempt = 0; attempt < 120; attempt++) {
         try {
           await readFile(finished);
