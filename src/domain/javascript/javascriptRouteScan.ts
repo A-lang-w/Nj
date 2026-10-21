@@ -46,6 +46,12 @@ interface Frame {
   readonly ancestry?: Ancestry;
   readonly fallback?: { key: string; node: t.Node };
 }
+// Containers hold independent values; callable bodies execute in a separate context.
+const isRouteValueBoundary = (node: t.Node): boolean =>
+  t.isArrayExpression(node) ||
+  t.isObjectExpression(node) ||
+  t.isFunction(node) ||
+  t.isClass(node);
 interface DynamicRouteValueOwner {
   readonly node: t.Node;
   readonly navigation: boolean;
@@ -127,6 +133,7 @@ export class JavaScriptRouteScan {
     const owner = parent === null ? undefined : this.#dynamicValues.get(parent);
     if (
       owner !== undefined &&
+      !isRouteValueBoundary(node) &&
       !this.#dynamicValues.has(node) &&
       this.#queue(node)
     )
@@ -388,7 +395,7 @@ export class JavaScriptRouteScan {
   }
 
   #ownDynamicValue(node: t.Node, navigation: boolean): void {
-    if (this.#queue(node))
+    if (!isRouteValueBoundary(node) && this.#queue(node))
       this.#dynamicValues.set(node, { node, navigation, reported: false });
   }
 

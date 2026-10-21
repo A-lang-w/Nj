@@ -12,7 +12,7 @@ const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);`,
+    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);const extra='/reports/help';}]);`,
   );
   return path;
 };
@@ -52,7 +52,7 @@ cliTest(
       parseEvidence(envelope.summary).normalized_result,
     );
     expect(view.items).toHaveLength(2);
-    expect(view.coverage).toMatchObject({ total: 3, next_offset: 2 });
+    expect(view.coverage).toMatchObject({ total: 4, next_offset: 2 });
     expect(view.sources[0]!.sha256).toMatch(/^[a-f0-9]{64}$/u);
     await rm(path, { recursive: true });
     const bundle = JSON.parse(await readFile(output, "utf8")) as {
@@ -91,7 +91,7 @@ cliTest(
       javaScriptRoutesViewResultSchema.parse(
         parseEvidence(repeated.json).normalized_result,
       ).items,
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   },
 );
 cliTest(

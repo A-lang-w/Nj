@@ -307,3 +307,17 @@ it.each([
     ).toBe(true);
   },
 );
+
+it("does not let push registrations own independent module bodies or structured data", () => {
+  const facts = analyze(`
+    globalThis.TURBOPACK=[];
+    globalThis.TURBOPACK.push([123, function module(){
+      const paths=['/docs/a','/docs/b'];router.push('/docs');
+    }]);
+    router.push(build(function callback(){ const route = '/docs/c'; }));
+  `);
+  expect([...new Set(facts.candidates.map(({ path }) => path))].sort()).toEqual(
+    ["/docs", "/docs/a", "/docs/b", "/docs/c"],
+  );
+  expect(facts.unresolved).toEqual([]);
+});
