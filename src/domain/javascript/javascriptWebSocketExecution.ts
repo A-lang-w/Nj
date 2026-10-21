@@ -1591,8 +1591,20 @@ const webSocketImmediateCaller = (
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined) continue;
+    // A nested call result cannot identify its own caller from functions in
+    // its receiver or arguments. Exact returned-callable cases were handled
+    // by webSocketStoredCallTarget above. Pruning this subtree is important
+    // for chains such as `promise.then(...).then(...)`: otherwise each outer
+    // call rescans every earlier receiver and callback.
+    if (
+      node !== call &&
+      (t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node) ||
+        t.isNewExpression(node))
+    )
+      continue;
     if (t.isFunction(node)) {
-      const invocation =
+      const invocation: ReturnType<typeof webSocketImmediateInvocation> =
         t.isClassMethod(node) && node.kind === "constructor"
           ? webSocketClassConstruction(node, state)
           : webSocketImmediateInvocation(node, state);

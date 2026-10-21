@@ -54,6 +54,18 @@ it.each(sources)("retains initialized chained producer: %s", (source) => {
   ]);
 });
 
+it("handles a 4,000-link native promise chain without losing its wait", () => {
+  const chain = `pending${".then(()=>{})".repeat(4_000)}`;
+  const result = analyzeJavaScriptStaticSource(
+    `const {WebSocket:Socket}=await import("ws");const pending=(async()=>{await 0;new Socket("wss://example.test/deep-chain")})();await ${chain};`,
+  );
+  expect(result.parse_status).not.toBe("failed");
+  expect(result.parse_error_count).toBe(0);
+  expect(result.endpoints.map(({ value }) => value)).toEqual([
+    "wss://example.test/deep-chain",
+  ]);
+}, 30_000);
+
 it.each([
   ["pending.finally=()=>undefined;", "pending.finally()"],
   ["const alias=pending;alias.finally=()=>undefined;", "pending.finally()"],

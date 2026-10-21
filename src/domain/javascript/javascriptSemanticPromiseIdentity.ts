@@ -231,78 +231,162 @@ export const semanticExactValueIdentity = (
   }
 };
 
+type PromiseChainIdentity = NonNullable<
+  ReturnType<typeof semanticExactValueIdentity>
+>;
+type PromiseChainEntry = PromiseChainIdentity | null;
+interface PromiseChainIndex {
+  readonly literalEffects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+  readonly ambientEffects: JavaScriptSemanticAnalysisState["ambientReferenceEffects"];
+  readonly ambientEffectCount: number;
+  readonly arrayIterationUnknown: boolean;
+  readonly entries: WeakMap<t.Node, PromiseChainEntry>;
+}
+
+const promiseChainIndexes = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  PromiseChainIndex
+>();
+
+/** Final chain proofs are reusable only after all mutation facts are indexed. */
+const promiseChainIndex = (
+  state: JavaScriptSemanticAnalysisState,
+): PromiseChainIndex | undefined => {
+  if (state.memberMutationFactsPhase !== "indexed") return undefined;
+  const current = promiseChainIndexes.get(state);
+  if (
+    current !== undefined &&
+    current.literalEffects === state.literalMemberEffects &&
+    current.ambientEffects === state.ambientReferenceEffects &&
+    current.ambientEffectCount === state.ambientReferenceEffects.length &&
+    current.arrayIterationUnknown === state.arrayIterationUnknown
+  )
+    return current;
+  const next: PromiseChainIndex = {
+    literalEffects: state.literalMemberEffects,
+    ambientEffects: state.ambientReferenceEffects,
+    ambientEffectCount: state.ambientReferenceEffects.length,
+    arrayIterationUnknown: state.arrayIterationUnknown,
+    entries: new WeakMap(),
+  };
+  promiseChainIndexes.set(state, next);
+  return next;
+};
+
 /** Chaining waits for its receiver only with native method and species identity. */
 const nativePromiseChainParent = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   onLiteralProjection: (() => void) | undefined,
-  seen = new Set<t.Node>(),
 ): ReturnType<typeof semanticExactValueIdentity> => {
-  if (!t.isCallExpression(node) || seen.has(node)) return undefined;
-  seen.add(node);
-  const member = unwrapJavaScriptExpression(node.callee).node;
-  if (!t.isMemberExpression(member)) return undefined;
-  const method = semanticStaticPropertyName(member.property, member.computed);
-  if (
-    (method !== "then" && method !== "catch" && method !== "finally") ||
-    node.arguments.some(
-      (argument) =>
-        t.isSpreadElement(argument) || !syntaxEvaluationCannotThrow(argument),
-    )
-  )
-    return undefined;
+  if (!t.isCallExpression(node)) return undefined;
   state.memberMutationFactsPhase ??= "requested";
   onLiteralProjection?.();
-  const receiver = semanticExactValueIdentity(
-    member.object,
-    state,
-    onLiteralProjection,
-  );
-  if (receiver === undefined) return undefined;
-  const value = receiver.node;
-  const executor = t.isNewExpression(value) ? value.arguments[0] : undefined;
-  const functionValue =
-    executor === undefined
-      ? undefined
-      : unwrapJavaScriptExpression(executor).node;
-  const native =
-    semanticNativePromiseProducer(value, state) ||
-    (executor !== undefined &&
-      t.isFunction(functionValue) &&
-      semanticNativePromiseExecutor(functionValue, executor, state) ===
-        value) ||
-    nativePromiseChainParent(value, state, onLiteralProjection, seen) !==
-      undefined;
-  if (!native) return undefined;
-  if (
-    !promiseAmbientLookupIntact(method, member, state) ||
-    !promiseAliasesLookupIntact(receiver.aliases, method, member, state) ||
-    !promiseAmbientLookupIntact("then", member, state) ||
-    !promiseAliasesLookupIntact(receiver.aliases, "then", member, state) ||
-    !promiseAmbientLookupIntact("constructor", node, state) ||
-    !promiseAliasesLookupIntact(
-      receiver.aliases,
-      "constructor",
-      node,
+  const index = promiseChainIndex(state);
+  if (index === undefined) return undefined;
+  if (index.entries.has(node)) return index.entries.get(node) ?? undefined;
+
+  const chain: {
+    readonly call: t.CallExpression;
+    readonly member: t.MemberExpression;
+    readonly method: "then" | "catch" | "finally";
+    readonly receiver: PromiseChainIdentity;
+  }[] = [];
+  const seen = new Set<t.Node>();
+  let current: t.Node = node;
+  let native = false;
+  for (;;) {
+    if (!t.isCallExpression(current) || seen.has(current)) break;
+    if (index.entries.has(current)) {
+      native = index.entries.get(current) !== null;
+      break;
+    }
+    seen.add(current);
+    const member = unwrapJavaScriptExpression(current.callee).node;
+    if (!t.isMemberExpression(member)) {
+      index.entries.set(current, null);
+      break;
+    }
+    const method = semanticStaticPropertyName(member.property, member.computed);
+    if (
+      (method !== "then" && method !== "catch" && method !== "finally") ||
+      current.arguments.some(
+        (argument) =>
+          t.isSpreadElement(argument) || !syntaxEvaluationCannotThrow(argument),
+      )
+    ) {
+      index.entries.set(current, null);
+      break;
+    }
+    const receiver = semanticExactValueIdentity(
+      member.object,
       state,
-      true,
-    ) ||
-    // Species keys can be computed symbols. Any visible static Promise slot
-    // write/escape can hide a custom species constructor that settles early.
-    state.ambientReferenceEffects.some(
-      ({ path, node: effect }) =>
-        path
-          .slice(0, 2)
-          .every((key, index) =>
-            semanticPropertyPathKeyMatches(
-              key,
-              ["global", "Promise"][index] ?? "",
-            ),
-          ) && semanticEffectTiming(node, effect, state) !== "after",
-    )
-  )
-    return undefined;
-  return receiver;
+      onLiteralProjection,
+    );
+    if (receiver === undefined) {
+      index.entries.set(current, null);
+      break;
+    }
+    chain.push({
+      call: current,
+      member,
+      method,
+      receiver,
+    });
+    const value = receiver.node;
+    if (index.entries.has(value)) {
+      native = index.entries.get(value) !== null;
+      break;
+    }
+    const executor = t.isNewExpression(value) ? value.arguments[0] : undefined;
+    const functionValue =
+      executor === undefined
+        ? undefined
+        : unwrapJavaScriptExpression(executor).node;
+    if (
+      semanticNativePromiseProducer(value, state) ||
+      (executor !== undefined &&
+        t.isFunction(functionValue) &&
+        semanticNativePromiseExecutor(functionValue, executor, state) === value)
+    ) {
+      native = true;
+      break;
+    }
+    current = value;
+  }
+
+  for (let position = chain.length - 1; position >= 0; position -= 1) {
+    const { call, member, method, receiver } = chain[position]!;
+    native =
+      native &&
+      promiseAmbientLookupIntact(method, member, state) &&
+      promiseAliasesLookupIntact(receiver.aliases, method, member, state) &&
+      promiseAmbientLookupIntact("then", member, state) &&
+      promiseAliasesLookupIntact(receiver.aliases, "then", member, state) &&
+      promiseAmbientLookupIntact("constructor", call, state) &&
+      promiseAliasesLookupIntact(
+        receiver.aliases,
+        "constructor",
+        call,
+        state,
+        true,
+      ) &&
+      // Species keys can be computed symbols. Any visible static Promise slot
+      // write/escape can hide a custom species constructor that settles early.
+      !state.ambientReferenceEffects.some(
+        ({ path, node: effect }) =>
+          path
+            .slice(0, 2)
+            .every((key, index) =>
+              semanticPropertyPathKeyMatches(
+                key,
+                ["global", "Promise"][index] ?? "",
+              ),
+            ) && semanticEffectTiming(call, effect, state) !== "after",
+      );
+    index.entries.set(call, native ? receiver : null);
+  }
+  return native ? chain[0]?.receiver : undefined;
 };
 
 /** Async adoption preserves values; native handler chains only preserve waits. */
