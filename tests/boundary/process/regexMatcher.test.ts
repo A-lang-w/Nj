@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
@@ -148,6 +151,37 @@ it("lets --max-old-space-size-percentage override an absolute heap in either ord
     expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
       kind: "unknown",
     });
+});
+
+it("does not report the 128 MiB request for NODE_OPTIONS supplied by an env file", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rea-regex-env-file-"));
+  const file = join(directory, "heap.env");
+  writeFileSync(file, "NODE_OPTIONS=--max-old-space-size=256\n");
+  try {
+    const fromFile = probeWorkerHeap([`--env-file=${file}`], undefined);
+    const ifExists = probeWorkerHeap(
+      [`--env-file-if-exists=${file}`],
+      undefined,
+    );
+    const baseline = probeWorkerHeap([], undefined);
+    expect(fromFile.resourceOld).toBe(128);
+    expect(ifExists.resourceOld).toBe(128);
+    expect(fromFile.heap).toBeGreaterThan(baseline.heap);
+    expect(ifExists.heap).toBeGreaterThan(baseline.heap);
+    for (const execArgv of [
+      [`--env-file=${file}`],
+      [`--env-file-if-exists=${file}`],
+      [`--env-file=${file}`, "--max-old-space-size=64"],
+    ])
+      expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
+        kind: "unknown",
+      });
+    expect(
+      resolveRegexWorkerHeap([`--env-file=${file}`], "--max-old-space-size=64"),
+    ).toEqual({ kind: "effective", mib: 64, overridden: true });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 it("lets a launch --max-old-space-size override the 128 MiB worker request", () => {

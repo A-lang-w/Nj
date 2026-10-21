@@ -38,6 +38,12 @@ const WORKER_HEAP_MIB = 128;
 const OLD_SPACE_FLAG = /^--max[-_]old[-_]space[-_]size(?:=(.*))?$/u;
 const OLD_SPACE_PERCENT_FLAG =
   /^--max[-_]old[-_]space[-_]size[-_]percentage(?:=.*)?$/u;
+/**
+ * Node applies `NODE_OPTIONS` from `--env-file` / `--env-file-if-exists` only
+ * when the variable was absent. The file is not in `/proc/self/environ`, and a
+ * later read is not the startup contents. Underscore spellings are not this flag.
+ */
+const ENV_FILE_FLAG = /^--env-file(?:-if-exists)?(?:=.*)?$/u;
 
 /** Old-generation heap the regex worker will actually hit. */
 export type RegexWorkerHeapLimit =
@@ -110,10 +116,18 @@ export const resolveRegexWorkerHeap = (
 ): RegexWorkerHeapLimit => {
   const fromEnvironment =
     nodeOptions === undefined ? [] : nodeOptionsArgv(nodeOptions);
+  const tokens = [...(fromEnvironment ?? []), ...execArgv];
+  // An absent NODE_OPTIONS lets the env file supply one, including a percentage
+  // that beats a later absolute flag. The file's text is not launch provenance.
+  if (
+    nodeOptions === undefined &&
+    tokens.some((token) => ENV_FILE_FLAG.test(token))
+  )
+    return { kind: "unknown" };
   let limit: RegexWorkerHeapLimit =
     fromEnvironment === undefined ? { kind: "unknown" } : requestedHeap;
   let percentage = false;
-  for (const token of [...(fromEnvironment ?? []), ...execArgv]) {
+  for (const token of tokens) {
     if (OLD_SPACE_PERCENT_FLAG.test(token)) {
       percentage = true;
       limit = { kind: "unknown" };
@@ -204,7 +218,7 @@ const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
 
 const heapBound = (heap: RegexWorkerHeapLimit): string => {
   if (heap.kind === "unknown")
-    return "The worker requests 128 MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size and --max-old-space-size-percentage can change that request.";
+    return "The worker requests 128 MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size, --max-old-space-size-percentage, --env-file, and --env-file-if-exists can change that request.";
   const override =
     "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the 128 MiB worker request";
   return heap.overridden

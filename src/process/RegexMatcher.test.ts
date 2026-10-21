@@ -153,6 +153,48 @@ it.each([
     nodeOptions: undefined,
     heap: { kind: "unknown" } as const,
   },
+  {
+    name: "leaves an env-file launch unestablished when NODE_OPTIONS was absent",
+    execArgv: ["--env-file=rea.env"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "leaves an env-file-if-exists launch unestablished when NODE_OPTIONS was absent",
+    execArgv: ["--env-file-if-exists=.env"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not let an absolute flag hide NODE_OPTIONS supplied by an env file",
+    execArgv: ["--env-file=rea.env", "--max-old-space-size=64"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "recognizes an env-file flag split from its path",
+    execArgv: ["--env-file", "rea.env"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "keeps an inherited NODE_OPTIONS value when an env file cannot override it",
+    execArgv: ["--env-file=rea.env"],
+    nodeOptions: "--max-old-space-size=64",
+    heap: effective(64, true),
+  },
+  {
+    name: "lets a later absolute flag win when an inherited NODE_OPTIONS blocks the env file",
+    execArgv: ["--max-old-space-size=32", "--env-file-if-exists=rea.env"],
+    nodeOptions: "--max-old-space-size=64",
+    heap: effective(32, true),
+  },
+  {
+    name: "keeps the 128 MiB request when an empty NODE_OPTIONS blocks the env file",
+    execArgv: ["--env-file=rea.env"],
+    nodeOptions: "",
+    heap: effective(128, false),
+  },
 ] as const)(
   "resolveRegexWorkerHeap $name",
   ({ execArgv, nodeOptions, heap }) => {

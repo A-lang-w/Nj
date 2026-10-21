@@ -213,7 +213,11 @@ heap stays unestablished instead of the 128 MiB request or the absolute flag.
 The reported `NODE_OPTIONS` value is the process initial environment when that
 block can be read. A later edit to the environment is not the value Node
 applied, and an unreadable initial value leaves the effective heap
-unestablished.
+unestablished. `--env-file` or `--env-file-if-exists` can supply `NODE_OPTIONS`
+when the initial environment has none. That file is not part of the initial
+environment block, so the effective heap stays unestablished instead of the
+128 MiB request. An initial `NODE_OPTIONS` is still used, because Node does
+not let the file replace it.
 Literal mode retains Unicode casefold matching.
 
 ## Bounded static traces
