@@ -1,6 +1,6 @@
 # Verification
 
-Executed on macOS with Node v22.23.1 on this branch with the write-plan branch's head `264ce410` merged in. The pilot recordings
+Executed on macOS with Node v22.23.1 on this branch with the write-plan branch's head `45a5c8b9` merged in. The pilot recordings
 were made against live applications on six disposable Linux VMs, each restored from a snapshot first.
 
 ## Gates
@@ -8,8 +8,8 @@ were made against live applications on six disposable Linux VMs, each restored f
 - `npm run build:cached`, `npm run check:fast` (typecheck and lint, no warnings in the changed files),
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
-- `npm run jscpd`: 3.43% duplicated lines over 3752 files.
-- `npx vitest run --project domain --project services`: 7741 passed, 5 pre-existing skips.
+- `npm run jscpd`: 3.43% duplicated lines over 3754 files.
+- `npx vitest run --project domain --project services`: 7757 passed, 5 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 79 passed.
