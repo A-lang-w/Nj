@@ -45,6 +45,71 @@ const renderWindow = async (
 };
 
 describe("successful CLI token windows", () => {
+  it.each([undefined, null, ""])(
+    "preserves the full-output data field for a fitting empty value (%j)",
+    async (value) => {
+      const page = await renderWindow(value, 0, 1000, true);
+      expect(page.handled).toBe(true);
+      expect(page.text).toBe(
+        `${Formatter.format(
+          {
+            ok: true,
+            data: value,
+            meta: { command: "fixture", duration: "0ms" },
+          },
+          "toon",
+        )}\n`,
+      );
+    },
+  );
+
+  it("preserves an existing final newline when the whole result fits", async () => {
+    const page = await renderWindow("abcdefghij\n", 0, 1000);
+    expect(page.handled).toBe(true);
+    expect(page.text).toBe("abcdefghij\n");
+  });
+
+  it.each([false, true])(
+    "owns fitting windows and preserves full-output structure (%s)",
+    async (fullOutput) => {
+      const value = { text: "😀é", nested: { value: 42 } };
+      const page = await renderWindow(value, 0, 1000, fullOutput);
+      expect(page.handled).toBe(true);
+      expect(page.text).toBe(
+        `${Formatter.format(
+          fullOutput
+            ? {
+                ok: true,
+                data: value,
+                meta: { command: "fixture", duration: "0ms" },
+              }
+            : value,
+          "toon",
+        )}\n`,
+      );
+      expect(page.text).not.toContain("nextOffset");
+      expect(page.text).not.toContain("[truncated:");
+    },
+  );
+
+  it("does not reformat a fitting ordinary result", async () => {
+    let reads = 0;
+    const page = await renderWindow(
+      {
+        get text() {
+          reads++;
+          return "abcdefghij";
+        },
+      },
+      0,
+      1000,
+    );
+    expect(page.handled).toBe(true);
+    // TOON reads this property once per formatting pass.
+    expect(reads).toBe(1);
+    expect(page.text).toBe("text: abcdefghij\n");
+  });
+
   it.each([
     { terminal: false, formatExplicit: false },
     { terminal: true, formatExplicit: false },

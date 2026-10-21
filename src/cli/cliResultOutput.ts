@@ -358,28 +358,40 @@ export const createCliResultOutput = (
         options.tokenOffset ?? 0,
         options.tokenLimit,
       );
-      if (!window.truncated) return false;
+      // Keep Incur's empty human/agent presentation semantics. Nonempty text
+      // already belongs to this formatter, even when the whole result fits.
+      if (!window.truncated && !options.fullOutput && formatted === "")
+        return false;
 
-      const sliced = `${window.text}\n[truncated: showing tokens ${options.tokenOffset ?? 0}–${window.end} of ${window.total}]`;
+      const sliced = window.truncated
+        ? `${window.text}\n[truncated: showing tokens ${options.tokenOffset ?? 0}–${window.end} of ${window.total}]`
+        : formatted;
       const outputDocument = options.fullOutput
         ? Formatter.format(
-            {
-              ok: true,
-              data: sliced,
-              meta: {
-                command: metadata.command,
-                duration: metadata.duration,
-                ...(window.end < window.total
-                  ? { nextOffset: window.end }
-                  : {}),
-              },
-            },
+            window.truncated
+              ? {
+                  ok: true,
+                  data: sliced,
+                  meta: {
+                    command: metadata.command,
+                    duration: metadata.duration,
+                    ...(window.end < window.total
+                      ? { nextOffset: window.end }
+                      : {}),
+                  },
+                }
+              : { ok: true, data: filtered, meta },
             format,
           )
         : sliced;
       handled = true;
       try {
-        await writeOutputText(destination, `${outputDocument}\n`);
+        await writeOutputText(
+          destination,
+          outputDocument.endsWith("\n")
+            ? outputDocument
+            : `${outputDocument}\n`,
+        );
       } catch (cause: unknown) {
         failed = true;
         throw cause;
