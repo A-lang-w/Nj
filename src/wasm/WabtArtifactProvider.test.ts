@@ -251,9 +251,15 @@ it.each([
   { tool: "wasm-validate", stdout: "1.0.41\n", stderr: "" },
   { tool: "wasm-objdump", stdout: "", stderr: "" },
   { tool: "wasm2wat", stdout: "1.0.42\n", stderr: "launcher warning\n" },
+  {
+    tool: "wasm-objdump",
+    stdout: "",
+    stderr: "version launcher failed\n",
+    exitCode: 2,
+  },
 ])(
   "retains the exact rejected $tool version probe and configuration recovery",
-  async ({ tool, stdout, stderr }) => {
+  async ({ tool, stdout, stderr, exitCode = 0 }) => {
     const root = await realpath(
       await createTestTempDirectory("rea-wabt-version-recovery-"),
     );
@@ -274,7 +280,7 @@ it.each([
           command: process.execPath,
           arguments: [
             "-e",
-            `process.stdout.write(${JSON.stringify(selected ? stdout : "1.0.42\n")}); process.stderr.write(${JSON.stringify(selected ? stderr : "")});`,
+            `process.stdout.write(${JSON.stringify(selected ? stdout : "1.0.42\n")}); process.stderr.write(${JSON.stringify(selected ? stderr : "")}); process.exit(${String(selected ? exitCode : 0)});`,
           ],
           expectedCommand: null,
         });

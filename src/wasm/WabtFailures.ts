@@ -27,6 +27,14 @@ import {
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 const OUTPUT_LIMIT_REASON = `WABT output exceeded the ${String(WABT_LIMITS.outputBytes)}-byte output budget`;
 
+/** Facts owned before dispatch, even when a version command does not return successfully. */
+export type WabtVersionProbe = {
+  readonly configuration_key: "REA_WABT_BIN_DIRECTORY";
+  readonly executable_path: string;
+  readonly tool: string;
+  readonly expected_version: typeof WABT_VERSION;
+};
+
 /** Configuration is captured by the server; fixing files and changing its environment are distinct repairs. */
 export const wabtConfigurationRecoveryAction = (cause?: unknown): string => {
   const code =
@@ -59,8 +67,9 @@ export const wabtFailure = (
   cause: unknown,
   phase: "configuration" | "artifact" | "producer",
   path: string,
+  versionProbe?: WabtVersionProbe,
 ): AnalysisError => {
-  const failure = classifyWabtFailure(cause, phase, path);
+  const failure = classifyWabtFailure(cause, phase, path, versionProbe);
   bindArtifactFileCleanup(cause, failure);
   return failure;
 };
@@ -69,6 +78,7 @@ const classifyWabtFailure = (
   cause: unknown,
   phase: "configuration" | "artifact" | "producer",
   path: string,
+  versionProbe: WabtVersionProbe | undefined,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const artifactCleanup =
@@ -98,13 +108,17 @@ const classifyWabtFailure = (
               stderr: cause.snapshot.stderr.text,
               truncated: cause.snapshot.diagnosticTruncated ?? false,
             };
-    const options =
-      capturedOutput === undefined ? { cause } : { cause, capturedOutput };
+    const options = {
+      cause,
+      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      ...(versionProbe === undefined ? {} : { diagnostics: versionProbe }),
+    };
     if (cause.cleanupFailure !== null)
       return new ProviderCleanupError(
         WABT_PROVIDER_IDENTITY.id,
         cause.resources,
         {
+          ...versionProbe,
           reason: cause.cleanupFailure,
           previous_error:
             cause.reason === "output-limit"

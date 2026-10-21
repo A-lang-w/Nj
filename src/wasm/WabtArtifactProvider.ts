@@ -47,6 +47,7 @@ import {
 import {
   wabtFailure,
   wabtConfigurationRecoveryAction,
+  type WabtVersionProbe,
 } from "./WabtFailures.js";
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
@@ -109,6 +110,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
     let phase: "configuration" | "artifact" | "producer" = "configuration";
     let result: Result<WasmArtifactExecution, AnalysisError>;
     let capturedOutput: AnalysisCapturedOutput | undefined;
+    let versionProbe: WabtVersionProbe | undefined;
     try {
       if (options?.signal?.aborted) throw new AnalysisCancelledError(OPERATION);
       const directory = this.environment.REA_WABT_BIN_DIRECTORY ?? "";
@@ -213,6 +215,12 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         return snapshot;
       };
       for (const command of commands) {
+        versionProbe = {
+          configuration_key: "REA_WABT_BIN_DIRECTORY",
+          executable_path: command.path,
+          tool: command.tool,
+          expected_version: WABT_VERSION,
+        };
         const version = await execute(command, ["--version"]);
         if (
           version.stdout.text.trim() !== WABT_VERSION ||
@@ -225,12 +233,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             reason,
             {
               userMessage: reason,
-              diagnostics: {
-                configuration_key: "REA_WABT_BIN_DIRECTORY",
-                executable_path: command.path,
-                tool: command.tool,
-                expected_version: WABT_VERSION,
-              },
+              diagnostics: versionProbe,
               capturedOutput: {
                 stdout: version.stdout.text,
                 stderr: version.stderr.text,
@@ -241,6 +244,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           );
         }
         command.version_banner = version.stdout.text;
+        versionProbe = undefined;
       }
       phase = "artifact";
       const selected = await readStableArtifact(
@@ -443,7 +447,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = wabtFailure(cause, phase, input.path);
+      const failure = wabtFailure(cause, phase, input.path, versionProbe);
       runtime?.retainCommandFailure(cause, failure, this.#resources);
       result = err(
         failure instanceof AnalysisOutputError &&

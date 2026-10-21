@@ -3,6 +3,47 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { wabtFailure } from "./WabtFailures.js";
 import { WABT_LIMITS } from "./WabtRelease.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+
+it.each([
+  { reason: "timeout" as const, cleanup: null, code: "provider_timeout" },
+  { reason: "cancelled" as const, cleanup: null, code: "cancelled" },
+  {
+    reason: "process" as const,
+    cleanup: "owned stop failed",
+    code: "cleanup_incomplete",
+  },
+])(
+  "retains version-probe facts without changing $reason cleanup=$cleanup",
+  ({ reason, cleanup, code }) => {
+    const cause = new OwnedCommandFailure(
+      reason,
+      "version command failed",
+      null,
+      cleanup,
+    );
+    const probe = {
+      configuration_key: "REA_WABT_BIN_DIRECTORY" as const,
+      executable_path: "/tools/wasm2wat",
+      tool: "wasm2wat",
+      expected_version: "1.0.42" as const,
+    };
+    const failure = wabtFailure(
+      cause,
+      "configuration",
+      "/selected.wasm",
+      probe,
+    );
+    const original = wabtFailure(cause, "configuration", "/selected.wasm");
+    expect(failure._tag).toBe(original._tag);
+    expect(failure.cleanupIncomplete).toBe(original.cleanupIncomplete);
+    expect(failure.cause).toBe(original.cause);
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code,
+      details: { diagnostics: probe },
+    });
+  },
+);
 
 it.each([
   { code: "EACCES", action: "read and execute access" },
