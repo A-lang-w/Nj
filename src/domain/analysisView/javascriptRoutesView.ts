@@ -295,6 +295,9 @@ const selectedSet = (values: readonly string[] | undefined) =>
   values === undefined ? undefined : new Set(values);
 const ranks = { low: 0, medium: 1, high: 2 };
 const PAGE_BYTES = 1024 * 1024;
+// Sealing appends this field to a nonempty JSON object after projection.
+const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
+const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
 const appIdentity = z.object({
   input_path: z.string().min(1),
   root_artifact_sha256: digestSchema,
@@ -418,7 +421,7 @@ export const projectJavaScriptRoutesView = (
         inventory.routes.length,
       ),
     };
-    return jsonValueByteLength(summary, PAGE_BYTES) > PAGE_BYTES
+    return jsonValueByteLength(summary, PROJECTION_BYTES) > PROJECTION_BYTES
       ? tooLarge()
       : ok(summary);
   }
@@ -447,23 +450,25 @@ export const projectJavaScriptRoutesView = (
       refs = new Map<string, JavaScriptRouteInventorySource>();
     // Count the fixed envelope once. Counter widths and status text reserve the
     // largest representation, so growing a page never rescans earlier sources.
-    let bytes = jsonValueByteLength(
-        {
-          ...shared,
-          items: [],
-          sources: [],
-          summary: null,
-          byte_limited: false,
-          coverage: {
-            status: "complete-within-view",
-            examined: Number.MAX_SAFE_INTEGER,
-            total: Number.MAX_SAFE_INTEGER,
-            next_offset: Number.MAX_SAFE_INTEGER,
-            exhausted: false,
+    let bytes =
+        DIGEST_BYTES +
+        jsonValueByteLength(
+          {
+            ...shared,
+            items: [],
+            sources: [],
+            summary: null,
+            byte_limited: false,
+            coverage: {
+              status: "complete-within-view",
+              examined: Number.MAX_SAFE_INTEGER,
+              total: Number.MAX_SAFE_INTEGER,
+              next_offset: Number.MAX_SAFE_INTEGER,
+              exhausted: false,
+            },
           },
-        },
-        PAGE_BYTES,
-      ),
+          PROJECTION_BYTES,
+        ),
       byte_limited = false;
     if (bytes > PAGE_BYTES) return tooLarge();
     for (
@@ -505,7 +510,8 @@ export const projectJavaScriptRoutesView = (
       byte_limited,
       coverage: pageViewCoverage(page.offset, items.length, rows.length),
     };
-    return jsonValueByteLength({ ...result, items }, PAGE_BYTES) > PAGE_BYTES
+    return jsonValueByteLength({ ...result, items }, PROJECTION_BYTES) >
+      PROJECTION_BYTES
       ? tooLarge()
       : ok(result);
   };

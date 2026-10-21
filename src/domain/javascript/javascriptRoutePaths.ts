@@ -28,10 +28,12 @@ export const nextAppRoutePath = (raw: string): string | undefined => {
   const assetRoot = value.indexOf("/_next/");
   if (assetRoot >= 0) value = value.slice(assetRoot + "/_next/".length);
   const match =
-    /(?:^|\/)app\/(?:(.*?)\/)?page(?:-[^/?#]+\.js|\.(?:[cm]?jsx?|tsx?)|)(?:[?#].*)?$/u.exec(
+    /(?:^|\/)app\/(?:(.*?)\/)?page(?:-([^/?#]+)\.js|\.(?:[cm]?jsx?|tsx?)|)(?:[?#].*)?$/u.exec(
       value,
     );
   if (!match) return;
+  if (match[2] !== undefined && !/(?:^|\/)static\/chunks\/app\//u.test(value))
+    return;
   const segments: string[] = [];
   for (const encoded of (match[1] ?? "").split("/")) {
     // Private folders are excluded before decoding: %5F names are public URLs.

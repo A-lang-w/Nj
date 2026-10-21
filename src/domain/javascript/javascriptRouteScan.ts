@@ -4,6 +4,8 @@ import type { JsonValue } from "../jsonValue.js";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "./javascriptAnalysisResourceControls.js";
 import {
   semanticStaticPropertyName,
+  semanticStaticPropertyKey,
+  javaScriptExpressionWrapperTarget,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -111,6 +113,7 @@ export class JavaScriptRouteScan {
   readonly #literalPaths: { value: string; node: t.Node }[] = [];
   readonly #propertyValues = new WeakSet<t.Node>();
   readonly #dynamicValues = new WeakMap<t.Node, DynamicRouteValueOwner>();
+  readonly #expressionParents = new WeakMap<t.Node, t.Node>();
   readonly #fieldsCache = new WeakMap<t.ObjectExpression, Fields>();
   readonly #routeParents = new WeakMap<
     t.ObjectExpression,
@@ -145,6 +148,14 @@ export class JavaScriptRouteScan {
   }
 
   inspect(node: t.Node, parent: t.Node | null): void {
+    const expressionParent =
+      parent === null ? null : (this.#expressionParents.get(parent) ?? parent);
+    if (
+      expressionParent !== null &&
+      javaScriptExpressionWrapperTarget(node) !== undefined &&
+      this.#queue(node)
+    )
+      this.#expressionParents.set(node, expressionParent);
     const owner = parent === null ? undefined : this.#dynamicValues.get(parent);
     if (
       owner !== undefined &&
@@ -209,13 +220,15 @@ export class JavaScriptRouteScan {
       if (value === undefined) return;
       const next = nextAppRoutePath(value);
       if (
-        (t.isBinaryExpression(parent) && parent.operator === "+") ||
-        (t.isTemplateLiteral(parent) && parent.expressions.length > 0)
+        (t.isBinaryExpression(expressionParent) &&
+          expressionParent.operator === "+") ||
+        (t.isTemplateLiteral(expressionParent) &&
+          expressionParent.expressions.length > 0)
       ) {
         if (next !== undefined)
           this.#unknown(
             "next-app-chunk",
-            parent!,
+            expressionParent!,
             "The module filename is part of a computed expression; a complete page path remains unknown.",
           );
         return;
@@ -568,8 +581,8 @@ export class JavaScriptRouteScan {
         unknownKeys = true;
         continue;
       }
-      const key = semanticStaticPropertyName(property.key, property.computed);
-      if (key === undefined) {
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      if (key === null) {
         values.clear();
         dynamicNames.clear();
         unknownKeys = true;
@@ -677,15 +690,14 @@ export class JavaScriptRouteScan {
       } else if (t.isObjectExpression(node)) {
         for (const property of node.properties) {
           if (t.isObjectProperty(property)) {
-            const key = semanticStaticPropertyName(
+            const key = semanticStaticPropertyKey(
               property.key,
               property.computed,
             );
             // Owning a route does not own the component/loader inputs it uses.
             // Follow the same route relationships consumed by the route walker.
             if (
-              key !== undefined &&
-              isRouteChildKey(key, typed) &&
+              (key === null || isRouteChildKey(key, typed)) &&
               (!typed ||
                 t.isObjectExpression(property.value) ||
                 t.isIdentifier(property.value))

@@ -268,3 +268,51 @@ it("returns a typed retained-parent resource error when even a summary identity 
   if (result.ok) throw new Error("Expected a resource error");
   expect(result.error.message).toContain("cannot fit");
 });
+
+it.each(["summary", "routes"] as const)(
+  "includes the sealed digest in the %s byte ceiling",
+  (collection) => {
+    const source = {
+      ...parent(),
+      operation: "analyze_web_bundle",
+      normalizedResult: {
+        capture: { target_url: "https://example.test/" },
+        route_inventory: inventory("route('/only');"),
+      },
+    };
+    const selection =
+      collection === "summary"
+        ? { collection }
+        : { collection, fields: ["path"], limit: 1 };
+    const bytes = Buffer.byteLength(JSON.stringify(query(source, selection)));
+    source.normalizedResult.capture.target_url += "a".repeat(
+      1024 * 1024 - bytes + 1,
+    );
+    const result = projectAnalysisView(
+      source,
+      analysisViewRequestSchema.parse({
+        kind: "javascript-routes",
+        ...selection,
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a sealed-page resource error");
+    expect(result.error.message).toContain("cannot fit");
+  },
+);
+it("admits a summary that fits exactly after sealing", () => {
+  const source = {
+    ...parent(),
+    operation: "analyze_web_bundle",
+    normalizedResult: {
+      capture: { target_url: "https://example.test/" },
+      route_inventory: inventory("route('/only');"),
+    },
+  };
+  const selection = { collection: "summary" };
+  const bytes = Buffer.byteLength(JSON.stringify(query(source, selection)));
+  source.normalizedResult.capture.target_url += "a".repeat(1024 * 1024 - bytes);
+  expect(Buffer.byteLength(JSON.stringify(query(source, selection)))).toBe(
+    1024 * 1024,
+  );
+});

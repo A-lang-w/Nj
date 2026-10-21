@@ -10,6 +10,20 @@ export const runtimeFunctionParameters = (
     ? node.params.slice(1)
     : node.params;
 
+/** One erased syntax edge, without walking a potentially nested wrapper chain. */
+export const javaScriptExpressionWrapperTarget = (
+  node: t.Node,
+): t.Node | undefined =>
+  t.isParenthesizedExpression(node) ||
+  t.isTSAsExpression(node) ||
+  t.isTSTypeAssertion(node) ||
+  t.isTSNonNullExpression(node) ||
+  t.isTSSatisfiesExpression(node) ||
+  t.isTSInstantiationExpression(node) ||
+  t.isTypeCastExpression(node)
+    ? node.expression
+    : undefined;
+
 /**
  * Remove wrappers that affect TypeScript or Flow checking but not runtime
  * expression identity. The returned depth lets bounded evaluators account for
@@ -21,15 +35,9 @@ export const unwrapJavaScriptExpression = (
 ): { readonly node: t.Node; readonly depth: number } => {
   let current = node;
   let depth = 0;
-  while (
-    t.isParenthesizedExpression(current) ||
-    t.isTSAsExpression(current) ||
-    t.isTSTypeAssertion(current) ||
-    t.isTSNonNullExpression(current) ||
-    t.isTSSatisfiesExpression(current) ||
-    t.isTSInstantiationExpression(current) ||
-    t.isTypeCastExpression(current)
-  ) {
+  for (;;) {
+    const target = javaScriptExpressionWrapperTarget(current);
+    if (target === undefined) break;
     // Optional-chain grouping affects execution even when expression identity
     // is transparent. Keep every grouping boundary available to that consumer.
     if (
@@ -38,7 +46,7 @@ export const unwrapJavaScriptExpression = (
         current.extra?.parenthesized === true)
     )
       break;
-    current = current.expression;
+    current = target;
     depth += 1;
   }
   return { node: current, depth };

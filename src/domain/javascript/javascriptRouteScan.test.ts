@@ -160,6 +160,26 @@ it("preserves only fields established after an unknown spread", () => {
   ]);
   expect(restored.unresolved).toHaveLength(1);
 });
+it("invalidates fields before unknown computed keys while preserving exact empty keys", () => {
+  const unknown = analyze(
+    `createBrowserRouter([{path:'/before',[key]:'/after',children:[{path:'settings'}]}]);`,
+  );
+  expect(unknown.candidates).toEqual([]);
+  expect(unknown.unresolved.length).toBeGreaterThan(0);
+  const child = analyze(
+    `createBrowserRouter([{path:'/before',[key]:{path:'/stale',element:View}}]);`,
+  );
+  expect(child.candidates).toEqual([]);
+  expect(child.unresolved.length).toBeGreaterThan(0);
+  const exact = analyze(
+    `createBrowserRouter([{path:'/before',['']:true,children:[{path:'settings'}]}]);`,
+  );
+  expect(exact.candidates.map(({ path }) => path)).toEqual([
+    "/before",
+    "/before/settings",
+  ]);
+  expect(exact.unresolved).toEqual([]);
+});
 it("keeps a getter-backed parent unknown without treating unrelated loader methods as route gaps", () => {
   const getter = analyze(
     `createBrowserRouter([{get path(){return '/dynamic'},children:[{path:'settings'}]}]);`,
@@ -197,6 +217,9 @@ it.each([
     undefined,
   ],
   ["app/app/page.tsx", "/app"],
+  ["app/reports/page-helpers.js", undefined],
+  ["app/reports/page-deadbeef.js", undefined],
+  ["https://example.test/app/reports/page-helpers.js", undefined],
   ["app/_components/page.tsx", undefined],
   ["app/blog/_draft/page.js", undefined],
   ["app/(group)/_private/nested/page.tsx", undefined],
@@ -487,6 +510,17 @@ it("does not promote concatenation or template fragments into independent path o
   expect(facts.unresolved.map(({ mechanism }) => mechanism)).toEqual([
     "next-app-chunk",
   ]);
+});
+it("retains computed-expression ownership through erased TypeScript wrappers", () => {
+  const facts = analyze(
+    "globalThis.TURBOPACK=[];route('/users');const file=(('app/admin/page.js' as string)!) + suffix;const partial=(('/users/' as const) satisfies string) + id;const template=`prefix${('/users/' as string)}`;const exact=('app/reports/page.js' as const);const independent='/users/settings';",
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))].sort()).toEqual(
+    ["/reports", "/users", "/users/settings"],
+  );
+  expect(
+    facts.unresolved.some(({ mechanism }) => mechanism === "next-app-chunk"),
+  ).toBe(true);
 });
 it("retains relative navigation uncertainty and excludes known external URL literals", () => {
   const facts = analyze(
