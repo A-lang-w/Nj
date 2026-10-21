@@ -308,6 +308,12 @@ it("keeps automatic framing applicability unknown when SAZ Content-Type is exclu
     ],
     ["raw/3_s.txt", response("")],
     ["raw/4_s.txt", response("Content-Type: application/octet-stream\r\n")],
+    [
+      "raw/5_s.txt",
+      response(
+        "Content-Type: application/grpc\r\nContent-Type: Application/GRPC ; x=1\r\n",
+      ),
+    ],
   ]);
   const path = await fixture(bytes);
   const inspect = async (extra: string[]) =>
@@ -321,17 +327,31 @@ it("keeps automatic framing applicability unknown when SAZ Content-Type is exclu
     sha256: createHash("sha256").update(body).digest("hex"),
   });
 
-  const visible = await inspect(["--record", "0", "--record", "1"]);
-  expect(visible.records[0]?.protobuf).toMatchObject([
-    { status: "complete", fields: [{ number: 1, value: "1" }] },
+  // Repeated declarations with one media-type essence agree; distinct essences conflict.
+  const visible = await inspect([
+    "--record",
+    "0",
+    "--record",
+    "1",
+    "--record",
+    "4",
   ]);
-  expect(visible.records[0]?.limitations).toEqual([]);
-  expect(visible.records[1]?.protobuf).toBeUndefined();
-  expect(visible.records[1]?.limitations).toEqual([unknown]);
+  const record = (ordinal: number) =>
+    visible.records.find((item) => item.ordinal === ordinal);
+  for (const ordinal of [0, 4]) {
+    expect(record(ordinal)?.protobuf).toMatchObject([
+      { status: "complete", fields: [{ number: 1, value: "1" }] },
+    ]);
+    expect(record(ordinal)?.limitations).toEqual([]);
+  }
+  // The first raw declaration, including its SAZ leading space, remains the reported value.
+  expect(record(4)?.protobuf?.[0]?.content_type).toBe(" application/grpc");
+  expect(record(1)?.protobuf).toBeUndefined();
+  expect(record(1)?.limitations).toEqual([unknown]);
   expect(visible.protobuf_coverage).toEqual({
     status: "partial",
-    selected_records: 2,
-    inspected_records: 2,
+    selected_records: 3,
+    inspected_records: 3,
   });
 
   const known = await inspect(["--record", "2", "--record", "3"]);

@@ -93,6 +93,10 @@ const excludeBody = (
   record.redactions.push({ pointer, reason });
 };
 
+/** A media type's case-insensitive essence; parameters do not select framing. */
+const mediaTypeEssence = (value: string) =>
+  value.split(";", 1)[0]!.trim().toLowerCase();
+
 /** Format-aware owner of body metadata; callers never reinterpret producer JSON. */
 const bodyMetadata = (
   record: WebNetworkCaptureRecord,
@@ -143,11 +147,19 @@ const bodyMetadata = (
       if (typeof name === "string") {
         const key = name.toLowerCase();
         const knownValue = typeof value === "string" ? value : undefined;
+        const previous = headers.get(key);
+        // Repeated declarations agree only when known and equal; media types by essence.
         headers.set(
           key,
-          headers.has(key) && headers.get(key) !== knownValue
-            ? undefined
-            : knownValue,
+          !headers.has(key)
+            ? knownValue
+            : previous !== undefined &&
+                knownValue !== undefined &&
+                (key === "content-type"
+                  ? mediaTypeEssence(previous) === mediaTypeEssence(knownValue)
+                  : previous === knownValue)
+              ? previous
+              : undefined,
         );
       } else headerNamesKnown = false;
     }
@@ -155,6 +167,13 @@ const bodyMetadata = (
   // A visible declaration selects framing. Absence is established only when every header
   // name is known; excluded or conflicting values leave framing applicability unknown.
   const header = headers.get("content-type");
+  const automaticFraming = (contentType: string | undefined) => {
+    const essence =
+      contentType === undefined ? undefined : mediaTypeEssence(contentType);
+    return essence !== undefined && Object.hasOwn(PROTOBUF_FRAMING, essence)
+      ? PROTOBUF_FRAMING[essence as keyof typeof PROTOBUF_FRAMING]
+      : undefined;
+  };
   if (format === "har") {
     if (
       pointer !== `/${side}/${side === "request" ? "postData" : "content"}/text`
@@ -164,9 +183,11 @@ const bodyMetadata = (
     const mimeType = object(
       message[side === "request" ? "postData" : "content"],
     )?.mimeType;
+    const contentType = typeof mimeType === "string" ? mimeType : header;
     return {
-      contentType: typeof mimeType === "string" ? mimeType : header,
-      contentTypeKnown: typeof mimeType === "string" || header !== undefined,
+      contentType,
+      automaticFraming: automaticFraming(contentType),
+      contentTypeKnown: contentType !== undefined,
       httpIdentityKnown: true,
       httpCodingKnown: true,
     };
@@ -175,6 +196,7 @@ const bodyMetadata = (
     return undefined;
   return {
     contentType: header,
+    automaticFraming: automaticFraming(header),
     contentTypeKnown:
       header !== undefined ||
       (headerNamesKnown && !headers.has("content-type")),
@@ -262,12 +284,7 @@ export const prepareCaptureProtobuf = async (
         incomplete = true;
         continue;
       }
-      const contentType = metadata.contentType;
-      const essence = contentType?.split(";", 1)[0]?.trim().toLowerCase();
-      const automatic =
-        essence === undefined
-          ? undefined
-          : PROTOBUF_FRAMING[essence as keyof typeof PROTOBUF_FRAMING];
+      const { contentType, automaticFraming: automatic } = metadata;
       const framing =
         options?.framing === undefined || options.framing === "auto"
           ? automatic
