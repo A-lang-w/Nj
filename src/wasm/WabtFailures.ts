@@ -1,4 +1,8 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -15,9 +19,36 @@ import {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
-import { WABT_LIMITS, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
+import {
+  WABT_LIMITS,
+  WABT_PROVIDER_IDENTITY,
+  WABT_VERSION,
+} from "./WabtRelease.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 const OUTPUT_LIMIT_REASON = `WABT output exceeded the ${String(WABT_LIMITS.outputBytes)}-byte output budget`;
+
+/** Facts owned before dispatch, even when a version command does not return successfully. */
+export type WabtVersionProbe = {
+  readonly configuration_key: "REA_WABT_BIN_DIRECTORY";
+  readonly executable_path: string;
+  readonly tool: string;
+  readonly expected_version: typeof WABT_VERSION;
+};
+
+/** Configuration is captured by the server; fixing files and changing its environment are distinct repairs. */
+export const wabtConfigurationRecoveryAction = (cause?: unknown): string => {
+  const code =
+    cause instanceof Error && "code" in cause ? cause.code : undefined;
+  const action =
+    code === "EACCES" || code === "EPERM"
+      ? "Check this REA process has read and execute access to the reported caller-supplied tools, or select an accessible trusted copy. "
+      : code === "ENOTDIR"
+        ? "Select the tools' containing directory, not an individual executable. "
+        : code === "ENOENT"
+          ? "The reported configured tool is missing. "
+          : "";
+  return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from WABT ${WABT_VERSION}; each --version must report ${WABT_VERSION} on stdout with empty stderr. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
+};
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
   stdout: boundedUtf8Text(snapshot.stdout.text, OUTPUT_LIMIT_EXCERPT_BYTES)
@@ -36,6 +67,18 @@ export const wabtFailure = (
   cause: unknown,
   phase: "configuration" | "artifact" | "producer",
   path: string,
+  versionProbe?: WabtVersionProbe,
+): AnalysisError => {
+  const failure = classifyWabtFailure(cause, phase, path, versionProbe);
+  bindArtifactFileCleanup(cause, failure);
+  return failure;
+};
+
+const classifyWabtFailure = (
+  cause: unknown,
+  phase: "configuration" | "artifact" | "producer",
+  path: string,
+  versionProbe: WabtVersionProbe | undefined,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const artifactCleanup =
@@ -48,7 +91,10 @@ export const wabtFailure = (
     (cause instanceof Error && cause.name === "AbortError")
   )
     return new AnalysisCancelledError("inspect_wasm_artifact", {
-      cause,
+      cause:
+        cause instanceof ArtifactReaderFailure
+          ? artifactFileCancellationCause(cause)
+          : cause,
       ...cleanupOptions,
     });
   if (cause instanceof OwnedCommandFailure) {
@@ -62,13 +108,17 @@ export const wabtFailure = (
               stderr: cause.snapshot.stderr.text,
               truncated: cause.snapshot.diagnosticTruncated ?? false,
             };
-    const options =
-      capturedOutput === undefined ? { cause } : { cause, capturedOutput };
+    const options = {
+      cause,
+      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      ...(versionProbe === undefined ? {} : { diagnostics: versionProbe }),
+    };
     if (cause.cleanupFailure !== null)
       return new ProviderCleanupError(
         WABT_PROVIDER_IDENTITY.id,
         cause.resources,
         {
+          ...versionProbe,
           reason: cause.cleanupFailure,
           previous_error:
             cause.reason === "output-limit"
@@ -111,8 +161,8 @@ export const wabtFailure = (
         reason,
         {
           ...options,
-          userMessage:
-            "Configured WABT could not start. Check executable/interpreter access and WABT 1.0.42 profile; inspect retained diagnostics.",
+          userMessage: `Configured WABT could not start. Check executable/interpreter access and WABT ${WABT_VERSION} profile; inspect retained diagnostics.`,
+          remediationAction: wabtConfigurationRecoveryAction(cause),
         },
       );
     return new AnalysisOutputError("inspect_wasm_artifact", reason, options);
@@ -132,7 +182,27 @@ export const wabtFailure = (
       {
         cause,
         ...cleanupOptions,
-        userMessage: `${reason} Supply WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY; REA does not install tools.`,
+        userMessage: reason,
+        remediationAction: wabtConfigurationRecoveryAction(cause),
+      },
+    );
+  if (
+    phase === "artifact" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "limit" &&
+    cause.boundary === "file-size"
+  )
+    return new AnalysisResourceConstraintError(
+      "inspect_wasm_artifact",
+      "file-size",
+      reason,
+      { maximum_input_bytes: WABT_LIMITS.inputBytes },
+      {
+        cause,
+        ...cleanupOptions,
+        retryable: false,
+        remediationAction:
+          "Select a suitable stable artifact within the reported input byte allowance. Do not truncate required bytes; retrying the unchanged oversized input will fail again.",
       },
     );
   if (
