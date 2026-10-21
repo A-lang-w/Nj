@@ -794,6 +794,8 @@ it("reports a null installer declaration as an absent installer", async () => {
   Package [com.example] (abcdef):
     versionName=1.2.3
     installerPackageName=null
+    requested permissions:
+      android.permission.INTERNET
 `,
     }),
   );
@@ -804,6 +806,7 @@ it("reports a null installer declaration as an absent installer", async () => {
   expect(result).toMatchObject({
     version_name: "1.2.3",
     installer_package_name: null,
+    requested_permissions_count: 1,
     coverage: "complete",
   });
 });
