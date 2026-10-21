@@ -1,14 +1,20 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`a6eac6963e65ae1f7523a299ca8193c62a074d17`, tree `3884e1f0f9ec24718c87ebc3ac8a8d0630741d2d`,
-on main base `6d356b843`. All current corpus, public-interface and delivery measurements use that runtime.
+`7c5e2ab1765cbcfeb0514c989f17c49b6ab1219b`, tree `60737d872f01d310d09960cb3e5aec50d20e93cf`,
+on main base `67a6477f011ae358fc333e5a6e26c86d932654ed`. All current corpus, public-interface and delivery measurements use that runtime.
 The entire source corpus was freshly analyzed after the latest syntax-owner
 change; earlier checkpoint replays remain identified in their pinned records. The JSON retains exact source digests,
 commands, profiles, historical controls and material failed attempts. Earlier
 qualification records are pinned to `48cc5fbc7` (runtime `b5ffdba6f`) and
 `13bfba73a` (root correction `4d0630abb`); verification-only commits do not change
 runtime code.
+
+The current runtime merges main `67a6477f0`. The shared analysis-view import and
+result-union conflict was resolved by retaining both route and source-to-bundle
+contracts. Both view workflows are exercised below; worker resource diagnostics
+from main are included in fresh analysis and delivery measurements. Dependency
+and toolchain files did not change.
 
 ## Inputs, oracle, and coverage
 
@@ -17,13 +23,13 @@ Downloaded the 29 homepage-referenced nextjs.org scripts (1,533,098 bytes) and
 and SHA-256. Saved bytes were independently rehashed and checked for lossless
 UTF-8 decoding before writing this record. Sources were read as data.
 
-Production isolated workers completed 65/67 source jobs, retaining route-fact
-checkpoints for 65/67 sources. 2 jobs reached the unchanged 15-second deadline;
-0 of those retained route facts. Unavailable sources and partial enumeration
+Production isolated workers completed 64/67 source jobs, retaining route-fact
+checkpoints for 65/67 sources. 3 jobs reached the unchanged 15-second deadline;
+1 of those retained route facts. Unavailable sources and partial enumeration
 remain visible. Each worker had a caller-selected 512 MiB old-space limit and
 one semantic projection node; route syntax precedes semantic projection. The
-complete probe took 195.304 s elapsed, 291.424 CPU s and
-491,651,072 sampled peak family RSS bytes. No resource guard
+complete probe took 200.349 s elapsed, 300.432 CPU s and
+485,130,240 sampled peak family RSS bytes. No resource guard
 stopped it. These captures do not establish lazy/server-only code, reachability
 or a complete application route denominator.
 
@@ -50,7 +56,7 @@ it. Actual CLI and SDK `analyze_web_bundle` calls captured that inert source via
 CDP and returned all 18 patterns, its original URL and exact SHA-256.
 Selected-source parsing was `complete` and candidate enumeration
 `partial`; application coverage stayed unknown. The verifier took
-10.280 s elapsed, 12.722 CPU s and 2,192,424,960 sampled
+10.117 s elapsed, 12.912 CPU s and 2,178,109,440 sampled
 peak family RSS bytes. Owned browser-group and temporary-profile cleanup succeeded.
 This qualifies passive capture, not the published application's UI behavior.
 
@@ -59,7 +65,7 @@ This qualifies passive capture, not the published application's UI behavior.
 Both fresh SDK sessions used the same source, semantic budget, 512 MiB worker,
 15-second deadline and `/docs` query with path, confidence, mechanisms and source
 provenance. Both retained the identical parent Evidence ID
-`ev_88fe6d629762c29285e04dbd85da65c4f6dbd26bf3f8b1703ddd501968f77f49`,
+`ev_aaa74242aeb9bfd9cd1f984250a00bca9c86f135a4075b610f56183214dd8e06`,
 performed three additional historical reads and exported complete Evidence.
 OS caches were already warm; there was no storage-cold or statistical study.
 The benchmark MCP host had a 2 GiB old-space choice; its driver had 3 GiB.
@@ -68,16 +74,16 @@ that default catalog cost is not measured by this comparison.
 
 | Measured complete workflow                                    | Complete delivery then route view | Selected view in analysis call |
 | ------------------------------------------------------------- | --------------------------------: | -----------------------------: |
-| Estimated tokens, used input declarations + all calls/replies |                         1,937,112 |                         58,252 |
-| Estimated tokens, entire catalog + all calls/replies          |                         3,019,686 |                      1,140,826 |
-| Elapsed seconds, including startup and cleanup                |                            13.835 |                         12.097 |
-| CPU seconds, process family                                   |                            18.181 |                         15.839 |
-| Peak sampled process-family RSS bytes                         |                     1,512,906,752 |                  1,294,807,040 |
+| Estimated tokens, used input declarations + all calls/replies |                         1,938,036 |                         58,786 |
+| Estimated tokens, entire catalog + all calls/replies          |                         3,027,094 |                      1,147,844 |
+| Elapsed seconds, including startup and cleanup                |                            13.854 |                         12.597 |
+| CPU seconds, process family                                   |                            18.054 |                         16.516 |
+| Peak sampled process-family RSS bytes                         |                     1,696,665,600 |                  1,331,994,624 |
 
 The primary question required two calls with complete delivery and one with
 selected delivery: used declarations plus primary replies estimate
-1,910,172 versus 11,260 tokens. The complete analysis
-reply was 6,202,233 SDK JSON bytes, versus 28,885 for the route page.
+1,911,096 versus 11,260 tokens. The complete analysis
+reply was 6,203,541 SDK JSON bytes, versus 28,885 for the route page.
 `tokenx` estimates use actual declarations, arguments and full SDK replies; they
 are not actual model usage. JSON-RPC initialization/envelopes remain unmeasured.
 Full-catalog costs are shown separately. SDK/Ajv validation and token-estimation
@@ -86,8 +92,8 @@ is unmeasured. Timing varied between runs: the earlier `135c56bc2` qualification
 selected delivery and remains pinned at `38f2f9637`. These samples establish no
 stable latency or underlying analysis-speedup claim.
 
-Complete-mode view calls took 1996.5, 30.0, 61.3, 11.2 ms; selected-mode historical calls took
-1925.7, 18.9, 13.7 ms. First calls include cold client/tool preparation that was not separately
+Complete-mode view calls took 2071.4, 31.2, 16.0, 11.7 ms; selected-mode historical calls took
+2159.4, 19.8, 12.9 ms. First calls include cold client/tool preparation that was not separately
 profiled. The immutable-snapshot cache does not establish zero preparation cost.
 Projection preserves complete Evidence materialization.
 
@@ -115,7 +121,9 @@ status and an 8 GiB family / 420-second stop guard; no qualifying run hit it.
   independent Next constant candidates. A public exact-total regression caught
   this additional fallback path before qualification.
   Stable child-array/object aliases share the same ancestry owner as inline
-  children; ambiguous or cyclic parents stay unknown rather than shortening paths.
+  children. Both ancestry and walking consume the same cached effective fields;
+  duplicate, accessor and spread overrides cannot invent a second parent.
+  Ambiguous or cyclic parents stay unknown rather than shortening paths.
   Browser CLI/SDK tests require the complete nested path through aliased children.
   Changed bindings cannot revive stale roots; ordinary wrappers do not become URL
   segments. Claiming follows route-child relationships consumed by the walker,
@@ -147,7 +155,7 @@ route Evidence. Stable/ambiguous ancestry and late-cancellation regressions fail
 before the fix. Existing SDK cancellation tests also verify retained facts, prior
 Evidence and subsequent request recovery.
 
-Current execution: **207/207 source regressions** and **31/31 production-worker /
+Current execution: **208/208 source regressions** and **33/33 production-worker /
 public CLI/SDK tests** passed, including source deletion before exported-Evidence
 queries, Turbopack-shaped modules, dynamic prefixes and independent component
 route tables. Exact advertised-input tests explicitly select the full profile;
