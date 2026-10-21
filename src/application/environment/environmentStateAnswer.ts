@@ -4,6 +4,7 @@ import {
   allLines,
   listItems,
   listsAll,
+  pageSize,
   pagesOnly,
   missingRequiredFields,
   renderStateEntity,
@@ -50,7 +51,11 @@ import { environmentToolArguments } from "./environmentTools.js";
 export type StateProvenance =
   | {
       readonly source: "recording";
-      readonly reason: RecordedViewReason | "no-view" | "unrecorded-request";
+      readonly reason:
+        | RecordedViewReason
+        | "no-view"
+        | "unrecorded-request"
+        | "page-exceeded";
     }
   | {
       readonly source: "state";
@@ -423,6 +428,14 @@ const answerList = (
   const collection = collectionPathOf(base, false);
   const type = store.type(view.type);
   const all = listsAll(view, base.ordinal);
+  // A requested page the collection has outgrown is answered as recorded, never with more items than it asked for.
+  const size = exact ? pageSize(base.query ?? undefined) : undefined;
+  if (
+    all &&
+    size !== undefined &&
+    store.inCollection(view.type, collection).length > size
+  )
+    return fromRecording(source, tool, args, "page-exceeded");
   const members: readonly StateEntity[] = all
     ? store.inCollection(view.type, collection)
     : recorded.flatMap((item) => {

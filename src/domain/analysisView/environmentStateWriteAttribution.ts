@@ -1,8 +1,44 @@
+import type { StateView } from "./environmentStateRules.js";
+import {
+  collectionTarget,
+  entityTarget,
+} from "./environmentStateWriteChecks.js";
+
+/** The fields a read of a view shows of its entities, less volatile ones it does not compare; all of a document's. */
+export const shownFields = (
+  view: StateView,
+  volatileOf: (type: string) => ReadonlySet<string>,
+): ReadonlySet<string> | "all" => {
+  if (view.shape !== "item" && view.shape !== "list") return "all";
+  const volatile = volatileOf(view.type);
+  return new Set(view.fields.filter((field) => !volatile.has(field)));
+};
+
 /** Modelled writes per target since its last check, with the fields each wrote (null: all). */
 export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
 
 /** Per target, the earliest modelled write since its last check and when the latest of them ended. */
 export type PendingTargets = Map<string, { since: number; until: number }>;
+
+/** Whether a modelled write to the target was still running when a read began at `start`, so the read may show either state. */
+export const runningAt = (
+  pending: PendingTargets,
+  key: string,
+  start: number,
+): boolean => (pending.get(key)?.until ?? -Infinity) > start;
+
+/** The tools whose writes a read exercises: those that changed its targets since they were last checked, less those that borrowed the read to learn their effect. */
+export const exercisedBy = (
+  touched: TouchedTargets,
+  keys: readonly string[],
+  borrowers: ReadonlySet<string> | undefined,
+): Set<string> => {
+  const exercised = new Set<string>();
+  for (const key of keys)
+    for (const name of touched.get(key)?.keys() ?? [])
+      if (!borrowers?.has(name)) exercised.add(name);
+  return exercised;
+};
 
 /** Record a modelled write on a target: the fields it wrote (undefined: all), when it began and when it ended. */
 export const touchTarget = (
@@ -91,7 +127,16 @@ export class WriteEffects {
   }
 
   /** A read showed the entity absent: no write's effect on it remains, so a write left with no entity drops from the collection. */
-  removed(touched: TouchedTargets, entity: string, collection: string): void {
+  removed(
+    touched: TouchedTargets,
+    gone: {
+      readonly type: string;
+      readonly collection: string;
+      readonly id: string;
+    },
+  ): void {
+    const entity = entityTarget(gone.type, gone.collection, gone.id);
+    const collection = collectionTarget(gone.type, gone.collection);
     this.#changed.delete(entity);
     const byTool = this.#members.get(collection);
     if (byTool === undefined) return;
@@ -100,6 +145,23 @@ export class WriteEffects {
       byTool.delete(tool);
       touched.get(collection)?.delete(tool);
     }
+  }
+
+  /** Whether a read showing `fields` of a target shows anything of a tool's effect there: a create's or delete's always, an update's through a field it changed; unknown claims count as shown. */
+  shows(
+    tool: string,
+    key: string,
+    fields: ReadonlySet<string> | "all",
+  ): boolean {
+    const visible = (claim: ChangedFields | undefined): boolean =>
+      fields === "all" ||
+      claim === undefined ||
+      claim === null ||
+      claim.some((field) => fields.has(field));
+    const own = this.#changed.get(key);
+    if (own !== undefined) return visible(own.get(tool));
+    const members = this.#members.get(key)?.get(tool);
+    return members === undefined || [...members.values()].some(visible);
   }
 
   /** A write's effect replaces what earlier writes left of theirs, then joins them. */

@@ -552,3 +552,16 @@ it.each<[string, string, boolean]>([
   expect(prefixRelated(left, right)).toBe(related);
   expect(prefixRelated(right, left)).toBe(related);
 });
+
+it(
+  "searches a wide request body for a copied value in linear time",
+  { timeout: 5_000 },
+  () => {
+    // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
+    const wide = Array.from({ length: 500_000 }, () => 0);
+    const result = explainCreate(
+      created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
+    );
+    expect(ruleFor(result.rules, "note")).toBeUndefined();
+  },
+);
