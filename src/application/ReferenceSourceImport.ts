@@ -1,6 +1,7 @@
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   createHistoricalSourceGraph,
+  historicalSourceExclusionKey,
   historicalSourceLanguages,
   historicalSourceManifests,
   historicalSourceParseFailureKey,
@@ -123,16 +124,12 @@ const deriveInventoryState = (
 const sortExclusions = (
   exclusions: HistoricalSourceGraphInput["exclusions"],
 ): HistoricalSourceGraphInput["exclusions"] =>
-  [...exclusions].sort((left, right) => {
-    const byPath = compareUnicodeCodePoints(left.path, right.path);
-    if (byPath !== 0) return byPath;
-    const byReason = compareUnicodeCodePoints(left.reason, right.reason);
-    if (byReason !== 0) return byReason;
-    return compareUnicodeCodePoints(
-      "pattern" in left ? left.pattern : "",
-      "pattern" in right ? right.pattern : "",
-    );
-  });
+  [...exclusions].sort((left, right) =>
+    compareUnicodeCodePoints(
+      historicalSourceExclusionKey(left),
+      historicalSourceExclusionKey(right),
+    ),
+  );
 
 /**
  * Import a reference source directory into a committed historical source graph.

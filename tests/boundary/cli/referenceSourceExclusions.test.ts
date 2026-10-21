@@ -101,6 +101,7 @@ describe.skipIf(process.platform === "win32")(
               entry_kind: "file",
               reason: "project-ignored",
               pattern: "project.tmp",
+              policy_path: ".gitignore",
             },
             {
               path: "logs/application.log",
@@ -128,16 +129,20 @@ describe.skipIf(process.platform === "win32")(
   "compiled nested reference-source exclusions",
   () => {
     cliTest(
-      "omits package-generated files and their imports using a nested ignore file",
+      "distinguishes root and nested policies excluding generated files and imports",
       async ({ cli }) => {
         const root = await createTestTempDirectory("rea-reference-nested-cli-");
+        await mkdir(join(root, "generated"));
         await mkdir(join(root, "packages/widget/generated"), {
           recursive: true,
         });
         await Promise.all([
-          writeFile(join(root, ".gitignore"), "root-generated.js\n"),
-          writeFile(join(root, "root-generated.js"), "export {};\n"),
-          writeFile(join(root, "packages/widget/.gitignore"), "generated/\n"),
+          writeFile(join(root, ".gitignore"), "/generated/\n"),
+          writeFile(
+            join(root, "generated/stale.js"),
+            'import "./missing.js";\n',
+          ),
+          writeFile(join(root, "packages/widget/.gitignore"), "/generated/\n"),
           writeFile(join(root, "packages/widget/main.js"), "export {};\n"),
           writeFile(
             join(root, "packages/widget/generated/stale.js"),
@@ -158,16 +163,18 @@ describe.skipIf(process.platform === "win32")(
         const graph = historicalSourceGraphSchema.parse(result.json);
         expect(graph.exclusions).toEqual([
           {
+            path: "generated",
+            entry_kind: "directory",
+            reason: "project-ignored",
+            pattern: "/generated/",
+            policy_path: ".gitignore",
+          },
+          {
             path: "packages/widget/generated",
             entry_kind: "directory",
             reason: "project-ignored",
-            pattern: "generated/",
-          },
-          {
-            path: "root-generated.js",
-            entry_kind: "file",
-            reason: "project-ignored",
-            pattern: "root-generated.js",
+            pattern: "/generated/",
+            policy_path: "packages/widget/.gitignore",
           },
         ]);
         expect(

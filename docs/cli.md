@@ -332,7 +332,11 @@ Default exclusions for common generated and dependency paths such as
 `node_modules/`, `dist/`, and `*.log` still apply after project rules, followed by
 caller exclusions. Pattern-based exclusions record the
 matched pattern and whether it came from project, default, caller, or sensitive
-path policy. Links into excluded paths retain their internal target metadata;
+path policy. Project exclusions also record `policy_path`, the supplying
+`.gitignore` path relative to the selected root (for example, `.gitignore` or
+`packages/app/.gitignore`). This identifies the rule's directory scope without
+rewriting the recorded pattern. Other exclusion reasons do not carry this field.
+Links into excluded paths retain their internal target metadata;
 the exclusion explains why the target has no inventory entry, and the inventory
 remains partial. Exclusions record `entry_kind` when the importer observed it;
 older saved exclusions without that field have unknown kind. An excluded
@@ -340,6 +344,13 @@ ancestor proves an internal descendant only when its kind is `directory`.
 Set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON array of ignore
 patterns when you want to mark selected paths as sensitive; those patterns are
 reported separately as configured-secret exclusions.
+
+Saved graphs without `policy_path` remain readable with their existing hashes;
+the policy source stays unknown. Re-import to capture it. The field participates
+in new graph and manifest commitments, so adding or changing it changes those
+hashes. Older strict readers reject graphs containing this field: upgrade the
+reader before consuming newly imported graphs. The source path does not preserve
+the complete ordered policy or make the exclusion replayable by itself.
 
 Re-import saved graphs whose pattern-based exclusions lack `pattern` before
 using them in source-to-bundle comparisons.

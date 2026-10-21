@@ -105,6 +105,12 @@ const addMarkedPatterns = (
           .split("/")
           .map(() => "*")
           .join("/");
+  const policyPath =
+    reason === "project-ignored"
+      ? directory === "."
+        ? ".gitignore"
+        : `${directory}/.gitignore`
+      : "";
   for (const pattern of patterns) {
     // Only the start of a policy file can contain an encoding signature.
     const text =
@@ -112,7 +118,10 @@ const addMarkedPatterns = (
     for (const line of text.split(/\r?\n/u)) {
       const scoped = scopedPattern(line, prefix);
       if (scoped !== undefined)
-        matcher.add({ pattern: scoped, mark: `${reason}\u0000${line}` });
+        matcher.add({
+          pattern: scoped,
+          mark: `${reason}\u0000${policyPath}\u0000${line}`,
+        });
     }
   }
   // This directory has already been admitted by the inherited policy.
@@ -387,18 +396,28 @@ const createShouldExclude =
       throw new Error(`Ignored path has no matching rule: ${path}`);
     const mark = match.rule.mark ?? "";
     const separator = mark.indexOf("\u0000");
+    const policySeparator = mark.indexOf("\u0000", separator + 1);
     const reason = mark.slice(0, separator);
     if (
-      reason !== "project-ignored" &&
-      reason !== "default-ignored" &&
-      reason !== "caller-excluded"
+      policySeparator === -1 ||
+      (reason !== "project-ignored" &&
+        reason !== "default-ignored" &&
+        reason !== "caller-excluded")
     )
       throw new Error(`Ignored path has unknown rule origin: ${path}`);
-    exclusions.push({
+    const evidence = {
       path,
       entry_kind: kind,
-      reason,
-      pattern: mark.slice(separator + 1),
-    });
+      pattern: mark.slice(policySeparator + 1),
+    };
+    exclusions.push(
+      reason === "project-ignored"
+        ? {
+            ...evidence,
+            reason,
+            policy_path: mark.slice(separator + 1, policySeparator),
+          }
+        : { ...evidence, reason },
+    );
     return true;
   };

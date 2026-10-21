@@ -83,6 +83,7 @@ describe.skipIf(process.platform === "win32")(
             entry_kind: "file",
             reason: "project-ignored",
             pattern: "source.ts",
+            policy_path: "pkg/.gitignore",
           },
         ]);
       },

@@ -203,6 +203,7 @@ describe.skipIf(process.platform === "win32")(
               entry_kind: "file",
               reason: "project-ignored",
               pattern: "*",
+              policy_path: "nested/.gitignore",
             });
           }
         } finally {

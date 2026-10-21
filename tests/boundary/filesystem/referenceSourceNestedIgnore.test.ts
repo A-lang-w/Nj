@@ -46,24 +46,28 @@ describe.skipIf(process.platform === "win32")(
           entry_kind: "file",
           reason: "project-ignored",
           pattern: "/anchored.tmp",
+          policy_path: "packages/[widget]/.gitignore",
         },
         {
           path: "packages/[widget]/deep/again.tmp",
           entry_kind: "file",
           reason: "project-ignored",
           pattern: "again.tmp",
+          policy_path: "packages/[widget]/deep/.gitignore",
         },
         {
           path: "packages/sibling/keep.tmp",
           entry_kind: "file",
           reason: "project-ignored",
           pattern: "*.tmp",
+          policy_path: ".gitignore",
         },
         {
           path: "root.tmp",
           entry_kind: "file",
           reason: "project-ignored",
           pattern: "*.tmp",
+          policy_path: ".gitignore",
         },
       ]);
       expect(
@@ -109,6 +113,7 @@ describe.skipIf(process.platform === "win32")(
             entry_kind: "file",
             reason: "project-ignored",
             pattern: "ignored.txt",
+            policy_path: `${directory}/.gitignore`,
           },
         ]);
         expect(result.value.entries).toContainEqual(
@@ -221,6 +226,7 @@ describe.skipIf(process.platform === "win32")(
           entry_kind: "directory",
           reason: "project-ignored",
           pattern: "generated/",
+          policy_path: "pkg/.gitignore",
         },
         {
           path: "pkg/private.txt",
@@ -233,12 +239,14 @@ describe.skipIf(process.platform === "win32")(
           entry_kind: "file",
           reason: "project-ignored",
           pattern: "drop.js",
+          policy_path: "pkg/reopened/.gitignore",
         },
         {
           path: "pruned",
           entry_kind: "directory",
           reason: "project-ignored",
           pattern: "pruned/",
+          policy_path: ".gitignore",
         },
       ]);
       expect(
@@ -285,6 +293,7 @@ describe.skipIf(process.platform === "win32")(
             entry_kind: "directory",
             reason: "project-ignored",
             pattern,
+            policy_path: "packages/pkg/.gitignore",
           },
         ]);
         expect(
