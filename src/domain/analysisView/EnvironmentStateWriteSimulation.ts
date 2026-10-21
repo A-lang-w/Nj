@@ -5,6 +5,7 @@ import {
   isObject,
   isStateWrite,
   lastSegmentValue,
+  listsAll,
   normalizedPath,
   type StateDocument,
   type StateEntity,
@@ -336,7 +337,10 @@ export class EnvironmentStateWriteSimulation {
       };
       return item
         ? checkItemRead(this.#state, view, record, check)
-        : checkListRead(this.#state, view, record, check);
+        : checkListRead(this.#state, view, record, {
+            ...check,
+            all: listsAll(view, base),
+          });
     });
   }
 
@@ -473,8 +477,9 @@ export class EnvironmentStateWriteSimulation {
     record: StateRecordFacts,
     exercised: ReadonlySet<string>,
   ): boolean {
-    const collection = this.#line(view, record)?.collection;
-    if (view.membership !== "all" || collection === undefined) return false;
+    const line = this.#line(view, record);
+    if (line === undefined || !listsAll(view, line.ordinal)) return false;
+    const { collection } = line;
     const members = this.#state.members(view.type, collection);
     const key = (entity: StateEntity) =>
       entityTarget(entity.type, entity.collection, entity.id);

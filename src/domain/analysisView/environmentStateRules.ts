@@ -101,8 +101,21 @@ export type StateItemView = EntityViewPlan & {
 export type StateListView = EntityViewPlan & {
   readonly shape: "list";
   readonly membership: "all" | "recorded";
+  /** With recorded membership, the checked lines that each list their whole collection. */
+  readonly all_record_ordinals?: number[] | undefined;
   readonly counters: string[];
 };
+
+/** Whether a list view answers on a checked line with every entity of the collection. */
+export const listsAll = (view: StateListView, ordinal: number): boolean =>
+  view.membership === "all" ||
+  (view.all_record_ordinals?.includes(ordinal) ?? false);
+
+/** The checked lines a list view answers with every entity of the collection. */
+export const allLines = (view: StateListView): readonly number[] =>
+  view.membership === "all"
+    ? view.checked_record_ordinals
+    : (view.all_record_ordinals ?? []);
 
 export type StateView =
   | StateItemView

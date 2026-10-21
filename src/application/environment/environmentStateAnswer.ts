@@ -1,7 +1,9 @@
 import { stateBodyJson } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
   collectionPathOf,
+  allLines,
   listItems,
+  listsAll,
   pagesOnly,
   renderStateEntity,
   renderStateList,
@@ -422,17 +424,17 @@ const answerList = (
     return fromRecording(source, tool, args, "body-unusable");
   const collection = collectionPathOf(base, false);
   const type = store.type(view.type);
-  const members: readonly StateEntity[] =
-    view.membership === "all"
-      ? store.inCollection(view.type, collection)
-      : recorded.flatMap((item) => {
-          const id = scalarText(item[type?.id_field ?? ""]);
-          const entity =
-            id === undefined
-              ? undefined
-              : store.entity(view.type, collection, id);
-          return entity === undefined ? [] : [entity];
-        });
+  const all = listsAll(view, base.ordinal);
+  const members: readonly StateEntity[] = all
+    ? store.inCollection(view.type, collection)
+    : recorded.flatMap((item) => {
+        const id = scalarText(item[type?.id_field ?? ""]);
+        const entity =
+          id === undefined
+            ? undefined
+            : store.entity(view.type, collection, id);
+        return entity === undefined ? [] : [entity];
+      });
   const volatile = new Set(type?.volatile_fields);
   const items: JsonObject[] = [];
   for (const entity of members) {
@@ -449,7 +451,7 @@ const answerList = (
       view: "list",
       type: view.type,
       collection,
-      membership: view.membership,
+      membership: all ? "all" : "recorded",
       listed: items.length,
     },
   );
@@ -486,8 +488,8 @@ const answerCheckedLine = (
   );
   const base =
     named ??
-    (view.shape === "list" && view.membership === "all"
-      ? unfilteredLine(serving.source, tool, view.checked_record_ordinals, args)
+    (view.shape === "list"
+      ? unfilteredLine(serving.source, tool, allLines(view), args)
       : undefined);
   if (base === undefined)
     return fromRecording(serving.source, tool, args, "unrecorded-request");

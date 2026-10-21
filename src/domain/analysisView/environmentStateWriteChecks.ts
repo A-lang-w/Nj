@@ -333,12 +333,17 @@ const checkRecordedList = (
   return { pass: listCheck(view, check, members), targets, unheld };
 };
 
-/** A list read on a checked line, compared with the answer the served environment renders on that line's base recording from the collection it names. */
+/** A list read on a checked line, compared with the answer the served environment renders on that line's base recording from the collection it names: every entity when that line lists them all. */
 export const checkListRead = (
   state: SimulatedState,
   view: StateListView,
   record: StateRecordFacts,
-  check: ReadBodies & { readonly idField: string; readonly collection: string },
+  check: ReadBodies & {
+    readonly idField: string;
+    readonly collection: string;
+    /** Whether the base line lists every entity of its collection. */
+    readonly all: boolean;
+  },
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
   const { body, base } = check;
@@ -353,7 +358,7 @@ export const checkListRead = (
   )
     return undefined;
   const bodies = { ...check, body, base, items, baseItems };
-  return view.membership === "all"
+  return check.all
     ? checkAllList(state, view, bodies)
     : checkRecordedList(state, view, bodies);
 };
