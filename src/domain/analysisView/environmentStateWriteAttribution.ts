@@ -220,8 +220,10 @@ export class WriteEffects {
     const own = this.#changed.get(at.entity);
     for (const [tool, claim] of own ?? []) {
       const left = tool === at.writer ? claim : remaining(claim, write);
-      if (left !== undefined) own!.set(tool, left);
-      else {
+      if (left !== undefined) {
+        own!.set(tool, left);
+        if (tool !== at.writer) touched.get(at.entity)?.set(tool, left);
+      } else {
         own!.delete(tool);
         touched.get(at.entity)?.delete(tool);
       }

@@ -844,6 +844,32 @@ describe("what a check leaves pending", () => {
     });
   });
 
+  it("checks only a partial update's fields that remain after a later overwrite", () => {
+    const patched = described(1, "Patched", "survives");
+    const replaced = described(1, "Replaced", "survives");
+    const changedByOtherAction = described(1, "Archived", "survives");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
+      ["GET", "/api/books/1", described(1, "First Book", "original")],
+      ["GET", "/api/books/2", described(2, "Second Book", "other")],
+      [
+        "PATCH",
+        "/api/books/1",
+        patched,
+        200,
+        { name: "Patched", description: "survives" },
+      ],
+      ["PUT", "/api/books/1", replaced, 200, { name: "Replaced" }],
+      ["POST", "/api/books/1/archive", changedByOtherAction, 204, {}],
+      ["GET", "/api/books/1", changedByOtherAction],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
   it("neither resynchronises nor checks an entity by a read begun while a write to it still ran", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
@@ -880,6 +906,38 @@ describe("what a check leaves pending", () => {
 });
 
 describe("what a later call must follow", () => {
+  it("rejects a later create whose unique field repeats a value already held", () => {
+    const existing = {
+      id: "123e4567-e89b-42d3-a456-426614174000",
+      ref: "223e4567-e89b-42d3-a456-426614174000",
+      name: "Existing",
+    };
+    const first = {
+      id: "323e4567-e89b-42d3-a456-426614174000",
+      ref: "423e4567-e89b-42d3-a456-426614174000",
+      name: "First",
+    };
+    const duplicate = {
+      id: "523e4567-e89b-42d3-a456-426614174000",
+      ref: first.ref,
+      name: "Second",
+    };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/items", [existing]],
+      ["GET", `/api/items/${existing.id}`, existing],
+      ["POST", "/api/items", first, 201, { name: "First" }],
+      ["GET", `/api/items/${first.id}`, first],
+      ["GET", "/api/items", [existing, first]],
+      ["POST", "/api/items", duplicate, 201, { name: "Second" }],
+      ["GET", `/api/items/${duplicate.id}`, duplicate],
+      ["GET", "/api/items", [existing, first, duplicate]],
+    ];
+    expect(gated(rows, "post_items")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
   it("refuses a create whose later call does not follow the sequence it learned", () => {
     const ranked = (at: Book, rank: number) => ({ ...at, rank });
     const third = ranked(book(3, "Third Book", bookClock(3)), 3);
