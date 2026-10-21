@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useThreadsStore } from "@/stores/threads-store";
 import { useUiStore } from "@/stores/ui-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { sseClient } from "@/lib/sse-client";
 import { ThreadCard } from "./ThreadCard";
 import {
@@ -19,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { COLORS } from "@/lib/theme-colors";
 import type { Thread } from "@/types/api";
 
-type StatusFilter = "all" | Thread["status"];
+type StatusFilter = "all" | "starred" | Thread["status"];
 
 const buttonSizeVariants = {
   sm: "px-3 py-1.5 text-sm",
@@ -61,12 +62,15 @@ export function ThreadListPage() {
   const loadMore = useThreadsStore((s) => s.loadMore);
   const setLayoutMode = useThreadsStore((s) => s.setLayoutMode);
   const setSearchTerm = useThreadsStore((s) => s.setSearchTerm);
+  const fetchFavorites = useFavoritesStore((s) => s.fetchFavorites);
+  const favoriteKeys = useFavoritesStore((s) => s.keys);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   useEffect(() => {
     fetchThreads(activeWorkspaceId);
-  }, [fetchThreads, activeWorkspaceId]);
+    void fetchFavorites();
+  }, [fetchThreads, fetchFavorites, activeWorkspaceId]);
 
   // Live list: pick up threads created elsewhere and resync after a replay
   // gap (restart/eviction) instead of going silently stale.
@@ -89,13 +93,17 @@ export function ThreadListPage() {
   const filtered = useMemo(
     () =>
       threads.filter((t) => {
-        if (statusFilter !== "all" && t.status !== statusFilter) return false;
+        if (statusFilter === "starred") {
+          if (!favoriteKeys.has(`thread:${t.id}`)) return false;
+        } else if (statusFilter !== "all" && t.status !== statusFilter) {
+          return false;
+        }
         if (!searchTerm) return true;
         return (
           t.title?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false
         );
       }),
-    [threads, searchTerm, statusFilter],
+    [threads, searchTerm, statusFilter, favoriteKeys],
   );
 
   const boardColumns = useMemo(() => {
@@ -225,6 +233,7 @@ export function ThreadListPage() {
           }}
         >
           <option value="all">All statuses</option>
+          <option value="starred">Starred</option>
           <option value="active">Active</option>
           <option value="archived">Archived</option>
           <option value="completed">Completed</option>

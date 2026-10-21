@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import FocusTrap from "focus-trap-react";
 import { useUiStore } from "@/stores/ui-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { apiGet, apiPost, apiDelete } from "@/lib/api-client";
 import type { Memory } from "@/types/api";
 import {
@@ -18,7 +19,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
 
-type MemoryScope = "all" | "personal" | "agent";
+type MemoryScope = "all" | "starred" | "personal" | "agent";
 type MemoryLayout = "list" | "grid";
 
 export function MemoriesPage() {
@@ -28,17 +29,20 @@ export function MemoriesPage() {
   const [layout, setLayout] = useState<MemoryLayout>("list");
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [pinnedIds, setPinnedIds] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
+  const fetchFavorites = useFavoritesStore((s) => s.fetchFavorites);
+  const favoriteKeys = useFavoritesStore((s) => s.keys);
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
     void loadMemories();
-  }, [activeWorkspaceId]);
+    void fetchFavorites();
+  }, [activeWorkspaceId, fetchFavorites]);
 
   const loadMemories = async () => {
     const requestId = ++requestIdRef.current;
@@ -46,21 +50,11 @@ export function MemoriesPage() {
     setLoadError(null);
     setDeleteError(null);
     try {
-      const [data, favorites] = await Promise.all([
-        apiGet<Memory[]>("/memories", { workspaceId: activeWorkspaceId }),
-        apiGet<{ items: Array<{ targetType: string; targetId: number }> }>(
-          "/favorites",
-        ).catch(() => ({ items: [] })),
-      ]);
+      const data = await apiGet<Memory[]>("/memories", {
+        workspaceId: activeWorkspaceId,
+      });
       if (requestIdRef.current !== requestId) return;
       setMemories(data);
-      setPinnedIds(
-        new Set(
-          favorites.items
-            .filter((f) => f.targetType === "memory")
-            .map((f) => f.targetId),
-        ),
-      );
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
       setMemories([]);
@@ -92,19 +86,8 @@ export function MemoriesPage() {
   };
 
   const handleTogglePin = async (id: number) => {
-    const pinned = pinnedIds.has(id);
     try {
-      if (pinned) {
-        await apiDelete(`/favorites?targetType=memory&targetId=${id}`);
-        setPinnedIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      } else {
-        await apiPost("/favorites", { targetType: "memory", targetId: id });
-        setPinnedIds((prev) => new Set(prev).add(id));
-      }
+      await toggleFavorite("memory", id);
     } catch (err) {
       setDeleteError(
         err instanceof Error ? err.message : "Failed to update pin",
@@ -138,6 +121,7 @@ export function MemoriesPage() {
 
   const filtered = useMemo(() => {
     const scoped = memories.filter((m) => {
+      if (scope === "starred") return favoriteKeys.has(`memory:${m.id}`);
       if (scope === "personal") return m.agentId == null;
       if (scope === "agent") return m.agentId != null;
       return true;
@@ -148,11 +132,11 @@ export function MemoriesPage() {
         m.content.toLowerCase().includes(searchTerm.toLowerCase()),
     );
     return [...searched].sort((a, b) => {
-      const ap = pinnedIds.has(a.id) ? 1 : 0;
-      const bp = pinnedIds.has(b.id) ? 1 : 0;
+      const ap = favoriteKeys.has(`memory:${a.id}`) ? 1 : 0;
+      const bp = favoriteKeys.has(`memory:${b.id}`) ? 1 : 0;
       return bp - ap;
     });
-  }, [memories, searchTerm, scope, pinnedIds]);
+  }, [memories, searchTerm, scope, favoriteKeys]);
 
   return (
     <div
@@ -290,6 +274,7 @@ export function MemoriesPage() {
           }}
         >
           <option value="all">All memories</option>
+          <option value="starred">Starred</option>
           <option value="personal">Personal only</option>
           <option value="agent">Agent-linked</option>
         </select>
@@ -427,7 +412,7 @@ export function MemoriesPage() {
             )}
           >
             {filtered.map((memory) => {
-              const pinned = pinnedIds.has(memory.id);
+              const pinned = favoriteKeys.has(`memory:${memory.id}`);
               const selected = selectedIds.has(memory.id);
               return (
                 <li

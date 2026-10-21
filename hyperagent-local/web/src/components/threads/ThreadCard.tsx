@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Thread } from "@/types/api";
-import { formatDate } from "@/lib/utils";
+import { formatDate, cn } from "@/lib/utils";
 import { useThreadsStore } from "@/stores/threads-store";
-import { apiPost, apiDelete } from "@/lib/api-client";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import {
   Star,
   MoreHorizontal,
@@ -23,8 +23,9 @@ export const ThreadCard = React.memo(function ThreadCard({
   const titleText = thread.title || "Untitled thread";
   const updateThread = useThreadsStore((s) => s.updateThread);
   const deleteThread = useThreadsStore((s) => s.deleteThread);
+  const favorited = useFavoritesStore((s) => s.keys.has(`thread:${thread.id}`));
+  const toggleFavoriteStore = useFavoritesStore((s) => s.toggleFavorite);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [favorited, setFavorited] = useState(false);
   const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -44,18 +45,9 @@ export const ThreadCard = React.memo(function ThreadCard({
     e.stopPropagation();
     setBusy(true);
     try {
-      if (favorited) {
-        await apiDelete(`/favorites?targetType=thread&targetId=${thread.id}`);
-        setFavorited(false);
-      } else {
-        await apiPost("/favorites", {
-          targetType: "thread",
-          targetId: thread.id,
-        });
-        setFavorited(true);
-      }
+      await toggleFavoriteStore("thread", thread.id);
     } catch {
-      // Keep prior state; silent — list still usable.
+      // Store rolls back optimistic state; list stays usable.
     } finally {
       setBusy(false);
     }
@@ -124,7 +116,14 @@ export const ThreadCard = React.memo(function ThreadCard({
           {formatDate(thread.updatedAt)}
         </p>
       </div>
-      <div className="relative z-10 flex flex-shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div
+        className={cn(
+          "relative z-10 flex flex-shrink-0 items-center gap-1 transition-opacity",
+          favorited
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+        )}
+      >
         <button
           type="button"
           disabled={busy}
@@ -132,7 +131,12 @@ export const ThreadCard = React.memo(function ThreadCard({
           title={favorited ? "Unstar thread" : "Star thread"}
           aria-label={favorited ? "Unstar thread" : "Star thread"}
           aria-pressed={favorited}
-          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-2.5 text-slate-400 hover:bg-slate-100 hover:text-amber-500 dark:hover:bg-slate-800"
+          className={cn(
+            "flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800",
+            favorited
+              ? "text-amber-500"
+              : "text-slate-400 hover:text-amber-500",
+          )}
         >
           <Star
             className="h-4 w-4"

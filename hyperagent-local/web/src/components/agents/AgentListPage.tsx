@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAgentsStore } from "@/stores/agents-store";
 import { useUiStore } from "@/stores/ui-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { AgentCard } from "./AgentCard";
 import { AgentForm } from "./AgentForm";
 import { Plus, Search, Bot } from "lucide-react";
@@ -8,13 +9,15 @@ import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
 
-type AgentScope = "all" | "personal" | "community";
+type AgentScope = "all" | "starred" | "personal" | "community";
 
 export function AgentListPage() {
   const agents = useAgentsStore((s) => s.agents);
   const fetchAgents = useAgentsStore((s) => s.fetchAgents);
   const isLoading = useAgentsStore((s) => s.isLoading);
   const fetchError = useAgentsStore((s) => s.fetchError);
+  const fetchFavorites = useFavoritesStore((s) => s.fetchFavorites);
+  const favoriteKeys = useFavoritesStore((s) => s.keys);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const [searchTerm, setSearchTerm] = useState("");
   const [scope, setScope] = useState<AgentScope>("all");
@@ -26,17 +29,20 @@ export function AgentListPage() {
 
   useEffect(() => {
     fetchAgents(activeWorkspaceId);
-  }, [fetchAgents, activeWorkspaceId]);
+    void fetchFavorites();
+  }, [fetchAgents, fetchFavorites, activeWorkspaceId]);
 
   const filtered = useMemo(
     () =>
       agents.filter((a) => {
+        if (scope === "starred" && !favoriteKeys.has(`agent:${a.id}`))
+          return false;
         if (scope === "personal" && a.isCommunity) return false;
         if (scope === "community" && !a.isCommunity) return false;
         if (!searchTerm) return true;
         return a.name.toLowerCase().includes(searchTerm.toLowerCase());
       }),
-    [agents, searchTerm, scope],
+    [agents, searchTerm, scope, favoriteKeys],
   );
 
   return (
@@ -102,6 +108,7 @@ export function AgentListPage() {
           }}
         >
           <option value="all">All agents</option>
+          <option value="starred">Starred</option>
           <option value="personal">Personal</option>
           <option value="community">Community</option>
         </select>

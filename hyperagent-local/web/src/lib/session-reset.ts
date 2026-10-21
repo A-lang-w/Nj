@@ -1,6 +1,7 @@
 import { useThreadsStore } from "@/stores/threads-store";
 import { useAgentsStore } from "@/stores/agents-store";
 import { useInboxStore } from "@/stores/inbox-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 
 /**
  * Clear every session-scoped client store at an account boundary: login (the
@@ -22,4 +23,5 @@ export function resetSessionStores(): void {
   useThreadsStore.getState().resetAccountData();
   useAgentsStore.getState().resetAccountData();
   useInboxStore.getState().resetAccountData();
+  useFavoritesStore.getState().resetAccountData();
 }

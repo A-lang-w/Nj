@@ -1,27 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import FocusTrap from "focus-trap-react";
 import { useUiStore } from "@/stores/ui-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api-client";
 import type { Skill } from "@/types/api";
-import { Plus, Search, Sparkles, Trash2, Pencil, X } from "lucide-react";
+import { Plus, Search, Sparkles, Trash2, Pencil, Star, X } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
+import { cn } from "@/lib/utils";
+
+type SkillScope = "all" | "starred";
 
 export function SkillsPage() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [scope, setScope] = useState<SkillScope>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
+  const fetchFavorites = useFavoritesStore((s) => s.fetchFavorites);
+  const favoriteKeys = useFavoritesStore((s) => s.keys);
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
     void loadSkills();
-  }, [activeWorkspaceId]);
+    void fetchFavorites();
+  }, [activeWorkspaceId, fetchFavorites]);
 
   const loadSkills = async () => {
     const requestId = ++requestIdRef.current;
@@ -59,10 +68,21 @@ export function SkillsPage() {
     }
   };
 
-  const filtered = skills.filter(
-    (s) =>
-      !searchTerm || s.name.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
+  const filtered = skills.filter((s) => {
+    if (scope === "starred" && !favoriteKeys.has(`skill:${s.id}`)) return false;
+    if (!searchTerm) return true;
+    return s.name.toLowerCase().includes(searchTerm.toLowerCase());
+  });
+
+  const handleToggleStar = async (id: number) => {
+    try {
+      await toggleFavorite("skill", id);
+    } catch (err) {
+      setDeleteError(
+        err instanceof Error ? err.message : "Failed to update favorite",
+      );
+    }
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -119,6 +139,23 @@ export function SkillsPage() {
             }}
           />
         </div>
+        <label htmlFor="skill-scope-filter" className="sr-only">
+          Filter skills
+        </label>
+        <select
+          id="skill-scope-filter"
+          value={scope}
+          onChange={(e) => setScope(e.target.value as SkillScope)}
+          className="rounded-lg border px-3 py-2 text-sm min-h-[44px]"
+          style={{
+            borderColor: COLORS.border,
+            backgroundColor: COLORS.inputBg,
+            color: COLORS.textPrimary,
+          }}
+        >
+          <option value="all">All skills</option>
+          <option value="starred">Starred</option>
+        </select>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -202,6 +239,42 @@ export function SkillsPage() {
                     </div>
                   </div>
                   <div className="flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleStar(skill.id)}
+                      title={
+                        favoriteKeys.has(`skill:${skill.id}`)
+                          ? "Unstar skill"
+                          : "Star skill"
+                      }
+                      aria-label={
+                        favoriteKeys.has(`skill:${skill.id}`)
+                          ? `Unstar ${skill.name}`
+                          : `Star ${skill.name}`
+                      }
+                      aria-pressed={favoriteKeys.has(`skill:${skill.id}`)}
+                      className={cn(
+                        "flex items-center justify-center rounded min-w-[44px] min-h-[44px] p-2.5 transition-opacity hover:text-amber-500",
+                        favoriteKeys.has(`skill:${skill.id}`)
+                          ? "text-amber-500 opacity-100"
+                          : "reveal-on-hover",
+                      )}
+                      style={
+                        favoriteKeys.has(`skill:${skill.id}`)
+                          ? undefined
+                          : { color: COLORS.textSecondary }
+                      }
+                    >
+                      <Star
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                        fill={
+                          favoriteKeys.has(`skill:${skill.id}`)
+                            ? "currentColor"
+                            : "none"
+                        }
+                      />
+                    </button>
                     <button
                       type="button"
                       onClick={() => setEditingSkill(skill)}
