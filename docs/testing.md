@@ -251,6 +251,11 @@ and retain representative compiled CLI parity checks. Every distinct source
 scenario still runs through the public workflow; session-lifecycle scenarios
 need their own sessions and cleanup assertions.
 
+When a matrix already holds a named tool definition from live `tools/list`,
+pass that definition through the SDK's `toolDefinition` call option. This keeps
+the selected output-schema validation without eagerly compiling unrelated
+catalog schemas. Re-read definitions if the server advertises a changed list.
+
 Report unavailable authority as a named skip. Await owned cleanup before a
 verifier reports success. Native process inspectors are released at Vitest
 worker teardown; fork termination does not run Node exit hooks, and per-file
