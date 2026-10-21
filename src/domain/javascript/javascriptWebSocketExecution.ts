@@ -42,6 +42,7 @@ import {
 import {
   semanticAwaitedResultSites,
   semanticExactValueIdentity,
+  semanticNativePromiseExecutor,
 } from "./javascriptSemanticPromiseIdentity.js";
 import {
   syntaxMayExitByJump,
@@ -235,39 +236,6 @@ const webSocketFreshMethodSelection = (
   return semanticStaticPropertyKey(member.property, member.computed) === key
     ? member
     : undefined;
-};
-
-/** A native Promise constructor invokes its literal executor before returning. */
-const webSocketNativePromiseExecutor = (
-  node: t.Function | t.Class,
-  value: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): t.NewExpression | undefined => {
-  if (!t.isFunction(node) || node.generator) return undefined;
-  const invocation = state.parentsByNode.get(value);
-  if (
-    !t.isNewExpression(invocation) ||
-    invocation.arguments[0] !== value ||
-    !isUnshadowedGlobal(invocation.callee, state, "Promise") ||
-    invocation.arguments
-      .slice(1)
-      .some(
-        (argument) =>
-          t.isSpreadElement(argument) || !syntaxEvaluationCannotThrow(argument),
-      )
-  )
-    return undefined;
-  const selected = ["global", "Promise"];
-  return state.ambientReferenceEffects.some(
-    ({ path, node: effect }) =>
-      path.length <= selected.length &&
-      path.every((key, index) =>
-        semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
-      ) &&
-      semanticEffectTiming(invocation, effect, state) !== "after",
-  )
-    ? undefined
-    : invocation;
 };
 
 /** Known caller activations order helper lookup independently of lexical source order. */
@@ -849,7 +817,7 @@ const webSocketImmediateInvocation = (
       ? selection
       : undefined;
   if (selection === undefined) {
-    const promise = webSocketNativePromiseExecutor(node, value, state);
+    const promise = semanticNativePromiseExecutor(node, value, state);
     if (promise !== undefined) return promise;
   }
   let callee =
@@ -2415,7 +2383,7 @@ const webSocketExecutionContextsForCalls = (
             webSocketImmediateInvocation(parent, state));
       const nativePromiseExecutor =
         t.isFunction(parent) && parent.async
-          ? webSocketNativePromiseExecutor(
+          ? semanticNativePromiseExecutor(
               parent,
               webSocketOuterExpression(parent, state),
               state,

@@ -4,6 +4,7 @@ import * as t from "@babel/types";
 import {
   unwrapJavaScriptExpression,
   semanticDirectFunctionReturn,
+  semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
 import { semanticLiteralInitializerProjection } from "./javascriptSemanticLiteralProjection.js";
 import {
@@ -28,7 +29,7 @@ import {
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 
 const promiseAmbientLookupIntact = (
-  property: "constructor" | "then",
+  property: "constructor" | "then" | "catch",
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
@@ -43,6 +44,68 @@ const promiseAmbientLookupIntact = (
       semanticEffectTiming(capture, effect, state) !== "after",
   );
 };
+
+/** Constructor entry and allocated result identity share one intrinsic proof. */
+export const semanticNativePromiseExecutor = (
+  node: t.Function | t.Class,
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.NewExpression | undefined => {
+  if (!t.isFunction(node) || node.generator) return undefined;
+  const invocation = state.parentsByNode.get(value);
+  if (
+    !t.isNewExpression(invocation) ||
+    invocation.arguments[0] !== value ||
+    !isUnshadowedGlobal(invocation.callee, state, "Promise") ||
+    invocation.arguments
+      .slice(1)
+      .some(
+        (argument) =>
+          t.isSpreadElement(argument) || !syntaxEvaluationCannotThrow(argument),
+      )
+  )
+    return undefined;
+  const selected = ["global", "Promise"];
+  return state.ambientReferenceEffects.some(
+    ({ path, node: effect }) =>
+      path.length <= selected.length &&
+      path.every((key, index) =>
+        semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+      ) &&
+      semanticEffectTiming(invocation, effect, state) !== "after",
+  )
+    ? undefined
+    : invocation;
+};
+
+const promiseAliasesLookupIntact = (
+  aliases: NonNullable<
+    ReturnType<typeof semanticExactValueIdentity>
+  >["aliases"],
+  property: string,
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  includeReferencedObjects = false,
+): boolean =>
+  aliases.every(({ read }) => {
+    const binding = resolveSemanticBindingState(state, read, read.name);
+    return (
+      binding !== undefined &&
+      [...binding.memberWrites, ...binding.escapedPaths].every(
+        ({ path, node: effect }) =>
+          !(
+            semanticPrototypeLookupMayChange(path, property) ||
+            (includeReferencedObjects &&
+              path.some((_, index) =>
+                semanticPrototypeLookupMayChange(
+                  path.slice(0, index + 1),
+                  property,
+                ),
+              ))
+          ) || semanticEffectTiming(capture, effect, state) === "after",
+      )
+    );
+  });
 
 /** Native await skips Get(then) only while the promise's constructor identity is intact. */
 const nativePromiseAwaitIdentityIntact = (
@@ -62,19 +125,7 @@ const nativePromiseAwaitIdentityIntact = (
     return true;
   onLiteralProjection?.();
   if (!promiseAmbientLookupIntact("constructor", capture, state)) return false;
-  return aliases.every(({ read }) => {
-    const binding = resolveSemanticBindingState(state, read, read.name);
-    return (
-      binding !== undefined &&
-      [...binding.memberWrites, ...binding.escapedPaths].every(
-        ({ path, node: effect }) =>
-          !semanticPrototypeLookupMayChange(path, "constructor") ||
-          // Copying a promise reference does not snapshot its properties.
-          // Every alias shares lookup validity at the actual await/adoption site.
-          semanticEffectTiming(capture, effect, state) === "after",
-      )
-    );
-  });
+  return promiseAliasesLookupIntact(aliases, "constructor", capture, state);
 };
 
 /** Inert arguments and simple parameters preserve an exact literal return. */
@@ -180,6 +231,80 @@ export const semanticExactValueIdentity = (
   }
 };
 
+/** Chaining waits for its receiver only with native method and species identity. */
+const nativePromiseChainParent = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection: (() => void) | undefined,
+  seen = new Set<t.Node>(),
+): ReturnType<typeof semanticExactValueIdentity> => {
+  if (!t.isCallExpression(node) || seen.has(node)) return undefined;
+  seen.add(node);
+  const member = unwrapJavaScriptExpression(node.callee).node;
+  if (!t.isMemberExpression(member)) return undefined;
+  const method = semanticStaticPropertyName(member.property, member.computed);
+  if (
+    (method !== "then" && method !== "catch") ||
+    node.arguments.some(
+      (argument) =>
+        t.isSpreadElement(argument) || !syntaxEvaluationCannotThrow(argument),
+    )
+  )
+    return undefined;
+  state.memberMutationFactsPhase ??= "requested";
+  onLiteralProjection?.();
+  const receiver = semanticExactValueIdentity(
+    member.object,
+    state,
+    onLiteralProjection,
+  );
+  if (receiver === undefined) return undefined;
+  const value = receiver.node;
+  const executor = t.isNewExpression(value) ? value.arguments[0] : undefined;
+  const functionValue =
+    executor === undefined
+      ? undefined
+      : unwrapJavaScriptExpression(executor).node;
+  const native =
+    semanticNativePromiseProducer(value, state) ||
+    (executor !== undefined &&
+      t.isFunction(functionValue) &&
+      semanticNativePromiseExecutor(functionValue, executor, state) ===
+        value) ||
+    nativePromiseChainParent(value, state, onLiteralProjection, seen) !==
+      undefined;
+  if (!native) return undefined;
+  if (
+    !promiseAmbientLookupIntact(method, member, state) ||
+    !promiseAliasesLookupIntact(receiver.aliases, method, member, state) ||
+    !promiseAmbientLookupIntact("then", member, state) ||
+    !promiseAliasesLookupIntact(receiver.aliases, "then", member, state) ||
+    !promiseAmbientLookupIntact("constructor", node, state) ||
+    !promiseAliasesLookupIntact(
+      receiver.aliases,
+      "constructor",
+      node,
+      state,
+      true,
+    ) ||
+    // Species keys can be computed symbols. Any visible static Promise slot
+    // write/escape can hide a custom species constructor that settles early.
+    state.ambientReferenceEffects.some(
+      ({ path, node: effect }) =>
+        path
+          .slice(0, 2)
+          .every((key, index) =>
+            semanticPropertyPathKeyMatches(
+              key,
+              ["global", "Promise"][index] ?? "",
+            ),
+          ) && semanticEffectTiming(node, effect, state) !== "after",
+    )
+  )
+    return undefined;
+  return receiver;
+};
+
 /** A returned promise can be adopted without sharing the wrapper promise's identity. */
 export const semanticPromiseSettlementDependency = (
   rawNode: t.Node,
@@ -211,6 +336,27 @@ export const semanticPromiseSettlementDependency = (
       return undefined;
     seen.add(result.node);
     aliases.push(...result.aliases);
+    const chained = nativePromiseChainParent(
+      result.node,
+      state,
+      onLiteralProjection,
+    );
+    if (chained !== undefined) {
+      if (
+        !promiseAmbientLookupIntact("constructor", capture, state) ||
+        !promiseAliasesLookupIntact(
+          result.aliases,
+          "constructor",
+          capture,
+          state,
+        )
+      )
+        return undefined;
+      current = chained.node;
+      aliases.push(...chained.aliases);
+      capture = result.node;
+      continue;
+    }
     const returned = directLiteralReturn(result.node, state, true);
     if (returned === undefined) return { node: result.node, aliases };
     // The wrapper adopts during its own invocation, not a later alias await.
@@ -228,17 +374,7 @@ export const semanticPromiseSettlementDependency = (
       if (
         !promiseAmbientLookupIntact("then", capture, state) ||
         adopted === undefined ||
-        adopted.aliases.some(({ read }) => {
-          const binding = resolveSemanticBindingState(state, read, read.name);
-          return (
-            binding === undefined ||
-            [...binding.memberWrites, ...binding.escapedPaths].some(
-              ({ path, node: effect }) =>
-                semanticEffectTiming(capture, effect, state) !== "after" &&
-                semanticPrototypeLookupMayChange(path, "then"),
-            )
-          );
-        })
+        !promiseAliasesLookupIntact(adopted.aliases, "then", capture, state)
       )
         return undefined;
     }

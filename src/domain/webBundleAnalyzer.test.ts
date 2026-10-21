@@ -8454,6 +8454,27 @@ describe("web bundle literal consumers and iteration phases", () => {
   );
 });
 
+describe("web bundle native Promise chain waits", () => {
+  it.each([
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.then(()=>{});',
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();await pending.catch(()=>{});',
+    'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/chain");resolve()});await pending.then(()=>{});',
+    'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/chain");resolve()});await pending.catch(()=>{});',
+    'const pending=(async()=>{await 0;new Socket("wss://example.test/chain")})();const tail=pending.then(()=>{});await tail.catch(()=>{});',
+  ])("retains parent blocking in both consumers: %s", (source) => {
+    expect(
+      socketEndpoints(
+        `export {};${source}const Socket=globalThis.WebSocket;`,
+      ).map((items) => items.map((item) => item.value)),
+    ).toEqual([[], []]);
+    expect(
+      socketEndpoints(
+        `export {};const Socket=globalThis.WebSocket;${source}`,
+      ).map((items) => items.map((item) => item.value)),
+    ).toEqual([["wss://example.test/chain"], ["wss://example.test/chain"]]);
+  });
+});
+
 describe("web bundle Promise capability reference roles", () => {
   it.each([
     ["object key", "({resolve:0});"],

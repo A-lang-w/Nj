@@ -12,6 +12,37 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "async-then.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/async-then")})();await pending.then(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "async-catch.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/async-catch")})();await pending.catch(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "executor-then.mjs",
+    source:
+      'export {};const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/executor-then");resolve()});await pending.then(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "executor-catch.mjs",
+    source:
+      'export {};const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/executor-catch");resolve()});await pending.catch(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "chained-alias.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/chained-alias")})();const tail=pending.then(()=>{});await tail.catch(()=>{});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "initialized-chain.mjs",
+    endpoint: "wss://example.test/initialized-chain",
+    source:
+      'export {};const Socket=globalThis.WebSocket;const pending=(async()=>{await 0;new Socket("wss://example.test/initialized-chain")})();await pending.catch(()=>{});',
+  },
+  {
     file: "capability-name-0.mjs",
     source:
       'export {};const pending=new Promise(async function(resolve){({resolve:0});await 0;new Socket("wss://example.test/property-name-0");resolve()});await pending;const Socket=globalThis.WebSocket;',
