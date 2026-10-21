@@ -16,7 +16,7 @@ import {
   type StateView,
 } from "../../domain/analysisView/environmentStateRules.js";
 import {
-  pageSize,
+  pageBound,
   pagesOnly,
 } from "../../domain/analysisView/environmentStatePaging.js";
 import { isAbsence } from "../../domain/analysisView/environmentStateWriteChecks.js";
@@ -428,7 +428,9 @@ const answerList = (
   const collection = collectionPathOf(base, false);
   const type = store.type(view.type);
   // A requested page the collection has outgrown is answered as recorded, never with more items than it asked for.
-  const size = exact ? pageSize(base.query ?? undefined) : undefined;
+  const size = exact
+    ? pageBound(base.query ?? undefined, recorded.length)
+    : undefined;
   if (
     view.membership === "all" &&
     size !== undefined &&

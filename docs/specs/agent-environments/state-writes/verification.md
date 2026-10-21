@@ -319,3 +319,22 @@ A fourteenth round settled two findings Greptile raised on the list-queries bran
 
 Both tests fail on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke applies
 all 31 served write tools, and the gates passed again.
+
+A fifteenth round settled nine findings Greptile raised on this branch, the fidelity branch and the list-lines branch,
+five of them on the previous rounds' own changes:
+
+- an entity field whose name looks like a pointer is matched by name; only a document's pointers cover the members
+  under them;
+- a failed read contradicts each exercised write no unmodelled write came after, rather than skipping all of them
+  when the oldest pending write came before one;
+- an item read, update or delete names its entity as serving does, decoding the id once, so `book%2531` no longer
+  reaches `book1`;
+- a plan whose calls use a member both as the identity and as a fixed member, or fix it at different values, is
+  refused;
+- a size of zero bounds nothing only on a line whose recording listed items under it;
+- an update whose observation drops a field the entity held is refused;
+- a later create whose clock takes another format, or whose unique value is not a UUID, is refused;
+- a derived state `data/get` would write past 32 MiB is not served.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.
