@@ -118,7 +118,11 @@ try {
       "SEH probe output did not close",
     );
     const probe = supervisor.snapshot();
-    assert.equal(probe.exitCode, 0);
+    await writeFile(
+      join(workspace, "probe.log"),
+      probe.stdout.text + probe.stderr.text,
+    );
+    assert.equal(probe.exitCode, 0, probe.stdout.text + probe.stderr.text);
     assert.match(
       probe.stdout.text + probe.stderr.text,
       /REA_BORLAND_SEH_PROBE_PASSED/u,
@@ -210,6 +214,70 @@ try {
           text.includes("SEH registration") && text.includes("included"),
       ),
     );
+    // These queries target ordinary destinations but return recovered sources.
+    const hasSeh = (evidence) =>
+      evidence.limitations.some(
+        (text) =>
+          text.includes("SEH registration") &&
+          text.includes("supplied/imported Borland RTL symbol"),
+      );
+    const selected = parseEvidence(
+      await call("procedure_address", { procedure: "0x401025" }),
+    );
+    assert.equal(selected.normalized_result, "0x401000");
+    assert.ok(hasSeh(selected));
+    const searched = parseEvidence(
+      await call("search_bytes", { pattern: "68 00 20 40 00" }),
+    );
+    assert.ok(
+      searched.normalized_result.matches.some(
+        (match) =>
+          match.address === "0x401025" &&
+          match.procedure.address === "0x401000",
+      ),
+    );
+    assert.ok(hasSeh(searched));
+    const callers = parseEvidence(
+      await call("procedure_callers", { procedure: "0x401090" }),
+    );
+    assert.ok(callers.normalized_result.includes("0x401000"));
+    assert.ok(hasSeh(callers));
+    const incoming = parseEvidence(
+      await call("procedure_references", {
+        procedure: "0x401090",
+        direction: "incoming",
+      }),
+    );
+    assert.ok(hasSeh(incoming));
+    for (const address of ["0x401090", "0x402000"]) {
+      const refs = parseEvidence(await call("xrefs", { address }));
+      assert.ok(
+        refs.normalized_result.includes(
+          address === "0x401090" ? "0x40102a" : "0x401025",
+        ),
+      );
+      assert.ok(hasSeh(refs));
+    }
+    const incomingInstruction = parseEvidence(
+      await call("inspect_native_instruction", { address: "0x401090" }),
+    );
+    assert.ok(hasSeh(incomingInstruction));
+    const calleeDossier = parseEvidence(
+      await call("analyze_function", { procedure: "0x401090" }),
+    );
+    assert.ok(hasSeh(calleeDossier));
+    for (const [name, arguments_] of [
+      ["procedure_address", { procedure: "0x4010f0" }],
+      ["procedure_callers", { procedure: "0x4010f0" }],
+      ["xrefs", { address: "0x4010f0" }],
+      [
+        "search_bytes",
+        { pattern: "68 00 20 40 00", start: "0x4010f0", end: "0x4010ff" },
+      ],
+    ]) {
+      const ordinary = parseEvidence(await call(name, arguments_));
+      assert.ok(!hasSeh(ordinary), `${name} attributed an unrelated SEH owner`);
+    }
     await call("close_binary", {});
     await writeFile(
       seeds,
@@ -280,6 +348,14 @@ try {
         "in_span_independent_rtl",
         "initially_undecoded_veneer_provenance",
         "bounded_gap_omission",
+        "speculative_instruction_and_reference_rollback",
+        "cancelled_traversal_rollback",
+        "preexisting_listing_and_references_preserved",
+        "earlier_successful_recovery_preserved",
+        "procedure_address_and_byte_search_provenance",
+        "reverse_reference_source_provenance",
+        "incoming_instruction_and_dossier_provenance",
+        "unrelated_query_provenance_isolation",
         "instruction_and_call_target_provenance",
         "original_and_recovered_mid_instruction_paths_omitted",
         "decoded_terminal_call_recovered",

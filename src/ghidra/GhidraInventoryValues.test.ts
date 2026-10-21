@@ -243,3 +243,61 @@ describe("containing-procedure complete body evidence", () => {
     ).toBe(false);
   });
 });
+
+describe("containment-derived inventory observation envelopes", () => {
+  const search = {
+    matches: [
+      {
+        address: "0x1020",
+        segment: ".text",
+        file_offset: 32,
+        procedure: { address: "0x1000", name: "first" },
+      },
+      {
+        address: "0x2020",
+        segment: ".text",
+        file_offset: 4128,
+        procedure: { address: "0x2000", name: "second" },
+      },
+    ],
+    searched: {
+      blocks: [
+        { segment: ".text", start: "0x1000", end: "0x2020", bytes: 4129 },
+      ],
+      bytes: 4129,
+      skipped_uninitialized: [],
+      skipped_not_loaded: [],
+    },
+    complete: false,
+    next_cursor: "bound-cursor",
+  };
+  it.each([
+    { operation: "procedure_address" as const, value: "0x1000" },
+    { operation: "search_bytes" as const, value: search },
+  ])(
+    "retains $operation provenance without changing normalized values",
+    ({ operation, value }) => {
+      const limitations = [
+        "First owner: supplied RTL identity",
+        "Second owner: handler omission",
+      ];
+      expect(
+        parseGhidraInventoryResult(operation, { value, limitations }),
+      ).toEqual({
+        ok: true,
+        value: { value, limitations },
+      });
+      expect(parseGhidraInventoryResult(operation, value).ok).toBe(false);
+      expect(
+        parseGhidraInventoryResult(operation, { value, limitations: [3] }).ok,
+      ).toBe(false);
+      expect(
+        parseGhidraInventoryResult(operation, {
+          value,
+          limitations,
+          extra: true,
+        }).ok,
+      ).toBe(false);
+    },
+  );
+});

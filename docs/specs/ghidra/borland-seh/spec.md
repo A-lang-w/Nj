@@ -36,3 +36,11 @@ identity uses actual FunctionManager ownership and AddressSet membership, even
 inside the enclosing numeric span. Retain the validated veneer fact from its
 producer, including an initially undecoded entry. Containment queries carry the
 same SEH observations for recovered addresses and known omitted handler entries.
+
+Omitted or cancelled traversals must remove their newly decoded instructions
+and generated source references, while preserving pre-existing instructions,
+references and successful earlier candidates. Procedure selectors, byte-match
+ownership and incoming relationship sources must retain SEH provenance on
+Evidence, with deduplication across all returned owners. Unrelated queries do
+not inherit another function's SEH observations. Normalized values and existing
+coverage remain unchanged; old cache profiles cannot replay these new contracts.

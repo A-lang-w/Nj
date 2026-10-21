@@ -81,7 +81,9 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
   };
   let output = jsonValueSchema.parse(page);
   const harness = await connectGhidraMcp("byte-search-projection", () =>
-    Promise.resolve(ok(output)),
+    Promise.resolve(
+      ok({ value: output, limitations: ["Byte-match owner SEH provenance"] }),
+    ),
   );
   try {
     const first = await harness.mcp.callTool({
@@ -93,6 +95,9 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       sessionEvidence(harness.session, first.structuredContent)
         .normalized_result,
     ).toEqual(page);
+    expect(
+      sessionEvidence(harness.session, first.structuredContent).limitations,
+    ).toContain("Byte-match owner SEH provenance");
     output = jsonValueSchema.parse({
       ...page,
       matches: [],

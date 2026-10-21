@@ -100,3 +100,35 @@ completed in the second run, but that does not establish the later update/MCP
 checks. The previous review revision passed full package verification. The
 fixture/network failure is a separate validation gap; this revision does not
 claim a successful full-package run or a performance improvement.
+
+## Speculative recovery and relationship provenance review
+
+Track the exact newly disassembled code-unit set for each handler candidate.
+On an omitted or cancelled traversal, clear only those new units and their
+references with a non-cancelled cleanup monitor; preserve pre-existing listing
+units and earlier successful candidates. Do not abort a nested Ghidra transaction:
+its rollback also aborts the enclosing program transaction. Run reference analyzers
+only after the traversal has passed every omission gate.
+
+Use the shared address-to-observation owner for all returned match and incoming
+reference source addresses. Carry deduplicated source-function observations on
+callers, incoming procedure references and xrefs, with strict value/limitations
+envelopes for xrefs, procedure_address and search_bytes. Preserve normalized
+values and coverage fields, invalidate old observation profiles, and update
+controlled fixtures. Verify rollback of non-entry speculative instructions and
+references, retained pre-existing instructions, multi-owner search aggregation,
+reverse-reference provenance and unrelated-query controls through real Ghidra/MCP.
+
+Validation for review 5601920500: 238 tests passed across function/inventory
+contracts, snapshot admission, MCP Evidence, client lifecycle and bridge-source
+packaging. Both CI failures were stale v4 observation-profile expectations; the
+updated snapshot test explicitly rejects the previous v5 semantics. Static and
+documentation checks passed. The sequential real Ghidra 12.1.4/JDK 21 CLI/MCP
+run passed omitted/cancelled speculative-unit cleanup, retained existing listing
+and user references, preserved earlier successful recovery, procedure selection,
+byte search, reverse callers/references/xrefs, incoming instruction/dossier
+provenance and unrelated-query controls. Target SHA-256 remained unchanged;
+runtime roots were empty and process lineage was positively verified empty.
+Full-package verification was not rerun for this review; the recorded #6038
+gap remains. Windows-host/public-binary coverage and performance comparisons
+remain outside the verified scope.

@@ -152,93 +152,134 @@ public final class ReaGhidraBorlandSeh {
             monitor.checkCancelled();
             allowed.delete(data.getMinAddress(), data.getMaxAddress());
         }
-        AddressSet added = new AddressSet();
-        var pending = new ArrayDeque<Address>();
-        pending.add(handler);
-        boolean continuation = false;
-        boolean veneer = false;
-        while (!pending.isEmpty()) {
-            monitor.checkCancelled();
-            if (budget.visits-- <= 0 || pending.size() > RecoveryBudget.MAX_PENDING)
-                return RecoveryBudget.EXHAUSTED;
-            Address address = pending.removeFirst();
-            if (original.contains(address)) {
-                Instruction existing = program.getListing().getInstructionAt(address);
-                if (existing == null || !original.contains(existing.getMinAddress(), existing.getMaxAddress()))
-                    return "Handler flow enters the original body outside a decoded instruction boundary.";
-                if (address.equals(handler) && rtlVeneer(program, function, existing)) {
-                    veneer = true;
-                    pending.add(existing.getMaxAddress().next());
-                } else continuation = true;
-                continue;
-            }
-            if (added.contains(address)) {
-                if (program.getListing().getInstructionAt(address) == null)
-                    return "Handler flow overlaps recovered bytes outside a decoded instruction boundary.";
-                continue;
-            }
-            if (!allowed.contains(address)) return "Handler flow crosses a data or ownership boundary.";
-            Instruction instruction = program.getListing().getInstructionAt(address);
-            if (instruction == null) {
-                if (budget.bytes < 15) return RecoveryBudget.EXHAUSTED;
-                Address maximum = address;
-                for (int index = 0; index < 14 && maximum.next() != null; index++) maximum = maximum.next();
-                AddressSet decode = new AddressSet(address, maximum).intersect(allowed);
-                DisassembleCommand command = new DisassembleCommand(new AddressSet(address), decode, false);
-                command.enableCodeAnalysis(false);
-                command.applyTo(program, monitor);
-                instruction = program.getListing().getInstructionAt(address);
-            }
-            if (instruction == null || !allowed.contains(instruction.getMinAddress(), instruction.getMaxAddress()))
-                return "Handler flow could not be decoded completely within the unowned gap.";
-            if (instruction.getLength() > budget.bytes) return RecoveryBudget.EXHAUSTED;
-            budget.bytes -= instruction.getLength();
-            added.add(instruction.getMinAddress(), instruction.getMaxAddress());
-            var flow = instruction.getFlowType();
-            Address[] destinations = instruction.getFlows();
-            // Borland's initial JMP calls its RTL through a continuation encoded immediately
-            // after the veneer. Do not absorb the shared RTL function into this body.
-            if (address.equals(handler) && rtlVeneer(program, function, instruction)) {
-                veneer = true;
-                pending.add(instruction.getMaxAddress().next());
-                continue;
-            }
-            if (flow.isJump()) {
-                if (flow.isComputed() || destinations.length == 0)
-                    return "Handler has an unresolved computed jump.";
-                if (pending.size() + destinations.length > RecoveryBudget.MAX_PENDING)
+        // Own only code units created by this candidate, never an existing listing.
+        AddressSet created = new AddressSet();
+        Map<Address, ghidra.program.model.symbol.Reference[]> retainedReferences = new LinkedHashMap<>();
+        boolean admitted = false;
+        try {
+            AddressSet added = new AddressSet();
+            var pending = new ArrayDeque<Address>();
+            pending.add(handler);
+            boolean continuation = false;
+            boolean veneer = false;
+            while (!pending.isEmpty()) {
+                monitor.checkCancelled();
+                if (budget.visits-- <= 0 || pending.size() > RecoveryBudget.MAX_PENDING)
                     return RecoveryBudget.EXHAUSTED;
-                pending.addAll(Arrays.asList(destinations));
+                Address address = pending.removeFirst();
+                if (original.contains(address)) {
+                    Instruction existing = program.getListing().getInstructionAt(address);
+                    if (existing == null || !original.contains(existing.getMinAddress(), existing.getMaxAddress()))
+                        return "Handler flow enters the original body outside a decoded instruction boundary.";
+                    if (address.equals(handler) && rtlVeneer(program, function, existing)) {
+                        veneer = true;
+                        pending.add(existing.getMaxAddress().next());
+                    } else continuation = true;
+                    continue;
+                }
+                if (added.contains(address)) {
+                    if (program.getListing().getInstructionAt(address) == null)
+                        return "Handler flow overlaps recovered bytes outside a decoded instruction boundary.";
+                    continue;
+                }
+                if (!allowed.contains(address)) return "Handler flow crosses a data or ownership boundary.";
+                Instruction instruction = program.getListing().getInstructionAt(address);
+                if (instruction == null) {
+                    if (budget.bytes < 15) return RecoveryBudget.EXHAUSTED;
+                    Address maximum = address;
+                    for (int index = 0; index < 14 && maximum.next() != null; index++) maximum = maximum.next();
+                    AddressSet decode = new AddressSet(address, maximum).intersect(allowed);
+                    DisassembleCommand command = new DisassembleCommand(new AddressSet(address), decode, false);
+                    command.enableCodeAnalysis(false);
+                    AddressSet existing = new AddressSet();
+                    for (Instruction unit : program.getListing().getInstructions(decode, true))
+                        existing.add(unit.getMinAddress(), unit.getMaxAddress());
+                    for (Address source : decode.getAddresses(true)) {
+                        if (created.contains(source) || existing.contains(source)) continue;
+                        var refs = program.getReferenceManager().getReferencesFrom(source);
+                        if (refs.length != 0) retainedReferences.putIfAbsent(source, refs);
+                    }
+                    try {
+                        command.applyTo(program, monitor);
+                    } finally {
+                        // Inspect the listing even when cancellation interrupts the
+                        // command before it publishes its disassembled-address set.
+                        for (Instruction unit : program.getListing().getInstructions(decode, true))
+                            if (!existing.contains(unit.getAddress()))
+                                created.add(unit.getMinAddress(), unit.getMaxAddress());
+                    }
+                    instruction = program.getListing().getInstructionAt(address);
+                }
+                if (instruction == null || !allowed.contains(instruction.getMinAddress(), instruction.getMaxAddress()))
+                    return "Handler flow could not be decoded completely within the unowned gap.";
+                if (instruction.getLength() > budget.bytes) return RecoveryBudget.EXHAUSTED;
+                budget.bytes -= instruction.getLength();
+                added.add(instruction.getMinAddress(), instruction.getMaxAddress());
+                var flow = instruction.getFlowType();
+                Address[] destinations = instruction.getFlows();
+                // Borland's initial JMP calls its RTL through a continuation encoded immediately
+                // after the veneer. Do not absorb the shared RTL function into this body.
+                if (address.equals(handler) && rtlVeneer(program, function, instruction)) {
+                    veneer = true;
+                    pending.add(instruction.getMaxAddress().next());
+                    continue;
+                }
+                if (flow.isJump()) {
+                    if (flow.isComputed() || destinations.length == 0)
+                        return "Handler has an unresolved computed jump.";
+                    if (pending.size() + destinations.length > RecoveryBudget.MAX_PENDING)
+                        return RecoveryBudget.EXHAUSTED;
+                    pending.addAll(Arrays.asList(destinations));
+                }
+                Address fallthrough = instruction.getFallThrough();
+                if (fallthrough != null) pending.add(fallthrough);
+                else if (!flow.isJump()) {
+                    boolean returns = Arrays.stream(instruction.getPcode()).anyMatch(op ->
+                        op.getOpcode() == ghidra.program.model.pcode.PcodeOp.RETURN);
+                    if (returns || flow.isTerminal()) continuation = true;
+                    else return "Handler instruction " + instruction.getAddress() + " (" +
+                        instruction.getMnemonicString() + ") has no decoded continuation.";
+                }
             }
-            Address fallthrough = instruction.getFallThrough();
-            if (fallthrough != null) pending.add(fallthrough);
-            else if (!flow.isJump()) {
-                boolean returns = Arrays.stream(instruction.getPcode()).anyMatch(op ->
-                    op.getOpcode() == ghidra.program.model.pcode.PcodeOp.RETURN);
-                if (returns || flow.isTerminal()) continuation = true;
-                else return "Handler instruction " + instruction.getAddress() + " (" +
-                    instruction.getMnemonicString() + ") has no decoded continuation.";
+            if (!continuation || added.isEmpty() || !veneer)
+                return "Handler lacks an identified Borland RTL veneer and a verified body continuation.";
+            // All omission gates have passed. Analyzer failures propagate as failed
+            // analysis, rather than publishing an omitted candidate with side effects.
+            admitted = true;
+            // The ordinary function-entry analyzer cannot reach exception-only paths.
+            // Run Ghidra's own reference producers on the still-unowned decoded gap,
+            // before assigning it to the function. Respect the caller's analyzer options.
+            var options = program.getOptions(Program.ANALYSIS_PROPERTIES);
+            var constants = new ghidra.app.plugin.core.analysis.X86Analyzer();
+            if (options.getBoolean(constants.getName(), true) && constants.canAnalyze(program)) {
+                constants.optionsChanged(options.getOptions(constants.getName()), program);
+                constants.analyzeSet(program, new AddressSet(added), monitor);
+            }
+            var references = new ghidra.app.plugin.core.analysis.OperandReferenceAnalyzer();
+            if (options.getBoolean(references.getName(), true) && references.canAnalyze(program)) {
+                references.optionsChanged(options.getOptions(references.getName()), program);
+                references.added(program, added, monitor, new ghidra.app.util.importer.MessageLog());
+            }
+            original.add(added);
+            function.setBody(original);
+            return null;
+        } finally {
+            if (!admitted) {
+                // Cancellation must not prevent cleanup of this candidate's units.
+                for (var range : created.getAddressRanges())
+                    program.getListing().clearCodeUnits(range.getMinAddress(), range.getMaxAddress(),
+                        false, TaskMonitor.DUMMY);
+                for (var retained : retainedReferences.entrySet()) {
+                    if (!created.contains(retained.getKey())) continue;
+                    for (var reference : retained.getValue()) {
+                        var restored = program.getReferenceManager().addReference(reference);
+                        program.getReferenceManager().setPrimary(restored, reference.isPrimary());
+                        var symbol = program.getSymbolTable().getSymbol(reference.getSymbolID());
+                        if (symbol != null) program.getReferenceManager().setAssociation(symbol, restored);
+                    }
+                }
             }
         }
-        if (!continuation || added.isEmpty() || !veneer)
-            return "Handler lacks an identified Borland RTL veneer and a verified body continuation.";
-        // The ordinary function-entry analyzer cannot reach exception-only paths.
-        // Run Ghidra's own reference producers on the still-unowned decoded gap,
-        // before assigning it to the function. Respect the caller's analyzer options.
-        var options = program.getOptions(Program.ANALYSIS_PROPERTIES);
-        var constants = new ghidra.app.plugin.core.analysis.X86Analyzer();
-        if (options.getBoolean(constants.getName(), true) && constants.canAnalyze(program)) {
-            constants.optionsChanged(options.getOptions(constants.getName()), program);
-            constants.analyzeSet(program, new AddressSet(added), monitor);
-        }
-        var references = new ghidra.app.plugin.core.analysis.OperandReferenceAnalyzer();
-        if (options.getBoolean(references.getName(), true) && references.canAnalyze(program)) {
-            references.optionsChanged(options.getOptions(references.getName()), program);
-            references.added(program, added, monitor, new ghidra.app.util.importer.MessageLog());
-        }
-        original.add(added);
-        function.setBody(original);
-        return null;
     }
 
     private static boolean rtlVeneer(Program program, Function function, Instruction instruction) {

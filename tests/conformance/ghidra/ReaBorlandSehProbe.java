@@ -87,6 +87,12 @@ public class ReaBorlandSehProbe extends GhidraScript {
             require(result.get(function.getEntryPoint()).omissions().stream().anyMatch(
                 text -> text.contains("instruction boundary")), "overlapping path was claimed complete");
             require(function.getBody().equals(original), "overlapping path published a partial body");
+            require(currentProgram.getListing().getInstructionAt(at(0x401025)) == null,
+                "omitted recovery retained a speculative non-entry instruction");
+            require(currentProgram.getReferenceManager().getReferencesFrom(at(0x401025)).length == 0,
+                "omitted recovery retained speculative source references");
+            require(currentProgram.getListing().getInstructionAt(at(0x401020)) != null,
+                "omitted recovery removed a pre-existing veneer");
         }
         clearListing(at(0x401025), at(0x401033));
         memory.setBytes(at(0x401025), new byte[] {(byte)0xe8, 0x66, 0, 0, 0});
@@ -111,6 +117,7 @@ public class ReaBorlandSehProbe extends GhidraScript {
     }
 
     private void verifyBudget() throws Exception {
+        currentProgram.getFunctionManager().removeFunction(at(0x401020));
         Address start = at(0x500000);
         var memory = currentProgram.getMemory();
         var block = memory.createInitializedBlock("rea_budget", start, 0x20000, (byte) 0x90, monitor, false);
@@ -134,9 +141,46 @@ public class ReaBorlandSehProbe extends GhidraScript {
         var function = currentProgram.getFunctionManager().createFunction("rea_budget", start, body,
             ghidra.program.model.symbol.SourceType.USER_DEFINED);
         var before = new AddressSet(function.getBody());
+        // Preserve an existing instruction in the middle of a candidate that will fail.
+        var retained = new AddressSet(at(0x500030));
+        var predecode = new ghidra.app.cmd.disassemble.DisassembleCommand(retained, retained, false);
+        predecode.enableCodeAnalysis(false);
+        predecode.applyTo(currentProgram, monitor);
+        var retainedReference = currentProgram.getReferenceManager().addMemoryReference(at(0x500026),
+            at(0x402000), ghidra.program.model.symbol.RefType.READ,
+            ghidra.program.model.symbol.SourceType.USER_DEFINED, 0);
         var result = ReaGhidraBorlandSeh.analyze(currentProgram, monitor, true);
         require(result.get(start).omissions().stream().anyMatch(text -> text.contains("resource budget exhausted")),
             "large gap must retain a budget omission");
         require(function.getBody().equals(before), "budget exhaustion published a partial body");
+        require(java.util.Arrays.asList(currentProgram.getReferenceManager().getReferencesFrom(at(0x500026)))
+            .contains(retainedReference), "budget omission lost a pre-existing reference");
+        require(currentProgram.getListing().getInstructionAt(at(0x500025)) == null,
+            "budget omission retained speculative non-entry instructions");
+        require(currentProgram.getListing().getInstructionAt(at(0x500020)) == null,
+            "budget omission retained its newly decoded veneer");
+        require(currentProgram.getListing().getInstructionAt(at(0x500030)) != null,
+            "budget omission erased a pre-existing instruction");
+        require(currentProgram.getListing().getInstructionAt(start) != null,
+            "budget omission erased the original function listing");
+        var recovered = currentProgram.getFunctionManager().getFunctionAt(at(0x401000));
+        require(recovered.getBody().contains(at(0x401025)),
+            "a later budget omission undid an earlier successful recovery");
+        var cancelled = new ghidra.util.task.TaskMonitorAdapter() {
+            @Override public void checkCancelled() throws ghidra.util.exception.CancelledException {
+                if (currentProgram.getListing().getInstructionAt(at(0x500026)) != null)
+                    throw new ghidra.util.exception.CancelledException();
+            }
+        };
+        boolean interrupted = false;
+        try { ReaGhidraBorlandSeh.analyze(currentProgram, cancelled, true); }
+        catch (ghidra.util.exception.CancelledException expected) { interrupted = true; }
+        require(interrupted, "cancellation fixture did not reach speculative decoding");
+        require(currentProgram.getListing().getInstructionAt(at(0x500025)) == null &&
+            currentProgram.getListing().getInstructionAt(at(0x500026)) == null,
+            "cancelled traversal retained speculative instructions");
+        require(currentProgram.getListing().getInstructionAt(at(0x500030)) != null &&
+            recovered.getBody().contains(at(0x401025)),
+            "cancelled traversal damaged existing listing or a successful recovery");
     }
 }

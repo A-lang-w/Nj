@@ -33,3 +33,14 @@
 - [ ] Complete full package verification after resolving the unrelated update
       fixture's registry-proxy failure; two attempted runs and limits are recorded
       in plan.md. Earlier revision's successful run does not cover this gap.
+
+## Speculative recovery and relationship provenance review
+
+- [x] Remove newly decoded units on omitted or cancelled traversal; retain prior
+      instructions/references and earlier successful candidates.
+- [x] Envelope procedure selection, byte search and xrefs; advance cache profiles.
+- [x] Preserve returned source provenance on callers, incoming references, dossiers
+      and instruction inspection through the shared address owner.
+- [x] Pass real Ghidra producer/CLI/MCP controls for rollback, cancellation,
+      pre-existing references, reverse queries and unrelated-query isolation.
+- [x] Pass 238 expanded focused regressions and final static/docs checks.

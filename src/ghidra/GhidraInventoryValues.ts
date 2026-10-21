@@ -374,10 +374,14 @@ export function parseGhidraInventoryResult(
       ? ok({ value: parsed.data, rawResult: value })
       : err(inventoryOutputFailure(operation, parsed.error));
   }
-  if (operation === "resolve_containing_procedure") {
+  if (
+    operation === "resolve_containing_procedure" ||
+    operation === "procedure_address" ||
+    operation === "search_bytes"
+  ) {
     const parsed = z
       .strictObject({
-        value: containingProcedure,
+        value: resultSchemas[operation],
         limitations: z.array(z.string()),
       })
       .safeParse(value);

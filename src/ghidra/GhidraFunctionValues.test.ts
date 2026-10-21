@@ -31,6 +31,7 @@ const observationOperations: ReadonlySet<GhidraFunctionOperation> = new Set([
   "read_function_instructions",
   "inspect_native_instruction",
   "resolve_native_call_targets",
+  "xrefs",
 ]);
 
 // Existing assertions focus on the value schema; this helper builds the current
@@ -962,4 +963,25 @@ describe("complete Ghidra function body range evidence", () => {
       }).ok,
     ).toBe(false);
   });
+});
+
+it("requires xref observations and preserves recovered source qualifications", () => {
+  const value = ["0x401025", "0x402025"];
+  const limitations = [
+    "SEH registration in source function 0x401000",
+    "SEH registration in source function 0x402000",
+  ];
+  expect(
+    parseGhidraFunctionResult("xrefs", { value, limitations }),
+  ).toMatchObject({
+    ok: true,
+    value: { value, limitations },
+  });
+  expect(parseGhidraFunctionResult("xrefs", value).ok).toBe(false);
+  expect(
+    parseGhidraFunctionResult("xrefs", {
+      value: ["not-an-address"],
+      limitations,
+    }).ok,
+  ).toBe(false);
 });
