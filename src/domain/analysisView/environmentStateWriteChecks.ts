@@ -11,8 +11,10 @@ import {
   isObject,
   isParam,
   lastSegmentValue,
+  listsAll,
   listItems,
   missingRequiredFields,
+  pagesOnly,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -29,24 +31,25 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 
-/** A query as replay compares a call's: decoded values by name, in any order. A query repeating a name, which no call's arguments can carry, keeps its spelling. */
-const queryKey = (query: string | undefined): string => {
+/** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name, which no call's arguments can carry. */
+const queryKey = (query: string | undefined): string | undefined => {
   const pairs = [...iterateUrlQueryParameters(query ?? "")];
   return new Set(pairs.map(([name]) => name)).size === pairs.length
     ? compositeKey(pairs.sort(([left], [right]) => compare(left, right)))
-    : compositeKey([query ?? ""]);
+    : undefined;
 };
+
+interface CheckedLine {
+  readonly ordinal: number;
+  readonly segments: readonly string[];
+}
 
 /** A list or document view's checked lines, by query, in the tool's recorded order, and which path segments are the tool's parameters. */
 export interface CheckedLines {
   readonly params: ReadonlySet<number>;
-  readonly byQuery: ReadonlyMap<
-    string,
-    readonly {
-      readonly ordinal: number;
-      readonly segments: readonly string[];
-    }[]
-  >;
+  readonly byQuery: ReadonlyMap<string, readonly CheckedLine[]>;
+  /** The lines listing their whole collection that only page it, which serving answers a call supplying no query from. */
+  readonly unfiltered: readonly CheckedLine[];
 }
 
 /** The line a read's call is answered from, and the collection serving lists for it. */
@@ -70,24 +73,27 @@ export const checkedLines = (input: {
     const tool = tools.get(view.tool);
     if (view.shape === "recorded" || view.shape === "item" || !tool) continue;
     const checked = new Set(view.checked_record_ordinals);
-    const byQuery = new Map<
-      string,
-      { readonly ordinal: number; readonly segments: readonly string[] }[]
-    >();
+    const byQuery = new Map<string, CheckedLine[]>();
+    const unfiltered: CheckedLine[] = [];
     for (const ordinal of tool.record_ordinals) {
       const record = byOrdinal.get(ordinal);
-      if (!checked.has(ordinal) || record === undefined) continue;
-      const key = queryKey(record.query);
-      const lines = byQuery.get(key) ?? [];
-      lines.push({ ordinal, segments: segmentsOf(record.path) });
-      byQuery.set(key, lines);
+      const key = record === undefined ? undefined : queryKey(record.query);
+      if (!checked.has(ordinal) || key === undefined) continue;
+      const line = { ordinal, segments: segmentsOf(record!.path) };
+      byQuery.set(key, [...(byQuery.get(key) ?? []), line]);
+      if (
+        view.shape === "list" &&
+        listsAll(view, ordinal) &&
+        pagesOnly(record!.query)
+      )
+        unfiltered.push(line);
     }
     const params = new Set(
       segmentsOf(tool.path_template).flatMap((segment, index) =>
         isParam(segment) ? [index] : [],
       ),
     );
-    byView.set(view.tool, { params, byQuery });
+    byView.set(view.tool, { params, byQuery, unfiltered });
   }
   return byView;
 };
@@ -95,27 +101,39 @@ export const checkedLines = (input: {
 /**
  * The checked line serving answers a read's call from, ranked as replay ranks lines: every
  * parameter the read's value verbatim or once percent-decoded and the query the read's, then the
- * most verbatim parameters, then recorded order.
+ * most verbatim parameters, then recorded order. A read with no query falls back, as serving does,
+ * on a whole list's lines that only page it.
  */
 export const servedLine = (
   lines: CheckedLines | undefined,
   record: StateRecordFacts,
 ): ServedLine | undefined => {
+  const key = queryKey(record.query);
+  if (lines === undefined || key === undefined) return undefined;
+  return (
+    bestLine(lines, lines.byQuery.get(key) ?? [], record) ??
+    ([...iterateUrlQueryParameters(record.query ?? "")].length === 0
+      ? bestLine(lines, lines.unfiltered, record)
+      : undefined)
+  );
+};
+
+const bestLine = (
+  lines: CheckedLines,
+  candidates: readonly CheckedLine[],
+  record: StateRecordFacts,
+): ServedLine | undefined => {
   const read = segmentsOf(record.path);
   let best: { line: ServedLine; verbatim: number } | undefined;
-  for (const { ordinal, segments } of lines?.byQuery.get(
-    queryKey(record.query),
-  ) ?? []) {
+  for (const { ordinal, segments } of candidates) {
     if (segments.length !== read.length) continue;
     let verbatim = 0;
     const matches = segments.every((segment, index) => {
       if (segment === read[index]) {
-        if (lines!.params.has(index)) verbatim += 1;
+        if (lines.params.has(index)) verbatim += 1;
         return true;
       }
-      return (
-        lines!.params.has(index) && decodedSegment(segment) === read[index]
-      );
+      return lines.params.has(index) && decodedSegment(segment) === read[index];
     });
     if (matches && (best === undefined || verbatim > best.verbatim))
       best = {
@@ -125,163 +143,6 @@ export const servedLine = (
   }
   return best?.line;
 };
-
-/** Modelled writes per target since its last check, with the fields each wrote (null: all). */
-export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
-
-/** The fields of a write's effect on an entity no later write has overwritten: all of them for a create or delete (null). */
-type ChangedFields = readonly string[] | null;
-
-/** What a later write overwrites: the whole entity, the fields it sets, or every field (a recorded outcome). */
-interface Overwrite {
-  readonly whole: boolean;
-  readonly fields: ReadonlySet<string> | "all";
-}
-
-/** What an earlier effect keeps after a write: nothing once every field it holds is overwritten; an update leaves a create's or delete's whole effect. */
-const remaining = (
-  claim: ChangedFields,
-  write: Overwrite,
-): ChangedFields | undefined => {
-  if (write.whole) return undefined;
-  if (claim === null) return null;
-  const { fields } = write;
-  if (fields === "all") return undefined;
-  const left = claim.filter((field) => !fields.has(field));
-  return left.length > 0 ? left : undefined;
-};
-
-/** Add a write's changed fields under a key: all of them once any write there changed the whole entity. */
-const record = (
-  map: Map<string, ChangedFields>,
-  key: string,
-  whole: boolean,
-  changed: readonly string[],
-): Map<string, ChangedFields> => {
-  const before = map.get(key);
-  return map.set(
-    key,
-    whole || before === null
-      ? null
-      : [...new Set([...(before ?? []), ...changed])],
-  );
-};
-
-/**
- * What each write changed since the targets it touched were last checked, less what later writes overwrote, so a
- * write whose effect is gone drops out: from the entity's target, and from its collection's once no entity it changed
- * there keeps any of it.
- */
-export class WriteEffects {
-  /** Per entity target, the fields each tool changed there. */
-  readonly #changed = new Map<string, Map<string, ChangedFields>>();
-  /** Per collection target, the entities each tool's claim there rests on, with the fields it changed on each. */
-  readonly #members = new Map<
-    string,
-    Map<string, Map<string, ChangedFields>>
-  >();
-
-  /** Forget a checked target's writes, as the touched targets do. */
-  checked(key: string): void {
-    this.#changed.delete(key);
-    this.#members.delete(key);
-  }
-
-  /** A read showed the entity absent: no write's effect on it remains, so a write left with no entity drops from the collection. */
-  removed(touched: TouchedTargets, entity: string, collection: string): void {
-    this.#changed.delete(entity);
-    const byTool = this.#members.get(collection);
-    if (byTool === undefined) return;
-    for (const [tool, entities] of byTool) {
-      if (!entities.delete(entity) || entities.size > 0) continue;
-      byTool.delete(tool);
-      touched.get(collection)?.delete(tool);
-    }
-  }
-
-  /** A write's effect replaces what earlier writes left of theirs, then joins them. */
-  supersede(
-    touched: TouchedTargets,
-    writer: string,
-    effect: {
-      readonly targets: readonly string[];
-      readonly fields?: readonly string[];
-      readonly changed?: {
-        readonly fields: readonly string[];
-        readonly accumulated: readonly string[];
-      };
-    },
-  ): void {
-    const [entity, collection] = effect.targets as [string, string?];
-    const changed = effect.changed?.fields ?? effect.fields ?? [];
-    const whole = effect.fields === undefined;
-    this.#overwrite(
-      touched,
-      { entity, collection, writer },
-      {
-        whole,
-        fields: new Set(
-          changed.filter(
-            (field) => !effect.changed?.accumulated.includes(field),
-          ),
-        ),
-      },
-    );
-    this.#changed.set(
-      entity,
-      record(this.#changed.get(entity) ?? new Map(), writer, whole, changed),
-    );
-    if (collection === undefined) return;
-    const byTool = this.#members.get(collection) ?? new Map();
-    byTool.set(
-      writer,
-      record(byTool.get(writer) ?? new Map(), entity, whole, changed),
-    );
-    this.#members.set(collection, byTool);
-  }
-
-  /** A recorded outcome is the entity's new baseline: what earlier writes changed on it is gone, its membership is not. */
-  observed(touched: TouchedTargets, targets: readonly string[]): void {
-    const [entity, collection] = targets as [string, string?];
-    this.#overwrite(
-      touched,
-      { entity, collection, writer: undefined },
-      { whole: false, fields: "all" },
-    );
-  }
-
-  #overwrite(
-    touched: TouchedTargets,
-    at: {
-      readonly entity: string;
-      readonly collection: string | undefined;
-      readonly writer: string | undefined;
-    },
-    write: Overwrite,
-  ): void {
-    const own = this.#changed.get(at.entity);
-    for (const [tool, claim] of own ?? []) {
-      const left = tool === at.writer ? claim : remaining(claim, write);
-      if (left !== undefined) own!.set(tool, left);
-      else {
-        own!.delete(tool);
-        touched.get(at.entity)?.delete(tool);
-      }
-    }
-    if (at.collection === undefined) return;
-    const byTool = this.#members.get(at.collection);
-    for (const [tool, entities] of byTool ?? []) {
-      const claim = entities.get(at.entity);
-      if (tool === at.writer || claim === undefined) continue;
-      const left = remaining(claim, write);
-      if (left !== undefined) entities.set(at.entity, left);
-      else entities.delete(at.entity);
-      if (entities.size > 0) continue;
-      byTool!.delete(tool);
-      touched.get(at.collection)?.delete(tool);
-    }
-  }
-}
 
 export const entityTarget = (type: string, collection: string, id: string) =>
   `e${compositeKey([type, collection, id])}`;

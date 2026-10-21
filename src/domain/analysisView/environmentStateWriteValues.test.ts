@@ -187,6 +187,20 @@ it("finds a delimited token in any string nested in objects and arrays", () => {
   expect(containsDelimited(["2026", true, [{ e: "x2" }]], "2")).toBe(false);
 });
 
+it("searches arrays and objects too wide to spread into one call", () => {
+  const wide = Array.from({ length: 500_000 }, () => 0);
+  expect(containsDelimited(wide, "2")).toBe(false);
+  expect(containsDelimited({ wide: [...wide, "see /issues/2"] }, "2")).toBe(
+    true,
+  );
+  expect(
+    containsDelimited(
+      Object.fromEntries(wide.map((value, index) => [String(index), value])),
+      "2",
+    ),
+  ).toBe(false);
+});
+
 it("derives a deterministic version 4 UUID per seed", () => {
   const first = seededUuid("seed-a", UUID_EXEMPLAR);
   expect(first).toMatch(V4_UUID);

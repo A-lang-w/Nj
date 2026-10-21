@@ -527,3 +527,89 @@ describe("updates whose effect later writes erase", () => {
     });
   });
 });
+
+describe("reads as serving answers them", () => {
+  it("checks a read with no query on the line serving answers it from, a whole list's paging line", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books?limit=50", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK]],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+
+  it("checks nothing by a line whose query repeats a name, which no call can name", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books?tag=a&tag=b", [FIRST_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["PATCH", "/api/books/1", RENAMED, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books?tag=a&tag=b", [RENAMED]],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("checks nothing by a read made while a write to its targets was still running", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      // The create runs from second 3 to 4.5; the list at second 4 still shows the books before it.
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }, 1500],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK]],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+      contradicted_by: null,
+    });
+  });
+
+  it("refuses an update a later call stores otherwise than the plan echoed", () => {
+    const formatted = (at: number, format: string): Book => ({
+      ...renamedBook(FIRST_BOOK, "First Book", at),
+      format,
+    });
+    const rows: TimedCaptureRow[] = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { ...FIRST_BOOK, format: "EBOOK" },
+          { ...SECOND_BOOK, format: "EBOOK" },
+        ],
+      ],
+      ["GET", "/api/books/1", { ...FIRST_BOOK, format: "EBOOK" }],
+      ["GET", "/api/books/2", { ...SECOND_BOOK, format: "EBOOK" }],
+      [
+        "PATCH",
+        "/api/books/1",
+        formatted(3, "PAPER"),
+        200,
+        { format: "PAPER" },
+      ],
+      ["GET", "/api/books/1", formatted(3, "PAPER")],
+      [
+        "PATCH",
+        "/api/books/1",
+        formatted(5, "HARDCOVER"),
+        200,
+        { format: "hardcover" },
+      ],
+      ["GET", "/api/books/1", formatted(5, "HARDCOVER")],
+    ];
+    // One call echoed the format, the other stored another value: no one plan serves both.
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+});

@@ -608,6 +608,37 @@ describe("values the state started with", () => {
     expect(create("acme1", "Epsilon")).toBe("/api/orgs/a%63me1/books");
   });
 
+  it("creates in the spelling of a collection the capture listed empty", () => {
+    const beta = orgBook(2, "acme2", "Beta");
+    const gamma = orgBook(3, "my org1", "Gamma");
+    const delta = orgBook(4, "acme2", "Delta");
+    // The state starts before the first create, when the encoded organisation's list was empty.
+    const books = servedFrom([
+      ["GET", "/api/orgs/my%20org1/books", []],
+      ["GET", "/api/orgs/acme2/books", [beta]],
+      ["GET", "/api/orgs/acme2/books/2", beta],
+      ["POST", "/api/orgs/my%20org1/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/orgs/my%20org1/books", [gamma]],
+      ["POST", "/api/orgs/acme2/books", delta, 201, { name: "Delta" }],
+      ["GET", "/api/orgs/acme2/books", [beta, delta]],
+    ]);
+    const tool = books.source.manifest.tools.find(
+      (candidate) => candidate.method === "POST",
+    )!;
+    const [parent] = environmentToolArguments(tool).path.values();
+    books.answer(tool.name, {
+      [parent!]: "my%20org1",
+      body: { name: "Epsilon" },
+    });
+    expect(
+      books.store
+        .snapshot()
+        .rea_state.entities.find(
+          (entity) => entity.fields["name"] === "Epsilon",
+        )?.collection,
+    ).toBe("/api/orgs/my%20org1/books");
+  });
+
   it("forgets the spellings of a loaded state once reset", () => {
     const { books, create } = twoOrgs("%61cme1", "acme1");
     const { rea_state: held } = books.store.snapshot();
