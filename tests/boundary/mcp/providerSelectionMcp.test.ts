@@ -294,10 +294,101 @@ describe("explicit provider selection over MCP", () => {
   });
 });
 
+it("admits eligible providers and retains unconfigured rejections", async () => {
+  directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      candidate("beta", starts),
+      candidate("ghidra", starts, defaultOperations, false),
+      candidate("alpha", starts),
+      candidate("kuna", starts, defaultOperations, false),
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server);
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+
+  // A tie is admitted without a binding, and unconfigured engines stay
+  // ineligible instead of being offered as choices.
+  const admitted = await mcp.callTool({
+    name: "open_binary",
+    arguments: { path: target },
+  });
+  expect(admitted.isError).not.toBe(true);
+  expect(
+    structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .result,
+  ).toMatchObject({
+    analysis_provider_selection_state: "selection_required",
+    analysis_provider_binding: null,
+    analysis_provider_candidates: [
+      { provider: { id: "alpha" }, eligibility: "eligible" },
+      { provider: { id: "beta" }, eligibility: "eligible" },
+      { provider: { id: "ghidra" }, eligibility: "ineligible" },
+      { provider: { id: "kuna" }, eligibility: "ineligible" },
+    ],
+  });
+  expect(starts).toEqual([]);
+
+  // The typed error separates the possible choices from the rejections.
+  const undecided = await mcp.callTool({
+    name: "address_name",
+    arguments: { address: "0x1" },
+  });
+  expect(undecided.isError).toBe(true);
+  expect(structured(undecided)).toMatchObject({
+    error: {
+      details: {
+        selection_reason: "ambiguous",
+        candidate_ids: ["alpha", "beta"],
+        rejections: [
+          { provider_id: "ghidra", code: "not_configured" },
+          { provider_id: "kuna", code: "not_configured" },
+        ],
+      },
+    },
+  });
+  expect(starts).toEqual([]);
+
+  const retried = await mcp.callTool({
+    name: "open_binary",
+    arguments: { path: target, provider_id: "alpha" },
+  });
+  expect(retried.isError).not.toBe(true);
+  expect(
+    structured(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: {},
+      }),
+    ).result,
+  ).toMatchObject({
+    analysis_provider_binding: {
+      provider: { id: "alpha", version: "1" },
+      selection_source: "request",
+    },
+  });
+  expect(starts).toEqual([]);
+});
+
+/** Operations a fixture provider declares unless a test says otherwise. */
+const defaultOperations: readonly DeclaredOperation[] = ["address_name"];
+
 const candidate = (
   id: string,
   starts: string[],
-  operations: readonly DeclaredOperation[],
+  operations: readonly DeclaredOperation[] = defaultOperations,
+  available = true,
 ): AnalysisProviderCandidate => {
   const identity: ProviderIdentity = {
     id,
@@ -308,12 +399,20 @@ const candidate = (
     identity: () => identity,
     capabilities: () =>
       operations.map((operation) => capability(identity, operation)),
-    inspectAvailability: () => ({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
-    }),
+    inspectAvailability: () =>
+      available
+        ? {
+            status: "available",
+            code: null,
+            reason: null,
+            diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
+          }
+        : {
+            status: "unavailable",
+            code: "not_configured",
+            reason: `${id} is not configured`,
+            diagnostics: {},
+          },
     inspectTargetSupport: () => ({
       status: "supported",
       code: null,

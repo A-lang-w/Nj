@@ -235,6 +235,71 @@ describe("inspection without deep binding", () => {
 });
 
 describe("analysis provider registry: selection failures", () => {
+  it("offers only admitted providers for ambiguous automatic selection", async () => {
+    const alpha = candidate("alpha");
+    const beta = candidate("beta");
+    const ghidra = candidate("ghidra", {
+      available: false,
+      unconfigured: true,
+    });
+    const kuna = candidate("kuna", {
+      available: false,
+      unconfigured: true,
+    });
+    const registry = new AnalysisProviderRegistry([
+      alpha.provider,
+      beta.provider,
+      ghidra.provider,
+      kuna.provider,
+    ]);
+
+    const pending = await registry.select(DATABASE_TARGET);
+    if (!pending.ok) throw pending.error;
+    // The tie is admitted without a binding; unconfigured engines stay
+    // ineligible instead of being offered as choices.
+    expect(pending.value).toMatchObject({
+      requestedProviderId: "auto",
+      selectionState: "selection_required",
+      binding: null,
+      candidates: [
+        { provider: { id: "alpha" }, eligibility: "eligible" },
+        { provider: { id: "beta" }, eligibility: "eligible" },
+        { provider: { id: "ghidra" }, eligibility: "ineligible" },
+        { provider: { id: "kuna" }, eligibility: "ineligible" },
+      ],
+    });
+    // The typed deep-operation error keeps the admitted choices and the
+    // unconfigured rejections apart.
+    expect(
+      projectAnalysisError(
+        registry.unboundOperationError("address_name", pending.value),
+      ),
+    ).toMatchObject({
+      details: {
+        selection_reason: "ambiguous",
+        candidate_ids: ["alpha", "beta"],
+        rejections: [
+          { provider_id: "ghidra", code: "not_configured" },
+          { provider_id: "kuna", code: "not_configured" },
+        ],
+      },
+    });
+
+    for (const selected of [
+      await registry.select(DATABASE_TARGET, "alpha"),
+      await registry.select(DATABASE_TARGET, "beta"),
+    ])
+      expect(selected).toMatchObject({ ok: true });
+    expect([
+      ...alpha.created,
+      ...beta.created,
+      ...ghidra.created,
+      ...kuna.created,
+    ]).toEqual([]);
+  });
+});
+
+describe("analysis provider registry: selection failure details", () => {
   it("returns actionable unknown, unavailable, and unsupported failures", async () => {
     const unavailable = candidate("alpha", { available: false });
     const registry = new AnalysisProviderRegistry([unavailable.provider]);
@@ -694,6 +759,7 @@ const candidate = (
   id: string,
   options: {
     readonly available?: boolean;
+    readonly unconfigured?: boolean;
     readonly profile?: "resolved" | "missing" | "error";
   } = {},
 ): CandidateFixture => {
@@ -717,7 +783,7 @@ const candidate = (
           }
         : {
             status: "unavailable",
-            code: "runtime_missing",
+            code: options.unconfigured ? "not_configured" : "runtime_missing",
             reason: `${id} runtime is unavailable`,
             diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
           },

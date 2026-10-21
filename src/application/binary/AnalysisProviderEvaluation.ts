@@ -11,6 +11,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
+  AnalysisProviderBoundClientFactory,
   AnalysisProfileResolutionOptions,
   AnalysisProviderCandidate,
   ProviderIdentity,
@@ -23,6 +24,7 @@ export interface AnalysisProviderCandidateEvaluation {
   readonly candidate: AnalysisProviderCandidate;
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
+  readonly createClient?: AnalysisProviderBoundClientFactory;
   readonly profileError?: AnalysisError;
 }
 
@@ -113,6 +115,9 @@ export const evaluateAnalysisProviderCandidate = async (
       candidate,
       status: eligibleStatus(status, profile.provider),
       profile,
+      ...(resolved.value.createClient === undefined
+        ? {}
+        : { createClient: resolved.value.createClient }),
     });
   } catch (cause: unknown) {
     void cause;

@@ -10,7 +10,10 @@ import type {
 } from "./AnalysisProviderRegistry.js";
 import type { ProviderCandidateEligibility } from "./AutoProviderSelectionPolicy.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import {
+  createAnalysisProfile,
+  type AnalysisProfileCommitment,
+} from "../../domain/analysisProfile.js";
 import { workflowSnapshotRecord } from "../WorkflowEvidence.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 
@@ -109,6 +112,10 @@ const boundSelection = (): AnalysisProviderSelection => {
   };
 };
 
+/** The binding profile a deep workflow would offer for this selection. */
+const boundProfile = (): AnalysisProfileCommitment | undefined =>
+  boundSelection().binding?.profile;
+
 const observation = (value: AnalysisProviderSelection) => {
   const created = createProviderSelectionEvidence(TARGET, value);
   if (!created.ok) throw created.error;
@@ -134,7 +141,7 @@ describe("provider selection Evidence", () => {
     // carries an analysis profile or claims a snapshot replay binding.
     expect(evidence.analysis_profile).toBeNull();
     expect(
-      workflowSnapshotRecord(evidence, "analyze_function"),
+      workflowSnapshotRecord(evidence, "analyze_function", boundProfile()),
     ).toBeUndefined();
     expect(evidence.predicate_type).toBe("rea.provider-selection");
     expect(evidence.operation).toBe("open_binary");
