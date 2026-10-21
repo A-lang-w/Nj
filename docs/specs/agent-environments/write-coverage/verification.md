@@ -41,7 +41,19 @@ Over the 50 published captures, against `ad8f674d`:
 - Six states change: those five captures and Airbyte.
 - A served smoke with manifests rebuilt by each tree applies all 39 served write tools here and all 35 on the base.
 
-## Re-recorded capture
+## Re-recorded captures
 
-The Homebox capture re-recorded with a read-back after each first write numbers assets in digit groups (`000-001`, `000-002`, …). Its
-create goes from `contradicted` to served with a `sequence` rule on `assetId`, and the smoke applies it and the delete.
+Captures re-recorded with a read-back after each first write and two scratch objects per write tool:
+
+- A Homebox pilot recording numbers assets in digit groups (`000-001`, `000-002`, …). Its create goes from
+  `contradicted` to served with a `sequence` rule on `assetId`, and the smoke applies it and the delete.
+- Five published environments rebuilt from such recordings (Navidrome, Lychee, Homebox, Directus, Linkding) go from 9
+  served write tools to 11, and the smoke applies all 11:
+  - Navidrome's playlist views stop requiring `imageAbsent`, which its new playlists leave out, so its playlist update is
+    served;
+  - Homebox's create is served, as in the pilot recording.
+- Jellyfin and Memos, re-recorded and rebuilt end to end with this change (manifest, bundle, smoke and both evaluation
+  models on 12 retrieval tasks each), serve no new write:
+  - Jellyfin's four bodiless write groups become tools, all withheld. Its playlists are created through
+    `POST /Playlists` but read back only through `/Items/{id}`, which stops that item view rendering from the state.
+  - Memos has none of the four shapes; it names items `memos/<id>`, which the identity proof does not match.
