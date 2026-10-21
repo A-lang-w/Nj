@@ -1,3 +1,4 @@
+import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
 import { setImmediate } from "node:timers/promises";
 import type { z } from "zod";
 import type { compareSourceToBundleCliInputSchema } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
@@ -35,7 +36,22 @@ export const resolveSourceToBundleReference = async (
         cause: signal?.reason,
       }),
     );
+  const headroom = requireAuthenticationHeadroom(read.value, {
+    operation: "compare_source_to_bundle",
+    path: reference.path,
+    description:
+      "Insufficient heap headroom to authenticate the historical source graph",
+  });
+  if (!headroom.ok) return headroom;
   const parsed = historicalSourceGraphSchema.safeParse(read.value);
+  // Dispatch aborts queued while synchronous validation and commitment hashing ran.
+  await setImmediate();
+  if (cancelled())
+    return err(
+      new AnalysisCancelledError("compare_source_to_bundle", {
+        cause: signal?.reason,
+      }),
+    );
   if (!parsed.success)
     return err(
       analysisInputErrorFromIssues(

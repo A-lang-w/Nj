@@ -1,3 +1,6 @@
+import { setImmediate } from "node:timers/promises";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { ok } from "../../domain/result.js";
 import { resolveSourceToBundleReference } from "../../application/javascript/SourceToBundleReference.js";
 import {
   requireAnalysisViewRetention,
@@ -66,16 +69,43 @@ export const registerCompareSourceToBundleTool = (
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);
+          const parent = result.value;
+          const comparison = sourceToBundleComparisonResultSchema.parse(
+            parent.normalized_result,
+          );
+          // Stage the projection against the owned parent before committing any session facts.
+          const selected =
+            input.view === undefined
+              ? ok(parent)
+              : inspectAnalysisViewValidated(
+                  {
+                    source: {
+                      kind: "retained-evidence",
+                      evidence_id: parent.evidence_id,
+                    },
+                    view: input.view,
+                  },
+                  (id) =>
+                    id === parent.evidence_id
+                      ? parent
+                      : options.evidenceById?.(id),
+                );
+          await setImmediate();
+          if (context.mcpReq.signal.aborted)
+            return server.delivery.toErrorToolResult(
+              new AnalysisCancelledError(contract.name, {
+                cause: context.mcpReq.signal.reason,
+              }),
+              contract.returnsTargetContent,
+            );
+          if (!selected.ok)
+            return server.delivery.toCallToolResult(selected, contract);
           const recorded = recordSessionEvidenceSources(
             options.recordEvidence,
             [parsed.application],
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, contract);
-          const comparison = sourceToBundleComparisonResultSchema.parse(
-            result.value.normalized_result,
-          );
-          const parent = result.value;
           const saved = recordApplicationResult(
             options,
             parent,
@@ -85,28 +115,12 @@ export const registerCompareSourceToBundleTool = (
           );
           if (saved !== undefined && !saved.ok)
             return server.delivery.toCallToolResult(saved, contract);
-          if (input.view === undefined)
-            return server.delivery.toEvidenceToolResult(
-              parent,
-              contract,
-              saved,
-            );
-          const selected = inspectAnalysisViewValidated(
-            {
-              source: {
-                kind: "retained-evidence",
-                evidence_id: parent.evidence_id,
-              },
-              view: input.view,
-            },
-            options.evidenceById,
-          );
-          if (!selected.ok)
-            return server.delivery.toCallToolResult(selected, contract);
           return server.delivery.toEvidenceToolResult(
             selected.value,
             contract,
-            options.recordEvidence?.(selected.value),
+            input.view === undefined
+              ? saved
+              : options.recordEvidence?.(selected.value),
           );
         },
       ),

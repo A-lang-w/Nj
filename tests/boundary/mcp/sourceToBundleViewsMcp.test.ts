@@ -158,6 +158,22 @@ const comparisonFixture = async (profile: "full" | "compact") => {
       }),
     );
   }
+  await writeFile(join(previous, "src/b.js"), "export const other = 1;\n");
+  await writeFile(
+    join(current, "dist/three.js"),
+    "var other = 2;\n//# sourceMappingURL=three.js.map\n",
+  );
+  await writeFile(
+    join(current, "dist/three.js.map"),
+    JSON.stringify({
+      version: 3,
+      file: "three.js",
+      sources: ["../src/b.js"],
+      sourcesContent: ["export const other = 2;\n"],
+      names: [],
+      mappings: "AAAA",
+    }),
+  );
   const reference = await importReferenceSource({
     root: previous,
     caller: "source-view-test",
@@ -273,6 +289,7 @@ const assertRetainedPages = async (
       coverage: { total: 2, next_offset: offset === 0 ? 1 : null },
     });
   }
+  await assertCandidateBoundaryPages(view);
   const weak = await view({
     kind: "source-to-bundle",
     collection: "candidates",
@@ -292,5 +309,58 @@ const assertRetainedPages = async (
       source_coverage: full.coverage,
       unmapped_current_node_count: full.unmapped_current_node_ids.length,
     },
+  });
+};
+
+const assertCandidateBoundaryPages = async (
+  view: (
+    value: Record<string, unknown>,
+  ) => Promise<ReturnType<typeof analysisViewResultSchema.parse>>,
+) => {
+  const boundary = await view({
+    kind: "source-to-bundle",
+    collection: "candidates",
+    fields: [],
+    offset: 1,
+    limit: 3,
+  });
+  expect(boundary).toMatchObject({
+    items: [
+      {
+        source_path: "src/a.js",
+        source_index: 0,
+        candidate_index: 1,
+        mapped: true,
+      },
+      {
+        source_path: "src/b.js",
+        source_index: 1,
+        candidate_index: 0,
+        mapped: true,
+      },
+      {
+        source_path: "src/other/a.js",
+        source_index: 2,
+        candidate_index: 0,
+        mapped: false,
+      },
+    ],
+    coverage: { total: 5, next_offset: 4, exhausted: false },
+  });
+  expect(
+    await view({
+      kind: "source-to-bundle",
+      collection: "candidates",
+      source_paths: ["src/a.js", "src/b.js"],
+      fields: [],
+      offset: 1,
+      limit: 2,
+    }),
+  ).toMatchObject({
+    items: [
+      { source_path: "src/a.js", source_index: 0, candidate_index: 1 },
+      { source_path: "src/b.js", source_index: 1, candidate_index: 0 },
+    ],
+    coverage: { total: 3, next_offset: null, exhausted: true },
   });
 };

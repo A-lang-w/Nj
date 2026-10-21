@@ -4,9 +4,11 @@ Issue #6112. Baseline: `main@aa51e4343963fdd0b97ec2ebdc3c41579fd9cb38`.
 Measured implementation: the production-file SHA-256 manifest in
 [source-to-bundle.json](source-to-bundle.json). These are working-tree
 measurements, not a claim that the baseline commit already contains the feature.
-The original cohort predates a CLI-only error-envelope compatibility fix, pinned
-separately in the JSON. Its invalid-application output was checked against the
-baseline and restored exactly; MCP producer/view code is unchanged.
+The original cohort predates the CLI error-envelope and review guard fixes,
+pinned separately in the JSON. The CLI invalid-application output was restored
+exactly. Post-review SDK tasks verify both output profiles against the independent
+oracle and preserve byte-identical complete comparison Evidence. Historical paired
+medians are not presented as new measurements of the later guard changes.
 
 ## Analyst question and correctness
 
@@ -161,3 +163,26 @@ cohort, add `--output-profile off`, use new `off-paired-*` directories and the
 `--pattern 'off-paired-*' --output "$LAB/costs-off.json"`. Retain the tarball,
 reference, transcripts, bundles, independent proofs and guard receipts locally.
 Never commit target binaries, dependency trees, credentials or generated builds.
+
+## Review guards and regression controls
+
+The file reader admits JSON assembly; a shared application guard additionally
+reserves live heap headroom before schema validation clones data and computes the
+root commitment. Evidence-file and historical-graph readers use the same owner,
+with their original operation-specific diagnostics. Validation yields before
+checking a pending cancellation, including validation failures. MCP computes its
+selected view before yielding and committing any application source, comparison,
+residual unknown or view to the session.
+
+Seven shared headroom/Evidence-reader tests pass. A separate 65-test focused run
+covers file cancellation, graph paths, actual SDK cancellation during validation
+and comparison, and cross-source pages with candidate counts 2/1/2. The latter
+checks original indices, totals and next offsets across boundaries and filters.
+All three new guard regressions fail in a negative control with those gates
+temporarily removed, then pass after restoration. Memory admission is an estimate;
+the reported hard process-family ceilings come from the experiment guard.
+
+Final additional public-package SDK tasks for both output profiles retain all
+180 source-file / 99 embedded-node / 210 relation oracle checks and byte-identical
+complete comparison Evidence. Their receipts, source hashes and costs are under
+`subsequent_review_guards` in the main JSON; they are excluded from paired medians.
