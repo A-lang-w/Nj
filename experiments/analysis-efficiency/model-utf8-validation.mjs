@@ -11,7 +11,10 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createRetainedQueryCaller } from "./retained-query-calls.mjs";
-import { finalizeRetainedQueryReceipt } from "./retained-query-finalization.mjs";
+import {
+  finalizeRetainedQueryReceipt,
+  publishRetainedQueryReceipt,
+} from "./retained-query-finalization.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -44,23 +47,43 @@ if (values.phase) {
   const provider = new ModelArtifactProvider();
   try {
     for (let index = 0; index < 7; index++) {
-      const start = performance.now();
-      const result = await provider.inspect({
-        path: values.artifact,
-        hash: "header",
-      });
-      const elapsed_ms = performance.now() - start;
-      assert.ok(result.ok, JSON.stringify(result));
-      assert.deepEqual(result.value, expected);
-      report.calls.push({
+      const sample = {
         phase: index === 0 ? "fresh" : "repeat",
-        elapsed_ms,
-      });
+        is_error: true,
+      };
+      const start = performance.now();
+      try {
+        const result = await provider.inspect({
+          path: values.artifact,
+          hash: "header",
+        });
+        sample.elapsed_ms = performance.now() - start;
+        assert.ok(result.ok, JSON.stringify(result));
+        assert.deepEqual(result.value, expected);
+        sample.is_error = false;
+      } catch (cause) {
+        sample.elapsed_ms ??= performance.now() - start;
+        sample.failure = String(cause?.stack ?? cause);
+        throw cause;
+      } finally {
+        report.calls.push(sample);
+      }
     }
     report.status = "passed";
+  } catch (cause) {
+    report.status = "failed";
+    report.failure = String(cause?.stack ?? cause);
+    process.exitCode = 1;
   } finally {
-    await provider.close();
-    await writeFile(join(values.output, "report.json"), JSON.stringify(report));
+    report.cleanup_failures = [];
+    try {
+      await provider.close();
+    } catch (cause) {
+      report.cleanup_failures.push(`provider: ${String(cause)}`);
+      report.status = "failed";
+    }
+    if (!(await publishRetainedQueryReceipt({ report, output: values.output })))
+      process.exitCode = 1;
   }
 } else {
   await runMcpTask();

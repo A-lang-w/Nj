@@ -425,5 +425,11 @@
     }
   ],
   "published_equivalent_source": "2f091ccc734d7bd945bd61432d41cf5ba68be12b",
-  "candidate_reproduction": "Use baseline_source plus the byte-identical src/model/GgufHeader.ts from published_equivalent_source; driver SHA-256 is pinned separately. Measured local candidate predates the integration rebase."
+  "candidate_reproduction": "Use baseline_source plus the byte-identical src/model/GgufHeader.ts from published_equivalent_source; driver SHA-256 is pinned separately. Measured local candidate predates the integration rebase.",
+  "post_review_receipt_fix": {
+    "measured_driver_version": "2f091ccc734d7bd945bd61432d41cf5ba68be12b",
+    "driver_sha256": "449860fb973418f2e3e51183a81be1e3111ffa6453de8208a4b175d3d410322f",
+    "publication_owner_sha256": "901092ae6dc7fda1a8869d62362a0a9f560e03d5ef5667a5c6ed660db000b9a2",
+    "validation": "3 new fault-injection regressions reject original driver and pass current; 11 shared receipt regressions pass. Real stories15M MCP and seven-inspection phase reruns qualify; original paired samples retain their measured driver hash."
+  }
 }

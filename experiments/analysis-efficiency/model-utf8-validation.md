@@ -133,3 +133,15 @@ only that finding. It is outside this change and is left unchanged. Initial
 control attempts lacked resolvable worker artifacts and are not clean controls.
 Development builds/checks used separate 6/8 GiB hard guards; runtime experiments
 retain their 4 GiB limit. No guard stop or OOM occurred.
+
+Greptile identified a receipt defect in the phase driver, not the model parser:
+failed inspections/assertions were not recorded before cleanup, and a close
+failure could suppress publication. Each attempted phase now records its cost
+and primary failure before cleanup. Phase and MCP paths share one atomic receipt
+publisher; cleanup failures are independent facts and cannot replace the primary
+failure. Three new fault-injection tests fail on the original driver and pass
+after the correction; all 11 existing shared receipt tests pass. These stand-ins
+qualify failure accounting only. Real stories15M MCP and seven-inspection phase
+reruns also pass with verified counters/cleanup. The original 36 paired samples
+keep their measured driver hash; the receipt records the post-review driver and
+publication-owner hashes separately. No timing cohort is relabeled.
