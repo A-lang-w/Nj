@@ -60,16 +60,14 @@ it("uses typed literal segments and marks property-name fallbacks inferred", () 
   });
   expect(facts.candidates[2]!.segments[1]!.origin).toBe("property-name");
 });
-it("joins unanchored typed trees from their inferred root without dropping missing ancestor segments", () => {
-  const facts = analyze(`const ROUTES={reports:{settings:{_$:'settings'}}};`);
+it("joins missing typed ancestor segments within a selected route-builder root", () => {
+  const facts = analyze(`defineRoutes({reports:{settings:{_$:'settings'}}});`);
   expect(facts.candidates.map(({ path }) => path)).toEqual([
     "/reports",
     "/reports/settings",
   ]);
-  expect(
-    facts.candidates.every(({ derivation }) => derivation === "inferred"),
-  ).toBe(true);
-  expect(facts.unresolved).toHaveLength(1);
+  expect(facts.candidates[0]!.derivation).toBe("inferred");
+  expect(facts.unresolved).toHaveLength(0);
 });
 it("does not reinterpret a typed descendant as a root after its parent was unresolved", () => {
   const facts = analyze(
@@ -211,4 +209,38 @@ it("distinguishes route-pattern markers, navigation query strings and Next asset
   expect(
     nextScriptBasePath("https://example.test/_next/static/chunks/1.js"),
   ).toBe("");
+});
+
+it("keeps rejected mutated configurations owned instead of reviving stale automatic roots", () => {
+  for (const code of [
+    `const routes=[{path:'/before',element:View}];routes[0].path='/after';useRoutes(routes);`,
+    `const routes=[{path:'/before',element:View}];const alias=routes;alias[0].path='/after';useRoutes(routes);`,
+    `let routes=[{path:'/before',element:View}];routes=[{path:'/after',element:View}];useRoutes(routes);`,
+  ]) {
+    const facts = analyze(code);
+    expect(facts.candidates).toEqual([]);
+    expect(facts.unresolved.length).toBeGreaterThan(0);
+  }
+});
+it("does not turn ordinary wrapper objects into route ancestry", () => {
+  const standard = analyze(
+    `const config={routes:[{path:'/reports',component:Reports}]};x(config);`,
+  );
+  expect(standard.candidates.map((row) => row.path)).toEqual(["/reports"]);
+  const typed = analyze(
+    `const config={ui:{routes:{reports:{_$:'reports',settings:{_$:'settings'}}}}};x(config);`,
+  );
+  expect(typed.candidates.map((row) => row.path)).toEqual([
+    "/reports",
+    "/reports/settings",
+  ]);
+  expect(typed.unresolved).toHaveLength(1);
+});
+it("leaves missing unbound typed ancestors unknown instead of inventing container segments", () => {
+  const facts = analyze(
+    `const config={reports:{settings:{_$:'settings'}}};x(config);`,
+  );
+  expect(facts.candidates.map((row) => row.path)).toEqual(["/settings"]);
+  expect(facts.candidates[0]!.derivation).toBe("inferred");
+  expect(facts.unresolved).toHaveLength(1);
 });

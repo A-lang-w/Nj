@@ -136,6 +136,30 @@ export const buildCapturedWebBundleAnalysis = (
             facts: analyzed?.route_facts ?? null,
           };
         }),
+        undefined,
+        [
+          ...(omittedScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-records" as const,
+                  count: omittedScripts,
+                  reason: captureBudgetReason("script records", omittedScripts),
+                },
+              ]),
+          ...(omittedSourceScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-sources" as const,
+                  count: omittedSourceScripts,
+                  reason: captureBudgetReason(
+                    "script source artifacts",
+                    omittedSourceScripts,
+                  ),
+                },
+              ]),
+        ],
       ),
     ),
     capture: buildCaptureObservation(

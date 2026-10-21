@@ -79,12 +79,12 @@ export class JavaScriptRouteScan {
     typed: boolean;
   }[] = [];
   readonly #automaticRoots: { node: t.ObjectExpression; typed: boolean }[] = [];
-  readonly #expanded = new WeakSet<t.Node>();
+  readonly #claimed = new WeakSet<t.Node>();
   readonly #seen = new Set<string>();
   readonly #literalPaths: { value: string; node: t.Node }[] = [];
   readonly #propertyValues = new WeakSet<t.Node>();
   readonly #fieldsCache = new WeakMap<t.ObjectExpression, Fields>();
-  readonly #objectParents = new WeakMap<
+  readonly #routeParents = new WeakMap<
     t.ObjectExpression,
     t.ObjectExpression
   >();
@@ -234,15 +234,26 @@ export class JavaScriptRouteScan {
       hasView ||=
         key === "element" || key === "Component" || key === "component";
       hasIndex ||= key === "index";
-      const parent = (child: t.ObjectExpression): void => {
-        if (this.#queue(child)) this.#objectParents.set(child, node);
-      };
-      if (t.isObjectExpression(property.value)) parent(property.value);
-      else if (t.isArrayExpression(property.value))
-        for (const child of property.value.elements) {
+    }
+    // Only router children establish path ancestry. Ordinary object wrappers
+    // can contain routes without contributing URL segments.
+    if (hasPath || hasView || hasIndex) {
+      for (const property of node.properties) {
+        if (
+          !t.isObjectProperty(property) ||
+          semanticStaticPropertyName(property.key, property.computed) !==
+            "children"
+        )
+          continue;
+        const children = t.isArrayExpression(property.value)
+          ? property.value.elements
+          : [property.value];
+        for (const child of children) {
           if (this.#result.capacity !== null) break;
-          if (t.isObjectExpression(child)) parent(child);
+          if (t.isObjectExpression(child) && this.#queue(child))
+            this.#routeParents.set(child, node);
         }
+      }
     }
     if (
       (typed || (hasView && (hasPath || hasChildren || hasIndex))) &&
@@ -273,18 +284,19 @@ export class JavaScriptRouteScan {
         );
         continue;
       }
+      this.#claimConfiguration(first, index);
       yield* this.#walk(first, call.node, call.typed, index);
     }
     for (const candidate of this.#automaticRoots) {
       if (this.#result.capacity !== null) break;
       yield;
       let root = candidate.node,
-        owned = this.#expanded.has(root);
+        owned = this.#claimed.has(root);
       while (!owned) {
-        const parent = this.#objectParents.get(root);
+        const parent = this.#routeParents.get(root);
         if (parent === undefined) break;
         root = parent;
-        owned = this.#expanded.has(root);
+        owned = this.#claimed.has(root);
       }
       if (!owned) {
         this.#unknown(
@@ -292,6 +304,7 @@ export class JavaScriptRouteScan {
           root,
           "The routing root is inferred from configuration syntax without a bound route-builder call.",
         );
+        this.#claimConfiguration(root, index);
         yield* this.#walk(root, root, candidate.typed, index, true);
       }
     }
@@ -404,6 +417,68 @@ export class JavaScriptRouteScan {
     }
   }
 
+  /** Ownership is independent of whether the selected value is unchanged. */
+  #claimConfiguration(root: t.Node, index: JavaScriptBindingIndex): void {
+    const pending: t.Node[] = [];
+    const admit = (raw: t.Node | null | undefined): void => {
+      if (raw == null) return;
+      const node = unwrapJavaScriptExpression(raw).node;
+      if (
+        !(
+          t.isObjectExpression(node) ||
+          t.isArrayExpression(node) ||
+          t.isIdentifier(node) ||
+          t.isMemberExpression(node) ||
+          t.isOptionalMemberExpression(node) ||
+          t.isConditionalExpression(node) ||
+          t.isLogicalExpression(node) ||
+          t.isSequenceExpression(node) ||
+          t.isAssignmentExpression(node) ||
+          t.isSpreadElement(node) ||
+          t.isCallExpression(node) ||
+          t.isOptionalCallExpression(node)
+        )
+      )
+        return;
+      if (!this.#claimed.has(node) && this.#queue(node)) {
+        this.#claimed.add(node);
+        pending.push(node);
+      }
+    };
+    admit(root);
+    while (pending.length > 0 && this.#result.capacity === null) {
+      const node = pending.pop()!;
+      if (t.isIdentifier(node)) {
+        const binding = index.bindingForReferenceAt(node);
+        // All source initializers belong to this binding, even when mutation,
+        // conditional execution or projection prevents trusting a current value.
+        for (const value of binding?.initializers ?? []) admit(value.node);
+        for (const value of binding?.referenceInitializers ?? [])
+          admit(value.node);
+      } else if (t.isObjectExpression(node)) {
+        for (const property of node.properties) {
+          if (t.isObjectProperty(property)) admit(property.value);
+          else if (t.isSpreadElement(property)) admit(property.argument);
+        }
+      } else if (t.isArrayExpression(node))
+        for (const child of node.elements) admit(child);
+      else if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+        admit(node.object);
+      else if (t.isConditionalExpression(node)) {
+        admit(node.consequent);
+        admit(node.alternate);
+      } else if (t.isLogicalExpression(node)) {
+        admit(node.left);
+        admit(node.right);
+      } else if (t.isSequenceExpression(node))
+        for (const child of node.expressions) admit(child);
+      else if (t.isAssignmentExpression(node)) admit(node.right);
+      else if (t.isSpreadElement(node)) admit(node.argument);
+      else if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+        for (const child of node.arguments) admit(child);
+    }
+  }
+
   *#walk(
     root: t.Node,
     site: t.Node,
@@ -444,7 +519,6 @@ export class JavaScriptRouteScan {
         );
         continue;
       }
-      this.#expanded.add(node);
       const ancestry = { node, previous: frame.ancestry };
       if (t.isArrayExpression(node)) {
         for (

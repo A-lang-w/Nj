@@ -141,7 +141,7 @@ it("keeps source gaps separate from pattern counts and preserves partial coverag
   expect(gaps.items.length).toBeGreaterThan(0);
   expect(gaps.source_coverage.candidate_enumeration).toBe("partial");
   const summary = query(source, { collection: "summary" });
-  expect(summary.summary!.statistics.route_patterns).toBe(2);
+  expect(summary.summary!.statistics.route_patterns).toBe(1);
   expect(summary.summary!.gaps).toBeGreaterThan(0);
   expect(summary.items).toEqual([]);
 });

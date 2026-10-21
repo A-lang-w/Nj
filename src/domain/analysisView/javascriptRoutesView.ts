@@ -12,6 +12,7 @@ import {
   javaScriptRouteOccurrenceSchema,
   javaScriptRouteInventorySourceSchema,
   javaScriptRouteGapSchema,
+  javaScriptRouteCaptureOmissionSchema,
   type JavaScriptRouteInventory,
   type JavaScriptInventoryRoute,
   type JavaScriptRouteOccurrence,
@@ -160,6 +161,13 @@ export const javaScriptRoutesViewItemsSchema = z.union([
   ),
 ]);
 export const javaScriptRoutesViewSummarySchema = z.strictObject({
+  reported_capture_omissions: z.array(
+    z.strictObject({
+      id: javaScriptRouteGapSchema.shape.id,
+      reason: z.string(),
+      ...javaScriptRouteCaptureOmissionSchema.shape,
+    }),
+  ),
   statistics: javaScriptRouteInventorySchema.shape.statistics,
   gaps: z.number().int().nonnegative(),
   source_status_counts: z.strictObject({
@@ -243,6 +251,11 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     sources: table(inventory.sources),
     gaps: table(inventory.unknowns),
     summary: {
+      reported_capture_omissions: inventory.unknowns.flatMap((gap) =>
+        gap.capture_omission === undefined
+          ? []
+          : [{ id: gap.id, reason: gap.reason, ...gap.capture_omission }],
+      ),
       statistics: inventory.statistics,
       gaps: inventory.unknowns.length,
       source_status_counts,

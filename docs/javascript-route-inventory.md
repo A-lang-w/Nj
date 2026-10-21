@@ -61,6 +61,9 @@ The shared parser handles literal router calls, nested route objects, typed
 `_$` trees with explicitly inferred property-name fallbacks, Next App Router
 page paths, and navigation targets. It follows stable lexical bindings and
 keeps unresolved parents, mutations, spreads, and dynamic fields explicit.
+A selected route-builder root owns its configuration even when mutation prevents
+trusting its value. Ordinary wrapper keys do not become route ancestors. Missing
+outer ancestors of unbound typed subtrees remain unknown rather than invented.
 Generic Next runtime path constants require a top-level application segment
 supported by structural or navigation candidates across the supplied sources.
 This limits framework filesystem noise, while leaving unsupported candidates
@@ -74,6 +77,11 @@ can differ from the routing base. Every affected occurrence keeps
 `unprefixed_path`, `inferred_base_path`, and low confidence. `system` classification
 is explicitly a path-name heuristic; `page` uses page-file or structured/typed configuration support. Name-only
 `route`/`addRoute` calls remain `unknown` because they can also register server APIs.
+
+Known capture omissions remain inline in `summary.reported_capture_omissions`
+and queryable as `unknowns` of kind `capture-omission`. Each keeps a stable gap ID,
+its script-record/script-source unit, and the reported count (including `null`
+for unknown). They do not invent missing script identities or source ranges.
 
 Counts describe deduplicated patterns in the provided code sources. They are
 not a denominator for complete application or capture coverage. In particular,

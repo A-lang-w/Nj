@@ -68,6 +68,10 @@ export const javaScriptInventoryRouteSchema = z.strictObject({
   source_count: z.number().int().nonnegative(),
   primary_occurrence_id: javaScriptRouteOccurrenceSchema.shape.id,
 });
+export const javaScriptRouteCaptureOmissionSchema = z.strictObject({
+  unit: z.enum(["script-records", "script-sources"]),
+  count: z.number().int().nonnegative().nullable(),
+});
 export const javaScriptRouteGapSchema = z.strictObject({
   id: z.string().regex(/^jsg:[a-f0-9]{32}$/u),
   source_id: sourceShape.id.nullable(),
@@ -76,9 +80,11 @@ export const javaScriptRouteGapSchema = z.strictObject({
     "interpretation",
     "inferred-base",
     "capacity",
+    "capture-omission",
   ]),
   source_range: javaScriptRouteRangeSchema.nullable(),
   reason: z.string(),
+  capture_omission: javaScriptRouteCaptureOmissionSchema.exactOptional(),
 });
 const capacitySchema = z.strictObject({
   limit_bytes: z.number().int().nonnegative(),
@@ -216,13 +222,7 @@ export const javaScriptRouteInventorySchema = inventoryShape.superRefine(
     for (const gap of value.unknowns) {
       if (
         gaps.has(gap.id) ||
-        gap.id !==
-          lookupId("jsg", [
-            gap.source_id,
-            gap.kind,
-            gap.source_range,
-            gap.reason,
-          ]) ||
+        gap.id !== routeGapId(gap) ||
         (gap.source_id !== null && !sources.has(gap.source_id))
       )
         context.addIssue({
@@ -230,6 +230,18 @@ export const javaScriptRouteInventorySchema = inventoryShape.superRefine(
           path: ["unknowns"],
           message:
             "An attributed route gap requires a unique content-bound identity and retained source",
+        });
+      if (
+        (gap.kind === "capture-omission") !==
+          (gap.capture_omission !== undefined) ||
+        (gap.kind === "capture-omission" &&
+          (gap.source_id !== null || gap.source_range !== null))
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["unknowns"],
+          message:
+            "Capture omissions keep capture-level counts and have no invented source or range.",
         });
       gaps.add(gap.id);
     }
@@ -269,6 +281,19 @@ const hash = (value: JsonValue): string =>
   digestCanonicalValue(value, "JavaScript route fact");
 const lookupId = (prefix: string, value: JsonValue): string =>
   `${prefix}:${hash(value).slice(0, 32)}`;
+const routeGapId = (
+  gap: Omit<z.infer<typeof javaScriptRouteGapSchema>, "id">,
+): string =>
+  lookupId("jsg", [
+    gap.source_id,
+    gap.kind,
+    gap.source_range,
+    gap.reason,
+    ...(gap.capture_omission === undefined ? [] : [gap.capture_omission]),
+  ]);
+export type JavaScriptRouteCaptureOmission = NonNullable<
+  z.infer<typeof javaScriptRouteGapSchema>["capture_omission"]
+> & { readonly reason: string };
 const routeId = (path: string): string => lookupId("jsr", path);
 const order = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const ranks = { low: 0, medium: 1, high: 2 } as const;
@@ -312,6 +337,7 @@ const INVENTORY_LIMITATIONS = [
 export function* buildJavaScriptRouteInventorySteps(
   inputs: readonly JavaScriptRouteInventoryInput[],
   byteBudget = JAVASCRIPT_STATIC_FACT_BYTES,
+  captureOmissions: readonly JavaScriptRouteCaptureOmission[] = [],
 ): Generator<void, JavaScriptRouteInventory> {
   const sources: JavaScriptRouteInventorySource[] = [],
     occurrences: JavaScriptRouteOccurrence[] = [],
@@ -374,24 +400,32 @@ export function* buildJavaScriptRouteInventorySteps(
     accounted += bytes;
     return true;
   };
-  const gap = (
-    source: JavaScriptRouteInventorySource,
-    kind: z.infer<typeof javaScriptRouteGapSchema>["kind"],
-    reason: string,
-    source_range: z.infer<typeof javaScriptRouteRangeSchema> | null = null,
+  const retainGap = (
+    body: Omit<z.infer<typeof javaScriptRouteGapSchema>, "id">,
   ): void => {
-    const value = {
-      id: lookupId("jsg", [source.id, kind, source_range, reason]),
-      source_id: source.id,
-      kind,
-      source_range,
-      reason,
-    };
+    const value = { id: routeGapId(body), ...body };
     if (!seenGaps.has(value.id) && reserve(value)) {
       unknowns.push(value);
       seenGaps.add(value.id);
     }
   };
+  const gap = (
+    source: JavaScriptRouteInventorySource,
+    kind: z.infer<typeof javaScriptRouteGapSchema>["kind"],
+    reason: string,
+    source_range: z.infer<typeof javaScriptRouteRangeSchema> | null = null,
+  ): void => retainGap({ source_id: source.id, kind, source_range, reason });
+  for (const { unit, count, reason } of captureOmissions) {
+    yield;
+    partial = true;
+    retainGap({
+      source_id: null,
+      kind: "capture-omission",
+      source_range: null,
+      reason,
+      capture_omission: { unit, count },
+    });
+  }
   const manifestIds: string[] = [];
   for (const input of inputs) {
     yield;
