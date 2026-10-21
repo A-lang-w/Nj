@@ -1,16 +1,29 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import {
   DEFAULT_CONTEXT_TOKENS,
   DEFAULT_PAGE_LIMIT,
 } from "../config/constants.js";
 import { db } from "../db/connection.js";
-import { threads, messages } from "../db/schema.js";
+import {
+  threads,
+  messages,
+  memories,
+  skills,
+  mcpServers,
+  agents,
+  files,
+} from "../db/schema.js";
 import { emitEvent } from "../domain/events.js";
 import { logger } from "../lib/logger.js";
 import { streamCompletion } from "../llm/client.js";
-import { safeParseJson, threadMetadataSchema } from "../db/validators.js";
+import {
+  safeParseJson,
+  skillTriggerPatternsSchema,
+  threadMetadataSchema,
+} from "../db/validators.js";
 import { Ok, Err, StorageError } from "../lib/result.js";
 import type { Result } from "../lib/result.js";
+import { formatAgentTools, probeEnabledMcpServers } from "./mcp-runtime.js";
 
 /**
  * Creates a new thread within a workspace and emits a creation event.
@@ -44,6 +57,73 @@ export async function createThread(
     return Err(
       new StorageError(
         err instanceof Error ? err.message : "Failed to create thread",
+      ),
+    );
+  }
+}
+
+export async function updateThread(
+  threadId: number,
+  workspaceId: number,
+  updates: {
+    title?: string;
+    status?: "active" | "archived" | "completed";
+    agentId?: number | null;
+  },
+): Promise<Result<typeof threads.$inferSelect, StorageError>> {
+  try {
+    const patch: Partial<typeof threads.$inferInsert> = {
+      updatedAt: new Date(),
+    };
+    if (updates.title !== undefined) patch.title = updates.title;
+    if (updates.status !== undefined) patch.status = updates.status;
+    if (updates.agentId !== undefined) patch.agentId = updates.agentId;
+    const [updated] = await db
+      .update(threads)
+      .set(patch)
+      .where(
+        and(eq(threads.id, threadId), eq(threads.workspaceId, workspaceId)),
+      )
+      .returning();
+    if (!updated) {
+      return Err(new StorageError("Thread not found"));
+    }
+    emitEvent("thread.updated", {
+      id: updated.id,
+      workspaceId,
+      status: updated.status,
+      title: updated.title,
+    });
+    return Ok(updated);
+  } catch (err) {
+    return Err(
+      new StorageError(
+        err instanceof Error ? err.message : "Failed to update thread",
+      ),
+    );
+  }
+}
+
+export async function deleteThread(
+  threadId: number,
+  workspaceId: number,
+): Promise<Result<{ id: number }, StorageError>> {
+  try {
+    const [deleted] = await db
+      .delete(threads)
+      .where(
+        and(eq(threads.id, threadId), eq(threads.workspaceId, workspaceId)),
+      )
+      .returning({ id: threads.id });
+    if (!deleted) {
+      return Err(new StorageError("Thread not found"));
+    }
+    emitEvent("thread.deleted", { id: deleted.id, workspaceId });
+    return Ok(deleted);
+  } catch (err) {
+    return Err(
+      new StorageError(
+        err instanceof Error ? err.message : "Failed to delete thread",
       ),
     );
   }
@@ -175,27 +255,239 @@ function estimateTokens(content: string): number {
  * @returns An ordered message array beginning with the system prompt followed by
  *   as many recent historical messages as fit within the remaining token budget.
  */
+/**
+ * Builds the system prompt with workspace memories, matching skills,
+ * agent tools, thread files, and probed MCP tool catalogs. Keeps agent
+ * identity first.
+ */
+async function buildAugmentedSystemPrompt(
+  workspaceId: number,
+  threadId: number,
+  agentSystemPrompt: string,
+  latestUserText: string | null,
+  agentToolsJson: unknown,
+): Promise<string> {
+  const sections: string[] = [agentSystemPrompt];
+
+  const agentToolsSection = formatAgentTools(agentToolsJson);
+  if (agentToolsSection) sections.push(agentToolsSection);
+
+  try {
+    const memoryRows = await db
+      .select({ content: memories.content })
+      .from(memories)
+      .where(eq(memories.workspaceId, workspaceId))
+      .orderBy(desc(memories.createdAt))
+      .limit(12);
+    if (memoryRows.length > 0) {
+      sections.push(
+        "## Workspace memories\n" +
+          memoryRows.map((m, i) => `${i + 1}. ${m.content}`).join("\n"),
+      );
+    }
+  } catch (err) {
+    logger.warn("Failed to load memories for chat context", {
+      workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    const skillRows = await db
+      .select({
+        name: skills.name,
+        instructions: skills.instructions,
+        triggerPatternsJson: skills.triggerPatternsJson,
+      })
+      .from(skills)
+      .where(
+        and(
+          eq(skills.workspaceId, workspaceId),
+          eq(skills.approvalStatus, "approved"),
+        ),
+      )
+      .orderBy(desc(skills.createdAt))
+      .limit(50);
+    const withPatterns = skillRows.map((skill) => ({
+      ...skill,
+      patterns: safeParseJson(
+        skill.triggerPatternsJson,
+        skillTriggerPatternsSchema,
+        { table: "skills", column: "trigger_patterns_json" },
+        [] as string[],
+      ),
+    }));
+    const triggered = withPatterns.filter((skill) => {
+      if (skill.patterns.length === 0 || !latestUserText) return false;
+      const hay = latestUserText.toLowerCase();
+      return skill.patterns.some((p) => {
+        try {
+          return new RegExp(p, "i").test(latestUserText);
+        } catch {
+          return hay.includes(p.toLowerCase());
+        }
+      });
+    });
+    const alwaysOn = withPatterns.filter((s) => s.patterns.length === 0);
+    // Prefer pattern-matched skills; otherwise a few always-on skills.
+    const chosen =
+      triggered.length > 0 ? triggered.slice(0, 5) : alwaysOn.slice(0, 3);
+    if (chosen.length > 0) {
+      sections.push(
+        "## Active skills\n" +
+          chosen.map((s) => `### ${s.name}\n${s.instructions}`).join("\n\n"),
+      );
+    }
+  } catch (err) {
+    logger.warn("Failed to load skills for chat context", {
+      workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    const threadFiles = await db
+      .select({
+        id: files.id,
+        filename: files.filename,
+        mimeType: files.mimeType,
+        sizeBytes: files.sizeBytes,
+      })
+      .from(files)
+      .where(
+        and(eq(files.workspaceId, workspaceId), eq(files.threadId, threadId)),
+      )
+      .orderBy(desc(files.createdAt))
+      .limit(20);
+    if (threadFiles.length > 0) {
+      sections.push(
+        "## Thread attachments\n" +
+          threadFiles
+            .map(
+              (f) =>
+                `- id=${f.id} ${f.filename} (${f.mimeType}, ${f.sizeBytes} bytes). Download via GET /api/files/${f.id}/content when the user needs the bytes.`,
+            )
+            .join("\n"),
+      );
+    }
+  } catch (err) {
+    logger.warn("Failed to load thread files for chat context", {
+      workspaceId,
+      threadId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    const servers = await db
+      .select({
+        name: mcpServers.name,
+        transportType: mcpServers.transportType,
+        configJson: mcpServers.configJson,
+      })
+      .from(mcpServers)
+      .where(
+        and(
+          eq(mcpServers.workspaceId, workspaceId),
+          eq(mcpServers.isEnabled, true),
+        ),
+      )
+      .limit(8);
+    if (servers.length > 0) {
+      const probes = await probeEnabledMcpServers(servers);
+      const lines = probes.map((p) => {
+        if (p.ok && p.tools.length > 0) {
+          const toolLines = p.tools
+            .map((t) =>
+              t.description
+                ? `  - ${t.name}: ${t.description}`
+                : `  - ${t.name}`,
+            )
+            .join("\n");
+          return `- ${p.serverName} (${p.transportType}) tools:\n${toolLines}`;
+        }
+        if (p.ok) {
+          return `- ${p.serverName} (${p.transportType}): connected; no tools advertised`;
+        }
+        return `- ${p.serverName} (${p.transportType}): unavailable — ${p.error ?? "probe failed"}`;
+      });
+      sections.push(
+        "## MCP servers (local)\n" +
+          lines.join("\n") +
+          "\nPrefer answering with the tools and skills above when they apply. Tool execution is not wired into this chat loop; describe which tool the user should run or how to invoke it.",
+      );
+    }
+  } catch (err) {
+    logger.warn("Failed to load MCP servers for chat context", {
+      workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return sections.join("\n\n");
+}
+
 async function prepareLlmMessages(
   threadId: number,
   agentSystemPrompt: string,
   maxContextTokens = DEFAULT_CONTEXT_TOKENS,
 ): Promise<Array<{ role: "user" | "assistant" | "system"; content: string }>> {
-  const systemTokens = estimateTokens(agentSystemPrompt);
-  let remainingBudget = Math.max(0, maxContextTokens - systemTokens);
+  const [thread] = await db
+    .select({
+      workspaceId: threads.workspaceId,
+      agentId: threads.agentId,
+    })
+    .from(threads)
+    .where(eq(threads.id, threadId))
+    .limit(1);
+  const workspaceId = thread?.workspaceId;
+
+  let agentToolsJson: unknown = [];
+  if (thread?.agentId != null && workspaceId != null) {
+    try {
+      const [agent] = await db
+        .select({ toolsJson: agents.toolsJson })
+        .from(agents)
+        .where(
+          and(
+            eq(agents.id, thread.agentId),
+            eq(agents.workspaceId, workspaceId),
+          ),
+        )
+        .limit(1);
+      agentToolsJson = agent?.toolsJson ?? [];
+    } catch (err) {
+      logger.warn("Failed to load agent tools for chat context", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   // Fetch messages newest-first so we can greedily fill the budget from the
   // most recent end of the conversation without knowing the total row count.
-  // A conservative SQL LIMIT bounds the row set returned to the client; the
-  // greedy loop below still enforces the exact token budget. Threads whose
-  // relevant history exceeds this cap would benefit from a precomputed
-  // token_count column and a running-sum query, but the limit prevents
-  // unbounded fetches for typical workloads without schema changes.
   const candidates = await db
     .select({ role: messages.role, content: messages.content })
     .from(messages)
     .where(eq(messages.threadId, threadId))
     .orderBy(desc(messages.createdAt))
     .limit(200);
+
+  const latestUserText =
+    candidates.find((m) => m.role === "user")?.content ?? null;
+  const systemPrompt =
+    workspaceId != null
+      ? await buildAugmentedSystemPrompt(
+          workspaceId,
+          threadId,
+          agentSystemPrompt,
+          latestUserText,
+          agentToolsJson,
+        )
+      : agentSystemPrompt;
+
+  const systemTokens = estimateTokens(systemPrompt);
+  let remainingBudget = Math.max(0, maxContextTokens - systemTokens);
 
   const selected: Array<{
     role: "user" | "assistant" | "system";
@@ -213,10 +505,9 @@ async function prepareLlmMessages(
     });
   }
 
-  // Reverse to restore chronological order (oldest → newest).
   selected.reverse();
 
-  return [{ role: "system" as const, content: agentSystemPrompt }, ...selected];
+  return [{ role: "system" as const, content: systemPrompt }, ...selected];
 }
 
 /**

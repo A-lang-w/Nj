@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import FocusTrap from "focus-trap-react";
 import { useUiStore } from "@/stores/ui-store";
-import { apiGet, apiDelete } from "@/lib/api-client";
+import { apiGet, apiPost, apiDelete } from "@/lib/api-client";
 import type { Memory } from "@/types/api";
 import {
   Brain,
@@ -11,6 +12,7 @@ import {
   List,
   LayoutGrid,
   MoreHorizontal,
+  X,
 } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -22,6 +24,7 @@ export function MemoriesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const requestIdRef = useRef(0);
 
@@ -179,10 +182,10 @@ export function MemoriesPage() {
               </button>
             </div>
             <button
-              disabled
-              title="Add memory — coming soon"
-              aria-label="Add memory — coming soon"
-              className="inline-flex shrink-0 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md font-medium text-sm opacity-50"
+              type="button"
+              onClick={() => setShowCreate(true)}
+              aria-label="Add memory"
+              className="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md font-medium text-sm"
               style={{
                 backgroundColor: COLORS.textPrimary,
                 color: COLORS.bg,
@@ -454,6 +457,153 @@ export function MemoriesPage() {
           </ul>
         )}
       </div>
+
+      {showCreate && (
+        <CreateMemoryDialog
+          workspaceId={activeWorkspaceId}
+          onClose={() => setShowCreate(false)}
+          onCreated={(memory) => {
+            setMemories((prev) => [memory, ...prev]);
+            setShowCreate(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function CreateMemoryDialog({
+  workspaceId,
+  onClose,
+  onCreated,
+}: {
+  workspaceId: number;
+  onClose: () => void;
+  onCreated: (memory: Memory) => void;
+}) {
+  const [content, setContent] = useState("");
+  const [tags, setTags] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!content.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const tagList = tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const created = await apiPost<Memory>("/memories", {
+        workspaceId,
+        content: content.trim(),
+        tags: tagList,
+      });
+      onCreated(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create memory");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FocusTrap
+      active
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: () => {
+          onClose();
+          return false;
+        },
+      }}
+    >
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add memory"
+          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+              Add memory
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close dialog"
+              className="rounded-lg p-3 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+            <div>
+              <label
+                htmlFor="memory-content"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+              >
+                Content
+              </label>
+              <textarea
+                id="memory-content"
+                required
+                rows={5}
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                placeholder="Something the agent should remember…"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="memory-tags"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+              >
+                Tags (comma-separated)
+              </label>
+              <input
+                id="memory-tags"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                placeholder="preference, project"
+              />
+            </div>
+            {error && (
+              <p
+                role="alert"
+                className="text-sm text-red-600 dark:text-red-400"
+              >
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submitting || !content.trim()}
+                className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-950 disabled:opacity-50"
+              >
+                {submitting ? "Saving…" : "Save memory"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </FocusTrap>
   );
 }

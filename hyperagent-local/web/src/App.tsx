@@ -62,6 +62,11 @@ const SettingsPage = lazy(() =>
     default: m.SettingsPage,
   })),
 );
+const LibraryPage = lazy(() =>
+  import("@/components/library/LibraryPage").then((m) => ({
+    default: m.LibraryPage,
+  })),
+);
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
@@ -161,6 +166,7 @@ export default function App() {
               <Route path="/memories" element={<MemoriesPage />} />
               <Route path="/inbox" element={<InboxPage />} />
               <Route path="/marketplace" element={<MarketplacePage />} />
+              <Route path="/library" element={<LibraryPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/threads" replace />} />

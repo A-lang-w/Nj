@@ -13,6 +13,7 @@ import {
   Brain,
   Store,
   Settings,
+  Library,
 } from "lucide-react";
 
 const MAX_THREAD_RESULTS = 5;
@@ -62,6 +63,7 @@ export function CommandPalette() {
       { label: "Agents", path: "/agents", icon: Bot },
       { label: "Skills", path: "/skills", icon: Sparkles },
       { label: "Memories", path: "/memories", icon: Brain },
+      { label: "Library", path: "/library", icon: Library },
       { label: "Marketplace", path: "/marketplace", icon: Store },
       { label: "Settings", path: "/settings", icon: Settings },
     ] as const;

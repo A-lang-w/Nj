@@ -20,6 +20,8 @@ import {
   createThread,
   getThreads,
   addMessage,
+  updateThread,
+  deleteThread,
   streamAssistantResponse,
 } from "../services/thread-service.js";
 import { streamSSE } from "hono/streaming";
@@ -174,6 +176,98 @@ threadsRouter.get("/:id", async (c) => {
   // The query pages newest-first for cursor pagination, but consumers render
   // top-to-bottom and append live messages at the end; return chronological.
   return c.json({ ...thread, messages: msgs.reverse() });
+});
+
+threadsRouter.patch("/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const authWorkspaceId = await authorizeResourceOwnership(
+    threads,
+    threads.id,
+    threads.workspaceId,
+    id,
+    c,
+  );
+  if (authWorkspaceId == null) return c.json({ error: "Not found" }, 404);
+  const parsed = await readJsonBody(c);
+  if (!parsed.ok) return c.json({ error: parsed.error.message }, 400);
+  const body = parsed.value;
+  const updates: {
+    title?: string;
+    status?: "active" | "archived" | "completed";
+    agentId?: number | null;
+  } = {};
+  if (body.title !== undefined) {
+    if (typeof body.title !== "string") {
+      return c.json({ error: "title must be a string" }, 400);
+    }
+    if (body.title.length > MAX_THREAD_TITLE_LENGTH) {
+      return c.json(
+        {
+          error: `title must be at most ${MAX_THREAD_TITLE_LENGTH} characters`,
+        },
+        400,
+      );
+    }
+    updates.title = body.title.trim() || "Untitled";
+  }
+  if (body.status !== undefined) {
+    if (
+      body.status !== "active" &&
+      body.status !== "archived" &&
+      body.status !== "completed"
+    ) {
+      return c.json(
+        { error: "status must be active, archived, or completed" },
+        400,
+      );
+    }
+    updates.status = body.status;
+  }
+  if (body.agentId !== undefined) {
+    if (body.agentId !== null && typeof body.agentId !== "number") {
+      return c.json({ error: "agentId must be a number or null" }, 400);
+    }
+    if (typeof body.agentId === "number") {
+      const agentWorkspaceId = await authorizeResourceOwnership(
+        agents,
+        agents.id,
+        agents.workspaceId,
+        body.agentId,
+        c,
+      );
+      if (agentWorkspaceId === null || agentWorkspaceId !== authWorkspaceId) {
+        return c.json({ error: "Not found" }, 404);
+      }
+    }
+    updates.agentId = body.agentId;
+  }
+  if (Object.keys(updates).length === 0) {
+    return c.json({ error: "No updates provided" }, 400);
+  }
+  const result = await updateThread(id, authWorkspaceId, updates);
+  if (!result.ok) {
+    const status = result.error.message === "Thread not found" ? 404 : 500;
+    return c.json({ error: result.error.message }, status);
+  }
+  return c.json(result.value);
+});
+
+threadsRouter.delete("/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const authWorkspaceId = await authorizeResourceOwnership(
+    threads,
+    threads.id,
+    threads.workspaceId,
+    id,
+    c,
+  );
+  if (authWorkspaceId == null) return c.json({ error: "Not found" }, 404);
+  const result = await deleteThread(id, authWorkspaceId);
+  if (!result.ok) {
+    const status = result.error.message === "Thread not found" ? 404 : 500;
+    return c.json({ error: result.error.message }, status);
+  }
+  return c.json({ success: true });
 });
 
 threadsRouter.post("/:id/messages", async (c) => {

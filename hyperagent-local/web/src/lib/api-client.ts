@@ -174,6 +174,18 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   return handleResponse<T>(response, url, init);
 }
 
+export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const url = `${BASE}${path}`;
+  const init: RequestInit = {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  const response = await fetch(url, init);
+  return handleResponse<T>(response, url, init);
+}
+
 export async function apiDelete(path: string): Promise<void> {
   const url = `${BASE}${path}`;
   const init: RequestInit = {

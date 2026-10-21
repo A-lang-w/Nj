@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { Thread, Message } from "@/types/api";
-import { apiGet, apiPost } from "@/lib/api-client";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api-client";
 
 interface ThreadsResponse {
   items: Thread[];
@@ -39,6 +39,11 @@ interface ThreadsState {
     agentId?: number | null,
     title?: string,
   ) => Promise<Thread>;
+  updateThread: (
+    id: number,
+    updates: Partial<Pick<Thread, "title" | "status" | "agentId">>,
+  ) => Promise<Thread>;
+  deleteThread: (id: number) => Promise<void>;
   sendMessage: (threadId: number, content: string) => Promise<void>;
   /** Bind a fresh streaming session to a thread without posting (autostart). */
   armStream: (threadId: number) => void;
@@ -257,6 +262,31 @@ export const useThreadsStore = create<ThreadsState>((set, get) => {
       listEpoch++;
       set((s) => ({ threads: [thread, ...s.threads] }));
       return thread;
+    },
+
+    updateThread: async (id, updates) => {
+      const generation = sessionGeneration;
+      const updated = await apiPatch<Thread>(`/threads/${id}`, updates);
+      if (generation !== sessionGeneration) return updated;
+      set((s) => ({
+        threads: s.threads.map((t) => (t.id === id ? updated : t)),
+        activeThread:
+          s.activeThread?.id === id
+            ? { ...s.activeThread, ...updated }
+            : s.activeThread,
+      }));
+      return updated;
+    },
+
+    deleteThread: async (id) => {
+      const generation = sessionGeneration;
+      await apiDelete(`/threads/${id}`);
+      if (generation !== sessionGeneration) return;
+      listEpoch++;
+      set((s) => ({
+        threads: s.threads.filter((t) => t.id !== id),
+        activeThread: s.activeThread?.id === id ? null : s.activeThread,
+      }));
     },
 
     sendMessage: async (threadId: number, content: string) => {

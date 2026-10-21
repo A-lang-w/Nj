@@ -17,8 +17,6 @@ import {
   Store,
   PanelLeftClose,
   PanelLeftOpen,
-  GraduationCap,
-  FolderKanban,
   Library,
   MoreHorizontal,
 } from "lucide-react";
@@ -73,49 +71,6 @@ const NavLink = memo(function NavLink({
       />
       {!collapsed && <span className="truncate">{label}</span>}
     </Link>
-  );
-});
-
-// Destinations with no registered route render as disabled placeholders, not
-// links: App.tsx's catch-all would otherwise bounce the click to /threads
-// with no feedback. Restore the Link when the route ships.
-const DisabledNavItem = memo(function DisabledNavItem({
-  icon: Icon,
-  label,
-  collapsed,
-}: {
-  icon: React.ElementType;
-  label: string;
-  collapsed: boolean;
-}) {
-  return (
-    <span
-      role="link"
-      aria-disabled="true"
-      tabIndex={-1}
-      title={`${label} — coming soon`}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-        }
-      }}
-      className={cn(
-        "flex min-h-[44px] w-full cursor-not-allowed items-center gap-2 overflow-hidden rounded-md px-3.5 py-1.5 text-sm opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
-        collapsed ? "justify-center px-2" : "",
-      )}
-      style={{
-        fontFamily:
-          'Geist, "Geist Fallback", ui-sans-serif, system-ui, sans-serif',
-        color: COLORS.textSecondary,
-      }}
-    >
-      <Icon
-        className="h-4 w-4 flex-shrink-0"
-        aria-hidden="true"
-        style={{ fill: "none", stroke: "currentColor" }}
-      />
-      {!collapsed && <span className="truncate">{label}</span>}
-    </span>
   );
 });
 
@@ -521,17 +476,8 @@ export function Sidebar() {
               label="Memories"
               collapsed={sidebarCollapsed}
             />
-            <DisabledNavItem
-              icon={GraduationCap}
-              label="Learning"
-              collapsed={sidebarCollapsed}
-            />
-            <DisabledNavItem
-              icon={FolderKanban}
-              label="Projects"
-              collapsed={sidebarCollapsed}
-            />
-            <DisabledNavItem
+            <NavLink
+              to="/library"
               icon={Library}
               label="Library"
               collapsed={sidebarCollapsed}

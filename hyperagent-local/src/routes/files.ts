@@ -1,5 +1,8 @@
+import { createReadStream } from "node:fs";
+import { access } from "node:fs/promises";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { stream } from "hono/streaming";
 import { eq } from "drizzle-orm";
 import { db } from "../db/connection.js";
 import { files, threads } from "../db/schema.js";
@@ -166,6 +169,35 @@ filesRouter.post("/", async (c) => {
     return c.json({ error: saved.error.message ?? saved.error.tag }, status);
   }
   return c.json(saved.value, 201);
+});
+
+filesRouter.get("/:id/content", async (c) => {
+  const id = Number(c.req.param("id"));
+  const [file] = await db.select().from(files).where(eq(files.id, id)).limit(1);
+  const authWorkspaceId = await resolveAuthorizedWorkspaceId(
+    c,
+    file?.workspaceId,
+  );
+  if (authWorkspaceId == null || !file) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  try {
+    await access(file.storagePath);
+  } catch {
+    return c.json({ error: "File bytes missing on disk" }, 404);
+  }
+  c.header("Content-Type", file.mimeType || "application/octet-stream");
+  c.header(
+    "Content-Disposition",
+    `attachment; filename="${file.filename.replace(/"/g, "")}"`,
+  );
+  c.header("Content-Length", String(file.sizeBytes));
+  return stream(c, async (s) => {
+    const nodeStream = createReadStream(file.storagePath);
+    for await (const chunk of nodeStream) {
+      await s.write(chunk);
+    }
+  });
 });
 
 filesRouter.delete("/:id", async (c) => {

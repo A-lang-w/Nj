@@ -2,25 +2,26 @@ import { useEffect, useState } from "react";
 import FocusTrap from "focus-trap-react";
 import { useAgentsStore } from "@/stores/agents-store";
 import { useUiStore } from "@/stores/ui-store";
+import type { Agent } from "@/types/api";
 import { X } from "lucide-react";
 
 interface AgentFormProps {
   onClose: () => void;
+  /** When set, the dialog updates this agent instead of creating. */
+  agent?: Agent;
 }
 
-// NOTE: this dialog is create-only. An `agentId` edit prop existed but was
-// never passed by any caller and never fetched or updated anything; it was
-// removed rather than left as a trap. Agent editing needs a product decision
-// (entry point + update flow), not a silent duplicate-creating branch.
-export function AgentForm({ onClose }: AgentFormProps) {
+export function AgentForm({ onClose, agent }: AgentFormProps) {
   const createAgent = useAgentsStore((s) => s.createAgent);
+  const updateAgent = useAgentsStore((s) => s.updateAgent);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const isEdit = agent !== undefined;
+  const [name, setName] = useState(agent?.name ?? "");
+  const [description, setDescription] = useState(agent?.description ?? "");
   const [systemPrompt, setSystemPrompt] = useState(
-    "You are a helpful assistant.",
+    agent?.systemPrompt ?? "You are a helpful assistant.",
   );
-  const [model, setModel] = useState("claude-opus-5-5");
+  const [model, setModel] = useState(agent?.model ?? "claude-opus-5-5");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<{
     name?: string;
@@ -29,8 +30,6 @@ export function AgentForm({ onClose }: AgentFormProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Closing must return focus to the trigger ("New agent" button): without
-    // this, keyboard users are dropped at <body> with no visible indicator.
     const trigger =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -51,17 +50,30 @@ export function AgentForm({ onClose }: AgentFormProps) {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      await createAgent({
-        workspaceId: activeWorkspaceId,
-        name: name.trim(),
-        description: description.trim() || undefined,
-        systemPrompt: systemPrompt.trim(),
-        model,
-      });
+      if (isEdit && agent) {
+        await updateAgent(agent.id, {
+          name: name.trim(),
+          description: description.trim() || null,
+          systemPrompt: systemPrompt.trim(),
+          model,
+        });
+      } else {
+        await createAgent({
+          workspaceId: activeWorkspaceId,
+          name: name.trim(),
+          description: description.trim() || undefined,
+          systemPrompt: systemPrompt.trim(),
+          model,
+        });
+      }
       onClose();
     } catch (err) {
       setSubmitError(
-        err instanceof Error ? err.message : "Failed to create agent",
+        err instanceof Error
+          ? err.message
+          : isEdit
+            ? "Failed to update agent"
+            : "Failed to create agent",
       );
     } finally {
       setIsSubmitting(false);
@@ -86,13 +98,13 @@ export function AgentForm({ onClose }: AgentFormProps) {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="New agent"
+          aria-label={isEdit ? "Edit agent" : "New agent"}
           className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-              New Agent
+              {isEdit ? "Edit Agent" : "New Agent"}
             </h2>
             <button
               onClick={onClose}
@@ -225,7 +237,13 @@ export function AgentForm({ onClose }: AgentFormProps) {
                 disabled={isSubmitting || !name.trim() || !systemPrompt.trim()}
                 className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-950 hover:bg-primary-700 disabled:opacity-50"
               >
-                {isSubmitting ? "Creating…" : "Create Agent"}
+                {isSubmitting
+                  ? isEdit
+                    ? "Saving…"
+                    : "Creating…"
+                  : isEdit
+                    ? "Save Changes"
+                    : "Create Agent"}
               </button>
             </div>
           </form>

@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import FocusTrap from "focus-trap-react";
 import { apiGet, apiPost } from "@/lib/api-client";
 import type { Skill, Agent } from "@/types/api";
-import { Store, Search, Download, Sparkles, Bot, Check } from "lucide-react";
+import {
+  Store,
+  Search,
+  Download,
+  Sparkles,
+  Bot,
+  Check,
+  Plus,
+  X,
+} from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
@@ -22,6 +32,7 @@ export function MarketplacePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [showSubmit, setShowSubmit] = useState(false);
   // Tracks which items are currently being installed or have been installed.
   // Keyed by `${category}:${id}` to avoid collisions across types.
   const [installState, setInstallState] = useState<
@@ -185,6 +196,13 @@ export function MarketplacePage() {
             </p>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowSubmit(true)}
+          className="flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-primary-950 hover:bg-primary-700"
+        >
+          <Plus className="h-4 w-4" /> Submit skill
+        </button>
       </div>
 
       <div
@@ -394,6 +412,233 @@ export function MarketplacePage() {
           </div>
         )}
       </div>
+      {showSubmit && (
+        <SubmitCommunitySkillDialog
+          onClose={() => setShowSubmit(false)}
+          onSubmitted={() => {
+            setShowSubmit(false);
+            setCategory("skills");
+            void loadItems();
+            showToast("Community skill submitted");
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function SubmitCommunitySkillDialog({
+  onClose,
+  onSubmitted,
+}: {
+  onClose: () => void;
+  onSubmitted: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [triggers, setTriggers] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const trigger =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    return () => {
+      trigger?.focus();
+    };
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !instructions.trim()) {
+      setError("Name and instructions are required.");
+      return;
+    }
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const triggerPatterns = triggers
+        .split(/[\n,]/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+      await apiPost("/community/skills/submit", {
+        name: name.trim(),
+        description: description.trim() || undefined,
+        instructions: instructions.trim(),
+        triggerPatterns:
+          triggerPatterns.length > 0 ? triggerPatterns : undefined,
+      });
+      onSubmitted();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to submit community skill",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: () => {
+          onClose();
+          return false;
+        },
+      }}
+    >
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        onClick={onClose}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="submit-skill-title"
+          className="w-full max-w-lg rounded-xl border p-5 shadow-xl"
+          style={{
+            backgroundColor: COLORS.bg,
+            borderColor: COLORS.border,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h2
+              id="submit-skill-title"
+              className="text-lg font-semibold"
+              style={{ color: COLORS.textPrimary }}
+            >
+              Submit community skill
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
+            <div>
+              <label
+                htmlFor="community-skill-name"
+                className="mb-1 block text-sm"
+                style={{ color: COLORS.textSecondary }}
+              >
+                Name
+              </label>
+              <input
+                id="community-skill-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                style={{
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.inputBg,
+                  color: COLORS.textPrimary,
+                }}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="community-skill-description"
+                className="mb-1 block text-sm"
+                style={{ color: COLORS.textSecondary }}
+              >
+                Description
+              </label>
+              <input
+                id="community-skill-description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                style={{
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.inputBg,
+                  color: COLORS.textPrimary,
+                }}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="community-skill-instructions"
+                className="mb-1 block text-sm"
+                style={{ color: COLORS.textSecondary }}
+              >
+                Instructions
+              </label>
+              <textarea
+                id="community-skill-instructions"
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                required
+                rows={5}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                style={{
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.inputBg,
+                  color: COLORS.textPrimary,
+                }}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="community-skill-triggers"
+                className="mb-1 block text-sm"
+                style={{ color: COLORS.textSecondary }}
+              >
+                Trigger patterns (comma or newline separated)
+              </label>
+              <textarea
+                id="community-skill-triggers"
+                value={triggers}
+                onChange={(e) => setTriggers(e.target.value)}
+                rows={2}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                style={{
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.inputBg,
+                  color: COLORS.textPrimary,
+                }}
+              />
+            </div>
+            {error && (
+              <p
+                role="alert"
+                className="text-sm text-red-600 dark:text-red-400"
+              >
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border px-3 py-2 text-sm"
+                style={{
+                  borderColor: COLORS.border,
+                  color: COLORS.textSecondary,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-primary-950 disabled:opacity-50"
+              >
+                {isSubmitting ? "Submitting…" : "Submit"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </FocusTrap>
   );
 }

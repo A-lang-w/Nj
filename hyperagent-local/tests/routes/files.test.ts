@@ -111,6 +111,24 @@ describe("files route upload, list, and delete", () => {
     expect(res.status).toBe(404);
   });
 
+  it("downloads file content with Content-Disposition", async () => {
+    const form = new FormData();
+    form.append(
+      "file",
+      new File(["payload-bytes"], "download-me.txt", { type: "text/plain" }),
+    );
+    form.append("workspaceId", "1");
+    const upload = await authed("/files", { method: "POST", body: form });
+    expect(upload.status).toBe(201);
+    const file = await upload.json();
+
+    const res = await authed(`/files/${file.id}/content`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/plain");
+    expect(res.headers.get("Content-Disposition")).toContain("download-me.txt");
+    expect(await res.text()).toBe("payload-bytes");
+  });
+
   it("deletes an owned file and returns 404 on re-delete", async () => {
     const form = new FormData();
     form.append(

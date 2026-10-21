@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import FocusTrap from "focus-trap-react";
 import { useUiStore } from "@/stores/ui-store";
-import { apiGet, apiDelete } from "@/lib/api-client";
+import { apiGet, apiPost, apiDelete } from "@/lib/api-client";
 import type { Skill } from "@/types/api";
-import { Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
@@ -13,6 +14,7 @@ export function SkillsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const requestIdRef = useRef(0);
 
@@ -85,10 +87,9 @@ export function SkillsPage() {
         </div>
         <button
           type="button"
-          disabled
-          title="Create skill — coming soon"
-          aria-label="Create skill — coming soon"
-          className="flex cursor-not-allowed items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-primary-950 opacity-50"
+          onClick={() => setShowCreate(true)}
+          aria-label="Create skill"
+          className="flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-primary-950 hover:bg-primary-700"
         >
           <Plus className="h-4 w-4" /> Create skill
         </button>
@@ -150,7 +151,20 @@ export function SkillsPage() {
             icon={Sparkles}
             title={searchTerm ? "No matching skills" : "No skills yet"}
             description={
-              searchTerm ? undefined : "Skills will appear here once discovered"
+              searchTerm
+                ? undefined
+                : "Create a skill to teach agents reusable instructions"
+            }
+            action={
+              searchTerm ? undefined : (
+                <button
+                  type="button"
+                  onClick={() => setShowCreate(true)}
+                  className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-950 hover:bg-primary-700"
+                >
+                  Create skill
+                </button>
+              )
             }
           />
         ) : (
@@ -209,6 +223,186 @@ export function SkillsPage() {
           </div>
         )}
       </div>
+
+      {showCreate && (
+        <CreateSkillDialog
+          workspaceId={activeWorkspaceId}
+          onClose={() => setShowCreate(false)}
+          onCreated={(skill) => {
+            setSkills((prev) => [skill, ...prev]);
+            setShowCreate(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function CreateSkillDialog({
+  workspaceId,
+  onClose,
+  onCreated,
+}: {
+  workspaceId: number;
+  onClose: () => void;
+  onCreated: (skill: Skill) => void;
+}) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [triggers, setTriggers] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !instructions.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const triggerPatterns = triggers
+        .split("\n")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const created = await apiPost<Skill>("/skills", {
+        workspaceId,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        instructions: instructions.trim(),
+        triggerPatterns,
+      });
+      onCreated(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create skill");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FocusTrap
+      active
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: () => {
+          onClose();
+          return false;
+        },
+      }}
+    >
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Create skill"
+          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+              Create skill
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close dialog"
+              className="rounded-lg p-3 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+            <div>
+              <label
+                htmlFor="skill-name"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+              >
+                Name
+              </label>
+              <input
+                id="skill-name"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="skill-description"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+              >
+                Description
+              </label>
+              <input
+                id="skill-description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="skill-instructions"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+              >
+                Instructions
+              </label>
+              <textarea
+                id="skill-instructions"
+                required
+                rows={5}
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="skill-triggers"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+              >
+                Trigger patterns (one per line, optional)
+              </label>
+              <textarea
+                id="skill-triggers"
+                rows={3}
+                value={triggers}
+                onChange={(e) => setTriggers(e.target.value)}
+                placeholder="review|code review"
+                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+            {error && (
+              <p
+                role="alert"
+                className="text-sm text-red-600 dark:text-red-400"
+              >
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submitting || !name.trim() || !instructions.trim()}
+                className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-950 disabled:opacity-50"
+              >
+                {submitting ? "Creating…" : "Create"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </FocusTrap>
   );
 }

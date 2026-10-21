@@ -324,6 +324,7 @@ export function ThreadDetailPage() {
             onSend={handleSend}
             onStop={stopStream}
             isStreaming={isStreaming}
+            threadId={threadId}
             disabled={
               !activeThread || activeThread.id !== threadId || isSubmitting
             }

@@ -81,12 +81,14 @@ import { threadsRouter } from "./routes/threads.js";
 import { agentsRouter } from "./routes/agents.js";
 import { authRouter } from "./routes/auth.js";
 import { workspacesRouter } from "./routes/workspaces.js";
+import { favoritesRouter } from "./routes/favorites.js";
 import { authMiddleware } from "./auth/middleware.js";
 import { verifyResidency } from "./residency/guard.js";
 import { config, verifyDataResidency } from "./config.js";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { createRateLimitMiddleware } from "./lib/rate-limit-middleware.js";
 import { handleAppError } from "./lib/error-handler.js";
+import { startActivitySink } from "./services/activity-service.js";
 verifyResidency();
 verifyDataResidency();
 // Apply pending schema migrations at startup so fresh checkouts and
@@ -95,6 +97,8 @@ verifyDataResidency();
 migrate(db, {
   migrationsFolder: process.env.MIGRATIONS_DIR || "./src/db/migrations",
 });
+// Inbox activity feed reads activity_events; this sink is the producer.
+startActivitySink();
 const app = new Hono();
 
 // Malformed request bodies are client errors, not crashes: the shared error
@@ -106,7 +110,12 @@ app.onError(handleAppError);
 app.use("*", createRateLimitMiddleware());
 
 // --- CORS Middleware (SEC-012) ---
-const ALLOWED_ORIGINS = ["http://localhost:5173", "http://localhost:3000"];
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:3000",
+];
 
 app.use("*", async (c, next) => {
   const origin = c.req.header("origin");
@@ -184,6 +193,7 @@ app.route("/api/marketplace", marketplaceRouter);
 app.route("/api/integrations", integrationsRouter);
 app.route("/api/settings", settingsRouter);
 app.route("/api/workspaces", workspacesRouter);
+app.route("/api/favorites", favoritesRouter);
 const { port, host, dataDir } = config;
 // SEC-004: Passwordless email login is only safe on loopback. Binding to a
 // non-loopback address without an explicit override would expose account
