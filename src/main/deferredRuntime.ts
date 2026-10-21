@@ -211,6 +211,10 @@ export const runDeferred = async (
     }
   } catch (cause) {
     finishServing();
+    serverLogger.error(
+      { error: cause instanceof Error ? cause.message : String(cause) },
+      SERVER_START_FAILED,
+    );
     try {
       await close();
     } catch (cleanupCause) {

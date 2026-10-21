@@ -16,6 +16,7 @@ import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { SERVER_START_FAILED } from "../../../src/main/messages.js";
 
 const connect = async (
   mode: "legacy" | "auto",
@@ -228,6 +229,69 @@ globalThis.Date = class extends NativeDate {
   });
 });
 
+it.each([
+  { level: "info", asynchronous: false, errorObject: true },
+  { level: "info", asynchronous: true, errorObject: false },
+  { level: "silent", asynchronous: false, errorObject: true },
+])(
+  "logs deferred startup failure with $level logging and asynchronous=$asynchronous",
+  ({ level, asynchronous, errorObject }) => {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+import assert from "node:assert/strict";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const config = parseConfig({ HOME: process.env.HOME, REA_LOG_LEVEL: ${JSON.stringify(level)} });
+assert.equal(config.ok, true);
+const output = [];
+let closeCalls = 0;
+let unregistrations = 0;
+const result = await runDeferred({
+  env: {},
+  writeStderr: (text) => output.push(text),
+  setExitCode: () => {},
+  registerShutdown: () => () => { unregistrations++; },
+  serve: (factory) => {
+    const server = factory({});
+    const close = server.server.close.bind(server.server);
+    server.server.close = async () => { closeCalls++; await close(); };
+    const cause = ${errorObject ? 'new Error("transport setup reason")' : '"transport setup reason"'};
+    if (${asynchronous}) return Promise.reject(cause);
+    throw cause;
+  },
+}, config.value);
+console.log(JSON.stringify({ result, output, closeCalls, unregistrations }));
+`,
+      ],
+      { cwd: process.cwd(), encoding: "utf8", timeout: 10000 },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual({
+      result: 1,
+      output: [`${SERVER_START_FAILED}\n`],
+      closeCalls: 1,
+      unregistrations: 1,
+    });
+    if (level === "silent") {
+      expect(child.stderr).toBe("");
+    } else {
+      expect(JSON.parse(child.stderr)).toMatchObject({
+        level: 50,
+        application: "rea",
+        mode: "mcp",
+        layer: "server",
+        error: "transport setup reason",
+        msg: SERVER_START_FAILED,
+      });
+    }
+  },
+);
+
 it("retains process cleanup ownership after partial startup and failed cleanup", () => {
   const child = spawnSync(
     process.execPath,
@@ -238,7 +302,7 @@ it("retains process cleanup ownership after partial startup and failed cleanup",
 import assert from "node:assert/strict";
 import { runDeferred } from "./dist/main/deferredRuntime.js";
 import { parseConfig } from "./dist/config/parseConfig.js";
-const config = parseConfig({ HOME: process.env.HOME });
+const config = parseConfig({ HOME: process.env.HOME, REA_LOG_LEVEL: "silent" });
 assert.equal(config.ok, true);
 const handlers = [];
 const calls = [0, 0];
