@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -139,6 +139,347 @@ it("uses legacy simulator and device platform facts when resolving dylibs", asyn
         expect.objectContaining({ outcome: "platform-mismatch" }),
       ]),
     }),
+  );
+});
+
+it.each([false, true] as const)(
+  "applies macOS dyld's implicit platform to a platform-less dylib and traces its required child present=%s",
+  async (childPresent) => {
+    const root = await createTestTempDirectory("rea-dylib-platform-unknown-");
+    const executablePath = "Contents/MacOS/probe";
+    const dylibPath = "Contents/Frameworks/libA.dylib";
+    const fallbackPath = "Contents/Fallbacks/libA.dylib";
+    const childPath = "Contents/Frameworks/libMissing.dylib";
+    const fallbackChildPath = "Contents/Fallbacks/libFallbackOnly.dylib";
+    const executable = machoImage({
+      cpu: CPU.arm64,
+      commands: [
+        buildVersionCommand(1),
+        rpathCommand("@executable_path/../Frameworks"),
+        rpathCommand("@executable_path/../Fallbacks"),
+        dylibCommand(LC.LOAD_DYLIB, "@rpath/libA.dylib"),
+      ],
+    });
+    const dylib = machoImage({
+      cpu: CPU.arm64,
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        rpathCommand("@loader_path"),
+        dylibCommand(LC.LOAD_DYLIB, "@rpath/libMissing.dylib"),
+      ],
+    });
+    const child = machoImage({
+      cpu: CPU.arm64,
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    });
+    const fallback = machoImage({
+      cpu: CPU.arm64,
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        rpathCommand("@loader_path"),
+        dylibCommand(LC.LOAD_DYLIB, "@rpath/libFallbackOnly.dylib"),
+      ],
+    });
+    const fallbackChild = machoImage({
+      cpu: CPU.arm64,
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    });
+    await mkdir(join(root, "Contents/MacOS"), { recursive: true });
+    await mkdir(join(root, "Contents/Frameworks"), { recursive: true });
+    await mkdir(join(root, "Contents/Fallbacks"), { recursive: true });
+    await writeFile(join(root, executablePath), executable);
+    await writeFile(join(root, dylibPath), dylib);
+    await writeFile(join(root, fallbackPath), fallback);
+    await writeFile(join(root, fallbackChildPath), fallbackChild);
+    if (childPresent) await writeFile(join(root, childPath), child);
+
+    const trace = await traceDylibResolution({
+      rootPath: root,
+      targetPath: join(root, executablePath),
+      targetSha256: createHash("sha256").update(executable).digest("hex"),
+      enumerateRoots: false,
+      parameters: { roots: [executablePath] },
+    });
+
+    expect(
+      trace.images.find(({ path }) => path === executablePath)?.slices[0],
+    ).toMatchObject({ platform: 1, platforms: [1] });
+    expect(
+      trace.images.find(({ path }) => path === dylibPath)?.slices[0],
+    ).toMatchObject({ platform: null, platforms: [] });
+    expect(trace.edges[0]).toMatchObject({
+      loader: executablePath,
+      install_name: "@rpath/libA.dylib",
+      candidates: [
+        {
+          outcome: "resolved",
+          resolved_path: dylibPath,
+          platform_basis: "macos-dyld-implicit",
+        },
+      ],
+      resolution: { status: "resolved", image: dylibPath },
+    });
+    expect(trace.edges[1]).toMatchObject({
+      loader: dylibPath,
+      install_name: "@rpath/libMissing.dylib",
+      resolution: childPresent
+        ? { status: "resolved", image: childPath }
+        : { status: "unresolved", image: null },
+      loader_conditional: false,
+    });
+    expect(trace.images.map(({ path }) => path)).toEqual(
+      childPresent
+        ? [executablePath, childPath, dylibPath].sort()
+        : [executablePath, dylibPath].sort(),
+    );
+    expect(trace.images.map(({ path }) => path)).not.toContain(fallbackPath);
+    expect(trace.images.map(({ path }) => path)).not.toContain(
+      fallbackChildPath,
+    );
+    expect(trace.coverage.status).toBe("complete");
+    expect(trace.limitations).toContainEqual(
+      expect.stringContaining(dylibPath),
+    );
+    expect(trace.findings.map(({ kind }) => kind)).toEqual(
+      childPresent ? [] : ["required-load-unresolved"],
+    );
+  },
+);
+
+describe("absolute dyld candidate paths at the filesystem reader boundary", () => {
+  it.each(["install-name", "rpath"] as const)(
+    "resolves an absolute in-root %s while preserving its source path",
+    async (kind) => {
+      const root = await createTestTempDirectory("rea-dylib-absolute-in-root-");
+      const canonicalRoot = await realpath(root);
+      const bridgePath = "Frameworks/libBridge.dylib";
+      const leafPath = "Frameworks/libLeaf.dylib";
+      const bridgeAbsolute = `${canonicalRoot}/${bridgePath}`;
+      const leafName = "@loader_path/libLeaf.dylib";
+      const executable = machoImage({
+        commands: [
+          buildVersionCommand(1),
+          ...(kind === "rpath"
+            ? [rpathCommand(`${canonicalRoot}/Frameworks`)]
+            : []),
+          dylibCommand(
+            LC.LOAD_DYLIB,
+            kind === "rpath" ? "@rpath/libBridge.dylib" : bridgeAbsolute,
+          ),
+        ],
+      });
+      const bridge = machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [
+          buildVersionCommand(1),
+          dylibCommand(LC.LOAD_DYLIB, leafName),
+        ],
+      });
+      const leaf = machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      });
+      await mkdir(join(root, "Frameworks"), { recursive: true });
+      await writeFile(join(root, "App"), executable);
+      await writeFile(bridgeAbsolute, bridge);
+      await writeFile(join(root, leafPath), leaf);
+
+      const trace = await traceDylibResolution({
+        rootPath: root,
+        targetPath: join(root, "App"),
+        targetSha256: createHash("sha256").update(executable).digest("hex"),
+        enumerateRoots: false,
+        parameters: { roots: ["App"] },
+      });
+
+      expect(trace.edges[0]).toMatchObject({
+        install_name:
+          kind === "rpath" ? "@rpath/libBridge.dylib" : bridgeAbsolute,
+        candidates: [
+          {
+            path: bridgeAbsolute,
+            ...(kind === "rpath"
+              ? { rpath: `${canonicalRoot}/Frameworks` }
+              : {}),
+            outcome: "resolved",
+            resolved_path: bridgePath,
+          },
+        ],
+        resolution: { status: "resolved", image: bridgePath },
+      });
+      expect(trace.edges).toContainEqual(
+        expect.objectContaining({
+          loader: bridgePath,
+          install_name: leafName,
+          resolution: { status: "resolved", image: leafPath },
+        }),
+      );
+      expect(trace.images.map(({ path }) => path)).toEqual([
+        "App",
+        bridgePath,
+        leafPath,
+      ]);
+    },
+  );
+
+  it("keeps a genuinely external absolute candidate outside the analyzed root", async () => {
+    const root = await createTestTempDirectory("rea-dylib-absolute-outside-");
+    const canonicalRoot = await realpath(root);
+    const executable = machoImage({
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.LOAD_DYLIB, "/usr/lib/libSystem.B.dylib"),
+        dylibCommand(LC.LOAD_DYLIB, `${canonicalRoot}/../outside.dylib`),
+        dylibCommand(
+          LC.LOAD_DYLIB,
+          `file://${canonicalRoot}/Frameworks/libBridge.dylib`,
+        ),
+      ],
+    });
+    await writeFile(join(root, "App"), executable);
+    const trace = await traceDylibResolution({
+      rootPath: root,
+      targetPath: join(root, "App"),
+      targetSha256: createHash("sha256").update(executable).digest("hex"),
+      enumerateRoots: false,
+      parameters: { roots: ["App"] },
+    });
+
+    expect(trace.edges[0]).toMatchObject({
+      candidates: [
+        {
+          path: "/usr/lib/libSystem.B.dylib",
+          outcome: "outside-target",
+          resolved_path: null,
+        },
+      ],
+      resolution: { status: "undetermined", image: null },
+    });
+    expect(trace.edges[1]).toMatchObject({
+      candidates: [{ outcome: "escapes-target", resolved_path: null }],
+      resolution: { status: "undetermined", image: null },
+    });
+    expect(trace.edges[2]).toMatchObject({
+      install_name: `file://${canonicalRoot}/Frameworks/libBridge.dylib`,
+      candidates: [
+        {
+          path: `file://${canonicalRoot}/Frameworks/libBridge.dylib`,
+          outcome: "undetermined",
+          resolved_path: null,
+        },
+      ],
+      resolution: { status: "undetermined", image: null },
+    });
+    expect(trace.images.map(({ path }) => path)).toEqual(["App"]);
+  });
+});
+
+describe("absolute dyld candidate traversal", () => {
+  it("maps an absolute candidate spelled through the selected root symlink", async () => {
+    const root = await createTestTempDirectory(
+      "rea-dylib-absolute-root-alias-",
+    );
+    const aliasRoot = join(root, "bundle-alias");
+    const bridgePath = "Frameworks/libBridge.dylib";
+    const bridgeAbsolute = `${aliasRoot}/${bridgePath}`;
+    const executable = machoImage({
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.LOAD_DYLIB, bridgeAbsolute),
+      ],
+    });
+    const bridge = machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    });
+    await symlink(".", aliasRoot);
+    await mkdir(join(root, "Frameworks"), { recursive: true });
+    await writeFile(join(root, "App"), executable);
+    await writeFile(join(root, bridgePath), bridge);
+
+    const trace = await traceDylibResolution({
+      rootPath: aliasRoot,
+      targetPath: `${aliasRoot}/App`,
+      targetSha256: createHash("sha256").update(executable).digest("hex"),
+      enumerateRoots: false,
+      parameters: { roots: ["App"] },
+    });
+
+    expect(trace.edges[0]).toMatchObject({
+      install_name: bridgeAbsolute,
+      candidates: [
+        {
+          path: bridgeAbsolute,
+          outcome: "resolved",
+          resolved_path: bridgePath,
+        },
+      ],
+      resolution: { status: "resolved", image: bridgePath },
+    });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves symlink-then-parent traversal for an absolute in-root path",
+    async () => {
+      const root = await createTestTempDirectory("rea-dylib-absolute-symlink-");
+      const canonicalRoot = await realpath(root);
+      const bridgePath = "Frameworks/Versions/libBridge.dylib";
+      const decoyPath = "Frameworks/libBridge.dylib";
+      const sourcePath = `${canonicalRoot}/Frameworks/Current/../libBridge.dylib`;
+      const executable = machoImage({
+        commands: [
+          buildVersionCommand(1),
+          dylibCommand(LC.LOAD_DYLIB, sourcePath),
+        ],
+      });
+      const bridge = machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [
+          buildVersionCommand(1),
+          dylibCommand(LC.LOAD_DYLIB, "@loader_path/libLeaf.dylib"),
+        ],
+      });
+      const leaf = machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      });
+      await mkdir(join(root, "Frameworks/Versions/A"), { recursive: true });
+      await symlink("Versions/A", join(root, "Frameworks/Current"));
+      await writeFile(join(root, "App"), executable);
+      await writeFile(join(root, bridgePath), bridge);
+      await writeFile(join(root, decoyPath), new Uint8Array([0, 1, 2]));
+      await writeFile(join(root, "Frameworks/Versions/libLeaf.dylib"), leaf);
+
+      const trace = await traceDylibResolution({
+        rootPath: root,
+        targetPath: join(root, "App"),
+        targetSha256: createHash("sha256").update(executable).digest("hex"),
+        enumerateRoots: false,
+        parameters: { roots: ["App"] },
+      });
+
+      expect(trace.edges[0]).toMatchObject({
+        candidates: [
+          {
+            path: sourcePath,
+            outcome: "resolved",
+            resolved_path: bridgePath,
+          },
+        ],
+        resolution: { status: "resolved", image: bridgePath },
+      });
+      expect(trace.edges).toContainEqual(
+        expect.objectContaining({
+          loader: bridgePath,
+          resolution: {
+            status: "resolved",
+            image: "Frameworks/Versions/libLeaf.dylib",
+          },
+        }),
+      );
+    },
   );
 });
 

@@ -129,6 +129,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_go_binary: evidence,
   inspect_il2cpp_metadata: evidence,
   inspect_model_artifact: evidence,
+  inspect_gpu_code_objects: evidence,
   inspect_rust_binary: evidence,
   inspect_sqlite_database: effects({
     mutatesSession: true,
@@ -679,6 +680,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   project_apple_application_graph: evidence,
   project_harmony_application_graph: evidence,
   open_binary: effects({ mutatesSession: true, launchesProcess: true }),
+  open_bundle_resources: effects({ mutatesSession: true }),
   close_binary: effects({
     mutatesSession: true,
     writesFilesystem: true,

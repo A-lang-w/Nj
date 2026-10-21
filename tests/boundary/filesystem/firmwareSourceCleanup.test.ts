@@ -312,6 +312,7 @@ it.each(
       const raw = await publishFirmwareExtraction({
         files,
         workspacePath: f.root,
+        analysisTimeoutMs: 120_000,
         outputDirectory,
         entries: [
           {
