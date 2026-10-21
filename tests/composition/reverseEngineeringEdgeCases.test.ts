@@ -15,6 +15,7 @@ import { ReverseEngineeringService as CoreReverseEngineeringService } from "../.
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { AnalysisResourceConstraintError } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { InvestigationRecords } from "../../src/application/investigation/InvestigationRecords.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
   OwnedCommandFailure,
@@ -668,15 +669,11 @@ it("preserves raw retained byte counts when output text replaces invalid UTF-8",
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
-        capturedOutput: {
-          stdout: "�",
-          stderr: "�",
-          stdout_bytes: 1,
-          stderr_bytes: 2,
-          exit_code: null,
-        },
+        capturedOutput: undefined,
         partialObservation: {
           raw_result: {
+            stdout: "�",
+            stderr: "�",
             stdout_bytes: 1,
             stderr_bytes: 2,
             exit_code: null,
@@ -684,10 +681,6 @@ it("preserves raw retained byte counts when output text replaces invalid UTF-8",
         },
       },
     });
-    if (!result.ok)
-      expect(result.error.partialObservation).not.toHaveProperty(
-        "raw_result.stdout",
-      );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -723,17 +716,17 @@ it("projects cancelled multi-megabyte output only once", async () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     const projected = projectAnalysisError(result.error);
-    expect(result.error.capturedOutput).toMatchObject({
-      stdout: output,
-      stderr: output,
+    expect(result.error.capturedOutput).toBeUndefined();
+    expect(result.error.partialObservation).toMatchObject({
+      raw_result: { stdout: output, stderr: output },
     });
-    expect(result.error.partialObservation).not.toHaveProperty(
-      "raw_result.stdout",
-    );
-    expect(result.error.partialObservation).not.toHaveProperty(
-      "raw_result.stderr",
-    );
     expect(JSON.stringify(projected).length).toBeLessThan(10 * 1024 * 1024);
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("evidence_id" in partial))
+      throw new Error("Cancelled Evidence was not retained.");
+    const records = new InvestigationRecords();
+    expect(records.recordEvidence(partial).ok).toBe(true);
+    expect(records.exportEvidenceBundle().records).toContainEqual(partial);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1059,7 +1052,7 @@ it("preserves the observed exit code when cancellation interrupts the final dige
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
-        capturedOutput: { exit_code: 0 },
+        capturedOutput: undefined,
         partialObservation: {
           raw_result: { exit_code: 0 },
           normalized_result: {

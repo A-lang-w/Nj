@@ -436,12 +436,19 @@ export class ReverseEngineeringService {
     try {
       profile = await prepare(signal);
     } catch (cause) {
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: callerCancellationCause(signal, cause),
-          }),
-        );
+      if (signal?.aborted) {
+        const cancellation = new AnalysisCancelledError(operation, {
+          cause: callerCancellationCause(signal, cause),
+          ...(cause instanceof AnalysisError && cause.cleanupIncomplete
+            ? (cause.cleanup === undefined
+                  ? {}
+                  : { cleanup: cause.cleanup })
+            : {}),
+        });
+        if (cause instanceof AnalysisError && cause.cleanupIncomplete)
+          cancellation.bindCleanupDependencies([cause]);
+        return err(cancellation);
+      }
       if (
         cause instanceof Error &&
         Reflect.get(cause, "code") === "ETIMEDOUT"
@@ -736,7 +743,6 @@ export class ReverseEngineeringService {
         if (commandCancelled(signal, cause, code))
           failure = new AnalysisCancelledError(operation, {
             cause: callerCancellationCause(signal, cause),
-            capturedOutput,
             ...ownedCleanupOptions(cause),
           });
         else if (code === "ETIMEDOUT")
@@ -819,15 +825,6 @@ export class ReverseEngineeringService {
     if (signal?.aborted && failure === undefined) {
       failure = new AnalysisCancelledError(operation, {
         cause: signal.reason,
-        capturedOutput: {
-          stdout,
-          stderr,
-          truncated: outputTruncated,
-          stdout_bytes: stdoutBytes,
-          stderr_bytes: stderrBytes,
-          exit_code: typeof exitCode === "number" ? exitCode : null,
-          signal: signalName,
-        },
       });
       exitCode = null;
       completionStatus = "unknown";
@@ -943,6 +940,8 @@ export class ReverseEngineeringService {
         rawResult:
           failure instanceof AnalysisCancelledError
             ? {
+                stdout,
+                stderr,
                 truncated: outputTruncated,
                 stdout_bytes: stdoutBytes,
                 stderr_bytes: stderrBytes,

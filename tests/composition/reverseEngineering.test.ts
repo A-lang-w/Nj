@@ -587,11 +587,14 @@ it("preserves raw byte counts when cancellation rejects invalid UTF-8 output", a
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.capturedOutput).toMatchObject({
-        stdout: "�",
-        stderr: "€",
-        stdout_bytes: 1,
-        stderr_bytes: 3,
+      expect(result.error.capturedOutput).toBeUndefined();
+      expect(result.error.partialObservation).toMatchObject({
+        raw_result: {
+          stdout: "�",
+          stderr: "€",
+          stdout_bytes: 1,
+          stderr_bytes: 3,
+        },
       });
     }
   } finally {
@@ -626,16 +629,11 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.capturedOutput).toMatchObject({
-        stdout: "�",
-        stderr: "�",
-        stdout_bytes: 1,
-        stderr_bytes: 1,
-        exit_code: 0,
-        signal: null,
-      });
+      expect(result.error.capturedOutput).toBeUndefined();
       expect(result.error.partialObservation).toMatchObject({
         raw_result: {
+          stdout: "�",
+          stderr: "�",
           stdout_bytes: 1,
           stderr_bytes: 1,
           truncated: false,
@@ -644,12 +642,6 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
           expect.stringContaining("cancellation interrupted the digest"),
         ]),
       });
-      expect(result.error.partialObservation).not.toHaveProperty(
-        "raw_result.stdout",
-      );
-      expect(result.error.partialObservation).not.toHaveProperty(
-        "raw_result.stderr",
-      );
       expect(result.error.partialObservation).not.toHaveProperty(
         "normalized_result.stdout",
       );
