@@ -93,7 +93,8 @@ type DirectAnalysisTool =
   | "xrefs"
   | "trace_feature"
   | "trace_native_ui_action"
-  | "trace_native_values";
+  | "trace_native_values"
+  | "decompile_all";
 
 // These one-shot CLI questions require native utilities, not a deep engine.
 // Runtime observation retains the ordinary session and authority checks.
@@ -451,6 +452,7 @@ const runAnalysis = async (
     if (
       isWorkflowEvidenceTool(tool) &&
       tool !== "trace_native_ui_action" &&
+      tool !== "decompile_all" &&
       snapshotPath !== undefined &&
       session.allowsSnapshotReplay(tool)
     ) {
@@ -466,7 +468,11 @@ const runAnalysis = async (
           return err(recorded.error.retainPartialObservation(evidence));
       }
     }
-    if (tool !== "trace_native_ui_action" && snapshotPath !== undefined) {
+    if (
+      tool !== "trace_native_ui_action" &&
+      tool !== "decompile_all" &&
+      snapshotPath !== undefined
+    ) {
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok)
         return err(snapshot.error.retainPartialObservation(evidence));
@@ -554,7 +560,8 @@ const executeAnalysisTool = async (input: {
     tool === "inspect_native_dispatch_metadata" ||
     tool === "trace_feature" ||
     tool === "trace_native_values" ||
-    tool === "trace_native_ui_action"
+    tool === "trace_native_ui_action" ||
+    tool === "decompile_all"
   ) {
     const { EnhancedTools } = await import("./EnhancedTools.js");
     const result = await executeComposedWorkflow(session, (observed) =>
@@ -713,7 +720,8 @@ const allowsSnapshotReplay = (
     | ManagedToolName
     | DirectAnalysisTool,
 ): boolean => {
-  if (tool === "trace_native_ui_action") return false;
+  if (tool === "trace_native_ui_action" || tool === "decompile_all")
+    return false;
   const descriptor = route.capabilities?.get(tool);
   return descriptor === undefined
     ? ![...(route.capabilities?.values() ?? [])].some(
@@ -786,7 +794,8 @@ const isWorkflowEvidenceTool = (
   tool === "inspect_native_dispatch_metadata" ||
   tool === "trace_feature" ||
   tool === "trace_native_values" ||
-  tool === "trace_native_ui_action";
+  tool === "trace_native_ui_action" ||
+  tool === "decompile_all";
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {
