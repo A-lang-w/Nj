@@ -1254,13 +1254,14 @@ export class RizinDebugSessionManager {
     let identityFailure: unknown;
     if (parsed.error === undefined) {
       const pendingAtStart = [...session.pendingInferiorPids];
+      const observedPids = new Set(parsed.rows.map(([, pid]) => pid));
       // Retain every reported PID before reconciling previously pending
       // identities. Resolving an older PID can fail, but must not discard
       // targets observed in this complete inventory.
       for (const [, pid] of parsed.rows) session.pendingInferiorPids.add(pid);
       for (const pid of pendingAtStart) {
         try {
-          if (parsed.rows.some(([, observedPid]) => observedPid === pid)) {
+          if (observedPids.has(pid)) {
             await this.#resolveInferiorRowIdentity(session, pid);
             session.pendingInferiorPids.delete(pid);
             continue;
