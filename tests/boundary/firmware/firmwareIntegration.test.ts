@@ -635,9 +635,6 @@ it.each(["depth", "dependency", "link"])(
           continuation: expect.stringContaining("metadata"),
         },
       ]);
-      expect(gapsWithContinuations(normalized)[0]?.continuation).toContain(
-        "Unblob normalizes absolute symlinks",
-      );
       await expect(access(`${fixture.output}/escape`)).rejects.toMatchObject({
         code: "ENOENT",
       });

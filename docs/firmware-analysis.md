@@ -109,9 +109,8 @@ build's source revision, so that field remains unknown.
   complete firmware reconstruction.
 - Non-regular files (symlinks and special device nodes) appear in
   `unpublished_entries` and are never published to disk to prevent directory
-  traversal. Unblob's safe-link extraction normalizes absolute symlink targets
-  relative to the extraction root, so `link_target` reflects the safe extracted
-  target rather than raw stored filesystem metadata.
+  traversal. `link_target` is the value reported by the active extraction
+  provider and may not preserve the original on-disk metadata.
 - `extraction_gaps` makes those conditions recoverable: a row identifies an
   unextracted region or a failed task/stage. A chunk retains its identity and
   byte range, plus its original-file range when it belongs to the selected input.
