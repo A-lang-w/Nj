@@ -54,6 +54,21 @@ it.each([null, "owned stop unconfirmed"])(
     expect(
       JSON.stringify(projected).split("partial-owned-output"),
     ).toHaveLength(2);
+    if (cleanup !== null) {
+      expect(failure.cleanupPrimary).toMatchObject({
+        _tag: "AnalysisTimeoutError",
+        timeoutMs: 1234,
+      });
+      failure.resolveCleanup();
+      const resolved = projectAnalysisError(failure);
+      expect(resolved).toMatchObject({
+        code: "provider_timeout",
+        details: { timeout_ms: 1234 },
+      });
+      expect(
+        JSON.stringify(resolved).split("partial-owned-output"),
+      ).toHaveLength(2);
+    }
   },
 );
 

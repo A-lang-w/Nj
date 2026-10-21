@@ -40,7 +40,10 @@ import type {
   ProviderProcessStopResult,
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
-import { sqliteDatabaseFailure } from "./SqliteDatabaseFailures.js";
+import {
+  createSqliteCleanupError,
+  sqliteDatabaseFailure,
+} from "./SqliteDatabaseFailures.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
@@ -501,17 +504,14 @@ const sqliteCleanupFailure = (
   const partialObservation = result.ok
     ? completedSqliteEvidence(input, result.value)
     : result.error.partialObservation;
-  return new ProviderCleanupError(
-    SQLITE_PROVIDER_IDENTITY.id,
+  return createSqliteCleanupError(
     resources,
     {
       ...details,
       reason,
-      previous_error: result.ok ? null : projectAnalysisError(result.error),
-      ...(output === undefined ? {} : { captured_output: { ...output } }),
     },
     {
-      operation,
+      ...(output === undefined ? {} : { capturedOutput: output }),
       ...(result.ok ? {} : { cleanupPrimary: result.error }),
       ...(cause === undefined ? {} : { cause }),
       ...(partialObservation === undefined ? {} : { partialObservation }),

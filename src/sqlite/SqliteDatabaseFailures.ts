@@ -8,7 +8,9 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
+  type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -37,6 +39,38 @@ export const capturedSqliteOutput = (
   stderr: snapshot.stderr.text,
   truncated: snapshot.diagnosticTruncated === true,
 });
+
+/** Keep typed cleanup history and one canonical output owner, including after resolution. */
+export const createSqliteCleanupError = (
+  resources: readonly string[],
+  diagnostics: Readonly<Record<string, JsonValue>>,
+  options: Omit<AnalysisErrorOptions, "diagnostics">,
+): ProviderCleanupError => {
+  const capturedOutput =
+    options.capturedOutput ?? options.cleanupPrimary?.capturedOutput;
+  let previous =
+    options.cleanupPrimary === undefined
+      ? null
+      : projectAnalysisError(options.cleanupPrimary);
+  // History carries facts/recovery; the wrapper delivers output only once.
+  if (capturedOutput !== undefined && previous?.details !== undefined) {
+    const { captured_output: _capturedOutput, ...metadata } = previous.details;
+    previous = { ...previous, details: metadata };
+  }
+  return new ProviderCleanupError(
+    SQLITE_PROVIDER_IDENTITY.id,
+    resources,
+    {
+      ...diagnostics,
+      previous_error: previous ?? diagnostics.previous_error ?? null,
+    },
+    {
+      ...options,
+      operation: "inspect_sqlite_database",
+      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+    },
+  );
+};
 
 /** The file-set member a filesystem error names, if it is the database, its WAL or its journal. */
 const busyMember = (cause: Error, path: string): string => {
@@ -89,16 +123,12 @@ export const sqliteDatabaseFailure = (
         previous = new AnalysisCancelledError(operation, {
           cause: signal.reason,
         });
-      const error = new ProviderCleanupError(
-        SQLITE_PROVIDER_IDENTITY.id,
+      const error = createSqliteCleanupError(
         cause.cleanup.resources,
         {
           reason: cause.cleanup.reason,
-          previous_error:
-            previous === undefined ? null : projectAnalysisError(previous),
         },
         {
-          operation,
           cause,
           ...(previous === undefined ? {} : { cleanupPrimary: previous }),
         },
@@ -209,8 +239,6 @@ const ownedCommandFailure = (
     cause.reason === "timeout"
       ? new AnalysisTimeoutError(operation, workerTimeoutMs, {
           ...options,
-          capturedOutput:
-            cause.cleanupFailure === null ? capturedOutput : undefined,
           userMessage: `The SQLite worker reached its ${String(workerTimeoutMs)} ms server/provider deadline (worker_timeout_ms). This is not a whole-inspection or MCP client deadline.`,
           remediationAction: `${
             workerTimeoutMs < MAX_SQLITE_WORKER_TIMEOUT_MS
@@ -220,23 +248,23 @@ const ownedCommandFailure = (
         })
       : undefined;
   if (cause.cleanupFailure !== null)
-    return new ProviderCleanupError(
-      SQLITE_PROVIDER_IDENTITY.id,
+    return createSqliteCleanupError(
       cause.resources,
       {
         reason: cause.cleanupFailure,
-        previous_error:
-          timeout === undefined
-            ? {
+        ...(timeout === undefined
+          ? {
+              previous_error: {
                 failure_kind: cause.reason,
                 message: cause.message,
-              }
-            : projectAnalysisError(timeout),
-        ...(capturedOutput === undefined
-          ? {}
-          : { captured_output: { ...capturedOutput } }),
+              },
+            }
+          : {}),
       },
-      { operation, cause },
+      {
+        ...options,
+        ...(timeout === undefined ? {} : { cleanupPrimary: timeout }),
+      },
     );
   if (cause.reason === "cancelled")
     return new AnalysisCancelledError(operation, {
