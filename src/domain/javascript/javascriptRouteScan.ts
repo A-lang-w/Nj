@@ -106,6 +106,7 @@ export class JavaScriptRouteScan {
   readonly #calls: {
     node: t.CallExpression | t.OptionalCallExpression;
     typed: boolean;
+    namedParent?: boolean;
   }[] = [];
   readonly #automaticRoots = new Map<t.ObjectExpression, boolean>();
   readonly #claimed = {
@@ -317,28 +318,37 @@ export class JavaScriptRouteScan {
         navigationReceivers.has(parts.at(-2) ?? "");
       this.#navigation(first, recognized);
     }
-    if (name === "route" || name === "addRoute") {
-      if (stringValue(first) === undefined) this.#ownDynamicValue(first, false);
-      const value = stringValue(first),
-        path =
-          value === undefined
-            ? undefined
-            : routePath(value, { relative: true });
-      if (path !== undefined)
-        this.#emit(
-          path,
-          "router-call",
-          [{ value: value!, location: range(first), origin: "literal" }],
-          first,
-          !value!.startsWith("/"),
-        );
-      else
-        this.#unknown(
-          "router-call",
-          first,
-          "The registered path is not a supported literal.",
-        );
+    if (name === "addRoute" && node.arguments.length === 2) {
+      // This overload can name a parent rather than a URL. Resolve its record
+      // only after the shared binding index is complete.
+      this.#ownDynamicValue(first, false);
+      this.#propertyValues.add(unwrapJavaScriptExpression(first).node);
+      if (this.#queue(node))
+        this.#calls.push({ node, typed: false, namedParent: true });
+      return;
     }
+    if (name === "route" || name === "addRoute") this.#registeredPath(first);
+  }
+
+  #registeredPath(first: t.Node): void {
+    if (stringValue(first) === undefined) this.#ownDynamicValue(first, false);
+    const value = stringValue(first),
+      path =
+        value === undefined ? undefined : routePath(value, { relative: true });
+    if (path !== undefined)
+      this.#emit(
+        path,
+        "router-call",
+        [{ value: value!, location: range(first), origin: "literal" }],
+        first,
+        !value!.startsWith("/"),
+      );
+    else
+      this.#unknown(
+        "router-call",
+        first,
+        "The registered path is not a supported literal.",
+      );
   }
 
   #object(node: t.ObjectExpression): void {
@@ -383,7 +393,7 @@ export class JavaScriptRouteScan {
     for (const call of this.#calls) {
       if (this.#result.capacity !== null) break;
       yield;
-      const first = call.node.arguments[0];
+      const first = call.node.arguments[call.namedParent === true ? 1 : 0];
       if (
         first === undefined ||
         t.isSpreadElement(first) ||
@@ -394,6 +404,20 @@ export class JavaScriptRouteScan {
           call.node,
           "The route configuration is unavailable.",
         );
+        continue;
+      }
+      if (call.namedParent === true) {
+        const record = this.#resolve(first, call.node, index);
+        if (record !== undefined && t.isFunction(record)) {
+          this.#registeredPath(call.node.arguments[0]!);
+        } else {
+          this.#claimConfiguration(first, index, false);
+          this.#unknown(
+            "router-call",
+            call.node,
+            "The named parent route does not establish a static URL ancestry.",
+          );
+        }
         continue;
       }
       this.#claimConfiguration(first, index, call.typed);
@@ -519,10 +543,11 @@ export class JavaScriptRouteScan {
   }
 
   #navigation(node: t.Node, recognized = true): void {
-    const pathnameObject = recognized && t.isObjectExpression(node);
-    let destination = node;
+    const unwrapped = unwrapJavaScriptExpression(node).node;
+    const pathnameObject = recognized && t.isObjectExpression(unwrapped);
+    let destination = unwrapped;
     if (pathnameObject) {
-      const fields = this.#fields(node);
+      const fields = this.#fields(unwrapped);
       let local = !fields.unknownKeys && fields.dynamicNames.size === 0;
       for (const key of fields.values.keys())
         if (!localNavigationFields.has(key)) {
@@ -535,6 +560,7 @@ export class JavaScriptRouteScan {
       // properties. Callable bodies remain independent syntax contexts.
       this.#ownDynamicValue(node, true, true, true);
     }
+    destination = unwrapJavaScriptExpression(destination).node;
     const value = stringValue(destination);
     if (value === undefined) {
       if (recognized)

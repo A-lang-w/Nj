@@ -12,7 +12,7 @@ const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data'}});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
+    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data'}});router.addRoute('admin',{path:'settings',component:View});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
   );
   return path;
 };
@@ -134,6 +134,24 @@ it.each(["full", "compact"] as const)(
       expect(invalid.isError).toBe(true);
       expect(JSON.stringify(invalid.content)).toContain("source_paths");
     }
+    const deliveryView = { kind: "javascript-routes", collection: "routes" };
+    for (const delivery of [
+      { view: deliveryView },
+      { detail: "complete", view: deliveryView },
+    ]) {
+      const invalid = await call("analyze_javascript_application", {
+        input_path: "/not-opened",
+        ...delivery,
+      });
+      expect(invalid.isError).toBe(true);
+    }
+    const invalidBrowser = await call("analyze_web_bundle", {
+      cdp_endpoint: "http://127.0.0.1:1",
+      target_id: "not-opened",
+      allowed_origins: ["https://example.test"],
+      detail: "summary",
+    });
+    expect(invalidBrowser.isError).toBe(true);
     const response = await call("analyze_javascript_application", {
       input_path: path,
       detail: "summary",

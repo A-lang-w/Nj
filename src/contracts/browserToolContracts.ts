@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
+import {
+  javaScriptRoutesCompleteDeliveryShape,
+  webRoutesSummaryDeliveryShape,
+} from "../domain/analysisView/javascriptRoutesView.js";
 import { javaScriptRoutesViewResultSchema } from "../domain/analysisView/analysisView.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
@@ -38,25 +41,12 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(webPageInspectionSchema);
-export const analyzeWebBundleRequestSchema = analyzeWebBundleInputSchema
-  .extend({
-    ...javaScriptRoutesDeliverySchema.shape,
-  })
-  .superRefine((input, context) => {
-    if (input.detail === "summary" && input.view === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["view"],
-        message:
-          "Web-bundle summary delivery requires an explicit javascript-routes view.",
-      });
-    if (input.view !== undefined && input.detail !== "summary")
-      context.addIssue({
-        code: "custom",
-        path: ["view"],
-        message: "A route view requires detail summary.",
-      });
-  });
+export const analyzeWebBundleRequestSchema = z
+  .discriminatedUnion("detail", [
+    analyzeWebBundleInputSchema.extend(javaScriptRoutesCompleteDeliveryShape),
+    analyzeWebBundleInputSchema.extend(webRoutesSummaryDeliveryShape),
+  ])
+  .meta({ "x-rea-root-discriminator": "detail" });
 const bundleOutputSchema = evidenceResultOf(
   z.union([webBundleAnalysisSchema, javaScriptRoutesViewResultSchema]),
 );

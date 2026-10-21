@@ -113,20 +113,27 @@ export const javaScriptRoutesViewRequestSchema = z.discriminatedUnion(
   ],
 );
 /** Select retained delivery explicitly; complete delivery never silently drops facts. */
-export const javaScriptRoutesDeliverySchema = z
-  .strictObject({
-    detail: z.enum(["complete", "summary"]).default("complete"),
-    view: javaScriptRoutesViewRequestSchema.exactOptional(),
-  })
-  .superRefine((input, context) => {
-    if (input.view !== undefined && input.detail !== "summary")
-      context.addIssue({
-        code: "custom",
-        path: ["view"],
-        message:
-          "A route view requires detail summary so complete source Evidence remains retained.",
-      });
-  });
+export const javaScriptRoutesCompleteDeliveryShape = {
+  // Optional input participates in discriminator dispatch before its default.
+  detail: z.literal("complete").optional().default("complete"),
+  view: z.never().exactOptional(),
+};
+export const javaScriptRoutesSummaryDeliveryShape = {
+  detail: z.literal("summary"),
+  view: javaScriptRoutesViewRequestSchema.exactOptional(),
+};
+export const webRoutesSummaryDeliveryShape = {
+  detail: z.literal("summary"),
+  view: javaScriptRoutesViewRequestSchema,
+};
+export const javaScriptRoutesDeliverySchema = z.discriminatedUnion("detail", [
+  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
+  z.strictObject(javaScriptRoutesSummaryDeliveryShape),
+]);
+export const webRoutesDeliverySchema = z.discriminatedUnion("detail", [
+  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
+  z.strictObject(webRoutesSummaryDeliveryShape),
+]);
 export const javaScriptRouteProvenanceSchema = z.strictObject({
   source_id: javaScriptRouteInventorySourceSchema.shape.id,
   occurrence_id: javaScriptRouteOccurrenceSchema.shape.id.nullable(),

@@ -777,7 +777,7 @@ it("retains legacy routes and a bounded route-fact prefix inside one checkpoint 
   }
 }, 60000);
 
-it("keeps typed child ancestry through TypeScript wrappers in the real worker", async () => {
+it("keeps wrapped route ancestry, navigation and unknown named parents in the real worker", async () => {
   const worker = new JavaScriptAnalysisWorker({
     heapMb: 128,
     timeoutMs: 30000,
@@ -786,15 +786,18 @@ it("keeps typed child ancestry through TypeScript wrappers in the real worker", 
     const analyzed = await worker.analyze(
       source(
         "routes.ts",
-        "const detail={_$:'detail'};defineRoutes({reports:{_$:'reports',detail:(detail as typeof detail)}});",
+        "const detail={_$:'detail'};defineRoutes({reports:{_$:'reports',detail:(detail as typeof detail)}});router.push(({pathname:'/users'} as const));router.push(({pathname:'/settings'} satisfies {pathname:string}));router.addRoute('admin',({path:'settings',component:View} as const));",
       ),
       { nodes: 1, unknowns: 8 },
     );
     if (!analyzed.ok) throw analyzed.error.error;
     expect(
       analyzed.value.javascript.routes!.candidates.map(({ path }) => path),
-    ).toEqual(["/reports", "/reports/detail"]);
-    expect(analyzed.value.javascript.routes!.unresolved).toEqual([]);
+    ).toEqual(["/users", "/settings", "/reports", "/reports/detail"]);
+    expect(analyzed.value.javascript.routes!.unresolved).toHaveLength(1);
+    expect(analyzed.value.javascript.routes!.unresolved[0]!.reason).toContain(
+      "parent",
+    );
   } finally {
     await worker.close();
   }

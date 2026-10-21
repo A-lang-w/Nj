@@ -14,7 +14,10 @@ import {
   electronActiveObservationInputSchema,
   electronActiveObservationResultSchema,
 } from "../../domain/javascript/electronActiveObservation.js";
-import { javaScriptRoutesDeliverySchema } from "../../domain/analysisView/javascriptRoutesView.js";
+import {
+  javaScriptRoutesCompleteDeliveryShape,
+  javaScriptRoutesSummaryDeliveryShape,
+} from "../../domain/analysisView/javascriptRoutesView.js";
 import {
   javaScriptRoutesViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
@@ -33,19 +36,16 @@ import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeRe
 const listOutputSchema = evidenceResultOf(electronTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(electronPageInspectionSchema);
 /** Caller-selected delivery of a completed JavaScript application analysis. */
-export const analyzeJavaScriptApplicationRequestSchema =
-  analyzeJavaScriptApplicationInputSchema
-    .extend({
-      ...javaScriptRoutesDeliverySchema.shape,
-    })
-    .superRefine((input, context) => {
-      if (input.view !== undefined && input.detail !== "summary")
-        context.addIssue({
-          code: "custom",
-          path: ["view"],
-          message: "A route view requires detail summary.",
-        });
-    });
+export const analyzeJavaScriptApplicationRequestSchema = z
+  .discriminatedUnion("detail", [
+    analyzeJavaScriptApplicationInputSchema.extend(
+      javaScriptRoutesCompleteDeliveryShape,
+    ),
+    analyzeJavaScriptApplicationInputSchema.extend(
+      javaScriptRoutesSummaryDeliveryShape,
+    ),
+  ])
+  .meta({ "x-rea-root-discriminator": "detail" });
 const applicationOutputSchema = analysisDetailOutputSchemaOf(
   javascriptApplicationAnalysisResultSchema,
   z.union([

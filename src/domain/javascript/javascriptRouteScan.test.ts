@@ -552,3 +552,40 @@ it("retains relative navigation uncertainty and excludes known external URL lite
     ),
   ).toBe(true);
 });
+
+it.each([
+  "router.addRoute('admin',{path:'settings',component:View});",
+  "const child={path:'settings',component:View};router.addRoute('admin',child);",
+  "router.addRoute('admin',({path:'settings',component:View} as const));",
+] as const)("keeps named-parent addRoute ancestry unresolved: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved.some(({ reason }) => reason.includes("parent"))).toBe(
+    true,
+  );
+});
+it.each([
+  "router.push(({pathname:'/users'} as const));",
+  "router.push(({pathname:'/users'} satisfies {pathname:string}));",
+  "router.push(('/users' as const));",
+] as const)("reads navigation through erased wrappers: %s", (source) => {
+  const facts = analyze(source);
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/users"]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it("preserves literal route registration with an independent handler", () => {
+  const facts = analyze(
+    "router.addRoute('/ordinary',()=>render());router.route('/legacy',handler);",
+  );
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "router-call")
+      .map(({ path }) => path),
+  ).toEqual(["/legacy", "/ordinary"]);
+  expect(facts.unresolved).toEqual([]);
+});
