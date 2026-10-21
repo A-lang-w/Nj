@@ -12,7 +12,7 @@ const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);const extra='/reports/help';}]);`,
+    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const extra='/reports/help';}]);`,
   );
   return path;
 };

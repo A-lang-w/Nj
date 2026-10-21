@@ -46,15 +46,16 @@ interface Frame {
   readonly ancestry?: Ancestry;
   readonly fallback?: { key: string; node: t.Node };
 }
-// Containers hold independent values; callable bodies execute in a separate context.
-const isRouteValueBoundary = (node: t.Node): boolean =>
-  t.isArrayExpression(node) ||
-  t.isObjectExpression(node) ||
+// Callable bodies execute separately. Recognized navigation owns structured
+// destination data; unrelated containers retain their independent values.
+const isRouteValueBoundary = (node: t.Node, structured: boolean): boolean =>
   t.isFunction(node) ||
-  t.isClass(node);
+  t.isClass(node) ||
+  (!structured && (t.isArrayExpression(node) || t.isObjectExpression(node)));
 interface DynamicRouteValueOwner {
   readonly node: t.Node;
   readonly navigation: boolean;
+  readonly structured: boolean;
   reported: boolean;
 }
 interface Fields {
@@ -139,7 +140,7 @@ export class JavaScriptRouteScan {
     const owner = parent === null ? undefined : this.#dynamicValues.get(parent);
     if (
       owner !== undefined &&
-      !isRouteValueBoundary(node) &&
+      !isRouteValueBoundary(node, owner.structured) &&
       !this.#dynamicValues.has(node) &&
       this.#queue(node)
     )
@@ -188,6 +189,18 @@ export class JavaScriptRouteScan {
       const value = stringValue(node);
       if (value === undefined) return;
       const next = nextAppRoutePath(value);
+      if (
+        (t.isBinaryExpression(parent) && parent.operator === "+") ||
+        (t.isTemplateLiteral(parent) && parent.expressions.length > 0)
+      ) {
+        if (next !== undefined)
+          this.#unknown(
+            "next-app-chunk",
+            parent!,
+            "The module filename is part of a computed expression; a complete page path remains unknown.",
+          );
+        return;
+      }
       if (next !== undefined)
         this.#emit(
           next,
@@ -216,6 +229,8 @@ export class JavaScriptRouteScan {
     if (
       this.#result.capacity === null &&
       (name === "path" || name === "route" || name === "_$") &&
+      !this.#dynamicValues.has(node) &&
+      !this.#dynamicValues.has(node.value) &&
       stringValue(node.value) === undefined
     )
       this.#ownDynamicValue(node.value, false);
@@ -408,14 +423,19 @@ export class JavaScriptRouteScan {
     return this.#result;
   }
 
-  #ownDynamicValue(node: t.Node, navigation: boolean, reported = false): void {
+  #ownDynamicValue(
+    node: t.Node,
+    navigation: boolean,
+    reported = false,
+    structured = false,
+  ): void {
     // Leaf references have no descendants to suppress.
     if (
       !t.isIdentifier(node) &&
-      !isRouteValueBoundary(node) &&
+      !isRouteValueBoundary(node, structured) &&
       this.#queue(node)
     )
-      this.#dynamicValues.set(node, { node, navigation, reported });
+      this.#dynamicValues.set(node, { node, navigation, reported, structured });
   }
 
   #navigation(node: t.Node, recognized = true): void {
@@ -427,7 +447,7 @@ export class JavaScriptRouteScan {
           node,
           "The recognized navigation destination is not a supported literal.",
         );
-      this.#ownDynamicValue(node, true, recognized);
+      this.#ownDynamicValue(node, true, recognized, recognized);
       return;
     }
     const path = routePath(value, { navigation: true });
@@ -438,6 +458,16 @@ export class JavaScriptRouteScan {
         [{ value, location: range(node), origin: "literal" }],
         node,
         true,
+      );
+    else if (
+      recognized &&
+      !value.startsWith("//") &&
+      !/^[a-z][a-z0-9+.-]*:/iu.test(value)
+    )
+      this.#unknown(
+        "navigation-target",
+        node,
+        "The relative or unsupported navigation literal cannot establish a rooted path without runtime context.",
       );
   }
 

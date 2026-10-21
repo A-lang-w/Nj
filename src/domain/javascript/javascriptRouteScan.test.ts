@@ -364,3 +364,40 @@ it("does not attach an independent typed tree to ordinary children ancestry", ()
     "/typed",
   ]);
 });
+
+it("owns structured navigation fragments without leaking partial destinations", () => {
+  const facts = analyze(
+    `createBrowserRouter([{path:'/users'}]);router.push({pathname:'/users/' + id});router.navigate(['/users/',id]);router.push({path:suffix + ['/users/',id]});`,
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/users",
+  ]);
+  expect(
+    facts.unresolved.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toHaveLength(3);
+});
+it("does not promote concatenation or template fragments into independent path or module constants", () => {
+  const facts = analyze(
+    `globalThis.TURBOPACK=[];createBrowserRouter([{path:'/users'}]);const computed='/users/' + id;items.push({pathname:'/users/fragment/' + id});const exact='/users/settings';const file='app/admin/page.js' + suffix;`,
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))].sort()).toEqual(
+    ["/users", "/users/settings"],
+  );
+  expect(facts.unresolved.map(({ mechanism }) => mechanism)).toEqual([
+    "next-app-chunk",
+  ]);
+});
+it("retains relative navigation uncertainty and excludes known external URL literals", () => {
+  const facts = analyze(
+    `navigate('settings');router.push('../edit');const link={href:'#details'};items.push('value');text.replace('../not-navigation','x');router.push('https://elsewhere.test/users');const external={href:'mailto:a@example.test'};`,
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toHaveLength(3);
+  expect(
+    facts.unresolved.every(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toBe(true);
+});
