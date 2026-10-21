@@ -16,6 +16,8 @@ export interface NativeUiHelperRuntime {
   readonly invoke: NativeUiHelper;
   readonly cleanupLease: AnalysisCleanupLease;
   readonly signal: AbortSignal;
+  /** Omitted by test doubles; production runtimes always set the selected deadline. */
+  readonly deadlineMs?: number;
   close(): Promise<void>;
   resources(): readonly string[];
 }
@@ -23,9 +25,10 @@ export interface NativeUiHelperRuntime {
 /** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
 export const createNativeUiHelperRuntime = (
   environment: Readonly<NodeJS.ProcessEnv>,
+  deadlineMs = NATIVE_UI_DEADLINE_MS,
 ): NativeUiHelperRuntime => {
   const selectedEnvironment = snapshotEnvironment(environment);
-  const deadlineSignal = AbortSignal.timeout(NATIVE_UI_DEADLINE_MS);
+  const deadlineSignal = AbortSignal.timeout(deadlineMs);
   const operations = new ArtifactResourceScope();
   let root: string | undefined;
   let preparation: Promise<string> | undefined;
@@ -109,6 +112,7 @@ export const createNativeUiHelperRuntime = (
     invoke,
     cleanupLease,
     signal: deadlineSignal,
+    deadlineMs,
     close: () => cleanupLease.release(),
     resources: () => (root === undefined ? [] : [root]),
   };

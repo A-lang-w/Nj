@@ -79,7 +79,10 @@ type DecoderReport = AnalysisPartialObservation & {
 };
 /** Adapter-selected semantics around a shared owned pwntools process boundary. */
 export interface PwntoolsDecoderProfile<
-  Input extends { readonly path: string },
+  Input extends {
+    readonly path: string;
+    readonly pwntools_timeout_ms?: number | undefined;
+  },
   Payload,
   Report extends DecoderReport,
 > {
@@ -101,7 +104,10 @@ export interface PwntoolsDecoderProfile<
 
 /** Thin owned-process adapter; all ELF parsing and heuristics come from unchanged upstream code. */
 export class PwntoolsDecoder<
-  Input extends { readonly path: string },
+  Input extends {
+    readonly path: string;
+    readonly pwntools_timeout_ms?: number | undefined;
+  },
   Payload,
   Report extends DecoderReport,
 > {
@@ -209,7 +215,12 @@ export class PwntoolsDecoder<
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     const OPERATION = this.profile.operation;
-    const context = { operation: OPERATION, providerId: this.identity.id };
+    const timeoutMs = input.pwntools_timeout_ms ?? PWNTOOLS_LIMITS.timeoutMs;
+    const context = {
+      operation: OPERATION,
+      providerId: this.identity.id,
+      timeoutMs,
+    };
     const replySchema = z.discriminatedUnion("ok", [
       z.strictObject({
         ok: z.literal(true),
@@ -335,6 +346,7 @@ export class PwntoolsDecoder<
         { flag: "wx", mode: 0o600 },
       );
       const execution = await this.#runCommand(
+        timeoutMs,
         {
           command: this.environment.REA_PWNTOOLS_PYTHON ?? "",
           arguments: [
@@ -408,9 +420,12 @@ export class PwntoolsDecoder<
           throw new AnalysisResourceConstraintError(
             OPERATION,
             "memory",
-            reply.message,
+            `${reply.message} cpuSeconds is ${String(PWNTOOLS_LIMITS.cpuSeconds)}. Output is ${String(PWNTOOLS_LIMITS.outputBytes)} bytes, diagnostics are ${String(PWNTOOLS_LIMITS.diagnosticBytes)} bytes, and address space is ${String(PWNTOOLS_LIMITS.addressSpaceBytes)} bytes. This release has no runtime override.`,
             reply.reported_limits ?? null,
-            { capturedOutput },
+            {
+              capturedOutput,
+              remediationAction: `cpuSeconds ${String(PWNTOOLS_LIMITS.cpuSeconds)}, the ${String(PWNTOOLS_LIMITS.outputBytes)}-byte output allowance, the ${String(PWNTOOLS_LIMITS.diagnosticBytes)}-byte diagnostic allowance, and the ${String(PWNTOOLS_LIMITS.addressSpaceBytes)}-byte address-space allowance have no runtime override. pwntools_timeout_ms does not raise them. Repeating the unchanged request fails the same way.`,
+            },
           );
         if (reply.reason === "format")
           throw new AnalysisInputError(OPERATION, { capturedOutput }, [
@@ -460,7 +475,7 @@ export class PwntoolsDecoder<
           diagnostics: capturedOutput,
           options,
           runCommand: (spawn, classifyFailure) =>
-            this.#runCommand(spawn, options, classifyFailure),
+            this.#runCommand(timeoutMs, spawn, options, classifyFailure),
         }),
       );
     } catch (cause: unknown) {
@@ -522,6 +537,7 @@ export class PwntoolsDecoder<
   }
 
   async #runCommand(
+    timeoutMs: number,
     spawn: OwnedProviderProcessSpawnOptions,
     options: ExecutionOptions | undefined,
     failure: (cause: unknown) => AnalysisError,
@@ -542,7 +558,7 @@ export class PwntoolsDecoder<
             expectedCommand: spawn.expectedCommand ?? null,
           },
           {
-            timeoutMs: PWNTOOLS_LIMITS.timeoutMs,
+            timeoutMs,
             diagnosticBytes: PWNTOOLS_LIMITS.diagnosticBytes,
           },
           {

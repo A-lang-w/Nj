@@ -30,7 +30,10 @@ import {
   NATIVE_UI_OUTPUT_BUDGET_BYTES,
   NATIVE_UI_OUTPUT_WEIGHT,
 } from "./NativeUiOutputBudget.js";
-import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
+import {
+  NATIVE_UI_DEADLINE_MS,
+  NativeUiInterruptionControl,
+} from "./NativeUiInterruptionControl.js";
 
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
@@ -69,7 +72,11 @@ export const observeNativeUi = async (
     options.runtime ?? createNativeUiHelperRuntime(options.environment);
   const interruption =
     options.interruption ??
-    new NativeUiInterruptionControl(options.signal, runtime.signal);
+    new NativeUiInterruptionControl(
+      options.signal,
+      runtime.signal,
+      runtime.deadlineMs ?? NATIVE_UI_DEADLINE_MS,
+    );
   const ownsInterruption = options.interruption === undefined;
   let result: Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>;
   try {
@@ -202,7 +209,11 @@ const observeWithHelper = async (
           new AnalysisCapabilityUnavailableError(
             "native-macos",
             operation,
-            "Scenario captures exceeded the 64 MiB output budget",
+            `Scenario captures exceeded the fixed 64 MiB output budget (${String(NATIVE_UI_OUTPUT_BUDGET_BYTES)} bytes). This release has no runtime override. native_ui_deadline_ms does not raise it.`,
+            {
+              userMessage: `Scenario captures exceeded the fixed 64 MiB output budget (${String(NATIVE_UI_OUTPUT_BUDGET_BYTES)} bytes). This release has no runtime override.`,
+              remediationAction: `The scenario output allowance is ${String(NATIVE_UI_OUTPUT_BUDGET_BYTES)} bytes. This release has no runtime override. Waiting, additional host memory, and native_ui_deadline_ms do not raise it. Repeating the unchanged request fails the same way.`,
+            },
           ),
         );
       return ok(response.result);
