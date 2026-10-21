@@ -93,3 +93,9 @@ stay at 31; the six environments compare exactly as before.
 It then merged that branch at 0ae64400 and 6257de93: an update's identity member never takes a rule, a page size of
 zero bounds nothing, and the paging rules move to `environmentStatePaging.ts`. Over the 50 captures again no view or
 write plan changed, and the six environments compare exactly as before.
+
+A fourth round merged the write-plan branch at 466ed8b4, which fixes four findings Greptile raised here against its
+code: an update whose observation drops a field is refused, entities are named as serving names them, a later
+create's generated values must keep their forms, and a derived state too large to load back is not served. The page
+cap here now uses that branch's `pageBound`. Over the 50 captures no view or write plan changed and served write tools
+stay at 31; the six environments compare exactly as before.
