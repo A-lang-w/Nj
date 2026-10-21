@@ -7,6 +7,9 @@ import {
 import { listBrowserTargetsInputSchema } from "./browserObservation.js";
 import {
   analyzeWebBundleInputSchema,
+  webBundleHeapExhaustedReason,
+  webBundleHeapExhaustedRemediation,
+  webBundleMemoryExhaustion,
   webBundleScriptTimeoutRecovery,
 } from "./webBundleAnalysis.js";
 import {
@@ -104,5 +107,78 @@ describe("web deadline controls", () => {
     expect(inspector.userMessage).not.toContain("command_timeout_ms");
     expect(inspector.remediationAction).not.toContain("--command-timeout-ms");
     expect(inspector.remediationAction).toContain("no runtime override");
+  });
+
+  it("names web-bundle exhaustion by the runtime that enforced it", () => {
+    const node = webBundleMemoryExhaustion({
+      runtime: "node",
+      heapMb: 1024,
+      memoryLimitReached: true,
+      processMemoryLimitBytes: 99,
+    });
+    expect(node.kind).toBe("v8-heap");
+    expect(webBundleHeapExhaustedReason(node)).toContain(
+      "exhausted its max_heap_mb V8 old-space heap of 1024 MiB",
+    );
+    expect(webBundleHeapExhaustedRemediation(node)).toContain(
+      "Increase max_heap_mb above 1024",
+    );
+
+    const commitBytes = 1024 * 1024 * 1024 + 512 * 1024 * 1024;
+    const windows = webBundleMemoryExhaustion({
+      runtime: "bun",
+      heapMb: 1024,
+      memoryLimitReached: true,
+      processMemoryLimitBytes: commitBytes,
+    });
+    const windowsReason = webBundleHeapExhaustedReason(windows);
+    expect(windows.kind).toBe("process-commit");
+    expect(windowsReason).toContain(
+      `${String(commitBytes)}-byte process commit limit`,
+    );
+    expect(windowsReason).toContain("512 MiB Bun runtime reserve");
+    expect(windowsReason).not.toContain("V8 old-space heap of");
+    const windowsRemediation = webBundleHeapExhaustedRemediation(windows);
+    expect(windowsRemediation).toContain("Increase max_heap_mb above 1024");
+    expect(windowsRemediation).toContain("Windows process commit limit");
+    expect(windowsRemediation).toContain("not a V8 old-space heap");
+    expect(windowsRemediation).not.toContain(
+      "exhausted its max_heap_mb V8 old-space heap",
+    );
+
+    const bun = webBundleMemoryExhaustion({
+      runtime: "bun",
+      heapMb: 1024,
+      memoryLimitReached: false,
+      processMemoryLimitBytes: null,
+    });
+    expect(bun.kind).toBe("bun-allocation");
+    expect(webBundleHeapExhaustedReason(bun)).toContain(
+      "Bun ignores the V8 old-space flag",
+    );
+    expect(webBundleHeapExhaustedReason(bun)).not.toContain(
+      "V8 old-space heap of",
+    );
+    expect(webBundleHeapExhaustedRemediation(bun)).not.toContain(
+      "Increase max_heap_mb",
+    );
+    expect(webBundleHeapExhaustedRemediation(bun)).toContain(
+      "does not change this exit",
+    );
+
+    expect(
+      webBundleMemoryExhaustion({
+        runtime: "bun",
+        heapMb: 1024,
+        memoryLimitReached: false,
+        processMemoryLimitBytes: commitBytes,
+      }).kind,
+    ).toBe("bun-allocation");
+    expect(
+      webBundleHeapExhaustedRemediation({
+        kind: "v8-heap",
+        heapMb: 16_384,
+      }),
+    ).toContain("already at the maximum 16384 MiB");
   });
 });

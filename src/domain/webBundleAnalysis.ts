@@ -82,16 +82,76 @@ export const webBundleTotalTimeoutRecovery = (
   remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS, "--total-analysis-timeout-ms")} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
 });
 
-/** Heap exhaustion names max_heap_mb, the effective MiB, and the accepted range. */
-export const webBundleHeapExhaustedReason = (heapMb: number): string =>
-  `Owned web analyzer exhausted its max_heap_mb V8 old-space heap of ${String(heapMb)} MiB (range ${String(MIN_WEB_BUNDLE_HEAP_MB)}..${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}). This is the isolated analyzer heap, not a process RSS limit.`;
+/**
+ * Which resource the analyzer actually exhausted.
+ * Node enforces the V8 old-space flag. Windows Bun enforces a process commit
+ * limit of that heap plus a 512 MiB reserve. Other Bun hosts enforce neither.
+ */
+export type WebBundleMemoryExhaustion =
+  | { readonly kind: "v8-heap"; readonly heapMb: number }
+  | {
+      readonly kind: "process-commit";
+      readonly heapMb: number;
+      readonly limitBytes: number;
+    }
+  | { readonly kind: "bun-allocation"; readonly heapMb: number };
 
-export const webBundleHeapExhaustedRemediation = (heapMb: number): string =>
-  `${
-    heapMb < MAX_WEB_BUNDLE_HEAP_MB
-      ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}), or use --max-heap-mb on the CLI.`
-      : `max_heap_mb is already at the maximum ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB; do not increase it further.`
-  } Applies on the next call. Raising max_heap_mb does not raise analysis_timeout_ms, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets. Those byte budgets have no runtime override.`;
+/** Map host facts onto the exhausted resource. The worker supplies those facts. */
+export const webBundleMemoryExhaustion = (input: {
+  readonly runtime: "node" | "bun";
+  readonly heapMb: number;
+  readonly memoryLimitReached: boolean;
+  readonly processMemoryLimitBytes: number | null;
+}): WebBundleMemoryExhaustion => {
+  if (input.runtime === "node")
+    return { kind: "v8-heap", heapMb: input.heapMb };
+  if (input.memoryLimitReached && input.processMemoryLimitBytes !== null)
+    return {
+      kind: "process-commit",
+      heapMb: input.heapMb,
+      limitBytes: input.processMemoryLimitBytes,
+    };
+  return { kind: "bun-allocation", heapMb: input.heapMb };
+};
+
+const webBundleHeapRange = (): string =>
+  `range ${String(MIN_WEB_BUNDLE_HEAP_MB)}..${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}`;
+
+const webBundleHeapIncrease = (heapMb: number): string =>
+  heapMb < MAX_WEB_BUNDLE_HEAP_MB
+    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}), or use --max-heap-mb on the CLI.`
+    : `max_heap_mb is already at the maximum ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB; do not increase it further.`;
+
+const webBundleHeapDoesNotRaise =
+  "Applies on the next call. Raising max_heap_mb does not raise analysis_timeout_ms, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets. Those byte budgets have no runtime override.";
+
+/** Heap exhaustion names the resource this runtime actually exhausted. */
+export const webBundleHeapExhaustedReason = (
+  exhaustion: WebBundleMemoryExhaustion,
+): string => {
+  const range = webBundleHeapRange();
+  switch (exhaustion.kind) {
+    case "v8-heap":
+      return `Owned web analyzer exhausted its max_heap_mb V8 old-space heap of ${String(exhaustion.heapMb)} MiB (${range}). This is the isolated analyzer heap, not a process RSS limit.`;
+    case "process-commit":
+      return `Owned web analyzer reached its ${String(exhaustion.limitBytes)}-byte process commit limit. That limit is max_heap_mb ${String(exhaustion.heapMb)} MiB plus a 512 MiB Bun runtime reserve (${range}). Bun ignores the V8 old-space flag, so this is not V8 old-space exhaustion.`;
+    case "bun-allocation":
+      return `Owned web analyzer ran out of memory. Bun ignores the V8 old-space flag, so this exit is not the configured max_heap_mb of ${String(exhaustion.heapMb)} MiB (${range}). This host enforces no analyzer process commit limit.`;
+  }
+};
+
+export const webBundleHeapExhaustedRemediation = (
+  exhaustion: WebBundleMemoryExhaustion,
+): string => {
+  switch (exhaustion.kind) {
+    case "v8-heap":
+      return `${webBundleHeapIncrease(exhaustion.heapMb)} ${webBundleHeapDoesNotRaise}`;
+    case "process-commit":
+      return `${webBundleHeapIncrease(exhaustion.heapMb)} That raises the Windows process commit limit (max_heap_mb plus the fixed 512 MiB Bun runtime reserve), not a V8 old-space heap. ${webBundleHeapDoesNotRaise}`;
+    case "bun-allocation":
+      return `Bun ignores V8 heap flags, so raising max_heap_mb does not change this exit. A reached Windows process commit limit is reported separately. Other Bun hosts enforce no analyzer heap limit. Reduce the analysis instead of increasing max_heap_mb. ${webBundleHeapDoesNotRaise}`;
+  }
+};
 
 export const webBundleFixedByteBudget = (
   budgetBytes: number,
