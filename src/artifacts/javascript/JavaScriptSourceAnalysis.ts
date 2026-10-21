@@ -63,9 +63,10 @@ const checkoutJavaScriptSourceAnalysis = async (
     await releaseReplacedJavaScriptWorker(scope, current.worker);
   }
   const worker = new JavaScriptAnalysisWorker(limits, launcher, sourceCount);
-  // A concurrent analysis may have claimed the slot while the replaced
-  // process was closing. This extra process is closed with its own port.
-  if (retained.get(scope)?.busy !== true)
+  // A concurrent analysis may have parked another healthy worker while the
+  // replaced process was closing. Claim the slot only when it is still empty.
+  // This extra process is closed through the port returned below.
+  if (retained.get(scope) === undefined)
     retained.set(scope, { worker, limits, busy: true });
   return new ScopeJavaScriptSourceAnalysis(scope, worker);
 };
