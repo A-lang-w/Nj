@@ -4,6 +4,7 @@ import {
   integer,
   real,
   index,
+  uniqueIndex,
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
@@ -64,6 +65,10 @@ export const workspaces = sqliteTable(
   },
   (table) => ({
     ownerIdx: index("workspaces_owner_idx").on(table.ownerId),
+    ownerNameIdx: uniqueIndex("workspaces_owner_name_idx").on(
+      table.ownerId,
+      table.name,
+    ),
   }),
 );
 
