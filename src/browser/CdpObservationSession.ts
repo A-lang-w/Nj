@@ -30,7 +30,8 @@ import {
   observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
-import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
+import { cdpFrameIdentity } from "./CdpCaptureEventHelpers.js";
+
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 interface ObservationContext {
@@ -75,7 +76,7 @@ export const observeCdpSession = async (
   const capture = new TimelineCapture(allowedOrigins, mainFrameId, initialUrl);
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
-    capture.targetTerminated(),
+    capture.transportDisconnected(),
   );
   try {
     await context.connection.send(
@@ -190,7 +191,7 @@ class TimelineCapture {
 
   constructor(
     private readonly allowedOrigins: ReadonlySet<string>,
-    private readonly mainFrameId: string,
+    private mainFrameId: string,
     initialUrl: string,
   ) {
     this.finalUrl =
@@ -210,7 +211,15 @@ class TimelineCapture {
   #ingestArmed(event: CdpTransportEvent, bufferedBeforeArm = false): void {
     if (this.#endReason !== undefined || this.#scopeExcluded) return;
     const params = recordValue(event.params);
-    if (params === undefined) return;
+    if (params === undefined) {
+      if (
+        event.method === "Page.frameRequestedNavigation" ||
+        event.method === "Page.frameNavigated" ||
+        event.method === "Page.navigatedWithinDocument"
+      )
+        this.completeness.exclude("timeline", "invalid_protocol_value");
+      return;
+    }
     const contextOnly =
       bufferedBeforeArm && hasNoComparableProducerTimestamp(event.method);
     if (contextOnly) this.#hasUnknownEventTime = true;
@@ -234,8 +243,10 @@ class TimelineCapture {
         this.#lifecycle(params);
         break;
       case "Inspector.targetCrashed":
-      case "Target.detachedFromTarget":
         this.targetTerminated(params);
+        break;
+      case "Target.detachedFromTarget":
+        this.sessionDetached(params);
         break;
     }
   }
@@ -304,6 +315,32 @@ class TimelineCapture {
     this.end("target_terminated");
   }
 
+  sessionDetached(params: UnknownRecord = {}): void {
+    if (this.#endReason !== undefined) return;
+    this.#add({
+      type: "session_detached",
+      params,
+      timestamp: null,
+      rawUrl: null,
+      requestId: null,
+      detail: "session_detached",
+    });
+    this.end("session_detached");
+  }
+
+  transportDisconnected(): void {
+    if (this.#endReason !== undefined) return;
+    this.#add({
+      type: "transport_disconnected",
+      params: {},
+      timestamp: null,
+      rawUrl: null,
+      requestId: null,
+      detail: "transport_disconnected",
+    });
+    this.end("transport_disconnected");
+  }
+
   setFinalUrl(rawUrl: string): void {
     if (this.#scopeExcluded) return;
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
@@ -332,7 +369,10 @@ class TimelineCapture {
     params: UnknownRecord,
     contextOnly: boolean,
   ): void {
-    if (!isMainFrameNavigation(event, this.mainFrameId)) return;
+    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    if (identity.identityIssue !== null || identity.parentIssue !== null)
+      this.completeness.exclude("timeline", "invalid_protocol_value");
+    if (identity.selection !== "main") return;
     const reason = safeDetail(params.reason);
     const rawUrl = cdpStringValue(params.url);
     const destination =
@@ -355,14 +395,27 @@ class TimelineCapture {
     contextOnly: boolean,
   ): void {
     const frame = recordValue(params.frame);
-    if (!isMainFrameNavigation(event, this.mainFrameId)) return;
+    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    if (identity.identityIssue !== null || identity.parentIssue !== null)
+      this.completeness.exclude("timeline", "invalid_protocol_value");
+    if (identity.selection !== "main" && !identity.isRootReplacement) return;
     const observation = observeCdpFrameUrl(frame);
     const rawUrl =
       observation.kind === "observed" ? observation.url : undefined;
     const destination = classifyCdpFrameUrl(observation, this.allowedOrigins);
+    if (identity.isRootReplacement) {
+      this.mainFrameId = identity.frameId ?? this.mainFrameId;
+      this.#pendingReload = false;
+      if (contextOnly) {
+        if (observation.kind !== "observed") this.invalidateFinalUrl();
+        this.#stopIfOutOfScope(destination);
+        return;
+      }
+    }
+
     this.#add({
       type:
-        !contextOnly && this.#pendingReload
+        !identity.isRootReplacement && !contextOnly && this.#pendingReload
           ? "same_origin_reload"
           : "navigation_committed",
       params: { ...params, frameId: frame?.id, loaderId: frame?.loaderId },
@@ -385,7 +438,10 @@ class TimelineCapture {
     params: UnknownRecord,
     contextOnly: boolean,
   ): void {
-    if (!isMainFrameNavigation(event, this.mainFrameId)) return;
+    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    if (identity.identityIssue !== null || identity.parentIssue !== null)
+      this.completeness.exclude("timeline", "invalid_protocol_value");
+    if (identity.selection !== "main") return;
     const rawUrl = cdpStringValue(params.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({

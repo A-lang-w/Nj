@@ -369,8 +369,16 @@ describe("CdpBrowserProvider navigation timeline", () => {
       expect(result.value.window.end_reason).toBe(
         sessionTimeline === "outside_policy"
           ? "target_left_scope"
-          : "target_terminated",
+          : "session_detached",
       );
+      if (sessionTimeline === "target_detached") {
+        expect(result.value.timeline).toContainEqual(
+          expect.objectContaining({ type: "session_detached" }),
+        );
+        expect(result.value.timeline).not.toContainEqual(
+          expect.objectContaining({ type: "target_terminated" }),
+        );
+      }
     },
   );
   it.each([2_147_483_648, 3_000_000_000])(
