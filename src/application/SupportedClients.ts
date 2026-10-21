@@ -34,6 +34,8 @@ export interface SetupClient {
   /** Same-scope fallback ZCode stops loading after its first native server. */
   readonly zcodeFallbackPath?: string;
   readonly markerPath?: string;
+  /** Additional stable installation marker files used for client detection. */
+  readonly markerPaths?: readonly string[];
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
@@ -105,6 +107,7 @@ interface ClientDefinitionBase {
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
+  readonly markerPaths?: (context: ClientPathContext) => readonly string[];
   readonly geminiSettings?: (
     context: ClientPathContext,
   ) => NonNullable<SetupClient["geminiSettings"]>;
@@ -689,13 +692,12 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     displayName: "Puku CLI",
     configPath: ({ home }: ClientPathContext) =>
       join(home, ".puku-cli", ".mcp.json"),
-    markerPath: (context: ClientPathContext) => {
-      const directory = pukuCliDirectory(context);
-      return [
-        join(directory, "settings.json"),
-        join(directory, "puku-cli.json"),
-      ];
-    },
+    markerPath: ({ home }: ClientPathContext) =>
+      join(home, ".puku-cli", "settings.json"),
+    markerPaths: ({ home }: ClientPathContext) => [
+      join(home, ".puku-cli", "settings.json"),
+      join(home, ".puku-cli", "puku-cli.json"),
+    ],
     skillPath: ({ home }: ClientPathContext) =>
       join(home, ".puku-cli", "skills"),
     format: "json",
@@ -726,13 +728,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
  * directory override does not exist.
  */
 export const clientEvidencePaths = (
-  client: Pick<SetupClient, "configPath" | "configPaths" | "markerPath">,
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "markerPath" | "markerPaths"
+  >,
 ): readonly string[] => [
   ...new Set(
     [
       client.configPath,
       ...(client.configPaths ?? []),
       client.markerPath,
+      ...(client.markerPaths ?? []),
     ].filter((path): path is string => path !== undefined && path.length > 0),
   ),
 ];
@@ -797,6 +803,9 @@ export const supportedClients = (
           ? {}
           : { zcodeFallbackPath: definition.zcodeFallbackPath(context) }),
         markerPath,
+        ...(definition.markerPaths === undefined
+          ? {}
+          : { markerPaths: definition.markerPaths(context) }),
         ...(msixPackage === undefined ? {} : { msixPackage }),
         ...(definition.quitBeforeSetup === true
           ? { quitBeforeSetup: true }
