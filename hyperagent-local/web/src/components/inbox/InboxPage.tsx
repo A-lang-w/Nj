@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { useInboxStore } from "@/stores/inbox-store";
 import { useUiStore } from "@/stores/ui-store";
-import { Inbox, Bell, MessageSquare, Bot, Sparkles } from "lucide-react";
+import { Inbox, Bell, MessageSquare, Bot, Sparkles, Star } from "lucide-react";
+import { Link } from "react-router-dom";
 import { formatDate } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
@@ -9,12 +10,49 @@ import { COLORS } from "@/lib/theme-colors";
 
 const EVENT_ICONS: Record<string, React.ElementType> = {
   "thread.created": MessageSquare,
-  "thread.message": MessageSquare,
+  "thread.updated": MessageSquare,
+  "thread.deleted": MessageSquare,
+  "message.done": MessageSquare,
   "memory.created": Sparkles,
+  "memory.updated": Sparkles,
+  "memory.deleted": Sparkles,
   "skill.created": Sparkles,
+  "skill.updated": Sparkles,
+  "skill.deleted": Sparkles,
+  "agent.created": Bot,
+  "agent.updated": Bot,
+  "agent.deleted": Bot,
   "mcp_server.created": Bot,
   "mcp_server.updated": Bot,
+  "mcp_server.deleted": Bot,
+  "favorite.added": Star,
+  "favorite.removed": Star,
 };
+
+function activityHref(event: {
+  eventType: string;
+  targetType: string | null;
+  targetId: number | null;
+}): string | null {
+  if (event.targetId == null) return null;
+  switch (event.targetType) {
+    case "thread":
+      return `/threads/${event.targetId}`;
+    case "agent":
+      return "/agents";
+    case "skill":
+      return "/skills";
+    case "memory":
+      return "/memories";
+    case "mcp_server":
+      return "/settings";
+    default:
+      if (event.eventType.startsWith("thread.")) {
+        return `/threads/${event.targetId}`;
+      }
+      return null;
+  }
+}
 
 export function InboxPage() {
   const summary = useInboxStore((s) => s.summary);
@@ -96,15 +134,9 @@ export function InboxPage() {
           <ul role="list" className="mx-auto max-w-2xl space-y-2">
             {activity.map((event) => {
               const Icon = EVENT_ICONS[event.eventType] || Bell;
-              return (
-                <li
-                  key={event.id}
-                  className="flex items-start gap-3 rounded-lg border p-4 transition-colors"
-                  style={{
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.bg,
-                  }}
-                >
+              const href = activityHref(event);
+              const body = (
+                <>
                   <div
                     className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full"
                     style={{
@@ -128,6 +160,32 @@ export function InboxPage() {
                       {formatDate(event.createdAt)}
                     </p>
                   </div>
+                </>
+              );
+              return (
+                <li key={event.id}>
+                  {href ? (
+                    <Link
+                      to={href}
+                      className="flex items-start gap-3 rounded-lg border p-4 transition-colors hover:border-primary-300 dark:hover:border-primary-700"
+                      style={{
+                        borderColor: COLORS.border,
+                        backgroundColor: COLORS.bg,
+                      }}
+                    >
+                      {body}
+                    </Link>
+                  ) : (
+                    <div
+                      className="flex items-start gap-3 rounded-lg border p-4"
+                      style={{
+                        borderColor: COLORS.border,
+                        backgroundColor: COLORS.bg,
+                      }}
+                    >
+                      {body}
+                    </div>
+                  )}
                 </li>
               );
             })}

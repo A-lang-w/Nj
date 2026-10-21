@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useUiStore } from "@/stores/ui-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThreadsStore } from "@/stores/threads-store";
+import { apiGet } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { nextPrimeWorkspaceId } from "@/lib/prime-workspace";
 import {
@@ -22,6 +23,11 @@ import {
 import { useState, useEffect, useRef, memo } from "react";
 import { APP_NAME } from "@/lib/branding";
 import { COLORS } from "@/lib/theme-colors";
+
+interface WorkspaceOption {
+  id: number;
+  name: string;
+}
 
 const NavLink = memo(function NavLink({
   to,
@@ -77,11 +83,13 @@ export function Sidebar() {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
+  const setActiveWorkspace = useUiStore((s) => s.setActiveWorkspace);
   const user = useAuthStore((s) => s.user);
   const recentThreads = useThreadsStore((s) => s.threads);
   const threadsLoading = useThreadsStore((s) => s.isLoading);
   const threadsFetchError = useThreadsStore((s) => s.fetchError);
   const fetchThreads = useThreadsStore((s) => s.fetchThreads);
+  const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([]);
   // Prime the recent-threads list when landing on a page that never fetched
   // threads (e.g. a cold load of /memories). Primed once per workspace: the
   // store's loading/error flags must not be dependencies — a completed
@@ -100,8 +108,27 @@ export function Sidebar() {
     primedWorkspaceRef.current = target;
     fetchThreads(target);
   }, [recentThreads.length, fetchThreads, activeWorkspaceId]);
+  useEffect(() => {
+    if (!user) {
+      setWorkspaces([]);
+      return;
+    }
+    let cancelled = false;
+    void apiGet<WorkspaceOption[]>("/workspaces")
+      .then((rows) => {
+        if (!cancelled) setWorkspaces(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
   const [threadsOpen, setThreadsOpen] = useState(true);
   const [personalOpen, setPersonalOpen] = useState(true);
+  const activeWorkspaceName =
+    workspaces.find((w) => w.id === activeWorkspaceId)?.name ?? "Personal";
 
   return (
     <div
@@ -190,10 +217,10 @@ export function Sidebar() {
                   color: COLORS.textPrimary,
                 }}
               >
-                P
+                {activeWorkspaceName.charAt(0).toUpperCase()}
               </div>
               <span className="min-w-0 flex-1 truncate font-medium">
-                Personal
+                {activeWorkspaceName}
               </span>
               <ChevronDown
                 className={cn(
@@ -208,6 +235,30 @@ export function Sidebar() {
                 }}
               />
             </button>
+            {personalOpen && workspaces.length > 1 && (
+              <div className="mb-2">
+                <label htmlFor="sidebar-workspace" className="sr-only">
+                  Workspace
+                </label>
+                <select
+                  id="sidebar-workspace"
+                  value={activeWorkspaceId}
+                  onChange={(e) => setActiveWorkspace(Number(e.target.value))}
+                  className="w-full rounded-md border px-2 py-1.5 text-sm min-h-[44px]"
+                  style={{
+                    borderColor: COLORS.border,
+                    backgroundColor: COLORS.inputBg,
+                    color: COLORS.textPrimary,
+                  }}
+                >
+                  {workspaces.map((ws) => (
+                    <option key={ws.id} value={ws.id}>
+                      {ws.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         )}
 
