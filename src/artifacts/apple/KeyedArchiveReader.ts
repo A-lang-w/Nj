@@ -79,7 +79,11 @@ export const decodeKeyedArchiveBytes = (
     binaryExpansion !== undefined
       ? {
           value: parseBinary(
-            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+            decodeBinaryPlistNumbers(
+              bytes,
+              binaryNumberMetadata!,
+              binaryExpansion.binaryDatePayloadOffsets,
+            ),
           ),
           numberLiterals: binaryNumberMetadata!.literals,
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
@@ -152,7 +156,8 @@ const keyedArchiveKindRemediation = (
 /** Read exactly one regular, contained bundle entry without following symlinks. */
 export const inspectBundleKeyedArchive = async (input: {
   bundlePath: string;
-  targetSha256: string;
+  targetSha256: string | null;
+  resourceRoot?: import("../../domain/apple/bundleResourceRoot.js").BundleResourceRoot;
   parameters: unknown;
   signal?: AbortSignal;
   /** Host whose available workflows the remediation names. */
@@ -228,6 +233,9 @@ export const inspectBundleKeyedArchive = async (input: {
     try {
       return keyedArchiveResultSchema.parse({
         target_sha256: input.targetSha256,
+        ...(input.resourceRoot === undefined
+          ? {}
+          : { resource_root: input.resourceRoot }),
         archive_path: entry.path,
         archive_sha256: createHash("sha256").update(bytes).digest("hex"),
         ...decodeKeyedArchiveBytes(bytes, selected),
