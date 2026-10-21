@@ -14,9 +14,8 @@ from typing import Any, Optional, Protocol, Sequence
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 # The native label setter truncates NSString names at this UTF-16 extent.
 HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
-# One request line, including its terminator, must fit in this many bytes.
-# Mirrors the Cutter bridge's MAX_FRAME_BYTES ceiling so both bridges bound a
-# peer-sized frame the same way.
+# Maximum request JSON payload size in bytes, excluding its trailing LF.
+# Matches the Cutter bridge's MAX_FRAME_BYTES payload ceiling.
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
 _rea_session_document = None
 _search_inventory_cache = {}
@@ -1024,21 +1023,21 @@ def _serve_connection(connection):
     should_stop = False
     try:
         while True:
-            # Bound the read itself: a peer can send an unterminated line, and
-            # the unbounded readline that used to serve this loop kept Hopper
-            # allocating for as long as that peer kept writing. A line that
-            # fills the limit without a terminator cannot be answered or
-            # resynchronized, because its remainder would be read as the next
-            # request, so it is refused once and the connection is closed.
-            line = file.readline(MAX_REQUEST_BYTES)
+            # Bound the read itself. The payload budget excludes LF, so permit
+            # one additional byte for the delimiter while still refusing an
+            # oversized unterminated peer without waiting for EOF.
+            line = file.readline(MAX_REQUEST_BYTES + 1)
             if not line:
                 break
             if not line.endswith(b"\n"):
+                message = (
+                    "Bridge request exceeds the %d-byte payload limit"
+                    % MAX_REQUEST_BYTES
+                    if len(line) > MAX_REQUEST_BYTES
+                    else "Incomplete bridge request frame"
+                )
                 _write_message(file, {"id": 0, "error": _safe_diagnostic(
-                    InvalidRequestError(
-                        "Bridge request exceeds the %d-byte frame limit"
-                        % MAX_REQUEST_BYTES
-                    )
+                    InvalidRequestError(message)
                 )})
                 break
             request_id = None

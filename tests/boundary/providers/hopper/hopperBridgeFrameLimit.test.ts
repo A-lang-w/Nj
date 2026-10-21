@@ -55,10 +55,10 @@ it("serves requests up to the frame limit and refuses a line that exceeds it", a
   });
   expect(result.past_limit.thread_released).toBe(true);
 
-  // A line that fills the limit without a terminator is refused with a typed
+  // An unterminated payload one byte over the limit is refused with a typed
   // diagnostic naming the limit and the connection is closed, instead of
-  // resynchronizing mid-line. The peer stays connected, so this pins the exact
-  // ceiling: a bound one byte larger would still be waiting here.
+  // resynchronizing mid-line. The peer stays connected, so this pins the
+  // payload ceiling without charging the LF against it.
   expect(result.stalled_line.reply).toMatchObject({
     error: {
       code: -32000,

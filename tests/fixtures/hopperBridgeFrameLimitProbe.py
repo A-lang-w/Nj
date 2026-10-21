@@ -3,13 +3,13 @@
 Four cases share one loaded bridge module:
 
 - ``legit``: an ordinary authenticated request is served.
-- ``at_limit``: a request whose line, including its terminator, is exactly the
-  frame limit is still served, so the ceiling does not reject legitimate traffic.
+- ``at_limit``: a request with an exactly-limit JSON payload plus LF is served,
+  so framing does not consume a payload byte.
 - ``past_limit``: a peer writes one byte past the limit and never terminates the
   line. An unbounded line read cannot answer this at all, which is what makes
   Hopper allocate for as long as the peer keeps writing.
-- ``stalled_line``: a peer fills the limit without a terminator, stops writing,
-  and keeps the connection open. The bridge must refuse it at the ceiling
+- ``stalled_line``: a peer exceeds the payload limit without a terminator,
+  stops writing, and keeps the connection open. The bridge must refuse it
   without waiting for EOF, then close.
 """
 import json
@@ -83,21 +83,18 @@ def main():
 
     legit = serve(bridge, request_line(bridge, {}) + b"\n", False)
 
-    # A request whose line, including its terminator, is exactly the limit is
-    # legitimate traffic and must still be served.
-    padding = limit - 1 - len(request_line(bridge, {"padding": ""}))
+    # The payload may fill the limit; the framing LF is additional.
+    padding = limit - len(request_line(bridge, {"padding": ""}))
     at_limit_line = request_line(bridge, {"padding": "p" * padding}) + b"\n"
-    assert len(at_limit_line) == limit, len(at_limit_line)
+    assert len(at_limit_line) == limit + 1, len(at_limit_line)
     at_limit = serve(bridge, at_limit_line, False)
 
     # One byte past the limit, still unterminated and still open.
     past_limit = serve(bridge, b"x" * (limit + 1), False)
 
-    # The limit filled without a terminator while the peer stays connected. No
-    # unread bytes remain, so the refusal reaches the peer intact, and only a
-    # bound that stops at the limit can answer: a larger bound waits here for a
-    # byte the peer never sends.
-    stalled_line = serve(bridge, b"x" * limit, True)
+    # The payload limit plus one byte, without a terminator. The peer stays
+    # connected so the bounded read must reject it without waiting for EOF.
+    stalled_line = serve(bridge, b"x" * (limit + 1), True)
 
     json.dump(
         {
