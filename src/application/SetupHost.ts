@@ -208,10 +208,13 @@ export const systemSetupHost = (
           result.packageFailure,
           "linux",
         );
-        return result.verificationFailure !== undefined
+        const detail =
+          result.verificationFailure?.message ??
+          result.pythonRuntimeFailure?.message;
+        return detail !== undefined
           ? {
               ...failure,
-              remediation: `${result.verificationFailure.message} ${failure.remediation}`,
+              remediation: `${detail} ${failure.remediation}`,
             }
           : failure;
       }

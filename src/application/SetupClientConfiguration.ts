@@ -27,11 +27,12 @@ import { isClientConfigurationCleanupFailure } from "./ClientConfigurationCleanu
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
 import {
   clientRegistrationEnvironment,
-  clientRegistrationEnvironmentDetails,
+  clientRegistrationEnvironmentDetailsWithBudget,
   type ProviderRequestBudgetResolver,
 } from "./ClientRegistrationEnvironment.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   MCP_STARTUP_POLICY,
@@ -124,7 +125,7 @@ const configureClientDocument = async (
   const policy = await readClientPolicyBlock(
     client,
     undefined,
-    clientConfigurationDesired(
+    await clientConfigurationDesired(
       client,
       environment,
       command,
@@ -163,7 +164,7 @@ const configureClientDocument = async (
     const policy = await readClientPolicyBlock(
       client,
       parsed,
-      clientConfigurationDesired(
+      await clientConfigurationDesired(
         client,
         environment,
         command,
@@ -189,7 +190,7 @@ const configureClientDocument = async (
     throwCleanupFailure(fallback.error);
     return { status: "failed", reason: "readback" };
   }
-  const desired = clientConfigurationDesired(
+  const desired = await clientConfigurationDesired(
     client,
     environment,
     command,
@@ -250,16 +251,6 @@ const persistClientConfiguration = async ({
       };
     if (target.value) return { status: "failed", reason: "target_changed" };
   }
-  let recoveryBackupPath: string | undefined;
-  if (original !== undefined) {
-    const preserved = await preserveCurrentRecoveryBackup(
-      `${client.configPath}.rea.backup`,
-      transactionPath,
-      original,
-    );
-    if (!preserved.ok) return { status: "failed", reason: "backup" };
-    recoveryBackupPath = preserved.value;
-  }
   // A native OpenCode V2 entry replaces REA's legacy V1 entry, which would
   // otherwise conflict with it.
   const legacyPath = legacyClientServerPath(
@@ -292,19 +283,51 @@ const persistClientConfiguration = async ({
           ),
         }
       : registered;
-  let publication: ClientConfigurationPublication;
+  let serialized: ReturnType<typeof serializeClientConfiguration>;
   try {
-    await mkdir(dirname(client.configPath), { recursive: true });
-    publication = await ClientConfigurationPublication.write(
-      transactionPath,
-      serializeClientConfiguration(document, format, original, [
+    serialized = serializeClientConfiguration(
+      document,
+      format,
+      original,
+      [
         ...Object.keys(fallbackServers)
           .filter((name) => name !== PRODUCT_IDENTITY.mcpServerKey)
           .map((name) => clientServerPath(parsed, name)),
         clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
         ...(legacyPath === undefined ? [] : [legacyPath]),
         ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
-      ]),
+      ],
+      // Setup deletes only REA's OpenCode V1 name, which the native V2 entry
+      // supersedes whatever its launcher; every repeat goes, as one member does.
+      { removeShadowedMembersAt: legacyPath === undefined ? [] : [legacyPath] },
+    );
+  } catch (cause: unknown) {
+    // An unserializable edit is reported before any file is written.
+    void cause;
+    return { status: "failed", reason: "write" };
+  }
+  if (!serialized.ok)
+    return {
+      status: "failed",
+      reason: "shadowed_member",
+      path: serialized.error.path,
+    };
+  let recoveryBackupPath: string | undefined;
+  if (original !== undefined) {
+    const preserved = await preserveCurrentRecoveryBackup(
+      `${client.configPath}.rea.backup`,
+      transactionPath,
+      original,
+    );
+    if (!preserved.ok) return { status: "failed", reason: "backup" };
+    recoveryBackupPath = preserved.value;
+  }
+  let publication: ClientConfigurationPublication;
+  try {
+    await mkdir(dirname(client.configPath), { recursive: true });
+    publication = await ClientConfigurationPublication.write(
+      transactionPath,
+      serialized.value,
       original,
       0o600,
     );
@@ -385,7 +408,7 @@ export const clientConfigurationAligned = async (
     const policy = await readClientPolicyBlock(
       client,
       parsed,
-      clientConfigurationDesired(
+      await clientConfigurationDesired(
         client,
         providerEnvironment,
         command,
@@ -402,7 +425,7 @@ export const clientConfigurationAligned = async (
       policy.value === undefined &&
       registrationCurrent(
         parsed,
-        clientConfigurationDesired(
+        await clientConfigurationDesired(
           client,
           providerEnvironment,
           command,
@@ -474,7 +497,7 @@ const inspectClientDocument = async (
   const policy = await readClientPolicyBlock(
     client,
     undefined,
-    clientConfigurationDesired(
+    await clientConfigurationDesired(
       client,
       providerEnvironment,
       command,
@@ -524,7 +547,7 @@ const inspectClientDocument = async (
     const policy = await readClientPolicyBlock(
       client,
       parsed,
-      clientConfigurationDesired(
+      await clientConfigurationDesired(
         client,
         providerEnvironment,
         command,
@@ -542,7 +565,7 @@ const inspectClientDocument = async (
     }
     if (policy.value !== undefined)
       return { status: "invalid", remediation: policy.value };
-    const desired = clientConfigurationDesired(
+    const desired = await clientConfigurationDesired(
       client,
       providerEnvironment,
       command,
@@ -690,14 +713,14 @@ const registrationCurrent = (
   !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
   !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey);
 
-const clientConfigurationDesired = (
+const clientConfigurationDesired = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   parsed: ClientConfigurationDocument | undefined,
   sources: readonly ClientConfigurationSource[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
-) => {
+): Promise<unknown> => {
   const effective = effectiveClientConfiguration(sources, {
     client,
     document: parsed,
@@ -719,7 +742,7 @@ const clientConfigurationDesired = (
     if (!desired.ok) throw desired.error;
     return desired.value;
   }
-  const validated = clientRegistrationEnvironmentDetails(
+  const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
     providerEnvironment,
     "effective",
@@ -739,7 +762,8 @@ const clientConfigurationDesired = (
   if (!environment.ok) throw environment.error;
   const registrationEnvironment =
     client.name === "kimi" &&
-    environment.value.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
+    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
+      undefined
       ? {
           ...environment.value,
           REA_MCP_INPUT_SCHEMA_PROFILE: "compact",

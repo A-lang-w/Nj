@@ -586,7 +586,9 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
       ? ["hopper"]
       : []),
     ...(report.providerInspections ?? [])
-      .filter(({ available }) => available)
+      .filter(
+        ({ available, checks }) => available && checks.every(({ ok }) => ok),
+      )
       .map(({ id }) => id),
   ],
   ...(report.hopperPath === undefined ? {} : { hopperPath: report.hopperPath }),
