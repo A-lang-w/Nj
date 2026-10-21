@@ -14,7 +14,10 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { MCP_TRANSPORT_EVIDENCE_DISCOVERY } from "../domain/analysisErrorPresentation.js";
+import {
+  MCP_TRANSPORT_EVIDENCE_DISCOVERY,
+  MCP_TRANSPORT_EVIDENCE_EXPORT,
+} from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
   stdioResponseBudgetRecovery,
@@ -89,14 +92,10 @@ const retainedEvidenceContinuation = (
 };
 
 /**
- * A complete `get_evidence_bundle` still has a summary discovery path.
- * An oversized summary has already used that path.
+ * A summary projection has already used `detail: "summary"`.
+ * Export still writes the retained bundle outside one MCP frame.
  */
-const completeEvidenceBundleOverflow = (
-  contractName: string,
-  value: JsonValue,
-): boolean => {
-  if (contractName !== "get_evidence_bundle") return false;
+const evidenceBundleSummary = (value: JsonValue): boolean => {
   const payload =
     typeof value === "object" &&
     value !== null &&
@@ -104,7 +103,7 @@ const completeEvidenceBundleOverflow = (
     "result" in value
       ? value.result
       : value;
-  return !(
+  return (
     typeof payload === "object" &&
     payload !== null &&
     !Array.isArray(payload) &&
@@ -245,8 +244,10 @@ export class ToolResultDelivery {
         ? "Call inspect_analysis_view with the supplied continuation arguments to read retained analysis. Follow coverage.next_offset for subsequent pages; reduce the page limit if needed, or export the complete retained Evidence."
         : retainedEvidence
           ? "Export retained evidence to consume the complete analysis, or use complete CLI JSON output."
-          : completeEvidenceBundleOverflow(contract.name, value)
-            ? MCP_TRANSPORT_EVIDENCE_DISCOVERY
+          : contract.name === "get_evidence_bundle"
+            ? evidenceBundleSummary(value)
+              ? MCP_TRANSPORT_EVIDENCE_EXPORT
+              : MCP_TRANSPORT_EVIDENCE_DISCOVERY
             : "Use complete CLI JSON output to consume the analysis.";
     const projected = mcpResponseOverflowProjection({
       completed: true,

@@ -187,7 +187,7 @@ describe("MCP response budget recovery", () => {
     );
   });
 
-  it("does not repeat summary discovery when the summary itself exceeds the budget", () => {
+  it("keeps export advice when the evidence summary itself exceeds the budget", () => {
     const tight = new ToolResultDelivery(2048);
     const delivered = tight.toCallToolResult(
       ok({
@@ -202,7 +202,9 @@ describe("MCP response budget recovery", () => {
       })
       .parse(delivered.structuredContent).error.remediation.action;
     expect(action).not.toContain("get_evidence_bundle and detail: summary");
-    expect(action).toContain("Use complete CLI JSON output");
+    expect(action).toContain("export_evidence_bundle");
+    expect(action).toContain("caller-selected path");
+    expect(action).toContain("or use complete CLI JSON output");
   });
 });
 
