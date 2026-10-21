@@ -28,17 +28,25 @@ import type {
 } from "./environmentExport.js";
 
 /**
- * A host failure while writing one bundle file. Descriptor operations such as
- * `write` and `fsync` fail without a path, so this names the file being written.
+ * A host failure on one file the bundle writer was reading or writing.
+ * Descriptor operations such as `read`, `write` and `fsync` fail without a
+ * path, so this names the file and the direction of the failed operation.
  */
-export class BundleFileWriteFailure extends Error {
+export class BundleFileHostFailure extends Error {
   constructor(
     readonly path: string,
+    readonly operation: "reading" | "writing",
     cause: Error,
   ) {
-    super(`${cause.message}, writing ${path}`, { cause });
+    super(`${cause.message}, ${operation} ${path}`, { cause });
   }
 }
+
+/** An untyped host system failure, which carries an errno-style code. */
+const isHostSystemFailure = (cause: unknown): cause is Error =>
+  cause instanceof Error &&
+  !(cause instanceof ArtifactReaderFailure) &&
+  typeof Reflect.get(cause, "code") === "string";
 
 /** Attribute a pathless host failure to the bundle file being written. */
 const writingBundleFile = async <Result>(
@@ -49,16 +57,26 @@ const writingBundleFile = async <Result>(
   try {
     return await write();
   } catch (cause: unknown) {
-    if (
-      cause instanceof Error &&
-      !(cause instanceof ArtifactReaderFailure) &&
-      typeof Reflect.get(cause, "code") === "string" &&
-      Reflect.get(cause, "path") === undefined
-    )
-      throw new BundleFileWriteFailure(join(directory, relative), cause);
+    if (isHostSystemFailure(cause) && Reflect.get(cause, "path") === undefined)
+      throw new BundleFileHostFailure(
+        join(directory, relative),
+        "writing",
+        cause,
+      );
     throw cause;
   }
 };
+
+/** Read the admitted tarball, attributing host failures to the source. */
+async function* tarballChunks(source: BundleTarball): AsyncIterable<unknown> {
+  try {
+    yield* readFileHandleChunks(source.handle);
+  } catch (cause: unknown) {
+    if (isHostSystemFailure(cause))
+      throw new BundleFileHostFailure(source.path, "reading", cause);
+    throw cause;
+  }
+}
 
 const writeBytes = async (
   tree: SafeOutputTree,
@@ -90,7 +108,7 @@ const writeTarball = async (
 ): Promise<WrittenBundleFile> => {
   const hash = createHash("sha256");
   let observed = 0;
-  for await (const chunk of readFileHandleChunks(source.handle)) {
+  for await (const chunk of tarballChunks(source)) {
     const bytes = streamChunkToBuffer(chunk);
     observed += bytes.length;
     if (observed > source.size) throw new RegularFileChangedError(source.path);
@@ -99,7 +117,7 @@ const writeTarball = async (
   if (observed !== source.size) throw new RegularFileChangedError(source.path);
   const sha256 = hash.digest("hex");
   const written = await writingBundleFile(directory, relative, () =>
-    tree.write(relative, readFileHandleChunks(source.handle), {
+    tree.write(relative, Readable.from(tarballChunks(source)), {
       bytes: source.size,
       sha256,
     }),

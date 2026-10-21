@@ -23,7 +23,7 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
-  BundleFileWriteFailure,
+  BundleFileHostFailure,
   writeEnvironmentBundle,
 } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
@@ -101,6 +101,13 @@ const hostWriteFailure = (directory: string) => ({
   diagnostics: { output_directory: directory },
 });
 
+/** Recovery for a host failure reading the package tarball during the copy. */
+const hostReadFailure = (source: string, directory: string) => ({
+  userMessage: `Reading ${source} failed on the host while writing the environment bundle to ${directory}; the details name the cause.`,
+  remediationAction: `Resolve the reported host failure reading ${source}. Inspect ${directory} and remove any partial output this export wrote before retrying, since a retry refuses a non-empty directory.`,
+  diagnostics: { output_directory: directory },
+});
+
 /** The host failure beneath a wrapper, whose message names its code and absolute path. */
 const hostSystemError = (cause: Error): Error | undefined => {
   const seen = new Set<unknown>([cause]);
@@ -151,7 +158,7 @@ const hostFailurePath = (cause: unknown): string | undefined => {
   let current = cause;
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
-    if (current instanceof BundleFileWriteFailure) return current.path;
+    if (current instanceof BundleFileHostFailure) return current.path;
     const path = Reflect.get(current, "path");
     if (systemCode(current) !== undefined && typeof path === "string")
       return isAbsolute(path) ? path : undefined;
@@ -370,13 +377,16 @@ export const exportEnvironmentBundle = async (
       return err(error);
     }
     if (
-      cause instanceof BundleFileWriteFailure ||
+      cause instanceof BundleFileHostFailure ||
       (cause instanceof Error && systemCode(cause) !== undefined)
     )
       return err(
         new AnalysisOutputError(ENVIRONMENT_EXPORT_OPERATION, cause.message, {
           cause,
-          ...hostWriteFailure(input.directory),
+          ...(cause instanceof BundleFileHostFailure &&
+          cause.operation === "reading"
+            ? hostReadFailure(cause.path, input.directory)
+            : hostWriteFailure(input.directory)),
         }),
       );
     throw cause;
