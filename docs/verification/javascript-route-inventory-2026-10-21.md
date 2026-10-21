@@ -1,13 +1,20 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`6363f40a106b472db39280918f5bfd48088134be`, tree `3a7613938e61b5d5626b2bc88950061945fa459f`,
-on main `3dbe314ada9f6dcc994ca4655dc0faf082503847`. Current public interface, worker fixtures,
+`b74dc2c7f3699b47236c554f0eed9214c223e342`, tree `9cde864443599cde5ee4ac68982042f96ac82110`,
+on main `2e6b38cef0cc1f2a949fe97244ef390aaacfc5b2`. Current public interface, worker fixtures,
 SDK, Chromium and the complete fresh 67-worker corpus measurements use this
 runtime. Verification-only
 commits change this report, not the runtime. Exact inputs, commands, profiles, historical
 controls and meaningful failed attempts are retained in the
 [verification record](javascript-route-inventory-2026-10-21.json).
+
+The current main integration preserves browser command/source-fetch deadlines
+and their per-script/total relationship alongside route delivery. One description
+conflict retained both upstream environment-state guidance and route-query guidance.
+Two added contract cases verify both delivery modes preserve the domain checks
+and caller-selected values; all six contract tests passed on the first probe.
+Fresh source and public checks also cover JSON validation and CDP deadlines.
 
 ## Real inputs and correctness oracle
 
@@ -23,10 +30,10 @@ conditional classifier replay are used for this qualification.
 | Supplied capture | Scripts |     Bytes | Completed jobs | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | -------------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
-| shadcn-ui        |      38 | 2,465,078 |             36 |                37 |              18 |
+| shadcn-ui        |      38 | 2,465,078 |             34 |                37 |              18 |
 
-At the current runtime, the complete 67-worker task took **201.783 s elapsed**,
-**301.510 CPU s** and **514,576,384 bytes** sampled
+At the current runtime, the complete 67-worker task took **286.732 s elapsed**,
+**382.947 CPU s** and **514,199,552 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -47,8 +54,8 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **12.057 s elapsed**,
-**15.526 CPU s** and **2,184,130,560 bytes** sampled
+cleanup succeeded. This task took **25.778 s elapsed**,
+**29.034 CPU s** and **2,171,641,856 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
 The earlier c86 worker corpus, 55 filename-classifier replay and 658 narrow
@@ -69,11 +76,11 @@ performed three historical view reads and exported complete Evidence.
 
 | Completed workflow                                              | Complete analysis, then route view | Route view in analysis call |
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
-| Estimated tokens: used input declarations and all calls/replies |                          1,938,137 |                      58,845 |
-| Estimated tokens: entire catalog and all calls/replies          |                          3,029,610 |                   1,150,318 |
-| Elapsed seconds, including startup and cleanup                  |                             14.267 |                      12.710 |
-| CPU seconds, process family                                     |                             18.615 |                      16.632 |
-| Peak sampled process-family RSS bytes                           |                      1,611,264,000 |               1,313,144,832 |
+| Estimated tokens: used input declarations and all calls/replies |                          1,938,132 |                      58,840 |
+| Estimated tokens: entire catalog and all calls/replies          |                          3,031,694 |                   1,152,402 |
+| Elapsed seconds, including startup and cleanup                  |                             36.038 |                      38.266 |
+| CPU seconds, process family                                     |                             42.292 |                      40.678 |
+| Peak sampled process-family RSS bytes                           |                      1,546,776,576 |               1,274,114,048 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -82,7 +89,8 @@ explicitly full; main's compact-default catalog cost is not measured by this
 comparison. SDK/Ajv/token instrumentation is included in elapsed/CPU/RSS; its
 separate cost is unmeasured. OS caches were warm, with fresh sessions/workers.
 There is no storage-cold or statistical study and no stable latency or underlying
-analysis-speedup claim. The earlier slower selected run remains in historical
+analysis-speedup claim. The selected task is slower in this current single pair;
+the earlier slower selected run also remains in historical
 records. All profiles sample descendant-task RSS every 20 ms, use CPU affinity
 0,1, and have an 8 GiB/420 s guard; no successful qualifier hit either guard.
 
@@ -144,7 +152,7 @@ inventory finalization, and owned worker cleanup/retry remains covered.
 
 ## Executed checks and limits
 
-**521/521 source/owner regressions** and **70/70 compiled
+**551/551 source/owner regressions** and **95/95 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
@@ -152,7 +160,7 @@ The public suite exercises exported-Evidence reads after source deletion,
 large bounded facts, source selection, retention, cancellation, SDK recovery,
 source-to-bundle integration and every advertised tool schema.
 
-Seven condition-only/reference-edge regressions failed before this correction
+Seven condition-only/reference-edge regressions failed before the earlier636 correction
 (7/110), while six actual-data-branch controls already passed. One owner now
 classifies which syntax edges supply navigation data. Conditional tests, unary
 and comparison/numeric operations, && guards, nonfinal sequence operands and
