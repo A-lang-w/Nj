@@ -19,6 +19,12 @@ import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import { parseOtoolLoadCommands } from "./parsers/otool.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import {
+  conflictingUuidCommandEvidence,
+  isMissingUuidDyldFailure,
+  missingUuidLimitation,
+  unusableNativeCommandOutput,
+} from "./NativeMachoCommandDiagnostics.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
@@ -33,6 +39,7 @@ interface NativeMachoInspectionContext {
     tool: string,
     arguments_: readonly string[],
     signal?: AbortSignal,
+    acceptNonZeroIf?: (capture: NativeCommandCapture) => boolean,
   ) => Promise<Result<NativeCommandCapture, AnalysisError>>;
   readonly invocation: (
     capture: NativeCommandCapture,
@@ -41,9 +48,15 @@ interface NativeMachoInspectionContext {
 
 const DISCOVERY_COMMANDS = [["lipo", ["-detailed_info"]]] as const;
 
+// llvm-nm's default dyld-info pass fakes up symbols the symbol table lacks
+// from dyld metadata. It takes seconds on large apps (Keynote arm64: 5.8 s
+// versus 0.01 s without it), and under -gU it can only add export-trie names.
+const SYMBOL_TABLE_EXPORTS = ["nm", ["-gjU", "--no-dyldinfo"]] as const;
+const DYLD_INFO_EXPORTS = ["nm", ["-gjU"]] as const;
+
 const REQUIRED_SLICE_COMMANDS = [
   ["otool", ["-h", "-l"]],
-  ["nm", ["-gjU"]],
+  SYMBOL_TABLE_EXPORTS,
   ["dyld_info", ["-imports"]],
   ["dyld_info", ["-exports"]],
   ["dwarfdump", ["--uuid"]],
@@ -94,23 +107,54 @@ export const inspectNativeMacho = async (
         context.target.path,
       ],
       context.signal,
+      tool === "dyld_info" ? isMissingUuidDyldFailure : undefined,
     );
+  // vtool knows no variant subtypes, so no spelling selects an arm64e.x1 slice.
+  const vtoolSelectsSlice =
+    selectedArchitecture === null ||
+    !toolArchitectureName("vtool", selectedArchitecture).includes(".");
   // Slice commands only read the selected artifact, so launch them together.
   // Every launch settles before return; declared order fixes provenance and
   // which failure is reported.
   const [required, optional] = await Promise.all([
-    Promise.all(REQUIRED_SLICE_COMMANDS.map(runSliceCommand)),
-    runSliceCommand(OPTIONAL_VTOOL_COMMAND),
+    Promise.all(
+      REQUIRED_SLICE_COMMANDS.map((command) => runSliceCommand(command)),
+    ),
+    vtoolSelectsSlice ? runSliceCommand(OPTIONAL_VTOOL_COMMAND) : null,
   ]);
   for (const captured of required) {
     if (!captured.ok) return err(captured.error);
+    if (
+      (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
+      !isMissingUuidDyldFailure(captured.value)
+    )
+      return err(unusableNativeCommandOutput(captured.value));
     captures.push(captured.value);
   }
   const limitations: string[] = [];
-  if (optional.ok) captures.push(optional.value);
+  if (optional === null)
+    limitations.push(
+      `vtool cannot select the ${selectedArchitecture} slice; build metadata is normalized from otool only.`,
+    );
+  else if (optional.ok) captures.push(optional.value);
   else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
+  const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
+  const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
+  if (nmIndex < 0 || dyldExports === undefined)
+    throw new TypeError("Missing nm or dyld_info export capture");
+  // A stripped symbol table (strip -T) can omit names the export trie keeps.
+  // Only then does llvm-nm's dyld-info pass add names, and its exact names
+  // disambiguate dyld_info rows, so rerun it rather than lose them.
+  if (
+    !isMissingUuidDyldFailure(dyldExports) &&
+    !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
+  ) {
+    const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
+    if (!withDyldInfo.ok) return err(withDyldInfo.error);
+    captures[nmIndex] = withDyldInfo.value;
+  }
   const otool = captures.find(({ tool }) => tool === "otool");
   if (otool === undefined) throw new TypeError("Missing otool capture");
   let load: ReturnType<typeof parseOtoolLoadCommands>;
@@ -136,6 +180,12 @@ export const inspectNativeMacho = async (
       ),
     );
   }
+  const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
+  if (
+    uuidlessDyldFailure !== undefined &&
+    load.commands.some(({ kind }) => kind === "LC_UUID")
+  )
+    return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
   const selectedArchitectureName =
     selectedArchitecture ??
     (architectures.length === 1 ? (architectures[0]?.name ?? null) : null);
@@ -148,6 +198,7 @@ export const inspectNativeMacho = async (
             ?.file_offset ?? undefined);
   const normalized = normalizeMacho(
     captures,
+    format,
     context.invocation,
     limitations,
     load,
@@ -179,6 +230,7 @@ export const inspectNativeMacho = async (
 
 const normalizeMacho = (
   captures: readonly NativeCommandCapture[],
+  containerFormat: "thin" | "fat",
   toInvocation: (capture: NativeCommandCapture) => NativeCommandInvocation,
   additionalLimitations: readonly string[],
   load: ReturnType<typeof parseOtoolLoadCommands>,
@@ -190,28 +242,41 @@ const normalizeMacho = (
   },
 ) => {
   const byTool = captureLookup(captures);
-  const imports = parseDyldSymbols(
-    sliceOutput(byTool("dyld_info", 0)),
-    "imports",
-  );
+  const dyldImportsCapture = byTool("dyld_info", 0);
+  const dyldExportsCapture = byTool("dyld_info", 1);
+  const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
+  const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
+  const imports = missingImportsUuid
+    ? []
+    : parseDyldSymbols(sliceOutput(dyldImportsCapture), "imports");
   const imageBase =
     load.segments.find(
       (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(byTool("nm").stdout);
-  const dyldExports = parseDyldSymbols(
-    sliceOutput(byTool("dyld_info", 1)),
-    "exports",
-    imageBase,
-    new Set(nmExports.map(({ name }) => name)),
-  );
+  const dyldExports = missingExportsUuid
+    ? []
+    : parseDyldSymbols(
+        sliceOutput(dyldExportsCapture),
+        "exports",
+        imageBase,
+        new Set(nmExports.map(({ name }) => name)),
+      );
   const exports = uniqueSymbols([...dyldExports, ...nmExports]);
   const dwarfdump = byTool("dwarfdump");
   const uuid = reconcileMachoUuid(
     load.commands,
     dwarfdump.stdout,
     artifactPath,
-    selectedArchitecture.name,
+    selectedArchitecture.name === null
+      ? null
+      : {
+          name: selectedArchitecture.name,
+          dwarfdumpName: toolArchitectureName(
+            "dwarfdump",
+            selectedArchitecture.name,
+          ),
+        },
   );
   const provenance = captures.map(toInvocation);
   // A thread-state command carries the entrypoint in architecture-specific
@@ -232,6 +297,8 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
+    ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
+    ...(missingExportsUuid ? [missingUuidLimitation("exports")] : []),
     ...uuid.limitations,
     ...(threadEntrypoint ? [threadEntrypointLimitation] : []),
     ...(imageBase === null &&
@@ -242,7 +309,7 @@ const normalizeMacho = (
       : []),
   ];
   return inspectMachoSchema.parse({
-    format: "mach-o",
+    format: containerFormat === "fat" ? "mach-o-universal" : "mach-o",
     selected_architecture: selectedArchitecture,
     endian: load.endian,
     word_size: load.wordSize,
@@ -257,12 +324,21 @@ const normalizeMacho = (
     architectures: covered(architectures, true),
     build_metadata: covered(load.builds, true),
     load_commands: covered(load.commands, true),
-    dependencies: covered(load.dependencies, true),
+    dependencies: covered(
+      load.dependencies,
+      load.omittedDependencyCommands.length === 0,
+      dependencyPayloadLimitations(load.omittedDependencyCommands),
+    ),
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
+      ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
     ]),
     exports: covered(exports, false, [
-      "Merged nm/dyld_info results may be incomplete for stripped binaries.",
+      ...(missingExportsUuid
+        ? [missingUuidLimitation("exports")]
+        : [
+            "Merged nm/dyld_info results may be incomplete for stripped binaries.",
+          ]),
       ...(dyldExports.some(({ sourceSymbol }) => sourceSymbol !== undefined)
         ? [
             "Renamed re-exports are listed under their exported name; the source library's symbol name is not reported.",
@@ -293,6 +369,34 @@ const captureLookup =
     return capture;
   };
 
+/**
+ * Whether every dyld_info export row names a symbol-table export. A row this
+ * parser cannot read counts as uncovered, so an unfamiliar format falls back.
+ */
+const namesEveryExport = (
+  nmOutput: string,
+  dyldExports: NativeCommandCapture,
+): boolean => {
+  const names = new Set(parseNmExports(nmOutput).map(({ name }) => name));
+  return sliceOutput(dyldExports)
+    .split(/\r?\n/u)
+    .every((rawLine, index) => {
+      const line = rawLine.trim();
+      if (
+        line.length === 0 ||
+        (index === 0 && line.endsWith(":")) ||
+        /^-?exports:$/u.test(line) ||
+        /^offset\s+symbol$/u.test(line)
+      )
+        return true;
+      const rows = parseDyldSymbols(line, "exports", null, names);
+      // The parser withholds a row only when nm names both of its readings.
+      if (rows.length === 0)
+        return names.has(/^0x[\da-f]+\s+(.+)$/iu.exec(line)?.[1] ?? "");
+      return rows.length === 1 && names.has(rows[0]!.name);
+    });
+};
+
 const parseNmExports = (output: string) =>
   output
     .split(/\r?\n/u)
@@ -304,6 +408,21 @@ const parseNmExports = (output: string) =>
       reexport: null,
       source: "nm",
     }));
+
+const dependencyPayloadLimitations = (
+  commands: readonly string[],
+): string[] => {
+  if (commands.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const command of commands)
+    counts.set(command, (counts.get(command) ?? 0) + 1);
+  const described = [...counts].map(
+    ([command, count]) => `${count} ${command}`,
+  );
+  return [
+    `Dependency inventory omits ${described.join(", ")} because otool -l does not print that command's linkedit install name. trace_dylib_resolution reads the payload.`,
+  ];
+};
 
 const covered = <Value>(
   items: readonly Value[],
@@ -373,16 +492,21 @@ export const architectureLocations = (
   return locations;
 };
 
+/**
+ * lipo appends the pointer-auth ABI version to arm64e (`arm64e.v1`). Only
+ * dyld_info accepts that spelling; the other Apple tools select the slice by
+ * its CPU-family name. Other variants are distinct subtypes (`arm64e.x1`)
+ * that the tools address only by their exact name.
+ */
+const toolArchitectureName = (tool: string, architecture: string): string =>
+  tool === "dyld_info" ? architecture : architecture.replace(/\.v\d+$/u, "");
+
 const selectedArchitectureArguments = (
   tool: string,
   architecture: string | null,
 ): string[] => {
   if (architecture === null) return [];
-  const baseArchitecture = architecture.split(".")[0] ?? architecture;
-  // dyld_info distinguishes arm64e ABI variants; the other Apple tools use
-  // the base CPU-family spelling for the same slice.
-  const toolArchitecture =
-    tool === "dyld_info" ? architecture : baseArchitecture;
+  const toolArchitecture = toolArchitectureName(tool, architecture);
   return tool === "dwarfdump"
     ? [`--arch=${toolArchitecture}`]
     : ["-arch", toolArchitecture];
