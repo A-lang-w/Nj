@@ -120,6 +120,8 @@ HTTP fields and ordered duplicate headers are retained, with stored body bytes
 in binary sidecars. Bodies are not dechunked or decompressed. Metadata is an
 XML node tree; optional `_w.txt` and `_g.txt` files retain opaque WebSocket and
 gRPC message bytes. Missing members remain null, distinct from empty bodies.
+A zero-byte `_c.txt` or `_s.txt` member, which Fiddler writes for a session
+without that message, is also null and adds a record limitation.
 See Telerik's [SAZ format reference](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
 
 ## Protobuf and gRPC bodies
@@ -178,6 +180,9 @@ sanitized source even with explicit sensitivity options. If that source pass
 is interrupted, unchecked bodies are not published as partial Evidence.
 Framing overrides apply only to format-owned body coordinates and preserve
 exclusions for the transport declared in MIME metadata.
+Explicitly excluded or conflicting MIME metadata is not treated as absent:
+automatic framing leaves such a non-empty body uninterpreted, adds a record
+limitation and keeps `protobuf_coverage` partial unless `framing` is selected.
 Unknown or explicitly excluded HTTP coding metadata is not treated as absent:
 SAZ/native bodies remain opaque until identity coding is established. Raw
 header values and retained body bytes remain available in source Evidence.
@@ -449,12 +454,13 @@ template and `params` carry the four format rules with names `id`, `uuid`,
 only when listed, each at most once (a repeated rule is an `invalid_request`),
 in this order:
 
-| Rule                    | Applies to                                                                                                                                                                                                                                                                                                         | Parameter                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `after-uid-literal`     | The literal segment right after a literal `uid`, unless it is a stop word                                                                                                                                                                                                                                          | `uid`                                                   |
-| `opaque-token`          | A lowercase alphanumeric segment of twelve or more characters mixing letters and digits that is not a `v1`-style version                                                                                                                                                                                           | `uid`                                                   |
-| `sibling-pair-variance` | Groups equal in method, origin and segment count that differ in two adjacent literals right after a plural literal at index 2 or later and followed by a literal, with at least three distinct pairs and both positions varying (`/repos/{owner}/{repo}/issues`); stop words and `v1`-style versions never qualify | singular plural literal plus `_namespace`, then `_name` |
-| `sibling-variance`      | Groups equal in method, origin and segment count that differ in one literal at index 2 or later; the siblings whose literal is identifier-like (a digit or `:`, or three or more hyphenated names under a plural literal) merge, never a stop word, and the other literals stay their own tools                    | singular previous literal plus `_id`, else `id`         |
+| Rule                    | Applies to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Parameter                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `after-uid-literal`     | The literal segment right after a literal `uid`, unless it is a stop word                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `uid`                                                   |
+| `opaque-token`          | A lowercase alphanumeric segment of twelve or more characters mixing letters and digits that is not a `v1`-style version                                                                                                                                                                                                                                                                                                                                                                                                                | `uid`                                                   |
+| `sibling-pair-variance` | Groups equal in method, origin and segment count that differ in two adjacent literals right after a plural literal at index 2 or later and followed by a literal, with at least three distinct pairs and both positions varying (`/repos/{owner}/{repo}/issues`); stop words and `v1`-style versions never qualify                                                                                                                                                                                                                      | singular plural literal plus `_namespace`, then `_name` |
+| `sibling-variance`      | Groups equal in method, origin and segment count that differ in one literal at index 2 or later; the siblings whose literal is identifier-like (a digit or `:`, or three or more hyphenated names under a plural literal) merge, never a stop word, and the other literals stay their own tools                                                                                                                                                                                                                                         | singular previous literal plus `_id`, else `id`         |
+| `prefix-variance`       | A literal at a position that another tool, of any method or segment count, templates by one of the rules above after the same preceding segments, when the literal is one of that parameter's observed values, carries a digit and has the length and character classes (digits, lower case, upper case, each other character) of one, or has the single length of eight or more characters every observed value has and only their character classes; stop words and `v1`-style versions never qualify, and tools that now match merge | the name of the parameter it shares                     |
 
 With `sibling-variance` selected, literal siblings within its comparison scope
 fold into existing opt-in parameters as observed values unless they are stop words.
@@ -471,7 +477,17 @@ cut to their first label, `_by_<params>` appended when parameters exist,
 sanitized to `[a-z0-9_]`, at most 60 characters and made unique with numeric
 suffixes: `get_dashboards_by_uid`, `get_plugins_settings_by_plugin_id`.
 
-`sibling-variance` and `sibling-pair-variance` compare routes of at most 32 segments; longer routes keep
+`prefix-variance` runs last so it can share the parameters the other rules
+produce: with `sibling-variance`, a `PATCH` or `DELETE` of the one entity a
+session edited, `/api/v1/collections/0RZ576QZQA5KG`, becomes
+`/api/v1/collections/{collection_id}` beside the reads that varied there, and
+so do deeper routes such as `/api/v1/collections/{collection_id}/books`. Its
+parameter is labelled `prefix-variance`, unless a merged tool templated the
+position by its own rule. When parameters of different rules share a position,
+a literal shares the one that observed it, else the earliest one it is spelled
+like.
+
+`sibling-variance`, `sibling-pair-variance` and `prefix-variance` compare routes of at most 32 segments; longer routes keep
 their grouped templates and the manifest says so in a limitation. `body_shape`
 is derived for `POST`, `PUT` and `PATCH` from the tool's earliest record when it
 carries an `application/json` or `application/*+json` request body: top-level
@@ -595,18 +611,22 @@ computes responses or derived values, and no effects of writes. The state
 accumulator charges the manifest's admission and grouping, every record line,
 each body as temporary bytes before it is decoded and parsed, and every value
 it keeps, within the same 96 MiB budget. The view performs no network activity
-and serves nothing.
+and serves nothing; `rea environment-serve` derives it from the capture at
+startup, serves read tools from it and loads replacement states through the
+AgentEnv data plane, as
+[serve from the state](agent-environments.md#serve-from-the-state) describes.
 
 ## Resource and lifecycle boundaries
 
 Complete evidence has a 32 MiB input, 96 MiB decoder reply and 64-level nesting
-budget. Exceeding a budget returns no partial success.
+budget. Those budgets have no runtime override. `capture_timeout_ms` does not
+raise them. Exceeding a budget returns no partial success.
 Oversized selected captures return an input error identifying `capture_path`
 and the byte budget; owned reply/output failures remain output or provider errors.
 HAR, SAZ and qlog run in an owned
 192 MiB Node old-generation heap with one V8 worker. Mitmproxy decoding applies
 Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
-both commands have a 30-second wall deadline and independently supervised
+both commands use `capture_timeout_ms` (default 30000) and independently supervised
 process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
 and stderr; the collector drops overflow as it arrives, reports the limit
 failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.

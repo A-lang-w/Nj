@@ -24,7 +24,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { fixedNativeAllowance } from "../domain/native/nativeDeadlines.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -44,6 +44,7 @@ import {
   createSwiftRelativeReader,
   decodeSwiftDispatchFacets,
   type DispatchRecordBudget,
+  type SwiftRelativeTargetLocation,
 } from "./AppleSwiftDispatchFacets.js";
 import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
@@ -76,10 +77,18 @@ export const decodeAppleDispatchMetadata = (
   const u32 = (address: bigint) => bytes.readUInt32LE(offset(address, 4));
   const decodePointer = (address: bigint) =>
     fixups.decode(address, bytes.readBigUInt64LE(offset(address, 8)));
-  /** Rebased target of a pointer; a bind to another image reads as 0. */
+  /** In-image target of a raw or rebased pointer; a bind is not an address. */
   const pointer = (address: bigint) => {
     const decodedPointer = decodePointer(address);
-    return decodedPointer.kind === "rebase" ? decodedPointer.target : 0n;
+    if (decodedPointer.kind === "rebase" || decodedPointer.kind === "raw")
+      return decodedPointer.target;
+    if (decodedPointer.kind === "bind") return 0n;
+    // Preserve the on-disk observation for structural Objective-C metadata.
+    // `raw` is not promoted to an authoritative fixup result: the shared
+    // pointer-fixup coverage remains partial, and consumers that need to
+    // distinguish null from an unresolved bind use resolvePointer directly.
+    if (decodedPointer.kind === "unknown") return decodedPointer.raw;
+    throw new RangeError(decodedPointer.reason);
   };
   const bound = (address: bigint) => {
     const decodedPointer = decodePointer(address);
@@ -89,6 +98,16 @@ export const decodeAppleDispatchMetadata = (
     address: `0x${address.toString(16)}`,
     file_offset: offset(address),
   });
+  const targetLocation = (address: bigint): SwiftRelativeTargetLocation => {
+    let fileOffset: number | null;
+    try {
+      fileOffset = offset(address);
+    } catch (cause) {
+      if (!(cause instanceof RangeError)) throw cause;
+      fileOffset = null;
+    }
+    return { address: `0x${address.toString(16)}`, file_offset: fileOffset };
+  };
   const evidence = (address: bigint, description: string) => [
     {
       kind: "binary_metadata" as const,
@@ -152,9 +171,11 @@ export const decodeAppleDispatchMetadata = (
     i32: (address: bigint) => bytes.readInt32LE(offset(address, 4)),
     u64: (address: bigint) => bytes.readBigUInt64LE(offset(address, 8)),
     pointer,
+    resolvePointer: decodePointer,
     bound,
     string,
     location,
+    targetLocation,
     evidence,
     offset,
   };
@@ -252,11 +273,12 @@ export const inspectAppleDispatchMetadata = async (
     new AnalysisResourceConstraintError(
       "inspect_native_dispatch_metadata",
       "memory",
-      "Apple static metadata input exceeds its 64 MiB snapshot budget",
+      `Apple static metadata input exceeds its ${String(maximumBytes)}-byte (64 MiB) snapshot budget. This release has no runtime override.`,
       { input_bytes: maximumBytes },
-      fixedAllowanceOptions(
+      fixedNativeAllowance(
         "The Apple static metadata snapshot allowance",
         "parser",
+        `${String(maximumBytes)} bytes`,
       ),
     );
   const cancelled = () =>
