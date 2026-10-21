@@ -1,20 +1,22 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`56dda3b9fdbd51f8c11e921fe922d7d8e1757b00`, tree `426da09af675ac4d882367e794e14e4a7a0d9748`,
-on main base `67a6477f011ae358fc333e5a6e26c86d932654ed`. All current corpus, public-interface and delivery measurements use that runtime.
-The entire source corpus was freshly analyzed after the latest syntax-owner
-change; earlier checkpoint replays remain identified in their pinned records. The JSON retains exact source digests,
+`414bacc62452bca37c867fb5b2048e073ae0fffe`, tree `a9ea9f7762b7269bc62035479c64891030cc9d44`,
+on main base `3220e17b8bd046ad1be8fbb2e4070d8ddc37ad64`. Current public-interface and delivery measurements use that runtime. Full-worker corpus measurements retain runtime 56dda3b9f, with current-parser eligibility checks and exact inventory replay.
+The source corpus was freshly analyzed at runtime 56dda3b9f after the syntax-owner
+corrections. Current source eligibility checks cover the changed wrapped-child
+admission and Vite-table branches; other route/worker owners are unchanged.
+Retained route facts are revalidated and replayed rather than
+claiming a repeated full-worker analysis. The JSON retains exact source digests,
 commands, profiles, historical controls and material failed attempts. Earlier
 qualification records are pinned to `48cc5fbc7` (runtime `b5ffdba6f`) and
 `13bfba73a` (root correction `4d0630abb`); verification-only commits do not change
 runtime code.
 
-The current runtime merges main `67a6477f0`. The shared analysis-view import and
-result-union conflict was resolved by retaining both route and source-to-bundle
-contracts. Both view workflows are exercised below; worker resource diagnostics
-from main are included in fresh analysis and delivery measurements. Dependency
-and toolchain files did not change.
+The current runtime merges main 3220e17b8. The CLI conflict retains both empty-path
+rejection and route-view delivery. The earlier route/source-to-bundle union
+integration is preserved. Vite spread-slot and selected/empty-path regressions
+run below. Dependency and toolchain files did not change.
 
 ## Inputs, oracle, and coverage
 
@@ -23,15 +25,25 @@ Downloaded the 29 homepage-referenced nextjs.org scripts (1,533,098 bytes) and
 and SHA-256. Saved bytes were independently rehashed and checked for lossless
 UTF-8 decoding before writing this record. Sources were read as data.
 
-Production isolated workers completed 65/67 source jobs, retaining route-fact
+At source-worker runtime 56dda3b9f, production isolated workers completed 65/67 jobs, retaining route-fact
 checkpoints for 65/67 sources. 2 jobs reached the unchanged 15-second deadline;
 0 of those retained route facts. Unavailable sources and partial enumeration
 remain visible. Each worker had a caller-selected 512 MiB old-space limit and
 one semantic projection node; route syntax precedes semantic projection. The
-complete probe took 196.580 s elapsed, 293.789 CPU s and
+original full-worker probe took 196.580 s elapsed, 293.789 CPU s and
 481,873,920 sampled peak family RSS bytes. No resource guard
 stopped it. These captures do not establish lazy/server-only code, reachability
 or a complete application route denominator.
+
+At the current runtime, all 67 source files were rehashed and parsed through
+the current format owner. None has a Vite helper or wrapped object/identifier
+property value needed to enter either changed source-analysis branch. The
+unchanged route-inventory owner then replayed all
+retained route facts and produced exactly identical complete inventories. This
+eligibility/replay check took 2.732 s elapsed, 3.874 CPU s
+and 370,376,704 sampled peak family RSS bytes. No new full
+worker-corpus run is claimed. Public interfaces, SDK workflows and Chromium
+below are fresh current-runtime checks.
 
 The shadcn corpus yields 18 `/docs` patterns and
 31 detector/site occurrences. Independent direct-byte inspection of its
@@ -56,7 +68,7 @@ it. Actual CLI and SDK `analyze_web_bundle` calls captured that inert source via
 CDP and returned all 18 patterns, its original URL and exact SHA-256.
 Selected-source parsing was `complete` and candidate enumeration
 `partial`; application coverage stayed unknown. The verifier took
-9.882 s elapsed, 12.570 CPU s and 2,196,746,240 sampled
+9.873 s elapsed, 12.590 CPU s and 2,165,886,976 sampled
 peak family RSS bytes. Owned browser-group and temporary-profile cleanup succeeded.
 This qualifies passive capture, not the published application's UI behavior.
 
@@ -75,10 +87,10 @@ that default catalog cost is not measured by this comparison.
 | Measured complete workflow                                    | Complete delivery then route view | Selected view in analysis call |
 | ------------------------------------------------------------- | --------------------------------: | -----------------------------: |
 | Estimated tokens, used input declarations + all calls/replies |                         1,938,036 |                         58,786 |
-| Estimated tokens, entire catalog + all calls/replies          |                         3,027,094 |                      1,147,844 |
-| Elapsed seconds, including startup and cleanup                |                            13.704 |                         12.253 |
-| CPU seconds, process family                                   |                            17.951 |                         16.284 |
-| Peak sampled process-family RSS bytes                         |                     1,565,143,040 |                  1,285,775,360 |
+| Estimated tokens, entire catalog + all calls/replies          |                         3,029,019 |                      1,149,769 |
+| Elapsed seconds, including startup and cleanup                |                            14.020 |                         12.482 |
+| CPU seconds, process family                                   |                            18.294 |                         16.407 |
+| Peak sampled process-family RSS bytes                         |                     1,510,117,376 |                  1,325,719,552 |
 
 The primary question required two calls with complete delivery and one with
 selected delivery: used declarations plus primary replies estimate
@@ -92,8 +104,8 @@ is unmeasured. Timing varied between runs: the earlier `135c56bc2` qualification
 selected delivery and remains pinned at `38f2f9637`. These samples establish no
 stable latency or underlying analysis-speedup claim.
 
-Complete-mode view calls took 2071.4, 33.7, 20.1, 12.7 ms; selected-mode historical calls took
-2079.0, 19.8, 17.8 ms. First calls include cold client/tool preparation that was not separately
+Complete-mode view calls took 2099.4, 30.8, 12.8, 12.0 ms; selected-mode historical calls took
+2167.2, 21.0, 13.9 ms. First calls include cold client/tool preparation that was not separately
 profiled. The immutable-snapshot cache does not establish zero preparation cost.
 Projection preserves complete Evidence materialization.
 
@@ -103,6 +115,12 @@ waited family usage with inherited shell usage removed. Profiles retain payload
 status and an 8 GiB family / 420-second stop guard; no qualifying run hit it.
 
 ## Review regressions and executed checks
+
+Typed child ownership and traversal share one wrapper-aware admission predicate.
+Three regressions failed before the fix: wrapped children acquired an inferred
+root/gap or a shortened path. Literal and stable identifier children now retain
+their parent; a real isolated worker parses the routes.ts regression and requires
+the joined path with no invented root gap.
 
 Effective route fields and configuration ownership share nullable exact property
 keys: an unknown computed key invalidates earlier values and cannot revive a
@@ -172,7 +190,7 @@ route Evidence. Stable/ambiguous ancestry and late-cancellation regressions fail
 before the fix. Existing SDK cancellation tests also verify retained facts, prior
 Evidence and subsequent request recovery.
 
-Current execution: **434/434 source/owner regressions** and **33/33 production-worker /
+Current execution: **441/441 source/owner regressions** and **37/37 production-worker /
 public CLI/SDK tests** passed, including source deletion before exported-Evidence
 queries, Turbopack-shaped modules, dynamic prefixes and independent component
 route tables. Exact advertised-input tests explicitly select the full profile;

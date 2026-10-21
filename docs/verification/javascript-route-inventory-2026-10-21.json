@@ -2,9 +2,9 @@
   "equivalent_parent_evidence_id": "ev_aaa74242aeb9bfd9cd1f984250a00bca9c86f135a4075b610f56183214dd8e06",
   "issue": 4772,
   "date": "2026-10-21",
-  "base_commit": "67a6477f011ae358fc333e5a6e26c86d932654ed",
-  "implementation_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00",
-  "implementation_tree": "426da09af675ac4d882367e794e14e4a7a0d9748",
+  "base_commit": "3220e17b8bd046ad1be8fbb2e4070d8ddc37ad64",
+  "implementation_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe",
+  "implementation_tree": "a9ea9f7762b7269bc62035479c64891030cc9d44",
   "host": {
     "platform": "linux",
     "arch": "x64",
@@ -26,7 +26,8 @@
     "Tokenx estimates include actual advertised declarations and SDK replies; not actual model usage. Initialization/JSON-RPC envelope tokens are unmeasured.",
     "Same implementation compared with complete vs selected delivery; no claim of faster underlying source analysis.",
     "SDK cost measurements explicitly use full input advertisements. New main defaults to compact advertisements; those default costs are not measured here.",
-    "Dynamic push/replace receiver recognition uses navigation naming conventions, not framework instance/type resolution. Arbitrary aliases and application reachability remain unknown."
+    "Dynamic push/replace receiver recognition uses navigation naming conventions, not framework instance/type resolution. Arbitrary aliases and application reachability remain unknown.",
+    "The 67-source full-worker corpus profile is pinned to runtime56dda3b9f; current main receives parser eligibility checks and exact retained-fact inventory replay rather than repeated full worker analyses. Current SDK/public/browser workflows are freshly measured."
   ],
   "corpus": [
     {
@@ -2562,7 +2563,7 @@
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "complete",
-      "label": "real-full-boundaries",
+      "label": "real-full-childwrap",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2600,45 +2601,45 @@
       "primary_calls": 2,
       "primary_estimated_tokens": 1888155,
       "used_input_declarations_plus_primary_estimated_tokens": 1911096,
-      "all_catalog_plus_primary_estimated_tokens": 3000374,
+      "all_catalog_plus_primary_estimated_tokens": 3002299,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 12.660564297999999,
+      "task_wall_s": 12.971553880000002,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 4084.205155,
+          "wall_ms": 4227.700151999999,
           "estimated_reply_tokens": 1879209,
           "reply_bytes": 6203541
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 2071.419753,
+          "wall_ms": 2099.3636929999993,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 33.71187199999986,
+          "wall_ms": 30.75773300000037,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 20.096300999999585,
+          "wall_ms": 12.821837999999843,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 12.718191000001752,
+          "wall_ms": 11.98512799999844,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 91.04948599999989,
+          "wall_ms": 90.57516099999884,
           "estimated_reply_tokens": 122,
-          "reply_bytes": 324
+          "reply_bytes": 322
         }
       ],
       "profile": {
@@ -2649,25 +2650,25 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "complete",
-          "real-full-boundaries"
+          "real-full-childwrap"
         ],
         "exit_code": 0,
-        "wall_s": 13.704240560000471,
-        "cpu_s": 17.951276,
+        "wall_s": 14.020143055997323,
+        "cpu_s": 18.294103999999997,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1565143040,
+        "peak_family_rss_bytes": 1510117376,
         "sample_ms": 20,
         "guard_stop": null
       },
       "all_calls_estimated_tokens": 1914875,
       "used_input_declarations_plus_all_calls_estimated_tokens": 1938036,
-      "full_catalog_plus_all_calls_estimated_tokens": 3027094,
-      "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00"
+      "full_catalog_plus_all_calls_estimated_tokens": 3029019,
+      "runtime_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe"
     },
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "selected",
-      "label": "real-selected-boundaries",
+      "label": "real-selected-childwrap",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2705,39 +2706,39 @@
       "primary_calls": 1,
       "primary_estimated_tokens": 8902,
       "used_input_declarations_plus_primary_estimated_tokens": 11260,
-      "all_catalog_plus_primary_estimated_tokens": 1121121,
+      "all_catalog_plus_primary_estimated_tokens": 1123046,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 11.631708457,
+      "task_wall_s": 11.821760518,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 3566.683168,
+          "wall_ms": 3551.4329529999995,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 2078.9613199999985,
+          "wall_ms": 2167.2401879999998,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 19.76126099999965,
+          "wall_ms": 21.037865999998758,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 17.80076100000042,
+          "wall_ms": 13.871317999999519,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 108.66293599999881,
+          "wall_ms": 94.4746299999988,
           "estimated_reply_tokens": 124,
-          "reply_bytes": 332
+          "reply_bytes": 330
         }
       ],
       "profile": {
@@ -2748,20 +2749,20 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "selected",
-          "real-selected-boundaries"
+          "real-selected-childwrap"
         ],
         "exit_code": 0,
-        "wall_s": 12.253422222995141,
-        "cpu_s": 16.283893,
+        "wall_s": 12.481791279999015,
+        "cpu_s": 16.407297,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1285775360,
+        "peak_family_rss_bytes": 1325719552,
         "sample_ms": 20,
         "guard_stop": null
       },
       "all_calls_estimated_tokens": 35625,
       "used_input_declarations_plus_all_calls_estimated_tokens": 58786,
-      "full_catalog_plus_all_calls_estimated_tokens": 1147844,
-      "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00"
+      "full_catalog_plus_all_calls_estimated_tokens": 1149769,
+      "runtime_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe"
     }
   ],
   "real_browser": {
@@ -2813,7 +2814,7 @@
         "base_path": null
       }
     ],
-    "elapsed_s": 8.828814112,
+    "elapsed_s": 8.847065245,
     "authority_limits": [
       "Not a live published-page or application execution test",
       "No reachability, route loading or full application route denominator proof"
@@ -2825,20 +2826,20 @@
         "-c",
         "0,1",
         "node",
-        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-boundaries.mjs"
+        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-childwrap.mjs"
       ],
       "exit_code": 0,
-      "wall_s": 9.881780862000596,
-      "cpu_s": 12.570497,
+      "wall_s": 9.872961521999969,
+      "cpu_s": 12.589603,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2196746240,
+      "peak_family_rss_bytes": 2165886976,
       "sample_ms": 20,
       "guard_stop": null
     }
   },
   "checks": [
     {
-      "name": "route-boundaries-source-tests-final",
+      "name": "route-childwrap-source-tests",
       "command": [
         "taskset",
         "-c",
@@ -2857,19 +2858,20 @@
         "src/domain/javascript/javascriptStaticAnalysis.routeProperties.test.ts",
         "src/domain/javascript/javascriptAstValues.test.ts",
         "src/domain/javascript/javascriptSemanticExpressionShapes.test.ts",
-        "src/domain/javascript/electronWrappedCallPaths.test.ts"
+        "src/domain/javascript/electronWrappedCallPaths.test.ts",
+        "src/domain/javascript/javascriptVitePreloadDependencies.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 16.506515253000543,
-      "cpu_s": 27.34318,
+      "wall_s": 16.630923056996835,
+      "cpu_s": 27.683427000000002,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1614639104,
+      "peak_family_rss_bytes": 1714724864,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00"
+      "runtime_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe"
     },
     {
-      "name": "route-boundaries-public-worker-selection-tests",
+      "name": "route-childwrap-public-worker-selection-tests",
       "command": [
         "taskset",
         "-c",
@@ -2885,40 +2887,41 @@
         "tests/boundary/mcp/javascriptSourceSelection.test.ts",
         "tests/boundary/filesystem/javascript-applications/javascriptRouteFinalization.test.ts",
         "tests/boundary/mcp/javascriptAnalysisCancellation.test.ts",
-        "tests/boundary/mcp/sourceToBundleViewsMcp.test.ts"
+        "tests/boundary/mcp/sourceToBundleViewsMcp.test.ts",
+        "tests/boundary/javascript/javascriptSelectedPathEvidence.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 102.3650674399978,
-      "cpu_s": 187.45500299999998,
+      "wall_s": 108.03096177599946,
+      "cpu_s": 204.119962,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2701545472,
+      "peak_family_rss_bytes": 2957303808,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00"
+      "runtime_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe"
     },
     {
-      "name": "route-boundaries-check-fast",
+      "name": "route-childwrap-check-fast",
       "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
       "exit_code": 0,
-      "wall_s": 0.5106924489955418,
-      "cpu_s": 0.6222719999999999,
+      "wall_s": 10.025754852002137,
+      "cpu_s": 18.872566,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 198029312,
+      "peak_family_rss_bytes": 1551319040,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00"
+      "runtime_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe"
     },
     {
-      "name": "route-boundaries-docs-check",
+      "name": "route-childwrap-docs-check",
       "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
       "exit_code": 0,
-      "wall_s": 4.22179885499645,
-      "cpu_s": 6.016642000000047,
+      "wall_s": 12.17750182600139,
+      "cpu_s": 15.664300000000026,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 814395392,
+      "peak_family_rss_bytes": 802885632,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00"
+      "runtime_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe"
     },
     {
       "name": "route-browser-boundary-isolated",
@@ -3213,7 +3216,8 @@
     "a6eac6963: typed route-field initializers and member writes share route-value ownership, so rejected data cannot reappear through Next constant fallback. The public exact-total regression caught this second path before qualification.",
     "7c5e2ab17: queue parent objects rather than raw child properties; ancestry indexing and walking now consume the same cached effective-field interpretation, preserving valid shared-child routes after duplicate/accessor/spread overwrites.",
     "c220b7fa3: extract effective local pathname literals from recognized navigation objects before owning their descendant data; reuse cached field interpretation; preserve unsupported authorities, dynamic/relative fields as unknown and prevent query/search/hash href data becoming separate navigation.",
-    "56dda3b9f: use nullable exact property keys in effective fields and configuration ownership; unknown computed children cannot revive stale roots. Restrict hashed Next page names to compiled chunk paths. Share one erased-wrapper edge parser with linear expression-parent ownership. Reserve sealing digest bytes before page admission."
+    "56dda3b9f: use nullable exact property keys in effective fields and configuration ownership; unknown computed children cannot revive stale roots. Restrict hashed Next page names to compiled chunk paths. Share one erased-wrapper edge parser with linear expression-parent ownership. Reserve sealing digest bytes before page admission.",
+    "414bacc62: typed child ownership and traversal share the same wrapper-aware shape predicate before binding resolution, retaining literal/identifier child ancestry rather than inferring detached roots."
   ],
   "result_budget_regression": {
     "source": "12000 literal route registrations, 1452889 UTF-8 bytes",
@@ -3456,6 +3460,11 @@
       "runtime_commit": "7c5e2ab1765cbcfeb0514c989f17c49b6ab1219b",
       "record_commit": "4c2bf7b1c77452c4ca519c2eea629c8fd5d540b2",
       "scope": "208 source / 33 public checks and fresh main67a real-source qualification before literal pathname-object follow-up."
+    },
+    {
+      "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00",
+      "record_commit": "8ca0f6b4a69202bf7cffb9156e5ada6097e554d9",
+      "scope": "434 source/owner tests, 33 public tests and fresh full source corpus before CLI-path/Vite main integration."
     }
   ],
   "input_schema_profile_integration": {
@@ -3542,11 +3551,11 @@
     "reason": "Cancelled when review found a stale-data bug; no passing technical CI claim for that head."
   },
   "main_integration": {
-    "main_commit": "67a6477f011ae358fc333e5a6e26c86d932654ed",
-    "integration_commit": "5301213ef8a39c1993b87f2553db352dec221c83",
+    "main_commit": "3220e17b8bd046ad1be8fbb2e4070d8ddc37ad64",
+    "integration_commit": "5295ca016e90277a0e1ccbf706bd349955f8e197",
     "original_issue_base": "6d356b843",
-    "conflict": "analysisView imports and result discriminated union; both javascript-routes and source-to-bundle contracts retained.",
-    "verification": "Fresh source, production worker/public SDK, source-to-bundle views, real SDK/Chromium and 67-source analysis after merging current main; no dependency/toolchain file changes."
+    "conflict": "CLI application path normalization; retain main empty-path rejection and route view delivery.",
+    "verification": "Fresh source/owner and public path checks, real TS source worker, SDK and Chromium. Full corpus workers remain pinned to56; current parser proves neither changed Vite nor wrapped-child admission branch applies to the67 immutable captured inputs, and complete inventories replay identically."
   },
   "effective_fields_regression": {
     "runtime_commit": "5301213ef8a39c1993b87f2553db352dec221c83",
@@ -3569,5 +3578,474 @@
     "limit_bytes": 1048576,
     "digest_field_bytes": 81,
     "oracle": "Actual sealed summary fits exactly at the limit; summary and row pages exceeding the final limit return retained-parent resource errors."
+  },
+  "prior_main_integration": {
+    "main_commit": "67a6477f011ae358fc333e5a6e26c86d932654ed",
+    "integration_commit": "5301213ef8a39c1993b87f2553db352dec221c83",
+    "original_issue_base": "6d356b843",
+    "conflict": "analysisView imports and result discriminated union; both javascript-routes and source-to-bundle contracts retained.",
+    "verification": "Fresh source, production worker/public SDK, source-to-bundle views, real SDK/Chromium and 67-source analysis after merging current main; no dependency/toolchain file changes."
+  },
+  "source_worker_qualification": {
+    "runtime_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00",
+    "record_commit": "8ca0f6b4a69202bf7cffb9156e5ada6097e554d9",
+    "base_commit": "67a6477f011ae358fc333e5a6e26c86d932654ed",
+    "current_inventory_replay": {
+      "runtime_commit": "414bacc62452bca37c867fb5b2048e073ae0fffe",
+      "source_worker_qualification_commit": "56dda3b9fdbd51f8c11e921fe922d7d8e1757b00",
+      "method": "Rehash and parse all 67 saved production scripts through the current format owner; the changed Vite-table branch has no applicable helper and the changed typed-child filter has no wrapped object/identifier property value. Replay retained source route facts through the unchanged current inventory owner and compare complete inventories exactly; no new full-worker analysis claimed.",
+      "probes": [
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2v5zh6m00lfum.js",
+          "sha256": "cbc64e16e8c3dfb6ecead560a58abf7bb4c7454c409209fd37626d7ac819c2a2",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3yp820osdt9kv.js",
+          "sha256": "1841558a199e41795777b48bbd652f92c6d3ec1b121a879b9fc2d41d5cc89b3a",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+          "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3-f__u1tgqe9w.js",
+          "sha256": "a4a7db369b41c7cfc3457bd620c6cd50740171f02ddf369fe9caf704a400170b",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2qd4c3xjf-y8d.js",
+          "sha256": "e5ac180193cdf48fac1a0eb5e5ad3480514b2a8d558fdb79a002a8ddbd38708d",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/273-kz7ddae_j.js",
+          "sha256": "2dbef264004178186358965a30a7a258b94d78cebed47b24e9cf0815aa30d8f6",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/32p67covm5twm.js",
+          "sha256": "4e12d2301bf2930ee285e85256d032b3e4c6761f5abe71cf1055b4c1665eac96",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/turbopack-22zuhxnmsa7m2.js",
+          "sha256": "96860acf83d42ba7a295c65d2e1cdeaf582c98156ce0d520a1ff29739580ba38",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3u1m4t0vzjnq5.js",
+          "sha256": "b7fd67b519b0d95aa5ae8d36b13e22dbd7179a0ff3c18f136c18be1c1e3bb009",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/23ugu0wxt5byy.js",
+          "sha256": "891442341e2a100908efcf600375e37e9332167307c8a3290c28c4673957df37",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2vko3i5lac74l.js",
+          "sha256": "9433ca68eb2a81002868f259c1e289868fc8777f51c289fa35144080bad4d349",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2q6evjwm-565v.js",
+          "sha256": "d43801f5709cc869420aea453dde724024c1a18db85e0b76b2bc4f4de674e9d3",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2e29l35axy4-8.js",
+          "sha256": "8280034a9a1300b9b91e451598b66a0d5fa94ea76a400a6393952084d0c8dd64",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/12l-srcvwshyf.js",
+          "sha256": "309a744a98f828c8ff1d43ba167e8985f98196fd76638fdc7fa5fe2a6f1023cf",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/39by9zrhsjvv9.js",
+          "sha256": "7f0ae6d793b3869905b717fff49d78aee9f93c56443fa164e297c2991290ded9",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3q448jj_u0oex.js",
+          "sha256": "3c5852456fb053661ced69e9e2961c73047f7fd3d6279c5fbf86d5459fdc4acb",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/1gv06lcrn7q_b.js",
+          "sha256": "f64bbf866ceebf36a5ea5c07a8d93f34429f9746191ff443df90bf5287fad672",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/03vn7c31403r9.js",
+          "sha256": "a71e547f16a1b0a835c0883dbc7a0643ac2b80a77c55c56e7e22ccc030d7f177",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3gvo0zcvrtjwi.js",
+          "sha256": "133f95790a428bd7fedfd3fc4b0d6e660047e9c9a1061812226bd3b8aca4c77d",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/25mr3s4f3688g.js",
+          "sha256": "303051d28d05d91216ff155bc89d345ebe31b69ceb1ec04e24a5d3cde1aaf074",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/26u0yg3-gdc6a.js",
+          "sha256": "4386a5dfdba681bae7a1acf0ce954ffd11ba43e613a464f9078e9c26eec6f064",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2hcdffj5-as7m.js",
+          "sha256": "0b496440052a9e3b776adc98912281dae83af1d265616b858a7570cc86646a82",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/2s_r_zifx54q7.js",
+          "sha256": "cff7962e92655f31b1a6967324bf70901a3180820f93c0dcc8c2c2a573130e0c",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/3vbktf2fq69e_.js",
+          "sha256": "bdcacca9362e043fa8956ea79b78ae2d1611901f5a4092b14509bff5c9a9070d",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/1hhc4p_d_log3.js",
+          "sha256": "6cd04c781348aee469a5846ba6ff16f63332b5a2943c14125e2e4e8b22df3bb6",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/39v8wpwthko65.js",
+          "sha256": "ff659151c718ac93fe4aac58904de1a91b1e84ec496e7ca66013268b04cd06be",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/0-yckxn3tleyi.js",
+          "sha256": "814aafb54addac626276c42edf7f73ef4d7baf92f73211ebce3e8e522e695c35",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/13ajf8_l__lm4.js",
+          "sha256": "6ab51219f8db4578126c1175565f1b8bc175d982975e5982e40cd23cd01e1910",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://nextjs.org/_next/static/immutable/chunks/0u3yva3kyrgqf.js",
+          "sha256": "5ad2ddfbca95282f194a22faccc41c3ea0cd3c3ee84a43785f0ace287c3b1a6a",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0bzde7pyy-uc5.js",
+          "sha256": "38938218385869bf08e5b6c7d026c5a1e0d62685f221e3756d83f6c4e3ca919f",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3iszc0bk6o3mv.js",
+          "sha256": "1f3bb0c524de6c2340e019e2108f4e1992c4d00169a3581e4e19e2ae3b117714",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+          "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23m56m87a3yx7.js",
+          "sha256": "37c2fca661e00c47550fb5f8bc460b9dc0f4029e5eb0a73ffcdde2b2e675d7ca",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23nleunmqp_r5.js",
+          "sha256": "63624774d85bee57c8668b48187750fc39be932a66bdf728cf89ff7b6cfb4fc8",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qdtj-d25cuf4.js",
+          "sha256": "c5320611932b281e9fb664cce6483a5c7b6751c9fbe2b5040729ceafe04634be",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/turbopack-0yl1_dp50rscn.js",
+          "sha256": "bd458733371ffbc8cfcbcd0ad964cce213058ee64fc263581f89046131e909ad",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3vmj7ocz3f6c-.js",
+          "sha256": "d95f555eb4e2ca74af4a1135f52b5f0c40936e984cf6f1613bc06b8e85f7a9b0",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/02ile3fpmk_64.js",
+          "sha256": "b1563d3335bf031f3ffa57d8297275af96f7cbfd2fd2afc86286d0f4409760e6",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1eknqc3un535f.js",
+          "sha256": "bd82e6b3568595fc03463500565d9304139a7c653e915f2a09bfd5214f5c6152",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/20e6u600s15u3.js",
+          "sha256": "6dac9d7a5b48860dca231879845b2f5278e860ff366549fcecd42a449668ec38",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0d52eigre8lfp.js",
+          "sha256": "da905ab3585c069fcc033211f1922d49f4722b714f4a053b66420075d414d61d",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0gq0axdizcqnp.js",
+          "sha256": "593c0a7b61bcdb6f5178ef466f402ce6b8b052652ff67b32110192d20303136c",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qkrpqots048e.js",
+          "sha256": "ea78347c01aed982f1a1d973d6949bf94410548d9f4587ccb3529a3f13e989fd",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/18c383c4nzwlc.js",
+          "sha256": "553e3f8d0069ddf70e28369f464ee5cd08495fa46b7706d90d996c82e3aaff10",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/00k0993h3uuc4.js",
+          "sha256": "2c7ca6b7f6d4f8f6b7ac614a4699fc6db117141dff0be7f1c94bd147f49800e3",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c55ckxmkcevb.js",
+          "sha256": "4424e6c091a01fe7e45c110f6f1d43e8097e558a1e64a4411023dfef567fb399",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/43wayr98w3lhg.js",
+          "sha256": "e39d55ddef9f548af8e27c1672e6e7c48bd519f728860ca6757672aee95aaff7",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1wjr7w9_jqiiu.js",
+          "sha256": "41bf09a71d4399d14b45afa756736eac0a7b3aa7240c085275e73bb24d6edbd7",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1v6j29bbqu5y0.js",
+          "sha256": "842e03ef5d938ddeca91cabc2c4265d2397b887b0a7f35ff8781bf3296c0a798",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3ld4clt1d2k47.js",
+          "sha256": "8214b0df0b2e427c0db7004967f0d1ebaad853f6cd1f6fe9aeaf9528cd90957c",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/03ki0f1f-yupw.js",
+          "sha256": "4b7b9af0d669b07aa3c6f24bb33006d508f49d97327cc433657250e15fbfc77f",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1m0zang2tqwnj.js",
+          "sha256": "ac2ef7bdd908caab5fa4037ef623a6422b1f70a6e44af4103c4d5f35dbcee310",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/032aaa86n1dh1.js",
+          "sha256": "b6083400902148dd72ee7dcda8d1733b0c01ad9af86ac5e1e15e457c39370ef0",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/25hee-gw8eskv.js",
+          "sha256": "14e8098e503692aa6984203a877b56db953fc299fcbac9bc0cb08f209bf8cca6",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1bxvn5ukbs28_.js",
+          "sha256": "882dcb46f71627625e996d73b3965a0ae3748285cafcdf6311a763971b1e1abf",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/28sh6u5tuq4f2.js",
+          "sha256": "3eb374d220a43deeae0687ba9bfa457ae5f0cd4da8f6cd904c47537d898e9ef9",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+          "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1gx2dkwg9qo3e.js",
+          "sha256": "3d23ccde3326aaae7bb8ec23ba081355e9d3bcfd123fa628b740cf44b653c846",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0rckdzguc6bi2.js",
+          "sha256": "3c5182cdb82f3aa47605c2e01a6de83ee1d9db8186bdd5df966851d3767648a6",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1vi-2xkk1cejt.js",
+          "sha256": "bd12a2497de25f2f826503077a7eed583036caeb38d6a90de4f36fd7b9b8e299",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/39c74mlpxrrci.js",
+          "sha256": "9951ee056ed51b64d6cc4401910ef83f3725d84498d84e4113481ea042817d8d",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2b-ga_ylsrfwf.js",
+          "sha256": "19ba5ae9ac9db38212b0ba5c7ec84fbacffaa96fdebaab522c06386851f4647f",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2xa04daxqn3ln.js",
+          "sha256": "600399ed13801d06a12df3beabb741c71e97877333e9308d28f58d7e6d2e795b",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3cg9j5-faot60.js",
+          "sha256": "80c6ec39463dea1c936736900b0f33367cda44c9b85b2b7869cd6d39b530d816",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2gsm7afyxcat9.js",
+          "sha256": "5ec7ed2fb6f59d49deaa6b840217a6f958b28c0b1d10d6b84cafd5684e4cb7c4",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/26m-fiew9hcdx.js",
+          "sha256": "89b660e8860e0249b9581b1fcc90fc5b6a8583602af40383f9f76bc9b790c115",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        },
+        {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/10ilc_hrifu7p.js",
+          "sha256": "f44a77042232b99d85d2aa3f92632273beb5603799659c109f76d544c931bd07",
+          "vite_helper_table": null,
+          "wrapped_child_candidates": 0
+        }
+      ],
+      "replays": [
+        {
+          "site": "nextjs-org",
+          "source_rows": 29,
+          "inventory_identical": true,
+          "statistics": {
+            "sources_seen": 29,
+            "sources_retained": 29,
+            "route_patterns": 0,
+            "occurrences": 0,
+            "unanchored_literals_excluded": 115
+          }
+        },
+        {
+          "site": "shadcn-ui",
+          "source_rows": 38,
+          "inventory_identical": true,
+          "statistics": {
+            "sources_seen": 38,
+            "sources_retained": 38,
+            "route_patterns": 18,
+            "occurrences": 31,
+            "unanchored_literals_excluded": 79
+          }
+        }
+      ]
+    },
+    "replay_profile": {
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "node",
+        "/home/yann/yann/rea-4772-lab/replay-childwrap-routes.mjs"
+      ],
+      "exit_code": 0,
+      "wall_s": 2.7315867069992237,
+      "cpu_s": 3.8738330000000003,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 370376704,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    "owner_comparison": "Route scan differs only in typed-child admission: one shared helper unwraps before both ownership and traversal filters. All other route/worker owners remain unchanged from56; main also changes only the eligible Vite-table branch in source analysis. Current AST probes cover all ObjectProperty values and show no newly eligible wrapped child, and no Vite helper, in every captured source."
+  },
+  "typed_child_regression": {
+    "before_runtime_commit": "5295ca016e90277a0e1ccbf706bd349955f8e197",
+    "before": "Three regressions failed (3/60): a top-level wrapped child fell back to an inferred root/gap; nested wrapped object and identifier children produced /detail instead of /reports/detail.",
+    "scope": "New unit cases and an actual isolated source-worker routes.ts case; dynamic aliases remain unknown. Full corpus facts are reused only after current AST eligibility and exact inventory checks."
   }
 }
