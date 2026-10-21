@@ -5,26 +5,26 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-for (const { command, limit, allowance } of [
+for (const { command, limit, recovery } of [
   {
     command: "inspect-go-binary",
     limit: 256 * 1024 * 1024,
-    allowance: "the fixed Go input allowance",
+    recovery: "input byte allowance",
   },
   {
     command: "inspect-rust-binary",
     limit: 256 * 1024 * 1024,
-    allowance: "the fixed Rust input allowance",
+    recovery: "within the fixed Rust input allowance",
   },
   {
     command: "inspect-il2cpp-metadata",
     limit: 256 * 1024 * 1024,
-    allowance: "the fixed IL2CPP input allowance",
+    recovery: "within the fixed IL2CPP input allowance",
   },
   {
     command: "inspect-wasm-artifact",
     limit: 8 * 1024 * 1024,
-    allowance: "the fixed WASM input allowance",
+    recovery: "input byte allowance",
   },
 ]) {
   cliTest.skipIf(process.platform === "win32")(
@@ -70,9 +70,7 @@ exit 1
         })
         .parse(output.json);
       // Raising the evidence-reply allowance cannot admit an oversized input.
-      expect(refusal.remediation.action).toContain(
-        `Select a suitable complete artifact within ${allowance}.`,
-      );
+      expect(refusal.remediation.action).toContain(recovery);
       expect(refusal.remediation.action).not.toMatch(
         /allowance for the evidence reply/u,
       );

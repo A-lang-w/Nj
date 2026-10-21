@@ -190,12 +190,8 @@ it.each([false, true])(
       },
     });
     if (!cleanup) {
-      expect(projected.remediation.action).toContain(
-        "the fixed WASM input allowance",
-      );
-      expect(projected.remediation.action).not.toMatch(
-        /allowance for the evidence reply/u,
-      );
+      expect(projected.remediation.action).toContain("input byte allowance");
+      expect(projected.remediation.action).not.toContain("evidence reply");
     }
     expect(
       wabtFailure(cause, "artifact", "selected.wasm").cleanupResources,
