@@ -20,6 +20,7 @@ import type {
   ExecutionOptions,
   AnalysisOperationPort,
   ProviderIdentity,
+  ProviderStartAdmission,
   ProviderStartCleanup,
 } from "../AnalysisProvider.js";
 import type { AnalysisOperation } from "../AnalysisProvider.js";
@@ -189,6 +190,15 @@ export class BinarySession
   implements BinarySessionPort
 {
   #active: SessionBinding | undefined;
+  /**
+   * The admission that bounds a provider start this session defers.
+   *
+   * A provider start runs under the shared limit of the slot that owns the
+   * session, so the session keeps the admission the open carries: a client
+   * this session creates later, such as the client of a restored target,
+   * starts its provider under the same limit as the client it replaces.
+   */
+  #startAdmission: ProviderStartAdmission | undefined;
   #externalMutationCleanupFailure: AnalysisError | undefined;
   #pendingCleanup:
     | {
@@ -621,6 +631,11 @@ export class BinarySession
     >,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     const generation = this.#lifecycleGeneration;
+    // The provider starts of this session run under the admission the open
+    // carries. The session keeps it, so a client the session creates later,
+    // such as the client of a restored target, starts its provider under the
+    // same limit as the client it replaces.
+    this.#startAdmission = options.startAdmission;
     if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
       return err(this.#externalMutationCleanupFailure);
     if (isAborted(options.signal))
@@ -1892,6 +1907,17 @@ export class BinarySession
    * replaced it. The check holds through the wait for the restored client,
    * because a close that runs while the restoration waits closes the slot the
    * restoration would bind.
+   *
+   * The restored client carries the admission of this session, so the
+   * provider start it defers runs under the shared limit like every other
+   * start of this session. Without it, the restored target starts its
+   * provider beside one that is still starting, and the analysis cap is
+   * exceeded.
+   *
+   * The restoration does not start the provider under that admission: the
+   * health probe of a composed client answers without touching a child, and a
+   * probe that waited for the limit would make a cancelled open wait for a
+   * permit it cannot use.
    */
   async #restore(
     previous: SessionBinding | undefined,
@@ -1902,6 +1928,12 @@ export class BinarySession
     const runId = randomUUID();
     const client = previous.route.createClient(previous.target, {
       runId,
+      // The restored client starts the provider it defers under the shared
+      // start limit, so a query on the restored target cannot launch a
+      // provider beside one that is still starting.
+      ...(this.#startAdmission === undefined
+        ? {}
+        : { startAdmission: this.#startAdmission }),
     });
     const run: SessionRun = {
       client,

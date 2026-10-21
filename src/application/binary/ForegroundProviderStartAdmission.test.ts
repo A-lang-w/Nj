@@ -13,6 +13,7 @@ import {
   createDeferred,
   createTestBinarySession,
   createTestBinaryTargetRegistry,
+  createTestComposedBinarySession,
   createTestComposedBinaryTargetRegistry,
 } from "../../../tests/fixtures/binarySession.js";
 import type { ProviderStartAdmission } from "../AnalysisProvider.js";
@@ -192,6 +193,57 @@ describe("an open whose start admission reports a failure", () => {
     expect(closes).toBe(2);
     expect(clients).toBe(3);
     expect(session.activeTarget()?.path).toBe(first);
+  });
+});
+
+/**
+ * A restored target starts its provider under the shared start limit.
+ *
+ * A failed open restores the target it replaced, and the restored client
+ * defers the provider start to the first call that needs it. The restored
+ * client therefore carries the admission that bounds that start: a restored
+ * target that starts its provider without it runs beside a provider that is
+ * still starting, and the analysis cap that bounds the concurrent analyses
+ * is exceeded.
+ */
+describe("a target restored by a failed start", () => {
+  it("starts its provider under the admission that bounds the session", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    let admitted = 0;
+    let reportFailure = true;
+    const admission: ProviderStartAdmission = {
+      run: async (start, _operation, _signal, cleanup) => {
+        admitted += 1;
+        if (!reportFailure) return start();
+        // The limit could not be acquired, so the start never ran and the
+        // cleanup of the failed open owns the client it created and the
+        // target it replaced.
+        reportFailure = false;
+        const failure = new AnalysisCancelledError("open_binary");
+        if (cleanup === undefined) return err(failure);
+        return err((await cleanup(failure)).error);
+      },
+    };
+    const session = createTestComposedBinarySession(() => ({
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(resultOk(null)),
+    }));
+
+    expect((await session.open(first)).ok).toBe(true);
+
+    const failed = await session.open(second, { startAdmission: admission });
+    expect(failed.ok).toBe(false);
+    // The target the failed open replaced is restored.
+    expect(session.activeTarget()?.path).toBe(first);
+    // The restoration does not take a permit of its own, so a cancelled open
+    // does not wait for a limit it cannot use.
+    expect(admitted).toBe(1);
+
+    // The restored client defers its provider start, so the first call that
+    // needs the provider runs under the admission.
+    const called = await session.execute("address_name", {});
+    expect(called.ok).toBe(true);
+    expect(admitted).toBe(2);
   });
 });
 

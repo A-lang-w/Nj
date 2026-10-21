@@ -194,6 +194,26 @@ export const createTestBinarySession = (
 ): BinarySession =>
   new BinarySession(createTestProviderRouter(provider, options));
 
+/**
+ * Create a focused session whose route composes two providers.
+ *
+ * The production route is a composite, so the provider it selected starts
+ * with the first call that needs it rather than with the open. A session
+ * that reproduces that shape is the only way to observe which start the
+ * shared limit covers.
+ */
+export const createTestComposedBinarySession = (
+  provider: AnalysisProvider | FixtureClientFactory,
+  options: TestBinarySessionOptions = {},
+  auxiliary: FixtureClientFactory = () => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }),
+): BinarySession =>
+  new BinarySession(
+    createTestComposedProviderRouter(provider, options, auxiliary),
+  );
+
 /** Create a multi-target registry with the same provider seam as the session. */
 export const createTestBinaryTargetRegistry = (
   provider: AnalysisProvider | FixtureClientFactory,
