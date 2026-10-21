@@ -28,7 +28,7 @@ import {
 } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
-import * as regularFileRead from "../RegularFileRead.js";
+import { readRegularFile } from "../RegularFileRead.js";
 import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
@@ -185,17 +185,12 @@ const NOT_A_FILE_CODES = new Set([
   "ENAMETOOLONG",
 ]);
 
-/** Live heap statistics for this export. Tests replace this read. */
-export const environmentExportHeap = {
-  statistics: () => getHeapStatistics(),
-};
-
 /** Refuse a whole read, native parse and owned snapshot traversal that cannot fit live heap headroom. */
 const headroomRefusal = (
   path: string,
   inputBytes: number,
 ): AnalysisResourceConstraintError | undefined => {
-  const heap = environmentExportHeap.statistics();
+  const heap = getHeapStatistics();
   const requiredBytes = nativeJsonParseRequiredBytes(inputBytes, true);
   return requiredBytes <= heap.total_available_size
     ? undefined
@@ -224,7 +219,7 @@ const readInput = async (
   try {
     // Admit the whole read against the opened file's own size, before materializing the
     // exact bytes the bundle copies.
-    bytes = await regularFileRead.readRegularFile(path, {
+    bytes = await readRegularFile(path, {
       resources,
       admit: (state) => {
         const refused = headroomRefusal(path, state.size);
