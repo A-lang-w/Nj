@@ -83,7 +83,16 @@ const environmentToolAnnotations = ({
 /** Agent-context budget for each captured display sample, excluding its provenance notice. */
 const DESCRIPTION_SAMPLE_BYTES = 1024;
 
-/** A display prefix is explicitly separate from the complete identity held by the Evidence named; `show` renders the text or its prefix. */
+/** Whether a rendered sample fits the display budget. Callers' `show` never shortens its input. */
+const sampleFits = (shown: string): boolean =>
+  shown.length <= DESCRIPTION_SAMPLE_BYTES &&
+  Buffer.byteLength(shown, "utf8") <= DESCRIPTION_SAMPLE_BYTES;
+
+/**
+ * A display prefix is explicitly separate from the complete identity held by the Evidence named.
+ * `show` renders the text or its prefix. The budget applies to that rendering, so JSON quoting of a
+ * name full of NULs or newlines cannot outgrow the sample.
+ */
 const describeText = (
   text: string,
   label: string,
@@ -93,13 +102,26 @@ const describeText = (
   if (
     text.length <= DESCRIPTION_SAMPLE_BYTES &&
     Buffer.byteLength(text, "utf8") <= DESCRIPTION_SAMPLE_BYTES
-  )
-    return show(text);
-  const { read } = new TextEncoder().encodeInto(
-    text,
-    new Uint8Array(DESCRIPTION_SAMPLE_BYTES),
-  );
-  return `${show(text.slice(0, read))}… (${label} display truncated; full value in ${holder})`;
+  ) {
+    const shown = show(text);
+    if (sampleFits(shown)) return shown;
+  }
+  let low = 0;
+  let high = Math.min(text.length, DESCRIPTION_SAMPLE_BYTES);
+  let best = 0;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (sampleFits(show(text.slice(0, mid)))) {
+      best = mid;
+      low = mid + 1;
+    } else high = mid - 1;
+  }
+  // A lone surrogate is not a character. Step off a high surrogate so the prefix stays whole.
+  if (best > 0 && best < text.length) {
+    const unit = text.charCodeAt(best - 1);
+    if (unit >= 0xd8_00 && unit <= 0xdb_ff) best -= 1;
+  }
+  return `${show(text.slice(0, best))}… (${label} display truncated; full value in ${holder})`;
 };
 
 /** Sample whole values before joining; keep full lists in the Evidence that owns them. */

@@ -610,8 +610,9 @@ with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
 reasons are `query-body` (a query `POST`), `no-init-recording`,
 `body-unusable`, `no-identity` (an item read without a proved identity),
 `path-varies` (another read under more than one path, as a template with a
-parameter before its end) and `query-varies` (another read of one path under
-more than one query). A document holds the value of its one `path`, so for such
+parameter before its end), `query-varies` (another read of one path under
+more than one query) and `rendered-oversize` (a document value whose JSON
+renders to more than 256 KiB). A document holds the value of its one `path`, so for such
 a template it says nothing about the template's other paths. A body is usable
 when its content type is
 JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
@@ -626,8 +627,8 @@ computes responses or derived values, and no effects of writes. The state
 accumulator charges the manifest's admission and grouping, every record line,
 each body as temporary bytes before it is decoded and parsed, and every value
 it keeps, within the same 96 MiB budget. Documents hold whole recorded response
-values of up to 256 KiB each, so a capture with many read-only paths yields a
-correspondingly larger state result. The view performs no network activity
+values whose recorded text and rendered JSON are each at most 256 KiB, so a
+capture with many read-only paths yields a correspondingly larger state result. The view performs no network activity
 and serves nothing; `rea environment-serve` derives it from the capture at
 startup, serves read tools from it and loads replacement states through the
 AgentEnv data plane, as
