@@ -1,5 +1,12 @@
 import type { GpuLocation, GpuObject } from "../domain/gpu/gpuCodeObjects.js";
 import type { GpuSource } from "./GpuSource.js";
+export interface GpuPayloadTarget {
+  readonly value: string | null;
+  readonly key: string | null;
+  readonly scope: "exact" | "cuda-base";
+  readonly cudaHeader?: GpuObject["cuda_target_header"];
+  readonly limitation?: string;
+}
 export const gpuLocation = (
   source: GpuSource,
   offset: number,
@@ -28,6 +35,7 @@ export const gpuObject = (
     kind,
     target: null,
     payload_target: null,
+    cuda_target_header: null,
     target_consistency: "unexamined",
     bundle_id: null,
     compression: "none",

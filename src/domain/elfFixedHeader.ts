@@ -9,6 +9,7 @@ export interface ElfFixedHeader {
   readonly byteOrder: "little" | "big";
   readonly headerSize: number;
   readonly machine: number;
+  readonly osAbi: number;
   readonly architecture: Exclude<
     BinaryArchitecture,
     RawOnlyArchitecture
@@ -64,6 +65,7 @@ export const readElfFixedHeader = (
     byteOrder: littleEndian ? "little" : "big",
     headerSize,
     machine,
+    osAbi: bytes[7]!,
     architecture: elfArchitecture(machine) ?? null,
   });
 };

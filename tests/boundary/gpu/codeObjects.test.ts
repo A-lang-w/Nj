@@ -149,6 +149,46 @@ it("keeps CUBIN base-only agreement distinct from verified feature-profile agree
     inspection: "complete",
   });
 });
+it.each([
+  [100, 0x06006402],
+  [101, 0x06006502],
+  [103, 0x05006702],
+  [120, 0x06007802],
+  [121, 0x06007902],
+])(
+  "reads ABI-qualified CUDA target sm_%d from released NVIDIA header flags",
+  async (architecture, flags) => {
+    const result = await inspect(cubinFixture({ osAbi: 0x41, flags }));
+    if (!result.ok) throw result.error;
+    expect(result.value.objects[0]).toMatchObject({
+      target: `sm_${architecture}`,
+      payload_target: `sm_${architecture}`,
+      target_consistency: "single-source",
+      inspection: "complete",
+      cuda_target_header: {
+        os_abi: 0x41,
+        flags: `0x${flags.toString(16).padStart(8, "0")}`,
+      },
+    });
+  },
+);
+it("keeps unsupported CUDA flag layouts unknown while retaining raw header evidence", async () => {
+  const result = await inspect(
+    cubinFixture({ osAbi: 0x41, flags: 0x06016402 }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    target: null,
+    payload_target: null,
+    target_consistency: "unknown",
+    inspection: "partial",
+    cuda_target_header: { os_abi: 0x41, flags: "0x06016402" },
+  });
+  expect(result.value.kernels).toHaveLength(1);
+  expect(result.value.kernels[0]!.limitations.join(" ")).toContain(
+    "target encoding is unknown",
+  );
+});
 it("discovers standalone AMD targets before exact selection", async () => {
   const bytes = amdFixture(),
     target = "amdgcn-amd-amdhsa--gfx900";

@@ -31,6 +31,7 @@ export interface NativeSectionDirectory {
   readonly bits: 32 | 64;
   readonly little: boolean;
   readonly machine: number;
+  readonly elf_os_abi: number | null;
   readonly flags: number;
   readonly program_offset: bigint;
   readonly program_count: number;
@@ -218,6 +219,7 @@ export function* readElfSectionDirectory(
   }
   return {
     format: "elf",
+    elf_os_abi: parsed.value.osAbi,
     bits,
     little,
     machine,
@@ -304,6 +306,7 @@ export function* readPeSectionDirectory(
   }
   return {
     format: "pe",
+    elf_os_abi: null,
     bits,
     little: true,
     machine: coff.u16(4),

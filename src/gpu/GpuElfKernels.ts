@@ -1,3 +1,5 @@
+import { readCudaTarget } from "./CudaTarget.js";
+import type { GpuPayloadTarget } from "./GpuObject.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   CudaMetadataBudget,
@@ -78,11 +80,6 @@ const blankKernel = (
   sources: { parameters: null, registers: null, shared: null, private: null },
   limitations: [],
 });
-export interface GpuPayloadTarget {
-  readonly value: string | null;
-  readonly key: string | null;
-  readonly scope: "exact" | "cuda-base";
-}
 export const readGpuElfKernels = async (
   source: GpuSource,
   kind: "cubin" | "amdgpu",
@@ -102,8 +99,7 @@ export const readGpuElfKernels = async (
   if (directory.machine !== (kind === "cubin" ? 190 : 224))
     rejectGpu("GPU entry kind disagrees with ELF machine");
   if (kind === "cubin") {
-    const target = `sm_${directory.flags & 0xff}`;
-    onTarget?.({ value: target, key: target, scope: "cuda-base" });
+    onTarget?.(readCudaTarget(source, directory));
     const coverage = await cudaKernels(source, directory, onKernel);
     return {
       coverage,

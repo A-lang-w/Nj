@@ -32,6 +32,12 @@ unexamined payloads remain `unexamined`. An exact AMDGPU target is normalized at
 its note owner for comparison with a Clang bundle declaration; raw values remain
 intact. Unresolved feature comparisons stay `unknown`.
 
+`cuda_target_header` retains the OS ABI, normalized raw `e_flags` and exact
+header location. CUDA OS ABI `0x33` and the observed `0x41` flags layout use
+different architecture fields; they are decoded at one ABI-aware owner.
+Unrecognized layouts keep the header and an unknown target instead of
+inventing an SM label. Header provenance is validated against its CUBIN object.
+
 Target filters select inventory declarations. An unselected payload's inner
 target remains unexamined; an empty filtered result does not establish that
 no enclosed code declares that target. Discovering every inner declaration

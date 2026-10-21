@@ -3,7 +3,8 @@ import {
   readClangBundleDirectory,
   readCcobHeader,
 } from "./ClangOffloadBundle.js";
-import { gpuObject, gpuLocation } from "./GpuObject.js";
+import { gpuObject, gpuLocation, type GpuPayloadTarget } from "./GpuObject.js";
+import { readCudaTarget } from "./CudaTarget.js";
 import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload } from "./GpuPayloadCodec.js";
 import { createHash } from "node:crypto";
@@ -43,7 +44,6 @@ import {
   readGpuElfKernels,
   readAmdElfMetadata,
   type AmdElfMetadata,
-  type GpuPayloadTarget,
 } from "./GpuElfKernels.js";
 import { readPtxKernels, readPtxTarget } from "./PtxKernels.js";
 
@@ -162,8 +162,7 @@ export class GpuInventory {
         });
         this.#add(row);
         if (directory.machine === 190) {
-          const target = `sm_${directory.flags & 0xff}`;
-          this.#target(row, { value: target, key: target, scope: "cuda-base" });
+          this.#target(row, readCudaTarget(source, directory));
         }
         if (directory.machine === 224)
           await this.#amdPayload(source, row, directory);
@@ -406,14 +405,19 @@ export class GpuInventory {
     }
     this.#retain({
       payload_target: payload.value,
+      cuda_target_header: payload.cudaHeader ?? null,
       target_consistency: state,
       target: selectedTarget ?? payload.value,
     });
     row.payload_target = payload.value;
+    row.cuda_target_header = payload.cudaHeader ?? null;
     row.target_consistency = state;
     if (selectedTarget === null) row.target = payload.value;
-    if (state !== "conflict") return;
-    const message = `Conflicting target declarations: inventory ${outer}; payload ${payload.value}. Target agreement is not established.`;
+    if (state !== "conflict" && payload.limitation === undefined) return;
+    const message =
+      state === "conflict"
+        ? `Conflicting target declarations: inventory ${outer}; payload ${payload.value}. Target agreement is not established.`
+        : payload.limitation!;
     this.#objectLimitations(row, [message]);
     return message;
   }
@@ -477,7 +481,7 @@ export class GpuInventory {
       },
     );
     this.#objectLimitations(row, parsed.limitations);
-    return row.target_consistency === "conflict" ? "partial" : parsed.coverage;
+    return conflict !== undefined ? "partial" : parsed.coverage;
   }
   async #cuda(source: GpuSource): Promise<void> {
     for await (const row of readCudaFatbinary(source, this.signal)) {

@@ -284,6 +284,24 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
   expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
   const parent = parseEvidence(reply.structuredContent),
     report = gpuCodeObjectsSchema.parse(parent.normalized_result);
+  const forgedHeaderReport = gpuCodeObjectsSchema.parse(
+    parent.normalized_result,
+  );
+  forgedHeaderReport.objects[1]!.cuda_target_header!.location.container_id =
+    forgedHeaderReport.objects[0]!.id;
+  const forgedHeader = createEvidence(undefined, parent.provider, {
+    operation: parent.operation,
+    parameters: parent.parameters,
+    result: forgedHeaderReport,
+  });
+  expect(
+    parseMcpToolError(
+      await call("inspect_analysis_view", {
+        source: { kind: "inline", evidence: forgedHeader },
+        view: { kind: "gpu-code-objects", collection: "objects" },
+      }),
+    ).error,
+  ).toMatchObject({ code: "invalid_request" });
   report.objects[1]!.id = report.objects[0]!.id;
   const forged = createEvidence(undefined, parent.provider, {
     operation: "inspect_gpu_code_objects",

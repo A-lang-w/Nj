@@ -28,6 +28,13 @@ export const gpuObjectSchema = z.strictObject({
   ]),
   target: z.string().nullable(),
   payload_target: z.string().nullable(),
+  cuda_target_header: z
+    .strictObject({
+      os_abi: z.number().int().min(0).max(255),
+      flags: z.string().regex(/^0x[0-9a-f]{8}$/u),
+      location: gpuLocationSchema,
+    })
+    .nullable(),
   target_consistency: z.enum([
     "unexamined",
     "single-source",
@@ -200,6 +207,27 @@ export const gpuCodeObjectsSchema = gpuCodeObjectsObjectSchema.superRefine(
       const row = report.objects[index]!;
       range(row.location, ["objects", index, "location"]);
       range(row.metadata_location, ["objects", index, "metadata_location"]);
+      const header = row.cuda_target_header;
+      if (header !== null) {
+        range(header.location, [
+          "objects",
+          index,
+          "cuda_target_header",
+          "location",
+        ]);
+        if (
+          row.kind !== "cubin" ||
+          ![52, 64].includes(header.location.size) ||
+          (header.location.container_id === row.id
+            ? header.location.offset !== 0
+            : header.location.container_id !== row.parent_id ||
+              header.location.offset !== row.location.offset)
+        )
+          issue(
+            ["objects", index, "cuda_target_header"],
+            "CUDA header provenance must start at its CUBIN object",
+          );
+      }
     }
     const kernelIds = new Set<string>();
     for (let index = 0; index < report.kernels.length; index++) {

@@ -18,6 +18,7 @@ it.each([
         byteOrder: data === 1 ? "little" : "big",
         headerSize: cls === 1 ? 52 : 64,
         machine: cls === 1 ? 3 : 62,
+        osAbi: 0,
         architecture: cls === 1 ? "x86" : "x86_64",
       },
     });

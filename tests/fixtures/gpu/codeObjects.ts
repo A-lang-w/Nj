@@ -88,6 +88,8 @@ export const cubinFixture = (
     globalRecords?: number;
     globalAliases?: number;
     architecture?: number;
+    osAbi?: number;
+    flags?: number;
   } = {},
 ): Buffer => {
   const name = options.name ?? "add_one";
@@ -146,6 +148,11 @@ export const cubinFixture = (
       48,
     );
   const table = Number(result.readBigUInt64LE(40));
+  if (options.osAbi !== undefined) {
+    result[7] = options.osAbi;
+    result.writeUInt32LE(1, 20);
+  }
+  if (options.flags !== undefined) result.writeUInt32LE(options.flags, 48);
   for (let index = 8; index < result.readUInt16LE(60); index++) {
     result.writeBigUInt64LE(
       result.readBigUInt64LE(table + 5 * 64 + 24),
