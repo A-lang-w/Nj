@@ -1358,6 +1358,41 @@ describe("NIBArchive single-object connectors", () => {
 // Only an absent NSSource marks an annotation; an encoded but unusable one is
 // still a connection whose owner cannot be resolved.
 describe("NIBArchive connectors with unusable sources", () => {
+  it("keeps an unknown AppKit connector without NSSource unresolved", async () => {
+    const root = await createTestTempDirectory("rea-ib-unknown-connector-");
+    const bundle = join(root, "Example.app");
+    await mkdir(bundle, { recursive: true });
+    await writeFile(
+      join(bundle, "Window.nib"),
+      encodeNibArchiveFixture({
+        classes: ["NSCustomObject", "NSButton", "NSFutureConnector"],
+        objects: [
+          { classIndex: 0, values: {} },
+          { classIndex: 1, values: {} },
+          { classIndex: 2, values: { NSDestination: { ref: 1 } } },
+        ],
+      }),
+    );
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+    });
+
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Window.nib",
+        status: "partial",
+        reason: "connection_unresolved",
+        omitted: 1,
+      }),
+    );
+    expect(analysis.graph.truncated).toBe(true);
+    expect(analysis.limitations).toContain(
+      "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+    );
+  });
+
   it.each([
     ["nil", null],
     ["a non-reference value", 7],

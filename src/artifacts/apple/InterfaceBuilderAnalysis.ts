@@ -41,6 +41,11 @@ import {
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
 const MAX_REPORTED_OMITTED_ARCHIVES = 64;
+const APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS = new Set([
+  "NSIBHelpConnector",
+  "NSNibAXAttributeConnector",
+  "NSIBUserDefinedRuntimeAttributesConnector",
+]);
 
 /** Decode compiled Interface Builder archives from a local app bundle. */
 export const analyzeInterfaceBuilderBundle = async (input: {
@@ -533,10 +538,14 @@ const projectNibArchive = (
     if (!uiKit && !className.includes("Connector")) continue;
     const values = object.values;
     const connectionFields = interfaceBuilderConnectionFieldNames(className);
-    // AppKit tooltip, accessibility attribute and user-defined runtime
-    // attribute connectors also match by name, but they annotate one object
-    // and encode no NSSource at all. They are not connections.
-    if (!uiKit && !Object.hasOwn(values, connectionFields.source)) continue;
+    // These known AppKit annotation records name one object and omit NSSource;
+    // unknown connector classes with that shape remain unresolved evidence.
+    if (
+      !uiKit &&
+      APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS.has(className) &&
+      !Object.hasOwn(values, connectionFields.source)
+    )
+      continue;
     const source = reference(values[connectionFields.source]);
     if (source === null) {
       unresolvedConnections += 1;
