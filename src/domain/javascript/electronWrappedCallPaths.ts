@@ -305,9 +305,13 @@ export const collectElectronWrappedCallPaths = (
         env.moduleFactory !== true
       )
         activated.add(env.scopeNode);
-    // Scopes from the handler out to the outermost activated function.
+    // Scopes from the handler out to the outermost activated function, and
+    // whether the function owning an arrow handler's `this` and `arguments`
+    // lies within them.
     const enclosing: string[] = [];
     let activatedScopes = 0;
+    let contextOwnerActivated = false;
+    let contextOwnerFound = !t.isArrowFunctionExpression(fn.node);
     for (
       let current = state.parentsByNode.get(fn.node);
       current;
@@ -315,7 +319,13 @@ export const collectElectronWrappedCallPaths = (
     ) {
       const scopeId = state.scopeByNode.get(current)?.scopeId;
       if (scopeId !== undefined) enclosing.push(scopeId);
-      if (activated.has(current)) activatedScopes = enclosing.length;
+      if (t.isFunction(current) && !t.isArrowFunctionExpression(current))
+        contextOwnerFound = true;
+      // An activated arrow inside the owner does not rebind its context.
+      if (activated.has(current)) {
+        activatedScopes = enclosing.length;
+        contextOwnerActivated ||= contextOwnerFound;
+      }
     }
     if (activatedScopes === 0) return false;
     const scopes = new Set(enclosing.slice(0, activatedScopes));
@@ -323,7 +333,8 @@ export const collectElectronWrappedCallPaths = (
     t.traverseFast(fn.node, (node) => {
       if (captures) return;
       if (t.isThisExpression(node)) {
-        captures = inheritsFunctionContext(node, fn.node);
+        captures =
+          contextOwnerActivated && inheritsFunctionContext(node, fn.node);
         return;
       }
       if (!t.isIdentifier(node)) return;
@@ -333,6 +344,7 @@ export const collectElectronWrappedCallPaths = (
       captures =
         binding === undefined
           ? (node.name === "arguments" &&
+              contextOwnerActivated &&
               inheritsFunctionContext(node, fn.node)) ||
             semanticResolutionBlocked(state, node, node.name)
           : scopes.has(binding.scopeId);

@@ -576,6 +576,25 @@ it("resolves a bundle module's handler in place as one shared listener", () => {
       ]),
   ).toEqual([["ch", "wrapper-substitution"]]);
 });
+it("resolves an arrow handler in place when its inherited this is module scope", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const CH = "ch";
+    const register = () => {
+      const handler = () => this;
+      ipcRenderer.on(CH, handler);
+    };
+    contextBridge.exposeInMainWorld("api", { on: () => register() });
+  `);
+  expect(
+    result.electron.ipc
+      .filter(({ mode }) => mode === "listen")
+      .map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+  ).toEqual([["ch", "wrapper-substitution"]]);
+});
 it("keeps a parameterless factory's closure as a per-invocation handler", () => {
   const result = analyzeJavaScriptStaticSource(`
     const { contextBridge, ipcRenderer } = require("electron");
