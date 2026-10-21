@@ -69,7 +69,8 @@ it("retains a complete pseudocode observation once and pages its exact text thro
   if (parent === undefined)
     throw new Error("Complete observation was not retained");
   expect(parent.normalized_result).toBe(text);
-  expect(parent.raw_result).toMatchObject({ value: text });
+  // The normalized result is the provider observation; no raw copy repeats it.
+  expect(parent.raw_result).toBeNull();
   expect(parent.parameters).toEqual({ procedure: "fixture_main" });
   expect(parent.limitations).toContain("Fixture decompiler limitation");
   const executions = [...calls];
@@ -286,7 +287,8 @@ it("refuses summary delivery before calling a fixed provider without retention",
 });
 
 it("keeps transport-overflow recovery usable for the original pseudocode observation", async () => {
-  const text = "x".repeat(3 * 1024 * 1024);
+  // Exceeds the default 10 MiB stdio response budget on its own.
+  const text = "x".repeat(11 * 1024 * 1024);
   const { mcp, session, calls } = await connectPseudocode(text);
   const response = await mcp.callTool({
     name: "procedure_pseudo_code",

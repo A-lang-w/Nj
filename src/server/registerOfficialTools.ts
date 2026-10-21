@@ -1,6 +1,6 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { NATIVE_INVENTORY_OPERATIONS } from "../domain/native/nativeInventory.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
 import {
   retainedSummaryDelivery,
@@ -8,20 +8,21 @@ import {
   type EvidenceToolFamilyOptions,
 } from "./retainedSummaryDelivery.js";
 
-const SUMMARY_DELIVERY: ReadonlySet<string> = new Set([
+const SUMMARY_OPERATIONS: ReadonlySet<string> = new Set([
+  ...NATIVE_INVENTORY_OPERATIONS,
   "procedure_pseudo_code",
 ]);
+const withoutDetail = withoutDeliveryDetail(SUMMARY_OPERATIONS);
 
-/** Register direct observations with shared Evidence ownership and optional pseudocode summaries. */
+/** Direct tools share Evidence recording/projection with the other provider-backed tools. */
 export const registerOfficialTools = (
   server: EvidenceMcpServer,
   options: EvidenceToolFamilyOptions,
 ): void => {
-  const withoutDelivery = withoutDeliveryDetail(SUMMARY_DELIVERY);
   registerEvidenceTools(server, OFFICIAL_TOOL_CONTRACTS, {
     ...options,
-    ...retainedSummaryDelivery(SUMMARY_DELIVERY, options),
-    parametersForExecution: withoutDelivery,
-    parametersForEvidence: withoutDelivery,
+    ...retainedSummaryDelivery(SUMMARY_OPERATIONS, options),
+    parametersForExecution: withoutDetail,
+    parametersForEvidence: withoutDetail,
   });
 };

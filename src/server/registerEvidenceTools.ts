@@ -108,7 +108,9 @@ export const registerEvidenceTools = (
               options.sourceEvidence?.(contract.name, execution.value.result) ??
               [];
             const evidence = createEvidence(
-              execution.value.subject ?? options.activeTarget?.(),
+              execution.value.subject === undefined
+                ? options.activeTarget?.()
+                : (execution.value.subject ?? undefined),
               execution.value.provider,
               {
                 operation: contract.name,
