@@ -281,8 +281,9 @@ export const estimateBinaryPlistExpansion = (
   // Metadata covers the full object table; projected values may repeat through references.
   const objectBytes = numberProjection ? 144 : 16;
   const expandedNodeBytes = numberProjection ? 224 : 96;
-  // Number projection may require a same-sized parser-compatible input copy
-  // for wide integers. Reserve for it before the caller allocates that copy.
+  // Number projection may require one same-sized parser-compatible input copy.
+  // That copy carries wide-integer rewrites and unrepresentable date payloads.
+  // Reserve for it before the caller allocates that copy.
   let estimate =
     bytes.length * (numberProjection ? 3 : 2) + objectCount * objectBytes;
   let binaryPrototypeKeyObserved = false;
@@ -373,15 +374,21 @@ export const estimateBinaryPlistExpansion = (
       continue;
     }
     if (type === 3) {
-      // Binary plist dates are only marker 0x33 plus an 8-byte float. The
-      // payload offset is retained so the decoder can judge that source
-      // instant without matching rounded timestamps across objects.
+      // Binary plist dates are only marker 0x33 plus an 8-byte float inside
+      // the object region. Decoder bounds let other objects use trailing
+      // bytes; a date there would be parsed as a timestamp. The payload
+      // offset is retained so the decoder can judge that source instant
+      // without matching rounded timestamps across objects.
+      if (
+        offset >= offsetTable ||
+        !Number.isSafeInteger(cursor + 8) ||
+        cursor + 8 > offsetTable
+      )
+        throw new TypeError("binary plist date object is truncated");
       if (marker !== 0x33)
         throw new TypeError(
           `binary plist date marker 0x${marker.toString(16)} is invalid`,
         );
-      if (!Number.isSafeInteger(cursor + 8) || cursor + 8 > objectsEnd)
-        throw new TypeError("binary plist date object is truncated");
       if (!recordedDateObjects.has(entry.object)) {
         recordedDateObjects.add(entry.object);
         datePayloadOffsets.push(cursor);

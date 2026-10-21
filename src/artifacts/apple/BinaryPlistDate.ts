@@ -16,28 +16,3 @@ export const binaryPlistDateRepresentable = (seconds: number): boolean => {
   if (!Number.isFinite(time)) return false;
   return (time - APPLE_REFERENCE_EPOCH_MILLISECONDS) / 1000 === seconds;
 };
-
-/**
- * Give the pinned decoder an Invalid Date for each payload it cannot
- * represent. The caller's buffer stays unchanged; a copy is returned only
- * when a payload changes.
- */
-export const maskUnrepresentableBinaryPlistDates = (
-  bytes: Buffer,
-  payloadOffsets: readonly number[],
-): Buffer => {
-  if (payloadOffsets.length === 0) return bytes;
-  let copy: Buffer | undefined;
-  for (const offset of payloadOffsets) {
-    if (
-      !Number.isSafeInteger(offset) ||
-      offset < 0 ||
-      offset + 8 > bytes.length
-    )
-      throw new TypeError("binary plist date object is truncated");
-    if (binaryPlistDateRepresentable(bytes.readDoubleBE(offset))) continue;
-    copy ??= Buffer.from(bytes);
-    copy.writeDoubleBE(Number.NaN, offset);
-  }
-  return copy ?? bytes;
-};

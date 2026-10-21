@@ -548,7 +548,9 @@ describe("binary keyed archive dates", () => {
     expect(mixedGraph.limitations).toContain(unknownDateLimitation(2));
     expect(mixed).toEqual(mixedOriginal);
   });
+});
 
+describe("binary plist date object region", () => {
   it("refuses a binary date that extends past the object region", () => {
     // Strict bounds end objects at the offset table. Four payload bytes
     // remain before that table, short of the required eight.
@@ -565,6 +567,30 @@ describe("binary keyed archive dates", () => {
     bytes.writeBigUInt64BE(BigInt(offsetTable), trailer + 24);
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "strict" }),
+    ).toThrow(new TypeError("binary plist date object is truncated"));
+    // Decoder bounds extend other objects to the end of the file. The date
+    // payload still has to end at the offset table.
+    expect(() =>
+      estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
+    ).toThrow(new TypeError("binary plist date object is truncated"));
+  });
+
+  it("refuses a decoder-bounds date whose marker sits past the offset table", () => {
+    // The one-byte offset table at byte 8 names an object at byte 9. That
+    // 0x33 marker and its eight payload bytes fit in the file, which decoder
+    // bounds would otherwise accept, but they are outside the object region.
+    const bytes = Buffer.alloc(64);
+    bytes.write("bplist00");
+    bytes[8] = 9;
+    bytes[9] = 0x33;
+    const trailer = bytes.length - 32;
+    bytes[trailer + 6] = 1;
+    bytes[trailer + 7] = 1;
+    bytes.writeBigUInt64BE(1n, trailer + 8);
+    bytes.writeBigUInt64BE(0n, trailer + 16);
+    bytes.writeBigUInt64BE(8n, trailer + 24);
+    expect(() =>
+      estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
     ).toThrow(new TypeError("binary plist date object is truncated"));
   });
 });

@@ -38,7 +38,6 @@ import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
-import { maskUnrepresentableBinaryPlistDates } from "./BinaryPlistDate.js";
 import {
   decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
@@ -783,8 +782,9 @@ const decodePlist = (
   const { value, omittedPrototypeKeys, numberLiterals } = binary
     ? {
         value: parseBinary(
-          maskUnrepresentableBinaryPlistDates(
-            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+          decodeBinaryPlistNumbers(
+            bytes,
+            binaryNumberMetadata!,
             binaryDatePayloadOffsets,
           ),
         ),
