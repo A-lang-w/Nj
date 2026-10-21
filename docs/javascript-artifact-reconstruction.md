@@ -371,7 +371,12 @@ Recognized literal module-table bootstraps also support bounded lexical
 substitution through module exports, import helper bodies, local wrapper calls,
 returned closures, object spreads, and callback parameters. Recovered Electron
 paths retain source ranges, module identities, literal channels and branch
-conditions as static candidates. Unknown spreads, reassigned bindings, accessors,
+conditions as static candidates. A channel the IPC call site itself
+determines, such as a local constant, resolves that call's observation rather
+than adding a second one. A channel supplied through a wrapper argument is a
+candidate beside the call's unresolved observation, because callers outside
+the traced paths may pass other channels. One wrapper call reached through
+several entries keeps one invocation identity. Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
 This pass neither executes the bundle nor proves that runtime guards pass.
 An ambiguous or unresolved handler retains its channel registration but does

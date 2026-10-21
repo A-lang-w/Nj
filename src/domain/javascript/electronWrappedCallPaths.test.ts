@@ -384,6 +384,66 @@ it("keeps a directly observed renderer operation singular when tracing its expos
     expect.objectContaining({ entry: "desktop.ping", channel: "ping" }),
   );
 });
+it("resolves a site-determined constant channel in place of its dynamic observation", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    const PING = "ping";
+    contextBridge.exposeInMainWorld("desktop",{ping:()=>ipcRenderer.send(PING)});
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      side: "renderer",
+      operation: "send",
+      channel: "ping",
+      resolution_basis: "wrapper-substitution",
+    }),
+  ]);
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({ entry: "desktop.ping", channel: "ping" }),
+  );
+});
+it("keeps an argument-supplied channel unresolved beside its resolved candidates", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    const forward = channel => ipcRenderer.send(channel);
+    contextBridge.exposeInMainWorld("desktop",{
+      a:()=>forward("a"),
+      b:()=>forward("b"),
+      any:name=>forward(name),
+    });
+  `);
+  const sends = result.electron.ipc.filter(
+    ({ side, operation }) => side === "renderer" && operation === "send",
+  );
+  expect(sends.map(({ channel }) => channel).sort()).toEqual(["a", "b", null]);
+  expect(
+    new Set(sends.map(({ location }) => JSON.stringify(location))).size,
+  ).toBe(1);
+});
+it.each([
+  [
+    "an exposed member",
+    `const forward = (channel, callback) => ipcRenderer.on(channel, callback);
+     contextBridge.exposeInMainWorld("desktop",{on:()=>forward("pong",()=>{})});`,
+  ],
+  [
+    "an enclosing local call",
+    `const forward = (channel, callback) => ipcRenderer.on(channel, callback);
+     const notify = kind => forward("pong", () => {});
+     notify("ready");`,
+  ],
+])(
+  "keeps one invocation of a wrapper call also reached through %s",
+  (_, entry) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const {contextBridge,ipcRenderer}=require("electron");
+      ${entry}
+    `);
+    expect(
+      result.electron.ipc.filter(({ channel }) => channel === "pong"),
+    ).toHaveLength(1);
+  },
+);
 it("counts one exposed renderer listener callsite once and retains its bridge path", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");
