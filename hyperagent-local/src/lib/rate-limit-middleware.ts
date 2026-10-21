@@ -19,9 +19,13 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
  * bootstrap probe and looks like a signed-out session after a hard refresh.
  */
 export function createRateLimitMiddleware() {
+  // General traffic must not inherit startup grace: React StrictMode and HMR
+  // remounts probe /sessions and settings immediately after process restart.
+  // Grace belongs only on auth-sensitive buckets below (and dedicated login).
   const generalRateLimiter = createRateLimiter({
     windowMs: RATE_LIMIT_WINDOW_MS,
     maxAttempts: 100,
+    startupGraceMs: 0,
   });
   const authRateLimiter = createRateLimiter({
     windowMs: RATE_LIMIT_WINDOW_MS,

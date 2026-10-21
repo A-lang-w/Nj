@@ -37,7 +37,7 @@ export const authRouter = new Hono();
 /** Session cookie attrs. Omit Domain when unset so the cookie is host-only. */
 function sessionCookieAttrs(maxAge: number): {
   httpOnly: true;
-  sameSite: "Strict";
+  sameSite: "Lax";
   secure: boolean;
   path: "/";
   maxAge: number;
@@ -45,14 +45,17 @@ function sessionCookieAttrs(maxAge: number): {
 } {
   const attrs: {
     httpOnly: true;
-    sameSite: "Strict";
+    sameSite: "Lax";
     secure: boolean;
     path: "/";
     maxAge: number;
     domain?: string;
   } = {
     httpOnly: true,
-    sameSite: "Strict",
+    // Lax: top-level navigations (bookmarks, automation, external links into
+    // the local UI) must carry the session. Strict dropped the cookie on
+    // those loads and painted a false "session ended" after a hard refresh.
+    sameSite: "Lax",
     secure: config.cookieSecure,
     path: "/",
     maxAge,
@@ -124,12 +127,9 @@ authRouter.post("/login", async (c) => {
   });
   const token = await signToken({ userId: user.id, email: user.email }, jti);
   // SEC-005/SEC-007: Cookie hardening for local-only deployment.
-  // secure: true is safe on localhost (browsers allow Secure cookies over HTTPS or loopback).
-  // domain: 'localhost' prevents cookie leakage to other hosts on the machine.
-  // SameSite=Strict is safe for localhost-only deployments with no cross-origin navigation
-  // requirements. The browser never sends the cookie on cross-site navigations, providing
-  // full CSRF protection without tokens. If this tool ever gains network accessibility or
-  // cross-origin links, downgrade to Lax and add explicit CSRF protection.
+  // Host-only (no Domain) so 127.0.0.1 and localhost each keep their own jar.
+  // SameSite=Lax keeps the session on top-level navigations; CSRF is limited
+  // by loopback binding and passwordless local-only threat model.
   setCookie(
     c,
     "ha_session",

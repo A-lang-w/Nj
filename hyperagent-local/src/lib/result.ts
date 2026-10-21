@@ -43,3 +43,7 @@ export class CapacityError extends DomainError {
 export class StorageError extends DomainError {
   readonly tag = "StorageError" as const;
 }
+
+export class ConflictError extends DomainError {
+  readonly tag = "ConflictError" as const;
+}

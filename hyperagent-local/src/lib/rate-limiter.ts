@@ -1,13 +1,12 @@
 // SEC-012: Shared in-memory rate limiter factory for local-only single-user tool.
-// Counters reset on process restart, which means a restarted server briefly allows
-// a fresh burst of attempts. To mitigate this, a startup grace period rejects all
-// requests for the first few seconds after process start, preventing immediate burst
-// abuse on restart. Persisting rate-limit state to SQLite would add write contention
-// on every request for marginal security gain in this threat model. If the tool ever
-// gains network accessibility or multi-user support, replace this Map with a durable store.
+// Counters reset on process restart. Persisting rate-limit state to SQLite would
+// add write contention on every request for marginal security gain in this threat
+// model. If the tool ever gains network accessibility or multi-user support,
+// replace this Map with a durable store and consider a non-zero startupGraceMs
+// so a restart cannot be used to reset a burst window.
 
-/** Default startup grace period in milliseconds. */
-const DEFAULT_STARTUP_GRACE_MS = 5_000;
+/** Default startup grace: off for local-only (HMR/StrictMode must probe immediately). */
+const DEFAULT_STARTUP_GRACE_MS = 0;
 
 interface RateLimitEntry {
   count: number;

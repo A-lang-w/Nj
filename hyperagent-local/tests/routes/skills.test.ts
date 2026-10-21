@@ -216,4 +216,24 @@ describe("skills route CRUD and search", () => {
     const skill = await res.json();
     expect(skill.workspaceId).toBe(1);
   });
+
+  it("returns 409 when creating a skill with a duplicate name", async () => {
+    const name = `dup-skill-${Date.now()}`;
+    const first = await authed("/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, instructions: "first" }),
+    });
+    expect(first.status).toBe(201);
+
+    const second = await authed("/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, instructions: "second" }),
+    });
+    expect(second.status).toBe(409);
+    const body = await second.json();
+    expect(body.error).toContain(name);
+    expect(body.error).toMatch(/already exists/i);
+  });
 });

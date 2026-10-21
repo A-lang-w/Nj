@@ -51,7 +51,19 @@ async function refreshToken(): Promise<boolean> {
         // retry once against the current cookie before declaring dead.
         const retry = await attempt().catch(() => null);
         if (retry && retry.ok) return true;
-        window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+        // No cookie at all is the logged-out bootstrap path, not mid-session
+        // expiry — announcing expiry would flash "session ended" on every
+        // cold visit to /login.
+        let absentCookie = false;
+        try {
+          const body = (await res.json()) as { error?: unknown };
+          absentCookie = body.error === "No session token";
+        } catch {
+          absentCookie = false;
+        }
+        if (!absentCookie) {
+          window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+        }
       }
       return false;
     } catch {

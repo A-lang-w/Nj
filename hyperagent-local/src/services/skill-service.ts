@@ -8,7 +8,7 @@ import {
   skillTriggerPatternsSchema,
   skillMetadataSchema,
 } from "../db/validators.js";
-import { Ok, Err, StorageError } from "../lib/result.js";
+import { Ok, Err, StorageError, ConflictError } from "../lib/result.js";
 import type { Result } from "../lib/result.js";
 
 /**
@@ -28,7 +28,7 @@ export async function createSkill(
   description: string,
   instructions: string,
   triggerPatterns: string[] = [],
-): Promise<Result<typeof skills.$inferSelect, StorageError>> {
+): Promise<Result<typeof skills.$inferSelect, StorageError | ConflictError>> {
   try {
     const [skill] = await db
       .insert(skills)
@@ -50,7 +50,7 @@ export async function createSkill(
       err instanceof Error ? err.message : "Failed to create skill";
     if (/UNIQUE|unique/i.test(message)) {
       return Err(
-        new StorageError(
+        new ConflictError(
           `A skill named "${name}" already exists in this workspace`,
         ),
       );
@@ -207,7 +207,9 @@ export async function updateSkill(
     instructions?: string;
     triggerPatterns?: string[];
   },
-): Promise<Result<typeof skills.$inferSelect | null, StorageError>> {
+): Promise<
+  Result<typeof skills.$inferSelect | null, StorageError | ConflictError>
+> {
   try {
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (updates.name !== undefined) patch.name = updates.name;
@@ -234,7 +236,7 @@ export async function updateSkill(
       err instanceof Error ? err.message : "Failed to update skill";
     if (/UNIQUE|unique/i.test(message) && updates.name) {
       return Err(
-        new StorageError(
+        new ConflictError(
           `A skill named "${updates.name}" already exists in this workspace`,
         ),
       );

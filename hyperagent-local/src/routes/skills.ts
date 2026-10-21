@@ -88,7 +88,10 @@ skillsRouter.post(
       body.instructions,
       body.triggerPatterns ?? [],
     );
-    if (!result.ok) return c.json({ error: result.error.message }, 500);
+    if (!result.ok) {
+      const status = result.error.tag === "ConflictError" ? 409 : 500;
+      return c.json({ error: result.error.message }, status);
+    }
     return c.json(result.value, 201);
   },
 );
@@ -118,7 +121,10 @@ skillsRouter.put(
       instructions: body.instructions,
       triggerPatterns: body.triggerPatterns,
     });
-    if (!result.ok) return c.json({ error: result.error.message }, 500);
+    if (!result.ok) {
+      const status = result.error.tag === "ConflictError" ? 409 : 500;
+      return c.json({ error: result.error.message }, status);
+    }
     if (!result.value) return c.json({ error: "Not found" }, 404);
     return c.json(result.value);
   },
