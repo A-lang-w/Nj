@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
-import { mkdtemp, realpath as realpathOf, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  realpath as realpathOf,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
