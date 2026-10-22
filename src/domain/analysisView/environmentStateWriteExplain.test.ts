@@ -232,6 +232,7 @@ it("accepts echoed members and fixes the others at their sent values", () => {
     ],
     required: ["title", "priority", "notify"],
     identity: null,
+    kinds: [],
   });
 });
 
@@ -276,6 +277,7 @@ it("explains an update's sent members as echoes, constants or the identity", () 
       ],
       required: [],
       identity: "id",
+      kinds: [],
     },
     unexplained: [],
   });

@@ -657,7 +657,7 @@ checked only on the members they sent; a mismatch no write explains marks the re
 `side-effect`. A plan is `served` when a read confirmed it and none
 contradicted it; otherwise its `reason` is the first of its build reason
 (`no-call`, `body-unusable`, `no-observation`, `unexplained-change`),
-`contradicted` (with `contradicted_by`), `side-effect`, `unconfirmed` and `incomplete-entities` (an update or delete that answers with the entity, when no initial entity holds every field its recorded answer shows, so it could answer only for entities the environment created).
+`contradicted` (with `contradicted_by`), `side-effect`, `unconfirmed` and `incomplete-entities` (an update or delete that answers with the entity, when no initial entity holds every field its recorded answer shows, counting for an update the fields its rules write, so it could answer only for entities the environment created).
 `checked_record_ordinals` lists the confirming reads, `insert` places created
 entities (sorted by a field the collection's recorded order shows, else last),
 and `write_clock` is the end of the last timed record, to the next second.
