@@ -307,13 +307,70 @@ A manifest binding names one owner and its exact implementation digest. Both
     "status": "pass",
     "result_evidence_id": "ev_5555555555555555555555555555555555555555555555555555555555555555",
     "enumerated_obligation_ids": ["protocol.rpc.cancel"],
+    "implementation_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "nondeterminism": {
       "mode": "partial-order",
       "specification": "cancel precedes the single terminal response"
-    }
+    },
+    "negative_controls": [
+      {
+        "candidate": {
+          "kind": "fixture",
+          "fixture_id": "rpc.cancel.deliberate-defect"
+        },
+        "defect": "The candidate drops the cancellation response.",
+        "status": "fail",
+        "result_evidence_id": "ev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
   }
 }
 ```
+
+Create one negative control by introducing one relevant defect in a separate
+candidate copy. For a verifier that compares recorded outputs, this can be a
+changed output fixture, as shown below. Run the **same verifier implementation**
+against both candidates. Bind
+that implementation's digest in `implementation_sha256`. The verifier's control
+Evidence must carry that digest, the same verifier/claim/obligation IDs, the
+candidate fixture ID or artifact SHA-256, and the stated `defect`. For a valid
+failure it must report `passed: false` and `failure_kind: "behavior-mismatch"`;
+an environment or execution failure is not evidence that the verifier detected
+the defect. Every listed control must be resolved; an `unknown`, `unsupported`,
+or `skipped` control keeps closure open even when another control fails. A
+control whose authenticated Evidence records a pass reports `vacuous-verifier`
+regardless of its declared status. REA checks that
+the control candidate differs from the bound positive fixture or artifact.
+Artifact controls also require a valid `candidate_sha256` in the passing
+verifier Evidence; missing or malformed identity keeps closure open because
+the candidate difference cannot be established.
+
+For fixture controls, different names are not enough: `original.json` and
+`corrupted.json` might contain identical bytes. Both verifier result Evidence
+records must include `normalized_result.fixture_sha256s`, an object mapping
+fixture IDs to lowercase SHA-256 content digests. The passing result must
+identify every fixture in the binding and every additional fixture named in
+its `fixture_ids`; the control result must identify the selected control fixture.
+REA rejects a control whose digest matches any of those positive fixtures.
+Missing or invalid digests also produce `invalid-control-candidate` and keep
+closure open. Hash the exact consumed contents using the same representation
+for both runs; do not hash filenames. Different digests establish changed
+contents, not that the change is a relevant defect or that every bug is detected.
+
+Migration: existing fixture-control manifests and stored ledgers still parse.
+Re-record positive and control verifier Evidence with `fixture_sha256s`, then
+update their Evidence references and rebuild. Historical readiness checks apply
+the same requirement without rewriting the stored ledger.
+
+Old manifests without controls still parse, but a freshly built ledger keeps
+their obligations open with `unchallenged-verifier`. Previously exported ledger
+Evidence retains its historical digest and status. When a readiness report
+consumes a historical `ready` ledger, it applies the same verifier and control
+Evidence assessment used when building a ledger. Missing authenticated failing
+controls report `reconstruction-verifier-unchallenged`; invalid identities,
+unresolved controls, and observed passing controls also block readiness. The
+historical ledger itself is not changed. Rebuild from the manifest to reassess
+the obligations. REA reads these records; it never runs the verifier.
 
 All referenced Evidence IDs must exist in the bundle. A green unit test cannot
 close a `packaged-process` obligation. A static-only source cannot close a
@@ -333,3 +390,120 @@ dependency graphs, Evidence links, and limitations.
 
 For named boundaries with explicit verifier contracts and package-proof kinds,
 see [reconstruction coverage](reconstruction-coverage.md).
+
+## Challenge a verifier with a copied output fixture
+
+A passing verifier result does not, by itself, demonstrate that the verifier
+detects a wrong result. Before supplying that result to the ledger, a caller
+can challenge the verifier with a **negative control**: a separate fixture with
+one deliberate, relevant defect. This tests the verifier's sensitivity to that
+defect; it is different from testing whether the reconstructed software rejects
+an invalid input.
+
+When a verifier consumes recorded outputs, the control can be a corrupted copy
+of the reconstruction's output. There is no need to rebuild the reconstruction
+for this comparison-level check. Keep the reference and original candidate
+fixtures unchanged, and run the same verifier with the same reference and
+settings against both the candidate and the control.
+
+The following Python 3 example uses **synthetic fixtures**, shaped like the
+result of reading a file after a container restart. It does not run Docker or
+establish Docker behavior. Save it as `output_control.py` and run
+`python3 output_control.py`; it uses only the standard library and writes no
+files.
+
+```python
+from copy import deepcopy
+import hashlib
+import json
+
+
+def fingerprint(value):
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def valid_file_result(value):
+    if not isinstance(value, dict) or type(value.get("exists")) is not bool:
+        return False
+    if value["exists"]:
+        return set(value) == {"exists", "content"} and isinstance(value["content"], str)
+    return set(value) == {"exists"}
+
+
+def verify(reference, candidate):
+    if not valid_file_result(reference) or not valid_file_result(candidate):
+        return {"status": "inconclusive", "reason": "invalid file-result fixture"}
+    differences = [
+        field for field in ("exists", "content")
+        if reference.get(field) != candidate.get(field)
+    ]
+    return {"status": "fail" if differences else "pass", "differences": differences}
+
+
+reference = {"exists": True, "content": "hello ordinary"}
+candidate = {"exists": True, "content": "hello ordinary"}
+original_fingerprints = (fingerprint(reference), fingerprint(candidate))
+
+control = deepcopy(candidate)
+control["content"] = "CORRUPTED"
+baseline_result = verify(reference, candidate)
+control_result = verify(reference, control)
+invalid_result = verify(reference, {"exists": "not a boolean"})
+
+if baseline_result != {"status": "pass", "differences": []}:
+    raise RuntimeError("The baseline did not pass")
+if control_result != {"status": "fail", "differences": ["content"]}:
+    raise RuntimeError("The verifier did not detect the declared content defect")
+if invalid_result["status"] != "inconclusive":
+    raise RuntimeError("An invalid fixture was mistaken for defect detection")
+if original_fingerprints != (fingerprint(reference), fingerprint(candidate)):
+    raise RuntimeError("An original fixture was modified")
+if fingerprint(control) == fingerprint(candidate):
+    raise RuntimeError("The control did not change the candidate")
+
+print(json.dumps({
+    "baseline": {
+        **baseline_result,
+        "fixture_sha256s": {"after-restart": fingerprint(candidate)},
+    },
+    "control": {
+        **control_result,
+        "fixture_sha256s": {"after-restart.corrupted": fingerprint(control)},
+    },
+    "invalid_fixture": invalid_result,
+    "reference_sha256": fingerprint(reference),
+    "candidate_sha256": fingerprint(candidate),
+    "control_sha256": fingerprint(control),
+}, indent=2))
+```
+
+The baseline reports `pass`. The control reports `fail` specifically for
+`content`, while the invalid fixture reports `inconclusive`. A crash, missing
+input, or parser error must not be reported as detection of this content defect.
+The script exits successfully only when all three expected outcomes and source
+preservation checks hold; that exit code is the example's result, not the
+individual control's verdict.
+
+For real evidence, preserve the original output artifacts and give the control
+its own identity. The example hashes a defined JSON serialization; if a verifier
+consumes file bytes, fingerprint those exact bytes instead. Record the unchanged
+verifier implementation, relevant settings, reference identity, candidate and
+control identities, the targeted obligation, the deliberate defect, and both
+observed results. An **expected** failure alone is not evidence of an **observed**
+failure. If several controls are used, retain every outcome, including a control
+that passes.
+
+These checks apply to the comparison path that consumes the fixture. They do
+not establish correct live execution, capture behavior, or complete reconstruction
+equivalence. A verifier without a recorded-output interface needs a suitable
+comparison boundary before this technique applies.
+
+The JSON printed above is an example report, not a REA Evidence record, and its
+fingerprints are not Evidence IDs. Capturing the example with
+[process capture](process-capture.md) records the caller's run; it does not
+automatically turn its output into a reconstruction proof. A caller must retain
+the existing proof fields and provenance when recording verifier Evidence; the
+`fixture_sha256s` maps supplement that proof. The manifest still selects the
+control by fixture ID and result Evidence ID. See
+[#4396](https://github.com/morluto/rea/issues/4396) for the control requirement.

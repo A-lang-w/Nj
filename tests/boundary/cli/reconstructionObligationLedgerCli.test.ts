@@ -20,6 +20,40 @@ import {
 
 const execute = promisify(execFile);
 
+describe("reconstruction obligation ledger CLI fixture controls", () => {
+  it.each([
+    ["changed", "4".repeat(64), "ready"],
+    ["renamed but identical", "6".repeat(64), "open"],
+  ])(
+    "checks %s control fixture contents",
+    async (_label, digest, status) => {
+      const input = readyProcessLedgerRequest("6".repeat(64), digest);
+      const { stdout } = await execute(
+        process.execPath,
+        [
+          "scripts/rea.mjs",
+          "build-reconstruction-obligation-ledger",
+          JSON.stringify(input),
+          "--json",
+        ],
+        { cwd: process.cwd(), env: process.env, maxBuffer: 16 * 1_024 * 1_024 },
+      );
+      const ledger = JSON.parse(stdout).normalized_result;
+      expect(ledger.status).toBe(status);
+      if (status === "open")
+        expect(ledger.obligations[0].diagnostics).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              code: "invalid-control-candidate",
+              detail: expect.stringContaining("reuses the contents"),
+            }),
+          ]),
+        );
+    },
+    20_000,
+  );
+});
+
 describe("reconstruction obligation ledger CLI parity", () => {
   it("reports non-canonical authenticated bundles as caller input", async () => {
     const records = ["first", "second"].map((label) =>

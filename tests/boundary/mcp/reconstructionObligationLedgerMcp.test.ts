@@ -15,6 +15,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import {
   MIXED_AUTHORITY_SUMMARY,
   mixedAuthorityRequest,
+  readyProcessLedgerRequest,
   reviewedObligation,
 } from "../../../src/application/ReconstructionObligationLedger.fixture.js";
 import { observed } from "../../fixtures/analysisExecution.js";
@@ -22,6 +23,7 @@ import { observed } from "../../fixtures/analysisExecution.js";
 type LedgerRequest = (
   evidenceBundle: unknown,
   reviewedObligations?: readonly unknown[],
+  manifest?: unknown,
 ) => ReturnType<Client["callTool"]>;
 
 const withLedgerClient = async (
@@ -38,15 +40,20 @@ const withLedgerClient = async (
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    await run((evidenceBundle, reviewedObligations = []) =>
-      client.callTool({
-        name: "build_reconstruction_obligation_ledger",
-        arguments: {
-          evidence_bundle: evidenceBundle,
-          reviewed_obligations: reviewedObligations,
-          manifest: { bindings: [], contradictions: [] },
-        },
-      }),
+    await run(
+      (
+        evidenceBundle,
+        reviewedObligations = [],
+        manifest = { bindings: [], contradictions: [] },
+      ) =>
+        client.callTool({
+          name: "build_reconstruction_obligation_ledger",
+          arguments: {
+            evidence_bundle: evidenceBundle,
+            reviewed_obligations: reviewedObligations,
+            manifest,
+          },
+        }),
     );
   } finally {
     await client.close();
@@ -172,6 +179,41 @@ describe("reconstruction obligation ledger residual graph input", () => {
       });
     },
   );
+});
+
+describe("reconstruction obligation ledger MCP fixture controls", () => {
+  it.each([
+    ["changed", "4".repeat(64), "ready"],
+    ["renamed but identical", "6".repeat(64), "open"],
+  ])("checks %s control fixture contents", async (_label, digest, status) => {
+    const input = readyProcessLedgerRequest("6".repeat(64), digest);
+    await withLedgerClient(async (request) => {
+      const result = await request(
+        input.evidence_bundle,
+        input.reviewed_obligations,
+        input.manifest,
+      );
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        normalized_result: { status },
+      });
+      if (status === "open")
+        expect(result.structuredContent).toMatchObject({
+          normalized_result: {
+            obligations: [
+              {
+                diagnostics: expect.arrayContaining([
+                  expect.objectContaining({
+                    code: "invalid-control-candidate",
+                    detail: expect.stringContaining("reuses the contents"),
+                  }),
+                ]),
+              },
+            ],
+          },
+        });
+    });
+  });
 });
 
 describe("reconstruction obligation ledger MCP parity", () => {

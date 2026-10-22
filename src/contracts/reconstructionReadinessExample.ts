@@ -32,6 +32,8 @@ const sourceEvidence = (variant: string) =>
 const SOURCE = sourceEvidence("authority");
 const CONTRADICTING_SOURCE = sourceEvidence("contradiction");
 const EVIDENCE_ID = SOURCE.evidence_id;
+const VERIFIER_SHA256 = "b".repeat(64);
+const CONTROL_DEFECT = "The candidate omits the teardown event.";
 const CASES = [
   "positive",
   "negative",
@@ -39,6 +41,51 @@ const CASES = [
   "cancellation",
   "teardown",
 ] as const;
+const POSITIVE_PROOF = createEvidence(
+  undefined,
+  { id: "rea-readiness-fixture", name: "REA readiness fixture", version: "1" },
+  {
+    predicateType: "rea.reconstruction-proof",
+    operation: "verify_reconstruction_obligations",
+    parameters: {},
+    result: {
+      passed: true,
+      obligation_ids: ["obl.readiness"],
+      verifier_ids: ["verifier.readiness"],
+      claim_ids: ["claim.readiness"],
+      verifier_sha256: VERIFIER_SHA256,
+      candidate_sha256: HASH,
+      fixture_ids: CASES.map((kind) => `fixture.${kind}`),
+      fixture_sha256s: Object.fromEntries(
+        CASES.map((kind) => [`fixture.${kind}`, HASH]),
+      ),
+    },
+    confidence: "observed",
+    authority: "controlled-replay",
+  },
+);
+const NEGATIVE_CONTROL = createEvidence(
+  undefined,
+  { id: "rea-readiness-fixture", name: "REA readiness fixture", version: "1" },
+  {
+    predicateType: "rea.reconstruction-proof",
+    operation: "verify_reconstruction_obligations",
+    parameters: {},
+    result: {
+      passed: false,
+      obligation_ids: ["obl.readiness"],
+      verifier_ids: ["verifier.readiness"],
+      claim_ids: ["claim.readiness"],
+      verifier_sha256: VERIFIER_SHA256,
+      fixture_ids: ["fixture.deliberate-defect"],
+      fixture_sha256s: { "fixture.deliberate-defect": "c".repeat(64) },
+      defect: CONTROL_DEFECT,
+      failure_kind: "behavior-mismatch",
+    },
+    confidence: "observed",
+    authority: "controlled-replay",
+  },
+);
 const FIXTURES = [
   "native",
   "javascript-cli",
@@ -134,19 +181,35 @@ const READINESS_OBLIGATION_LEDGER = (() => {
             command: "npm run verify:readiness",
             authority: "packaged-process",
             status: "pass",
-            result_evidence_id: EVIDENCE_ID,
+            result_evidence_id: POSITIVE_PROOF.evidence_id,
             enumerated_obligation_ids: ["obl.readiness"],
+            implementation_sha256: VERIFIER_SHA256,
             nondeterminism: {
               mode: "partial-order",
               specification: "Startup precedes teardown.",
             },
+            negative_controls: [
+              {
+                candidate: {
+                  kind: "fixture",
+                  fixture_id: "fixture.deliberate-defect",
+                },
+                defect: CONTROL_DEFECT,
+                status: "fail",
+                result_evidence_id: NEGATIVE_CONTROL.evidence_id,
+              },
+            ],
           },
         },
         status: "verified",
         diagnostics: [],
       },
     ],
-    evidence_links: [EVIDENCE_ID],
+    evidence_links: [
+      EVIDENCE_ID,
+      POSITIVE_PROOF.evidence_id,
+      NEGATIVE_CONTROL.evidence_id,
+    ].sort(),
     limitations: [],
   };
   const ledger = {
@@ -254,7 +317,12 @@ export const RECONSTRUCTION_READINESS_EXAMPLE: ReconstructionReadinessInput = {
       evidence_ids: [EVIDENCE_ID],
     },
   ],
-  evidence_bundle: createEvidenceBundle([SOURCE, CONTRADICTING_SOURCE]),
+  evidence_bundle: createEvidenceBundle([
+    SOURCE,
+    CONTRADICTING_SOURCE,
+    POSITIVE_PROOF,
+    NEGATIVE_CONTROL,
+  ]),
   comparisons: [
     {
       comparison_id: "comparison.concurrent",
