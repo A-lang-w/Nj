@@ -10,9 +10,7 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { logToolExecution } from "./toolLogging.js";
-import { applicationToolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err } from "../domain/result.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 
@@ -29,23 +27,9 @@ export const registerByteEntropyTool = (
   const retention = { recordEvidence, evidenceById };
   server.registerTool(
     contract.name,
-    applicationToolRegistrationOptions(contract),
-    async (rawInput, context) => {
-      const parsed = contract.inputSchema.safeParse(rawInput);
-      if (!parsed.success)
-        return server.delivery.toCallToolResult(
-          err(
-            analysisInputErrorFromIssues(
-              contract.name,
-              parsed.error.issues,
-              rawInput,
-              { cause: parsed.error },
-            ),
-          ),
-          contract,
-        );
-      const { detail, ...request } = parsed.data;
-      return runAdmittedToolOperation(
+    toolRegistrationOptions(contract),
+    async ({ detail, ...request }, context) =>
+      runAdmittedToolOperation(
         server,
         withAdmittedAnalysis,
         contract.name,
@@ -79,7 +63,6 @@ export const registerByteEntropyTool = (
             recorded,
           );
         },
-      );
-    },
+      ),
   );
 };
