@@ -376,10 +376,7 @@ it.skipIf(process.platform === "win32")(
         expect(secondReachedWriter).toBe(false);
         expect(entered).toEqual([realPath]);
         releaseFirst();
-        const [firstResult, secondResult] = await Promise.all([
-          first,
-          second,
-        ]);
+        const [firstResult, secondResult] = await Promise.all([first, second]);
         expect([firstResult.status, secondResult.status]).toEqual([
           "configured",
           "configured",
