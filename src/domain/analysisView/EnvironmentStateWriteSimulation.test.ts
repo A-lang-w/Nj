@@ -1514,6 +1514,7 @@ describe("resolved encoded item observations", () => {
       from: 0,
       viewOf: () => itemView,
       withBody: (_ordinal, use) => use({ id: "%61", name: "After" }),
+      queryOf: () => undefined,
     };
 
     expect(target).toEqual({ collection, id: "%61" });

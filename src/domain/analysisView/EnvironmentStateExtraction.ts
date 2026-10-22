@@ -257,6 +257,7 @@ export class EnvironmentStateExtraction {
           requestBody: (ordinal) => this.#requestBody(ordinal),
           emptyResponse: (ordinal) => this.#budget.emptyResponse(ordinal),
           retain: (bytes) => this.#retain(bytes),
+          queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
         },
       }),
     };

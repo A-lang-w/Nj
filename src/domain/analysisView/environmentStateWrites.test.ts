@@ -1662,3 +1662,46 @@ describe("lines left to replay", () => {
     });
   });
 });
+
+describe("field selections the gate reads as serving answers them", () => {
+  it("approves no create from a read serving replays, a selection no checked line gave", () => {
+    const state = stateOf([
+      ["GET", "/api/books/1?fields=*", FIRST_BOOK],
+      ["GET", "/api/books/2?fields=*", SECOND_BOOK],
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      [
+        "GET",
+        "/api/books/3?fields=id,name,slug,created_at,updated_at",
+        THIRD_BOOK,
+      ],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({
+      projected_query_keys: [{ name: "fields", value: "name" }],
+    });
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+    });
+  });
+
+  it("checks an update against a read of every field, which serving answers from the state", () => {
+    const state = stateOf([
+      ...BOOK_INIT_ROWS,
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+      ["PATCH", "/api/books/1", RENAMED_BOOK, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1?fields=*", FIRST_BOOK],
+      ["GET", "/api/books/1", RENAMED_BOOK],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({ projected_query_keys: [{ name: "fields" }] });
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+      contradicted_by: 5,
+    });
+  });
+});

@@ -39,7 +39,8 @@ its cause in the recordings and the code. The five largest shared causes:
   entities, a list line asking for some fields only is set aside before the identity proof the same way. A call
   matching those keys replays its recording, so it does not show served writes; a 400, 404 or 410 on such a line is
   still evidence. A call asking for some fields only replays unless every value it gives is `*` or one a checked line
-  gave, and no replayed read gave it. A filter role whose name matches no field needs two agreeing values.
+  gave, and no replayed read gave it. The write gate skips exactly the successful reads serving replays, by the same
+  decision. A filter role whose name matches no field needs two agreeing values.
 
 ## Acceptance
 

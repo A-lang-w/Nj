@@ -84,6 +84,7 @@ export interface WriteIo {
   readonly requestBody: (ordinal: number) => JsonValue | undefined;
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => void;
+  readonly queryOf: (ordinal: number) => string | null | undefined;
 }
 
 /** What the write gate reads: the manifest tools, the timeline, the read views and the initial state. */
@@ -218,6 +219,7 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   ...(context.timed ? { after: step.record.end } : {}),
   viewOf: context.viewOf,
   withBody: context.io.withBody,
+  queryOf: context.io.queryOf,
 });
 
 /** The entity an update's response shows, located by its identity, else a later item read of the target the write resolved. */

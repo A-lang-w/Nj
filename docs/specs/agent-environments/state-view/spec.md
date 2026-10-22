@@ -41,8 +41,9 @@ later increments.
   is listed there too, and proves no identity or membership. On a view with
   such replayed reads, serving replays a call naming a projection parameter for
   an entity the state holds unless every value it gives is `*` or one a checked
-  line gave, and no replayed read gave it. The write gate also leaves out any
-  read that names one and leaves out a field its view requires.
+  line gave, and no replayed read gave it. The write gate leaves out exactly
+  the successful reads serving replays, and any read that names one and leaves
+  out a field its view requires, which serving would answer whole.
 - A request line of an item or list view is a representation variant when it
   shows an entity another line shows with other members, or names a parameter
   the base lines do not (paging aside) while its objects carry a member no base
@@ -58,7 +59,7 @@ later increments.
   `variant` (`projection` when it leaves out a projection parameter every base
   line names; a projection value is tested as above), so the
   answer is a recording and shows no served write. The write gate neither
-  checks nor learns from a successful read matching a key; a 400, 404 or 410
+  checks nor learns from a successful read serving replays; a 400, 404 or 410
   such a read answers is still the absence it checks.
 - A field every recording of a view carried is required: serving refuses an
   entity lacking it. Once a successful read the write gate checks, naming no

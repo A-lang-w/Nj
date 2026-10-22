@@ -5,6 +5,8 @@ import {
   isProjectionParameter,
   projectsFields,
   type ReplayKey,
+  type StateItemView,
+  type StateListView,
   type StateRecordFacts,
 } from "./environmentStateRules.js";
 
@@ -213,7 +215,7 @@ export const replayKeys = (
 };
 
 /** Whether a call's query names a replay key: the parameter, the parameter with that value, or leaves out an absent key's parameter. */
-export const matchesReplayKey = (
+const matchesReplayKey = (
   keys: readonly ReplayKey[],
   call: ReadonlyMap<string, readonly string[]>,
 ): boolean =>
@@ -226,7 +228,7 @@ export const matchesReplayKey = (
   );
 
 /** Whether a call asks for a selection of fields the checked lines do not show exactly: a projection value a replayed line gave, or one no checked line gave other than `*`. */
-export const selectsOtherFields = (
+const selectsOtherFields = (
   call: ReadonlyMap<string, readonly string[]>,
   checked: readonly (string | null | undefined)[],
   replayed: readonly (string | null | undefined)[],
@@ -243,6 +245,39 @@ export const selectsOtherFields = (
           (value !== "*" && !gave(base, name, value)),
       ),
   );
+};
+
+/** Why serving replays a read call rather than answering it from the state (`projection` for some fields only, `variant` for another representation); the gate skips the same reads. */
+export const replayReason = (
+  view: Pick<
+    StateItemView | StateListView,
+    | "checked_record_ordinals"
+    | "projected_record_ordinals"
+    | "projected_query_keys"
+  >,
+  call: ReadonlyMap<string, readonly string[]>,
+  queryOf: (ordinal: number) => string | null | undefined,
+): "projection" | "variant" | undefined => {
+  if (view.projected_record_ordinals === undefined) return undefined;
+  // A field selection is tested on its own: a variant key cannot name every value the checked lines do not show.
+  if (
+    [...call.keys()].some(isProjectionParameter) &&
+    selectsOtherFields(
+      call,
+      view.checked_record_ordinals.map(queryOf),
+      view.projected_record_ordinals.map(queryOf),
+    )
+  )
+    return "projection";
+  const matched = (view.projected_query_keys ?? []).filter(
+    (key) =>
+      (key.absent === true || !isProjectionParameter(key.name)) &&
+      matchesReplayKey([key], call),
+  );
+  if (matched.length === 0) return undefined;
+  return matched.some((key) => isProjectionParameter(key.name))
+    ? "projection"
+    : "variant";
 };
 
 const requestLine = (record: StateRecordFacts): string =>

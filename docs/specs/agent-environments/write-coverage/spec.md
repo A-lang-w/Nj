@@ -31,8 +31,8 @@ what the writes did:
   is left out of the identity proof and the view's checks. The view lists it in `projected_record_ordinals`, and serving
   replays a call to that tool naming such a parameter, for an entity the state holds, with the reason `projection`;
   the replay shows the recording, not served writes. The write gate neither checks nor learns a write's effect from a
-  successful read that names such a parameter and leaves out a field its view requires; a 400, 404 or 410 such a read
-  answers is still the absence it checks.
+  successful read serving replays, nor from one that names such a parameter and leaves out a field its view requires; a
+  400, 404 or 410 such a read answers is still the absence it checks.
   Identity-free projection evidence after the initial-state cutoff is retained too, without seeding later values
   into initial entities. Failed responses are classified before the projection-replay shortcut, so a projected
   absence can confirm a delete or contradict an unexplained disappearance.

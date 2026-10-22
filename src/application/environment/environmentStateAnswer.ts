@@ -2,7 +2,6 @@ import { stateBodyJson } from "../../domain/analysisView/EnvironmentStateAccumul
 import {
   collectionMatch,
   collectionPathOf,
-  isProjectionParameter,
   decodedSegment,
   allLines,
   listItems,
@@ -21,10 +20,7 @@ import {
   type StateView,
 } from "../../domain/analysisView/environmentStateRules.js";
 import { pageBound } from "../../domain/analysisView/environmentStatePaging.js";
-import {
-  matchesReplayKey,
-  selectsOtherFields,
-} from "../../domain/analysisView/environmentStateVariants.js";
+import { replayReason } from "../../domain/analysisView/environmentStateVariants.js";
 import { isAbsence } from "../../domain/analysisView/environmentStateWriteChecks.js";
 import {
   evaluateQuery,
@@ -151,35 +147,17 @@ const fromRecording = (
     : replayed;
 };
 
-/** Why a call replays the view's replayed reads (`projection` for some fields only, `variant` for another representation), or undefined when the state answers it. */
+/** Why a call replays the view's replayed reads, or undefined when the state answers it. */
 const replayedCall = (
   source: EnvironmentSource,
   view: StateItemView | StateListView,
   call: ReadonlyMap<string, string>,
-): "projection" | "variant" | undefined => {
-  if (view.projected_record_ordinals === undefined) return undefined;
-  const values = new Map([...call].map(([name, value]) => [name, [value]]));
-  const queries = (ordinals: readonly number[]) =>
-    ordinals.map((ordinal) => source.exchanges.get(ordinal)?.query);
-  // A field selection is tested on its own: a variant key cannot name every value the checked lines do not show.
-  if (
-    selectsOtherFields(
-      values,
-      queries(view.checked_record_ordinals),
-      queries(view.projected_record_ordinals),
-    )
-  )
-    return "projection";
-  const matched = (view.projected_query_keys ?? []).filter(
-    (key) =>
-      (key.absent === true || !isProjectionParameter(key.name)) &&
-      matchesReplayKey([key], values),
+): "projection" | "variant" | undefined =>
+  replayReason(
+    view,
+    new Map([...call].map(([name, value]) => [name, [value]])),
+    (ordinal) => source.exchanges.get(ordinal)?.query,
   );
-  if (matched.length === 0) return undefined;
-  return matched.some((key) => isProjectionParameter(key.name))
-    ? "projection"
-    : "variant";
-};
 
 /** A recorded body the state renders into, usable exactly when extraction could use it. */
 export const recordedJson = (
