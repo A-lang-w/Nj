@@ -15,6 +15,7 @@ import { valid } from "semver";
 
 import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import {
   MCP_STARTUP_POLICY,
@@ -36,7 +37,7 @@ import {
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import { clientRegistrationEnvironmentDetails } from "./ClientRegistrationEnvironment.js";
+import { clientRegistrationEnvironmentDetailsWithBudget } from "./ClientRegistrationEnvironment.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
@@ -80,12 +81,18 @@ export type UnhealthyClientRegistrationStatus = Exclude<
   { readonly state: "aligned" }
 >;
 
+const tomlTimeoutSchema = z.union([
+  z.number().positive(),
+  z.bigint().positive(),
+]);
+
 const registrationSchema = z
   .object({
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
-    startup_timeout_sec: z.number().positive().optional(),
-    tool_timeout_sec: z.number().positive().optional(),
+    // TOML keeps integers beyond the safe Number range exact as bigint.
+    startup_timeout_sec: tomlTimeoutSchema.optional(),
+    tool_timeout_sec: tomlTimeoutSchema.optional(),
     startupTimeoutMs: z.number().positive().optional(),
     toolTimeoutMs: z.number().positive().optional(),
     type: z.string().optional(),
@@ -179,6 +186,7 @@ export const readClientRegistrationInspections = async (
       const configuration = await readEffectiveClientRegistrationConfiguration(
         client,
         options.resources,
+        options.platform,
       );
       if (!configuration.ok) {
         if (
@@ -254,11 +262,12 @@ export const readClientRegistrationInspections = async (
       const registration = parseRegistration(raw, effectiveClient);
       const registrationEnvironment =
         client.name === "kimi" || client.name === "codex"
-          ? clientRegistrationEnvironmentDetails(
+          ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
               {},
               "effective",
               options.resolveProviderRequestBudget,
+              options.platform,
             )
           : undefined;
       if (
@@ -291,8 +300,10 @@ export const readClientRegistrationInspections = async (
         platform: options.platform ?? process.platform,
         kimiInputSchemaProfileSelected:
           registrationEnvironment?.ok === true &&
-          registrationEnvironment.value.values.REA_MCP_INPUT_SCHEMA_PROFILE !==
-            undefined,
+          snapshotEnvironment(
+            registrationEnvironment.value.values,
+            options.platform,
+          ).REA_MCP_INPUT_SCHEMA_PROFILE !== undefined,
       });
       record(
         configuredStatus(
@@ -546,7 +557,8 @@ const timeoutAdvisory = (
   if (toolTimeout === undefined) return undefined;
   const providerAllowance = mcpProviderDeadlineAllowanceMs(timeoutInputs);
   const isKimi = client.name === "kimi";
-  const toolTimeoutMs = isKimi ? toolTimeout : toolTimeout * 1000;
+  // A bigint is beyond the safe Number range, so rounding cannot cross the allowance.
+  const toolTimeoutMs = Number(toolTimeout) * (isKimi ? 1 : 1000);
   if (toolTimeoutMs >= providerAllowance) return undefined;
   const setting = isKimi ? "toolTimeoutMs" : "tool_timeout_sec";
   const currentValue = isKimi

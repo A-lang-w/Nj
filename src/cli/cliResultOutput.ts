@@ -1,7 +1,7 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
-import { Cli, Filter, Formatter } from "incur";
+import { Filter, Formatter } from "incur";
 import { estimateTokenCount, sliceByTokens } from "tokenx";
 
 import {
@@ -23,6 +23,10 @@ import {
   writeOutputText,
 } from "./jsonOutput.js";
 import type { CliInstance } from "./types.js";
+import {
+  visitRegisteredCommands,
+  type RegisteredCommand,
+} from "./visitRegisteredCommands.js";
 
 /** Result metadata supplied by the command that actually ran. */
 export interface CliResultOutputMetadata {
@@ -41,40 +45,18 @@ export interface CliResultOutput {
   recoverFormattingFailure(cause: unknown): Promise<boolean>;
 }
 
-type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
-type CommandDefinition = Extract<
-  CommandMap extends Map<string, infer Entry> ? Entry : never,
-  { run: unknown }
->;
-const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
-
 /** Install formatting once, after registration, for every ordinary CLI result. */
 export const streamCliCommandResults = (
   cli: CliInstance,
   output: CliResultOutput,
 ): void => {
-  const commands = registeredCommands.get(cli);
-  if (commands !== undefined) wrapCommands(commands, [], output);
-};
-
-const wrapCommands = (
-  commands: CommandMap,
-  parents: readonly string[],
-  output: CliResultOutput,
-): void => {
-  for (const [name, entry] of commands) {
-    const path = [...parents, name];
-    if ("_group" in entry) {
-      wrapCommands(entry.commands, path, output);
-      if (entry.root !== undefined)
-        wrapCommand(entry.root, path.join(" "), output);
-    } else if (!("_alias" in entry) && !("_fetch" in entry))
-      wrapCommand(entry, path.join(" "), output);
-  }
+  visitRegisteredCommands(cli, (command, path) =>
+    wrapCommand(command, path, output),
+  );
 };
 
 const wrapCommand = (
-  command: Pick<CommandDefinition, "run">,
+  command: Pick<RegisteredCommand, "run">,
   name: string,
   output: CliResultOutput,
 ): void => {
@@ -219,20 +201,37 @@ export const createCliResultOutput = (
     value: unknown,
     metadata: CliResultOutputMetadata,
   ): Promise<boolean> {
-    const failure = options.fullOutput
-      ? cliOperationFailurePayload(value)
-      : undefined;
     completed = {
       metadata,
       originalFailure: cliOperationFailureIdentity(value),
     };
-    const filtered: unknown = options.filterOutput
-      ? Filter.apply(value, Filter.parse(options.filterOutput))
-      : value;
-    // Leave successful YAML and bare YAML rendering to Incur. The custom
-    // boundary is needed only for a full failure envelope, whose error
-    // sentinel otherwise drops category, remediation, and details.
-    if (format !== "json" && format !== "jsonl" && failure === undefined)
+    const filterPaths = options.filterOutput
+      ? Filter.parse(options.filterOutput)
+      : undefined;
+    const operationFailure =
+      options.fullOutput || filterPaths !== undefined
+        ? cliOperationFailurePayload(value)
+        : undefined;
+    const failure = options.fullOutput ? operationFailure : undefined;
+    const filtered: unknown =
+      operationFailure ??
+      (filterPaths === undefined ? value : Filter.apply(value, filterPaths));
+    if (
+      operationFailure === undefined &&
+      filterPaths !== undefined &&
+      filterPaths.length > 0 &&
+      (format === "json" || format === "jsonl") &&
+      Array.isArray(filtered)
+    )
+      normalizeFilteredJsonArrays(filtered);
+    // Leave successful non-JSON rendering to Incur. This owner handles typed
+    // failures when full output is requested or a data filter would erase the
+    // failure projection.
+    if (
+      format !== "json" &&
+      format !== "jsonl" &&
+      operationFailure === undefined
+    )
       return false;
     if (options.tokenCount) {
       // Incur/tokenx materialize JSON. Measure its UTF-16 expansion before
@@ -257,8 +256,7 @@ export const createCliResultOutput = (
         }
       }
       if (characters <= constants.MAX_STRING_LENGTH) {
-        if (failure === undefined) return false;
-        const count = estimateTokenCount(Formatter.format(failure, format));
+        const count = estimateTokenCount(Formatter.format(tokenValue, format));
         handled = true;
         try {
           await writeOutputText(destination, `${count}\n`);
@@ -314,7 +312,7 @@ export const createCliResultOutput = (
     // Once writing starts, a failed destination must not receive a second
     // document from Incur's error formatter.
     const failureText =
-      failure !== undefined && format !== "json" && format !== "jsonl"
+      operationFailure !== undefined && format !== "json" && format !== "jsonl"
         ? Formatter.format(document, format)
         : undefined;
     handled = true;
@@ -363,4 +361,22 @@ const fullFailureEnvelope = (
     error: `${sliceByTokens(formatted, offset, end)}\n[truncated: showing tokens ${offset}–${actualEnd} of ${total}]`,
     meta: { ...meta, ...(nextOffset === undefined ? {} : { nextOffset }) },
   };
+};
+
+/** Filter.apply owns these mapped arrays; an empty path list returns the source. */
+const normalizeFilteredJsonArrays = (selection: unknown[]): void => {
+  const pending = [selection];
+  while (pending.length > 0) {
+    const array = pending.pop()!;
+    for (let index = 0; index < array.length; index += 1) {
+      const value: unknown = array[index];
+      if (
+        value === undefined ||
+        typeof value === "function" ||
+        typeof value === "symbol"
+      )
+        array[index] = null;
+      else if (Array.isArray(value)) pending.push(value);
+    }
+  }
 };
