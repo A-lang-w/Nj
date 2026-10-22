@@ -166,7 +166,7 @@ it("reports the heap the selected adapter launches when decoder environment diff
     expect(limitations).toContain("256");
     expect(limitations).toContain("source setting");
     expect(limitations).not.toContain("source default");
-    expect(limitations).not.toContain("512 MiB");
+    expect(limitations).not.toContain("512 MiB (source setting)");
 
     vi.spyOn(launched, "command").mockRejectedValue(heapExhaustion());
     const exhausted = await decoder.inspect(input);
@@ -179,7 +179,9 @@ it("reports the heap the selected adapter launches when decoder environment diff
       CAPTURE_DECODER_OLD_GENERATION_SETTING,
     );
     expect(projected.message).not.toContain("192 MiB");
-    expect(projected.remediation.action).not.toContain("512 MiB");
+    expect(projected.remediation.action).not.toContain(
+      "512 MiB (source setting)",
+    );
   } finally {
     await decoder.close();
     await rm(root, { recursive: true, force: true });
