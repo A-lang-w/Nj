@@ -9,6 +9,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { prlimitArgumentVector } from "../../process/LinuxResourceLimits.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
@@ -22,7 +23,7 @@ import {
   fingerprintRecoveryFile,
   recoveryFailureMessage,
 } from "./RecoveryFiles.js";
-import { RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
 
 const OPERATION = "recover_javascript_sources";
 const WAKARU_REQUIREMENT =
@@ -118,12 +119,14 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
   const spawned = await (context.launcher ?? spawnOwnedProviderProcess)({
     command: context.limiter,
     arguments: [
-      `--as=${String(RECOVERY_LIMITS.addressSpaceBytes)}`,
-      `--fsize=${String(RECOVERY_LIMITS.outputBytes)}`,
-      "--core=0",
-      "--cpu=120",
-      "--",
-      context.command,
+      ...prlimitArgumentVector(
+        {
+          address_space_bytes: RECOVERY_LIMITS.addressSpaceBytes,
+          file_bytes: RECOVERY_LIMITS.outputBytes,
+          cpu_seconds: RECOVERY_LIMITS.cpuSeconds,
+        },
+        context.command,
+      ),
       ...context.arguments,
     ],
     expectedCommand: null,
@@ -170,6 +173,9 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
         throw new AnalysisOutputError(
           OPERATION,
           "Wakaru diagnostic stream exceeds 8 MiB",
+          wakaruFixedLimitRecovery(
+            `Wakaru diagnostic stream exceeds the ${String(RECOVERY_LIMITS.reportBytes)}-byte report allowance`,
+          ),
         );
       if (context.staging !== undefined)
         await inventoryRecoveryFiles(context.staging, context.signal);
@@ -179,6 +185,9 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
       throw new AnalysisOutputError(
         OPERATION,
         "Wakaru diagnostic stream exceeds 8 MiB",
+        wakaruFixedLimitRecovery(
+          `Wakaru diagnostic stream exceeds the ${String(RECOVERY_LIMITS.reportBytes)}-byte report allowance`,
+        ),
       );
   } catch (cause: unknown) {
     failure = cause;
