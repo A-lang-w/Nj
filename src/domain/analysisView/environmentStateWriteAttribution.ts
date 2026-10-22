@@ -27,6 +27,43 @@ export type PendingTargets = Map<
 export const overlapsWrite = (until: number, start: number): boolean =>
   until > start;
 
+/** What the gate tracks of the writes since each target's last check, and when each unmodelled write ran. */
+export interface WriteHistory {
+  readonly touched: TouchedTargets;
+  readonly pending: PendingTargets;
+  readonly checked: ReadonlyMap<string, number>;
+  readonly unmodelledAt: readonly number[];
+}
+
+/** The tools a failed read's difference an unmodelled write may explain: it came after the tool's call on a target where its effect survives, and after every differing target's last check and pending writes. */
+export const interference = (
+  history: WriteHistory,
+  read: {
+    readonly targets: readonly string[];
+    readonly unheld: readonly string[];
+    readonly differing?: readonly string[];
+  },
+): ((tool: string) => boolean) => {
+  const keys = [...read.targets, ...read.unheld];
+  const after = (since: number) =>
+    history.unmodelledAt.some((index) => index > since);
+  const explained = (read.differing ?? []).every((key) =>
+    after(
+      Math.max(
+        history.checked.get(key) ?? -1,
+        ...(history.pending.get(key)?.at.values() ?? []),
+      ),
+    ),
+  );
+  return (tool) =>
+    explained &&
+    keys.some((key) => {
+      if (history.touched.get(key)?.has(tool) !== true) return false;
+      const at = history.pending.get(key)?.at.get(tool);
+      return at !== undefined && after(at);
+    });
+};
+
 /** Whether a modelled write to the target was still running when a read began at `start`, so the read may show either state. */
 export const runningAt = (
   pending: PendingTargets,
