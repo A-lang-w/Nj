@@ -121,14 +121,16 @@ The `hexrays` protocol drives the [Hex-Rays IDA MCP](https://github.com/HexRaysS
 
 ```json
 {
-  "command": "uvx",
-  "args": ["--exclude-newer=1s", "ida-mcp", "stdio", "--agent=rea"],
+  "command": "ida-mcp",
+  "args": ["stdio", "--agent=rea"],
   "mode": "headless",
   "protocol": "hexrays"
 }
 ```
 
-The profile is headless and stdio only. Hex-Rays database leases belong to the MCP server process, so REA's own stdio child is what makes a lease provably REA's. Attached and HTTP Hex-Rays registrations are rejected, and analyzing a database already open in the IDA GUI is not supported. A registration that omits `protocol` but reaches a Hex-Rays server fails at startup with `advertised_tools` and a recovery naming the `hexrays` registration. Use the command from your working Hex-Rays installation, such as its Claude Code plugin's `uv run ... ida-mcp stdio` form.
+The profile is headless and stdio only. Hex-Rays database leases belong to the MCP server process, so REA's own stdio child is what makes a lease provably REA's. Attached and HTTP Hex-Rays registrations are rejected, and analyzing a database already open in the IDA GUI is not supported. A registration that omits `protocol` but reaches a Hex-Rays server fails at startup with `advertised_tools` and a recovery naming the `hexrays` registration.
+
+Any stdio command that starts the server works; copy `command` and `args` from your working installation, such as `uvx ida-mcp stdio` or the Claude Code plugin's `uv run ... ida-mcp stdio`. Upstream's README adds `--exclude-newer=1s` to the `uvx` form, which resolves the newest release on every start, so it can run a release newer than the ones verified below.
 
 REA copies and verifies the input in a private workspace as for the database supervisor, then calls `open_database` on that copy with `set_current: false`. Hex-Rays assigns the instance id; REA binds the session only when the reply reports an `idalib` backend and `list_databases` shows that id leased for the private input. A GUI database is refused, and the open is treated as unverified.
 
