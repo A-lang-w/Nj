@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import statistics
 from pathlib import Path
 
@@ -42,6 +43,7 @@ for case in inputs['cases'] + inputs.get('diagnostic_cases', []):
     for name, producer_digest in report['producer_sources_sha256'].items():
         assert producer_digest == inputs['harness_sources_sha256'][name]
     assert report['runtime_binding'] == expected[case['role']]
+    assert type(report['elapsed_ms']) in [int, float] and math.isfinite(report['elapsed_ms']) and report['elapsed_ms'] >= 0
     for key in ['role', 'cache', 'profile', 'phase']:
         assert report[key] == case[key]
     raw = (directory / 'catalog.json').read_bytes()
@@ -83,6 +85,7 @@ for case in inputs['cases'] + inputs.get('diagnostic_cases', []):
         assert guard_digest == inputs['harness_sources_sha256'][name]
     del resource['guard_sources_sha256']
     row = {**case, 'runtime_binding_sha256': sha(compact(report['runtime_binding']).encode()), 'runtime_audit_ms': report['runtime_audit_ms'],
+           'sdk_task_elapsed_seconds': report['elapsed_ms'] / 1000,
            'catalog_sha256': catalog_digest, 'parent_evidence_id': report.get('parent_evidence_id'),
            'parent_semantic_sha256': report.get('parent_semantic_sha256'),
            'answer_sha256': sha(compact(report['answer']).encode()), 'tokens_estimated': tokens,
@@ -117,7 +120,7 @@ for phase in ['discovery', 'analysis']:
                     assert len(selected) == 3
                     item[role] = {metric: {'median': statistics.median(row[metric] for row in selected),
                                            'min': min(row[metric] for row in selected), 'max': max(row[metric] for row in selected)}
-                                  for metric in ['wall_seconds', 'cpu_seconds', 'kernel_family_peak_bytes_including_page_cache']}
+                                  for metric in ['wall_seconds', 'cpu_seconds', 'kernel_family_peak_bytes_including_page_cache', 'sdk_task_elapsed_seconds']}
                     item[role]['tokens_estimated'] = [row['tokens_estimated']['whole_task'] for row in selected]
                 summary.append(item)
 result = {'status': 'passed', 'tokenizer': f'tiktoken=={tiktoken.__version__}/cl100k_base; estimates, not model usage',
@@ -126,6 +129,7 @@ result = {'status': 'passed', 'tokenizer': f'tiktoken=={tiktoken.__version__}/cl
           'cache_scope': 'Cold disables server Node compile cache. Warm enables a prepopulated role/profile-specific cache after one complete analysis priming run. Fresh server/client processes and HOME each trial. Driver compile cache disabled in both cohorts. Cache hit rate and OS page cache are unmeasured; source/runtime audits warm compiled-file pages before startup.',
           'resource_scope': 'Whole SDK driver, resource observer and owned REA process family. Includes before/after source-and-all-compiled-JS/JSON binding, SDK schema checks, extra validation calls, bundle export and independent oracle checking. Kernel cgroup peak includes file cache. Build/download/oracle preparation and cache priming excluded. Retained V8 heap and forced-GC diagnostics were not separately measured.',
           'measurement_inputs': inputs, 'catalogs': catalogs, 'summary': summary, 'records': rows,
+          'sdk_task_elapsed_scope': 'SDK span from client connect through task checks and client/server close. Excludes pre/post runtime binding and preflight artifact/oracle loading. Diagnostic spans include inspector and forced GC. CPU is measured for the whole family only; per-span CPU is unmeasured.',
           'warmup_receipts': {name: sha((root / name / 'report.json').read_bytes()) for name in [f'warmup-{profile}-{role}' for profile in ['default', 'full'] for role in ['baseline', 'candidate']]}}
 if heap_rows:
     assert len(heap_rows) == 12
@@ -137,7 +141,7 @@ if heap_rows:
             assert len(selected) == 3
             item[role] = {metric: {'median': statistics.median(row[metric] for row in selected),
                                    'min': min(row[metric] for row in selected), 'max': max(row[metric] for row in selected)}
-                          for metric in ['retained_v8_heap_bytes_after_gc', 'wall_seconds', 'cpu_seconds',
+                          for metric in ['retained_v8_heap_bytes_after_gc', 'wall_seconds', 'cpu_seconds', 'sdk_task_elapsed_seconds',
                                          'kernel_family_peak_bytes_including_page_cache']}
         heap_summary.append(item)
     result['heap_diagnostics'] = {

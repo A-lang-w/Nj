@@ -1,12 +1,12 @@
 # Integer validator allocation after MCP materialization
 
-Issue #6236; PR #4360. Linux x64, 2026-10-22. Baseline `main@0b7213c89056a8e3a9e2bb785be210c8393d2899`; candidate `3228fb235d61d64d3a4ef3970265b6d08a75d7e7`. Production schema changes are in `6d4c812f6`; later commits add diagnostic instrumentation and evidence. This is a pinned comparison, not a claim about every later main revision.
+Issue #6236; PR #4360. Linux x64, 2026-10-22. Baseline `main@4a4bbab3c337701febeb6b532ace49041c4876e0`; candidate `461f342c71a72ef2be60912391df2393aa4e2ea3`. Production changes preserve the latest shared metadata owner after synchronization in `461f342c7`; subsequent changes only record evidence. This is a pinned comparison, not a claim about every later main revision.
 
-Direct integer construction reduces retained REA V8 heap by about 9.6–9.7 MiB (5%) after a completed real Zellij metadata task. The three-pair ranges do not overlap in either profile. Normal completed-task timing and whole-family peaks vary by workload; there is no general latency or peak-memory reduction claim. Directory discovery already reads recorded schemas after #4424, so it does not materialize these validators. Context is unchanged.
+In the separate inspector/forced-GC diagnostics, direct integer construction reduces retained REA V8 heap by about 9.6–9.6 MiB after a completed real Zellij metadata task. The three-pair ranges do not overlap in either profile. Normal completed-task timing and whole-family peaks vary by workload; there is no general latency or peak-memory reduction claim. Directory discovery uses recorded advertisements after #4424; this study separates it from completed tasks that materialize canonical handlers. Context is unchanged.
 
 ## Change and compatibility
 
-Replace 1,248 argument-free `z.number().int()` constructions with `z.int()` across 175 existing source files. Keep current shared schema owners, refinements, bounds, defaults and metadata. AST-token comparison against the baseline, after normalizing this construction and formatting, is equal for every touched source file. No new tools, provider effects, caches or response contracts.
+Replace 1,247 argument-free `z.number().int()` constructions with `z.int()` across 175 existing source files. Keep current shared schema owners, refinements, bounds, defaults and metadata. AST-token comparison against the baseline, after normalizing this construction and formatting, is equal for every touched source file. No new tools, provider effects, caches or response contracts.
 
 The locked Zod 4.4.3 chained form retains a `ZodNumber` with a separate `ZodNumberFormat` check; direct construction uses the format itself. Incur 0.6.1 coerces argv strings only for `ZodNumber`. Existing CLI declarations and shared-input exceptions therefore retain the chained form. The actual compiled CLI registers 160 leaf commands; 104 numeric argument/option fields have identical results/errors in 974 installed-Incur parser cases across both runtimes, each field with an accepted probe. Fields are isolated from unrelated required options and no handlers are invoked. This is consumer-boundary coverage, not a real-engine claim.
 
@@ -18,7 +18,7 @@ Reuse the shared SDK task driver and independent ELF/section/zlib/JSON oracles f
 
 Normal cohort: three alternating baseline/candidate pairs for each task × cold/warm server compile cache × default compact/full inputs: 72 trials, plus four excluded full-task warm priming runs. Separate diagnostic cohort: three alternating pairs per profile, cold Zellij tasks, 12 trials. All pass, with identical complete parent IDs/hashes and answers.
 
-Node 24.18.0/npm 11.16.0; fresh client/server and HOME per trial, driver compile cache disabled. Each trial is serial, pinned to one CPU, 4 GiB hard/3 GiB early stop, no swap, at most 192 tasks. Before/after checks bind clean source, all 1,990 compiled JS/JSON assets, scripts and manifests; producer and resource-observer hashes are also bound. No OOM, resource stop or leftover payload processes. Whole-family measurements include SDK validation, extra calls, source/compiled audits and oracle checking; kernel peak includes file cache. Build/acquisition/oracle generation and priming are excluded. Warm uses a populated role/profile-specific Node cache; hit rate and OS page cache are unmeasured, and audits warm compiled-file pages.
+Node 24.18.0/npm 11.16.0; fresh client/server and HOME per trial, driver compile cache disabled. Each trial is serial, pinned to one CPU, 4 GiB hard/3 GiB early stop, no swap, at most 192 tasks. Before/after checks bind clean source, all compiled JS/JSON assets (1,990 baseline / 1,990 candidate files), scripts and manifests; producer and resource-observer hashes are also bound. No OOM, resource stop or leftover payload processes. Whole-family measurements include SDK validation, extra calls, source/compiled audits and oracle checking; kernel peak includes file cache. Build/acquisition/oracle generation and priming are excluded. Warm uses a populated role/profile-specific Node cache; hit rate and OS page cache are unmeasured, and audits warm compiled-file pages.
 
 ## Normal task costs
 
@@ -39,16 +39,39 @@ Medians, baseline → candidate; all ranges are in the JSON. No inspector or dia
 | ripgrep   | warm  | full          | 7.473 → 7.273 | 7.250 → 7.106 |   804.9 → 793.9 |
 | zellij    | warm  | full          | 7.473 → 7.471 | 7.282 → 7.262 |   832.6 → 827.4 |
 
+### SDK span and audit separation
+
+The whole-family table includes experimental source/compiled binding. In cold default discovery, median combined audit wall time is 1.273 s baseline / 0.782 s candidate, while the SDK span is 0.944 s / 0.948 s. The audit asymmetry explains most of that whole-task difference; its cause was not established. Startup latency is approximately unchanged. Whole-family CPU includes these audits; per-span CPU is unmeasured.
+
+SDK span runs from connect through task checks and close, excluding pre/post binding and preflight artifact/oracle loading. Medians below do not include inspector/GC:
+
+| Task      | Cache | Inputs  | SDK span s, baseline → candidate |
+| --------- | ----- | ------- | -------------------------------: |
+| directory | cold  | default |                    0.944 → 0.948 |
+| directory | cold  | full    |                    1.067 → 1.102 |
+| directory | warm  | default |                    0.888 → 0.878 |
+| directory | warm  | full    |                    1.038 → 1.042 |
+| ripgrep   | cold  | default |                    5.778 → 5.752 |
+| zellij    | cold  | default |                    5.998 → 5.991 |
+| ripgrep   | cold  | full    |                    6.077 → 6.119 |
+| zellij    | cold  | full    |                    6.228 → 6.209 |
+| ripgrep   | warm  | default |                    5.743 → 5.656 |
+| zellij    | warm  | default |                    5.965 → 5.788 |
+| ripgrep   | warm  | full    |                    6.100 → 6.492 |
+| zellij    | warm  | full    |                  11.776 → 11.529 |
+
+Full-profile warm Zellij is slower than its cold condition in both roles in this cohort. Cache hit rate and the cause of this observation are unmeasured, and cold/warm groups run sequentially. These timings support neither a general cache speedup nor a causal regression attribution.
+
 ## Separate retained-heap diagnostics
 
-The same completed SDK task launches only its owned REA process with `--inspect=127.0.0.1:0`. Four CDP calls verify the owned transport PID, read heap, force GC and read heap again. The endpoint comes from that child’s stderr; the PID is a cross-check of the owned endpoint, not sole ownership proof. The inspector socket closes before MCP shutdown. These V8 values exclude the client; diagnostic wall/CPU/family peaks include inspector and forced-GC overhead and are not normal-task timing results.
+The same completed SDK task launches only its owned REA process with `--inspect=127.0.0.1:0`. Four CDP calls verify the owned transport PID, read heap, force GC and read heap again. The endpoint comes from that child’s stderr; the PID is a cross-check of the owned endpoint, not sole ownership proof. The inspector socket closes before MCP shutdown. These V8 values include inspector perturbation and exclude the client; diagnostic wall/CPU/family peaks include inspector and forced-GC overhead and are not normal-task timing results.
 
 | Inputs  | REA V8 retained MiB |  Baseline range | Candidate range | Diagnostic wall s |         CPU s | Family peak MiB |
 | ------- | ------------------: | --------------: | --------------: | ----------------: | ------------: | --------------: |
 | default |   189.994 → 180.353 | 189.894–190.114 | 180.322–180.501 |     8.179 → 8.180 | 7.994 → 7.960 |   817.7 → 806.6 |
 | full    |   191.392 → 181.721 | 191.368–191.420 | 181.665–181.963 |     8.478 → 8.277 | 8.283 → 8.093 |   825.1 → 822.3 |
 
-A mismatched PID is rejected; removing only that guard makes the negative oracle fail. Both connections in that check use the same owned REA endpoint, with no foreign-process attachment. Aggregation rejects diagnostic GC in a normal trial. Reaggregating the historical #4424 receipts preserves every previous field except the updated aggregator source hash.
+A mismatched PID is rejected; removing only that guard makes the negative oracle fail. Both connections in that check use the same owned REA endpoint, with no foreign-process attachment. Aggregation rejects diagnostic GC in a normal trial. Historical #4424 receipt reaggregation preserves previous metrics and adds the separately reported SDK-span fields; its aggregator source hash changes.
 
 ## Context accounting
 
@@ -56,14 +79,14 @@ tiktoken 0.14.0 / cl100k_base estimates, **not actual model usage**. Both roles 
 
 | Profile | Input directory once | Directory task | ripgrep task | Zellij task |
 | ------- | -------------------: | -------------: | -----------: | ----------: |
-| default |               49,670 |         50,840 |       54,027 |      53,947 |
-| full    |              205,744 |        206,914 |      210,101 |     210,021 |
+| default |               49,670 |         50,840 |       54,029 |      53,949 |
+| full    |              205,744 |        206,914 |      210,103 |     210,023 |
 
-Task projection includes question/recipe, server instructions, one unchanged name/description/input-schema directory, every tool argument/text reply and discovery prompt directory. Raw SDK directory costs separately count all observed lists, including output schemas: 756,173/912,444 tokens and 2,935,197/3,587,841 bytes per default/full list; analysis lists twice. SDK initialization/framing, model reasoning and actual usage are unmeasured. Fewer allocated schemas do not imply fewer tokens.
+Task projection includes question/recipe, server instructions, one unchanged name/description/input-schema directory, every tool argument/text reply and discovery prompt directory. Raw SDK directory costs separately count all observed lists, including output schemas: 756,165/912,436 tokens and 2,935,148/3,587,792 bytes per default/full list; analysis lists twice. SDK initialization/framing, model reasoning and actual usage are unmeasured. Fewer allocated schemas do not imply fewer tokens.
 
 ## Validation and reproduction
 
-- Both runtime builds and all six static checks plus architecture guards pass. 5,972 source/contract/public CLI/MCP tests pass across 323 files; four skip for unavailable/guarded coverage. Includes real SQLite CLI/MCP record/column selection and JavaScript heap/deadline preservation. A first direct schema-validity invocation lacked generated catalog metadata; the supported focused entry generates it and all 15 cases pass. No production or timeout change was needed.
+- Both runtime builds and all six static checks plus architecture guards pass. Before the final main synchronization, 5,972 source/contract/public CLI/MCP tests pass across 323 files; four skip for unavailable/guarded coverage. After synchronization, both builds/static checks repeat successfully, 77 affected producer and CLI/MCP tests pass, and all 974 registered numeric-parameter parser cases match again. Includes real SQLite CLI/MCP record/column selection and JavaScript heap/deadline preservation. A first direct schema-validity invocation lacked generated catalog metadata; the supported focused entry generates it and all 15 cases pass. A later affected-test invocation selected two nonexistent paths; the corrected three-file producer/consumer run is the 77-case result above. Neither setup failure was counted as a passing test, and no production or timeout change was needed.
 - All 84 measured tasks and four warm priming tasks pass independent oracles, canonical refusal, parent/directory identity and owned cleanup checks. This does not verify external Hopper/Ghidra/IDA, Android devices, all providers or foreign OS behavior. The earlier macOS numbers in #4360 describe a different revision/platform and are not combined with these results.
 
 Build the pinned baseline/candidate in separate clean worktrees with the locked toolchain. Use the candidate’s producer scripts for both roles. `measurement_inputs` in the JSON records the complete matrix, questions/recipes, runtime bindings and producer hashes; extract it unchanged as the bindings file. Historical receipts require their matching producer revision. One normal task:
