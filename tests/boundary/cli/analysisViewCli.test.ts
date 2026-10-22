@@ -29,7 +29,11 @@ import {
   environmentManifestCaptureFixture,
   environmentStateCaptureFixture,
 } from "../../fixtures/analysisView.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { z } from "zod";
@@ -316,11 +320,22 @@ cliTest(
       inspection.normalized_result,
     ).substeps[0]!.evidence;
     const path = join(root, "view.json");
+    const reseal = (carrier: Evidence, result: JsonValue) => {
+      const subject = carrier.subject!;
+      return createEvidence(
+        {
+          path: subject.local_path,
+          sha256: subject.digest.sha256,
+          format: subject.format,
+        },
+        carrier.provider,
+        { operation: carrier.operation, parameters: {}, result },
+      );
+    };
     for (const [carrier, group, field] of [
       [inventory, "manifest", "node_count"],
       [inspection, "coverage", "substeps_completed"],
     ] as const) {
-      const subject = carrier.subject!;
       for (const variant of ["valid", "type", "missing"] as const) {
         const payload = structuredClone(carrier.normalized_result) as Record<
           string,
@@ -328,15 +343,7 @@ cliTest(
         >;
         if (variant === "type") payload[group]![field] = "bad";
         if (variant === "missing") delete payload[group]![field];
-        const evidence = createEvidence(
-          {
-            path: subject.local_path,
-            sha256: subject.digest.sha256,
-            format: subject.format,
-          },
-          carrier.provider,
-          { operation: carrier.operation, parameters: {}, result: payload },
-        );
+        const evidence = reseal(carrier, payload);
         const request = {
           source: { kind: "inline" as const, evidence },
           view: { kind: "summary" as const },
@@ -380,6 +387,52 @@ cliTest(
         });
       }
     }
+    const nested = artifactInspectionResultSchema.parse(
+      inspection.normalized_result,
+    );
+    nested.substeps.push(structuredClone(nested.substeps[0]!));
+    nested.coverage.substeps_completed = nested.substeps.length;
+    nested.substeps[1]!.evidence.evidence_id = `ev_${"f".repeat(64)}`;
+    const request = {
+      source: { kind: "inline" as const, evidence: reseal(inspection, nested) },
+      view: { kind: "summary" as const },
+    };
+    const application = inspectAnalysisView(request);
+    expect(application.ok).toBe(false);
+    if (application.ok) throw new Error("Expected invalid nested Evidence");
+    expect(application.error.cause).toMatchObject({
+      cause: expect.any(z.ZodError),
+      issues: [
+        expect.objectContaining({
+          path: ["substeps", 1, "evidence", "evidence_id"],
+        }),
+      ],
+    });
+    await writeFile(path, JSON.stringify(request));
+    const refused = await cli.run({
+      arguments: ["inspect-analysis-view", path, "--json"],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toBe("");
+    expect(refused.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: [
+              "source",
+              "normalized_result",
+              "substeps",
+              1,
+              "evidence",
+              "evidence_id",
+            ],
+            reason: "invalid_value",
+            message: "Evidence semantic identifier does not match its record",
+          },
+        ],
+      },
+    });
   },
 );
 
