@@ -26,6 +26,7 @@ import {
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const completeEvidence = (value: unknown) => {
@@ -153,10 +154,10 @@ cliTest(
         [mixed, cliMixed],
         [rotated, cliRotated],
       ] as const) {
-        const reply = await client.callTool({
-          name: tool.name,
-          arguments: { path, detail: "complete" },
-        });
+        const reply = await client.callTool(
+          { name: tool.name, arguments: { path, detail: "complete" } },
+          { toolDefinition: tool },
+        );
         expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
         expect(
           ajv.validate(outputSchema, reply.structuredContent),
@@ -331,12 +332,16 @@ cliTest(
       `${block}: the entry declares encryption (general-purpose flag bit 0); apksig ignores the flag, so its bytes were read as stored and the PKCS#7 decoding decides.`,
     );
 
+    const { call } = await connectLocalToolsMcp();
     for (const [path, decodeError] of cases) {
-      const result = await cli.run({
-        arguments: ["inspect-apk-signature", path, "--json"],
+      const result = await call("inspect_apk_signature", {
+        path,
+        detail: "complete",
       });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const report = completeEvidence(result.json).normalized_result;
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      const report = completeEvidence(
+        result.structuredContent,
+      ).normalized_result;
       const [signer, ...rest] = report.schemes.v1.signers;
       expect(rest, path).toEqual([]);
       if (decodeError === null) {
