@@ -45,7 +45,8 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 
 ## Go build metadata
 
-Use `inspect_go_binary` for an explicit local ELF, PE or thin Mach-O when the
+Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
+files need `architecture`) when the
 question concerns the embedded compiler version, module/dependency versions,
 local replacements or build settings. No `open_binary`, Go installation or
 target execution is required. The CLI equivalent is `inspect-go-binary PATH`.
@@ -84,7 +85,8 @@ See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metad
 
 ## Rust dependency metadata
 
-Use `inspect_rust_binary` for an explicit local ELF, PE, or thin Mach-O when
+Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
+files need `architecture`) when
 the question concerns the cargo-auditable crate list embedded in `.dep-v0`
 (Mach-O: `__DATA,.dep-v0`). No `open_binary`, Rust installation, or target
 execution is required. The CLI equivalent is `inspect-rust-binary PATH`.
@@ -345,8 +347,8 @@ every executable in the bundle. It also lists missing or weak loads and earlier
 `architecture`. System paths stay undetermined because the dyld shared cache
 provides them.
 
-Use `extract_artifact` when materialized files are needed. It extracts the active
-target and accepts optional `integrity_policy`; see the [MCP contracts](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md).
+Use `extract_artifact` when materialized files from a supported format are needed.
+It extracts the active target and accepts optional `integrity_policy`; see the [MCP contracts](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md).
 It materializes all regular files into a fresh temporary directory chosen by
 REA. Symlinks and encrypted entries are inventory facts, not extractable files.
 The result reports the materialized directory; callers do not choose the
@@ -355,8 +357,11 @@ destination. No separate permission grant is needed.
 Native DMG traversal automatically uses a read-only mount on supported macOS
 hosts, with an owned temporary mount directory and cleanup. It needs no approval
 flag. Unsupported hosts or mount failures remain explicit limitations; do not
-claim child inventory when only root identity is available. Extraction is a
-separate filesystem-writing operation.
+claim child inventory when only root identity is available. DMG extraction is
+unavailable through `extract_artifact`. To access DMG files on macOS, create a
+read-only mount with your own tools, select files from that mount for analysis,
+and detach the mount you created when finished. REA's inspection mount is
+temporary, not a retained export of the image's contents.
 
 For headerless DOS COM, explicitly open with `format: "dos-com"` (CLI
 `--target-format dos-com`). Inspect the load image before trusting function
