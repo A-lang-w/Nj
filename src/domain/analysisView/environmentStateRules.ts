@@ -118,7 +118,7 @@ export interface ReplayKey {
 interface ReplayedReads {
   /** Reads that asked for some fields only, or show entities in another representation than the checked lines. */
   readonly projected_record_ordinals?: number[] | undefined;
-  /** A call whose query matches one of these replays; absent on views that only left out projections. */
+  /** A call whose query matches one of these replays, a field selection by its values; absent on views that only left out projections. */
   readonly projected_query_keys?: ReplayKey[] | undefined;
 }
 

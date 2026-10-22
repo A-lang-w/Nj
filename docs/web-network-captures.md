@@ -620,7 +620,8 @@ entities in another representation (an expanding or reducing query, or one
 asking for some fields only) is left out of those checks when a query key tells
 it from the others: the plan lists its latest recordings in
 `projected_record_ordinals` and the keys in `projected_query_keys` (`name`,
-with a `value` or `absent: true`), and serving replays calls matching them.
+with a `value` or `absent: true`), and serving replays calls matching them and
+calls asking for fields the checked lines do not show.
 Otherwise the tool is a recorded view
 with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
 reasons are `query-body` (a query `POST`, or one the capture shows only reading), `no-init-recording`,

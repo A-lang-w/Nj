@@ -34,23 +34,27 @@ later increments.
   every listed item carries distinctly, which needs at least one listed item.
   An item read that asked for some fields only (`fields`, `fields[...]`,
   `select`, `$select`) and does not return the item is left out of the proof
-  and of the view's checks; the view lists it in `projected_record_ordinals`,
-  and serving replays any call to that tool that names a projection parameter
-  for an entity the state holds. The write gate also leaves out any read that
-  names one and leaves out a field its view requires.
+  and of the view's checks; the view lists it in `projected_record_ordinals`.
+  Beside a line showing whole entities, a list line asking for some fields only
+  is listed there too, and proves no identity or membership. On a view with
+  such replayed reads, serving replays a call naming a projection parameter for
+  an entity the state holds unless every value it gives is `*` or one a checked
+  line gave, and no replayed read gave it. The write gate also leaves out any
+  read that names one and leaves out a field its view requires.
 - A request line of an item or list view is a representation variant when it
   shows an entity another line shows with other members, or names a parameter
   the base lines do not (paging aside) while its objects carry a member no base
-  object carries or lack one every base object carries; a list line asking for
-  some fields only is one whenever a base line does not. Base lines are taken
+  object carries or lack one every base object carries. Base lines are taken
   first: lines naming no such parameter, then lines asking for every field,
-  then the line most others agree with. A variant leaves the view's checks and
-  the entity observations when a query key tells it apart: a parameter only
+  then the line most others agree with. A variant leaves the view's checks, the
+  entity observations and the membership changes that would end the type's
+  initial reads when a query key tells it apart: a parameter only
   variants name, a value no base line gives a parameter, or a parameter every
   base line names that a variant leaves out. The view lists its latest
   recordings in `projected_record_ordinals` and the keys in
   `projected_query_keys`; serving replays a call matching a key with the reason
-  `variant` (`projection` when the key asks for some fields only), so the
+  `variant` (`projection` when it leaves out a projection parameter every base
+  line names; a projection value is tested as above), so the
   answer is a recording and shows no served write. The write gate neither
   checks nor learns from a successful read matching a key; a 400, 404 or 410
   such a read answers is still the absence it checks.

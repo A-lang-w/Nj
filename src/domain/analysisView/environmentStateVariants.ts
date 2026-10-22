@@ -2,6 +2,7 @@ import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js
 import type { StatePlan } from "./environmentStateGate.js";
 import type { ObservedEntity } from "./environmentStateMerge.js";
 import {
+  isProjectionParameter,
   projectsFields,
   type ReplayKey,
   type StateRecordFacts,
@@ -102,7 +103,6 @@ const conflicts = (left: LineShape, right: LineShape): boolean =>
 export const variantLines = (
   latest: readonly StateRecordFacts[],
   shapeOf: (record: StateRecordFacts) => LineShape | undefined,
-  list: boolean,
 ): StateRecordFacts[] => {
   if (latest.length < 2) return [];
   const shape = (record: StateRecordFacts): LineShape =>
@@ -132,31 +132,21 @@ export const variantLines = (
   const base: StateRecordFacts[] = [];
   const variants: StateRecordFacts[] = [];
   for (const record of ordered) {
-    if (base.length > 0 && isVariant(record, base, { shape, list }))
+    if (base.length > 0 && isVariant(record, base, shape))
       variants.push(record);
     else base.push(record);
   }
   return variants;
 };
 
-/** Whether a line shows a base line's entity with other members, asks a list for some fields only, or names a new shaping parameter while its objects carry or lack members the base lines do not. */
+/** Whether a line shows a base line's entity with other members, or names a new shaping parameter while its objects carry or lack members the base lines do not. */
 const isVariant = (
   record: StateRecordFacts,
   base: readonly StateRecordFacts[],
-  facts: {
-    readonly shape: (record: StateRecordFacts) => LineShape;
-    readonly list: boolean;
-  },
+  shape: (record: StateRecordFacts) => LineShape,
 ): boolean => {
-  const { shape, list } = facts;
   const mine = shape(record);
   if (base.some((line) => conflicts(mine, shape(line)))) return true;
-  if (
-    list &&
-    projectsFields(record.query ?? undefined) &&
-    base.some((line) => !projectsFields(line.query ?? undefined))
-  )
-    return true;
   const baseNames = new Set(base.flatMap((line) => shapingNames(line.query)));
   if (!shapingNames(record.query).some((name) => !baseNames.has(name)))
     return false;
@@ -235,6 +225,26 @@ export const matchesReplayKey = (
         : call.get(key.name)?.includes(key.value) === true,
   );
 
+/** Whether a call asks for a selection of fields the checked lines do not show exactly: a projection value a replayed line gave, or one no checked line gave other than `*`. */
+export const selectsOtherFields = (
+  call: ReadonlyMap<string, readonly string[]>,
+  checked: readonly (string | null | undefined)[],
+  replayed: readonly (string | null | undefined)[],
+): boolean => {
+  const [base, other] = [checked.map(queryValues), replayed.map(queryValues)];
+  const gave = (lines: Map<string, string[]>[], name: string, value: string) =>
+    lines.some((values) => values.get(name)?.includes(value) === true);
+  return [...call].some(
+    ([name, values]) =>
+      isProjectionParameter(name) &&
+      values.some(
+        (value) =>
+          gave(other, name, value) ||
+          (value !== "*" && !gave(base, name, value)),
+      ),
+  );
+};
+
 const requestLine = (record: StateRecordFacts): string =>
   record.path + (record.query ?? "");
 
@@ -249,7 +259,7 @@ export const withoutVariants = (
 ):
   | { readonly plan: StatePlan; readonly dropped: ReadonlySet<number> }
   | undefined => {
-  const found = variantLines(plan.latest, facts.shapeOf, !plan.item);
+  const found = variantLines(plan.latest, facts.shapeOf);
   const unkeyed = plan.latest.filter((record) => !found.includes(record));
   const variants = found.filter(
     (record) =>

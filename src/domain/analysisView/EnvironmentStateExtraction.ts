@@ -194,10 +194,11 @@ export class EnvironmentStateExtraction {
     return candidates;
   }
 
-  /** Leave each plan's representation variants to replay: out of its lines and the observed entities. */
+  /** Leave each plan's representation variants to replay: out of its lines, the observed entities and the membership changes. */
   #dropVariants(): void {
     const shapes = lineShapes(this.#entities.values());
     this.#retain(ENTRY_BYTES * (shapes.size + 1));
+    const dropped = new Set<number>();
     for (const [index, plan] of this.#plans.entries()) {
       const split = withoutVariants(plan, {
         shapeOf: (record) => shapes.get(record.ordinal),
@@ -208,7 +209,9 @@ export class EnvironmentStateExtraction {
       this.#retain(ENTRY_BYTES * (split.dropped.size + 2));
       this.#plans[index] = split.plan;
       dropObservations(this.#entities, split.dropped);
+      for (const ordinal of split.dropped) dropped.add(ordinal);
     }
+    this.#spans = this.#spans.filter((span) => !dropped.has(span.later));
   }
 
   /** End each rewritten type's initial reads at the earliest write its reads disagree across, and clear the plans to make them again. */
@@ -494,8 +497,11 @@ export class EnvironmentStateExtraction {
    */
   #planList(candidate: Candidate): void {
     const { tool, type } = candidate;
-    const recordings = this.#initRecordingsOf(candidate);
-    if (recordings === undefined) return;
+    const initial = this.#initRecordingsOf(candidate);
+    if (initial === undefined) return;
+    // Beside a line showing whole entities, one asking for some fields only is replayed and proves nothing.
+    const whole = initial.filter((record) => !projectsFields(record.query));
+    const recordings = whole.length > 0 ? whole : initial;
     const proved = this.#identity.get(type)?.field;
     const fieldsOf = (items: readonly JsonObject[]): string[] =>
       proved === undefined
@@ -545,7 +551,15 @@ export class EnvironmentStateExtraction {
     if (field === undefined || pointer === undefined) return;
     if (!this.#identity.has(type))
       this.#identity.set(type, { field, basis: "field-name" });
-    this.#addPlan(candidate, pointer, recordings);
+    this.#retain(ENTRY_BYTES * (initial.length - recordings.length));
+    this.#addPlan(
+      candidate,
+      pointer,
+      recordings,
+      initial
+        .filter((record) => !recordings.includes(record))
+        .map((record) => record.ordinal),
+    );
   }
 
   #observePlan(plan: StatePlan): void {
@@ -598,18 +612,12 @@ export class EnvironmentStateExtraction {
     for (const object of objects)
       if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
     if (previous.ids.size > 0) changed = true;
-    if (
-      earlier !== undefined &&
-      changed &&
-      this.#writeWithin(earlier, record)
-    ) {
-      this.#rewritten.add(plan.type);
+    if (earlier !== undefined && changed && this.#writeWithin(earlier, record))
       this.#spans.push({
         type: plan.type,
         earlier: earlier.ordinal,
         later: record.ordinal,
       });
-    }
     previous.ids.clear();
     for (const object of objects) previous.ids.add(scalarText(object[field])!);
     previous.record = record;
@@ -655,7 +663,7 @@ export class EnvironmentStateExtraction {
     });
   }
 
-  /** A change across any recorded write rewrites the type; one between repeats of a line with no write is volatile. */
+  /** A change across any recorded write, in values or in a kept line's membership, rewrites the type; one between repeats of a line with no write is volatile. */
   #classifyChanges(): void {
     const recordOf = (observation: StateObservation): StateRecordFacts =>
       this.#byOrdinal.get(observation.ordinal)!;
@@ -664,8 +672,8 @@ export class EnvironmentStateExtraction {
       (observation) => [observation.tool, requestLine(recordOf(observation))],
       (earlier, later) => this.#writeWithin(recordOf(earlier), recordOf(later)),
     );
-    for (const type of changes.rewritten) this.#rewritten.add(type);
     this.#spans.push(...changes.spans);
+    for (const { type } of this.#spans) this.#rewritten.add(type);
     for (const [type, names] of changes.volatile)
       this.#volatile.set(type, names);
   }

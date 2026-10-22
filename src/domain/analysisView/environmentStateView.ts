@@ -136,7 +136,7 @@ const replayedReadFields = {
     )
     .optional()
     .describe(
-      "Query keys that pick calls of the replayed reads out: a parameter only they name, a value only they give a parameter, or (absent) a parameter every checked line names and they leave out. A call matching any key replays.",
+      "Query keys that pick calls of the replayed reads out: a parameter only they name, a value only they give a parameter, or (absent) a parameter every checked line names and they leave out. A call matching any key replays; a projection parameter's value is tested on its own: a call replays unless every value it gives is `*` or one a checked line gave, and no replayed read gave it.",
     ),
 };
 const viewSchema = z.discriminatedUnion("shape", [

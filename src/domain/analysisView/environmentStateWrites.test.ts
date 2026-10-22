@@ -1505,3 +1505,55 @@ describe("creates read under another path", () => {
     );
   });
 });
+
+describe("lines left to replay", () => {
+  it("plans a list past a line that asks for some fields only and leaves the proved id out", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      [
+        "GET",
+        "/api/books?fields=name",
+        [{ name: "First Book" }, { name: "Second Book" }],
+      ],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, created]],
+    ]);
+    expect(state.views.find((view) => view.tool === "get_books")).toMatchObject(
+      {
+        shape: "list",
+        checked_record_ordinals: [0],
+        projected_record_ordinals: [1],
+        projected_query_keys: [{ name: "fields" }],
+      },
+    );
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("keeps a list's whole line when only a replayed line's membership changed across a write", () => {
+    // The expanded line lists shelved books only; the whole list still shows both after the export.
+    const view = stateOf([
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      [
+        "GET",
+        "/api/books?expand=shelf",
+        [FIRST_BOOK, SECOND_BOOK].map(expandedBook),
+      ],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["GET", "/api/books?expand=shelf", [expandedBook(FIRST_BOOK)]],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [5],
+      projected_record_ordinals: [4],
+      projected_query_keys: [{ name: "expand" }],
+    });
+  });
+});

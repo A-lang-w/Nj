@@ -32,10 +32,12 @@ its cause in the recordings and the code. The five largest shared causes:
 - **Rewrite cuts.** When a type's reads disagree across a write under another root, the type's initial window ends at
   the earliest write within the change and the state is extracted again. The earlier of this and the creation cut wins.
 - **Variant lines.** A read line that shows the same entities in another form is a variant: it leaves the view's
-  checks and the entity observations, and the view names it with the query keys that pick it out
-  (`projected_query_keys`, on item and list views). A call matching those keys replays its recording, so it does not
-  show served writes; a 400, 404 or 410 on such a line is still evidence. A filter role whose name matches no field
-  needs two agreeing values.
+  checks, the entity observations and the membership changes that cut a type's initial window, and the view names it
+  with the query keys that pick it out (`projected_query_keys`, on item and list views). Beside a line showing whole
+  entities, a list line asking for some fields only is set aside before the identity proof the same way. A call
+  matching those keys replays its recording, so it does not show served writes; a 400, 404 or 410 on such a line is
+  still evidence. A call asking for some fields only replays unless every value it gives is `*` or one a checked line
+  gave, and no replayed read gave it. A filter role whose name matches no field needs two agreeing values.
 
 ## Acceptance
 

@@ -321,6 +321,50 @@ describe("wider write coverage", () => {
   });
 });
 
+describe("field selections beside replayed reads", () => {
+  it("replays a field selection no checked line gave, and answers a selection of every field from the state", () => {
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1?fields=*", FIRST_BOOK],
+      ["GET", "/api/books/2?fields=*", SECOND_BOOK],
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+    ]);
+    expect(
+      books.answer("get_books_by_id", { id: "1", fields: "id" }),
+    ).toMatchObject({ state: { source: "recording", reason: "projection" } });
+    expect(
+      books.answer("get_books_by_id", { id: "1", fields: "*" }),
+    ).toMatchObject({
+      body: FIRST_BOOK,
+      state: { source: "state", view: "item" },
+    });
+  });
+
+  it("replays a field selection a replayed read gave, beside a variant key and a checked line giving it too", () => {
+    // One read asking for a book's name answered it whole; another left the id out.
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/1?fields=name", FIRST_BOOK],
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+    ]);
+    expect(
+      books.answer("get_books_by_id", { id: "2", fields: "name" }),
+    ).toMatchObject({
+      body: { name: "Second Book" },
+      state: { source: "recording", reason: "projection" },
+    });
+    expect(
+      books.answer("get_books_by_id", { id: "1", expand: "shelf" }),
+    ).toMatchObject({ state: { source: "recording", reason: "variant" } });
+    expect(books.answer("get_books_by_id", { id: "2" })).toMatchObject({
+      body: SECOND_BOOK,
+      state: { source: "state", view: "item" },
+    });
+  });
+});
+
 describe("write coverage limits", () => {
   it("numbers past a mask's width again after the state is saved and loaded", () => {
     const books = servedFrom([
