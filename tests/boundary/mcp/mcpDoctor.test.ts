@@ -546,14 +546,11 @@ describe("production MCP doctor request-flow deadline", () => {
       "REA_MCP_INITIALIZE_BUDGET_MS",
       "REA_MCP_DOCTOR_DEADLINE_MS",
     ]);
+    const budgetRange = `from ${String(MCP_PHASE_BUDGET_FLOOR_MS)} to ${String(MCP_PHASE_BUDGET_MAXIMUM_MS)} ms`;
     expect(result.checks[0]?.detail).toContain("REA_MCP_INITIALIZE_BUDGET_MS");
-    expect(result.checks[0]?.detail).toContain(
-      String(MCP_PHASE_BUDGET_FLOOR_MS),
-    );
-    expect(result.checks[0]?.detail).toContain(
-      String(MCP_PHASE_BUDGET_MAXIMUM_MS),
-    );
+    expect(result.checks[0]?.detail).toContain(budgetRange);
     expect(result.checks[1]?.detail).toContain("REA_MCP_DOCTOR_DEADLINE_MS");
+    expect(result.checks[1]?.detail).toContain(budgetRange);
     expect(result.checks[0]?.detail).not.toContain("no runtime override");
   });
 });

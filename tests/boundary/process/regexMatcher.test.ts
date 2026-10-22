@@ -78,9 +78,8 @@ it("names the configurable regex deadline and the effective worker heap", () => 
   expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
   expect(REGEX_MATCHING_LIMITATION).toContain(REGEX_MATCHING_DEADLINE_SETTING);
   expect(REGEX_MATCHING_LIMITATION).toContain(
-    String(DEFAULT_REGEX_MATCHING_DEADLINE_MS),
+    `${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms (source default`,
   );
-  expect(REGEX_MATCHING_LIMITATION).toContain("source default");
   expect(REGEX_MATCHING_LIMITATION).toContain(
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
   );

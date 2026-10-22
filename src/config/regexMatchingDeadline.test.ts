@@ -95,9 +95,8 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
     ?.limitations.join(" ");
   expect(hopperText).toContain(REGEX_MATCHING_DEADLINE_SETTING);
   expect(hopperText).toContain(
-    String(parsed.value.regexMatchingDeadline.deadlineMs),
+    `${String(parsed.value.regexMatchingDeadline.deadlineMs)} ms (source setting`,
   );
-  expect(hopperText).toContain("source setting");
   expect(hopperText).not.toContain("1 ms matching deadline");
   expect(hopperText).not.toContain("no runtime override");
 
@@ -109,8 +108,7 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
       .find((capability) => capability.operation === "search_strings")
       ?.limitations.join(" ");
     expect(kunaText).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-    expect(kunaText).toContain("10000");
-    expect(kunaText).toContain("source setting");
+    expect(kunaText).toContain("10000 ms (source setting");
     expect(kunaText).not.toContain("1 ms matching deadline");
   } finally {
     vi.unstubAllEnvs();
@@ -123,10 +121,7 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
     ?.limitations.join(" ");
   expect(ambientText).toContain(REGEX_MATCHING_DEADLINE_SETTING);
   expect(ambientText).toContain(
-    String(DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs),
-  );
-  expect(ambientText).toContain(
-    `source ${DEFAULT_REGEX_MATCHING_DEADLINE.source}`,
+    `${String(DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs)} ms (source ${DEFAULT_REGEX_MATCHING_DEADLINE.source}`,
   );
 });
 

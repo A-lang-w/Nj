@@ -457,10 +457,7 @@ it("describes the effective heap and the configurable matching deadline", () => 
     const limitation = regexMatchingLimitation(heap);
     expect(limitation).toContain(REGEX_MATCHING_DEADLINE_SETTING);
     expect(limitation).toContain(
-      String(DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs),
-    );
-    expect(limitation).toContain(
-      `source ${DEFAULT_REGEX_MATCHING_DEADLINE.source}`,
+      `${String(DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs)} ms (source ${DEFAULT_REGEX_MATCHING_DEADLINE.source}`,
     );
     expect(limitation).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
     expect(limitation).not.toContain("no runtime override");
