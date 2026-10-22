@@ -7,6 +7,7 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   IDENTITY_FIELD,
+  keyedByLearnedIds,
   pairElements,
   translateValue,
   type IdMap,
@@ -255,9 +256,10 @@ class Differ {
     own = false,
   ): void {
     const self = own || pointer === this.entity.at;
-    // An object keyed by ids compares each member under the environment's key.
+    // An object keyed by ids compares each member under the environment's key; any other compares field by field.
+    const keyed = keyedByLearnedIds(live, env, this.map);
     const envKey = (key: string): string => {
-      const mapped = this.map.env(key);
+      const mapped = keyed ? this.map.env(key) : undefined;
       return mapped !== undefined && Object.hasOwn(env, String(mapped))
         ? String(mapped)
         : key;

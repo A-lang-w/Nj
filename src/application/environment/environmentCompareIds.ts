@@ -191,6 +191,19 @@ const keyedByIds = (
         )),
   );
 
+/** Whether an answer's object is keyed by learned ids, read as learning reads one: a key both sides share needs every key evidently an id, and otherwise each entry is an entity or each key evidently an id. */
+export const keyedByLearnedIds = (
+  live: JsonObject,
+  env: JsonObject,
+  map: IdMap,
+): boolean => {
+  const entries = Object.entries(live);
+  if (!entries.some(([key]) => map.hasLive(key))) return false;
+  return entries.some(([key]) => Object.hasOwn(env, key))
+    ? keyedByIds(entries)
+    : entries.every(([, value]) => isObject(value)) || keyedByIds(entries);
+};
+
 /**
  * Two objects keyed by ids, whose object values pair by a natural key: each pair maps the live key to the environment's
  * and is learned from in turn. Returns whether the objects were read that way.

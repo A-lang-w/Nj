@@ -66,7 +66,8 @@ credentials and resets it between sequences.
   compare equal, in scalar sets as well, an entity's own identity within the call's collection and any other id by the
   probe's mapping, and an entity's own identity both sides hold verbatim differs when its collection's mapping gives it
   another environment value (a reference keeps raw equality, as the probe's mapping cannot tell which collection it
-  names); two clock values (ISO-8601 strings, or epoch numbers under
+  names); an object's members compare under the environment's mapped keys only when it is keyed by learned ids as
+  learning reads one, and any other object compares field by field; two clock values (ISO-8601 strings, or epoch numbers under
   time-named fields) compare by format only; two different generated values (both UUIDs, or both of one length and the
   same character classes with a digit) that neither side maps compare equal and are counted. A body over the replay
   limit, text or binary, compares by status only, as does a live body the probe did not record, unless the answer has

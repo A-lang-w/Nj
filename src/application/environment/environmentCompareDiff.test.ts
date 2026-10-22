@@ -103,6 +103,36 @@ describe("compareAnswers", () => {
     ).toEqual([]);
   });
 
+  it("compares ordinary fields by name, even one named like a learned id", () => {
+    const map = new IdMap();
+    map.learn("books", "tags");
+    expect(
+      compare({ books: 1, tags: 2 }, { books: 1, tags: 2 }, map).differences,
+    ).toEqual([]);
+    // A real rename shows, rather than being taken for a mapped key.
+    expect(
+      compare({ books: 1 }, { tags: 1 }, map).differences.map((d) => [
+        d.category,
+        d.pointer,
+      ]),
+    ).toEqual([
+      ["missing-field", "/books"],
+      ["extra-field", "/tags"],
+    ]);
+  });
+
+  it("still compares an object keyed by ids under the environment's keys when some ids are the same on both sides", () => {
+    const map = new IdMap();
+    map.learn("101", "2");
+    expect(
+      compare(
+        { counts: { "1": 3, "101": 5 } },
+        { counts: { "1": 3, "2": 5 } },
+        map,
+      ).differences,
+    ).toEqual([]);
+  });
+
   it("reports a reordered set of scalars as order alone and reads epoch array items as clocks", () => {
     expect(
       compare(
