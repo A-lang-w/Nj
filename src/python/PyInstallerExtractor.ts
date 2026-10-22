@@ -4,6 +4,9 @@ import {
   isPythonBytecode,
   resolvePythonVersion,
 } from "./PythonBytecode.js";
+import { readMarshalSubset } from "../artifacts/pyinstaller/MarshalSubset.js";
+import { MAX_PYZ_TABLE_BYTES } from "../artifacts/pyinstaller/PyzArchive.js";
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 
 /** PyInstaller standard cookie signature: b'MEI\x0c\x0b\x0a\x0b\x0e' */
 export const PYINSTALLER_MAGIC = Buffer.from([
@@ -187,7 +190,13 @@ export const parsePyInstallerArchive = (
       let decompressedPyz = rawPyz;
       if (pyzEntry.compressionFlag === 1) {
         try {
-          decompressedPyz = zlib.inflateSync(rawPyz);
+          const maxPyzBytes =
+            pyzEntry.uncompressedLength > 0
+              ? Math.min(pyzEntry.uncompressedLength, MAX_PER_ENTRY_BYTES)
+              : MAX_PER_ENTRY_BYTES;
+          decompressedPyz = zlib.inflateSync(rawPyz, {
+            maxOutputLength: maxPyzBytes,
+          });
         } catch {
           // ignore decompression failure on probe
         }
@@ -204,115 +213,6 @@ export const parsePyInstallerArchive = (
   };
 };
 
-/**
- * Lightweight, safe Python marshal deserializer for PYZ TOC dictionaries.
- */
-class SimpleMarshalReader {
-  private offset: number;
-  private readonly buffer: Buffer;
-
-  constructor(buffer: Buffer, startOffset = 0) {
-    this.buffer = buffer;
-    this.offset = startOffset;
-  }
-
-  hasMore(): boolean {
-    return this.offset < this.buffer.length;
-  }
-
-  readByte(): number {
-    if (this.offset >= this.buffer.length) throw new Error("Marshal EOF");
-    return this.buffer[this.offset++]!;
-  }
-
-  readUInt32LE(): number {
-    if (this.offset + 4 > this.buffer.length) throw new Error("Marshal EOF");
-    const val = this.buffer.readUInt32LE(this.offset);
-    this.offset += 4;
-    return val;
-  }
-
-  readInt32LE(): number {
-    if (this.offset + 4 > this.buffer.length) throw new Error("Marshal EOF");
-    const val = this.buffer.readInt32LE(this.offset);
-    this.offset += 4;
-    return val;
-  }
-
-  readString(len: number): string {
-    if (this.offset + len > this.buffer.length) throw new Error("Marshal EOF");
-    const str = this.buffer
-      .subarray(this.offset, this.offset + len)
-      .toString("utf8");
-    this.offset += len;
-    return str;
-  }
-
-  private readDict(): Record<string, unknown> {
-    const dict: Record<string, unknown> = {};
-    while (this.hasMore()) {
-      const peek = this.buffer[this.offset];
-      if (peek === 0x30) {
-        this.offset += 1;
-        break;
-      }
-      const key = this.readObject();
-      if (typeof key !== "string") break;
-      dict[key] = this.readObject();
-    }
-    return dict;
-  }
-
-  private readTuple(count: number): unknown[] {
-    if (count < 0 || count > 100_000) {
-      throw new Error(`Marshal tuple count ${count} exceeds limit`);
-    }
-    const tuple: unknown[] = [];
-    for (let i = 0; i < count; i += 1) {
-      tuple.push(this.readObject());
-    }
-    return tuple;
-  }
-
-  readObject(): unknown {
-    if (!this.hasMore()) throw new Error("Marshal EOF");
-    const rawType = this.readByte();
-    const type = rawType & 0x7f;
-
-    if (type === 0x7b) return this.readDict();
-    if (type === 0x5b) {
-      const count = this.readUInt32LE();
-      if (count < 0 || count > 100_000) {
-        throw new Error(`Marshal list count ${count} exceeds limit`);
-      }
-      const list: unknown[] = [];
-      for (let i = 0; i < count; i += 1) {
-        list.push(this.readObject());
-      }
-      return list;
-    }
-    if (type === 0x73 || type === 0x75 || type === 0x61 || type === 0x74) {
-      return this.readString(this.readUInt32LE());
-    }
-    if (type === 0x7a || type === 0xda) {
-      return this.readString(this.readByte());
-    }
-    if (type === 0x28) return this.readTuple(this.readUInt32LE());
-    if (type === 0x29) return this.readTuple(this.readByte());
-    if (type === 0x69) return this.readInt32LE();
-    if (type === 0x49) {
-      if (this.offset + 8 > this.buffer.length) throw new Error("Marshal EOF");
-      const low = this.buffer.readUInt32LE(this.offset);
-      this.offset += 8;
-      return low;
-    }
-    if (type === 0x54) return true;
-    if (type === 0x46) return false;
-    if (type === 0x4e) return null;
-    return null;
-  }
-}
-
 /** Parse embedded PYZ archive header and its marshaled module table. */
 export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
   if (pyzBuffer.length < 12) return null;
@@ -323,40 +223,40 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
   const pythonVersion = resolvePythonVersion(pycMagic);
   const tocOffset = pyzBuffer.readUInt32BE(8);
 
-  if (tocOffset >= pyzBuffer.length) return null;
+  if (tocOffset < 12 || tocOffset > pyzBuffer.length) return null;
 
   const modules: PyzModuleEntry[] = [];
-  try {
-    const reader = new SimpleMarshalReader(pyzBuffer, tocOffset);
-    const toc = reader.readObject();
-    if (Array.isArray(toc)) {
-      for (const item of toc) {
+  const table = pyzBuffer.subarray(tocOffset);
+  if (table.length <= MAX_PYZ_TABLE_BYTES) {
+    const marshalled = readMarshalSubset(table);
+    if (marshalled.ok && Array.isArray(marshalled.value)) {
+      for (const item of marshalled.value) {
         if (!Array.isArray(item) || item.length < 2) continue;
-        const name = String(item[0]);
+        const name = typeof item[0] === "string" ? item[0] : String(item[0]);
         const val = item[1];
         if (!Array.isArray(val) || val.length < 3) continue;
         const typeCode = Number(val[0]);
-        const isPackage = typeCode === 1;
         const dataOffset = Number(val[1]);
         const dataLength = Number(val[2]);
-        if (Number.isFinite(dataOffset) && Number.isFinite(dataLength)) {
-          modules.push({ name, typeCode, isPackage, dataOffset, dataLength });
-        }
-      }
-    } else if (toc && typeof toc === "object") {
-      for (const [name, val] of Object.entries(toc)) {
-        if (!Array.isArray(val) || val.length < 3) continue;
-        const typeCode = Number(val[0]);
-        const isPackage = typeCode === 1;
-        const dataOffset = Number(val[1]);
-        const dataLength = Number(val[2]);
-        if (Number.isFinite(dataOffset) && Number.isFinite(dataLength)) {
-          modules.push({ name, typeCode, isPackage, dataOffset, dataLength });
+        if (
+          Number.isSafeInteger(typeCode) &&
+          Number.isSafeInteger(dataOffset) &&
+          Number.isSafeInteger(dataLength) &&
+          dataOffset >= 0 &&
+          dataLength >= 0 &&
+          dataOffset <= tocOffset &&
+          dataLength <= tocOffset - dataOffset
+        ) {
+          modules.push({
+            name,
+            typeCode,
+            isPackage: typeCode === 1 || typeCode === 3,
+            dataOffset,
+            dataLength,
+          });
         }
       }
     }
-  } catch {
-    // Graceful recovery on truncated or unexpected marshal forms
   }
 
   return {
@@ -368,24 +268,35 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
   };
 };
 
-/**
- * Extract all files, scripts, embedded modules, and libraries from a PyInstaller binary.
- * Reconstructs valid .pyc bytecode with compliant headers for decompiler compatibility.
- */
-const MAX_INFLATE_BYTES = 128 * 1024 * 1024; // 128 MiB per entry limit
+export const MAX_PER_ENTRY_BYTES = 64 * 1024 * 1024; // 64 MiB per entry limit
+
 const inflatePayload = (
   raw: Buffer,
   flag: number,
-  maxOutputBytes = MAX_INFLATE_BYTES,
+  maxOutputBytes = MAX_PER_ENTRY_BYTES,
+  expectedLength?: number,
 ): {
   readonly data: Buffer;
   readonly decompressed: boolean;
   readonly error?: string | undefined;
 } => {
-  if (flag === 0) return { data: raw, decompressed: true };
+  if (flag === 0) {
+    if (raw.length > maxOutputBytes) {
+      return {
+        data: raw,
+        decompressed: false,
+        error: `Uncompressed entry size ${raw.length} exceeds output budget ${maxOutputBytes}`,
+      };
+    }
+    return { data: raw, decompressed: true };
+  }
+  const budget =
+    expectedLength !== undefined && expectedLength > 0
+      ? Math.min(maxOutputBytes, expectedLength)
+      : maxOutputBytes;
   try {
     return {
-      data: zlib.inflateSync(raw, { maxOutputLength: maxOutputBytes }),
+      data: zlib.inflateSync(raw, { maxOutputLength: budget }),
       decompressed: true,
     };
   } catch (err) {
@@ -402,6 +313,7 @@ const extractPyzModule = (
   pycMagic: number,
   pythonVersion: string,
   mod: PyzModuleEntry,
+  maxOutputBytes = MAX_PER_ENTRY_BYTES,
 ): ExtractedPyInstallerFile | null => {
   // Type 3: namespace package (no payload)
   if (mod.typeCode === 3) {
@@ -419,7 +331,7 @@ const extractPyzModule = (
     return null;
   }
   const raw = pyzData.subarray(mod.dataOffset, mod.dataOffset + mod.dataLength);
-  const inflated = inflatePayload(raw, 1);
+  const inflated = inflatePayload(raw, 1, maxOutputBytes);
 
   // Type 2: raw data file (no bytecode header, no .pyc extension)
   if (mod.typeCode === 2) {
@@ -530,9 +442,25 @@ export const extractPyInstallerEntries = (
   const archive = parsePyInstallerArchive(buffer);
   if (!archive) return [];
 
+  const totalBudget = artifactExpansionBudgetBytes(buffer.length);
+  let remainingBudget = totalBudget;
   const results: ExtractedPyInstallerFile[] = [];
 
   for (const entry of archive.tocEntries) {
+    if (remainingBudget <= 0) {
+      results.push({
+        name: entry.name,
+        kind:
+          entry.typeFlag === "b" || entry.typeFlag === "d" ? "binary" : "data",
+        data: Buffer.alloc(0),
+        decompressed: false,
+        limitations: [
+          `Total artifact expansion budget of ${totalBudget} bytes exhausted; entry skipped`,
+        ],
+      });
+      break;
+    }
+
     const dataOffset = archive.carchiveOffset + entry.pkgOffset;
     if (dataOffset < 0 || dataOffset + entry.compressedLength > buffer.length) {
       continue;
@@ -542,8 +470,17 @@ export const extractPyInstallerEntries = (
       dataOffset,
       dataOffset + entry.compressedLength,
     );
-    const inflated = inflatePayload(rawData, entry.compressionFlag);
+    const entryBudget = Math.min(MAX_PER_ENTRY_BYTES, remainingBudget);
+    const inflated = inflatePayload(
+      rawData,
+      entry.compressionFlag,
+      entryBudget,
+      entry.uncompressedLength,
+    );
     const limitations = inflated.error ? [inflated.error] : [];
+    if (inflated.decompressed) {
+      remainingBudget -= inflated.data.length;
+    }
 
     if (entry.typeFlag === "z" || entry.name.toLowerCase().endsWith(".pyz")) {
       results.push({
@@ -558,13 +495,21 @@ export const extractPyInstallerEntries = (
       const pyz = parsePyzArchive(inflated.data);
       const modules = pyz?.modules ?? [];
       for (const mod of modules) {
+        if (remainingBudget <= 0) break;
+        const modBudget = Math.min(MAX_PER_ENTRY_BYTES, remainingBudget);
         const extractedMod = extractPyzModule(
           inflated.data,
           pyz!.pycMagic,
           pyz!.pythonVersion,
           mod,
+          modBudget,
         );
-        if (extractedMod) results.push(extractedMod);
+        if (extractedMod) {
+          if (extractedMod.decompressed) {
+            remainingBudget -= extractedMod.data.length;
+          }
+          results.push(extractedMod);
+        }
       }
       continue;
     }

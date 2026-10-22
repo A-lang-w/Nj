@@ -1,4 +1,4 @@
-import { hasBoundedJvmClassFraming, isJvmClassFile } from "./jvmClassFile.js";
+import { hasBoundedJvmClassFraming } from "./jvmClassFile.js";
 
 /** loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit. */
 export const machoLoadCommandAlignment = (wide: boolean): 4 | 8 =>
@@ -116,7 +116,8 @@ export const readFatContainerHeader = (
   fileSize: number,
 ): FatContainerHeader => {
   if (!hasFatMagic(bytes)) return { state: "not-fat" };
-  if (hasBoundedJvmClassFraming(bytes)) return { state: "not-fat" };
+  if (fileSize <= 16 * 1024 * 1024 && hasBoundedJvmClassFraming(bytes))
+    return { state: "not-fat" };
   if (!Number.isSafeInteger(fileSize) || fileSize < bytes.byteLength)
     return {
       state: "malformed",

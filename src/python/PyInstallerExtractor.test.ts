@@ -11,6 +11,42 @@ import {
 } from "./PyInstallerExtractor.js";
 import { isPythonBytecode } from "./PythonBytecode.js";
 
+const marshalString = (text: string): Buffer => {
+  const body = Buffer.from(text, "utf8");
+  if (body.length <= 255 && body.every((byte) => byte < 0x80))
+    return Buffer.concat([Buffer.from([0x7a, body.length]), body]);
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(body.length);
+  return Buffer.concat([Buffer.from([0x75]), length, body]);
+};
+
+const int32 = (value: number): Buffer => {
+  const bytes = Buffer.alloc(5);
+  bytes[0] = 0x69;
+  bytes.writeInt32LE(value, 1);
+  return bytes;
+};
+
+const smallTuple = (items: readonly Buffer[]): Buffer =>
+  Buffer.concat([Buffer.from([0x29, items.length]), ...items]);
+
+const marshalPair = (
+  name: string,
+  typeCode: number,
+  offset: number,
+  length: number,
+): Buffer =>
+  smallTuple([
+    marshalString(name),
+    smallTuple([int32(typeCode), int32(offset), int32(length)]),
+  ]);
+
+const marshalList = (items: readonly Buffer[]): Buffer => {
+  const count = Buffer.alloc(4);
+  count.writeInt32LE(items.length, 0);
+  return Buffer.concat([Buffer.from([0x5b]), count, ...items]);
+};
+
 const createMockPyzArchive = (): Buffer => {
   const pycMagic = Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]); // 3439 (Python 3.10)
   const codeObject = Buffer.from("PRINT_HELLO_WORLD_CODE_OBJECT_12345");
@@ -19,30 +55,8 @@ const createMockPyzArchive = (): Buffer => {
   const modOffset = 12;
   const modLen = compressedMod.length;
 
-  // Build marshaled TOC dict: { "app.engine": (False, modOffset, modLen) }
-  const modName = "app.engine";
-  const nameBuf = Buffer.from(modName, "utf8");
-
-  const tocBuf = Buffer.concat([
-    Buffer.from([0x7b]), // '{' dict
-    Buffer.from([0x7a, nameBuf.length]), // 'z' short ascii
-    nameBuf,
-    Buffer.from([0x29, 3]), // ')' small tuple of 3 elements
-    Buffer.from([0x46]), // 'F' False (isPackage = false)
-    Buffer.from([0x69]), // 'i' int32 LE (modOffset)
-    (() => {
-      const b = Buffer.alloc(4);
-      b.writeInt32LE(modOffset);
-      return b;
-    })(),
-    Buffer.from([0x69]), // 'i' int32 LE (modLen)
-    (() => {
-      const b = Buffer.alloc(4);
-      b.writeInt32LE(modLen);
-      return b;
-    })(),
-    Buffer.from([0x30]), // '0' NULL terminator
-  ]);
+  // Build standard PyInstaller PYZ table: [ (name, (typeCode, offset, length)) ]
+  const tocBuf = marshalList([marshalPair("app.engine", 0, modOffset, modLen)]);
 
   const tocOffset = 12 + compressedMod.length;
 
@@ -227,5 +241,41 @@ describe("PyInstallerExtractor", () => {
     const pyz = parsePyzArchive(malformed);
     expect(pyz).not.toBeNull();
     expect(pyz?.modules).toEqual([]);
+  });
+
+  it("bounds decompression when uncompressedLength is smaller than expanded output", () => {
+    const raw = Buffer.alloc(1024, 0x41);
+    const compressed = zlib.deflateSync(raw);
+
+    // Build binary with declared uncompressedLen = 10, but actual = 1024
+    const cookie = Buffer.alloc(88);
+    PYINSTALLER_MAGIC.copy(cookie, 0);
+
+    const nameBytes = Buffer.from("bomb.py\0", "utf8");
+    const structLen = 18 + nameBytes.length;
+    const tocEntry = Buffer.alloc(structLen);
+    tocEntry.writeUInt32BE(structLen, 0);
+    tocEntry.writeUInt32BE(0, 4); // pkgOffset = 0
+    tocEntry.writeUInt32BE(compressed.length, 8);
+    tocEntry.writeUInt32BE(10, 12); // uncompressedLen = 10 (exceeded by 1024)
+    tocEntry.writeUInt8(1, 16); // compressed
+    tocEntry.writeUInt8("s".charCodeAt(0), 17);
+    nameBytes.copy(tocEntry, 18);
+
+    const carchiveData = compressed;
+    const tocOffset = carchiveData.length;
+    const tocLength = tocEntry.length;
+    const pkgLength = carchiveData.length + tocLength + 88;
+
+    cookie.writeUInt32BE(pkgLength, 8);
+    cookie.writeUInt32BE(tocOffset, 12);
+    cookie.writeUInt32BE(tocLength, 16);
+    cookie.writeInt32BE(310, 20);
+
+    const binary = Buffer.concat([carchiveData, tocEntry, cookie]);
+    const extracted = extractPyInstallerEntries(binary);
+    expect(extracted.length).toBe(1);
+    expect(extracted[0]?.decompressed).toBe(false);
+    expect(extracted[0]?.limitations[0]).toContain("Decompression error");
   });
 });

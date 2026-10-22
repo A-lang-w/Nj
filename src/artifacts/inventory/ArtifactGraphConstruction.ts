@@ -36,10 +36,7 @@ import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
-import {
-  hasBoundedJvmClassFraming,
-  isJvmClassFile,
-} from "../../domain/apple/jvmClassFile.js";
+import { hasBoundedJvmClassFraming } from "../../domain/apple/jvmClassFile.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -639,12 +636,15 @@ export const classifyArtifactBytes = (
     hasPythonBytecodeMagic(prefix.readUInt16LE(0))
   )
     return "python-bytecode";
-  const fatFormat = classifyFatArtifact(prefix, fileSize, fatSliceHeaders);
-  if (fatFormat !== null) return fatFormat;
   if (prefix.length >= 4) {
     const magic = prefix.readUInt32BE(0);
     if (magic === 0xcafebabe && hasBoundedJvmClassFraming(prefix))
       return "jvm-class";
+  }
+  const fatFormat = classifyFatArtifact(prefix, fileSize, fatSliceHeaders);
+  if (fatFormat !== null) return fatFormat;
+  if (prefix.length >= 4) {
+    const magic = prefix.readUInt32BE(0);
     if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
       return "mach-o";
     if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
