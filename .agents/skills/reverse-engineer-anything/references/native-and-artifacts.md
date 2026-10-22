@@ -45,7 +45,8 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 
 ## Go build metadata
 
-Use `inspect_go_binary` for an explicit local ELF, PE or thin Mach-O when the
+Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
+files need `architecture`) when the
 question concerns the embedded compiler version, module/dependency versions,
 local replacements or build settings. No `open_binary`, Go installation or
 target execution is required. The CLI equivalent is `inspect-go-binary PATH`.
@@ -84,7 +85,8 @@ See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metad
 
 ## Rust dependency metadata
 
-Use `inspect_rust_binary` for an explicit local ELF, PE, or thin Mach-O when
+Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
+files need `architecture`) when
 the question concerns the cargo-auditable crate list embedded in `.dep-v0`
 (Mach-O: `__DATA,.dep-v0`). No `open_binary`, Rust installation, or target
 execution is required. The CLI equivalent is `inspect-rust-binary PATH`.
@@ -93,6 +95,41 @@ file range. A missing section is null metadata, not proof the binary has no
 dependencies. An omitted package kind stays null. A rustc commit hash is
 inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
 identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+
+## PE Authenticode certificate tables
+
+Use `inspect_pe_certificates` for an explicit local PE32/PE32+ image when the
+question concerns the Authenticode certificate table, WIN_CERTIFICATE types, or
+embedded PKCS#7 signer and X.509 identity fields. No `open_binary`, Windows SDK,
+or target execution is required. The CLI equivalent is
+`inspect-pe-certificates PATH`. Preserve artifact SHA-256, table file ranges,
+payload hashes, original validity-time spellings, and
+`subject_key_identifier_hex` when the signer uses that form. A missing
+`IMAGE_DIRECTORY_ENTRY_SECURITY` directory is observed absence of that table,
+not proof the image is unsigned in every catalog or overlay sense. Signatures,
+chains, timestamps, and Authenticode digest coverage remain unobserved. See
+[PE Authenticode certificate tables](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).
+
+## ELF note tables
+
+Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
+question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, or GNU ABI-tag
+fields. No `open_binary` or target execution is required. The CLI equivalent
+is `inspect-elf-notes PATH`. Preserve artifact SHA-256, table file ranges,
+descriptor hashes, and original owner spellings. A missing table is observed
+absence of those declarations, not proof the image never carried notes in
+another container. See
+[ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+
+## Erlang BEAM files
+
+Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
+question concerns IFF chunks, atom names, exports, imports, lambdas, or the
+Code header. No `open_binary`, Erlang installation, or bytecode execution is
+required. The CLI equivalent is `inspect-erlang-beam PATH`. Preserve artifact
+SHA-256, chunk file ranges, 1-based atom indices, and original atom spellings.
+Missing optional tables stay null. See
+[Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
 
 ## SQLite snapshots
 
@@ -366,6 +403,8 @@ For headerless DOS COM, explicitly open with `format: "dos-com"` (CLI
 analysis: the entry is `0x10100`, file offset zero, with imposed real-mode segment
 context. PSP/stack/device state remains unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/ghidra-dos.md).
 
+Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
+
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
 `arm`, `arm64`, `6502`, or `m68k`), and `entry_point` (`0x` hex). File offset 0 is mapped at
@@ -392,6 +431,16 @@ code pages, payload hashes and static icon-group references. Same-language icon
 resolution is explicit; missing references and size mismatch remain visible.
 Other payloads are opaque, and this operation does not decode images or simulate
 Windows resource loading. Consult the budgets and supported tree profile in
+[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
+
+## Offline PE and ELF export tables
+
+Use `inspect_native_exports` with an absolute `path`, or
+`rea inspect-native-exports ./libexample.so --json`, to read a PE export
+directory or ELF dynamic symbol table on any host without opening a native
+target. Ordinal-only, forwarded and hidden-version exports stay distinct;
+partial or unsupported coverage means the inventory is incomplete, not that
+exports are absent. Use `inspect_macho` for Mach-O. See
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
 
 For exact core-module import/export differences, use `compare_wasm_interfaces`

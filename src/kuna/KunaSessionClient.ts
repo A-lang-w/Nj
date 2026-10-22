@@ -45,7 +45,6 @@ import { kunaFunctionDeadline } from "./KunaConfiguration.js";
 import {
   createKunaResourceScope,
   inspectKunaInstallation,
-  kunaInstallationCancellation,
   type KunaInstallation,
 } from "./KunaInstallation.js";
 import {
@@ -71,6 +70,7 @@ import { KunaReferenceQueries } from "./KunaReferenceQueries.js";
 import { KunaQueryWork } from "./KunaQueryWork.js";
 import { KunaStringQueries } from "./KunaStringQueries.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 import type { KunaRunRelease, KunaRunSlots } from "./KunaRunSlots.js";
 import {
@@ -252,6 +252,7 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #queryWork: KunaQueryWork;
   readonly #references: KunaReferenceQueries;
   readonly #strings: KunaStringQueries;
+  readonly #deadline: RegexMatchingDeadline;
   #installation:
     | SharedStartupAttempt<Result<KunaInstallation, AnalysisError>>
     | undefined;
@@ -283,6 +284,7 @@ export class KunaSessionClient implements AnalysisClient {
       readonly cache: KunaProjectCache;
       readonly runSlots: KunaRunSlots;
       readonly environment: Readonly<NodeJS.ProcessEnv>;
+      readonly deadline: RegexMatchingDeadline;
       readonly launcher?: KunaProcessLauncher;
     },
   ) {
@@ -298,11 +300,16 @@ export class KunaSessionClient implements AnalysisClient {
         ? {}
         : { launcher: dependencies.launcher }),
     });
-    this.#queryWork = new KunaQueryWork(this.#commands, {
-      signal: this.#session.signal,
-      own: (work) => this.#own(work),
-      runSlots: dependencies.runSlots,
-    });
+    this.#deadline = dependencies.deadline;
+    this.#queryWork = new KunaQueryWork(
+      this.#commands,
+      {
+        signal: this.#session.signal,
+        own: (work) => this.#own(work),
+        runSlots: dependencies.runSlots,
+      },
+      dependencies.deadline,
+    );
     this.#references = new KunaReferenceQueries(this.#queryWork);
     this.#strings = new KunaStringQueries(this.#queryWork);
   }
@@ -412,7 +419,7 @@ export class KunaSessionClient implements AnalysisClient {
         );
       return ok(
         this.#execution(
-          kunaLimitations(operation),
+          kunaLimitations(operation, this.#deadline),
           installation.value,
           answer.value,
         ),
@@ -1264,7 +1271,7 @@ export class KunaSessionClient implements AnalysisClient {
         cfg: unavailable("Kuna exports no basic blocks."),
       },
       limitations: [
-        ...kunaLimitations("analyze_function"),
+        ...kunaLimitations("analyze_function", this.#deadline),
         ...pseudocode.value.limitations,
         KUNA_RELATIONSHIP_LIMITATION,
         ...(relationships.ok
@@ -1429,25 +1436,12 @@ export class KunaSessionClient implements AnalysisClient {
     } catch (cause: unknown) {
       const retainedCleanup = kunaRetainedResourceCleanupError(cause, "health");
       if (retainedCleanup !== undefined) return err(retainedCleanup);
-      const cancellation = kunaInstallationCancellation(cause);
-      if (
-        !(cause instanceof RegularFileCleanupFailure) &&
-        cancellation !== undefined
-      ) {
-        const error = new AnalysisCancelledError("health", {
-          cause: cancellation.reason,
-          diagnostics: cancellation.diagnostics,
-          ...(!kunaResources.hasPending
-            ? {}
-            : {
-                cleanup: {
-                  reason: "Kuna version-probe process cleanup is unconfirmed.",
-                  resources: kunaResources.cleanupResources ?? [],
-                },
-              }),
-        });
-        kunaResources.bindRetainedFailure(error);
-        return err(error);
+      if (!(cause instanceof RegularFileCleanupFailure)) {
+        const cancellation = kunaResources.installationCancellationError(
+          cause,
+          "health",
+        );
+        if (cancellation !== undefined) return err(cancellation);
       }
       if (!(cause instanceof RegularFileCleanupFailure))
         return err(failure("health", cause));

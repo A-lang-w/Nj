@@ -12,9 +12,20 @@ import { wasmArtifactModule } from "../composition/wasm.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
+import {
+  createElfNotesService,
+  createPeCertificatesService,
+  createNativeExportsService,
+  createPeResourcesService,
+} from "../composition/binaryDiagnostics.js";
+import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
+import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
+import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
+import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import {
   evmInterfaceModule,
@@ -41,13 +52,20 @@ import { registerIl2cppTools } from "./registerIl2cppTools.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import { registerRustTools } from "./registerRustTools.js";
+import { createBeamService } from "../composition/erlang.js";
+import type { BeamService } from "../application/erlang/BeamService.js";
+import { registerErlangTools } from "./registerErlangTools.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
 import { registerFridaTools } from "./registerFridaTools.js";
-import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
+import {
+  createByteEntropyService,
+  createBinaryLayoutService,
+} from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
+import { createCatalogIdentity } from "../catalogIdentity.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import {
   createToolResultDelivery,
@@ -161,6 +179,10 @@ const RECOVERY_INSTRUCTIONS =
   "Recovery: For invalid arguments, read the connected tool's input schema (refresh tools/list if stale), fix the reported fields and do not repeat the unchanged call. A returned REA provider_timeout is a server/provider deadline: follow its remediation and reuse accessible partial Evidence. A host error such as 'timed out awaiting tools/call' without a REA result is a client deadline, not proof that work or cleanup stopped. Do not repeat the unchanged analysis. Increase the host's tool deadline with execution/cleanup/delivery headroom; when configuration is not editable, report the required setting (Codex: mcp_servers.<server>.tool_timeout_sec, seconds). Server analysis_timeout_ms, when advertised, is a separate millisecond budget; raising it cannot fix a shorter client deadline. Session state does not establish completion of every target-free operation.";
 
 export interface CreateServerOptions {
+  /** Preserve the connection's creation time when materializing its runtime. */
+  readonly startedAt?: string;
+  /** Existing SDK server whose deferred registrations are being materialized. */
+  readonly mcpServer?: EvidenceMcpServer;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly delivery?: ToolResultDelivery;
   readonly packetCapture?: PacketCaptureService;
@@ -174,6 +196,7 @@ export interface CreateServerOptions {
   readonly goBinary?: GoBinaryService;
   readonly il2cppMetadata?: Il2cppMetadataService;
   readonly rustBinary?: RustBinaryService;
+  readonly erlangBeam?: BeamService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
@@ -298,6 +321,10 @@ const createMcpServer = (
     delivery,
     compactPresentation,
     omitOutputSchemas,
+    createCatalogIdentity(
+      compactPresentation,
+      omitOutputSchemas ? "off" : "full",
+    ),
   );
 
 /**
@@ -333,11 +360,15 @@ export const createServer = (
   const desktopApplication = createDesktopApplicationService();
   const goBinary = options.goBinary ?? createGoBinaryService();
   const rustBinary = options.rustBinary ?? createRustBinaryService();
+  const erlangBeam = options.erlangBeam ?? createBeamService();
   const modelArtifact = createModelArtifactService();
   const gpuCodeObjects = createGpuCodeObjectsService();
   const il2cppMetadata =
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
+  const nativeExports = createNativeExportsService();
+  const elfNotes = createElfNotesService();
+  const peCertificates = createPeCertificatesService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
@@ -361,14 +392,28 @@ export const createServer = (
     webModuleTrace,
     javascriptRecovery,
   };
-  const startedAt = new Date().toISOString();
+  const startedAt = options.startedAt ?? new Date().toISOString();
   const logger = options.logger ?? silentLogger;
-  const server = createMcpServer(
-    session,
-    delivery,
-    selectCompactInputSchemaPresentation(environment),
-    omitOutputSchemas,
-  );
+  const server =
+    options.mcpServer ??
+    createMcpServer(
+      session,
+      delivery,
+      selectCompactInputSchemaPresentation(environment),
+      omitOutputSchemas,
+    );
+  if (options.mcpServer !== undefined) {
+    server.attachRuntime(
+      session === undefined
+        ? undefined
+        : (evidence) => session.recordEvidence(evidence),
+      delivery,
+      createCatalogIdentity(
+        selectCompactInputSchemaPresentation(environment),
+        omitOutputSchemas ? "off" : "full",
+      ),
+    );
+  }
   const gdbSessions = new GdbSessionManager({
     environment: providerEnvironment,
   });
@@ -421,10 +466,14 @@ export const createServer = (
       desktopApplication.close(),
       goBinary.close(),
       rustBinary.close(),
+      erlangBeam.close(),
       il2cppMetadata.close(),
       modelArtifact.close(),
       gpuCodeObjects.close(),
       peResources.close(),
+      nativeExports.close(),
+      elfNotes.close(),
+      peCertificates.close(),
       electronFuses.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
@@ -486,8 +535,12 @@ export const createServer = (
     artifactResources,
     goBinary,
     rustBinary,
+    erlangBeam,
     il2cppMetadata,
     peResources,
+    nativeExports,
+    elfNotes,
+    peCertificates,
     electronFuses,
     webNetworkCapture,
   };
@@ -717,8 +770,12 @@ const registerConfiguredAnalysisTools = (
     withAdmittedAnalysis,
     goBinary,
     rustBinary,
+    erlangBeam,
     il2cppMetadata,
     peResources,
+    nativeExports,
+    elfNotes,
+    peCertificates,
     webNetworkCapture,
     artifactResources,
   }: ServerToolContext,
@@ -747,6 +804,7 @@ const registerConfiguredAnalysisTools = (
   registerBinaryDiagnosticsTools(
     server,
     options.binaryLayout ?? createBinaryLayoutService(environment),
+    createByteEntropyService(artifactResources),
     toolLogger,
     recordEvidence,
     evidenceById,
@@ -763,6 +821,27 @@ const registerConfiguredAnalysisTools = (
   registerPeResourcesTool(
     server,
     peResources,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerNativeExportsTool(
+    server,
+    nativeExports,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerElfNotesTool(
+    server,
+    elfNotes,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerPeCertificatesTool(
+    server,
+    peCertificates,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -790,6 +869,13 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
     withAdmittedAnalysis,
     evidenceById,
+  );
+  registerErlangTools(
+    server,
+    erlangBeam,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
   );
   registerWasmTools(
     server,
@@ -898,8 +984,12 @@ const createSessionRecorders = (
 interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly goBinary: GoBinaryService;
   readonly rustBinary: RustBinaryService;
+  readonly erlangBeam: BeamService;
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
+  readonly nativeExports: NativeExportsService;
+  readonly elfNotes: ElfNotesService;
+  readonly peCertificates: PeCertificatesService;
   readonly electronFuses: ElectronFuseService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
@@ -980,11 +1070,13 @@ const registerObservationTools = ({
   recordEvidenceWithUnknown,
   withAdmittedAnalysis,
   artifactResources,
+  environment,
 }: ServerToolContext): void => {
   const common = { logger, recordEvidence, withAdmittedAnalysis };
   registerWebScriptTool(server, { ...common, artifactResources });
   registerBrowserTools(server, {
     ...common,
+    evidenceById,
     browser: options.browserObservation,
     loadFailure: options.optionalProviderLoadFailures?.browserObservation,
   });
@@ -996,6 +1088,7 @@ const registerObservationTools = ({
   registerElectronTools(server, {
     ...common,
     artifactResources,
+    environment,
     evidenceById,
     electron: options.electronObservation,
     electronActive: options.electronActiveObservation,

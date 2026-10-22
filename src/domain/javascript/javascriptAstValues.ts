@@ -28,6 +28,20 @@ export const runtimeFunctionParameters = (
     ? node.params.slice(1)
     : node.params;
 
+/** One erased syntax edge, without walking a potentially nested wrapper chain. */
+export const javaScriptExpressionWrapperTarget = (
+  node: t.Node,
+): t.Node | undefined =>
+  t.isParenthesizedExpression(node) ||
+  t.isTSAsExpression(node) ||
+  t.isTSTypeAssertion(node) ||
+  t.isTSNonNullExpression(node) ||
+  t.isTSSatisfiesExpression(node) ||
+  t.isTSInstantiationExpression(node) ||
+  t.isTypeCastExpression(node)
+    ? node.expression
+    : undefined;
+
 /**
  * Remove wrappers that affect TypeScript or Flow checking but not runtime
  * expression identity. The returned depth lets bounded evaluators account for
@@ -39,15 +53,9 @@ export const unwrapJavaScriptExpression = (
 ): { readonly node: t.Node; readonly depth: number } => {
   let current = node;
   let depth = 0;
-  while (
-    t.isParenthesizedExpression(current) ||
-    t.isTSAsExpression(current) ||
-    t.isTSTypeAssertion(current) ||
-    t.isTSNonNullExpression(current) ||
-    t.isTSSatisfiesExpression(current) ||
-    t.isTSInstantiationExpression(current) ||
-    t.isTypeCastExpression(current)
-  ) {
+  for (;;) {
+    const target = javaScriptExpressionWrapperTarget(current);
+    if (target === undefined) break;
     // Optional-chain grouping affects execution even when expression identity
     // is transparent. Keep every grouping boundary available to that consumer.
     if (
@@ -56,7 +64,7 @@ export const unwrapJavaScriptExpression = (
         current.extra?.parenthesized === true)
     )
       break;
-    current = current.expression;
+    current = target;
     depth += 1;
   }
   return { node: current, depth };
@@ -245,6 +253,26 @@ export const semanticStaticPropertyKey = (
   return !computed && t.isIdentifier(property) ? property.name : null;
 };
 
+/** Determine value truthiness from syntax, without executing source or resolving bindings. */
+export const staticJavaScriptTruthiness = (
+  node: t.Node,
+): boolean | undefined => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (t.isBooleanLiteral(value)) return value.value;
+  if (t.isNullLiteral(value)) return false;
+  if (t.isStringLiteral(value)) return value.value.length > 0;
+  if (t.isNumericLiteral(value))
+    return value.value !== 0 && !Number.isNaN(value.value);
+  if (
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isArrowFunctionExpression(value)
+  )
+    return true;
+  return undefined;
+};
+
 /** Syntax whose value cannot contribute own properties to an object spread. */
 export const isNullishJavaScriptSyntax = (node: t.Node): boolean => {
   node = unwrapJavaScriptExpression(node).node;
@@ -267,7 +295,8 @@ type StaticObjectMember =
 
 const UNKNOWN_STATIC_OBJECT_MEMBER: StaticObjectMember = { kind: "unknown" };
 
-const isObjectPrototypeSetter = (property: t.ObjectProperty): boolean =>
+/** Object-literal prototype setters are never ordinary own-property writes. */
+export const isObjectPrototypeSetter = (property: t.ObjectProperty): boolean =>
   !property.computed &&
   !property.shorthand &&
   semanticStaticPropertyKey(property.key, false) === "__proto__";
@@ -696,4 +725,32 @@ export const semanticValueWriteSite = (
 ): t.Node | undefined => {
   const site = semanticValueTargetSite(node, parents);
   return t.isUnaryExpression(site, { operator: "delete" }) ? undefined : site;
+};
+
+/** Strip a static member chain, returning its root expression and member path. */
+export const semanticMemberChain = (
+  node: t.Node | null | undefined,
+  admit?: (node: t.Node) => boolean,
+):
+  | { readonly root: t.Node | null | undefined; readonly members: string[] }
+  | undefined => {
+  const members: string[] = [];
+  let current = node;
+  while (current !== null && current !== undefined) {
+    current = unwrapJavaScriptExpression(current).node;
+    if (admit?.(current) === false) return undefined;
+    if (
+      !t.isMemberExpression(current) &&
+      !t.isOptionalMemberExpression(current)
+    )
+      break;
+    const member = semanticStaticPropertyKey(
+      current.property,
+      current.computed,
+    );
+    if (member === null || !t.isNode(current.object)) return undefined;
+    members.push(member);
+    current = current.object;
+  }
+  return { root: current, members: members.reverse() };
 };

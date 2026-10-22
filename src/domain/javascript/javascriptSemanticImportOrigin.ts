@@ -1,13 +1,13 @@
 import * as t from "@babel/types";
 
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
-import { semanticMemberChain } from "./javascriptSemanticRequireOrigin.js";
 import {
   unwrapJavaScriptExpression,
   readExactJavaScriptNormalResult,
   semanticFinalObjectSlot,
   semanticStaticPropertyKey,
   semanticDirectFunctionResult,
+  semanticMemberChain,
 } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
