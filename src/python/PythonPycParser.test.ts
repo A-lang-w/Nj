@@ -913,6 +913,21 @@ it("keeps the first dictionary key when a later key compares equal", () => {
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
+it("walks a wide dictionary once per child instead of copying it each step", () => {
+  const keys = 8000;
+  const pieces: Buffer[] = [Buffer.from([0x7b])];
+  for (let index = 0; index < keys; index += 1)
+    pieces.push(Buffer.from([0x69]), i32(index), Buffer.from([0x4e]));
+  pieces.push(Buffer.from([0x30]));
+  const bytes = withConsts([Buffer.concat(pieces)]);
+  const started = Date.now();
+  const report = parse(bytes);
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(root(report).consts[0]).toEqual({ kind: "dict", length: keys });
+  expect(report.coverage.objects).toBeLessThanOrEqual(defaults.max_objects);
+  expect(report.coverage.status).toBe("complete");
+});
+
 const parseWith = (bytes: Buffer, limits: Partial<typeof defaults> = {}) =>
   parsePythonPyc(
     bytes,

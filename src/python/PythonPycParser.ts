@@ -571,23 +571,27 @@ class MarshalReader {
   }
 
   /**
-   * Post-order walk on an explicit stack. A back edge returns before any
-   * cyclic container is cached; the caller then scans that component once.
+   * Post-order walk on an explicit stack. Each frame keeps its child list,
+   * so a dictionary is not copied once per entry. A back edge returns before
+   * any cyclic container is cached; the caller then scans that component once.
    */
   #memoizeNested(
     root: MarshalValue,
     added: { value: MarshalValue; retained: number }[],
   ): boolean {
     const gray = new Set<MarshalValue>();
-    const frames: { value: MarshalValue; index: number }[] = [
-      { value: root, index: 0 },
-    ];
+    const frames: {
+      value: MarshalValue;
+      index: number;
+      /** Built once. A dictionary child list is not copied on every step. */
+      children: readonly MarshalValue[];
+    }[] = [{ value: root, index: 0, children: containerChildren(root) }];
     gray.add(root);
     while (frames.length > 0) {
       this.#takeNestedStep();
       const frame = frames[frames.length - 1];
       if (frame === undefined) break;
-      const children = containerChildren(frame.value);
+      const children = frame.children;
       if (frame.index < children.length) {
         const child = children[frame.index];
         frame.index += 1;
@@ -595,7 +599,11 @@ class MarshalReader {
         if (this.#nestedCache.has(child)) continue;
         if (gray.has(child)) return true;
         gray.add(child);
-        frames.push({ value: child, index: 0 });
+        frames.push({
+          value: child,
+          index: 0,
+          children: containerChildren(child),
+        });
         continue;
       }
       const retainedBefore = this.#nestedRetained;
