@@ -43,6 +43,7 @@ import {
 import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
 import {
   isUuid,
+  nextSequence,
   readClock,
   sequenceNumber,
   spelledLike,
@@ -185,9 +186,9 @@ const followsSequences = (
       (entity) =>
         rule.scope === "type" || entity.collection === created.collection,
     );
-    const next = Math.max(
-      nextInteger(fieldsOf(scope), rule.field) ?? 1,
-      (draft.sequences.get(key) ?? 0) + 1,
+    const next = nextSequence(
+      nextInteger(fieldsOf(scope), rule.field),
+      draft.sequences.get(key),
     );
     return (
       created.fields[rule.field] ===
@@ -207,10 +208,15 @@ const followsGenerated = (
       return (
         JSON.stringify(readClock(value)?.format) === JSON.stringify(rule.format)
       );
+    if (rule.rule === "unique")
+      return (
+        isUuid(value) &&
+        !context.state
+          .ofType(created.type)
+          .some((held) => held.fields[rule.field] === value)
+      );
     return (
-      (rule.rule !== "unique" &&
-        (rule.rule !== "identity" || rule.generator !== "uuid")) ||
-      isUuid(value)
+      rule.rule !== "identity" || rule.generator !== "uuid" || isUuid(value)
     );
   }) && followsSequences(context, draft, created);
 

@@ -296,6 +296,24 @@ it("updates sent echoed members and derives the slug of a sent member", () => {
   expect(asked).toEqual([UPDATE_PLAN.rules[6]]);
 });
 
+it("preserves an unknown generated field when the observation omits it", () => {
+  const result = updatedFields(
+    UPDATE_PLAN,
+    { before: BEFORE, observed: AFTER },
+    { ...callWith({ title: "New Title" }, { item: "42" }), id: "42" },
+    () => ok(undefined),
+  );
+  expect(result).toEqual(
+    ok({
+      ...BEFORE,
+      title: "New Title",
+      slug: "new-title",
+      version: 4,
+      revision: "10",
+    }),
+  );
+});
+
 it("applies a constant from the recorded update only when the call sends it", () => {
   expect(update({ status: "CLOSED" }).result).toEqual(
     ok({ ...BEFORE, ...ADVANCED, status: "closed" }),

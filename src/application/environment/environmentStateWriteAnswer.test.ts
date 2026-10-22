@@ -417,6 +417,24 @@ describe("refusals", () => {
   });
 });
 
+/** Items whose `rank` is a collection sequence, with a recorded create at `recorded`. */
+const rankedItems = (initial: readonly [number, number], recorded: number) => {
+  const item = (id: number, rank: number) => ({
+    id,
+    name: `n${String(id)}`,
+    rank,
+  });
+  const [first, second] = initial;
+  return servedFrom([
+    ["GET", "/api/items", [item(1, first), item(2, second)]],
+    ["GET", "/api/items/1", item(1, first)],
+    ["GET", "/api/items/2", item(2, second)],
+    ["POST", "/api/items", item(3, recorded), 201, { name: "n3" }],
+    ["GET", "/api/items/3", item(3, recorded)],
+    ["GET", "/api/items", [item(1, first), item(2, second), item(3, recorded)]],
+  ]);
+};
+
 describe("generated values", () => {
   it("answers the same calls identically after a reset, never reusing a deleted id", () => {
     const books = servedFrom();
@@ -440,6 +458,24 @@ describe("generated values", () => {
       id: 4,
       name: "Another Book",
     });
+  });
+
+  it("serves the next rank when a collection sequence runs through negative values", () => {
+    const acrossZero = rankedItems([-2, -1], 0);
+    expect(
+      acrossZero.answer("post_items", { body: { name: "n4" } }).body,
+    ).toMatchObject({ id: 3, rank: 0 });
+    expect(
+      acrossZero.answer("post_items", { body: { name: "n5" } }).body,
+    ).toMatchObject({ id: 4, rank: 1 });
+    // The value after a stored negative rank stays on that sequence.
+    const negative = rankedItems([-4, -3], -2);
+    expect(
+      negative.answer("post_items", { body: { name: "n4" } }).body,
+    ).toMatchObject({ id: 3, rank: -2 });
+    expect(
+      negative.answer("post_items", { body: { name: "n5" } }).body,
+    ).toMatchObject({ id: 4, rank: -1 });
   });
 
   it("restarts the clock and the sequences when data/add loads a state", () => {
@@ -615,6 +651,25 @@ describe("collections a create chooses", () => {
         .rea_state.entities.find((entity) => entity.fields["name"] === "Zeta")
         ?.collection,
     ).toBe("/api/orgs/acme1/books");
+  });
+
+  it("refuses an empty parent segment before storing an unreadable collection", () => {
+    const books = servedFrom(ROWS);
+    const tool = books.source.manifest.tools.find(
+      (candidate) => candidate.method === "POST",
+    )!;
+    const [org] = environmentToolArguments(tool).path.values();
+    const before = books.snapshot();
+    expect(
+      books.refusal(tool.name, { [org!]: "", body: { name: "Invalid" } }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("path argument to be non-empty"),
+    });
+    expect(books.snapshot()).toBe(before);
+    expect(
+      books.store.knownCollectionsOf("/api/orgs/{org}/books"),
+    ).not.toContain("/api/orgs//books");
   });
 });
 
