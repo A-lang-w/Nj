@@ -1,20 +1,21 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`b74dc2c7f3699b47236c554f0eed9214c223e342`, tree `9cde864443599cde5ee4ac68982042f96ac82110`,
-on main `2e6b38cef0cc1f2a949fe97244ef390aaacfc5b2`. Current public interface, worker fixtures,
+`f6ed21684c3c6c082ffb7909427cce10f31e5061`, tree `3cb6e8e519d451dc3d2c4c366e109a9c715b4b65`,
+on main `18669641e98d49d06c9d1c3227167756db9a6c3b`. Current public interface, worker fixtures,
 SDK, Chromium and the complete fresh 67-worker corpus measurements use this
 runtime. Verification-only
 commits change this report, not the runtime. Exact inputs, commands, profiles, historical
 controls and meaningful failed attempts are retained in the
 [verification record](javascript-route-inventory-2026-10-21.json).
 
-The current main integration preserves browser command/source-fetch deadlines
-and their per-script/total relationship alongside route delivery. One description
-conflict retained both upstream environment-state guidance and route-query guidance.
-Two added contract cases verify both delivery modes preserve the domain checks
-and caller-selected values; all six contract tests passed on the first probe.
-Fresh source and public checks also cover JSON validation and CDP deadlines.
+Current qualification was recorded at `2026-10-22T00:37:50.149Z`.
+The source capture and initial report date remain pinned to the original inputs.
+The main integration includes the independently verified [CI fixture fix #6186](https://github.com/morluto/rea/pull/6186).
+Route facts, inventory and views now use the same JavaScript coordinate owner as
+application and semantic graphs; the duplicate range schema and alias are removed.
+Accepted ranges retain one-based lines, zero-based UTF-16 columns and exclusive ends.
+Shared input registration and host-absolute path contracts remain in effect.
 
 ## Real inputs and correctness oracle
 
@@ -30,10 +31,10 @@ conditional classifier replay are used for this qualification.
 | Supplied capture | Scripts |     Bytes | Completed jobs | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | -------------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
-| shadcn-ui        |      38 | 2,465,078 |             34 |                37 |              18 |
+| shadcn-ui        |      38 | 2,465,078 |             35 |                37 |              18 |
 
-At the current runtime, the complete 67-worker task took **286.732 s elapsed**,
-**382.947 CPU s** and **514,199,552 bytes** sampled
+At the current runtime, the complete 67-worker task took **259.122 s elapsed**,
+**377.308 CPU s** and **559,210,496 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -54,8 +55,8 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **25.778 s elapsed**,
-**29.034 CPU s** and **2,171,641,856 bytes** sampled
+cleanup succeeded. This task took **13.518 s elapsed**,
+**16.440 CPU s** and **2,155,495,424 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
 The earlier c86 worker corpus, 55 filename-classifier replay and 658 narrow
@@ -76,11 +77,11 @@ performed three historical view reads and exported complete Evidence.
 
 | Completed workflow                                              | Complete analysis, then route view | Route view in analysis call |
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
-| Estimated tokens: used input declarations and all calls/replies |                          1,938,132 |                      58,840 |
-| Estimated tokens: entire catalog and all calls/replies          |                          3,031,694 |                   1,152,402 |
-| Elapsed seconds, including startup and cleanup                  |                             36.038 |                      38.266 |
-| CPU seconds, process family                                     |                             42.292 |                      40.678 |
-| Peak sampled process-family RSS bytes                           |                      1,546,776,576 |               1,274,114,048 |
+| Estimated tokens: used input declarations and all calls/replies |                          1,934,870 |                      58,840 |
+| Estimated tokens: entire catalog and all calls/replies          |                          3,027,876 |                   1,151,846 |
+| Elapsed seconds, including startup and cleanup                  |                             17.939 |                      15.445 |
+| CPU seconds, process family                                     |                             22.798 |                      19.485 |
+| Peak sampled process-family RSS bytes                           |                      1,659,056,128 |               1,349,070,848 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -89,8 +90,8 @@ explicitly full; main's compact-default catalog cost is not measured by this
 comparison. SDK/Ajv/token instrumentation is included in elapsed/CPU/RSS; its
 separate cost is unmeasured. OS caches were warm, with fresh sessions/workers.
 There is no storage-cold or statistical study and no stable latency or underlying
-analysis-speedup claim. The selected task is slower in this current single pair;
-the earlier slower selected run also remains in historical
+analysis-speedup claim. The current single pair does not establish a latency
+trend; earlier slower selected runs remain in historical
 records. All profiles sample descendant-task RSS every 20 ms, use CPU affinity
 0,1, and have an 8 GiB/420 s guard; no successful qualifier hit either guard.
 
@@ -152,7 +153,7 @@ inventory finalization, and owned worker cleanup/retry remains covered.
 
 ## Executed checks and limits
 
-**551/551 source/owner regressions** and **95/95 compiled
+**572/572 source/owner regressions** and **97/97 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
@@ -180,5 +181,16 @@ capacity, cleanup, cancellation and failed-control records remain pinned to
 their actual revisions. Earlier technical CI results do not qualify this head;
 latest CI/review must be checked separately.
 
+The earlier browser CI failure was independently reproduced on clean main `8413ec08f`:
+the stalled-handshake fixture inherited a 20-second command deadline but its test
+guard waited 12 seconds. CI fix #6186 explicitly selects 2000 ms for that case and
+records it; the original guard and timeout, cancellation, socket release, policy
+restoration and target reuse checks remain. The complete local real-browser
+verifier then passed on Chrome 156 with verified cleanup. GitHub CI run39696167922
+passed the fix on Chrome 155.0.8059.84, also recording the selected deadline and
+zero owned descendants. The exact before/after profiles and verified merged tree
+are in JSON. The baseline stopped early, so no speed comparison is claimed.
+The old dependent #6019 run was cancelled; this head now contains the fix and
+requires fresh CI.
 No claim is made for complete application routes, live route execution, private
 issue samples, external cloud clients or Windows/macOS provider execution.
