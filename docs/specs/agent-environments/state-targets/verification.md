@@ -10,8 +10,8 @@ and compares it with the recording.
 - `npm run build:cached`, `npm run check:fast` (typecheck and lint, no new warnings in the changed files),
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
-- `npm run jscpd`: 3.49% duplicated lines over 4055 files.
-- `npx vitest run --project domain --project services`: 8962 passed, 6 pre-existing skips.
+- `npm run jscpd`: 3.49% duplicated lines over 4072 files.
+- `npx vitest run --project domain --project services`: 8975 passed, 6 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 88 passed.
@@ -46,6 +46,8 @@ write tool is lost.
 - **Review fixes:** no write verdict changes. A NocoDB records list whose `fields` line had rejected it becomes
   state-backed, and all 7 of its recorded reads match. Without its guard, a short id would cut 23 Tandoor views'
   initial windows at a `POST /api/view-log/` returning `{"id":1}`.
+  The second round (the gate skipping exactly the reads serving replays, earlier reads vetoing a linked create, whole
+  RPC batches, and releasing a discarded planning pass) changes no measurement.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
