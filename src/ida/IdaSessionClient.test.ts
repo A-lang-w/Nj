@@ -594,7 +594,9 @@ describe("attached IDA regex supervision", () => {
         pattern: "!$",
         mode: "regex",
       });
-      expect(recovered.ok && recovered.value.result).toHaveLength(1);
+      expect(recovered.ok && recovered.value.result).toEqual([
+        expect.objectContaining({ address: "0x3000", value }),
+      ]);
     } finally {
       await client.close();
     }
