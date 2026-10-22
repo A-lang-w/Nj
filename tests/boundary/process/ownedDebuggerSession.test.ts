@@ -819,7 +819,8 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await attempt).toEqual({
       status: "incomplete",
-      reason: "Owned GDB inferior detach was not verified within 1000 ms.",
+      reason:
+        "Owned GDB inferior detach was not verified within 1000 ms. This release has no runtime override.",
     });
     const retry = stopOwnedDebuggerProcess(session, "GDB", {
       platform: "linux",
@@ -827,7 +828,8 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await retry).toEqual({
       status: "incomplete",
-      reason: "Owned GDB inferior detach was not verified within 1000 ms.",
+      reason:
+        "Owned GDB inferior detach was not verified within 1000 ms. This release has no runtime override.",
     });
     expect(detachCalls).toBe(1);
     expect(signals).toEqual([]);

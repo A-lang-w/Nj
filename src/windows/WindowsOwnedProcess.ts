@@ -65,6 +65,10 @@ export class WindowsOwnedProcess extends EventEmitter {
   readonly #settled: Promise<void>;
   #settle: (() => void) | undefined;
   #closed = false;
+  // Settlement was observed and stream teardown finished, but process_close
+  // has not released every native handle. Later cleanup retries that close
+  // alone; kill and poll still need the job or process handle.
+  #releasePending = false;
   #failure: string | undefined;
   #consecutivePollFailures = 0;
   #timer: NodeJS.Timeout | undefined;
@@ -253,6 +257,17 @@ export class WindowsOwnedProcess extends EventEmitter {
 
   async #stop(): Promise<ProcessCleanupResult> {
     if (this.#closed) return { cleaned: true, signaled: false };
+    if (this.#releasePending) {
+      try {
+        this.#release();
+        return { cleaned: true, signaled: false };
+      } catch (cause: unknown) {
+        return {
+          cleaned: false,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        };
+      }
+    }
     let timer: NodeJS.Timeout | undefined;
     try {
       const signaled = this.kill();
@@ -339,6 +354,17 @@ export class WindowsOwnedProcess extends EventEmitter {
   #poll(): void {
     this.#timer = undefined;
     if (this.#closed) return;
+    if (this.#releasePending) {
+      try {
+        this.#release();
+      } catch (cause: unknown) {
+        const failure =
+          cause instanceof Error ? cause : new Error(String(cause));
+        this.#failure = failure.message;
+        if (this.listenerCount("error") > 0) this.emit("error", failure);
+      }
+      return;
+    }
     try {
       const observed: unknown = this.#authority.call("process_poll", [
         this.#handle,
@@ -390,6 +416,8 @@ export class WindowsOwnedProcess extends EventEmitter {
       this.#schedule(
         Math.min(5_000, 250 * 2 ** (this.#consecutivePollFailures - 1)),
       );
+      // Poll failures keep the job for another observation. A process_close
+      // failure leaves #releasePending so cleanup retries that close alone.
     }
   }
 
@@ -418,14 +446,18 @@ export class WindowsOwnedProcess extends EventEmitter {
 
   #release(): void {
     if (this.#closed) return;
-    if (this.#timer !== undefined) clearTimeout(this.#timer);
-    this.#clearBlockedWake();
-    this.stdin?.destroy();
-    if (!this.stdout.destroyed) this.stdout.end();
-    if (!this.stderr.destroyed) this.stderr.end();
-    // End local streams before releasing the native handle. If release fails,
-    // the retained job can be retried without leaving output streams open.
+    if (!this.#releasePending) {
+      if (this.#timer !== undefined) clearTimeout(this.#timer);
+      this.#timer = undefined;
+      this.#clearBlockedWake();
+      this.stdin?.destroy();
+      if (!this.stdout.destroyed) this.stdout.end();
+      if (!this.stderr.destroyed) this.stderr.end();
+      this.#releasePending = true;
+    }
+    // Streams are already ended. A failed close retries this call alone.
     this.#authority.call("process_close", [this.#handle]);
+    this.#releasePending = false;
     this.#closed = true;
     this.#settle?.();
     this.emit("close", this.exitCode, null);
