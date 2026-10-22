@@ -752,8 +752,18 @@ class _BridgeServer(threading.Thread):
                         connection, _authenticated_frame_timeout_seconds()
                     )
                     request_bytes = authenticated_frame.get("request") if isinstance(authenticated_frame, dict) else None
-                    expected_proof = hmac.new(self.token.encode(), f"rea-cutter-client-v2:{self.session_id}:{client_nonce}:{server_nonce}:{request_bytes}".encode(), hashlib.sha256).hexdigest()
-                    if not isinstance(request_bytes, str) or not isinstance(authenticated_frame.get("proof"), str) or not hmac.compare_digest(authenticated_frame["proof"], expected_proof):
+                    presented_proof = authenticated_frame.get("proof") if isinstance(authenticated_frame, dict) else None
+                    if not isinstance(request_bytes, str) or not isinstance(presented_proof, str):
+                        self._send(connection, {"ok": False, "error": "authentication-failed"})
+                        return
+                    # Update the prefix and the request separately. One joined
+                    # preimage would retain another copy of a maximum-sized command.
+                    expected_proof = hmac.new(self.token.encode(), digestmod=hashlib.sha256)
+                    expected_proof.update(
+                        f"rea-cutter-client-v2:{self.session_id}:{client_nonce}:{server_nonce}:".encode()
+                    )
+                    expected_proof.update(request_bytes.encode())
+                    if not hmac.compare_digest(presented_proof, expected_proof.hexdigest()):
                         self._send(connection, {"ok": False, "error": "authentication-failed"})
                         return
                     request = json.loads(request_bytes)

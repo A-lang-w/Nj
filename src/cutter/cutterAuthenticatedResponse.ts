@@ -136,8 +136,15 @@ export class CutterAuthenticatedResponseDecoder {
 
   #takeBody(chunk: Buffer, offset: number): number {
     if (this.#escape !== "none") return this.#takeEscape(chunk, offset);
-    const quote = chunk.indexOf(0x22, offset);
+    // Stop at the first quote or backslash. Searching the whole tail for a
+    // quote after every escape repeats that scan for backslash-heavy replies.
     const slash = chunk.indexOf(0x5c, offset);
+    let quote = -1;
+    if (slash < 0) quote = chunk.indexOf(0x22, offset);
+    else {
+      const relative = chunk.subarray(offset, slash).indexOf(0x22);
+      if (relative >= 0) quote = offset + relative;
+    }
     let end = chunk.length;
     if (quote >= 0 && quote < end) end = quote;
     if (slash >= 0 && slash < end) end = slash;

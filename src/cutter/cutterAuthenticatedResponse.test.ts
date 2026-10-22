@@ -54,6 +54,10 @@ it("decodes an authenticated response split at escape and proof boundaries", () 
   for (const size of splitPoints(frame.length))
     expect(decode(frame, frame.length, size).response).toBe(response);
   expect(decode(envelope(""), envelope("").length).response).toBe("");
+  const slashes = "\\".repeat(32_000);
+  expect(
+    decode(envelope(slashes), envelope(slashes).length, 64 * 1024).response,
+  ).toBe(slashes);
   expect(
     decode(Buffer.from(`{"response":"\\u0041","proof":"${PROOF}"}`), 256)
       .response,
