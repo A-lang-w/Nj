@@ -12,7 +12,11 @@ import {
   type CreateEvidence,
   type UpdateEvidence,
 } from "./environmentStateWriteExplain.js";
-import { renewedUuids } from "./environmentStateWriteGenerated.js";
+import {
+  callRenewal,
+  disagreeingRenewals,
+  renewedUuids,
+} from "./environmentStateWriteGenerated.js";
 import {
   classifyWrite,
   pathValuesOf,
@@ -877,4 +881,97 @@ it("explains a sent UUID stored in another letter case as stored otherwise, not 
     value: ID(2).replace("4000", "4abc"),
   });
   expect(result.body.accepted).toEqual([]);
+});
+
+/** A UUID of one repeated hex letter, so its letter case shows. */
+const LETTERED = (letter: string): string =>
+  `${letter.repeat(8)}-${letter.repeat(4)}-4${letter.repeat(3)}-a${letter.repeat(3)}-${letter.repeat(12)}`;
+
+it("generates no UUID into a field that holds one the call sent in another member", () => {
+  const result = explainUpdate(
+    updated(
+      { id: "42", sourceId: ID(1), aliasId: ID(2) },
+      { id: "42", sourceId: ID(3), aliasId: ID(3) },
+      { sourceId: ID(3) },
+    ),
+  );
+  // The field follows the sent member, so serving keeps the two linked.
+  expect(ruleFor(result.rules, "aliasId")).toEqual({
+    field: "aliasId",
+    rule: "slug",
+    from: "sourceId",
+  });
+});
+
+it("renews one UUID alike in either letter case, and spells each place in its own case", () => {
+  const rules: FieldRule[] = [
+    { field: "rows", rule: "renewed", pointers: ["/*/id"] },
+    { field: "toc", rule: "renewed", pointers: ["/*/ref"] },
+  ];
+  const before = {
+    rows: [{ id: LETTERED("a") }],
+    toc: [{ ref: LETTERED("a").toUpperCase() }],
+  };
+  const renewed = (row: string, ref: string) => ({
+    rows: [{ id: row }],
+    toc: [{ ref }],
+  });
+  expect(
+    disagreeingRenewals(
+      rules,
+      before,
+      renewed(LETTERED("b"), LETTERED("c").toUpperCase()),
+    ),
+  ).toEqual(["toc"]);
+  expect(
+    disagreeingRenewals(
+      rules,
+      before,
+      renewed(LETTERED("b"), LETTERED("b").toUpperCase()),
+    ),
+  ).toEqual([]);
+  const renew = callRenewal("call");
+  const row = renew(LETTERED("a"));
+  expect(renew(LETTERED("a").toUpperCase())).toBe(row.toUpperCase());
+  expect(row).toBe(row.toLowerCase());
+});
+
+it("refuses renewals that join two old UUIDs onto one new one", () => {
+  const rules: FieldRule[] = [
+    { field: "left", rule: "renewed", pointers: ["/*"] },
+    { field: "right", rule: "renewed", pointers: ["/*"] },
+  ];
+  expect(
+    disagreeingRenewals(
+      rules,
+      { left: [ID(1)], right: [ID(2)] },
+      { left: [ID(3)], right: [ID(3)] },
+    ),
+  ).toEqual(["right"]);
+});
+
+it("accepts a copied member only with its recorded value when a template keeps it beside another source", () => {
+  const result = explainCreate(
+    created(
+      {
+        id: 7,
+        name: "Atlas",
+        code: "alpha-handle-1",
+        groupCode: "group-alpha-2",
+        link: "/g/group-alpha-2/u/alpha-handle-1",
+      },
+      { name: "Atlas", handle: "alpha-handle-1", group: "group-alpha-2" },
+    ),
+  );
+  expect(ruleFor(result.rules, "link")).toEqual({
+    field: "link",
+    rule: "template",
+    from: "code",
+  });
+  expect(result.body.accepted).toContain("handle");
+  expect(result.body.accepted).not.toContain("group");
+  expect(result.body.fixed).toContainEqual({
+    member: "group",
+    sent: "group-alpha-2",
+  });
 });

@@ -4,7 +4,6 @@ import {
   isObject,
   locateItem,
   pointerTo,
-  pointerTokens,
   same,
   scalarText,
   type JsonObject,
@@ -18,12 +17,17 @@ import type {
 } from "./environmentStateWriteRules.js";
 import {
   containsDelimited,
-  delimitedOffsets,
   integerOf,
   isUuid,
   readClock,
   slugOf,
 } from "./environmentStateWriteValues.js";
+import {
+  COPY_MIN_LENGTH,
+  storedMembers,
+  strandedCopies,
+  templateRule,
+} from "./environmentStateWriteCopies.js";
 import {
   disagreeingRenewals,
   freshUuid,
@@ -33,8 +37,6 @@ import {
 
 /** A clock value counts as written by the request when it lies this close to the request's start. */
 const CLOCK_WINDOW_MS = 10 * 60_000;
-/** Shorter body strings are too common to show that a field copied one. */
-const COPY_MIN_LENGTH = 8;
 
 /** What explaining a create reads: the observed entity, the call that wrote it and the entities it joined. */
 export interface CreateEvidence {
@@ -177,44 +179,6 @@ const generatedRule = (
   return undefined;
 };
 
-/** A string that embeds a generated value, or a long value copied from the call, delimited is rebuilt around the new value. */
-const templateRule = (
-  entity: JsonObject,
-  field: string,
-  sources: readonly FieldRule[],
-): FieldRule | undefined => {
-  const value = entity[field];
-  if (typeof value !== "string") return undefined;
-  for (const rule of sources) {
-    const token = scalarText(entity[rule.field]);
-    const generated = GENERATED.has(rule.rule);
-    if (
-      rule.field !== field &&
-      token !== undefined &&
-      token.length >= (generated ? 1 : COPY_MIN_LENGTH) &&
-      delimitedOffsets(value, token).length > 0
-    )
-      return { field, rule: "template", from: rule.field };
-  }
-  return undefined;
-};
-
-/** Body members the entity stores as sent, under their own name (echo) or only another (a copy of the whole member). */
-const storedMembers = (
-  rules: readonly FieldRule[],
-  entity: JsonObject,
-): Set<string> =>
-  new Set(
-    rules.flatMap((rule) => {
-      if (rule.rule === "echo") return [rule.field];
-      const tokens = rule.rule === "copy" ? pointerTokens(rule.from) : [];
-      // A member also stored otherwise under its own name is not stored as sent.
-      return tokens.length === 1 && !Object.hasOwn(entity, tokens[0]!)
-        ? tokens
-        : [];
-    }),
-  );
-
 /** Body members the application stored as sent, and the others with what they were sent. */
 const bodyOf = (
   body: JsonObject,
@@ -271,20 +235,26 @@ export const explainCreate = (
   const tokens = [...evidence.call.pathValues.values()].filter(
     (value) => value.length > 0,
   );
+  const templates = rules.flatMap((rule) =>
+    rule.rule === "template" ? [rule.field] : [],
+  );
+  // A member whose copy a template cannot rebuild is accepted only with its recorded value.
+  const stranded = strandedCopies(rules, evidence.entity, [
+    ...constants,
+    ...templates,
+  ]);
   return {
     rules,
     body: bodyOf(
       evidence.call.body,
-      storedMembers(rules, evidence.entity),
+      storedMembers(
+        rules.filter((rule) => !stranded.has(rule.field)),
+        evidence.entity,
+      ),
       Object.keys(evidence.call.body),
     ),
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
-    tied: [
-      ...constants,
-      ...rules.flatMap((rule) =>
-        rule.rule === "template" ? [rule.field] : [],
-      ),
-    ].some((field) =>
+    tied: [...constants, ...templates].some((field) =>
       tokens.some((token) => containsDelimited(evidence.entity[field]!, token)),
     ),
   };
@@ -317,7 +287,7 @@ const changeRule = (
   const after = evidence.after[field]!;
   if (readClock(after) !== undefined && isClockNear(after, evidence.startMs))
     return { field, rule: "clock", format: readClock(after)!.format };
-  if (freshUuid(evidence, field, undefined)) return { field, rule: "unique" };
+  if (freshUuid(evidence, field)) return { field, rule: "unique" };
   // Child rows only: a single UUID that changed is a reference or a generated value, judged above.
   const renewed =
     Array.isArray(before) || isObject(before)
@@ -374,7 +344,7 @@ export const explainUpdate = (
     if (same(evidence.after[member], sent)) {
       echoed.add(member);
       rules.push({ field: member, rule: "echo" });
-    } else if (freshUuid(evidence, member, sent)) {
+    } else if (freshUuid(evidence, member)) {
       generated.add(member);
       rules.push({ field: member, rule: "unique" });
     } else

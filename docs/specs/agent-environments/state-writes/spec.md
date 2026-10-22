@@ -87,7 +87,9 @@ identity the client sends is an echo:
    value, as a delimited token (for example a URL that ends in the new id or in
    a slug the call sent under another name). It is rebuilt around the new
    value. An echoed value is not a token, nor is a copy of one: it may recur in
-   unrelated text.
+   unrelated text. A copied member whose value also sits in text no template
+   rebuilds around it (beside another source in one template, or in a constant)
+   is accepted only with its recorded value.
 10. **Constant.** Otherwise the exemplar's value.
 
 When a constant, or the text a template keeps, contains a path value of the
@@ -128,13 +130,15 @@ explained as one of:
 - an increment by one;
 - a slug of an echoed member;
 - `unique`: a UUID in place of another UUID, that no other entity of the type
-  holds (a version the application assigns on every update);
+  holds and the call sent nowhere in its body (a version the application assigns
+  on every update);
 - `renewed`: an array or object whose only changes are UUIDs replaced by ones
   that neither it nor another entity of the type held, as child rows an update
   rewrites are. The rule names the pointers it renewed at (`*` for any array
   index): every UUID at them is new, each old UUID by a single new one, and
   UUIDs elsewhere, such as a row's references, are kept. One call renews a
-  UUID alike in every field.
+  UUID alike in every field and in either letter case, and never two old UUIDs
+  into one new one.
 
 A field the entity lacked before is a change too when the view that observed
 the update had shown the entity, so a field the application fills in on update
@@ -378,7 +382,8 @@ their recorded format.
 - **Renewed fields:** the entity's current value with each UUID at the rule's
   pointers replaced by one derived from a SHA-256 of the state Evidence id, the
   tool, the write counter and the UUID's order in the call, the same
-  replacement wherever the call renews that UUID; held values are not skipped.
+  replacement wherever the call renews that UUID in either letter case, spelled
+  in each place's case; held values are not skipped.
   An entity without the field is left without it.
 
 `data/reset` and `data/add` restart the clock, the counter and the

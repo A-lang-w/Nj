@@ -15,15 +15,15 @@ export const GENERATED: ReadonlySet<FieldRule["rule"]> = new Set([
   "unique",
 ]);
 
-/** A UUID the update put where another UUID was, that the call did not send and no other entity holds, in any letter case. */
+/** A UUID the update put where another UUID was, that the call sent nowhere in its body and no other entity holds, in any letter case. */
 export const freshUuid = (
   evidence: {
     readonly before: JsonObject;
     readonly after: JsonObject;
+    readonly call: { readonly body: JsonObject };
     readonly others: readonly JsonObject[];
   },
   field: string,
-  sent: JsonValue | undefined,
 ): boolean => {
   const before = evidence.before[field];
   const after = evidence.after[field];
@@ -31,7 +31,7 @@ export const freshUuid = (
   const fresh = after.toLowerCase();
   return (
     before.toLowerCase() !== fresh &&
-    !uuidsIn(sent).has(fresh) &&
+    !uuidsIn(evidence.call.body).has(fresh) &&
     !uuidsIn(evidence.others.map((other) => other[field] ?? null)).has(fresh)
   );
 };
@@ -45,6 +45,8 @@ export interface Renewal {
 /** The UUIDs two values hold at each pointer: those that changed, and those kept in place. */
 interface Paired {
   readonly renewed: Map<string, string>;
+  /** The same renewal in lower case, so one UUID spelled two ways is still one. */
+  readonly lower: Map<string, string>;
   readonly changedAt: Set<string>;
   readonly keptAt: Set<string>;
   readonly kept: Set<string>;
@@ -58,6 +60,7 @@ const childPointer = (pointer: string, key: string | number): string =>
 const pairUuids = (before: JsonValue, after: JsonValue): Paired | undefined => {
   const paired: Paired = {
     renewed: new Map(),
+    lower: new Map(),
     changedAt: new Set(),
     keptAt: new Set(),
     kept: new Set(),
@@ -73,11 +76,13 @@ const pairUuids = (before: JsonValue, after: JsonValue): Paired | undefined => {
         paired.keptAt.add(pointer);
       } else if (
         was.toLowerCase() === now.toLowerCase() ||
-        (paired.renewed.get(was) ?? now) !== now
+        (paired.lower.get(was.toLowerCase()) ?? now.toLowerCase()) !==
+          now.toLowerCase()
       )
         return undefined;
       else {
         paired.renewed.set(was, now);
+        paired.lower.set(was.toLowerCase(), now.toLowerCase());
         paired.changedAt.add(pointer);
       }
     } else if (Array.isArray(was) && Array.isArray(now)) {
@@ -145,32 +150,37 @@ export const renewedRule = (
     : undefined;
 };
 
-/** Renewed fields of one update that give an old UUID another new one than an earlier field did, as serving renews it alike. */
+/** Renewed fields of one update that give an old UUID another new one than an earlier field did, or another old UUID's new one, in any letter case, as serving renews each UUID once and alike. */
 export const disagreeingRenewals = (
   rules: readonly FieldRule[],
   before: JsonObject,
   after: JsonObject,
 ): string[] => {
-  const uuids = new Map<string, string>();
+  const renewed = new Map<string, string>();
+  const owners = new Map<string, string>();
   const fields = new Set<string>();
   for (const rule of rules) {
     if (rule.rule !== "renewed") continue;
     const renewal = renewedUuids(before[rule.field]!, after[rule.field]!);
-    for (const [was, now] of renewal?.uuids ?? []) {
-      if ((uuids.get(was) ?? now) !== now) fields.add(rule.field);
-      uuids.set(was, now);
+    for (const [spelledWas, spelledNow] of renewal?.uuids ?? []) {
+      const was = spelledWas.toLowerCase();
+      const now = spelledNow.toLowerCase();
+      if ((renewed.get(was) ?? now) !== now || (owners.get(now) ?? was) !== was)
+        fields.add(rule.field);
+      renewed.set(was, now);
+      owners.set(now, was);
     }
   }
   return [...fields];
 };
 
-/** The UUID replacements of one served call: each UUID once, seeded by the call and the order it was first renewed in. */
+/** The UUID replacements of one served call: each UUID once in any letter case, seeded by the call and the order it was first renewed in, and spelled in the case of each place it fills. */
 export const callRenewal = (seed: string): ((uuid: string) => string) => {
-  const renewal = new Map<string, string>();
+  const order = new Map<string, number>();
   return (uuid) => {
-    if (!renewal.has(uuid))
-      renewal.set(uuid, seededUuid(`${seed}:${String(renewal.size)}`, uuid));
-    return renewal.get(uuid)!;
+    const key = uuid.toLowerCase();
+    if (!order.has(key)) order.set(key, order.size);
+    return seededUuid(`${seed}:${String(order.get(key))}`, uuid);
   };
 };
 
