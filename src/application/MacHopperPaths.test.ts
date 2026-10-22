@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  localMacHopperRenamedLauncherCandidates,
   macHopperCanonicalLauncherCandidates,
-  macHopperLauncherCandidates,
   macHopperRenamedLauncherCandidates,
 } from "./MacHopperPaths.js";
 
@@ -35,18 +35,12 @@ describe("macOS Hopper launcher paths", () => {
     ]);
   });
 
-  it("always includes the installer's canonical user destination", () => {
-    expect(macHopperLauncherCandidates(home)).toContain(
-      "/fixture/home/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
-    );
-  });
-
   it("finds renamed user bundles through the runtime filesystem scan", async () => {
     const temporary = await mkdtemp(join(tmpdir(), "rea-hopper-paths-"));
     const appDirectory = join(temporary, "Applications", "Hopper Preview.app");
     try {
       await mkdir(appDirectory, { recursive: true });
-      expect([...macHopperLauncherCandidates(temporary)]).toContain(
+      expect([...localMacHopperRenamedLauncherCandidates(temporary)]).toContain(
         join(appDirectory, "Contents/MacOS/hopper"),
       );
     } finally {

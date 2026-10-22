@@ -52,9 +52,7 @@ export const macHopperRenamedLauncherCandidates = (
 const localBundleNames = (root: string): readonly string[] => {
   try {
     return readdirSync(root, { withFileTypes: true })
-      .filter(
-        (entry) => entry.isDirectory() && /^Hopper.*\.app$/iu.test(entry.name),
-      )
+      .filter((entry) => entry.isDirectory())
       .map(({ name }) => name);
   } catch (cause: unknown) {
     // Missing or unreadable optional app directories contain no candidates.
@@ -63,11 +61,10 @@ const localBundleNames = (root: string): readonly string[] => {
   }
 };
 
-/** Yield canonical paths first; enumerate renamed bundles only if needed. */
-export function* macHopperLauncherCandidates(
+/** Yield renamed bundles from the local filesystem, reading each root only if needed. */
+export function* localMacHopperRenamedLauncherCandidates(
   homeDirectory: string,
 ): Generator<string> {
-  yield* macHopperCanonicalLauncherCandidates(homeDirectory);
   for (const root of macHopperApplicationRoots(homeDirectory))
     yield* macHopperRenamedLauncherCandidates(
       homeDirectory,
