@@ -569,8 +569,11 @@ export const writtenFieldChecks = (
   const shown = renderStateEntity(entity, view, check.volatile, observed);
   const outcomes = new Map<string, boolean>();
   for (const [tool, fields] of check.writes) {
+    // A volatile field renders from the read itself, so it shows nothing of a write.
     const compared = (fields ?? []).filter(
-      (field) => Object.hasOwn(observed, field) || Object.hasOwn(shown, field),
+      (field) =>
+        !check.volatile.has(field) &&
+        (Object.hasOwn(observed, field) || Object.hasOwn(shown, field)),
     );
     if (fields === null || compared.length === 0) continue;
     outcomes.set(

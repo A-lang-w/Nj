@@ -1,6 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  at as valueAt,
   decodedSegment,
+  isObject,
   pointerTo,
   same,
   segmentsOf,
@@ -49,15 +51,26 @@ const writePointer = (
     ? draft.plan.observation?.pointer
     : documentPointerOf(value, body);
 
-/** The fields a document write changed, as pointers: a merge the members it sent at its object, a replacement all under it (undefined: the whole document). */
+/**
+ * The fields a document write changed, as pointers: a merge the members it sent at its object, a replacement every
+ * member it wrote or removed there, so later writes can overwrite its effect (undefined: the whole document).
+ */
 const writtenPointers = (
   draft: WriteDraft,
   body: JsonObject,
+  values: { readonly before: JsonValue; readonly after: JsonValue },
 ): readonly string[] | undefined => {
   const at = draft.plan.observation?.pointer ?? "";
   if (draft.plan.merge === "merge")
     return Object.keys(body).map((member) => `${at}${pointerTo(member)}`);
-  return at === "" ? undefined : [at];
+  const members = new Set(
+    [values.before, values.after].flatMap((value) => {
+      const object = valueAt(value, at);
+      return isObject(object) ? Object.keys(object) : [];
+    }),
+  );
+  if (members.size === 0) return at === "" ? undefined : [at];
+  return [...members].map((member) => `${at}${pointerTo(member)}`);
 };
 
 /** Build a document plan from its exemplar: its object, merge or replacement by method, and the members it sent. */
@@ -130,7 +143,10 @@ export const applyDocument = (
   }));
   context.io.retain(64 + JSON.stringify(written.value).length * 2);
   context.state.setDocument(tool, written.value);
-  const fields = writtenPointers(draft, body!);
+  const fields = writtenPointers(draft, body!, {
+    before: value!,
+    after: written.value,
+  });
   return {
     kind: "applied",
     targets: [documentTarget(tool)],

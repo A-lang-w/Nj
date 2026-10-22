@@ -830,6 +830,35 @@ describe("what a read shows of a write", () => {
     });
   });
 
+  it("confirms no document replacement a later merge overwrote", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/settings", { theme: "light", lang: "en" }],
+      [
+        "PUT",
+        "/api/settings",
+        { theme: "dark", lang: "fr" },
+        200,
+        { theme: "dark", lang: "fr" },
+      ],
+      [
+        "PATCH",
+        "/api/settings",
+        { theme: "blue", lang: "de" },
+        200,
+        { theme: "blue", lang: "de" },
+      ],
+      ["GET", "/api/settings", { theme: "blue", lang: "de" }],
+    ];
+    expect(gated(rows, "put_settings")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+    expect(gated(rows, "patch_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+  });
+
   it("confirms no document write a later replacement overwrote", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/settings", { theme: "light", lang: "en" }],
@@ -1650,6 +1679,31 @@ describe("what an unmodelled write explains", () => {
     expect(gated(rows, "put_books_by_id")).toMatchObject({
       served: false,
       contradicted_by: 8,
+    });
+  });
+});
+
+describe("volatile fields", () => {
+  it("confirms no write through a volatile field a read renders from itself", () => {
+    const seen = (id: number, name: string, at: string) => ({
+      id,
+      name,
+      seen: at,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [seen(1, "A", "t1"), seen(2, "B", "t1")]],
+      ["GET", "/api/books/1", seen(1, "A", "t1")],
+      // A repeated read with no write between shows `seen` changing on its own, so it is volatile.
+      ["GET", "/api/books/1", seen(1, "A", "t2")],
+      ["GET", "/api/books/2", seen(2, "B", "t1")],
+      ["PATCH", "/api/books/1", seen(1, "A", "t3"), 200, { seen: "t3" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      // The export may explain the new name, and `seen` renders from the read, so nothing shows the patch.
+      ["GET", "/api/books/1", seen(1, "Z", "t9")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
     });
   });
 });
