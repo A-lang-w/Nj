@@ -1,7 +1,7 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`e189ae4de805e34f55d976ac4ee602fd053445f4`, tree `ac800a85558d797171f0291ba2b8ef07589187f0`,
+`1d846371cfc2b195b9de5144c848afa0dc012d28`, tree `d1429a5dc1efbdf014681345a2aebcca5fd2d313`,
 on main `18669641e98d49d06c9d1c3227167756db9a6c3b`. Current public interface, worker fixtures,
 SDK, Chromium and the complete fresh 67-worker corpus measurements use this
 runtime. Verification-only
@@ -9,7 +9,7 @@ commits change this report, not the runtime. Exact inputs, commands, profiles, h
 controls and meaningful failed attempts are retained in the
 [verification record](javascript-route-inventory-2026-10-21.json).
 
-Current qualification was recorded at `2026-10-22T01:21:23.334Z`.
+Current qualification was recorded at `2026-10-22T01:47:05.636Z`.
 The source capture and initial report date remain pinned to the original inputs.
 The main integration includes the independently verified [CI fixture fix #6186](https://github.com/morluto/rea/pull/6186).
 Route facts, inventory and views now use the same JavaScript coordinate owner as
@@ -33,8 +33,8 @@ conditional classifier replay are used for this qualification.
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
 | shadcn-ui        |      38 | 2,465,078 |             36 |                37 |              18 |
 
-At the current runtime, the complete 67-worker task took **210.724 s elapsed**,
-**313.019 CPU s** and **531,550,208 bytes** sampled
+At the current runtime, the complete 67-worker task took **247.056 s elapsed**,
+**374.587 CPU s** and **541,859,840 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -55,8 +55,8 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **10.600 s elapsed**,
-**13.364 CPU s** and **2,186,285,056 bytes** sampled
+cleanup succeeded. This task took **18.735 s elapsed**,
+**23.928 CPU s** and **2,179,420,160 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
 The earlier c86 worker corpus, 55 filename-classifier replay and 658 narrow
@@ -79,9 +79,9 @@ performed three historical view reads and exported complete Evidence.
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
 | Estimated tokens: used input declarations and all calls/replies |                          1,934,870 |                      58,840 |
 | Estimated tokens: entire catalog and all calls/replies          |                          3,027,876 |                   1,151,846 |
-| Elapsed seconds, including startup and cleanup                  |                             14.597 |                      12.933 |
-| CPU seconds, process family                                     |                             18.843 |                      16.861 |
-| Peak sampled process-family RSS bytes                           |                      1,744,887,808 |               1,351,847,936 |
+| Elapsed seconds, including startup and cleanup                  |                             27.086 |                      24.027 |
+| CPU seconds, process family                                     |                             34.993 |                      30.356 |
+| Peak sampled process-family RSS bytes                           |                      1,380,454,400 |               1,328,480,256 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -156,24 +156,33 @@ inventory finalization, and owned worker cleanup/retry remains covered.
 The shared navigation owner now follows a destructured initializer's lexical
 own literal fields. It no longer claims an entire registry when only its query
 property supplies navigation data. Renamed/nested fields use the same resolver
-and cached effective-field owner; unsupported rest, array or dynamic projections
-remain conservative. Independent sibling routes stay visible.
+and cached effective-field owner. Rest copies reuse semantic copy-path and key
+selection metadata: excluded object fields and array prefixes remain independent,
+while selected query values are owned as data. Unresolved dynamic keys, accessors
+and indices after a spread remain conservative. Independent siblings stay visible.
 
 Registration/path owners normalize wrappers and resolve stable field aliases
 before generic constants are admitted. This preserves optional pattern syntax
 such as `/users/:id?` without inventing `/users/:id`; a separate explicit URL
 navigation still keeps URL query semantics. Resolved literals retain initializer
 segment ranges. Ten regressions failed on the prior runtime (111 controls passed). Three
-additional callable-scope cases failed against the first fix. All 126 scanner
+additional callable-scope cases failed against the first fix. All 136 scanner
 tests now pass. Source ownership follows possible lexical identities while
 destination inference retains its per-use freshness checks. The explicit
 URL-navigation control already passed before the correction and remains covered.
 Full/compact historical SDK reads after source deletion and both browser adapters
 exercise independent-route retention, query exclusion and optional patterns.
 
+Ten additional rest-copy regressions failed against the previous qualified
+runtime, with126 existing controls passing. All136 scanner tests now pass.
+The iterative selector charges work before retaining slots and shares object
+field parsing, copy-path normalization and key selection with the binding owner.
+Full/compact retained SDK queries and both browser adapters exclude route-shaped
+rest payload data while preserving excluded route siblings.
+
 ## Executed checks and limits
 
-**588/588 source/owner regressions** and **97/97 compiled
+**598/598 source/owner regressions** and **97/97 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
