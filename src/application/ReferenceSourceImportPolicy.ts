@@ -68,19 +68,112 @@ const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 type IgnoreReason = "project-ignored" | "default-ignored" | "caller-excluded";
 
-/** Preserve literal whitespace as one glob atom; `ignore` rewrites it to space. */
-const protectLiteralWhitespace = (pattern: string): string => {
+// Hex atoms survive ignore's wildcard rewrites, including its terminal-star
+// rewrite. Encode both range endpoints with uppercase hex so its textual
+// range sanitizer cannot mistake their suffixes for a descending range.
+const literalIgnoreAtom = (character: string, inClass: boolean): string => {
+  const code = character.charCodeAt(0);
+  const atom =
+    code < 256
+      ? `\\x${code.toString(16).toUpperCase().padStart(2, "0")}`
+      : `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`;
+  return inClass ? atom : `[${atom}]`;
+};
+
+/** Normalize simple classes as members/ranges, never as independent escapes. */
+const normalizeGitClass = (pattern: string, start: number) => {
+  let index = start + 1;
+  const negative = pattern[index] === "!" || pattern[index] === "^";
+  if (negative) index += 1;
+  let unsupported = pattern[index] === "]";
+  const members: { character: string; quoted: boolean }[] = [];
+  if (unsupported) {
+    members.push({ character: "]", quoted: false });
+    index += 1;
+  }
+  for (; index < pattern.length; index += 1) {
+    const character = pattern[index]!;
+    if (character === "]") {
+      const end = index + 1;
+      // POSIX classes and a literal initial ] retain the dependency's existing
+      // behavior; they need a broader matcher compatibility decision.
+      if (unsupported) return { text: pattern.slice(start, end), end };
+      let text = "";
+      for (let member = 0; member < members.length; member += 1) {
+        const from = members[member]!.character;
+        const dash = members[member + 1];
+        const to = members[member + 2];
+        if (dash?.character === "-" && !dash.quoted && to !== undefined) {
+          // Git retains the first member of a descending range. Avoid an
+          // invalid encoded range in JavaScript's RegExp constructor.
+          if (from.charCodeAt(0) <= to.character.charCodeAt(0))
+            text += `${literalIgnoreAtom(from, true)}-${literalIgnoreAtom(to.character, true)}`;
+          else text += literalIgnoreAtom(from, true);
+          member += 2;
+        } else text += literalIgnoreAtom(from, true);
+      }
+      return { text: `[${negative ? "!" : ""}${text}]`, end };
+    }
+    if (
+      character === "[" &&
+      [":", ".", "="].includes(pattern[index + 1] ?? "")
+    ) {
+      const end = pattern.indexOf(`${pattern[index + 1]}]`, index + 2);
+      if (end !== -1) {
+        unsupported = true;
+        index = end + 1;
+        continue;
+      }
+    }
+    if (character === "/") unsupported = true;
+    if (character === "\\" && pattern[index + 1] !== undefined) {
+      index += 1;
+      if (pattern[index] === "/") unsupported = true;
+      members.push({ character: pattern[index]!, quoted: true });
+    } else members.push({ character, quoted: false });
+  }
+  return { text: pattern.slice(start), end: pattern.length };
+};
+
+/** Project policies normalize Git quoting; caller/secret rules keep their syntax. */
+const normalizeIgnorePattern = (
+  sourcePattern: string,
+  gitEscapes = false,
+): string => {
+  const pattern = gitEscapes
+    ? sourcePattern.replace(
+        /((?:\\\\)*?)(\\? +)$/u,
+        (_match, pairs: string, trailing: string) =>
+          pairs + (trailing.startsWith("\\") ? "\\ " : ""),
+      )
+    : sourcePattern;
   let result = "";
   let inClass = false;
   let classFirst = false;
   let classAllowsInitialClose = false;
   for (let index = 0; index < pattern.length;) {
     const character = pattern[index]!;
+    if (gitEscapes && character === "[") {
+      const characterClass = normalizeGitClass(pattern, index);
+      result += characterClass.text;
+      index = characterClass.end;
+      continue;
+    }
     if (character === "\\") {
       let end = index;
       while (pattern[end] === "\\") end += 1;
       const count = end - index;
       const next = pattern[end];
+      if (gitEscapes) {
+        result += literalIgnoreAtom("\\", false).repeat(Math.floor(count / 2));
+        if (count % 2 === 1) {
+          if (next === undefined) return "";
+          // A quoted separator still separates path components in Git.
+          result += next === "/" ? "/" : literalIgnoreAtom(next, false);
+          index = end + 1;
+        } else index = end;
+        continue;
+      }
       if (next !== undefined && /\s/u.test(next) && next !== " ") {
         result += "\\".repeat(count - (count % 2));
         result += inClass ? next : `[${next}]`;
@@ -153,28 +246,22 @@ const protectLiteralWhitespace = (pattern: string): string => {
 const scopedPattern = (
   sourcePattern: string,
   prefix: string | undefined,
+  projectPolicy: boolean,
 ): string | undefined => {
   // A terminal directory globstar must consume a descendant. ignore otherwise
   // lets its zero-depth match include the named parent, including for negations.
-  const pattern = sourcePattern.replace(/(^!?|\/)\*\*\/(?= *$)/u, "$1**/*/");
-  if (prefix === undefined) return protectLiteralWhitespace(pattern);
+  const pattern = normalizeIgnorePattern(sourcePattern, projectPolicy).replace(
+    /(^!?|\/)\*\*\/(?= *$)/u,
+    "$1**/*/",
+  );
+  if (prefix === undefined) return pattern;
   if (pattern.length === 0 || /^ *$/u.test(pattern) || pattern.startsWith("#"))
     return undefined;
   const negative = pattern.startsWith("!");
-  // Account for escaped trailing whitespace before deciding whether a slash
-  // anchors the rule to its own directory.
   const body = negative ? pattern.slice(1) : pattern;
-  const normalized = body.replace(
-    /((?:\\\\)*?)(\\? +)$/u,
-    (_match, pairs: string, trailing: string) =>
-      pairs + (trailing.startsWith("\\") ? " " : ""),
-  );
-  if (normalized === "" || normalized === "/") return undefined;
-  const anchored =
-    normalized.startsWith("/") || normalized.slice(0, -1).includes("/");
-  return protectLiteralWhitespace(
-    `${negative ? "!" : ""}/${prefix}/${anchored ? "" : "**/"}${body.replace(/^\//u, "")}`,
-  );
+  if (body === "" || body === "/") return undefined;
+  const anchored = body.startsWith("/") || body.slice(0, -1).includes("/");
+  return `${negative ? "!" : ""}/${prefix}/${anchored ? "" : "**/"}${body.replace(/^\//u, "")}`;
 };
 
 const addMarkedPatterns = (
@@ -207,7 +294,7 @@ const addMarkedPatterns = (
       // Git removes one terminal CR even from a final line without LF.
       // Do this only for policy files, before protecting literal whitespace.
       const line = projectPolicy ? rawLine.replace(/\r$/u, "") : rawLine;
-      const scoped = scopedPattern(line, prefix);
+      const scoped = scopedPattern(line, prefix, projectPolicy);
       if (scoped !== undefined)
         matcher.add({
           pattern: scoped,
@@ -398,7 +485,7 @@ export const prepareReferenceSourceImport = async (
       const secrets = ignore();
       for (const pattern of options.policy.secretPatterns)
         secrets.add({
-          pattern: protectLiteralWhitespace(pattern),
+          pattern: normalizeIgnorePattern(pattern),
           mark: pattern,
         });
       return ok({
