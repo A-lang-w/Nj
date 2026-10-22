@@ -77,6 +77,9 @@ const transitions = [
   { kind: "malformed", loader: false, reason: "protocol_error" },
   { kind: "malformed", loader: true, reason: "protocol_error" },
   { kind: "foreign-malformed", loader: true, reason: "target_not_allowed" },
+  { kind: "foreign-loader-change", loader: true, reason: "target_changed" },
+  { kind: "foreign", loader: false, reason: "target_changed" },
+  { kind: "foreign", loader: true, reason: "target_not_allowed" },
   { kind: "missing", loader: true, reason: "protocol_error" },
   { kind: "frame-change", loader: true, reason: "target_changed" },
   { kind: "loader-change", loader: true, reason: "target_changed" },
@@ -102,7 +105,9 @@ it.each(
               ...(loader
                 ? {
                     loaderId:
-                      changed && kind === "loader-change"
+                      changed &&
+                      (kind === "loader-change" ||
+                        kind === "foreign-loader-change")
                         ? "replacement"
                         : "document-1",
                   }
@@ -111,7 +116,10 @@ it.each(
                 ? {}
                 : {
                     url:
-                      changed && kind === "foreign-malformed"
+                      changed &&
+                      (kind === "foreign-malformed" ||
+                        kind === "foreign" ||
+                        kind === "foreign-loader-change")
                         ? "https://foreign.example/app"
                         : changed && kind === "unsupported"
                           ? "about:blank"

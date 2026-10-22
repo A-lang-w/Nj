@@ -1,8 +1,8 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
-import { Cli, Filter, Formatter } from "incur";
-import { estimateTokenCount, sliceByTokens } from "tokenx";
+import { Filter, Formatter } from "incur";
+import { estimateTokenCount } from "tokenx";
 
 import {
   parseCliOutputArguments,
@@ -13,6 +13,7 @@ import {
   cliOperationFailurePayload,
 } from "../cliLogging.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { sliceTextByTokenWindow } from "./tokenWindow.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -23,12 +24,17 @@ import {
   writeOutputText,
 } from "./jsonOutput.js";
 import type { CliInstance } from "./types.js";
+import {
+  visitRegisteredCommands,
+  type RegisteredCommand,
+} from "./visitRegisteredCommands.js";
 
 /** Result metadata supplied by the command that actually ran. */
 export interface CliResultOutputMetadata {
   readonly command: string;
   readonly duration: string;
   readonly format: string;
+  readonly renderOutput?: boolean;
 }
 
 /** Optional executable-owned result surface for one CLI invocation. */
@@ -41,42 +47,21 @@ export interface CliResultOutput {
   recoverFormattingFailure(cause: unknown): Promise<boolean>;
 }
 
-type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
-type CommandDefinition = Extract<
-  CommandMap extends Map<string, infer Entry> ? Entry : never,
-  { run: unknown }
->;
-const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
-
 /** Install formatting once, after registration, for every ordinary CLI result. */
 export const streamCliCommandResults = (
   cli: CliInstance,
   output: CliResultOutput,
 ): void => {
-  const commands = registeredCommands.get(cli);
-  if (commands !== undefined) wrapCommands(commands, [], output);
-};
-
-const wrapCommands = (
-  commands: CommandMap,
-  parents: readonly string[],
-  output: CliResultOutput,
-): void => {
-  for (const [name, entry] of commands) {
-    const path = [...parents, name];
-    if ("_group" in entry) {
-      wrapCommands(entry.commands, path, output);
-      if (entry.root !== undefined)
-        wrapCommand(entry.root, path.join(" "), output);
-    } else if (!("_alias" in entry) && !("_fetch" in entry))
-      wrapCommand(entry, path.join(" "), output);
-  }
+  visitRegisteredCommands(cli, (command, path, inheritedPolicy) =>
+    wrapCommand(command, path, output, inheritedPolicy),
+  );
 };
 
 const wrapCommand = (
-  command: Pick<CommandDefinition, "run">,
+  command: Pick<RegisteredCommand, "run">,
   name: string,
   output: CliResultOutput,
+  inheritedPolicy?: "all" | "agent-only",
 ): void => {
   const run = command.run;
   command.run = (context) => {
@@ -100,6 +85,7 @@ const wrapCommand = (
         !(await output.write(value, {
           command: name,
           format: context.format,
+          renderOutput: context.agent || inheritedPolicy !== "agent-only",
           duration: `${Math.round(performance.now() - started)}ms`,
         }))
       )
@@ -231,9 +217,24 @@ export const createCliResultOutput = (
         ? cliOperationFailurePayload(value)
         : undefined;
     const failure = options.fullOutput ? operationFailure : undefined;
+    // Incur owns suppressed human presentation, but a filter must never erase
+    // the typed failure that this boundary already owns.
+    if (
+      operationFailure === undefined &&
+      metadata.renderOutput === false &&
+      !options.fullOutput &&
+      !options.tokenCount
+    )
+      return false;
     const filtered: unknown =
       operationFailure ??
       (filterPaths === undefined ? value : Filter.apply(value, filterPaths));
+    const ownsSuccessfulTokenWindow =
+      operationFailure === undefined &&
+      options.tokenWindow &&
+      !options.tokenCount &&
+      format !== "json" &&
+      format !== "jsonl";
     if (
       operationFailure === undefined &&
       filterPaths !== undefined &&
@@ -248,7 +249,8 @@ export const createCliResultOutput = (
     if (
       format !== "json" &&
       format !== "jsonl" &&
-      operationFailure === undefined
+      operationFailure === undefined &&
+      !ownsSuccessfulTokenWindow
     )
       return false;
     if (options.tokenCount) {
@@ -327,6 +329,53 @@ export const createCliResultOutput = (
           typeof filtered === "symbol"
         ? {}
         : filtered;
+    if (ownsSuccessfulTokenWindow) {
+      const formatted = Formatter.format(filtered, format);
+      const window = sliceTextByTokenWindow(
+        formatted,
+        options.tokenOffset ?? 0,
+        options.tokenLimit,
+      );
+      // Keep Incur's empty human/agent presentation semantics. Nonempty text
+      // already belongs to this formatter, even when the whole result fits.
+      if (!window.truncated && !options.fullOutput && formatted === "")
+        return false;
+
+      const sliced = window.truncated
+        ? `${window.text}\n[truncated: showing tokens ${options.tokenOffset ?? 0}–${window.end} of ${window.total}]`
+        : formatted;
+      const outputDocument = options.fullOutput
+        ? Formatter.format(
+            window.truncated
+              ? {
+                  ok: true,
+                  data: sliced,
+                  meta: {
+                    command: metadata.command,
+                    duration: metadata.duration,
+                    ...(window.end < window.total
+                      ? { nextOffset: window.end }
+                      : {}),
+                  },
+                }
+              : { ok: true, data: filtered, meta },
+            format,
+          )
+        : sliced;
+      handled = true;
+      try {
+        await writeOutputText(
+          destination,
+          outputDocument.endsWith("\n")
+            ? outputDocument
+            : `${outputDocument}\n`,
+        );
+      } catch (cause: unknown) {
+        failed = true;
+        throw cause;
+      }
+      return true;
+    }
     // Once writing starts, a failed destination must not receive a second
     // document from Incur's error formatter.
     const failureText =
@@ -368,15 +417,13 @@ const fullFailureEnvelope = (
   if (tokenLimit === undefined && tokenOffset === undefined)
     return { ok: false, error: failure, meta };
   const formatted = Formatter.format(failure, format);
-  const total = estimateTokenCount(formatted);
   const offset = tokenOffset ?? 0;
-  const end = tokenLimit === undefined ? total : offset + tokenLimit;
-  if (offset === 0 && end >= total) return { ok: false, error: failure, meta };
-  const actualEnd = Math.min(end, total);
-  const nextOffset = actualEnd < total ? actualEnd : undefined;
+  const window = sliceTextByTokenWindow(formatted, offset, tokenLimit);
+  if (!window.truncated) return { ok: false, error: failure, meta };
+  const nextOffset = window.end < window.total ? window.end : undefined;
   return {
     ok: false,
-    error: `${sliceByTokens(formatted, offset, end)}\n[truncated: showing tokens ${offset}–${actualEnd} of ${total}]`,
+    error: `${window.text}\n[truncated: showing tokens ${offset}–${window.end} of ${window.total}]`,
     meta: { ...meta, ...(nextOffset === undefined ? {} : { nextOffset }) },
   };
 };

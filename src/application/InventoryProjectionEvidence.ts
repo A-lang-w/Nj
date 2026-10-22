@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   createEvidence,
   type Evidence,
@@ -9,8 +9,10 @@ import {
   type EvidenceSubjectTarget,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import type { MobileApplicationProjectionWithSources } from "../domain/mobileApplicationGraphProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { requestInputError, workflowInputError } from "./workflowInputError.js";
+import { requestInputError } from "./workflowInputError.js";
+import { ArtifactInventoryCarrierError } from "../domain/artifactInventoryEvidence.js";
 
 interface InventoryProjectionInput {
   readonly inventory_evidence: readonly Evidence[];
@@ -23,18 +25,24 @@ interface InventoryProjectionResult {
   readonly limitations: readonly string[];
 }
 
+export interface InventoryProjectionEvidenceResult {
+  readonly evidence: Evidence;
+  readonly sources: readonly Evidence[];
+}
+
 interface InventoryProjectionOptions<
   Input extends InventoryProjectionInput,
   Output extends InventoryProjectionResult,
 > {
   readonly rawInput: unknown;
   readonly schema: z.ZodType<Input>;
-  readonly project: (input: Input) => Output;
+  readonly project: (
+    input: Input,
+  ) => MobileApplicationProjectionWithSources<Output>;
   readonly operation: string;
   readonly predicateType: string;
   readonly provider: EvidenceProvider;
   readonly subjectFormat: (first: Evidence) => EvidenceSubjectTarget["format"];
-  readonly protocolError: string;
 }
 
 /** Parse one inventory projection and wrap its deterministic result in Evidence. */
@@ -43,17 +51,18 @@ export const projectInventoryEvidence = <
   Output extends InventoryProjectionResult,
 >(
   options: InventoryProjectionOptions<Input, Output>,
-): Result<Evidence, AnalysisError> => {
+): Result<InventoryProjectionEvidenceResult, AnalysisError> => {
   const parsed = options.schema.safeParse(options.rawInput);
   if (!parsed.success)
     return err(
       requestInputError(options.operation, parsed.error, options.rawInput),
     );
   try {
-    const result = options.project(parsed.data);
-    const first = parsed.data.inventory_evidence[0];
-    return ok(
-      createEvidence(
+    const projected = options.project(parsed.data);
+    const result = projected.projection;
+    const first = projected.sources[0];
+    return ok({
+      evidence: createEvidence(
         first?.subject === null || first?.subject === undefined
           ? undefined
           : {
@@ -80,12 +89,28 @@ export const projectInventoryEvidence = <
           evidenceLinks: result.source_evidence_ids,
         },
       ),
-    );
+      sources: projected.sources,
+    });
   } catch (cause: unknown) {
-    return err(
-      cause instanceof TypeError || cause instanceof z.ZodError
-        ? workflowInputError(options.operation, cause)
-        : new AnalysisProtocolError(options.protocolError, { cause }),
-    );
+    if (cause instanceof AnalysisError) return err(cause);
+    if (cause instanceof ArtifactInventoryCarrierError)
+      return err(
+        new AnalysisInputError(
+          options.operation,
+          { cause, userMessage: cause.message },
+          [
+            {
+              path: [
+                "inventory_evidence",
+                ...(cause.index === undefined ? [] : [cause.index]),
+                ...(cause.index === undefined ? [] : ["operation"]),
+              ],
+              reason: "invalid_value",
+              message: cause.message,
+            },
+          ],
+        ),
+      );
+    throw cause;
   }
 };

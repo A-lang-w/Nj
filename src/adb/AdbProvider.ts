@@ -41,7 +41,6 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import { adbResultSchemas } from "../domain/adb/adbDeviceAnalysis.js";
 import {
-  AnalysisCapabilityUnavailableError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -73,7 +72,10 @@ import {
   type PrivateRuntimeRootOptions,
 } from "../process/PrivateRuntimeRoot.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../process/RuntimeControlUnavailableError.js";
 import {
   adbArguments,
   runAdb,
@@ -1027,12 +1029,11 @@ export class AdbProvider {
       return err(
         cause instanceof AnalysisError
           ? cause
-          : cause instanceof PrivateRuntimeRootUnavailableError
-            ? new AnalysisCapabilityUnavailableError(
+          : cause instanceof RuntimeControlUnavailableError
+            ? runtimeControlCapabilityError(
                 ADB_PROVIDER_IDENTITY.id,
                 operation,
-                cause.message,
-                { cause, retryable: cause.retryable },
+                cause,
               )
             : new AnalysisOutputError(
                 operation,
@@ -3216,10 +3217,12 @@ export class AdbProvider {
       await removeOwnedOutputDirectory(stagingDirectory, stagingIdentity);
     } catch (cause) {
       const primary = collectedResult.ok
-        ? new AnalysisOutputError(
-            operation,
-            "The archive was published, but its staging directory could not be removed",
-          )
+        ? signal?.aborted === true
+          ? new AnalysisCancelledError(operation, { cause: signal.reason })
+          : new AnalysisOutputError(
+              operation,
+              "The archive was published, but its staging directory could not be removed",
+            )
         : collectedResult.error;
       if (retainedObservation !== undefined)
         primary.retainPartialObservation(retainedObservation);

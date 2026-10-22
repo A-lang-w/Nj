@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import type {
@@ -44,6 +45,8 @@ interface ElectronContext {
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: InspectElectronPageInput;
+  /** Header admission resolved by the provider's composition root. */
+  readonly asarHeaderAdmission: AsarHeaderAdmission;
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
 }
@@ -415,7 +418,12 @@ const readCurrentFrames = async (
     context.signal,
   );
   seedFrameDocuments(result, generations, documents, state);
-  const inventory = await captureFrames(result, completeness, context.signal);
+  const inventory = await captureFrames(
+    result,
+    completeness,
+    context.asarHeaderAdmission,
+    context.signal,
+  );
   const main = inventory.frames[0];
   if (main === undefined || inventory.parents.get(main.frame_id) !== null)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
@@ -483,6 +491,7 @@ const captureElectronContent = async (
       return authorized ? script.frameId : null;
     },
     completeness: state.completeness,
+    asarHeaderAdmission: context.asarHeaderAdmission,
   });
   const workers = await captureElectronWorkers({
     connection: context.connection,
@@ -492,6 +501,7 @@ const captureElectronContent = async (
     frameIds,
     completeness: state.completeness,
     limitations: state.limitations,
+    asarHeaderAdmission: context.asarHeaderAdmission,
   });
   return { dom, scripts, resources, workers };
 };
@@ -510,13 +520,23 @@ const assertStableMainFrame = async (
     context.signal,
   );
   seedFrameDocuments(result, generations, documents, state);
-  const afterPath = await mainFilePath(result, context.signal);
+  const afterPath = await mainFilePath(
+    result,
+    context.asarHeaderAdmission,
+    context.signal,
+  );
+
   if (afterPath === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (state.navigationDuringCapture || afterPath !== expectedPath)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   const completeness = new CdpCaptureCompleteness();
-  const inventory = await captureFrames(result, completeness, context.signal);
+  const inventory = await captureFrames(
+    result,
+    completeness,
+    context.asarHeaderAdmission,
+    context.signal,
+  );
   const { frames } = inventory;
   if (
     state.navigationDuringCapture ||
@@ -543,6 +563,7 @@ const assertStableMainFrame = async (
 export const captureFrames = async (
   result: unknown,
   completeness: CdpCaptureCompleteness,
+  asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<ElectronFrameInventory> => {
   const frameTree = recordValue(requiredRecord(result).frameTree);
@@ -584,6 +605,7 @@ export const captureFrames = async (
       cdpStringValue(frame.url) ?? "",
       signal,
       "inspect_electron_page",
+      asarHeaderAdmission,
     );
     if (path === undefined) {
       completeness.exclude("frames", "out_of_target_scope");
@@ -621,6 +643,7 @@ const captureResources = async (
       cdpStringValue(resource.url) ?? "",
       context.signal,
       "inspect_electron_page",
+      context.asarHeaderAdmission,
     );
     if (path === undefined) {
       completeness.exclude("resources", "out_of_target_scope");
@@ -681,6 +704,7 @@ const captureDom = async (
         documentUrl,
         context.signal,
         "inspect_electron_page",
+        context.asarHeaderAdmission,
       )) === undefined
     ) {
       completeness.exclude("dom", "out_of_target_scope");
@@ -719,6 +743,7 @@ const captureDom = async (
 
 const mainFilePath = async (
   result: unknown,
+  asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<string | undefined> => {
   const frameTree = recordValue(requiredRecord(result).frameTree);
@@ -727,6 +752,7 @@ const mainFilePath = async (
     cdpStringValue(frame?.url) ?? "",
     signal,
     "inspect_electron_page",
+    asarHeaderAdmission,
   );
 };
 
