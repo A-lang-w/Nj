@@ -88,7 +88,7 @@ export const createShutdown = (input: {
       () => (failureReported ? 1 : 0),
       (cause: unknown) => {
         failureReported = true;
-        reportShutdownFailure(cause, dependencies, serverLogger);
+        reportMcpShutdownFailure(cause, dependencies, serverLogger);
         return 1 as const;
       },
     );
@@ -207,9 +207,10 @@ const closeOwners = async (
   };
 };
 
-const reportShutdownFailure = (
+/** Preserve the same diagnostics for eager and deferred runtime owners. */
+export const reportMcpShutdownFailure = (
   cause: unknown,
-  dependencies: RuntimeDependencies,
+  dependencies: Pick<RuntimeDependencies, "writeStderr" | "setExitCode">,
   serverLogger: Logger,
 ): void => {
   serverLogger.debug(

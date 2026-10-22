@@ -8,19 +8,12 @@ import { realpathSync } from "node:fs";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config/parseConfig.js";
-import { createBinarySession } from "./composition/binary.js";
-import { createLogger } from "./logger.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
+import { runDeferred } from "./main/deferredRuntime.js";
+import { RECORDED_MCP_CATALOG_SHA256 } from "./recordedMcpCatalog.js";
 import { SERVER_START_FAILED } from "./main/messages.js";
-import { openInitialTarget } from "./main/startup.js";
-import { startMcpTransport } from "./main/transport.js";
-import {
-  createOptionalObservationFactories,
-  loadOptionalObservationProviders,
-} from "./composition/optionalObservationProviders.js";
-import { createToolResultDelivery } from "./server/toolResult.js";
-import { createShutdown } from "./main/shutdown.js";
+
 import {
   createExitStatus,
   latchSignalShutdown,
@@ -53,6 +46,7 @@ const httpRuntimeDependencies = (
   const base = runtimeDependencies();
   return {
     ...base,
+    transport: "http",
     setExitCode: exit.set,
     serve: async (factory, options) => {
       // Loaded here so the default stdio entry never loads the HTTP listener.
@@ -90,12 +84,7 @@ const httpRuntimeDependencies = (
   };
 };
 
-/**
- * Start the long-lived MCP adapter and install idempotent shutdown handlers.
- * The adapter owns its BinarySession for the process lifetime; stdin EOF on
- * the stdio transport and process signals on either transport close bridge
- * resources without assuming ownership of the Hopper app.
- */
+/** Start discovery without constructing unused analysis validators. */
 export const run = async (
   dependencies: RuntimeDependencies = runtimeDependencies(),
 ): Promise<number> => {
@@ -105,59 +94,23 @@ export const run = async (
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  const logger = createLogger("mcp", config.value.logLevel);
-  const serverLogger = logger.child({ layer: "server" });
-  const session = (dependencies.createSession ?? createBinarySession)(
-    config.value,
-    logger,
-    environment,
-  );
-  // Handle signals before the initial open: provider children run detached,
-  // so default signal termination would leave them behind. On stdio, stdin
-  // EOF is seen only once the transport reads stdin, after startup.
-  const lifecycle = createShutdown({ session, dependencies, serverLogger });
-  try {
-    const opened = await openInitialTarget(session, config.value, {
-      serverLogger,
-      writeStderr: dependencies.writeStderr,
-      signal: lifecycle.signal,
-    });
-    if (!opened.ok) {
-      if ("cancelled" in opened) return lifecycle.finish();
-      if (opened.cleanupPending) await lifecycle.finishFailedOpen();
-      else await lifecycle.release();
-      return opened.exitCode;
-    }
-    if (lifecycle.signal.aborted) return lifecycle.finish();
-    const transport = await startMcpTransport(dependencies, session, {
-      logger,
-      serverLogger,
-      environment,
-      delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
-      loadOptionalProviders:
-        dependencies.loadOptionalProviders ??
-        (() =>
-          loadOptionalObservationProviders(
-            createOptionalObservationFactories(environment),
-          )),
-      signal: lifecycle.signal,
-    });
-    if (!transport.ok) {
-      if ("cancelled" in transport) {
-        lifecycle.attachTransport(transport);
-        return lifecycle.finish();
-      }
-      await lifecycle.release();
-      return 1;
-    }
-    lifecycle.attachTransport(transport);
-    if (lifecycle.signal.aborted) return lifecycle.finish();
-    return 0;
-  } catch (cause: unknown) {
-    // An unexpected startup failure still closes what startup acquired.
-    await lifecycle.finish();
-    throw cause;
+  const fullOutputCatalog =
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
+  if (
+    RECORDED_MCP_CATALOG_SHA256 !== undefined &&
+    dependencies.transport !== "http" &&
+    config.value.hopperTargetPath === undefined &&
+    fullOutputCatalog &&
+    dependencies.createServer === undefined &&
+    dependencies.loadOptionalProviders === undefined
+  ) {
+    return runDeferred({ ...dependencies, env: environment }, config.value);
   }
+  return (await import("./main/eagerRuntime.js")).runEager(
+    { ...dependencies, env: environment },
+    config.value,
+  );
 };
 
 /** Run the executable boundary without exposing an unexpected startup cause. */
