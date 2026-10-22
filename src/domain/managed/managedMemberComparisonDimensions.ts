@@ -117,7 +117,18 @@ export const methodDimensions = (
   readonly operandsUnknown: boolean;
 } => {
   const dimensions: MethodItem["dimensions"] = [];
-  if (left.flags !== right.flags || left.impl_flags !== right.impl_flags)
+  const headerFields = ["max_stack", "init_locals"] as const;
+  const headerChanged = headerFields.some(
+    (field) =>
+      left.body[field] !== null &&
+      right.body[field] !== null &&
+      left.body[field] !== right.body[field],
+  );
+  if (
+    left.flags !== right.flags ||
+    left.impl_flags !== right.impl_flags ||
+    headerChanged
+  )
     dimensions.push("metadata");
   if (signatureIdentity(left.signature) !== signatureIdentity(right.signature))
     dimensions.push("signature");
@@ -150,7 +161,14 @@ export const methodDimensions = (
   if (fieldShape(left.body.anchors) !== fieldShape(right.body.anchors))
     dimensions.push("field-shape");
   if (operands.exceptionShape) dimensions.push("exception-shape");
-  return { dimensions, bodyUnknown: false, operandsUnknown: operands.unknown };
+  return {
+    dimensions,
+    // An unavailable header value establishes neither equality nor a change.
+    bodyUnknown: headerFields.some(
+      (field) => left.body[field] === null || right.body[field] === null,
+    ),
+    operandsUnknown: operands.unknown,
+  };
 };
 
 const callShape = (anchors: Method["body"]["anchors"]): string =>

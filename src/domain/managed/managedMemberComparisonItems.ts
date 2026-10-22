@@ -1,9 +1,9 @@
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
 import type { ManagedMemberComparisonResult } from "./managedMemberComparison.js";
-import {
-  type ManagedFieldMatches,
-  type ManagedMethodMatches,
-  sha256,
+import type {
+  ManagedFieldMatches,
+  ManagedMethodMatches,
 } from "./managedMemberComparisonMatch.js";
 import { methodDimensions } from "./managedMemberComparisonDimensions.js";
 import { signatureIdentity } from "./managedMemberSignatureIdentity.js";
@@ -102,7 +102,7 @@ const methodOnlyItem = (
       inventory: "method",
     });
     return {
-      item_id: `mmc_method_${sha256({ token: member.left.token, side: "left" })}`,
+      item_id: `mmc_method_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
       status: limitations.length === 0 ? "removed" : "unknown",
       left: methodIdentity(member.left),
       right: null,
@@ -125,7 +125,7 @@ const methodOnlyItem = (
     inventory: "method",
   });
   return {
-    item_id: `mmc_method_${sha256({ token: member.right.token, side: "right" })}`,
+    item_id: `mmc_method_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
     status: limitations.length === 0 ? "added" : "unknown",
     left: null,
     right: methodIdentity(member.right),
@@ -299,7 +299,7 @@ const fieldOnlyItem = (
       inventory: "field",
     });
     return {
-      item_id: `mmc_field_${sha256({ token: member.left.token, side: "left" })}`,
+      item_id: `mmc_field_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
       status: limitations.length === 0 ? "removed" : "unknown",
       left: fieldIdentity(member.left),
       right: null,
@@ -321,7 +321,7 @@ const fieldOnlyItem = (
     inventory: "field",
   });
   return {
-    item_id: `mmc_field_${sha256({ token: member.right.token, side: "right" })}`,
+    item_id: `mmc_field_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
     status: limitations.length === 0 ? "added" : "unknown",
     left: null,
     right: fieldIdentity(member.right),
@@ -388,11 +388,14 @@ export const buildMethodItems = (
       ...unknownBodyLimitations(facets),
     ];
     items.push({
-      item_id: `mmc_method_${sha256({
-        left: pair.left.item.token,
-        right: pair.right.item.token,
-        basis: pair.basis,
-      })}`,
+      item_id: `mmc_method_${digestCanonicalValue(
+        {
+          left: pair.left.item.token,
+          right: pair.right.item.token,
+          basis: pair.basis,
+        },
+        "Managed comparison",
+      )}`,
       status:
         facets.dimensions.length > 0
           ? "changed"
@@ -417,11 +420,14 @@ export const buildMethodItems = (
   }
   for (const ambiguous of matches.ambiguous) {
     items.push({
-      item_id: `mmc_method_${sha256({
-        left: ambiguous.left.map(({ item }) => item.token),
-        right: ambiguous.right.map(({ item }) => item.token),
-        basis: ambiguous.basis,
-      })}`,
+      item_id: `mmc_method_${digestCanonicalValue(
+        {
+          left: ambiguous.left.map(({ item }) => item.token),
+          right: ambiguous.right.map(({ item }) => item.token),
+          basis: ambiguous.basis,
+        },
+        "Managed comparison",
+      )}`,
       status: "unknown",
       left: null,
       right: null,
@@ -487,10 +493,13 @@ export const buildFieldItems = (
         signatureIdentity(pair.right.item.signature) ||
       pair.left.item.flags !== pair.right.item.flags;
     items.push({
-      item_id: `mmc_field_${sha256({
-        left: pair.left.item.token,
-        right: pair.right.item.token,
-      })}`,
+      item_id: `mmc_field_${digestCanonicalValue(
+        {
+          left: pair.left.item.token,
+          right: pair.right.item.token,
+        },
+        "Managed comparison",
+      )}`,
       status: changed
         ? "changed"
         : signatureLimitations.length > 0
@@ -511,10 +520,13 @@ export const buildFieldItems = (
   }
   for (const ambiguous of matches.ambiguous)
     items.push({
-      item_id: `mmc_field_${sha256({
-        left: ambiguous.left.map(({ item }) => item.token),
-        right: ambiguous.right.map(({ item }) => item.token),
-      })}`,
+      item_id: `mmc_field_${digestCanonicalValue(
+        {
+          left: ambiguous.left.map(({ item }) => item.token),
+          right: ambiguous.right.map(({ item }) => item.token),
+        },
+        "Managed comparison",
+      )}`,
       status: "unknown",
       left: null,
       right: null,
