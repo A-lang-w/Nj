@@ -4,58 +4,68 @@ import { resolve } from "node:path";
 
 import {
   createEsmModuleProfileCollector,
-  fixedMcpStartupPhaseBudgetRecovery,
+  mcpStartupPhaseBudgetRecovery,
   measureMcpStartup,
   parseLinuxVmRssBytes,
   profileMcpModuleLoading,
 } from "../../../scripts/lib/mcp-startup-probe.mjs";
 import {
-  fixedMcpPhaseBudgetRecovery,
+  DEFAULT_MCP_STARTUP_BUDGETS,
+  mcpPhaseBudgetRecovery,
+  resolveMcpStartupBudgets,
+  type McpPhaseBudget,
+} from "../../../src/config/mcpStartupBudgets.js";
+import {
   mcpDoctorDeadlineRecovery,
   MCP_STARTUP_POLICY,
+  resolveMcpStartupProbePolicy,
 } from "../../../src/mcpStartupPolicy.js";
 
 describe("MCP startup policy", () => {
-  it("names fixed phase budgets without turning Codex's 30s into a REA knob", () => {
-    const initialize = fixedMcpPhaseBudgetRecovery(
-      "MCP initialize phase budget",
-      MCP_STARTUP_POLICY.initializeBudgetMs,
-      "ms",
-    );
+  it("names phase budget settings without turning Codex's 30s into a REA knob", () => {
+    const budgets = resolveMcpStartupBudgets({});
+    expect(budgets).toEqual(DEFAULT_MCP_STARTUP_BUDGETS);
+    expect(resolveMcpStartupProbePolicy({})).toEqual(budgets);
+    expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
+    expect(MCP_STARTUP_POLICY.initializeBudgetMs).toBe(15_000);
+    expect(MCP_STARTUP_POLICY.toolsListBudgetMs).toBe(5_000);
+    expect(MCP_STARTUP_POLICY.firstCatalogBudgetMs).toBe(20_000);
+    expect(MCP_STARTUP_POLICY.doctorDeadlineMs).toBe(30_000);
+    const initialize = mcpPhaseBudgetRecovery(budgets.initialize);
     expect(initialize).toBe(
-      "REA's fixed MCP initialize phase budget is 15000 ms and this release has no runtime override.",
+      "The effective REA_MCP_INITIALIZE_BUDGET_MS value for the MCP initialize phase budget is 15000 ms (source default; default 15000 ms, floor 1 ms, maximum 2147483647 ms). Set REA_MCP_INITIALIZE_BUDGET_MS in the environment that starts REA to a positive decimal integer from 1 to 2147483647, then restart REA.",
     );
-    expect(initialize).toBe(
-      fixedMcpStartupPhaseBudgetRecovery(
-        "MCP initialize phase budget",
-        MCP_STARTUP_POLICY.initializeBudgetMs,
-        "ms",
-      ),
+    expect(initialize).toBe(mcpStartupPhaseBudgetRecovery(budgets.initialize));
+    expect(initialize).not.toContain("no runtime override");
+    expect(mcpStartupPhaseBudgetRecovery(budgets.toolsList)).toContain(
+      "The effective REA_MCP_TOOLS_LIST_BUDGET_MS value for the MCP tools/list phase budget is 5000 ms (source default; default 5000 ms, floor 1 ms, maximum 2147483647 ms).",
     );
-    expect(
-      fixedMcpStartupPhaseBudgetRecovery(
-        "MCP tools/list phase budget",
-        MCP_STARTUP_POLICY.toolsListBudgetMs,
-        "ms",
-      ),
-    ).toContain("5000 ms");
-    expect(
-      fixedMcpStartupPhaseBudgetRecovery(
-        "MCP first-catalog phase budget",
-        MCP_STARTUP_POLICY.firstCatalogBudgetMs,
-        "ms",
-      ),
-    ).toContain("20000 ms");
-    const doctor = mcpDoctorDeadlineRecovery(
-      MCP_STARTUP_POLICY.doctorDeadlineMs,
+    expect(mcpStartupPhaseBudgetRecovery(budgets.firstCatalog)).toContain(
+      "REA_MCP_FIRST_CATALOG_BUDGET_MS",
     );
-    expect(doctor).toContain("30000 ms");
-    expect(doctor).toContain("no runtime override");
+    expect(mcpStartupPhaseBudgetRecovery(budgets.firstCatalog)).toContain(
+      "20000 ms (source default",
+    );
+    const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
+    expect(doctor).toContain(
+      "The effective REA_MCP_DOCTOR_DEADLINE_MS value for the MCP doctor startup deadline is 30000 ms (source default; default 30000 ms, floor 1 ms, maximum 2147483647 ms).",
+    );
+    expect(doctor).toContain(
+      "Set REA_MCP_DOCTOR_DEADLINE_MS in the environment that starts REA",
+    );
+    expect(doctor).not.toContain("no runtime override");
     expect(doctor).toContain(
       "Codex startup_timeout_sec of 30 seconds is client guidance",
     );
     expect(doctor).toContain("does not enforce");
     expect(doctor).not.toContain("REA_MCP_STARTUP");
+    const selected = resolveMcpStartupProbePolicy({
+      REA_MCP_INITIALIZE_BUDGET_MS: "16000",
+    });
+    expect(selected.initialize.milliseconds).toBe(16_000);
+    expect(selected.initialize.source).toBe("setting");
+    expect(selected.toolsList).toEqual(budgets.toolsList);
+    expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
   });
 
   it("parses Linux resident memory without accepting other fields", () => {
@@ -87,6 +97,15 @@ describe("MCP startup policy", () => {
 
 const probeChild = resolve("tests/fixtures/mcpStartupProbeChild.mjs");
 
+const selectedBudget = (
+  budget: McpPhaseBudget,
+  milliseconds: number,
+): McpPhaseBudget => ({
+  ...budget,
+  milliseconds,
+  source: "setting",
+});
+
 const probePolicy = (
   overrides: Partial<{
     initializeBudgetMs: number;
@@ -94,13 +113,27 @@ const probePolicy = (
     firstCatalogBudgetMs: number;
     doctorDeadlineMs: number;
   }> = {},
-) => ({
-  initializeBudgetMs: 30_000,
-  toolsListBudgetMs: 30_000,
-  firstCatalogBudgetMs: 30_000,
-  doctorDeadlineMs: 30_000,
-  ...overrides,
-});
+) => {
+  const generous = 30_000;
+  return {
+    initialize: selectedBudget(
+      DEFAULT_MCP_STARTUP_BUDGETS.initialize,
+      overrides.initializeBudgetMs ?? generous,
+    ),
+    toolsList: selectedBudget(
+      DEFAULT_MCP_STARTUP_BUDGETS.toolsList,
+      overrides.toolsListBudgetMs ?? generous,
+    ),
+    firstCatalog: selectedBudget(
+      DEFAULT_MCP_STARTUP_BUDGETS.firstCatalog,
+      overrides.firstCatalogBudgetMs ?? generous,
+    ),
+    doctor: selectedBudget(
+      DEFAULT_MCP_STARTUP_BUDGETS.doctor,
+      overrides.doctorDeadlineMs ?? generous,
+    ),
+  };
+};
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
@@ -116,7 +149,7 @@ describe("packaged MCP startup probe failures", () => {
         policy: probePolicy({ initializeBudgetMs: budgetMs }),
       }),
     ).rejects.toThrow(
-      `MCP initialize phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      `The effective REA_MCP_INITIALIZE_BUDGET_MS value for the MCP initialize phase budget is ${String(budgetMs)} ms (source setting; default 15000 ms, floor 1 ms, maximum 2147483647 ms).`,
     );
   });
 
@@ -133,7 +166,7 @@ describe("packaged MCP startup probe failures", () => {
         policy: probePolicy({ toolsListBudgetMs: budgetMs }),
       }),
     ).rejects.toThrow(
-      `MCP tools/list phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      `The effective REA_MCP_TOOLS_LIST_BUDGET_MS value for the MCP tools/list phase budget is ${String(budgetMs)} ms (source setting; default 5000 ms, floor 1 ms, maximum 2147483647 ms).`,
     );
   });
 
@@ -147,7 +180,7 @@ describe("packaged MCP startup probe failures", () => {
         policy: probePolicy({ firstCatalogBudgetMs: budgetMs }),
       }),
     ).rejects.toThrow(
-      `MCP first-catalog phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      `The effective REA_MCP_FIRST_CATALOG_BUDGET_MS value for the MCP first-catalog phase budget is ${String(budgetMs)} ms (source setting; default 20000 ms, floor 1 ms, maximum 2147483647 ms).`,
     );
   });
 
@@ -180,7 +213,7 @@ describe("packaged MCP startup probe failures", () => {
         packageName: "rea-agents",
       }),
     ).rejects.toThrow(
-      `MCP doctor startup deadline is ${String(budgetMs)} ms and this release has no runtime override.`,
+      `The effective REA_MCP_DOCTOR_DEADLINE_MS value for the MCP doctor startup deadline is ${String(budgetMs)} ms (source setting; default 30000 ms, floor 1 ms, maximum 2147483647 ms).`,
     );
   });
 
@@ -198,7 +231,7 @@ describe("packaged MCP startup probe failures", () => {
         packageName: "rea-agents",
       }),
     ).rejects.toThrow(
-      `MCP tools/list phase budget is ${String(budgetMs)} ms and this release has no runtime override.`,
+      `The effective REA_MCP_TOOLS_LIST_BUDGET_MS value for the MCP tools/list phase budget is ${String(budgetMs)} ms (source setting; default 5000 ms, floor 1 ms, maximum 2147483647 ms).`,
     );
   });
 
