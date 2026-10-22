@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -38,7 +38,7 @@ export const peCertificateTypeName = (type: number): PeCertificateType => {
 
 /** Complete bounded inspection of one PE Authenticode certificate table. */
 export const inspectPeCertificatesInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a PE image",
   ),
   max_file_bytes: z
@@ -89,6 +89,10 @@ const signerInfoSchema = z.strictObject({
   signature_algorithm_name: z.string().nullable(),
   issuer: distinguishedNameSchema.nullable(),
   serial_hex: z
+    .string()
+    .regex(/^[0-9a-f]*$/)
+    .nullable(),
+  subject_key_identifier_hex: z
     .string()
     .regex(/^[0-9a-f]*$/)
     .nullable(),

@@ -103,7 +103,8 @@ question concerns the Authenticode certificate table, WIN_CERTIFICATE types, or
 embedded PKCS#7 signer and X.509 identity fields. No `open_binary`, Windows SDK,
 or target execution is required. The CLI equivalent is
 `inspect-pe-certificates PATH`. Preserve artifact SHA-256, table file ranges,
-payload hashes, and original validity-time spellings. A missing
+payload hashes, original validity-time spellings, and
+`subject_key_identifier_hex` when the signer uses that form. A missing
 `IMAGE_DIRECTORY_ENTRY_SECURITY` directory is observed absence of that table,
 not proof the image is unsigned in every catalog or overlay sense. Signatures,
 chains, timestamps, and Authenticode digest coverage remain unobserved. See

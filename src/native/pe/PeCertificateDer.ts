@@ -229,6 +229,25 @@ const integerHex = (content: Buffer, budget: DecodedNameBudget): string => {
   return content.subarray(start).toString("hex");
 };
 
+// Key identifiers are octet strings, not integers: leading zero bytes stay.
+// The hex form is evidence text, so it shares the decoded-text budget.
+const octetHex = (content: Buffer, budget: DecodedNameBudget): string => {
+  chargeDecodedName(budget, content.length * 2);
+  return content.toString("hex");
+};
+
+const requireBitStringContent = (content: Buffer, label: string): void => {
+  const unused = content[0];
+  if (unused === undefined || unused > 7)
+    return fail(`${label} BIT STRING is truncated or has invalid unused bits.`);
+};
+
+const requireBitString = (node: DerNode | undefined, label: string): void => {
+  if (node === undefined || node.tag !== 0x03)
+    return fail(`${label} is not a BIT STRING.`);
+  requireBitStringContent(node.content, label);
+};
+
 const sequence = (node: DerNode, label: string): readonly DerNode[] => {
   if (node.tag !== 0x30) return fail(`Expected SEQUENCE for ${label}.`);
   return node.children;
@@ -304,6 +323,56 @@ export interface ParsedCertificate {
   readonly signature_algorithm_oid: string;
 }
 
+const requireSubjectPublicKeyInfo = (node: DerNode): void => {
+  const children = sequence(node, "SubjectPublicKeyInfo");
+  const algorithm = children[0];
+  const key = children[1];
+  if (algorithm === undefined || key === undefined || children.length !== 2)
+    return fail(
+      "SubjectPublicKeyInfo is missing algorithm or subjectPublicKey.",
+    );
+  algorithmOid(algorithm);
+  requireBitString(key, "SubjectPublicKeyInfo subjectPublicKey");
+};
+
+// issuerUniqueID [1], subjectUniqueID [2], and extensions [3] are optional
+// and ordered. Anything else is not a TBSCertificate field.
+const finishTbsCertificate = (
+  children: readonly DerNode[],
+  start: number,
+): void => {
+  let cursor = start;
+  const issuerUniqueId = children[cursor];
+  if (issuerUniqueId?.tag === 0x81) {
+    requireBitStringContent(
+      issuerUniqueId.content,
+      "TBSCertificate issuerUniqueID",
+    );
+    cursor += 1;
+  }
+  const subjectUniqueId = children[cursor];
+  if (subjectUniqueId?.tag === 0x82) {
+    requireBitStringContent(
+      subjectUniqueId.content,
+      "TBSCertificate subjectUniqueID",
+    );
+    cursor += 1;
+  }
+  const extensions = children[cursor];
+  if (extensions?.tag === 0xa3) {
+    const body = extensions.children[0];
+    if (
+      extensions.children.length !== 1 ||
+      body === undefined ||
+      body.tag !== 0x30
+    )
+      return fail("TBSCertificate extensions are not a SEQUENCE.");
+    cursor += 1;
+  }
+  if (cursor !== children.length)
+    return fail("TBSCertificate has unexpected trailing fields.");
+};
+
 /** Decode one X.509 Certificate SEQUENCE at a known file-relative DER node. */
 export const parseCertificate = (
   node: DerNode,
@@ -312,29 +381,61 @@ export const parseCertificate = (
   const children = sequence(node, "Certificate");
   const tbs = children[0];
   const signatureAlgorithm = children[1];
-  if (tbs === undefined || signatureAlgorithm === undefined)
-    return fail("Certificate is missing TBSCertificate or signatureAlgorithm.");
+  const signatureValue = children[2];
+  // Not verifying the signature does not make the required BIT STRING optional.
+  if (
+    tbs === undefined ||
+    signatureAlgorithm === undefined ||
+    signatureValue === undefined
+  )
+    return fail(
+      "Certificate is missing TBSCertificate, signatureAlgorithm, or signatureValue.",
+    );
+  if (children.length !== 3)
+    return fail("Certificate has unexpected trailing fields.");
+  requireBitString(signatureValue, "Certificate signatureValue");
   const tbsChildren = sequence(tbs, "TBSCertificate");
   let index = 0;
-  if (tbsChildren[0]?.tag === 0xa0) index = 1;
+  const version = tbsChildren[0];
+  if (version?.tag === 0xa0) {
+    const versionNumber = version.children[0];
+    if (
+      version.children.length !== 1 ||
+      versionNumber === undefined ||
+      versionNumber.tag !== 0x02
+    )
+      return fail("TBSCertificate version is not an INTEGER.");
+    index = 1;
+  }
   const serial = tbsChildren[index];
+  const tbsSignature = tbsChildren[index + 1];
   const issuer = tbsChildren[index + 2];
   const validity = tbsChildren[index + 3];
   const subject = tbsChildren[index + 4];
+  const subjectPublicKeyInfo = tbsChildren[index + 5];
   if (
     serial === undefined ||
     serial.tag !== 0x02 ||
+    tbsSignature === undefined ||
     issuer === undefined ||
     validity === undefined ||
-    subject === undefined
+    subject === undefined ||
+    subjectPublicKeyInfo === undefined
   )
     return fail(
-      "TBSCertificate is missing serial, issuer, validity, or subject.",
+      "TBSCertificate is missing serial, signature, issuer, validity, subject, or subjectPublicKeyInfo.",
     );
+  algorithmOid(tbsSignature);
+  requireSubjectPublicKeyInfo(subjectPublicKeyInfo);
+  finishTbsCertificate(tbsChildren, index + 6);
   const validityChildren = sequence(validity, "Validity");
   const notBefore = validityChildren[0];
   const notAfter = validityChildren[1];
-  if (notBefore === undefined || notAfter === undefined)
+  if (
+    validityChildren.length !== 2 ||
+    notBefore === undefined ||
+    notAfter === undefined
+  )
     return fail("Validity is missing notBefore or notAfter.");
   return {
     start: node.start,
@@ -353,6 +454,7 @@ export interface ParsedSigner {
   readonly signature_algorithm_oid: string;
   readonly issuer: ReturnType<typeof decodeName> | null;
   readonly serial_hex: string | null;
+  readonly subject_key_identifier_hex: string | null;
   readonly authenticated_attributes: boolean;
 }
 
@@ -362,6 +464,7 @@ const signerIdentifier = (
 ): {
   readonly issuer: ReturnType<typeof decodeName> | null;
   readonly serial_hex: string | null;
+  readonly subject_key_identifier_hex: string | null;
 } => {
   if (sid.tag === 0x30) {
     const name = sid.children[0];
@@ -377,12 +480,17 @@ const signerIdentifier = (
     return {
       issuer: decodeName(name, names),
       serial_hex: integerHex(serial.content, names),
+      subject_key_identifier_hex: null,
     };
   }
   if (sid.tag === 0x80) {
     if (sid.content.length === 0)
       return fail("SignerInfo subjectKeyIdentifier is empty.");
-    return { issuer: null, serial_hex: null };
+    return {
+      issuer: null,
+      serial_hex: null,
+      subject_key_identifier_hex: octetHex(sid.content, names),
+    };
   }
   return fail(
     "SignerInfo sid is not issuerAndSerialNumber or subjectKeyIdentifier.",
@@ -398,7 +506,10 @@ const parseSigner = (node: DerNode, names: DecodedNameBudget): ParsedSigner => {
     return fail("SignerInfo is missing version.");
   if (sid === undefined || digestAlg === undefined)
     return fail("SignerInfo is missing sid or digestAlgorithm.");
-  const { issuer, serial_hex } = signerIdentifier(sid, names);
+  const { issuer, serial_hex, subject_key_identifier_hex } = signerIdentifier(
+    sid,
+    names,
+  );
   let cursor = 3;
   const authenticated = children[cursor]?.tag === 0xa0;
   if (authenticated) cursor += 1;
@@ -419,6 +530,7 @@ const parseSigner = (node: DerNode, names: DecodedNameBudget): ParsedSigner => {
     signature_algorithm_oid: algorithmOid(signatureAlg),
     issuer,
     serial_hex,
+    subject_key_identifier_hex,
     authenticated_attributes: authenticated,
   };
 };

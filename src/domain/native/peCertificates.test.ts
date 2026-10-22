@@ -13,6 +13,20 @@ it("maps WIN_CERTIFICATE type numbers without inventing unknown names", () => {
   expect(peCertificateTypeName(99)).toBe("unknown");
 });
 
+it("rejects a relative path in the advertised input schema", () => {
+  const relative = inspectPeCertificatesInputSchema.safeParse({
+    path: "app.exe",
+  });
+  expect(relative.success).toBe(false);
+  if (relative.success) throw new Error("relative path was accepted");
+  expect(relative.error.issues[0]?.message).toMatch(/absolute/u);
+  expect(
+    inspectPeCertificatesInputSchema.safeParse({
+      path: "/artifacts/app.exe",
+    }).success,
+  ).toBe(true);
+});
+
 it("rejects extra caller arguments and admits an absent certificate table", () => {
   expect(
     inspectPeCertificatesInputSchema.safeParse({

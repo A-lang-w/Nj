@@ -153,6 +153,7 @@ export const parsePeCertificates = (
                     attributes: [...signer.issuer.attributes],
                   },
             serial_hex: signer.serial_hex,
+            subject_key_identifier_hex: signer.subject_key_identifier_hex,
             authenticated_attributes: signer.authenticated_attributes,
           })),
         };

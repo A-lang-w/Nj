@@ -222,7 +222,8 @@ explicit path or endpoint and do not need it.
 - PE Authenticode certificate table: `inspect_pe_certificates` with the explicit
   local PE32/PE32+ file. This built-in target-free inspection requires no
   Windows SDK. Preserve WIN_CERTIFICATE ranges, types, payload SHA-256, and
-  PKCS#7 signer/X.509 identity fields. A missing security directory is observed
+  PKCS#7 signer/X.509 identity fields, including `subject_key_identifier_hex`
+  when the signer uses that form. A missing security directory is observed
   absence of that table, not proof the image is unsigned in every catalog sense.
   Signatures are not verified. See the
   [PE certificate guide](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).

@@ -77,6 +77,10 @@ export const pkcs7SignedDataFixture = (
     seq(utc("250101000000Z"), utc("260101000000Z")),
     subject,
     seq(algorithm(RSA), bitString(Buffer.from("pubkey"))),
+    context(
+      3,
+      seq(seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa])))),
+    ),
   );
   const certificate = seq(
     tbs,

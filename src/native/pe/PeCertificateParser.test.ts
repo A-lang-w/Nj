@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { inspectPeCertificatesInputSchema } from "../../domain/native/peCertificates.js";
+import {
+  inspectPeCertificatesInputSchema,
+  peCertificatesSchema,
+} from "../../domain/native/peCertificates.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   peCertificateFixture,
@@ -55,6 +58,11 @@ it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
     expect(certificate?.serial_hex).toBe("11223344");
     expect(certificate?.subject.text).toContain("commonName=REA Fixture");
     expect(certificate?.not_before).toBe("250101000000Z");
+    expect(report.entries[0]?.pkcs7?.signers[0]).toMatchObject({
+      serial_hex: "11223344",
+      subject_key_identifier_hex: null,
+    });
+    expect(peCertificatesSchema.safeParse(report).success).toBe(true);
     expect(report.coverage).toEqual({
       status: "complete",
       examined_entries: 1,
@@ -197,6 +205,73 @@ it("fails signedData whose signerInfos set is empty", () => {
   );
 });
 
+it("keeps subjectKeyIdentifier bytes on the signer", () => {
+  const ski = Buffer.from([0x00, 0xab, 0xcd]);
+  const signer = derSeq(
+    derInt(3),
+    der(0x80, ski),
+    SHA256_ALG,
+    SHA256_ALG,
+    der(0x04, Buffer.from([1])),
+  );
+  const payload = contentInfo(
+    derSeq(derInt(1), derSet(SHA256_ALG), derSeq(DATA_OID), derSet(signer)),
+  );
+  const report = parse(peCertificateFixture(false, payload));
+  expect(report.entries[0]?.pkcs7?.signers[0]).toMatchObject({
+    issuer: null,
+    serial_hex: null,
+    subject_key_identifier_hex: "00abcd",
+  });
+  expect(peCertificatesSchema.safeParse(report).success).toBe(true);
+  const empty = derSeq(
+    derInt(3),
+    der(0x80, Buffer.alloc(0)),
+    SHA256_ALG,
+    SHA256_ALG,
+    der(0x04, Buffer.from([1])),
+  );
+  expect(() =>
+    parse(
+      peCertificateFixture(
+        false,
+        contentInfo(
+          derSeq(
+            derInt(1),
+            derSet(SHA256_ALG),
+            derSeq(DATA_OID),
+            derSet(empty),
+          ),
+        ),
+      ),
+    ),
+  ).toThrow(/subjectKeyIdentifier is empty/u);
+  const wide = der(0x80, Buffer.alloc(MAX_DECODED_NAME_BYTES / 2 + 1, 0x11));
+  expect(() =>
+    parse(
+      peCertificateFixture(
+        false,
+        contentInfo(
+          derSeq(
+            derInt(1),
+            derSet(SHA256_ALG),
+            derSeq(DATA_OID),
+            derSet(
+              derSeq(
+                derInt(3),
+                wide,
+                SHA256_ALG,
+                SHA256_ALG,
+                der(0x04, Buffer.from([1])),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  ).toThrow(/decoded budget/u);
+});
+
 it("fails a truncated issuerAndSerialNumber instead of dropping the signer", () => {
   const signer = derSeq(
     derInt(1),
@@ -253,21 +328,77 @@ it("rejects an oversized OBJECT IDENTIFIER before growing an arc", () => {
 
 const cn = Buffer.from([0x06, 0x03, 0x55, 0x04, 0x03]);
 const directoryName = (value: Buffer) => derSeq(derSet(derSeq(cn, value)));
+const spki = derSeq(SHA256_ALG, der(0x03, Buffer.from([0])));
+const validity = derSeq(
+  der(0x17, Buffer.from("250101000000Z")),
+  der(0x17, Buffer.from("260101000000Z")),
+);
 const namedCertificate = (issuer: Buffer, subject: Buffer) =>
   derSeq(
+    derSeq(derInt(1), SHA256_ALG, issuer, validity, subject, spki),
+    SHA256_ALG,
+    der(0x03, Buffer.from([0])),
+  );
+
+it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () => {
+  const issuer = directoryName(der(0x0c, Buffer.from("A")));
+  const subject = directoryName(der(0x0c, Buffer.from("B")));
+  const tbs = (withSpki: boolean) =>
     derSeq(
       derInt(1),
       SHA256_ALG,
       issuer,
-      derSeq(
-        der(0x17, Buffer.from("250101000000Z")),
-        der(0x17, Buffer.from("260101000000Z")),
-      ),
+      validity,
       subject,
+      ...(withSpki ? [spki] : []),
+    );
+  expect(() =>
+    parseCertificate(
+      readDer(derSeq(tbs(false), SHA256_ALG, der(0x03, Buffer.from([0, 1])))),
     ),
+  ).toThrow(/subjectPublicKeyInfo/u);
+  expect(() =>
+    parseCertificate(readDer(derSeq(tbs(true), SHA256_ALG))),
+  ).toThrow(/signatureValue/u);
+  const signer = derSeq(
+    derInt(1),
+    derSeq(derSeq(), derInt(1)),
     SHA256_ALG,
-    der(0x03, Buffer.from([0])),
+    SHA256_ALG,
+    der(0x04, Buffer.from([1])),
   );
+  const payload = contentInfo(
+    derSeq(
+      derInt(1),
+      derSet(SHA256_ALG),
+      derSeq(DATA_OID),
+      der(0xa0, derSeq(tbs(false), SHA256_ALG)),
+      derSet(signer),
+    ),
+  );
+  expect(() => parse(peCertificateFixture(false, payload))).toThrow(
+    /signatureValue/u,
+  );
+  expect(() =>
+    parseCertificate(
+      readDer(
+        derSeq(
+          derSeq(
+            derInt(1),
+            SHA256_ALG,
+            issuer,
+            validity,
+            subject,
+            spki,
+            der(0x04, Buffer.from([1])),
+          ),
+          SHA256_ALG,
+          der(0x03, Buffer.from([0])),
+        ),
+      ),
+    ),
+  ).toThrow(/trailing fields/u);
+});
 
 it("decodes BMPString names once and shares the decoded-byte budget", () => {
   const bmp = (text: string) => {
@@ -321,16 +452,7 @@ it("decodes UniversalString names as UTF-32BE", () => {
   };
   const cn = Buffer.from([0x06, 0x03, 0x55, 0x04, 0x03]);
   const name = derSeq(derSet(derSeq(cn, universal("REA"))));
-  const tbs = derSeq(
-    derInt(1),
-    SHA256_ALG,
-    name,
-    derSeq(
-      der(0x17, Buffer.from("250101000000Z")),
-      der(0x17, Buffer.from("260101000000Z")),
-    ),
-    name,
-  );
+  const tbs = derSeq(derInt(1), SHA256_ALG, name, validity, name, spki);
   const certificate = readDer(
     derSeq(tbs, SHA256_ALG, der(0x03, Buffer.from([0]))),
   );
@@ -351,9 +473,13 @@ it("decodes UniversalString names as UTF-32BE", () => {
         odd,
         derSeq(der(0x17, Buffer.from("x")), der(0x17, Buffer.from("x"))),
         odd,
+        spki,
       ),
       SHA256_ALG,
+      der(0x03, Buffer.from([0])),
     ),
   );
-  expect(() => parseCertificate(broken)).toThrow(PeCertificateDerFailure);
+  expect(() => parseCertificate(broken)).toThrow(
+    /UniversalString length is not a multiple of 4/u,
+  );
 });

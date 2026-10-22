@@ -11,7 +11,8 @@ rea inspect-pe-certificates /absolute/path/to/application.exe --json
 ```
 
 The CLI resolves relative paths against the caller's working directory. MCP
-requires an absolute filesystem path and preserves that exact selection:
+and the advertised input schema require an absolute filesystem path and
+preserve that exact selection:
 
 ```json
 {
@@ -29,7 +30,9 @@ revision, type, and the payload SHA-256.
 
 For `WIN_CERTIFICATE` type 2 (PKCS#7 signedData) `pkcs7` contains digest
 algorithm OIDs, embedded X.509 serial/issuer/subject/validity fields, and
-signer identifier facts. Other certificate types keep `pkcs7` null.
+signer identifier facts. A signer identified by subject key identifier reports
+that value as `subject_key_identifier_hex`. Other certificate types keep
+`pkcs7` null.
 
 A missing table is observed absence of that directory. It is not proof the
 image is unsigned in every catalog or overlay sense.
@@ -42,8 +45,10 @@ truncated certificate entries, and PKCS#7 that is not structurally signedData
 fail without partial success. A security directory that ends in fewer than
 eight header bytes, including zeros, is a truncated `WIN_CERTIFICATE` and
 fails the same way. SignedData must contain at least one `SignerInfo`, and
-each `SignerInfo` must carry a non-empty signature value. Decoded certificate
-name text shares a 64 KiB budget per PKCS#7 payload.
+each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
+certificate must include `subjectPublicKeyInfo` and `signatureValue`. Decoded
+certificate name text, serials, validity spellings, and subject key identifiers
+share a 64 KiB budget per PKCS#7 payload.
 
 This workflow does not verify signatures, certificate chains, timestamps, or
 Authenticode digest coverage of image bytes.
