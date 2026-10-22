@@ -528,13 +528,14 @@ class TimelineCapture {
     // The failure's resource type decides; a request that omitted its type is
     // not proof of a document.
     const failureType = cdpStringValue(params.type);
+    if (failureType !== undefined && failureType !== "Document") return;
+    const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
+    if (!eventTime.keep) return;
+    // Only a failure inside the window can leave the timeline incomplete.
     if (failureType === undefined && !declaredDocument) {
       this.completeness.exclude("timeline", "invalid_protocol_value");
       return;
     }
-    if ((failureType ?? "Document") !== "Document") return;
-    const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
-    if (!eventTime.keep) return;
     this.#add({
       type: "load_failed",
       params,
