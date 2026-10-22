@@ -17,19 +17,22 @@ import {
   checkDocumentRead,
   checkItemRead,
   checkListRead,
-  checkedLines,
   collectionTarget,
   entityTarget,
   isAbsence,
   itemTarget,
-  servedLine,
   succeeded,
   withBodies,
+  showsPlacement,
   SimulatedState,
   type CheckOutcome,
+} from "./environmentStateWriteChecks.js";
+import {
+  checkedLines,
+  servedLine,
   type CheckedLines,
   type ServedLine,
-} from "./environmentStateWriteChecks.js";
+} from "./environmentStateCheckedLines.js";
 import {
   exercisedBy,
   interference,
@@ -336,10 +339,7 @@ export class EnvironmentStateWriteSimulation {
       };
       return item
         ? checkItemRead(this.#state, view, record, check)
-        : checkListRead(this.#state, view, record, {
-            ...check,
-            all: listsAll(view, base),
-          });
+        : checkListRead(this.#state, view, record, { ...check, line: line! });
     });
   }
 
@@ -374,7 +374,7 @@ export class EnvironmentStateWriteSimulation {
       outcome.pass ||
       (view.shape === "list" && this.#retryInsert(view, record, exercised));
     const unseen = pass
-      ? this.#confirm(view, record, keys, exercised)
+      ? this.#confirm(view, record, outcome, exercised)
       : undefined;
     if (!pass) {
       const interfered = new Set([...exercised].filter(interferes));
@@ -414,17 +414,18 @@ export class EnvironmentStateWriteSimulation {
   #confirm(
     view: StateView,
     record: StateRecordFacts,
-    keys: readonly string[],
+    outcome: CheckOutcome,
     exercised: ReadonlySet<string>,
   ): Map<string, Set<string>> {
     const shown = shownWrites(this.#touched, this.#effects, {
-      keys,
+      keys: [...outcome.targets, ...outcome.unheld],
       exercised,
       fields: shownFields(view, this.#input.volatileOf),
     });
     for (const name of shown.confirmed) {
       this.#drafts.get(name)!.confirmed.push(record.ordinal);
-      if (view.shape === "list") this.#placed.add(name);
+      if (showsPlacement(view, outcome, this.#inserted, name))
+        this.#placed.add(name);
     }
     return shown.unseen;
   }
