@@ -91,7 +91,18 @@ export class HistoricalCaptureDecoder {
     resources = new ArtifactResourceScope(),
   ) {
     this.#resources = resources;
-    this.#heap = resolveCaptureDecoderHeap(environment);
+    // Adapters that launch the Node decoder already carry its parsed heap.
+    // Reuse that fact. This environment is only the fallback when none do,
+    // or when those facts disagree.
+    const shared = sharedCaptureDecoderHeap(adapters);
+    this.#heap = shared ?? resolveCaptureDecoderHeap(environment);
+  }
+
+  /** Heap the selected adapter launches, or the shared fallback when it has none. */
+  #reportedHeap(
+    adapter: HistoricalCaptureFormatAdapter | undefined,
+  ): CaptureDecoderHeap {
+    return adapter?.heap ?? this.#heap;
   }
 
   /** Retry retained readers and private roots at service shutdown. */
@@ -133,10 +144,12 @@ export class HistoricalCaptureDecoder {
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
     let encodedReplyBytes = 0;
+    let reportedHeap = this.#heap;
     try {
       const adapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
       );
+      reportedHeap = this.#reportedHeap(adapter);
       if (adapter === undefined)
         throw new AnalysisCapabilityUnavailableError(
           input.format,
@@ -197,7 +210,7 @@ export class HistoricalCaptureDecoder {
           input,
           CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
           undefined,
-          this.#heap,
+          reportedHeap,
         );
       let reply: z.output<typeof replySchema>;
       try {
@@ -264,7 +277,7 @@ export class HistoricalCaptureDecoder {
             input,
             reply.message,
             undefined,
-            this.#heap,
+            reportedHeap,
           );
         if (reply.reason === "decoder")
           throw new ProviderAdapterError(input.format, OPERATION, {
@@ -305,7 +318,7 @@ export class HistoricalCaptureDecoder {
           "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
           "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
           "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          `Complete evidence is bounded by a ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, a ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, and a ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap. Those have no runtime override. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(this.#heap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
+          `Complete evidence is bounded by a ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, a ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, and a ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap. Those have no runtime override. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
         ],
       };
       if (input.format === "qlog") {
@@ -370,7 +383,7 @@ export class HistoricalCaptureDecoder {
                     cause,
                     phase,
                     options,
-                    this.#heap,
+                    reportedHeap,
                   );
           if (safePartialSource) error.retainPartialObservation(result.value);
           throw error;
@@ -382,7 +395,7 @@ export class HistoricalCaptureDecoder {
         cause,
         phase,
         options,
-        this.#heap,
+        reportedHeap,
       );
       result = err(
         redactExplicitFailure(
@@ -446,6 +459,25 @@ export class HistoricalCaptureDecoder {
     return result;
   }
 }
+
+/** One shared parsed heap, when every Node adapter agrees. Disagreement stays unresolved here. */
+const sharedCaptureDecoderHeap = (
+  adapters: readonly HistoricalCaptureFormatAdapter[],
+): CaptureDecoderHeap | undefined => {
+  const heaps = adapters.flatMap((adapter) =>
+    adapter.heap === undefined ? [] : [adapter.heap],
+  );
+  const first = heaps[0];
+  if (first === undefined) return undefined;
+  return heaps.every(
+    (heap) =>
+      heap === first ||
+      (heap.oldGenerationMiB === first.oldGenerationMiB &&
+        heap.source === first.source),
+  )
+    ? first
+    : undefined;
+};
 
 /** The Node capture decoder runs on this executable; only Node.js enforces its V8 heap flags. */
 const nodeMemoryLimitation = (heap: CaptureDecoderHeap): string => {

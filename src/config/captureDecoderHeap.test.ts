@@ -1,13 +1,20 @@
-import { expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { expect, it, vi } from "vitest";
 
 import { NodeCaptureAdapter } from "../browser/history/NodeCaptureAdapter.js";
 import { HistoricalCaptureDecoder } from "../browser/history/HistoricalCaptureDecoder.js";
+import { decodeHarCapture } from "../browser/history/HarCapture.js";
 import { historicalCaptureFailure } from "../browser/history/CaptureFailures.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
+import { createCli } from "../cli.js";
+import { historicalHar } from "../../tests/fixtures/historicalHar.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
@@ -104,6 +111,93 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
         old_generation_heap_source: "setting",
       },
     });
+});
+
+it("keeps a parsed heap instead of reading the adapter environment again", async () => {
+  const heap = configured(256);
+  const adapter = new NodeCaptureAdapter(
+    "har",
+    { REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "512" },
+    heap,
+  );
+  expect(adapter.heap).toBe(heap);
+  const command = await adapter.command("/owned/request.json");
+  expect(command.arguments).toContain("--max-old-space-size=256");
+  expect(command.arguments).not.toContain("--max-old-space-size=512");
+});
+
+it("reports the heap the selected adapter launches when decoder environment differs", async () => {
+  const launched = new NodeCaptureAdapter("har", {
+    REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
+  });
+  const other = new NodeCaptureAdapter("saz", {
+    REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "512",
+  });
+  const root = await mkdtemp(join(tmpdir(), "rea-capture-heap-report-"));
+  const capturePath = join(root, "input.har");
+  const text = JSON.stringify(historicalHar());
+  await writeFile(capturePath, text);
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: capturePath,
+    format: "har",
+  });
+  const decoder = new HistoricalCaptureDecoder([launched, other], {});
+  try {
+    vi.spyOn(launched, "command").mockImplementation(async (requestPath) => {
+      const runtimePath = join(requestPath, "..");
+      await writeFile(
+        join(runtimePath, "reply.json"),
+        JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
+      );
+      return {
+        command: process.execPath,
+        arguments: ["-e", "process.exit(0)"],
+      };
+    });
+    const reported = await decoder.inspect(input);
+    if (!reported.ok)
+      throw new Error(projectAnalysisError(reported.error).message);
+    const limitations = reported.value.limitations.join("\n");
+    expect(limitations).toContain(
+      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 256 MiB (source setting",
+    );
+    expect(limitations).not.toContain("192 MiB (source default)");
+    expect(limitations).not.toContain("512 MiB (source setting)");
+
+    vi.spyOn(launched, "command").mockRejectedValue(heapExhaustion());
+    const exhausted = await decoder.inspect(input);
+    if (exhausted.ok) throw new Error("Heap exhaustion must fail inspection");
+    const projected = projectAnalysisError(exhausted.error);
+    expect(projected.message).toContain(
+      "exhausted its 256 MiB V8 old-generation heap (source setting)",
+    );
+    expect(projected.remediation.action).toContain(
+      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 256 MiB (source setting",
+    );
+    expect(projected.message).not.toContain("192 MiB");
+    expect(projected.remediation.action).not.toContain(
+      "512 MiB (source setting)",
+    );
+  } finally {
+    await decoder.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("registers CLI commands when the capture decoder heap setting is invalid", async () => {
+  const cli = createCli({
+    REA_LOG_LEVEL: "silent",
+    REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "7",
+  });
+  let text = "";
+  await cli.serve(["inspect-web-network-capture", "--help"], {
+    env: {},
+    exit: () => undefined,
+    stdout: (chunk: string) => {
+      text += chunk;
+    },
+  });
+  expect(text).toContain("inspect-web-network-capture");
 });
 
 it.each([

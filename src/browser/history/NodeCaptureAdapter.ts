@@ -23,15 +23,18 @@ export class NodeCaptureAdapter implements HistoricalCaptureFormatAdapter {
   /**
    * `environment` is the selected startup environment. Omitted means the
    * default heap, not ambient `process.env`. An invalid setting is refused.
+   * `heap` is an already parsed fact and is not read from `environment` again.
    */
   constructor(
     readonly format: "har" | "saz" | "qlog",
     environment?: Readonly<Record<string, string | undefined>>,
+    heap?: CaptureDecoderHeap,
   ) {
     this.heap =
-      environment === undefined
+      heap ??
+      (environment === undefined
         ? DEFAULT_CAPTURE_DECODER_HEAP
-        : resolveCaptureDecoderHeap(environment);
+        : resolveCaptureDecoderHeap(environment));
     this.identity =
       format === "har"
         ? HAR_CAPTURE_PROVIDER_IDENTITY
