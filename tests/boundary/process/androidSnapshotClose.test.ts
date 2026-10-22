@@ -4,9 +4,16 @@ import { sep } from "node:path";
 
 import { expect, test, vi } from "vitest";
 
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { captureJadxFailure } from "../../../src/android/JadxFailure.js";
+import type { AndroidRequest } from "../../../src/domain/android/androidAnalysis.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
@@ -24,6 +31,13 @@ const state = vi.hoisted(() => ({
   sourceOpens: 0,
   handles: [] as { handle: FileHandle; close: () => Promise<void> }[],
   sourceHandles: [] as { handle: FileHandle; close: () => Promise<void> }[],
+  latestSource: undefined as
+    | {
+        handle: FileHandle;
+        close: () => Promise<void>;
+        snapshot: boolean;
+      }
+    | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -39,19 +53,20 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         typeof args[1] === "number"
       ) {
         state.sourceOpens += 1;
-        // The first read open is the stable hash. The snapshot source follows.
-        if (state.failSource && state.sourceOpens === 2) {
-          const close = handle.close.bind(handle);
-          state.sourceHandles.push({ handle, close });
-          handle.close = async () => {
-            state.sourceCloseCalls += 1;
-            if (state.failSource)
-              throw Object.assign(new Error("controlled source close EIO"), {
-                code: "EIO",
-              });
-            return close();
-          };
-        }
+        const close = handle.close.bind(handle);
+        const record = { handle, close, snapshot: false };
+        state.latestSource = record;
+        state.sourceHandles.push(record);
+        handle.close = async () => {
+          state.sourceCloseCalls += 1;
+          // Only the descriptor still open when the snapshot destination is
+          // created belongs to the copy. Later admission reads must close.
+          if (record.snapshot && state.failSource)
+            throw Object.assign(new Error("controlled source close EIO"), {
+              code: "EIO",
+            });
+          return close();
+        };
       }
       if (
         state.enabled &&
@@ -59,6 +74,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         args[1] === "wx"
       ) {
         state.opens += 1;
+        if (
+          state.latestSource !== undefined &&
+          state.latestSource.handle.fd >= 0
+        )
+          state.latestSource.snapshot = true;
         if (state.change) await actual.appendFile(state.source, "changed");
         const close = handle.close.bind(handle);
         state.handles.push({ handle, close });
@@ -92,6 +112,7 @@ test("keeps the stable-file diagnosis when snapshot close succeeds", async () =>
   state.sourceOpens = 0;
   state.handles = [];
   state.sourceHandles = [];
+  state.latestSource = undefined;
   try {
     const result = await fixture.service.execute("inspect_android_package", {
       path: fixture.apk,
@@ -131,6 +152,7 @@ for (const mode of ["changed-close-failure", "completed-close-failure"] as const
     state.sourceOpens = 0;
     state.handles = [];
     state.sourceHandles = [];
+    state.latestSource = undefined;
     try {
       const result = await fixture.service.execute("inspect_android_package", {
         path: fixture.apk,
@@ -238,6 +260,7 @@ for (const mode of ["source-close-failure", "both-close-failure"] as const)
     state.sourceOpens = 0;
     state.handles = [];
     state.sourceHandles = [];
+    state.latestSource = undefined;
     try {
       const result = await fixture.service.execute("inspect_android_package", {
         path: fixture.apk,
@@ -285,10 +308,11 @@ for (const mode of ["source-close-failure", "both-close-failure"] as const)
           },
         },
       });
-      const source = state.sourceHandles[0];
+      const source = state.sourceHandles.find(
+        (candidate) => candidate.handle.fd >= 0,
+      );
       if (source === undefined) throw new Error("missing source descriptor");
       expect(source.handle.fd).toBeGreaterThanOrEqual(0);
-      expect(state.sourceOpens).toBe(2);
       expect(state.opens).toBe(1);
       const destination = state.handles[0];
       if (destination === undefined)
@@ -300,7 +324,6 @@ for (const mode of ["source-close-failure", "both-close-failure"] as const)
       if (workspace === undefined) throw new Error("missing snapshot workspace");
       await expect(stat(workspace)).resolves.toBeTruthy();
 
-      const sourceOpens = state.sourceOpens;
       const opens = state.opens;
       const blocked = await fixture.service.execute("inspect_android_package", {
         path: fixture.apk,
@@ -308,7 +331,6 @@ for (const mode of ["source-close-failure", "both-close-failure"] as const)
       expect(blocked.ok).toBe(false);
       if (blocked.ok) return;
       expect(blocked.error.cleanupIncomplete).toBe(true);
-      expect(state.sourceOpens).toBe(sourceOpens);
       expect(state.opens).toBe(opens);
       expect(source.handle.fd).toBeGreaterThanOrEqual(0);
 
@@ -336,3 +358,103 @@ for (const mode of ["source-close-failure", "both-close-failure"] as const)
       await verifyJadxFixtureCleanup(fixture.launches);
     }
   });
+
+test("keeps the changed-file diagnosis when both snapshot closes fail", async () => {
+  const fixture = await createJadxProtocolFixture();
+  state.source = fixture.apk;
+  state.change = true;
+  state.fail = true;
+  state.failSource = true;
+  state.enabled = true;
+  state.closeCalls = 0;
+  state.sourceCloseCalls = 0;
+  state.opens = 0;
+  state.sourceOpens = 0;
+  state.handles = [];
+  state.sourceHandles = [];
+  state.latestSource = undefined;
+  try {
+    const result = await fixture.service.execute("inspect_android_package", {
+      path: fixture.apk,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
+    expect(result.error.cleanupPrimary?.cleanupPrimary).toBeInstanceOf(
+      AnalysisInputError,
+    );
+    expect(
+      result.error.cleanupPrimary?.cleanupPrimary?.cause?.constructor.name,
+    ).toBe("AndroidSnapshotChangedError");
+    const source = state.sourceHandles.find(
+      (candidate) => candidate.handle.fd >= 0,
+    );
+    const destination = state.handles[0];
+    if (source === undefined || destination === undefined)
+      throw new Error("missing snapshot descriptors");
+    expect(source.handle.fd).toBeGreaterThanOrEqual(0);
+    expect(destination.handle.fd).toBeGreaterThanOrEqual(0);
+    const resources = result.error.cleanupPrimary?.cleanupResources ?? [];
+    expect(resources).toContain(fixture.apk);
+    expect(snapshotResource(resources)).toBeDefined();
+  } finally {
+    state.enabled = false;
+    state.fail = false;
+    state.failSource = false;
+    await fixture.provider.close().catch(() => undefined);
+    for (const owned of [...state.handles, ...state.sourceHandles])
+      if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);
+    await verifyJadxFixtureCleanup(fixture.launches);
+  }
+});
+
+test("classifies a nested snapshot close as cancellation", () => {
+  const reason = { requested: "snapshot-close" };
+  const copy = {
+    kind: "android-snapshot-copy" as const,
+    sha256: "a".repeat(64),
+    sourcePath: "/workspace/sample.apk",
+    snapshotPath: "/workspace/snap/target.apk",
+    bytes: 12,
+  };
+  const destination = new RegularFileCleanupFailure(
+    copy.snapshotPath,
+    new OwnedFileHandle({
+      fd: 7,
+      close: async () => undefined,
+    } as FileHandle),
+    { kind: "completed", value: copy },
+    new Error("dest EIO"),
+    { kind: "not_requested" },
+    { reason },
+  );
+  const source = new RegularFileCleanupFailure(
+    copy.sourcePath,
+    new OwnedFileHandle({
+      fd: 8,
+      close: async () => undefined,
+    } as FileHandle),
+    { kind: "failed", cause: destination },
+    new Error("source EIO"),
+  );
+  const error = captureJadxFailure({
+    cause: source,
+    request: {
+      operation: "inspect_android_package",
+      input: { path: copy.sourcePath },
+    } as AndroidRequest,
+    timeout: new AbortController().signal,
+    timeoutMs: 1000,
+    signal: AbortSignal.abort(reason),
+    session: undefined,
+  })();
+  expect(error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
+  expect(error.cleanupIncomplete).toBe(true);
+  expect(error.cleanupResources).toEqual([copy.sourcePath, copy.snapshotPath]);
+  expect(error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path: copy.snapshotPath,
+    sha256: copy.sha256,
+    bytes: copy.bytes,
+  });
+});
