@@ -2,9 +2,9 @@
   "equivalent_parent_evidence_id": "ev_8ed574a3a7a6fa16333857e921c69789dde59f7c61c5691225d1b3eaa114218d",
   "issue": 4772,
   "date": "2026-10-21",
-  "base_commit": "18669641e98d49d06c9d1c3227167756db9a6c3b",
-  "implementation_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
-  "implementation_tree": "d1429a5dc1efbdf014681345a2aebcca5fd2d313",
+  "base_commit": "183b4d4e7e303561cb06617fa485d996a4c99f63",
+  "implementation_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
+  "implementation_tree": "afb55f3c2881ec56adf2682d477e99799821b1cd",
   "host": {
     "platform": "linux",
     "arch": "x64",
@@ -26,7 +26,7 @@
     "Same implementation compared with complete vs selected delivery; no claim of faster underlying source analysis.",
     "SDK cost measurements explicitly use full input advertisements. New main defaults to compact advertisements; those default costs are not measured here.",
     "Dynamic push/replace receiver recognition uses navigation naming conventions, not framework instance/type resolution. Arbitrary aliases and application reachability remain unknown.",
-    "64/67 jobs completed and 65 retained route checkpoints; all configured deadlines/unavailable results explicit. Fresh full workers at current qualified runtime; no retained-source-fact reuse."
+    "65/67 jobs completed and 65 retained route checkpoints; all configured deadlines/unavailable results explicit. Fresh full workers at current qualified runtime; no retained-source-fact reuse."
   ],
   "corpus": [
     {
@@ -48,7 +48,7 @@
           "bytes": 32352,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2359.565425,
+          "elapsed_ms": 2247.720236,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -61,7 +61,7 @@
           "bytes": 33951,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2148.8057479999998,
+          "elapsed_ms": 1982.9290250000004,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -74,7 +74,7 @@
           "bytes": 112594,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 7241.191222,
+          "elapsed_ms": 7035.932201,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -87,7 +87,7 @@
           "bytes": 15009,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1110.1138030000002,
+          "elapsed_ms": 1175.9815390000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -100,7 +100,7 @@
           "bytes": 133360,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4888.653466,
+          "elapsed_ms": 5050.110187999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -113,7 +113,7 @@
           "bytes": 229185,
           "source_analysis_completed": false,
           "route_facts_retained": false,
-          "elapsed_ms": 15195.522319,
+          "elapsed_ms": 15235.592554000003,
           "parse_status": null,
           "parse_error_count": null,
           "error": {
@@ -128,7 +128,7 @@
           "bytes": 28175,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 6002.640577999999,
+          "elapsed_ms": 5883.662820999998,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -141,7 +141,7 @@
           "bytes": 12863,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1297.9547200000015,
+          "elapsed_ms": 1534.9359640000039,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -154,7 +154,7 @@
           "bytes": 20385,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1475.2070079999976,
+          "elapsed_ms": 1453.2017120000019,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -167,7 +167,7 @@
           "bytes": 31944,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1837.457242000004,
+          "elapsed_ms": 2203.6343629999974,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -180,7 +180,7 @@
           "bytes": 34609,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1883.2077199999985,
+          "elapsed_ms": 1922.2198840000055,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -193,7 +193,7 @@
           "bytes": 26926,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1541.3768459999992,
+          "elapsed_ms": 1546.7601639999993,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -206,7 +206,7 @@
           "bytes": 32709,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1870.9038010000004,
+          "elapsed_ms": 1854.6162519999998,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -219,7 +219,7 @@
           "bytes": 32580,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1843.8730810000052,
+          "elapsed_ms": 2028.0429640000002,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -232,7 +232,7 @@
           "bytes": 44459,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2188.9799459999995,
+          "elapsed_ms": 3526.4103539999996,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -245,7 +245,7 @@
           "bytes": 155519,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 6818.715034000001,
+          "elapsed_ms": 6389.194494000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -258,7 +258,7 @@
           "bytes": 42730,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1827.4842209999988,
+          "elapsed_ms": 1835.6656559999974,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -271,7 +271,7 @@
           "bytes": 27406,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1845.9873510000034,
+          "elapsed_ms": 1839.5719370000006,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -284,7 +284,7 @@
           "bytes": 42218,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2096.2555869999924,
+          "elapsed_ms": 2166.7750629999937,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -297,7 +297,7 @@
           "bytes": 166723,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2517.1676399999997,
+          "elapsed_ms": 2042.7320860000036,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -310,7 +310,7 @@
           "bytes": 17846,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1545.5859760000021,
+          "elapsed_ms": 1545.9067989999894,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -323,7 +323,7 @@
           "bytes": 24269,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1365.9473480000015,
+          "elapsed_ms": 1401.943604,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -336,7 +336,7 @@
           "bytes": 31418,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2017.3315980000043,
+          "elapsed_ms": 1943.5292069999996,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -349,7 +349,7 @@
           "bytes": 75012,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3533.862034000005,
+          "elapsed_ms": 3238.7749440000043,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -362,7 +362,7 @@
           "bytes": 42111,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2054.7807780000003,
+          "elapsed_ms": 1972.886845999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -375,7 +375,7 @@
           "bytes": 10240,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1213.1163410000008,
+          "elapsed_ms": 1135.3607920000068,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -388,7 +388,7 @@
           "bytes": 35473,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1880.9698300000018,
+          "elapsed_ms": 1690.0501060000097,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -401,7 +401,7 @@
           "bytes": 17541,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1563.8368950000004,
+          "elapsed_ms": 1541.3193610000017,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -414,7 +414,7 @@
           "bytes": 23491,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1440.497015999994,
+          "elapsed_ms": 1318.7651840000035,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1716,7 +1716,7 @@
           "bytes": 31543,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2330.7330419999926,
+          "elapsed_ms": 2071.1277280000068,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1729,7 +1729,7 @@
           "bytes": 63279,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2410.447622000007,
+          "elapsed_ms": 2409.897232999996,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1742,7 +1742,7 @@
           "bytes": 112594,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 6908.568599999999,
+          "elapsed_ms": 6716.165576000014,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1755,7 +1755,7 @@
           "bytes": 14486,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1335.5951789999963,
+          "elapsed_ms": 1107.1681769999996,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1768,7 +1768,7 @@
           "bytes": 228552,
           "source_analysis_completed": false,
           "route_facts_retained": false,
-          "elapsed_ms": 15452.340368999998,
+          "elapsed_ms": 15344.831165999989,
           "parse_status": null,
           "parse_error_count": null,
           "error": {
@@ -1783,7 +1783,7 @@
           "bytes": 155988,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 12040.98206400001,
+          "elapsed_ms": 11695.371221000009,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1796,7 +1796,7 @@
           "bytes": 10987,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1334.1966469999898,
+          "elapsed_ms": 1215.2772909999912,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1809,7 +1809,7 @@
           "bytes": 14992,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1360.5867169999983,
+          "elapsed_ms": 1294.6005020000011,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1822,7 +1822,7 @@
           "bytes": 37582,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2230.5256930000032,
+          "elapsed_ms": 2212.9806830000016,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1835,7 +1835,7 @@
           "bytes": 16480,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1513.7368749999878,
+          "elapsed_ms": 1409.2433230000024,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1848,7 +1848,7 @@
           "bytes": 21421,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1713.5556019999785,
+          "elapsed_ms": 1710.9341430000059,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1861,7 +1861,7 @@
           "bytes": 35536,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1854.7661589999916,
+          "elapsed_ms": 1789.530346000014,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1874,7 +1874,7 @@
           "bytes": 40090,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2051.4731160000083,
+          "elapsed_ms": 1972.9623079999874,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1887,7 +1887,7 @@
           "bytes": 25890,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1894.7359490000235,
+          "elapsed_ms": 1837.5990720000118,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1900,7 +1900,7 @@
           "bytes": 350746,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 11520.974317999993,
+          "elapsed_ms": 10562.49298000001,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1913,7 +1913,7 @@
           "bytes": 26497,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3206.236137,
+          "elapsed_ms": 1734.413803000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1926,7 +1926,7 @@
           "bytes": 34416,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3681.494558000006,
+          "elapsed_ms": 1945.951202999975,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1939,7 +1939,7 @@
           "bytes": 26406,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3182.7484769999865,
+          "elapsed_ms": 1625.015864999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1952,7 +1952,7 @@
           "bytes": 64639,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4952.12028599999,
+          "elapsed_ms": 2626.9281589999737,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1965,7 +1965,7 @@
           "bytes": 32890,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3978.1929529999907,
+          "elapsed_ms": 2094.8656109999865,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1978,7 +1978,7 @@
           "bytes": 30074,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3260.281973999983,
+          "elapsed_ms": 1925.1849670000083,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1991,7 +1991,7 @@
           "bytes": 1004,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1322.4450670000224,
+          "elapsed_ms": 681.9860859999899,
           "parse_status": "complete",
           "parse_error_count": 0,
           "error": null,
@@ -2004,7 +2004,7 @@
           "bytes": 20530,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3191.8765260000073,
+          "elapsed_ms": 1758.6161030000076,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2017,7 +2017,7 @@
           "bytes": 21998,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2929.1543099999835,
+          "elapsed_ms": 1567.0763120000192,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2030,7 +2030,7 @@
           "bytes": 36684,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4133.316558999999,
+          "elapsed_ms": 2545.312340000004,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2043,7 +2043,7 @@
           "bytes": 23435,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2827.991460999998,
+          "elapsed_ms": 1787.0554209999973,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2056,7 +2056,7 @@
           "bytes": 59881,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3432.794630999997,
+          "elapsed_ms": 2145.1151989999926,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2069,7 +2069,7 @@
           "bytes": 86218,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4580.687442000024,
+          "elapsed_ms": 2570.999949000019,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2082,7 +2082,7 @@
           "bytes": 133226,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2128.7121240000124,
+          "elapsed_ms": 1575.7818829999887,
           "parse_status": "complete",
           "parse_error_count": 0,
           "error": null,
@@ -2095,7 +2095,7 @@
           "bytes": 19607,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3029.313616999978,
+          "elapsed_ms": 1856.7418269999907,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2108,7 +2108,7 @@
           "bytes": 30064,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2550.8618669999996,
+          "elapsed_ms": 1585.5197019999905,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2121,7 +2121,7 @@
           "bytes": 44497,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 5102.144391999987,
+          "elapsed_ms": 2841.3478249999753,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2134,7 +2134,7 @@
           "bytes": 30296,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3324.940382999979,
+          "elapsed_ms": 2042.1542400000035,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2147,7 +2147,7 @@
           "bytes": 34851,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3677.1861759999883,
+          "elapsed_ms": 1740.9420080000127,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2158,14 +2158,12 @@
           "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3cg9j5-faot60.js",
           "sha256": "80c6ec39463dea1c936736900b0f33367cda44c9b85b2b7869cd6d39b530d816",
           "bytes": 347373,
-          "source_analysis_completed": false,
+          "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 15425.527031000005,
+          "elapsed_ms": 13675.488473000005,
           "parse_status": "partial",
           "parse_error_count": 0,
-          "error": {
-            "message": "Analysis operation timed out after 15000ms: analyze_javascript_application"
-          },
+          "error": null,
           "candidates": 10,
           "capacity": null
         },
@@ -2175,7 +2173,7 @@
           "bytes": 53417,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4327.609234000003,
+          "elapsed_ms": 2647.577858000004,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2188,7 +2186,7 @@
           "bytes": 114918,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 8271.797924999992,
+          "elapsed_ms": 4485.247471999988,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2201,7 +2199,7 @@
           "bytes": 31991,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3256.113153000013,
+          "elapsed_ms": 1938.149785000016,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -2590,16 +2588,16 @@
       "-c",
       "0,1",
       "node",
-      "/home/yann/yann/rea-4772-lab/probe-main5-routes.mjs"
+      "/home/yann/yann/rea-4772-lab/probe-main6-routes.mjs"
     ],
     "exit_code": 0,
-    "wall_s": 247.05573116100277,
-    "cpu_s": 374.58691,
+    "wall_s": 208.19910246400104,
+    "cpu_s": 309.052206,
     "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-    "peak_family_rss_bytes": 541859840,
+    "peak_family_rss_bytes": 491433984,
     "sample_ms": 20,
     "guard_stop": null,
-    "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+    "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598"
   },
   "independent_oracle": {
     "method": "All 18 unescaped ASCII /docs quoted literals enumerated directly from the immutable 86218-byte production chunk with a regular expression independent of the AST route decoder; 12 are direct href property literals. These are static declaration checks, not runtime routes.",
@@ -2628,7 +2626,7 @@
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "complete",
-      "label": "real-full-main5",
+      "label": "real-full-main6",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2666,48 +2664,48 @@
       "primary_calls": 2,
       "primary_estimated_tokens": 1884935,
       "used_input_declarations_plus_primary_estimated_tokens": 1907933,
-      "all_catalog_plus_primary_estimated_tokens": 3001159,
+      "all_catalog_plus_primary_estimated_tokens": 3001096,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 24.991001827,
+      "task_wall_s": 13.259052059,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 7607.160005000001,
+          "wall_ms": 4438.880350000001,
           "estimated_reply_tokens": 1875989,
           "reply_bytes": 6203639
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 3912.4169,
+          "wall_ms": 2106.3457710000002,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 44.43829899999764,
+          "wall_ms": 29.789716999999655,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 26.124229999997624,
+          "wall_ms": 71.30195400000048,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 22.484079000001657,
+          "wall_ms": 12.486829000001308,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 193.2968069999988,
+          "wall_ms": 107.16855000000032,
           "estimated_reply_tokens": 120,
           "reply_bytes": 314
         }
       ],
-      "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+      "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
       "profile": {
         "command": [
           "taskset",
@@ -2716,24 +2714,24 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "complete",
-          "real-full-main5"
+          "real-full-main6"
         ],
         "exit_code": 0,
-        "wall_s": 27.085972908011172,
-        "cpu_s": 34.992629,
+        "wall_s": 14.423243664990878,
+        "cpu_s": 18.784437,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1380454400,
+        "peak_family_rss_bytes": 1683005440,
         "sample_ms": 20,
         "guard_stop": null
       },
       "all_calls_estimated_tokens": 1911652,
       "used_input_declarations_plus_all_calls_estimated_tokens": 1934870,
-      "full_catalog_plus_all_calls_estimated_tokens": 3027876
+      "full_catalog_plus_all_calls_estimated_tokens": 3027813
     },
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "selected",
-      "label": "real-selected-main5",
+      "label": "real-selected-main6",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -2771,42 +2769,42 @@
       "primary_calls": 1,
       "primary_estimated_tokens": 8902,
       "used_input_declarations_plus_primary_estimated_tokens": 11319,
-      "all_catalog_plus_primary_estimated_tokens": 1125126,
+      "all_catalog_plus_primary_estimated_tokens": 1125063,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 22.922720908,
+      "task_wall_s": 12.512281270999999,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 6292.2299969999995,
+          "wall_ms": 3721.4690889999997,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 4061.7097969999995,
+          "wall_ms": 2159.82913,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 44.3534989999971,
+          "wall_ms": 21.26412799999889,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 27.082729000001564,
+          "wall_ms": 14.966168000000835,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 199.02321700000175,
+          "wall_ms": 158.58704600000056,
           "estimated_reply_tokens": 122,
           "reply_bytes": 322
         }
       ],
-      "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+      "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
       "profile": {
         "command": [
           "taskset",
@@ -2815,19 +2813,19 @@
           "node",
           "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "selected",
-          "real-selected-main5"
+          "real-selected-main6"
         ],
         "exit_code": 0,
-        "wall_s": 24.02687272899493,
-        "cpu_s": 30.355762,
+        "wall_s": 13.445819299013237,
+        "cpu_s": 17.825686,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1328480256,
+        "peak_family_rss_bytes": 1360859136,
         "sample_ms": 20,
         "guard_stop": null
       },
       "all_calls_estimated_tokens": 35622,
       "used_input_declarations_plus_all_calls_estimated_tokens": 58840,
-      "full_catalog_plus_all_calls_estimated_tokens": 1151846
+      "full_catalog_plus_all_calls_estimated_tokens": 1151783
     }
   ],
   "real_browser": {
@@ -2879,7 +2877,7 @@
         "base_path": null
       }
     ],
-    "elapsed_s": 16.869364214,
+    "elapsed_s": 9.427453615,
     "authority_limits": [
       "Not a live published-page or application execution test",
       "No reachability, route loading or full application route denominator proof"
@@ -2891,21 +2889,21 @@
         "-c",
         "0,1",
         "node",
-        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-main5.mjs"
+        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-main6.mjs"
       ],
       "exit_code": 0,
-      "wall_s": 18.734681791000185,
-      "cpu_s": 23.927989,
+      "wall_s": 10.544145126012154,
+      "cpu_s": 13.4368,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2179420160,
+      "peak_family_rss_bytes": 2170097664,
       "sample_ms": 20,
       "guard_stop": null
     },
-    "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+    "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598"
   },
   "checks": [
     {
-      "name": "route-main5-source-tests",
+      "name": "route-main6-source-tests",
       "command": [
         "taskset",
         "-c",
@@ -2933,40 +2931,53 @@
         "src/domain/javascript/javascriptApplicationGraph.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 20.63534852799785,
-      "cpu_s": 35.360144,
+      "wall_s": 22.558435917002498,
+      "cpu_s": 37.812487,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1839828992,
+      "peak_family_rss_bytes": 1942732800,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+      "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598"
     },
     {
-      "name": "route-main5-public-tests",
+      "name": "route-main6-public-tests",
       "command": [
         "python3",
-        "/home/yann/yann/rea-4772-lab/run-main5-public.py"
+        "/home/yann/yann/rea-4772-lab/run-main6-public.py"
       ],
       "exit_code": 0,
-      "wall_s": 156.24880195398873,
-      "cpu_s": 266.83064700000006,
+      "wall_s": 153.89489979100472,
+      "cpu_s": 265.018197,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 3114258432,
+      "peak_family_rss_bytes": 3243032576,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+      "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598"
     },
     {
-      "name": "route-main5-checkfast",
+      "name": "route-main6-checkfast",
       "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
       "exit_code": 0,
-      "wall_s": 12.278939219002496,
-      "cpu_s": 22.232678,
+      "wall_s": 10.190424790998804,
+      "cpu_s": 19.151639000000003,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1578074112,
+      "peak_family_rss_bytes": 1579196416,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+      "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598"
+    },
+    {
+      "name": "route-main6-docs-check",
+      "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
+      "exit_code": 0,
+      "wall_s": 12.747283168995637,
+      "cpu_s": 16.666406,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 810823680,
+      "sample_ms": 20,
+      "guard_stop": null,
+      "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
+      "scope": "Generated-document and consistency verification after current qualification refresh; later edits record this receipt and format the report."
     }
   ],
   "failed_attempts": [
@@ -3634,7 +3645,8 @@
     "b74dc2c7f3699b47236c554f0eed9214c223e342: integrate actual current main2e, preserving both route-query and environment-state descriptions and all new browser deadline fields/refinements. The route scanner/inventory and JavaScript application analysis workers are unchanged by this merge. Domain JSON validation and browser/transport boundaries changed upstream, so all current workflows and source workers are freshly qualified.",
     "f6ed21684c3c6c082ffb7909427cce10f31e5061: integrate main18669641e and the independently verified CI fixture correction; reuse the canonical JavaScript source-coordinate schema directly across route facts/inventory/views, removing the duplicate definition and alias. Shared input registration and absolute-path contracts stay owned by their domain boundary. All current source/public and real-input qualifiers are freshly executed.",
     "e189ae4de805e34f55d976ac4ee602fd053445f4: preserve query initializer projections at ownership admission and registration-pattern semantics before generic constants; precise resolved-literal segment ranges. Fresh source/public/full67/SDK/Chromium qualification recorded without reusing source facts.",
-    "1d846371cfc2b195b9de5144c848afa0dc012d28: retain object/array rest-copy selected slot identities through the existing semantic copy-path/key-selection owners; bounded iterative selection, excluded siblings preserved, no call-site freshness relaxation. Fresh598 source/97 public/full67/SDK/Chromium evidence recorded."
+    "1d846371cfc2b195b9de5144c848afa0dc012d28: retain object/array rest-copy selected slot identities through the existing semantic copy-path/key-selection owners; bounded iterative selection, excluded siblings preserved, no call-site freshness relaxation. Fresh598 source/97 public/full67/SDK/Chromium evidence recorded.",
+    "d7bbdece86dcf98856a4a3c97c09a39fed03e598: retain object/array rest-copy selected slot identities through the existing semantic copy-path/key-selection owners; bounded iterative selection, excluded siblings preserved, no call-site freshness relaxation. Integrate main183 canonical web-bundle state owner without duplicate exports; fresh598 source/98 public/full67/SDK/Chromium evidence recorded."
   ],
   "result_budget_regression": {
     "source": "12000 literal route registrations, 1452889 UTF-8 bytes",
@@ -23136,6 +23148,2958 @@
         "source_inspection": "Clean merge; upstream worker-frame signal extraction, immutable derived view Evidence, JSON-file cancellation ownership and explicit optional provider failures preserve route contracts. Semantic projected-source change extracts existing selection calculation unchanged; no route scanner/fact/schema change. Combined-tree technical CI still required.",
         "qualified_head": "e189ae4de805e34f55d976ac4ee602fd053445f4"
       }
+    },
+    {
+      "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+      "record_commit": "c9040e964f0e21cc677335594a2535f012d4ec67",
+      "scope": "598 source/97 public checks and fresh67/SDK/Chromium with rest-copy fix; intermediate runtime before integrating main183 accumulator-owner extraction.",
+      "checks": [
+        {
+          "name": "route-main5-source-tests",
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "npm",
+            "run",
+            "test:local",
+            "--",
+            "src/domain/javascript/javascriptRouteScan.test.ts",
+            "src/domain/javascript/javascriptRouteInventory.test.ts",
+            "src/domain/javascript/javascriptRouteResultBudget.test.ts",
+            "src/domain/analysisView/javascriptRoutesView.test.ts",
+            "src/domain/webBundleAnalyzer.test.ts",
+            "src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.test.ts",
+            "src/application/analysisView/AnalysisViewService.test.ts",
+            "src/domain/javascript/javascriptStaticAnalysis.routeProperties.test.ts",
+            "src/domain/javascript/javascriptAstValues.test.ts",
+            "src/domain/javascript/javascriptSemanticExpressionShapes.test.ts",
+            "src/domain/javascript/electronWrappedCallPaths.test.ts",
+            "src/domain/javascript/javascriptVitePreloadDependencies.test.ts",
+            "src/contracts/javascriptRouteDeliveryContracts.test.ts",
+            "src/contracts/toolInputReferences.test.ts",
+            "src/domain/webDeadlineControls.test.ts",
+            "src/domain/jsonValue.test.ts",
+            "src/domain/javascript/javascriptApplicationGraph.test.ts"
+          ],
+          "exit_code": 0,
+          "wall_s": 20.63534852799785,
+          "cpu_s": 35.360144,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1839828992,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+        },
+        {
+          "name": "route-main5-public-tests",
+          "command": [
+            "python3",
+            "/home/yann/yann/rea-4772-lab/run-main5-public.py"
+          ],
+          "exit_code": 0,
+          "wall_s": 156.24880195398873,
+          "cpu_s": 266.83064700000006,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 3114258432,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+        },
+        {
+          "name": "route-main5-checkfast",
+          "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
+          "exit_code": 0,
+          "wall_s": 12.278939219002496,
+          "cpu_s": 22.232678,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 1578074112,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+        }
+      ],
+      "workflows": [
+        {
+          "runtime": "/home/yann/yann/rea-4772-route-inventory",
+          "mode": "complete",
+          "label": "real-full-main5",
+          "parameters": {
+            "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+            "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+            "max_semantic_nodes": 1,
+            "max_heap_mb": 512,
+            "analysis_timeout_ms": 15000
+          },
+          "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+          "answer": [
+            "/docs",
+            "/docs/ai-elements",
+            "/docs/changelog",
+            "/docs/cli",
+            "/docs/components",
+            "/docs/components/aria/code-block",
+            "/docs/components/aria/trace",
+            "/docs/components/base/code-block",
+            "/docs/components/base/trace",
+            "/docs/components/radix/code-block",
+            "/docs/components/radix/trace",
+            "/docs/forms",
+            "/docs/installation",
+            "/docs/mcp",
+            "/docs/registry",
+            "/docs/rtl",
+            "/docs/skills",
+            "/docs/theming"
+          ],
+          "source_coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "primary_calls": 2,
+          "primary_estimated_tokens": 1884935,
+          "used_input_declarations_plus_primary_estimated_tokens": 1907933,
+          "all_catalog_plus_primary_estimated_tokens": 3001159,
+          "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+          "task_wall_s": 24.991001827,
+          "calls": [
+            {
+              "name": "analyze_javascript_application",
+              "wall_ms": 7607.160005000001,
+              "estimated_reply_tokens": 1875989,
+              "reply_bytes": 6203639
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 3912.4169,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 44.43829899999764,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 26.124229999997624,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 22.484079000001657,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "export_evidence_bundle",
+              "wall_ms": 193.2968069999988,
+              "estimated_reply_tokens": 120,
+              "reply_bytes": 314
+            }
+          ],
+          "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+          "profile": {
+            "command": [
+              "taskset",
+              "-c",
+              "0,1",
+              "node",
+              "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
+              "complete",
+              "real-full-main5"
+            ],
+            "exit_code": 0,
+            "wall_s": 27.085972908011172,
+            "cpu_s": 34.992629,
+            "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+            "peak_family_rss_bytes": 1380454400,
+            "sample_ms": 20,
+            "guard_stop": null
+          },
+          "all_calls_estimated_tokens": 1911652,
+          "used_input_declarations_plus_all_calls_estimated_tokens": 1934870,
+          "full_catalog_plus_all_calls_estimated_tokens": 3027876
+        },
+        {
+          "runtime": "/home/yann/yann/rea-4772-route-inventory",
+          "mode": "selected",
+          "label": "real-selected-main5",
+          "parameters": {
+            "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
+            "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
+            "max_semantic_nodes": 1,
+            "max_heap_mb": 512,
+            "analysis_timeout_ms": 15000
+          },
+          "task": "List /docs static route patterns with confidence, mechanism and traceable source provenance; preserve complete Evidence",
+          "answer": [
+            "/docs",
+            "/docs/ai-elements",
+            "/docs/changelog",
+            "/docs/cli",
+            "/docs/components",
+            "/docs/components/aria/code-block",
+            "/docs/components/aria/trace",
+            "/docs/components/base/code-block",
+            "/docs/components/base/trace",
+            "/docs/components/radix/code-block",
+            "/docs/components/radix/trace",
+            "/docs/forms",
+            "/docs/installation",
+            "/docs/mcp",
+            "/docs/registry",
+            "/docs/rtl",
+            "/docs/skills",
+            "/docs/theming"
+          ],
+          "source_coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "primary_calls": 1,
+          "primary_estimated_tokens": 8902,
+          "used_input_declarations_plus_primary_estimated_tokens": 11319,
+          "all_catalog_plus_primary_estimated_tokens": 1125126,
+          "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
+          "task_wall_s": 22.922720908,
+          "calls": [
+            {
+              "name": "analyze_javascript_application",
+              "wall_ms": 6292.2299969999995,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 4061.7097969999995,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 44.3534989999971,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "inspect_analysis_view",
+              "wall_ms": 27.082729000001564,
+              "estimated_reply_tokens": 8762,
+              "reply_bytes": 28885
+            },
+            {
+              "name": "export_evidence_bundle",
+              "wall_ms": 199.02321700000175,
+              "estimated_reply_tokens": 122,
+              "reply_bytes": 322
+            }
+          ],
+          "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+          "profile": {
+            "command": [
+              "taskset",
+              "-c",
+              "0,1",
+              "node",
+              "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
+              "selected",
+              "real-selected-main5"
+            ],
+            "exit_code": 0,
+            "wall_s": 24.02687272899493,
+            "cpu_s": 30.355762,
+            "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+            "peak_family_rss_bytes": 1328480256,
+            "sample_ms": 20,
+            "guard_stop": null
+          },
+          "all_calls_estimated_tokens": 35622,
+          "used_input_declarations_plus_all_calls_estimated_tokens": 58840,
+          "full_catalog_plus_all_calls_estimated_tokens": 1151846
+        }
+      ],
+      "corpus_profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/probe-main5-routes.mjs"
+        ],
+        "exit_code": 0,
+        "wall_s": 247.05573116100277,
+        "cpu_s": 374.58691,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 541859840,
+        "sample_ms": 20,
+        "guard_stop": null,
+        "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+      },
+      "corpus": [
+        {
+          "site": "nextjs-org",
+          "page": {
+            "url": "https://nextjs.org/",
+            "final_url": "https://nextjs.org/",
+            "status": 200,
+            "content_type": "text/html; charset=utf-8",
+            "etag": null,
+            "sha256": "5794a753f5bc88b521ef49c63e74ec75477cdf26ffbaa6fd1b232ebd757bb991",
+            "bytes": 242699
+          },
+          "observed_scripts": 29,
+          "assets": [
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/2v5zh6m00lfum.js",
+              "sha256": "cbc64e16e8c3dfb6ecead560a58abf7bb4c7454c409209fd37626d7ac819c2a2",
+              "bytes": 32352,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2359.565425,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 3,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/3yp820osdt9kv.js",
+              "sha256": "1841558a199e41795777b48bbd652f92c6d3ec1b121a879b9fc2d41d5cc89b3a",
+              "bytes": 33951,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2148.8057479999998,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 9,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+              "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+              "bytes": 112594,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 7241.191222,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/3-f__u1tgqe9w.js",
+              "sha256": "a4a7db369b41c7cfc3457bd620c6cd50740171f02ddf369fe9caf704a400170b",
+              "bytes": 15009,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1110.1138030000002,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/2qd4c3xjf-y8d.js",
+              "sha256": "e5ac180193cdf48fac1a0eb5e5ad3480514b2a8d558fdb79a002a8ddbd38708d",
+              "bytes": 133360,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 4888.653466,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 33,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/273-kz7ddae_j.js",
+              "sha256": "2dbef264004178186358965a30a7a258b94d78cebed47b24e9cf0815aa30d8f6",
+              "bytes": 229185,
+              "source_analysis_completed": false,
+              "route_facts_retained": false,
+              "elapsed_ms": 15195.522319,
+              "parse_status": null,
+              "parse_error_count": null,
+              "error": {
+                "message": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+              },
+              "candidates": null,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/32p67covm5twm.js",
+              "sha256": "4e12d2301bf2930ee285e85256d032b3e4c6761f5abe71cf1055b4c1665eac96",
+              "bytes": 28175,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 6002.640577999999,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/turbopack-22zuhxnmsa7m2.js",
+              "sha256": "96860acf83d42ba7a295c65d2e1cdeaf582c98156ce0d520a1ff29739580ba38",
+              "bytes": 12863,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1297.9547200000015,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 4,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/3u1m4t0vzjnq5.js",
+              "sha256": "b7fd67b519b0d95aa5ae8d36b13e22dbd7179a0ff3c18f136c18be1c1e3bb009",
+              "bytes": 20385,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1475.2070079999976,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 2,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/23ugu0wxt5byy.js",
+              "sha256": "891442341e2a100908efcf600375e37e9332167307c8a3290c28c4673957df37",
+              "bytes": 31944,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1837.457242000004,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 7,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/2vko3i5lac74l.js",
+              "sha256": "9433ca68eb2a81002868f259c1e289868fc8777f51c289fa35144080bad4d349",
+              "bytes": 34609,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1883.2077199999985,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/2q6evjwm-565v.js",
+              "sha256": "d43801f5709cc869420aea453dde724024c1a18db85e0b76b2bc4f4de674e9d3",
+              "bytes": 26926,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1541.3768459999992,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/2e29l35axy4-8.js",
+              "sha256": "8280034a9a1300b9b91e451598b66a0d5fa94ea76a400a6393952084d0c8dd64",
+              "bytes": 32709,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1870.9038010000004,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/12l-srcvwshyf.js",
+              "sha256": "309a744a98f828c8ff1d43ba167e8985f98196fd76638fdc7fa5fe2a6f1023cf",
+              "bytes": 32580,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1843.8730810000052,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 11,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/39by9zrhsjvv9.js",
+              "sha256": "7f0ae6d793b3869905b717fff49d78aee9f93c56443fa164e297c2991290ded9",
+              "bytes": 44459,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2188.9799459999995,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/3q448jj_u0oex.js",
+              "sha256": "3c5852456fb053661ced69e9e2961c73047f7fd3d6279c5fbf86d5459fdc4acb",
+              "bytes": 155519,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 6818.715034000001,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 11,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/1gv06lcrn7q_b.js",
+              "sha256": "f64bbf866ceebf36a5ea5c07a8d93f34429f9746191ff443df90bf5287fad672",
+              "bytes": 42730,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1827.4842209999988,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 4,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/03vn7c31403r9.js",
+              "sha256": "a71e547f16a1b0a835c0883dbc7a0643ac2b80a77c55c56e7e22ccc030d7f177",
+              "bytes": 27406,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1845.9873510000034,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/3gvo0zcvrtjwi.js",
+              "sha256": "133f95790a428bd7fedfd3fc4b0d6e660047e9c9a1061812226bd3b8aca4c77d",
+              "bytes": 42218,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2096.2555869999924,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/25mr3s4f3688g.js",
+              "sha256": "303051d28d05d91216ff155bc89d345ebe31b69ceb1ec04e24a5d3cde1aaf074",
+              "bytes": 166723,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2517.1676399999997,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 4,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/26u0yg3-gdc6a.js",
+              "sha256": "4386a5dfdba681bae7a1acf0ce954ffd11ba43e613a464f9078e9c26eec6f064",
+              "bytes": 17846,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1545.5859760000021,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 2,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/2hcdffj5-as7m.js",
+              "sha256": "0b496440052a9e3b776adc98912281dae83af1d265616b858a7570cc86646a82",
+              "bytes": 24269,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1365.9473480000015,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/2s_r_zifx54q7.js",
+              "sha256": "cff7962e92655f31b1a6967324bf70901a3180820f93c0dcc8c2c2a573130e0c",
+              "bytes": 31418,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2017.3315980000043,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/3vbktf2fq69e_.js",
+              "sha256": "bdcacca9362e043fa8956ea79b78ae2d1611901f5a4092b14509bff5c9a9070d",
+              "bytes": 75012,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3533.862034000005,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 10,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/1hhc4p_d_log3.js",
+              "sha256": "6cd04c781348aee469a5846ba6ff16f63332b5a2943c14125e2e4e8b22df3bb6",
+              "bytes": 42111,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2054.7807780000003,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 7,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/39v8wpwthko65.js",
+              "sha256": "ff659151c718ac93fe4aac58904de1a91b1e84ec496e7ca66013268b04cd06be",
+              "bytes": 10240,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1213.1163410000008,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 5,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/0-yckxn3tleyi.js",
+              "sha256": "814aafb54addac626276c42edf7f73ef4d7baf92f73211ebce3e8e522e695c35",
+              "bytes": 35473,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1880.9698300000018,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/13ajf8_l__lm4.js",
+              "sha256": "6ab51219f8db4578126c1175565f1b8bc175d982975e5982e40cd23cd01e1910",
+              "bytes": 17541,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1563.8368950000004,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://nextjs.org/_next/static/immutable/chunks/0u3yva3kyrgqf.js",
+              "sha256": "5ad2ddfbca95282f194a22faccc41c3ea0cd3c3ee84a43785f0ace287c3b1a6a",
+              "bytes": 23491,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1440.497015999994,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            }
+          ],
+          "inventory": {
+            "statistics": {
+              "sources_seen": 29,
+              "sources_retained": 29,
+              "route_patterns": 0,
+              "occurrences": 0,
+              "unanchored_literals_excluded": 115
+            },
+            "coverage": {
+              "scope": "provided-code-sources",
+              "source_parsing": "partial",
+              "candidate_enumeration": "partial",
+              "application_routes": "unknown"
+            },
+            "capacity": null,
+            "routes": [],
+            "unknowns": [
+              {
+                "id": "jsg:a2b81961592381a36abe52e941490555",
+                "source_id": "jss:3c5f1832bed3e8704a4a913bae966729",
+                "kind": "source-unavailable",
+                "source_range": null,
+                "reason": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+              },
+              {
+                "id": "jsg:d269f41780db8a2e3191a7c4bbf7388d",
+                "source_id": "jss:44eea7aa9039538535f02974f95fbb32",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 12610
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 12611
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:0782cb08f958e666d6df53b0f1632370",
+                "source_id": "jss:44eea7aa9039538535f02974f95fbb32",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 131,
+                    "column": 1596
+                  },
+                  "end": {
+                    "line": 131,
+                    "column": 1602
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:316f01469ecc2a42247f86c46615bd5b",
+                "source_id": "jss:540e8f890d9836b5fc9be2a8f01cc808",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 9268
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 9270
+                  }
+                },
+                "reason": "The relative or unsupported navigation literal cannot establish a rooted path without runtime context."
+              },
+              {
+                "id": "jsg:4ee41bb95e2983623d8430870fdb194a",
+                "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 12909
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 12910
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:de2a4b468ba767d2cf4175c78d8bb13b",
+                "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 13168
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 13187
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:8a00d6d028c57f6a10ef24cc609e96d1",
+                "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 8,
+                    "column": 14289
+                  },
+                  "end": {
+                    "line": 8,
+                    "column": 14290
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:992829fcf65f6ede9b10a695f38d9f21",
+                "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 8,
+                    "column": 19913
+                  },
+                  "end": {
+                    "line": 8,
+                    "column": 19914
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:db974494335f8a505db17b1080af3a0d",
+                "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 3730
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 3736
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:434d2b305da72cacc472356b3540ff04",
+                "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 11139
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 11140
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:70f43eeb5cc4173ee08962f7b56dffac",
+                "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 11277
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 11278
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:0717d232d179cb233dbcba41dc2507d3",
+                "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 11499
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 11500
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:1b812a68a086eae3ba1c2807fe7b8919",
+                "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 12093
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 12097
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:2bb52932e49d56203e43879488b6cd2b",
+                "source_id": "jss:6b66429f6b9eceb413da12e1dc366d75",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 791
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 792
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:44bf3ffb18ca97f660a63dc7969f9e32",
+                "source_id": "jss:6b66429f6b9eceb413da12e1dc366d75",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 838
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 839
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:7c8774707a216d0d0a56557e92a9bc22",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 3508
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 3529
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:82469d6e5a4fd295eca79d7d2a4d786c",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 2859
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 2860
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:3b2ee01db06d7215000d39c3ebffa4df",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3004
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3005
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:c5bac56fda68a9589349c70708e7ff7b",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3195
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3327
+                  }
+                },
+                "reason": "Spread, computed keys or accessors leave route fields partially unknown."
+              },
+              {
+                "id": "jsg:70655a41201cfb0d962b2417cb83cdef",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3195
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3327
+                  }
+                },
+                "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
+              },
+              {
+                "id": "jsg:fde9b96dfb2404c64d74de6bf826a521",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3215
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3234
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:319e4082b3c6f48c4433aadb5e27e84a",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3299
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3300
+                  }
+                },
+                "reason": "The route configuration may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:25ce1d9db5c8df564ae0af62f4929b26",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3301
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3325
+                  }
+                },
+                "reason": "A route configuration is not a static object or array."
+              },
+              {
+                "id": "jsg:082c469ebc3722610e6e2bef887469bf",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3367
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3663
+                  }
+                },
+                "reason": "Spread, computed keys or accessors leave route fields partially unknown."
+              },
+              {
+                "id": "jsg:c9a66236d89bbfa9a83b55a91173a924",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3367
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3663
+                  }
+                },
+                "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
+              },
+              {
+                "id": "jsg:408df617514cebfb9bb513d989cdfc51",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3393
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3394
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:277780b097ca03fff8900fb9db22eb1c",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3661
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3662
+                  }
+                },
+                "reason": "The route configuration may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:b370f438ee78140ddab6689143e4d20d",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3677
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3842
+                  }
+                },
+                "reason": "Spread, computed keys or accessors leave route fields partially unknown."
+              },
+              {
+                "id": "jsg:4a9cc9a820dcb6a4f964966dc76cbfef",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3677
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3842
+                  }
+                },
+                "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
+              },
+              {
+                "id": "jsg:5972991ef372c1abb21e25160b5e955f",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3790
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3791
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:7b82b480ae44689c6847246139aeb482",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3840
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3841
+                  }
+                },
+                "reason": "The route configuration may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:661e0cb632ada3d6635f7ea90d8b9958",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 4151
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 4152
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:b00a6e0e15ebeb2d7c9101b0fdfb0508",
+                "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 4312
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 4313
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:ea57049185afa8cb7f71fcb472cf35c0",
+                "source_id": "jss:8c17a558b53c6f8519305af7bb07b35a",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 4690
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 4691
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:865c3a677eeb32b7412d34a6522ebbe2",
+                "source_id": "jss:8c17a558b53c6f8519305af7bb07b35a",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 11119
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 11120
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:f79d9f53f12eb3fce3c67d2ed630fcfc",
+                "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 4508
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 4514
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:decf7772521ea0a6ebad49ae54cdc6ee",
+                "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 11917
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 11918
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:ef37e35c8afb59eaf6088bc05d17eceb",
+                "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 12055
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 12056
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:75769aa99c8278b4e9431041063e8e6d",
+                "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 12277
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 12278
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:459972b2c7557f08089d9fa12df79b0f",
+                "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 12871
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 12875
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:70f79c0bf11aa54a9d92bbad4a4d149c",
+                "source_id": "jss:bad246409157001cf4d80f919d65e171",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 6,
+                    "column": 4524
+                  },
+                  "end": {
+                    "line": 6,
+                    "column": 4525
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:fedfab5cb5cbf222464b448b72d806e1",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 3834
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 3840
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:e433901d372c1e898ef2691790aa41e8",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 4017
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 4023
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:26efefc31dfee1c85532050f964b0ae2",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 4817
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 4818
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:44ff2245c821b9279579680b48c2dc45",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 5169
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 5170
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:e7476b6657354b283e842c7a44c51cbf",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 5311
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 5312
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:4529cc40973b369d6c53ec197699034b",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 5390
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 5391
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:9d31b2ba491e35cb6b08a2ab298bbdc9",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 5600
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 5601
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:d1fb05405306f0040553948989334f33",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 5742
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 5743
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:eb49e454e0f09e3d008160aecc97d538",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 6034
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 6040
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:a5714a760fd8bdffaccf8074f670be8e",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 8149
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 8155
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:9dd2c882f3a74b3db6a792f86a334fa5",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 10657
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 10663
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:16454c9c854fc8dc86e82fe9bf837288",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 10733
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 10734
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:4deeaab12d55e31c8ee367cda10b1714",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 38771
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 38772
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:6e83faa139252593f59340a1514b7b64",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 40355
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 40360
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:c9f29c9ed77bfd03f6568ea8b784d7a0",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 40720
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 40721
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:4539f4d6fb2a0b6f43a52d53ca746d4b",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 41533
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 41539
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:d52f17d4232609d38a42a8effe4cbe4d",
+                "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 41698
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 41704
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:287a6732bc7cda12b23c1c7d3c9b17ce",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 39190
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 39191
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:ac0381bf6d65b83ad928d26a5a92e230",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 39239
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 39240
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:1e896b4f997c06006627298f6a69fca3",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 54101
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 54106
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:8961d94cdb09fc9e27e1e65b9ffea4ae",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 58193
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 58198
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:2abf4903506c5487c18fe213dbce331b",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 88661
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 88666
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:0030c0c39e9b66f144ed2fa1e6fa48a0",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 88780
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 88781
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:6294ac4224ac79935172c8396894f963",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 88868
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 88869
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:837187b57ab1024d93a4c99187f39f28",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 95102
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 95107
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:ada3d244e61fe9bc07f5fff9c6790e86",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 1359
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 1364
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:7cffc7da5a586812af8b4b98d47b4a99",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 3851
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 3862
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:1d8bf40921d2c5c08896d35fb16fd036",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 4366
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 4371
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:a86e180c6ce37d6303bd3c503e970904",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 5097
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 5102
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:02ee353b089b1045c53dfb56f3c76062",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 5280
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 5285
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:c1244433da691536eb45e9847bf7106e",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 9033
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 9038
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:412cd352cafc76625a4b2b098ed0753d",
+                "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 4,
+                    "column": 12114
+                  },
+                  "end": {
+                    "line": 4,
+                    "column": 12131
+                  }
+                },
+                "reason": "The navigation target is dynamic; literal fragments do not establish a complete path."
+              },
+              {
+                "id": "jsg:1d5dde711a7df346eca1af1acc40efe4",
+                "source_id": "jss:d3444459b453e60ae4c002986e0df926",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 625
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 626
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:f31a9223768ec0400e5685ee064d22f1",
+                "source_id": "jss:d3444459b453e60ae4c002986e0df926",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 2362
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 2363
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:0f10d09ab05c1eabb3e1b8022510d5e4",
+                "source_id": "jss:d3444459b453e60ae4c002986e0df926",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 6400
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 6401
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:67f9f778956551ba4e66dedcb2bfa14c",
+                "source_id": "jss:db743839f53cc0e1befccf0eeb4950ad",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 1971
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 1972
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:de8ccb9b953c4f35c1f4a7640ec8afb6",
+                "source_id": "jss:db743839f53cc0e1befccf0eeb4950ad",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 2,
+                    "column": 13233
+                  },
+                  "end": {
+                    "line": 2,
+                    "column": 13234
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:7a8d49f8235259c9bfeb7fee00ecaf2c",
+                "source_id": "jss:db743839f53cc0e1befccf0eeb4950ad",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 55,
+                    "column": 3602
+                  },
+                  "end": {
+                    "line": 55,
+                    "column": 3603
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              }
+            ]
+          }
+        },
+        {
+          "site": "shadcn-ui",
+          "page": {
+            "url": "https://ui.shadcn.com/",
+            "final_url": "https://ui.shadcn.com/",
+            "status": 200,
+            "content_type": "text/html; charset=utf-8",
+            "etag": "\"11p84voa10sgreb\"",
+            "sha256": "3cd26ad0bf4d921498077e41fbcf85b053e15c530afb1dc4e27dcfc8fb8f670e",
+            "bytes": 782163
+          },
+          "observed_scripts": 38,
+          "assets": [
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0bzde7pyy-uc5.js",
+              "sha256": "38938218385869bf08e5b6c7d026c5a1e0d62685f221e3756d83f6c4e3ca919f",
+              "bytes": 31543,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2330.7330419999926,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 3,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3iszc0bk6o3mv.js",
+              "sha256": "1f3bb0c524de6c2340e019e2108f4e1992c4d00169a3581e4e19e2ae3b117714",
+              "bytes": 63279,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2410.447622000007,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c0hxoamwjsbw.js",
+              "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+              "bytes": 112594,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 6908.568599999999,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23m56m87a3yx7.js",
+              "sha256": "37c2fca661e00c47550fb5f8bc460b9dc0f4029e5eb0a73ffcdde2b2e675d7ca",
+              "bytes": 14486,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1335.5951789999963,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/23nleunmqp_r5.js",
+              "sha256": "63624774d85bee57c8668b48187750fc39be932a66bdf728cf89ff7b6cfb4fc8",
+              "bytes": 228552,
+              "source_analysis_completed": false,
+              "route_facts_retained": false,
+              "elapsed_ms": 15452.340368999998,
+              "parse_status": null,
+              "parse_error_count": null,
+              "error": {
+                "message": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+              },
+              "candidates": null,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qdtj-d25cuf4.js",
+              "sha256": "c5320611932b281e9fb664cce6483a5c7b6751c9fbe2b5040729ceafe04634be",
+              "bytes": 155988,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 12040.98206400001,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 32,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/turbopack-0yl1_dp50rscn.js",
+              "sha256": "bd458733371ffbc8cfcbcd0ad964cce213058ee64fc263581f89046131e909ad",
+              "bytes": 10987,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1334.1966469999898,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 4,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3vmj7ocz3f6c-.js",
+              "sha256": "d95f555eb4e2ca74af4a1135f52b5f0c40936e984cf6f1613bc06b8e85f7a9b0",
+              "bytes": 14992,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1360.5867169999983,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 2,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/02ile3fpmk_64.js",
+              "sha256": "b1563d3335bf031f3ffa57d8297275af96f7cbfd2fd2afc86286d0f4409760e6",
+              "bytes": 37582,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2230.5256930000032,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1eknqc3un535f.js",
+              "sha256": "bd82e6b3568595fc03463500565d9304139a7c653e915f2a09bfd5214f5c6152",
+              "bytes": 16480,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1513.7368749999878,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/20e6u600s15u3.js",
+              "sha256": "6dac9d7a5b48860dca231879845b2f5278e860ff366549fcecd42a449668ec38",
+              "bytes": 21421,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1713.5556019999785,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0d52eigre8lfp.js",
+              "sha256": "da905ab3585c069fcc033211f1922d49f4722b714f4a053b66420075d414d61d",
+              "bytes": 35536,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1854.7661589999916,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0gq0axdizcqnp.js",
+              "sha256": "593c0a7b61bcdb6f5178ef466f402ce6b8b052652ff67b32110192d20303136c",
+              "bytes": 40090,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2051.4731160000083,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3qkrpqots048e.js",
+              "sha256": "ea78347c01aed982f1a1d973d6949bf94410548d9f4587ccb3529a3f13e989fd",
+              "bytes": 25890,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1894.7359490000235,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/18c383c4nzwlc.js",
+              "sha256": "553e3f8d0069ddf70e28369f464ee5cd08495fa46b7706d90d996c82e3aaff10",
+              "bytes": 350746,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 11520.974317999993,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 5,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/00k0993h3uuc4.js",
+              "sha256": "2c7ca6b7f6d4f8f6b7ac614a4699fc6db117141dff0be7f1c94bd147f49800e3",
+              "bytes": 26497,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3206.236137,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0c55ckxmkcevb.js",
+              "sha256": "4424e6c091a01fe7e45c110f6f1d43e8097e558a1e64a4411023dfef567fb399",
+              "bytes": 34416,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3681.494558000006,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/43wayr98w3lhg.js",
+              "sha256": "e39d55ddef9f548af8e27c1672e6e7c48bd519f728860ca6757672aee95aaff7",
+              "bytes": 26406,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3182.7484769999865,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1wjr7w9_jqiiu.js",
+              "sha256": "41bf09a71d4399d14b45afa756736eac0a7b3aa7240c085275e73bb24d6edbd7",
+              "bytes": 64639,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 4952.12028599999,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1v6j29bbqu5y0.js",
+              "sha256": "842e03ef5d938ddeca91cabc2c4265d2397b887b0a7f35ff8781bf3296c0a798",
+              "bytes": 32890,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3978.1929529999907,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3ld4clt1d2k47.js",
+              "sha256": "8214b0df0b2e427c0db7004967f0d1ebaad853f6cd1f6fe9aeaf9528cd90957c",
+              "bytes": 30074,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3260.281973999983,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/03ki0f1f-yupw.js",
+              "sha256": "4b7b9af0d669b07aa3c6f24bb33006d508f49d97327cc433657250e15fbfc77f",
+              "bytes": 1004,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 1322.4450670000224,
+              "parse_status": "complete",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1m0zang2tqwnj.js",
+              "sha256": "ac2ef7bdd908caab5fa4037ef623a6422b1f70a6e44af4103c4d5f35dbcee310",
+              "bytes": 20530,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3191.8765260000073,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/032aaa86n1dh1.js",
+              "sha256": "b6083400902148dd72ee7dcda8d1733b0c01ad9af86ac5e1e15e457c39370ef0",
+              "bytes": 21998,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2929.1543099999835,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/25hee-gw8eskv.js",
+              "sha256": "14e8098e503692aa6984203a877b56db953fc299fcbac9bc0cb08f209bf8cca6",
+              "bytes": 36684,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 4133.316558999999,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1bxvn5ukbs28_.js",
+              "sha256": "882dcb46f71627625e996d73b3965a0ae3748285cafcdf6311a763971b1e1abf",
+              "bytes": 23435,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2827.991460999998,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 2,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/28sh6u5tuq4f2.js",
+              "sha256": "3eb374d220a43deeae0687ba9bfa457ae5f0cd4da8f6cd904c47537d898e9ef9",
+              "bytes": 59881,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3432.794630999997,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+              "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+              "bytes": 86218,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 4580.687442000024,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 43,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1gx2dkwg9qo3e.js",
+              "sha256": "3d23ccde3326aaae7bb8ec23ba081355e9d3bcfd123fa628b740cf44b653c846",
+              "bytes": 133226,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2128.7121240000124,
+              "parse_status": "complete",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0rckdzguc6bi2.js",
+              "sha256": "3c5182cdb82f3aa47605c2e01a6de83ee1d9db8186bdd5df966851d3767648a6",
+              "bytes": 19607,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3029.313616999978,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/1vi-2xkk1cejt.js",
+              "sha256": "bd12a2497de25f2f826503077a7eed583036caeb38d6a90de4f36fd7b9b8e299",
+              "bytes": 30064,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 2550.8618669999996,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/39c74mlpxrrci.js",
+              "sha256": "9951ee056ed51b64d6cc4401910ef83f3725d84498d84e4113481ea042817d8d",
+              "bytes": 44497,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 5102.144391999987,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2b-ga_ylsrfwf.js",
+              "sha256": "19ba5ae9ac9db38212b0ba5c7ec84fbacffaa96fdebaab522c06386851f4647f",
+              "bytes": 30296,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3324.940382999979,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 4,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2xa04daxqn3ln.js",
+              "sha256": "600399ed13801d06a12df3beabb741c71e97877333e9308d28f58d7e6d2e795b",
+              "bytes": 34851,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3677.1861759999883,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/3cg9j5-faot60.js",
+              "sha256": "80c6ec39463dea1c936736900b0f33367cda44c9b85b2b7869cd6d39b530d816",
+              "bytes": 347373,
+              "source_analysis_completed": false,
+              "route_facts_retained": true,
+              "elapsed_ms": 15425.527031000005,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": {
+                "message": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+              },
+              "candidates": 10,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/2gsm7afyxcat9.js",
+              "sha256": "5ec7ed2fb6f59d49deaa6b840217a6f958b28c0b1d10d6b84cafd5684e4cb7c4",
+              "bytes": 53417,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 4327.609234000003,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/26m-fiew9hcdx.js",
+              "sha256": "89b660e8860e0249b9581b1fcc90fc5b6a8583602af40383f9f76bc9b790c115",
+              "bytes": 114918,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 8271.797924999992,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 1,
+              "capacity": null
+            },
+            {
+              "url": "https://ui.shadcn.com/_next/static/immutable/chunks/10ilc_hrifu7p.js",
+              "sha256": "f44a77042232b99d85d2aa3f92632273beb5603799659c109f76d544c931bd07",
+              "bytes": 31991,
+              "source_analysis_completed": true,
+              "route_facts_retained": true,
+              "elapsed_ms": 3256.113153000013,
+              "parse_status": "partial",
+              "parse_error_count": 0,
+              "error": null,
+              "candidates": 0,
+              "capacity": null
+            }
+          ],
+          "inventory": {
+            "statistics": {
+              "sources_seen": 38,
+              "sources_retained": 38,
+              "route_patterns": 18,
+              "occurrences": 31,
+              "unanchored_literals_excluded": 79
+            },
+            "coverage": {
+              "scope": "provided-code-sources",
+              "source_parsing": "partial",
+              "candidate_enumeration": "partial",
+              "application_routes": "unknown"
+            },
+            "capacity": null,
+            "routes": [
+              {
+                "path": "/docs",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/ai-elements",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/changelog",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/cli",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/components",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/components/aria/code-block",
+                "confidence": "low",
+                "mechanisms": ["route-string-constant"]
+              },
+              {
+                "path": "/docs/components/aria/trace",
+                "confidence": "low",
+                "mechanisms": ["route-string-constant"]
+              },
+              {
+                "path": "/docs/components/base/code-block",
+                "confidence": "low",
+                "mechanisms": ["route-string-constant"]
+              },
+              {
+                "path": "/docs/components/base/trace",
+                "confidence": "low",
+                "mechanisms": ["route-string-constant"]
+              },
+              {
+                "path": "/docs/components/radix/code-block",
+                "confidence": "low",
+                "mechanisms": ["route-string-constant"]
+              },
+              {
+                "path": "/docs/components/radix/trace",
+                "confidence": "low",
+                "mechanisms": ["route-string-constant"]
+              },
+              {
+                "path": "/docs/forms",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/installation",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/mcp",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/registry",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/rtl",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/skills",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              },
+              {
+                "path": "/docs/theming",
+                "confidence": "low",
+                "mechanisms": ["navigation-target", "route-string-constant"]
+              }
+            ],
+            "unknowns": [
+              {
+                "id": "jsg:71db8e9b3edf248311ce1edc9b39d568",
+                "source_id": "jss:05397e888c7bc3a2504cf830bd4e3140",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 14116
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 14117
+                  }
+                },
+                "reason": "The relative or unsupported navigation literal cannot establish a rooted path without runtime context."
+              },
+              {
+                "id": "jsg:3a768700a2498a6e57bcb882369eedba",
+                "source_id": "jss:05397e888c7bc3a2504cf830bd4e3140",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 17881
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 17902
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:197de14232c580cd78b72450533434ab",
+                "source_id": "jss:069bcdffc70d03b26b303b1ad1d98c97",
+                "kind": "source-unavailable",
+                "source_range": null,
+                "reason": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+              },
+              {
+                "id": "jsg:b2e7a2101199e34ea912bcc998c0f907",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 6617
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 6671
+                  }
+                },
+                "reason": "The navigation target is dynamic; literal fragments do not establish a complete path."
+              },
+              {
+                "id": "jsg:d0668e07daec3bde6047c185997a1ac5",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 8569
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 8607
+                  }
+                },
+                "reason": "The navigation target is dynamic; literal fragments do not establish a complete path."
+              },
+              {
+                "id": "jsg:155a6d2e93c159844d72c8507949d138",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 14350
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 14400
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:efaf5967d5ac475282318c251d94db2e",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 35516
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 35522
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:a1c10fbf22941c951a3e711849c10781",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 36309
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 36310
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:a9cef6e741ff550079eb4c0878412aae",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 36412
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 36413
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:7c29496acb20438c1601b02f334be17f",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 38322
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 38328
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:9134172b6c00c3e3752f2f69dbbffa8f",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 38602
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 38603
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:f16b5540e7016b70625b4ec2f5e6e43b",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 38666
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 38667
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:83e339b93ab0999acd951c3e13f15f31",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 39238
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 39243
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              },
+              {
+                "id": "jsg:01594b902b43981a10de081386d4f1dd",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 25,
+                    "column": 32110
+                  },
+                  "end": {
+                    "line": 25,
+                    "column": 32111
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:c15e0a5f64eb77700dae25eea14fc2bb",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 25,
+                    "column": 33860
+                  },
+                  "end": {
+                    "line": 25,
+                    "column": 33861
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:7793a2b4e82c30b7509f6e24172ea215",
+                "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 25,
+                    "column": 44185
+                  },
+                  "end": {
+                    "line": 25,
+                    "column": 44186
+                  }
+                },
+                "reason": "The navigation destination may be dynamic, mutated, projected or cyclic."
+              },
+              {
+                "id": "jsg:7a3a0e01037ff5978d74fe664b5f5bb4",
+                "source_id": "jss:8977c2e81031898d4c7fde7839fbbfce",
+                "kind": "interpretation",
+                "source_range": {
+                  "start": {
+                    "line": 1,
+                    "column": 65979
+                  },
+                  "end": {
+                    "line": 1,
+                    "column": 65997
+                  }
+                },
+                "reason": "The recognized navigation destination is not a supported literal."
+              }
+            ]
+          }
+        }
+      ],
+      "source_worker_qualification": {
+        "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+        "base_commit": "18669641e98d49d06c9d1c3227167756db9a6c3b",
+        "method": "Fresh full isolated-worker analysis of all67 saved production scripts, rehashing every input. No cached source facts or conditional replay for current qualification.",
+        "profile": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-4772-lab/probe-main5-routes.mjs"
+          ],
+          "exit_code": 0,
+          "wall_s": 247.05573116100277,
+          "cpu_s": 374.58691,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 541859840,
+          "sample_ms": 20,
+          "guard_stop": null,
+          "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+        }
+      },
+      "real_browser": {
+        "executable": "/home/yann/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+        "browser_version": "156.0.8078.4",
+        "source": {
+          "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+          "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+          "bytes": 86218
+        },
+        "method": "Production chunk compiled inertly with Runtime.compileScript/persistScript in an owned blank local browser page, never run; actual public CLI and SDK analyze_web_bundle captured it through CDP",
+        "routes": [
+          "/docs",
+          "/docs/ai-elements",
+          "/docs/changelog",
+          "/docs/cli",
+          "/docs/components",
+          "/docs/components/aria/code-block",
+          "/docs/components/aria/trace",
+          "/docs/components/base/code-block",
+          "/docs/components/base/trace",
+          "/docs/components/radix/code-block",
+          "/docs/components/radix/trace",
+          "/docs/forms",
+          "/docs/installation",
+          "/docs/mcp",
+          "/docs/registry",
+          "/docs/rtl",
+          "/docs/skills",
+          "/docs/theming"
+        ],
+        "source_coverage": {
+          "scope": "provided-code-sources",
+          "source_parsing": "complete",
+          "candidate_enumeration": "partial",
+          "application_routes": "unknown"
+        },
+        "sources": [
+          {
+            "id": "jss:5a8904ffd2bb9db916cd05f2c0e7624c",
+            "key": "scr_6e20922f65bab674891bd7b6caa8ff2c460ea5afc830881dca59962a49728985",
+            "path": null,
+            "url": "https://ui.shadcn.com/_next/static/immutable/chunks/0ftd4gqztonqp.js",
+            "sha256": "45c6ead1e08cc578464e7a0c6b2e6764d7af83f99039e291f288a971b988b3fc",
+            "container_sha256": null,
+            "status": "complete",
+            "reported_route_capacity": null,
+            "reason": null,
+            "base_path": null
+          }
+        ],
+        "elapsed_s": 16.869364214,
+        "authority_limits": [
+          "Not a live published-page or application execution test",
+          "No reachability, route loading or full application route denominator proof"
+        ],
+        "cleanup": "verified owned browser group and temporary profile removed",
+        "profile": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-main5.mjs"
+          ],
+          "exit_code": 0,
+          "wall_s": 18.734681791000185,
+          "cpu_s": 23.927989,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 2179420160,
+          "sample_ms": 20,
+          "guard_stop": null
+        },
+        "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+      },
+      "upstream_compatibility": {
+        "observed_main": "183b4d4e7e303561cb06617fa485d996a4c99f63",
+        "qualified_head": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+        "merge_tree_exit": 1,
+        "output": "ae57b50fa8e1d0ba7583b10513517f2a65c9a851\n100644 2fa6cc4f20b460465b7da2dc917466cb9cc9bfed 1\tsrc/domain/webBundleAnalyzer.ts\n100644 8aceeb60158a075b19355903ab9c9975a205928c 2\tsrc/domain/webBundleAnalyzer.ts\n100644 e51ca3c40035ad51d91aea49e528001f8d9cab1e 3\tsrc/domain/webBundleAnalyzer.ts\n100644 a9a36b78c05b9cf18a5d41c161267d97fe9ac9e2 1\tsrc/domain/webBundleAnalyzerInspection.ts\n100644 b37b3cf3b242d92423250f194197d512c9e72cf0 2\tsrc/domain/webBundleAnalyzerInspection.ts\n100644 875e3ce01af505b3e613440b58e6f817776d16fc 3\tsrc/domain/webBundleAnalyzerInspection.ts\n\nAuto-merging src/browser/WebBundleAnalysisWorkerServer.test.ts\nAuto-merging src/browser/WebBundleAnalysisWorkerServer.ts\nAuto-merging src/domain/webBundleAnalyzer.test.ts\nAuto-merging src/domain/webBundleAnalyzer.ts\nCONFLICT (content): Merge conflict in src/domain/webBundleAnalyzer.ts\nAuto-merging src/domain/webBundleAnalyzerInspection.ts\nCONFLICT (content): Merge conflict in src/domain/webBundleAnalyzerInspection.ts\nAuto-merging src/domain/webBundleAnalyzerResult.ts\nAuto-merging src/server/registerElectronTools.ts\n",
+        "scope": "This intermediate runtime was qualified before integrating the new shared accumulator owner. New main has two import/type ownership conflicts; both are understood and prepared outside the frozen runtime. This intermediate head will not be published or merged; integration and fresh qualification are required."
+      }
     }
   ],
   "input_schema_profile_integration": {
@@ -23222,11 +26186,11 @@
     "reason": "Current-head Greptile identified route-shaped data in rest copies as a real source-ownership bug. The old run was cancelled after build/static/source/docs/browser/recovery/quality passed, without observed technical failures; a corrected new head needs a fresh run."
   },
   "main_integration": {
-    "main_commit": "18669641e98d49d06c9d1c3227167756db9a6c3b",
-    "integration_commit": "f6ed21684c3c6c082ffb7909427cce10f31e5061",
+    "main_commit": "183b4d4e7e303561cb06617fa485d996a4c99f63",
+    "integration_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
     "original_issue_base": "6d356b843",
-    "conflict": "Clean merge of current main including CI fix #6186. Route facts, inventory and views now use the canonical JavaScript source-coordinate owner; duplicate range schema and its alias were removed. Shared source ranges retain one-based lines, zero-based UTF-16 columns and exclusive ends. Current shared input/registration contracts are preserved.",
-    "verification": "Fresh598 source/owner/JSON/deadline/graph checks,97 compiled public/SDK/worker checks, full67-worker corpus, equivalent SDK tasks and inert real Chromium on the rest-copy corrected scanner."
+    "conflict": "Main moved IncludedScript, AnalysisAccumulator, isIncludedScript and their constructor to webBundleAnalyzerState. Both import/type conflicts resolve to that canonical state owner, removing old definitions and factory; route scan/facts remain shared. Coordinator assembly stays independent of parser imports.",
+    "verification": "Fresh598 source/owner/JSON/deadline/graph checks,98 compiled public/SDK/worker checks including the isolated coordinator parser-import boundary, full67-worker corpus, equivalent SDK tasks and inert real Chromium on the rest-copy corrected scanner."
   },
   "effective_fields_regression": {
     "runtime_commit": "5301213ef8a39c1993b87f2553db352dec221c83",
@@ -23251,15 +26215,15 @@
     "oracle": "Actual sealed summary fits exactly at the limit; summary and row pages exceeding the final limit return retained-parent resource errors."
   },
   "prior_main_integration": {
-    "main_commit": "2e6b38cef0cc1f2a949fe97244ef390aaacfc5b2",
-    "integration_commit": "b74dc2c7f3699b47236c554f0eed9214c223e342",
+    "main_commit": "18669641e98d49d06c9d1c3227167756db9a6c3b",
+    "integration_commit": "f6ed21684c3c6c082ffb7909427cce10f31e5061",
     "original_issue_base": "6d356b843",
-    "conflict": "The only textual conflict was the inspect_analysis_view description; retain upstream environment-state wording and the route-inventory prefix. Auto-merged browser/domain/CLI contracts preserve caller-selected timeout fields and shared route delivery. Two new contract cases verify inherited per-script<=total checks and explicit deadline values for complete and summary delivery; all6 contract tests passed on the first integration probe, without implementation changes.",
-    "verification": "Fresh551 source/owner/JSON/deadline checks, current compiled public/CLI/SDK/CDP boundaries, full67-worker corpus, equivalent SDK tasks and inert real Chromium."
+    "conflict": "Clean merge of current main including CI fix #6186. Route facts, inventory and views now use the canonical JavaScript source-coordinate owner; duplicate range schema and its alias were removed. Shared source ranges retain one-based lines, zero-based UTF-16 columns and exclusive ends. Current shared input/registration contracts are preserved.",
+    "verification": "Fresh598 source/owner/JSON/deadline/graph checks,97 compiled public/SDK/worker checks, full67-worker corpus, equivalent SDK tasks and inert real Chromium on the rest-copy corrected scanner."
   },
   "source_worker_qualification": {
-    "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
-    "base_commit": "18669641e98d49d06c9d1c3227167756db9a6c3b",
+    "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
+    "base_commit": "183b4d4e7e303561cb06617fa485d996a4c99f63",
     "method": "Fresh full isolated-worker analysis of all67 saved production scripts, rehashing every input. No cached source facts or conditional replay for current qualification.",
     "profile": {
       "command": [
@@ -23267,16 +26231,16 @@
         "-c",
         "0,1",
         "node",
-        "/home/yann/yann/rea-4772-lab/probe-main5-routes.mjs"
+        "/home/yann/yann/rea-4772-lab/probe-main6-routes.mjs"
       ],
       "exit_code": 0,
-      "wall_s": 247.05573116100277,
-      "cpu_s": 374.58691,
+      "wall_s": 208.19910246400104,
+      "cpu_s": 309.052206,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 541859840,
+      "peak_family_rss_bytes": 491433984,
       "sample_ms": 20,
       "guard_stop": null,
-      "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28"
+      "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598"
     }
   },
   "typed_child_regression": {
@@ -24275,6 +27239,13 @@
       "original_issue_base": "6d356b843",
       "conflict": "The only textual conflict was the inspect_analysis_view description; retain upstream environment-state wording and the route-inventory prefix. Auto-merged browser/domain/CLI contracts preserve caller-selected timeout fields and shared route delivery. Two new contract cases verify inherited per-script<=total checks and explicit deadline values for complete and summary delivery; all6 contract tests passed on the first integration probe, without implementation changes.",
       "verification": "Fresh551 source/owner/JSON/deadline checks, current compiled public/CLI/SDK/CDP boundaries, full67-worker corpus, equivalent SDK tasks and inert real Chromium."
+    },
+    {
+      "main_commit": "18669641e98d49d06c9d1c3227167756db9a6c3b",
+      "integration_commit": "f6ed21684c3c6c082ffb7909427cce10f31e5061",
+      "original_issue_base": "6d356b843",
+      "conflict": "Clean merge of current main including CI fix #6186. Route facts, inventory and views now use the canonical JavaScript source-coordinate owner; duplicate range schema and its alias were removed. Shared source ranges retain one-based lines, zero-based UTF-16 columns and exclusive ends. Current shared input/registration contracts are preserved.",
+      "verification": "Fresh598 source/owner/JSON/deadline/graph checks,97 compiled public/SDK/worker checks, full67-worker corpus, equivalent SDK tasks and inert real Chromium on the rest-copy corrected scanner."
     }
   ],
   "unmergeable_prior_head": {
@@ -24282,7 +27253,7 @@
     "ci_workflow_run_id": null,
     "observation": "This head had a merge conflict and no CI workflow run. The actual main branch ref was2e6b38cef while the PR payload base.sha still reported3dbe314ad; integration now uses the actual fetched ref."
   },
-  "current_qualification_recorded_at_utc": "2026-10-22T01:47:05.636Z",
+  "current_qualification_recorded_at_utc": "2026-10-22T01:56:30.588Z",
   "ci_baseline_fix": {
     "pr": 6186,
     "baseline_commit": "8413ec08f732b5ef4ecaeee1c4b9bfe8924a7e9d",
@@ -24351,9 +27322,9 @@
     "scope": "Fixture-only caller-selected2000ms deadline and its receipt; original12s guard and all timeout/cancellation/socket/target-reuse assertions remain. No production defaults changed. Baseline stopped early, so no before/after speed comparison."
   },
   "public_test_execution": {
-    "distinct_tests": 97,
-    "suites": 15,
-    "method": "All97 public tests:14 suites together, then selected-path identity separately with the original30s deadline.",
+    "distinct_tests": 98,
+    "suites": 16,
+    "method": "All98 public tests:15 suites together, then selected-path identity separately with the original30s deadline.",
     "commands": [
       {
         "command": [
@@ -24377,10 +27348,11 @@
           "tests/boundary/browser/cdpObservationWindowScope.test.ts",
           "tests/boundary/browser/webDeadlineBehavior.test.ts",
           "tests/boundary/browser/cdpTargetDeadlines.test.ts",
-          "tests/boundary/mcp/absoluteLocalPathSchema.test.ts"
+          "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+          "tests/boundary/browser/webBundleCoordinatorImports.test.ts"
         ],
         "exit_code": 0,
-        "wall_s": 136.75403263699263
+        "wall_s": 134.95990433200495
       },
       {
         "command": [
@@ -24394,7 +27366,7 @@
           "tests/boundary/javascript/javascriptSelectedPathEvidence.test.ts"
         ],
         "exit_code": 0,
-        "wall_s": 19.456104069002322
+        "wall_s": 18.879753005996463
       }
     ]
   },
@@ -24444,10 +27416,11 @@
   },
   "upstream_compatibility": {
     "observed_main": "183b4d4e7e303561cb06617fa485d996a4c99f63",
-    "qualified_head": "1d846371cfc2b195b9de5144c848afa0dc012d28",
-    "merge_tree_exit": 1,
-    "output": "ae57b50fa8e1d0ba7583b10513517f2a65c9a851\n100644 2fa6cc4f20b460465b7da2dc917466cb9cc9bfed 1\tsrc/domain/webBundleAnalyzer.ts\n100644 8aceeb60158a075b19355903ab9c9975a205928c 2\tsrc/domain/webBundleAnalyzer.ts\n100644 e51ca3c40035ad51d91aea49e528001f8d9cab1e 3\tsrc/domain/webBundleAnalyzer.ts\n100644 a9a36b78c05b9cf18a5d41c161267d97fe9ac9e2 1\tsrc/domain/webBundleAnalyzerInspection.ts\n100644 b37b3cf3b242d92423250f194197d512c9e72cf0 2\tsrc/domain/webBundleAnalyzerInspection.ts\n100644 875e3ce01af505b3e613440b58e6f817776d16fc 3\tsrc/domain/webBundleAnalyzerInspection.ts\n\nAuto-merging src/browser/WebBundleAnalysisWorkerServer.test.ts\nAuto-merging src/browser/WebBundleAnalysisWorkerServer.ts\nAuto-merging src/domain/webBundleAnalyzer.test.ts\nAuto-merging src/domain/webBundleAnalyzer.ts\nCONFLICT (content): Merge conflict in src/domain/webBundleAnalyzer.ts\nAuto-merging src/domain/webBundleAnalyzerInspection.ts\nCONFLICT (content): Merge conflict in src/domain/webBundleAnalyzerInspection.ts\nAuto-merging src/domain/webBundleAnalyzerResult.ts\nAuto-merging src/server/registerElectronTools.ts\n",
-    "scope": "This intermediate runtime was qualified before integrating the new shared accumulator owner. New main has two import/type ownership conflicts; both are understood and prepared outside the frozen runtime. This intermediate head will not be published or merged; integration and fresh qualification are required."
+    "qualified_head": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
+    "integrated": true,
+    "merge_tree_exit": 0,
+    "output": "afb55f3c2881ec56adf2682d477e99799821b1cd\n",
+    "scope": "This main commit is integrated into the qualified runtime. Both canonical-state ownership conflicts are resolved; 598 source checks and98 compiled public checks pass, including the isolated coordinator parser-import guard. Subsequent upstream advances still require combined-tree CI."
   },
   "projected_query_and_optional_pattern_regressions": {
     "before_runtime_commit": "638a63486d6b48a8aeba2f3530c188ec42d7bca8",
@@ -24477,7 +27450,7 @@
   "rest_copy_regression": {
     "before_runtime_commit": "e189ae4de805e34f55d976ac4ee602fd053445f4",
     "before_record_head": "ab6cba2d7ce89edf3523f8a8e5d19373cc3e3e76",
-    "runtime_commit": "1d846371cfc2b195b9de5144c848afa0dc012d28",
+    "runtime_commit": "d7bbdece86dcf98856a4a3c97c09a39fed03e598",
     "before": {
       "command": [
         "taskset",
@@ -24494,7 +27467,7 @@
     },
     "root_cause": "The single-value initializer helper discarded null rest projections even though the binding owner already retained copy kind, exclusions, offset and array start.",
     "structural_fix": "Follow normalized copy selections through semanticCopiedReferencePath and semanticPropertyPathKeyMatches. The shared cached effective-field owner selects own object slots; literal array slots preserve canonical indices and stop at a spread. A bounded iterative worklist charges before retaining selected slots; it never owns excluded source siblings. Source identity ownership remains separate from positive per-call freshness.",
-    "verification": "136 scanner/598 source tests and97 compiled public tests; full/compact historical SDK queries after source deletion and both browser adapters preserve excluded siblings and reject route-shaped rest-query data.",
+    "verification": "136 scanner/598 source tests and98 compiled public tests; full/compact historical SDK queries after source deletion and both browser adapters preserve excluded siblings and reject route-shaped rest-query data.",
     "limits": "Unresolved dynamic keys, accessors and array positions after a spread are conservative; no source execution, namespace fallback, new live cache or independent copy-pattern parser. Specific per-fix speed causality and cold-cache costs are unmeasured."
   }
 }
