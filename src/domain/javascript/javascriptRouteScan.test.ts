@@ -965,3 +965,37 @@ it.each(
   );
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
 });
+
+it.each([
+  "router.push({pathname:'/users',query:{item:independent,item:0}});",
+  "router.push({pathname:'/users',query:{item:independent,['item']:0}});",
+  "router.push({pathname:'/users',query:{1:independent,'1':0}});",
+  "router.push({pathname:'/users',query:independent,query:{}});",
+  "const payload={item:independent,item:0};router.push({pathname:'/users',query:payload});",
+  "router.push({pathname:'/users',query:{item:independent,...unknown,item:0}});",
+  "router.push({pathname:'/users',query:{item:independent,get item(){return 0;}}});",
+])(
+  "keeps overwritten navigation data references independent: %s",
+  (navigation) => {
+    const result = analyze(
+      `const independent={path:'/independent',component:View};${navigation}`,
+    );
+    expect(result.candidates.map((candidate) => candidate.path).sort()).toEqual(
+      ["/independent", "/users"],
+    );
+  },
+);
+
+it.each([
+  "{item:0,item:independent}",
+  "{item:independent,other:0}",
+  "{item:independent,...unknown}",
+  "{item:independent,[key]:0}",
+])("retains effective or uncertain query data ownership: %s", (query) => {
+  const result = analyze(
+    `const independent={path:'/query-data',component:Preview};router.push({pathname:'/users',query:${query}});`,
+  );
+  expect(result.candidates.map((candidate) => candidate.path)).toEqual([
+    "/users",
+  ]);
+});

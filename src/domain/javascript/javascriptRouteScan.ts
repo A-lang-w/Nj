@@ -314,7 +314,21 @@ export class JavaScriptRouteScan {
             seen.add(node);
           }
           this.#dynamicValues.set(node, owner);
+          let overwritten = false;
+          if (t.isObjectProperty(node) && t.isObjectExpression(parent)) {
+            const key = semanticStaticPropertyKey(node.key, node.computed);
+            if (key !== null) {
+              const fields = this.#fields(parent);
+              const effective = fields.values.get(key);
+              // Unknown spreads/keys may preserve earlier data. Only a known
+              // final slot or method proves that this reference was discarded.
+              overwritten =
+                fields.dynamicNames.has(key) ||
+                (effective !== undefined && effective !== node);
+            }
+          }
           const nonValue =
+            overwritten ||
             t.isTSType(node) ||
             !isNavigationDataEdge(node, parent) ||
             (parent !== null && nonValueReferences.has(parent));
