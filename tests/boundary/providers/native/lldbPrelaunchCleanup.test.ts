@@ -177,3 +177,47 @@ it("retries the tracer-owned resolver supervisor before another trace", async ()
     await tracer.close();
   }
 });
+
+it("keeps resolver preparation cleanup with the foreign helper", async () => {
+  const prepared = preparation();
+  const resolver = vi.fn(async () =>
+    err(
+      new NativeCommandFailure("lldb", "io", null, { cause: prepared.failure }),
+    ),
+  );
+  const tracer = new LldbCallTracer({}, undefined, resolver);
+  try {
+    const result = await tracer.trace(request);
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("ProviderAdapterError");
+    expect(result.error.diagnostics).toMatchObject({
+      phase: "process-preparation",
+      tool: "lldb",
+      reason: "controlled compiler failure",
+      compiler_outcome: { outcome: "exited", code: 1, signal: null },
+    });
+    expect(result.error.capturedOutput).toMatchObject({
+      stderr: "compiler failed",
+    });
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["owned-helper-root"]);
+    expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
+
+    expect((await tracer.close()).ok).toBe(true);
+    expect(prepared.close).not.toHaveBeenCalled();
+    expect(prepared.marker.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupIncomplete).toBe(true);
+
+    await tracer.trace(request);
+    expect(resolver).toHaveBeenCalledTimes(2);
+
+    await prepared.close();
+    expect(prepared.marker.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await tracer.close();
+    await prepared.close();
+  }
+});
