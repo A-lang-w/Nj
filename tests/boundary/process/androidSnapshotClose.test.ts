@@ -13,7 +13,10 @@ import {
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
+import {
+  RegularFileCancelled,
+  RegularFileCleanupFailure,
+} from "../../../src/filesystem/OwnedRegularFile.js";
 import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
@@ -479,6 +482,55 @@ test("retains the source descriptor when snapshot admission cleanup fails", asyn
       if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);
     await verifyJadxFixtureCleanup(fixture.launches);
   }
+});
+
+test("keeps the snapshot hash when cancellation wraps the finished copy", () => {
+  const reason = { requested: "snapshot-close" };
+  const copy = {
+    kind: "android-snapshot-copy" as const,
+    sha256: "b".repeat(64),
+    sourcePath: "/workspace/sample.apk",
+    snapshotPath: "/workspace/snap/target.apk",
+    bytes: 24,
+  };
+  const destination = new RegularFileCancelled(
+    copy.snapshotPath,
+    new OwnedFileHandle({
+      fd: 7,
+      close: async () => undefined,
+    } as FileHandle),
+    { outcome: { kind: "completed", value: copy }, reason },
+  );
+  const source = new RegularFileCleanupFailure(
+    copy.sourcePath,
+    new OwnedFileHandle({
+      fd: 8,
+      close: async () => undefined,
+    } as FileHandle),
+    { kind: "failed", cause: destination },
+    new Error("source EIO"),
+  );
+  const error = captureJadxFailure({
+    cause: source,
+    request: {
+      operation: "inspect_android_package",
+      input: { path: copy.sourcePath },
+    } as AndroidRequest,
+    timeout: new AbortController().signal,
+    timeoutMs: 1000,
+    signal: AbortSignal.abort(reason),
+    session: undefined,
+  })();
+  expect(error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
+  expect(error.cleanupPrimary?.cause).toBe(reason);
+  expect(error.cleanupIncomplete).toBe(true);
+  expect(error.cleanupResources).toEqual([copy.sourcePath]);
+  expect(error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path: copy.snapshotPath,
+    sha256: copy.sha256,
+    bytes: copy.bytes,
+  });
 });
 
 test("classifies a nested snapshot close as cancellation", () => {

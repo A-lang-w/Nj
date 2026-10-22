@@ -17,6 +17,7 @@ import {
   StableFileHashFailure,
 } from "../filesystem/StableFileHash.js";
 import {
+  RegularFileCancelled,
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
@@ -127,13 +128,7 @@ const observeJadxFailure = (
     const descriptorPaths = [
       ...new Set(closeFailures.map((failure) => failure.path)),
     ];
-    const completed = closeFailures
-      .map((failure) =>
-        failure.outcome.kind === "completed"
-          ? androidSnapshotCopy(failure.outcome.value)
-          : undefined,
-      )
-      .find((copy) => copy !== undefined);
+    const completed = completedSnapshotCopy(cause);
     const nestedCancellation = nestedFileCancellation(cause);
     const nestedCancellationError =
       nestedCancellation === undefined
@@ -242,6 +237,21 @@ const observeJadxFailure = (
   return physicalFailure(
     cause instanceof JadxInterruption ? cause.reason : cause,
   );
+};
+
+/**
+ * A finished copy can be the close outcome or the value inside a nested
+ * cancellation thrown after the destination close succeeded.
+ */
+const completedSnapshotCopy = (
+  cause: unknown,
+): ReturnType<typeof androidSnapshotCopy> => {
+  if (cause instanceof RegularFileCancelled)
+    return androidSnapshotCopy(cause.outcome.value);
+  if (!(cause instanceof RegularFileCleanupFailure)) return undefined;
+  if (cause.outcome.kind === "completed")
+    return androidSnapshotCopy(cause.outcome.value);
+  return completedSnapshotCopy(cause.outcome.cause);
 };
 
 /** This close and any nested close whose failure is its operation outcome. */
