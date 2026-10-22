@@ -3,7 +3,7 @@ import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
-import type { BinarySession } from "./binary/BinarySession.js";
+import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
 import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
@@ -298,7 +298,9 @@ const runAnalysis = async (
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
-    readonly createSession?: () => BinarySession | Promise<BinarySession>;
+    readonly createSession?: () =>
+      | BinarySessionPort
+      | Promise<BinarySessionPort>;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
@@ -306,7 +308,7 @@ const runAnalysis = async (
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
-  let session: BinarySession;
+  let session: BinarySessionPort;
   if (options.createSession !== undefined) {
     session = await options.createSession();
   } else {
@@ -426,7 +428,7 @@ const runAnalysis = async (
       const evidenceProfile = analysisProfileForEvidence(session, tool);
       const { output, evidence, cachePolicy } = await executeAnalysisTool({
         session,
-        openedTarget: opened.value,
+        openedTarget: opened.value.target,
         tool,
         arguments: arguments_,
         signal,
@@ -495,7 +497,7 @@ const runAnalysis = async (
 };
 
 const executeAnalysisTool = async (input: {
-  readonly session: BinarySession;
+  readonly session: BinarySessionPort;
   readonly openedTarget: BinaryTarget;
   readonly tool:
     | NativeToolName
@@ -740,7 +742,7 @@ const providerIdentityForRoute = (
   route.capabilities?.get(operation)?.provider ?? route.identity;
 
 const analysisProfileForEvidence = (
-  session: BinarySession,
+  session: BinarySessionPort,
   tool:
     | NativeToolName
     | ArtifactAnalysisOperation

@@ -2,6 +2,7 @@ import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { ProviderStartAdmission } from "../AnalysisProvider.js";
 import {
   snapshotMatchesBinding,
   snapshotMatchesTarget,
@@ -23,10 +24,16 @@ import {
 } from "./ProfilelessNativeWorkflowSnapshot.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
 
-/** Read a staged snapshot once the open holds its place in the session order. */
-export type AnalysisSnapshotLoader = () => Promise<
-  Result<AnalysisSnapshot, AnalysisError>
->;
+/**
+ * Read a staged snapshot once the open holds its place in the session order.
+ *
+ * The loader is given the signal the open runs under, so the read follows the
+ * open it belongs to. A background job owns its own signal, and a cancelled
+ * request stops the wait for that job instead of the job itself.
+ */
+export type AnalysisSnapshotLoader = (
+  signal: AbortSignal | undefined,
+) => Promise<Result<AnalysisSnapshot, AnalysisError>>;
 
 export interface BinarySessionOpenOptions {
   readonly signal?: AbortSignal;
@@ -41,6 +48,24 @@ export interface BinarySessionOpenOptions {
    */
   readonly loadSnapshot?: AnalysisSnapshotLoader;
   readonly providerId?: AnalysisProviderSelector;
+  /**
+   * Start the selected provider as part of this open.
+   *
+   * A composed client defers its start to the first analysis call. A caller
+   * that reports the target as started asks for that start here, so the
+   * provider runs inside the open's own start window and under the start
+   * limits that window carries.
+   */
+  readonly startProvider?: boolean;
+  /**
+   * The admission that bounds a start the client defers.
+   *
+   * A composed client starts the provider it selected with the first call
+   * that needs it, so that call runs under this admission: the shared start
+   * limit covers the real start and not only the open that resolved the
+   * target.
+   */
+  readonly startAdmission?: ProviderStartAdmission;
 }
 
 interface CurrentOpenBinding {
@@ -138,7 +163,14 @@ export const validateResolvedSessionTarget = (
   return { ok: true, value: { target, route, sameTarget } };
 };
 
-const sameSessionTarget = (
+/**
+ * Whether two observations name the same live target.
+ *
+ * The requested path, the resolved realpath and the file digest decide it,
+ * so a rebuilt binary at the same path is a different target and never
+ * inherits the analysis of the file it replaced.
+ */
+export const sameSessionTarget = (
   current: BinaryTarget | undefined,
   target: BinaryTarget,
 ): boolean =>

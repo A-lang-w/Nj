@@ -92,6 +92,7 @@ import {
   evidenceResultOf,
   segmentOutput,
   sessionProvider,
+  analysisJobState,
   symbolDiscoveryOutput,
   targetFormatSchema,
   targetKindSchema,
@@ -486,6 +487,13 @@ const lifecycleTargetFields = {
   path: z.string(),
   kind: targetKindSchema,
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  target_id: z
+    .string()
+    .describe(
+      "Opaque handle for this open target; pass it to target-bound tools.",
+    )
+    .optional(),
+  analysis: analysisJobState.optional(),
 };
 const detectedLifecycleTargetSchema = z.object({
   ...lifecycleTargetFields,

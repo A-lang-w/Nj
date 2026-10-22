@@ -411,7 +411,7 @@ describe("snapshot output cleanup lifecycle", () => {
         if (!saved.ok) throw saved.error;
         const loaded = await readAnalysisSnapshot(path);
         if (!loaded.ok) throw loaded.error;
-        expect(loaded.value.target.sha256).toBe(opened.value.sha256);
+        expect(loaded.value.target.sha256).toBe(opened.value.target.sha256);
       }
     } finally {
       const closed = await session.close();
@@ -1068,7 +1068,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   expect(
     isProfilelessNativeDispatchSnapshot(
       wrongReader,
-      opened.value,
+      opened.value.target,
       APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
     ),
   ).toBe(false);
@@ -1088,7 +1088,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   expect(
     isProfilelessNativeDispatchSnapshot(
       wrongOperation,
-      opened.value,
+      opened.value.target,
       APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
     ),
   ).toBe(false);
@@ -1127,7 +1127,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   expect(
     isProfilelessNativeDispatchSnapshot(
       mixedSnapshot as AnalysisSnapshot,
-      opened.value,
+      opened.value.target,
       APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
     ),
   ).toBe(false);

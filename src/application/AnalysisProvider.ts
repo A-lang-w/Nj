@@ -36,6 +36,10 @@ export interface ExecutionOptions {
    * supplied it.
    */
   readonly selectorOrigin?: "provider";
+  /** Route to one registered target slot; absent addresses the current slot. */
+  readonly targetId?: string;
+  /** Bound how long a call waits for a starting target before reporting progress. */
+  readonly waitMs?: number;
 }
 
 /** Closed operations accepted by provider-backed analysis sessions. */
@@ -207,6 +211,17 @@ export interface AnalysisClient extends AnalysisOperationPort {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError> | undefined>;
+  /**
+   * Start the provider this client selected, when the client defers it.
+   *
+   * A composed client answers a health probe without touching a child, so a
+   * caller that needs the provider running asks for that start explicitly.
+   * A client that starts its provider with its first call has nothing to do
+   * here and does not implement it.
+   */
+  startProvider?(
+    options?: ExecutionOptions,
+  ): Promise<Result<null, AnalysisError>>;
   /** Retained token-verified process snapshots for dynamic providers this client started. */
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   /** Current provider work that may outlive a timed-out or cancelled caller. */
@@ -225,9 +240,70 @@ export interface AnalysisClient extends AnalysisOperationPort {
   ): Promise<Result<null, AnalysisError>>;
 }
 
+/**
+ * The shared admission that bounds a provider start.
+ *
+ * A client that defers its start runs it under this admission, and an open
+ * that starts the provider it selected runs that start under it too, so a
+ * limit that counts provider starts counts the real ones instead of only the
+ * opens that resolved a target. The admission takes the limit around the
+ * start and gives it back when the start settles.
+ */
+export interface ProviderStartAdmission {
+  /**
+   * Run one provider start under the shared start limit.
+   *
+   * The admission reports the start's own failure. It never starts a
+   * provider twice and never runs the start without the limit.
+   *
+   * A failed start leaves a provider behind, and the cleanup of that failed
+   * start owns the provider: it either releases it or keeps it for a later
+   * retry. The cleanup runs under the same limit, so the limit counts the
+   * provider while it may still be running. A start without a cleanup gives
+   * the limit back when the start settles.
+   *
+   * The admission runs the cleanup for every failure it reports, including a
+   * start it could not attempt because the limit could not be acquired: the
+   * open still owns a client it created and a target it replaced, and the
+   * cleanup is what releases them. The admission reports the failure the
+   * cleanup answered with.
+   */
+  run<Value>(
+    start: () => Promise<Result<Value, AnalysisError>>,
+    operation: string,
+    signal?: AbortSignal,
+    cleanup?: (failure: AnalysisError) => Promise<ProviderStartCleanup>,
+  ): Promise<Result<Value, AnalysisError>>;
+}
+
+/**
+ * What the cleanup of a failed start reports to the start admission.
+ *
+ * The cleanup is the owner of the provider the failed start left behind, so
+ * it reports whether that provider may still be running.
+ */
+export interface ProviderStartCleanup {
+  /** The failure the failed start reports to its caller. */
+  readonly error: AnalysisError;
+  /**
+   * True when the provider the failed start left behind may still be running.
+   *
+   * The admission keeps the limit for that provider until a later cleanup
+   * releases it, so the analysis cap counts a provider that is still alive.
+   */
+  readonly providerAlive: boolean;
+}
+
 /** Per-client identity allocated before any provider side effect starts. */
 export interface AnalysisClientContext {
   readonly runId: string;
+  /**
+   * The admission that bounds a start this client defers.
+   *
+   * A client that starts its provider with a later call runs that call
+   * under this admission, so the shared start limit covers the real start.
+   */
+  readonly startAdmission?: ProviderStartAdmission;
 }
 
 /** One lifecycle owner for retained resources and abortable inspection work. */

@@ -3,17 +3,25 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
+import type { Result } from "../../domain/result.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,
+  AnalysisExecution,
+  AnalysisOperation,
   AnalysisProviderBoundClientFactory,
   AnalysisProvider,
   CapabilityDescriptor,
   ExecutionOptions,
   ProviderIdentity,
+  ProviderRequestActivitySnapshot,
+  ProviderRuntimeLineageSnapshot,
 } from "../AnalysisProvider.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
@@ -130,6 +138,7 @@ export class CompositeProvider implements AnalysisProvider {
   readonly #identity: ProviderIdentity;
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #providerByOperation: ReadonlyMap<string, AnalysisProvider>;
+  readonly #providers: readonly AnalysisProvider[];
   readonly #boundClientFactories: ReadonlyMap<
     string,
     AnalysisProviderBoundClientFactory
@@ -145,6 +154,7 @@ export class CompositeProvider implements AnalysisProvider {
     this.#boundClientFactories = boundClientFactories;
     if (providers.length === 0)
       throw new RangeError("CompositeProvider requires at least one provider");
+    this.#providers = providers;
     this.#identity = Object.freeze(
       compositeProviderIdentity(
         providers.map((provider) => provider.identity()),
@@ -186,6 +196,14 @@ export class CompositeProvider implements AnalysisProvider {
     context?: AnalysisClientContext,
   ): AnalysisClient {
     const clients = new Map<AnalysisProvider, AnalysisClient>();
+    /**
+     * The children whose provider is up.
+     *
+     * A child that starts its provider with its first call starts it inside
+     * that call, so the first call is the start and the later ones are not.
+     */
+    const started = new Set<AnalysisProvider>();
+    const admission = context?.startAdmission;
     const clientFor = (provider: AnalysisProvider): AnalysisClient => {
       const existing = clients.get(provider);
       if (existing !== undefined) return existing;
@@ -199,12 +217,46 @@ export class CompositeProvider implements AnalysisProvider {
       clients.set(provider, created);
       return created;
     };
+    /**
+     * Run one call against a child.
+     *
+     * The first call of a child starts that child's provider, so it runs
+     * under the shared start admission: the start limit covers the real
+     * start and not only the open that resolved the target. A child that is
+     * already up needs no limit.
+     */
+    const childCall = async (
+      provider: AnalysisProvider,
+      operation: AnalysisOperation,
+      parameters: Readonly<Record<string, JsonValue>>,
+      options: ExecutionOptions | undefined,
+    ): Promise<Result<AnalysisExecution, AnalysisError>> => {
+      const client = clientFor(provider);
+      if (started.has(provider))
+        return client.execute(operation, parameters, options);
+      const call = () => client.execute(operation, parameters, options);
+      const result =
+        admission === undefined
+          ? await call()
+          : await admission.run(call, operation, options?.signal);
+      if (result.ok) started.add(provider);
+      return result;
+    };
     let closed = false;
     const closeClients = closeCompositeClients(this.#identity, clients);
     const close: AnalysisClient["close"] = (options) => {
       closed = true;
       return closeClients(options);
     };
+    // The selected provider is the one whose profile the route bound. The
+    // health probe answers without touching a child, so the selected
+    // provider is started only when a caller asks for that start.
+    const selected =
+      profile === undefined
+        ? undefined
+        : this.#providers.find(
+            (candidate) => candidate.identity().id === profile.provider.id,
+          );
     return {
       executeIfReady: (operation, parameters, options) => {
         const provider = this.#providerByOperation.get(operation);
@@ -215,13 +267,17 @@ export class CompositeProvider implements AnalysisProvider {
           Promise.resolve(undefined)
         );
       },
+      startProvider: async (options) => {
+        if (closed) return err(clientClosedError(this.#identity.id));
+        if (selected === undefined) return ok(null);
+        // The explicit start is the caller's own admitted start: the caller
+        // runs it under the shared start limit.
+        const result = await clientFor(selected).execute("health", {}, options);
+        if (result.ok) started.add(selected);
+        return result.ok ? ok(null) : err(result.error);
+      },
       execute: async (operation, parameters, options) => {
-        if (closed)
-          return err(
-            new ProviderAdapterError(this.#identity.id, operation, {
-              diagnostics: { reason: "client_closed" },
-            }),
-          );
+        if (closed) return err(clientClosedError(this.#identity.id, operation));
         if (operation === "health")
           return executeCompositeHealth(this.#identity, clients, options);
         const provider = this.#providerByOperation.get(operation);
@@ -235,51 +291,73 @@ export class CompositeProvider implements AnalysisProvider {
                 ),
               ),
             )
-          : clientFor(provider).execute(operation, parameters, options);
+          : childCall(provider, operation, parameters, options);
       },
-      runtimeLineageSnapshots: () =>
-        [...clients.values()]
-          .flatMap((client) => client.runtimeLineageSnapshots?.() ?? [])
-          .sort((left, right) =>
-            compareUnicodeCodePoints(left.provider.id, right.provider.id),
-          ),
-      requestActivitySnapshots: () =>
-        [...clients.values()]
-          .flatMap((client) => client.requestActivitySnapshots?.() ?? [])
-          .sort((left, right) =>
-            compareUnicodeCodePoints(left.provider.id, right.provider.id),
-          ),
-      reuseReadiness: () => {
-        if (closed) return "blocked";
-        const states = [...clients.values()].map(
-          (client) => client.reuseReadiness?.() ?? "unknown",
-        );
-        if (states.some((state) => state === "blocked")) return "blocked";
-        return states.some((state) => state === "unknown")
-          ? "unknown"
-          : "ready";
-      },
-      operationHealthSnapshot: () => {
-        const snapshots = [...clients.values()].map((client) =>
-          client.operationHealthSnapshot?.(),
-        );
-        const failed = snapshots.find(
-          (snapshot) =>
-            snapshot !== undefined &&
-            (snapshot.state === "exited" ||
-              snapshot.state === "unreachable" ||
-              snapshot.state === "not_started"),
-        );
-        if (failed !== undefined) return failed;
-        const nonIdle = snapshots.find(
-          (snapshot) => snapshot !== undefined && snapshot.state !== "idle",
-        );
-        if (nonIdle !== undefined) return nonIdle;
-        if (snapshots.some((snapshot) => snapshot === undefined))
-          return undefined;
-        return snapshots[0];
-      },
+      runtimeLineageSnapshots: () => compositeRuntimeLineage(clients),
+      requestActivitySnapshots: () => compositeRequestActivity(clients),
+      reuseReadiness: () => compositeReuseReadiness(clients, closed),
+      operationHealthSnapshot: () => compositeOperationHealth(clients),
       close,
     };
   }
 }
+
+const clientClosedError = (
+  identity: string,
+  operation = "health",
+): ProviderAdapterError =>
+  new ProviderAdapterError(identity, operation, {
+    diagnostics: { reason: "client_closed" },
+  });
+
+const compositeRuntimeLineage = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+): readonly ProviderRuntimeLineageSnapshot[] =>
+  [...clients.values()]
+    .flatMap((client) => client.runtimeLineageSnapshots?.() ?? [])
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.provider.id, right.provider.id),
+    );
+
+const compositeRequestActivity = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+): readonly ProviderRequestActivitySnapshot[] =>
+  [...clients.values()]
+    .flatMap((client) => client.requestActivitySnapshots?.() ?? [])
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.provider.id, right.provider.id),
+    );
+
+const compositeReuseReadiness = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+  closed: boolean,
+): "ready" | "blocked" | "unknown" => {
+  if (closed) return "blocked";
+  const states = [...clients.values()].map(
+    (client) => client.reuseReadiness?.() ?? "unknown",
+  );
+  if (states.some((state) => state === "blocked")) return "blocked";
+  return states.some((state) => state === "unknown") ? "unknown" : "ready";
+};
+
+const compositeOperationHealth = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+): ProviderOperationHealth | undefined => {
+  const snapshots = [...clients.values()].map((client) =>
+    client.operationHealthSnapshot?.(),
+  );
+  const failed = snapshots.find(
+    (snapshot) =>
+      snapshot !== undefined &&
+      (snapshot.state === "exited" ||
+        snapshot.state === "unreachable" ||
+        snapshot.state === "not_started"),
+  );
+  if (failed !== undefined) return failed;
+  const nonIdle = snapshots.find(
+    (snapshot) => snapshot !== undefined && snapshot.state !== "idle",
+  );
+  if (nonIdle !== undefined) return nonIdle;
+  if (snapshots.some((snapshot) => snapshot === undefined)) return undefined;
+  return snapshots[0];
+};
