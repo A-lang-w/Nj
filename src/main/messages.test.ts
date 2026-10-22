@@ -44,6 +44,9 @@ it("uses one retry then a user handoff for transient MCP failures", () => {
   expect(SERVER_START_FAILED).toMatch(/^Do not repeat /u);
   expect(SERVER_START_FAILED).not.toMatch(/\bretry\b/iu);
   expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).toMatch(/^Do not repeat /u);
+  expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).toContain(
+    "check the input files",
+  );
   expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toMatch(/\bretry\b/iu);
   for (const message of [
     MCP_CONNECTION_START_FAILED,
@@ -118,6 +121,8 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
   const skillProse = prose(skill);
   expect(skillProse).toContain("once only");
   expect(skillProse).toContain("safe to repeat");
+  expect(skillProse).toContain("tell the user");
+  expect(skillProse).toContain("restart the MCP client");
   expect(skillProse).toContain("connection failed");
   expect(skillProse).toContain("Do not invent a setting");
   expect(skillProse).toContain("explicitly recommends that change");
@@ -128,6 +133,8 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
   );
   expect(instructions).toContain("once only");
   expect(instructions).toContain("safe to repeat");
+  expect(instructions).toContain("tell the user");
+  expect(instructions).toContain("restart the MCP client");
   expect(instructions).toContain("explicitly recommends that change");
   expect(instructions).toContain("not a recommendation to change it");
   expect(instructions).not.toContain("names a request field");

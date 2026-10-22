@@ -80,6 +80,8 @@ it.each([
   const constraint = parsed.error.settings[0]?.constraint ?? "";
   expect(parsed.error.settings).toEqual([{ setting, constraint }]);
   expect(constraint).toContain(setting);
+  expect(constraint).toContain("positive decimal integer");
+  expect(constraint).toContain(" ms");
   expect(constraint).toContain(String(MCP_PHASE_BUDGET_FLOOR_MS));
   expect(constraint).toContain(String(MCP_PHASE_BUDGET_MAXIMUM_MS));
   expect(parsed.error.message).toBe(constraint);
