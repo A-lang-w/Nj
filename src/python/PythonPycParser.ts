@@ -607,7 +607,7 @@ class MarshalReader {
         continue;
       }
       const retainedBefore = this.#nestedRetained;
-      const codes = this.#combineNested(frame.value);
+      const codes = this.#combineNested(frame.children);
       this.#nestedCache.set(frame.value, codes);
       added.push({
         value: frame.value,
@@ -654,8 +654,9 @@ class MarshalReader {
   /**
    * Share a child's array when this container adds no further code object.
    * Otherwise retain one new list and count its slots against the walk budget.
+   * `children` is the list the frame already built.
    */
-  #combineNested(value: MarshalValue): readonly CodeNode[] {
+  #combineNested(children: readonly MarshalValue[]): readonly CodeNode[] {
     let shared: readonly CodeNode[] | undefined;
     let onlyShared = true;
     const codes: CodeNode[] = [];
@@ -665,7 +666,7 @@ class MarshalReader {
       seen.add(code);
       codes.push(code);
     };
-    for (const child of containerChildren(value)) {
+    for (const child of children) {
       if (child.kind === "code") {
         if (shared !== undefined || codes.length > 0) onlyShared = false;
         add(child.value);
