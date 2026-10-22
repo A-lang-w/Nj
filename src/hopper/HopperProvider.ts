@@ -469,7 +469,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
                 closed.error,
                 descriptors,
                 "close_binary",
-              ),
+              ).bindCleanupDependencies([closed.error, descriptors]),
             );
       },
     };

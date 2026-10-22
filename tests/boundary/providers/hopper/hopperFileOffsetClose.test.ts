@@ -17,7 +17,7 @@ import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjec
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { silentLogger } from "../../../../src/logger.js";
-import { ok } from "../../../../src/domain/result.js";
+import { err, ok } from "../../../../src/domain/result.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperProvider } from "../../../../src/hopper/HopperProvider.js";
 
@@ -211,6 +211,74 @@ it("preserves file-offset reads and retries the exact descriptor after close fai
     expect(masked.error.cleanupIncomplete).toBe(false);
   } finally {
     call.mockRestore();
+    state.fail = false;
+    for (const entry of state.handles) await entry.close();
+    await client.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("clears a combined Hopper close only after the descriptor and session release", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-hopper-combined-close-"));
+  const bytes = Buffer.alloc(64);
+  bytes.writeUInt32LE(0xfeedfacf, 0);
+  bytes.writeUInt32LE(0x0100000c, 4);
+  state.path = join(root, "sample");
+  state.fail = false;
+  state.code = "EIO";
+  state.ended = 0;
+  state.handles.length = 0;
+  await writeFile(state.path, bytes);
+  const client = await clientFor(state.path, bytes);
+  const call = vi
+    .spyOn(HopperClient.prototype, "callTool")
+    .mockResolvedValue(ok(observation));
+  const session = new ProviderCleanupError(
+    "hopper",
+    ["hopper-session"],
+    { reason: "controlled session close failure" },
+    { operation: "close_binary" },
+  );
+  const close = vi
+    .spyOn(HopperClient.prototype, "close")
+    .mockResolvedValue(err(session));
+  try {
+    state.fail = true;
+    const failed = await client.execute("address_to_file_offset", {
+      address: "0x1000",
+    });
+    expect(failed.ok).toBe(false);
+    const owned = state.handles.at(-1);
+    if (owned === undefined) throw new Error("missing descriptor");
+    expect(owned.handle.fd).toBeGreaterThanOrEqual(0);
+
+    const combined = await client.close();
+    expect(combined.ok).toBe(false);
+    if (combined.ok) return;
+    expect(combined.error.cleanupPrimary).toBe(session);
+    expect(combined.error.cleanupIncomplete).toBe(true);
+    expect(combined.error.cleanupResources).toEqual([
+      "hopper-session",
+      state.path,
+    ]);
+    expect(call).toHaveBeenCalledTimes(1);
+
+    session.resolveCleanup();
+    expect(session.cleanupIncomplete).toBe(false);
+    expect(combined.error.cleanupIncomplete).toBe(true);
+    expect(combined.error.cleanupResources).toEqual([state.path]);
+    expect(owned.handle.fd).toBeGreaterThanOrEqual(0);
+
+    state.fail = false;
+    close.mockResolvedValue(ok(null));
+    const released = await client.close();
+    expect(released.ok).toBe(true);
+    expect(owned.handle.fd).toBe(-1);
+    expect(combined.error.cleanupIncomplete).toBe(false);
+    expect(combined.error.cleanupResources).toEqual([]);
+  } finally {
+    call.mockRestore();
+    close.mockRestore();
     state.fail = false;
     for (const entry of state.handles) await entry.close();
     await client.close();
