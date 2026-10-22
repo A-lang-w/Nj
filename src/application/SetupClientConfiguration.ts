@@ -27,11 +27,12 @@ import { isClientConfigurationCleanupFailure } from "./ClientConfigurationCleanu
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
 import {
   clientRegistrationEnvironment,
-  clientRegistrationEnvironmentDetails,
+  clientRegistrationEnvironmentDetailsWithBudget,
   type ProviderRequestBudgetResolver,
 } from "./ClientRegistrationEnvironment.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   MCP_STARTUP_POLICY,
@@ -124,7 +125,7 @@ const configureClientDocument = async (
   const policy = await readClientPolicyBlock(
     client,
     undefined,
-    clientConfigurationDesired(
+    await clientConfigurationDesired(
       client,
       environment,
       command,
@@ -163,7 +164,7 @@ const configureClientDocument = async (
     const policy = await readClientPolicyBlock(
       client,
       parsed,
-      clientConfigurationDesired(
+      await clientConfigurationDesired(
         client,
         environment,
         command,
@@ -189,7 +190,7 @@ const configureClientDocument = async (
     throwCleanupFailure(fallback.error);
     return { status: "failed", reason: "readback" };
   }
-  const desired = clientConfigurationDesired(
+  const desired = await clientConfigurationDesired(
     client,
     environment,
     command,
@@ -284,14 +285,22 @@ const persistClientConfiguration = async ({
       : registered;
   let serialized: ReturnType<typeof serializeClientConfiguration>;
   try {
-    serialized = serializeClientConfiguration(document, format, original, [
-      ...Object.keys(fallbackServers)
-        .filter((name) => name !== PRODUCT_IDENTITY.mcpServerKey)
-        .map((name) => clientServerPath(parsed, name)),
-      clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
-      ...(legacyPath === undefined ? [] : [legacyPath]),
-      ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
-    ]);
+    serialized = serializeClientConfiguration(
+      document,
+      format,
+      original,
+      [
+        ...Object.keys(fallbackServers)
+          .filter((name) => name !== PRODUCT_IDENTITY.mcpServerKey)
+          .map((name) => clientServerPath(parsed, name)),
+        clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
+        ...(legacyPath === undefined ? [] : [legacyPath]),
+        ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
+      ],
+      // Setup deletes only REA's OpenCode V1 name, which the native V2 entry
+      // supersedes whatever its launcher; every repeat goes, as one member does.
+      { removeShadowedMembersAt: legacyPath === undefined ? [] : [legacyPath] },
+    );
   } catch (cause: unknown) {
     // An unserializable edit is reported before any file is written.
     void cause;
@@ -396,36 +405,20 @@ export const clientConfigurationAligned = async (
     }
     const original = await readRegularFileText(client.configPath);
     const parsed = parseClientConfiguration(original, client.format);
-    const policy = await readClientPolicyBlock(
+    const desired = await clientConfigurationDesired(
       client,
+      providerEnvironment,
+      command,
       parsed,
-      clientConfigurationDesired(
-        client,
-        providerEnvironment,
-        command,
-        parsed,
-        files.value,
-        resolveProviderRequestBudget,
-      ),
+      files.value,
+      resolveProviderRequestBudget,
     );
+    const policy = await readClientPolicyBlock(client, parsed, desired);
     if (!policy.ok) {
       throwCleanupFailure(policy.error);
       return false;
     }
-    return (
-      policy.value === undefined &&
-      registrationCurrent(
-        parsed,
-        clientConfigurationDesired(
-          client,
-          providerEnvironment,
-          command,
-          parsed,
-          files.value,
-          resolveProviderRequestBudget,
-        ),
-      )
-    );
+    return policy.value === undefined && registrationCurrent(parsed, desired);
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     // Unreadable configuration is treated as not aligned so setup repairs it.
@@ -488,7 +481,7 @@ const inspectClientDocument = async (
   const policy = await readClientPolicyBlock(
     client,
     undefined,
-    clientConfigurationDesired(
+    await clientConfigurationDesired(
       client,
       providerEnvironment,
       command,
@@ -535,18 +528,15 @@ const inspectClientDocument = async (
   }
   try {
     const parsed = parseClientConfiguration(original, client.format);
-    const policy = await readClientPolicyBlock(
+    const desired = await clientConfigurationDesired(
       client,
+      providerEnvironment,
+      command,
       parsed,
-      clientConfigurationDesired(
-        client,
-        providerEnvironment,
-        command,
-        parsed,
-        files.value,
-        resolveProviderRequestBudget,
-      ),
+      files.value,
+      resolveProviderRequestBudget,
     );
+    const policy = await readClientPolicyBlock(client, parsed, desired);
     if (!policy.ok) {
       throwCleanupFailure(policy.error);
       return {
@@ -556,14 +546,6 @@ const inspectClientDocument = async (
     }
     if (policy.value !== undefined)
       return { status: "invalid", remediation: policy.value };
-    const desired = clientConfigurationDesired(
-      client,
-      providerEnvironment,
-      command,
-      parsed,
-      files.value,
-      resolveProviderRequestBudget,
-    );
     if (registrationCurrent(parsed, desired))
       return { status: "already_current" };
     const fallback = await readZcodeFallbackServers(client, parsed);
@@ -704,14 +686,14 @@ const registrationCurrent = (
   !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
   !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey);
 
-const clientConfigurationDesired = (
+const clientConfigurationDesired = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   parsed: ClientConfigurationDocument | undefined,
   sources: readonly ClientConfigurationSource[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
-) => {
+): Promise<unknown> => {
   const effective = effectiveClientConfiguration(sources, {
     client,
     document: parsed,
@@ -733,7 +715,7 @@ const clientConfigurationDesired = (
     if (!desired.ok) throw desired.error;
     return desired.value;
   }
-  const validated = clientRegistrationEnvironmentDetails(
+  const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
     providerEnvironment,
     "effective",
@@ -753,7 +735,8 @@ const clientConfigurationDesired = (
   if (!environment.ok) throw environment.error;
   const registrationEnvironment =
     client.name === "kimi" &&
-    environment.value.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
+    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
+      undefined
       ? {
           ...environment.value,
           REA_MCP_INPUT_SCHEMA_PROFILE: "compact",

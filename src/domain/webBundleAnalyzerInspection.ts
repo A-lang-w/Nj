@@ -1,8 +1,11 @@
+import type {
+  AnalysisAccumulator,
+  IncludedScript,
+} from "./webBundleAnalyzerState.js";
 import * as t from "@babel/types";
 
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
-import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
@@ -12,6 +15,9 @@ import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperatio
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  isNullishJavaScriptSyntax,
+  staticObjectProperty,
+  staticObjectPropertyNames,
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
 import {
@@ -23,7 +29,6 @@ import {
   location,
   locationFields,
   objectString,
-  objectValue,
   resolveSpecifier,
   isUrlLikeModuleSpecifier,
 } from "./webBundleAnalyzerAst.js";
@@ -35,25 +40,6 @@ type ChunkEdge = BundleObservations["chunks"]["edges"][number];
 type Finding = BundleObservations["routes"][number];
 type WebMcpDeclaration = BundleObservations["webmcp_declarations"][number];
 type Inference = WebBundleAnalysis["inferences"][number];
-type BrowserScript = WebPageInspection["scripts"]["items"][number];
-type IncludedSource = Extract<BrowserScript["source"], { included: true }>;
-export type IncludedScript = Omit<BrowserScript, "source"> & {
-  readonly source: IncludedSource;
-};
-
-export interface AnalysisAccumulator {
-  readonly edges: ChunkEdge[];
-  readonly routes: Finding[];
-  readonly endpoints: Finding[];
-  readonly webMcp: WebMcpDeclaration[];
-  readonly inferences: Inference[];
-  readonly seen: Set<string>;
-  visitedNodes: number;
-  parsedScripts: number;
-  readonly failedScripts: string[];
-  readonly recoveredScripts: string[];
-}
-
 export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
@@ -116,6 +102,8 @@ export const analyzeScript = (
         node: endpoint.node,
         accumulator,
       });
+  if (index.bindings.returnedReferenceWidenings.size > 0)
+    accumulator.widenedScripts.push(script.script_key);
 };
 
 const inspectNode = (
@@ -362,23 +350,60 @@ const addWebMcpDeclaration = (
   if (!t.isObjectExpression(declaration)) return;
   const name = objectString(declaration, "name");
   const description = objectString(declaration, "description");
-  const schema =
-    objectValue(declaration, "inputSchema") ??
-    objectValue(declaration, "input_schema");
-  const properties = t.isObjectExpression(schema)
-    ? objectValue(schema, "properties")
-    : undefined;
-  const schemaPropertyNames = t.isObjectExpression(properties)
-    ? properties.properties.flatMap((property) => {
-        if (!t.isObjectProperty(property)) return [];
-        const key = semanticStaticPropertyKey(property.key, property.computed);
-        return key === null ? [] : [key];
-      })
-    : [];
+  const camelSchema = staticObjectProperty(
+    declaration,
+    "inputSchema",
+    isNullishJavaScriptSyntax,
+  );
+  const schemaProperty =
+    camelSchema.status === "missing" ||
+    (camelSchema.status === "explicit" &&
+      isNullishJavaScriptSyntax(camelSchema.property.value))
+      ? staticObjectProperty(
+          declaration,
+          "input_schema",
+          isNullishJavaScriptSyntax,
+        )
+      : camelSchema;
+  let schemaPropertyNames: readonly string[] = [];
+  let schemaPropertyNamesCoverage: NonNullable<
+    WebMcpDeclaration["schema_property_names_coverage"]
+  > = "unknown";
+  if (schemaProperty.status === "missing") {
+    schemaPropertyNamesCoverage = "not_present";
+  } else if (schemaProperty.status === "explicit") {
+    const schema = schemaProperty.property.value;
+    if (t.isObjectExpression(schema)) {
+      const propertiesProperty = staticObjectProperty(
+        schema,
+        "properties",
+        isNullishJavaScriptSyntax,
+      );
+      if (propertiesProperty.status === "missing") {
+        schemaPropertyNamesCoverage = "not_present";
+      } else if (propertiesProperty.status === "explicit") {
+        const properties = propertiesProperty.property.value;
+        if (t.isObjectExpression(properties)) {
+          const projection = staticObjectPropertyNames(
+            properties,
+            isNullishJavaScriptSyntax,
+          );
+          if (
+            projection.status === "complete" ||
+            projection.status === "partial"
+          ) {
+            schemaPropertyNames = projection.names;
+            schemaPropertyNamesCoverage = projection.status;
+          }
+        }
+      }
+    }
+  }
   const metadata = {
     name: name ?? null,
     description: description ?? null,
     schema_property_names: [...new Set(schemaPropertyNames)].sort(),
+    schema_property_names_coverage: schemaPropertyNamesCoverage,
   };
   // Deduplicate the metadata we return, preserving omission and descriptions.
   // Property names are a variable-length source-derived list: NUL-joins
@@ -458,23 +483,6 @@ const basis = (script: IncludedScript, detector: string) => ({
   column: null,
   detector,
 });
-
-export const emptyAccumulator = (): AnalysisAccumulator => ({
-  edges: [],
-  routes: [],
-  endpoints: [],
-  webMcp: [],
-  inferences: [],
-  seen: new Set(),
-  visitedNodes: 0,
-  parsedScripts: 0,
-  failedScripts: [],
-  recoveredScripts: [],
-});
-
-export const isIncludedScript = (
-  script: BrowserScript,
-): script is IncludedScript => script.source.included;
 
 const routeCallNames = [
   "route",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+import { safeParseJson } from "./safeJson.js";
 
 const jsonValueTypeSchema = z.enum([
   "object",
@@ -129,7 +130,15 @@ export const inferJsonShape = (text: string): JsonShape | null => {
   };
 };
 
-const jsonValueType = (value: unknown): JsonValueType => {
+/** Parse text as a JSON object; anything else, including invalid JSON, is null. */
+export const parseJsonObject = (
+  text: string,
+): Readonly<Record<string, unknown>> | null => {
+  const parsed = safeParseJson(text);
+  return parsed.ok && isRecord(parsed.value) ? parsed.value : null;
+};
+/** The JSON type name of one parsed value. */
+export const jsonValueType = (value: unknown): JsonValueType => {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   switch (typeof value) {
