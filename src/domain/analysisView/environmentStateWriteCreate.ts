@@ -153,7 +153,8 @@ const buildCreate = (
     ),
     body: explained.body,
     rules: explained.rules,
-    collection: explained.tied ? evidence.collection : null,
+    collection:
+      explained.tied || draft.linked !== undefined ? evidence.collection : null,
     insert: draft.candidates[0]!,
   });
   draft.observed = evidence.observed.object;
@@ -329,7 +330,8 @@ export const applyCreate = (
   const idField = context.idField(type);
   const spelled = normalizedPath(step.record.path);
   // Serving writes a create into the collection it chooses for the path, and a tied plan refuses any other, so a create there is not counted.
-  const collection = servedCollection(context, step, type) ?? spelled;
+  const collection =
+    draft.linked ?? servedCollection(context, step, type) ?? spelled;
   if (
     built(draft) &&
     draft.plan.collection !== null &&

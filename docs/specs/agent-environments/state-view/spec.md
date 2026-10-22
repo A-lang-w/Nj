@@ -25,7 +25,10 @@ later increments.
   any start time is missing, and say which. Bound each type's state by the first
   write under its root (API base, version segments, one segment); a query
   `POST` is not a write, a read overlapping the write is left out, and a write
-  whose URL was redacted bounds every type, with a limitation counting it.
+  whose URL was redacted bounds every type, with a limitation counting it. A
+  successful `POST` elsewhere bounds a type's state too when its response named
+  an id (four characters or more) that the type's reads show only after it: the
+  `POST` made that entity, so it is not in the initial state.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that
   every listed item carries distinctly, which needs at least one listed item.

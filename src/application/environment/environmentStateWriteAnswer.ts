@@ -14,6 +14,7 @@ import {
   nextInteger,
 } from "../../domain/analysisView/environmentStateWriteExplain.js";
 import { callRenewal } from "../../domain/analysisView/environmentStateWriteGenerated.js";
+import { linkedCollection } from "../../domain/analysisView/environmentStateWriteLinks.js";
 import {
   pathValuesOf,
   type GeneratedRule,
@@ -283,12 +284,9 @@ const answerCreate = (
   const { tool, plan } = request;
   const type = plan.target ?? "";
   const idField = serving.store.type(type)?.id_field ?? "";
-  const collection = createdCollection(
-    serving,
-    request.tool,
-    request.args,
-    plan.target ?? "",
-  );
+  const collection =
+    linkedCollection(plan, tool.path_template) ??
+    createdCollection(serving, request.tool, request.args, plan.target ?? "");
   const observed = observedEntity(serving, plan);
   if (collection === undefined || observed === undefined)
     return err(

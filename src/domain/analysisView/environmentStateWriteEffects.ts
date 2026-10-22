@@ -66,6 +66,8 @@ export interface WriteDraft {
   readonly updates: UpdateCall[];
   /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
   readonly sequences: Map<string, number>;
+  /** The collection a create writes into when its own path names no state type: the one its returned id was read under. */
+  readonly linked?: string | undefined;
 }
 
 /** A write observation plus the fields its selected read view actually covers, if any. */

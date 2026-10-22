@@ -12,7 +12,6 @@ import {
   IDENTITY_NAMES,
   identityCandidates,
   isObject,
-  isParam,
   isQueryPost,
   jsonBytes,
   lastSegmentValue,
@@ -20,12 +19,10 @@ import {
   listItems,
   locateItem,
   locateList,
-  normalizedPath,
   projectsFields,
   rootOf,
   same,
   scalarText,
-  segmentsOf,
   writeSpanCheck,
   type ExtractedState,
   type JsonObject,
@@ -54,6 +51,13 @@ import {
   type StatePlan,
 } from "./environmentStateGate.js";
 import { StateWriteCutoffs } from "./environmentStateWriteCutoffs.js";
+import {
+  createdIdsOf,
+  creationLimit,
+  readType,
+  respondedIds,
+  type CreatedIds,
+} from "./environmentStateWriteLinks.js";
 import { extractWrites } from "./environmentStateWrites.js";
 import { stateWritesOf } from "./environmentStateQueryCalls.js";
 
@@ -88,6 +92,8 @@ export class EnvironmentStateExtraction {
   readonly #bases: ReadonlyMap<string, number>;
   #writeCutoffs: StateWriteCutoffs | undefined;
   readonly #initLimits = new Map<string, StateRecordFacts | undefined>();
+  /** Successful POSTs with the ids their responses named, read once on first use. */
+  #created: CreatedIds[] | undefined;
   readonly #identity = new Map<
     string,
     { readonly field: string; readonly basis: StateType["id_basis"] }
@@ -228,27 +234,40 @@ export class EnvironmentStateExtraction {
       )
         this.#recorded(tool, "query-body");
       if (tool.method !== "GET") continue;
-      const segments = segmentsOf(tool.path_template);
-      const item = segments.length > 0 && isParam(segments.at(-1)!);
-      candidates.push({
-        tool,
-        item,
-        type: item
-          ? `/${segments.slice(0, -1).join("/")}`
-          : normalizedPath(tool.path_template),
-      });
+      candidates.push({ tool, ...readType(tool.path_template) });
     }
     return candidates;
   }
 
-  /** The first write whose root relates to the template's bounds its init recordings. */
+  /** The first write whose root relates to the template's, or that made one of its entities, bounds its init recordings. */
   #initLimit(template: string): StateRecordFacts | undefined {
     if (this.#writeCutoffs === undefined) return undefined;
     if (this.#initLimits.has(template)) return this.#initLimits.get(template);
     const first = this.#writeCutoffs.first(rootOf(template, this.#bases));
+    const limit =
+      creationLimit(
+        this.#creations(),
+        {
+          type: template,
+          tools: this.#tools,
+          records: this.#byOrdinal,
+          position: (record) => this.#position.get(record.ordinal)!,
+          body: (ordinal) => this.#withBody(ordinal, (body) => body),
+        },
+        first,
+      ) ?? first;
     this.#retain(ENTRY_BYTES + textBytes(template.length));
-    this.#initLimits.set(template, first);
-    return first;
+    this.#initLimits.set(template, limit);
+    return limit;
+  }
+
+  #creations(): CreatedIds[] {
+    this.#created ??= createdIdsOf(this.#writes, (ordinal) => {
+      const ids = this.#withBody(ordinal, respondedIds);
+      this.#retain(ENTRY_BYTES + textBytes(ids.join("").length));
+      return ids;
+    });
+    return this.#created;
   }
 
   /** Initial-state admission is shared with later projection-evidence selection. */

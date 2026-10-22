@@ -13,6 +13,7 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import { UnseenEntities } from "./environmentStateWriteAdoption.js";
+import { linkedTarget } from "./environmentStateWriteLinks.js";
 import { updatedEntity } from "./environmentStateWriteApply.js";
 import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
@@ -158,7 +159,12 @@ export class EnvironmentStateWriteSimulation {
         this.#input.readOnly.has(tool.name)
       )
         continue;
-      const { effect, target } = classifyWrite(tool, types, documents);
+      const link = linkedTarget(tool, classifyWrite(tool, types, documents), {
+        ...this.#input,
+        viewOf: (ordinal) =>
+          this.#input.views.get(this.#toolOf.get(ordinal)?.name ?? ""),
+      });
+      const { effect, target } = link;
       this.#input.io.retain(512);
       this.#drafts.set(tool.name, {
         plan: {
@@ -173,6 +179,7 @@ export class EnvironmentStateWriteSimulation {
         calls: 0,
         updates: [],
         sequences: new Map(),
+        linked: link.collection,
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));

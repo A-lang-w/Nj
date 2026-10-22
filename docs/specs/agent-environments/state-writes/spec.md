@@ -72,6 +72,15 @@ endpoint under the same root regenerates values on every read.
 | `document` | `PUT`, `PATCH` or `POST` to a document view's path                    | that document             |
 | `none`     | anything else                                                         | reason `no-state-target`  |
 
+A `POST` whose path gives it no target is a `create` into the type its returned
+id is read under: its exemplar's response names an id (a scalar, an identity
+member, a sole member, or an identity member of an object member, four
+characters or more), and the first later successful item read naming that id
+belongs to a state type. The entity must be new: neither the initial state nor
+any earlier read holds that id. The plan records that read's collection, and
+serving creates there, since the call's own path names no collection of the
+type.
+
 **Exemplar.** A plan is built from its first successful (2xx) recorded call,
 the exemplar.
 

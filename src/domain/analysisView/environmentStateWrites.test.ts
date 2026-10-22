@@ -1294,3 +1294,82 @@ describe("calls the capture shows reading only", () => {
     ]);
   });
 });
+
+describe("creates read under another path", () => {
+  const note = (id: number, title: string) => ({ id, title });
+  const A = note(1001, "Alpha");
+  const B = note(1002, "Beta");
+  const C = note(1003, "Gamma");
+  const notesOf = (state: StateView) =>
+    state.entities
+      .filter((entity) => entity.type === "/api/notes")
+      .map((entity) => entity.id);
+  const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
+    ["GET", "/api/notes", [A, B]],
+    ["GET", "/api/notes/1001", A],
+    ["GET", "/api/notes/1002", B],
+    ...before,
+    ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+    ["GET", "/api/notes/1003", C],
+    ["GET", "/api/notes", [A, B, C]],
+  ];
+
+  it("plans a POST to another path as a create into the type its returned id is first read under", () => {
+    const state = stateOf(published([]));
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+      collection: "/api/notes",
+    });
+    expect(notesOf(state)).toEqual(["1001", "1002"]);
+  });
+
+  it("ends a type's initial reads at a POST elsewhere that made one of its entities", () => {
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["POST", "/api/imports", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(notesOf(state)).toEqual(["1001", "1002"]);
+    expect(
+      state.types.find((type) => type.collection_template === "/api/notes"),
+    ).toMatchObject({ init_before_ordinal: 1 });
+  });
+
+  it("links no create whose returned id a read showed before it", () => {
+    const shownBefore = published([
+      [
+        "PATCH",
+        "/api/notes/1001",
+        note(1001, "Alpha 2"),
+        200,
+        { title: "Alpha 2" },
+      ],
+      ["GET", "/api/notes/1003", C],
+    ]);
+    expect(planOf(stateOf(shownBefore), "post_drafts_publish")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(planOf(stateOf(published([])), "post_drafts_publish")).toMatchObject(
+      { effect: "create" },
+    );
+  });
+
+  it("links no create whose returned id the initial state holds", () => {
+    const held = stateOf([
+      ["GET", "/api/notes", [A, B, C]],
+      ["GET", "/api/notes/1001", A],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", C],
+    ]);
+    expect(planOf(held, "post_drafts_publish")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(notesOf(held)).toEqual(["1001", "1002", "1003"]);
+    expect(planOf(stateOf(published([])), "post_drafts_publish")).toMatchObject(
+      { effect: "create" },
+    );
+  });
+});

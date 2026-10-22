@@ -1564,3 +1564,29 @@ describe("served catalog of calls that only read", () => {
     expect(state.writes.has("post_books_ids")).toBe(false);
   });
 });
+
+describe("creates read under another path", () => {
+  it("creates into the collection a linked create's returned id was read under", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const notes = servedFrom([
+      ["GET", "/api/notes", [alpha, beta]],
+      ["GET", "/api/notes/1001", alpha],
+      ["GET", "/api/notes/1002", beta],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", gamma],
+      ["GET", "/api/notes", [alpha, beta, gamma]],
+    ]);
+    expect(
+      notes.answer("post_drafts_publish", { body: { title: "Delta" } }),
+    ).toMatchObject({ status: 201 });
+    // The capture's own create is not in the initial state, so the served one takes the next id.
+    const delta = note(1003, "Delta");
+    expect(notes.answer("get_notes_by_id", { id: "1003" }).body).toEqual(delta);
+    expect(notes.answer("get_notes").body).toEqual([alpha, beta, delta]);
+  });
+});
