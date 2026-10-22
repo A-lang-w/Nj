@@ -176,10 +176,11 @@ class TimelineCapture {
   #pendingReload = false;
   /**
    * Network.loadingFailed carries no frame, so a failure is attributed to the
-   * main frame only through its main-frame Document request. Entries leave
-   * when their request fails or, once armed, finishes.
+   * main frame only through its request. Main-frame requests that may be
+   * documents map to whether the request declared the Document type. Entries
+   * leave when their request fails or, once armed, finishes.
    */
-  readonly #mainFrameDocumentRequestIds = new Set<string>();
+  readonly #mainFrameDocumentCandidates = new Map<string, boolean>();
   #scopeExcluded = false;
   #endReason: EndReason | undefined;
   #armTimestamp: number | undefined;
@@ -471,14 +472,17 @@ class TimelineCapture {
   #trackDocumentRequest(params: UnknownRecord): void {
     const requestId = cdpStringValue(params.requestId);
     if (requestId !== undefined && this.#isMainFrameDocumentRequest(params))
-      this.#mainFrameDocumentRequestIds.add(requestId);
+      this.#mainFrameDocumentCandidates.set(
+        requestId,
+        cdpStringValue(params.type) === "Document",
+      );
   }
 
   /** A finished document request can no longer fail. */
   #loadingFinished(event: CdpTransportEvent): void {
     const requestId = cdpStringValue(recordValue(event.params)?.requestId);
     if (requestId !== undefined)
-      this.#mainFrameDocumentRequestIds.delete(requestId);
+      this.#mainFrameDocumentCandidates.delete(requestId);
   }
 
   #redirect(params: UnknownRecord, bufferedBeforeArm: boolean): void {
@@ -517,11 +521,18 @@ class TimelineCapture {
 
   #loadingFailed(params: UnknownRecord, bufferedBeforeArm: boolean): void {
     const requestId = cdpStringValue(params.requestId);
-    if (
-      requestId === undefined ||
-      !this.#mainFrameDocumentRequestIds.delete(requestId)
-    )
+    if (requestId === undefined) return;
+    const declaredDocument = this.#mainFrameDocumentCandidates.get(requestId);
+    if (declaredDocument === undefined) return;
+    this.#mainFrameDocumentCandidates.delete(requestId);
+    // The failure's resource type decides; a request that omitted its type is
+    // not proof of a document.
+    const failureType = cdpStringValue(params.type);
+    if (failureType === undefined && !declaredDocument) {
+      this.completeness.exclude("timeline", "invalid_protocol_value");
       return;
+    }
+    if ((failureType ?? "Document") !== "Document") return;
     const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
     if (!eventTime.keep) return;
     this.#add({

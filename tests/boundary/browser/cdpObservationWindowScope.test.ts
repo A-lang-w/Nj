@@ -386,6 +386,64 @@ it("records a load failure only for a main-frame document that has not finished"
   ).toEqual(["failed-document"]);
 });
 
+it("uses the failure's resource type when a main-frame request omits its type", async () => {
+  const untypedRequest = (
+    command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+    origin: string,
+    requestId: string,
+  ) => ({
+    method: "Network.requestWillBeSent",
+    sessionId: command.sessionId,
+    params: {
+      requestId,
+      timestamp: 21,
+      frameId: "frame-main",
+      request: { url: `${origin}/${requestId}` },
+    },
+  });
+  const loadingFailed = (
+    command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+    requestId: string,
+    type?: string,
+  ) => ({
+    method: "Network.loadingFailed",
+    sessionId: command.sessionId,
+    params: {
+      requestId,
+      timestamp: 22,
+      ...(type === undefined ? {} : { type }),
+      errorText: "net::ERR_CONNECTION_REFUSED",
+    },
+  });
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        untypedRequest(command, origin, "untyped-image"),
+        loadingFailed(command, "untyped-image", "Image"),
+        untypedRequest(command, origin, "untyped-document"),
+        loadingFailed(command, "untyped-document", "Document"),
+        untypedRequest(command, origin, "untyped-unknown"),
+        loadingFailed(command, "untyped-unknown"),
+      ];
+    },
+  });
+
+  expect(
+    observation.timeline
+      .filter((event) => event.type === "load_failed")
+      .map((event) => event.request_id),
+  ).toEqual(["untyped-document"]);
+  // Neither event declared a type, so the failure stays unknown.
+  expect(observation.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+    }),
+  );
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
