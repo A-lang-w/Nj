@@ -142,11 +142,7 @@ it.each(kinds)(
     expect(output.evidence_bundle.bytes).toBe(Buffer.byteLength(serialized));
     expect(bundle.records).toHaveLength(1);
     const parent = parseEvidence(bundle.records[0]);
-    if (kind === "gdb") {
-      expect(parent.raw_result).toEqual(parent.normalized_result);
-    } else {
-      expect(parent.raw_result).toBeNull();
-    }
+    expect(parent.raw_result).toEqual(parent.normalized_result);
     expect(selected.normalized_result).toMatchObject({
       parent_evidence_id: parent.evidence_id,
       source_parameters: parent.parameters,
