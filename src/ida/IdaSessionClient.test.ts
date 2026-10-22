@@ -7,13 +7,19 @@ import {
   RecordingIdaMcp,
 } from "../../tests/fixtures/idaMcp.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
+import {
+  DEFAULT_REGEX_MATCHING_DEADLINE,
+  REGEX_MATCHING_DEADLINE_SETTING,
+} from "../config/regexMatchingDeadline.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisProtocolError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
-import { REGEX_MATCHING_LIMITATION } from "../process/RegexMatcher.js";
 
 const roots: string[] = [];
 const windowsRuntimes = new Set<WindowsPrivateRuntime>();
@@ -574,16 +580,31 @@ describe("attached IDA regex supervision", () => {
         mode: "regex",
       });
       expect(result.ok).toBe(false);
-      if (!result.ok)
-        expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+      if (
+        result.ok ||
+        !(result.error instanceof AnalysisResourceConstraintError)
+      )
+        throw new Error("Expected a supervised regex deadline");
+      expect(result.error).toMatchObject({
+        operation: "search_strings",
+        resource: "cpu",
+        reportedLimits: {
+          matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs,
+          matching_deadline_source: DEFAULT_REGEX_MATCHING_DEADLINE.source,
+        },
+      });
+      expect(result.error.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
       const recovered = await client.execute("search_strings", {
         pattern: "!$",
         mode: "regex",
       });
-      expect(recovered.ok && recovered.value.result).toHaveLength(1);
-      expect(recovered.ok && recovered.value.limitations).toContain(
-        REGEX_MATCHING_LIMITATION,
-      );
+      expect(recovered.ok && recovered.value.result).toEqual([
+        expect.objectContaining({ address: "0x3000", value }),
+      ]);
+      if (recovered.ok)
+        expect(recovered.value.limitations.join("\n")).toContain(
+          REGEX_MATCHING_DEADLINE_SETTING,
+        );
     } finally {
       await client.close();
     }

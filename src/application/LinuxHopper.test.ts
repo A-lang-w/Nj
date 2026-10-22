@@ -385,13 +385,7 @@ describe("Linux Hopper cleanup and failure details", () => {
         HOME: directory,
         XDG_CACHE_HOME: join(directory, "cache"),
       },
-      () =>
-        Promise.resolve({
-          id: "ubuntu",
-          versionId: "24.04",
-          packageFamily: "deb",
-          hopperSetupSupported: true,
-        }),
+      async () => undefined,
     );
     const command = vi
       .spyOn(nativeCommands, "execFileOutput")

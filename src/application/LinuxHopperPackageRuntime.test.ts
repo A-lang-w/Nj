@@ -7,7 +7,6 @@ import * as pythonRuntime from "./LinuxHopperPython.js";
 import {
   linuxHopperInstallDisclosure,
   systemLinuxHopperInstallHost,
-  type LinuxDistribution,
 } from "./LinuxHopper.js";
 
 const missingPython = {
@@ -26,14 +25,6 @@ const readyPython = {
     path: "/usr/lib/x86_64-linux-gnu/libpython3.14.so.1.0",
   },
 } satisfies pythonRuntime.LinuxHopperPythonRuntime;
-const supportedDistribution = (): Promise<LinuxDistribution> =>
-  Promise.resolve({
-    id: "ubuntu",
-    versionId: "24.04",
-    packageFamily: "deb",
-    hopperSetupSupported: true,
-  });
-
 const commandSuccess = {
   exitCode: 0,
   stdout: "",
@@ -91,7 +82,7 @@ describe("Linux Hopper package runtime", () => {
     );
     const host = systemLinuxHopperInstallHost(
       { XDG_CACHE_HOME: directory },
-      supportedDistribution,
+      async () => undefined,
     );
     const command = vi
       .spyOn(boundedCommands, "execFileBoundedOutput")
@@ -129,7 +120,7 @@ describe("Linux Hopper package runtime", () => {
     );
     const host = systemLinuxHopperInstallHost(
       { XDG_CACHE_HOME: directory },
-      supportedDistribution,
+      async () => undefined,
     );
     const failed = {
       exitCode: 67,
@@ -170,7 +161,7 @@ describe("Linux Hopper package mapping", () => {
     const directory = await createTestTempDirectory("rea-python-package-map-");
     const host = systemLinuxHopperInstallHost(
       { XDG_CACHE_HOME: directory },
-      supportedDistribution,
+      async () => undefined,
     );
     const command = vi
       .spyOn(boundedCommands, "execFileBoundedOutput")
@@ -221,7 +212,7 @@ describe("Linux Hopper package cancellation and disclosure", () => {
       );
       const host = systemLinuxHopperInstallHost(
         { XDG_CACHE_HOME: directory },
-        supportedDistribution,
+        async () => undefined,
       );
       const controller = new AbortController();
       const cause = new Error("caller cancelled at " + phase);
