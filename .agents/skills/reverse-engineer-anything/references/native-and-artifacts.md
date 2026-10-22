@@ -96,6 +96,20 @@ dependencies. An omitted package kind stays null. A rustc commit hash is
 inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
 identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
 
+## PE Authenticode certificate tables
+
+Use `inspect_pe_certificates` for an explicit local PE32/PE32+ image when the
+question concerns the Authenticode certificate table, WIN_CERTIFICATE types, or
+embedded PKCS#7 signer and X.509 identity fields. No `open_binary`, Windows SDK,
+or target execution is required. The CLI equivalent is
+`inspect-pe-certificates PATH`. Preserve artifact SHA-256, table file ranges,
+payload hashes, original validity-time spellings, and
+`subject_key_identifier_hex` when the signer uses that form. A missing
+`IMAGE_DIRECTORY_ENTRY_SECURITY` directory is observed absence of that table,
+not proof the image is unsigned in every catalog or overlay sense. Signatures,
+chains, timestamps, and Authenticode digest coverage remain unobserved. See
+[PE Authenticode certificate tables](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).
+
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
@@ -106,6 +120,16 @@ descriptor hashes, and original owner spellings. A missing table is observed
 absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+
+## Erlang BEAM files
+
+Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
+question concerns IFF chunks, atom names, exports, imports, lambdas, or the
+Code header. No `open_binary`, Erlang installation, or bytecode execution is
+required. The CLI equivalent is `inspect-erlang-beam PATH`. Preserve artifact
+SHA-256, chunk file ranges, 1-based atom indices, and original atom spellings.
+Missing optional tables stay null. See
+[Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
 
 ## SQLite snapshots
 

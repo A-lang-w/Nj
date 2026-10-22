@@ -38,6 +38,7 @@ export const toolFamilyCatalog = (sources) => {
         ...sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
         ...sources.modelContracts.MODEL_TOOL_CONTRACTS,
         ...sources.rustContracts.RUST_TOOL_CONTRACTS,
+        ...sources.erlangContracts.ERLANG_BEAM_TOOL_CONTRACTS,
         ...sources.wasmContracts.WASM_TOOL_CONTRACTS,
         ...sources.apkSignatureContracts.APK_SIGNATURE_TOOL_CONTRACTS,
         ...sources.sqliteContracts.SQLITE_TOOL_CONTRACTS,
@@ -252,6 +253,13 @@ export const providerCatalog = (sources) => {
         ),
     },
     {
+      identity: sources.artifactProviders.PE_CERTIFICATES_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_certificates",
+        ),
+    },
+    {
       identity: sources.artifactProviders.ELF_NOTES_PROVIDER,
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
@@ -313,6 +321,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.rustProvider.RUST_BINARY_PROVIDER_IDENTITY,
       contracts: sources.rustContracts.RUST_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.erlangProvider.ERLANG_BEAM_PROVIDER_IDENTITY,
+      contracts: sources.erlangContracts.ERLANG_BEAM_TOOL_CONTRACTS,
     },
     {
       identity: sources.electronFuseProvider.ELECTRON_FUSE_PROVIDER_IDENTITY,

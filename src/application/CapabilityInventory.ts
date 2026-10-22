@@ -418,6 +418,7 @@ const workflowAvailabilityFor = ({
     name === "inspect_model_artifact" ||
     name === "inspect_gpu_code_objects" ||
     name === "inspect_rust_binary" ||
+    name === "inspect_erlang_beam" ||
     name === "inspect_electron_fuses"
   )
     return { reason: "available", remediation: null };
@@ -499,6 +500,8 @@ const workflowAvailabilityFor = ({
             "Supply WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY. No active binary target is required; tools are checked at execution.",
         };
   if (name === "inspect_pe_resources" || name === "inspect_native_exports")
+    return { reason: "available", remediation: null };
+  if (name === "inspect_pe_certificates")
     return { reason: "available", remediation: null };
   if (name === "inspect_elf_notes")
     return { reason: "available", remediation: null };
