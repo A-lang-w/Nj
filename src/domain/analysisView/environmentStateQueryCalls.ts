@@ -93,25 +93,36 @@ export interface QueryCallIo {
 const succeeded = (record: StateRecordFacts): boolean =>
   record.status !== null && record.status >= 200 && record.status < 300;
 
+/** A call that may have changed state without a 2xx answer saying what it did: redirected or unanswered. */
+const unresolved = (record: StateRecordFacts): boolean =>
+  isStateWrite(record) && !succeeded(record);
+
+/** The names among these that are operations rather than containers wrapping them. */
+const realOperations = (names: readonly (JsonValue | undefined)[]): string[] =>
+  names.filter(
+    (name): name is string =>
+      typeof name === "string" && !OPERATION_CONTAINERS.has(name.toLowerCase()),
+  );
+
 /** The operations an RPC call names: its body's `operation` or `operations[].operation`, else its query's, containers aside. */
 const operationsOf = (
   record: StateRecordFacts,
   body: JsonValue | undefined,
 ): string[] => {
   const named = isObject(body)
-    ? [
+    ? realOperations([
         body.operation,
         ...(Array.isArray(body.operations)
           ? body.operations.map((entry) =>
               isObject(entry) ? entry.operation : undefined,
             )
           : []),
-      ].filter((name): name is string => typeof name === "string")
+      ])
     : [];
   if (named.length > 0) return named;
   const query = new URLSearchParams(record.query ?? "");
-  return OPERATION_PARAMETERS.flatMap((name) => query.getAll(name)).filter(
-    (name) => !OPERATION_CONTAINERS.has(name.toLowerCase()),
+  return realOperations(
+    OPERATION_PARAMETERS.flatMap((name) => query.getAll(name)),
   );
 };
 
@@ -127,8 +138,9 @@ const readsOnly = (operation: string): boolean => {
 /**
  * POST tools whose recorded calls read state rather than change it, by the strongest evidence that
  * applies: a response repeating the latest read of the same path with no write between, an RPC
- * tunnel naming only read operations, a path word naming a lookup, or a session segment. A tool
- * is kept a write when a read line its path relates to changes across one of its calls.
+ * tunnel naming only read operations, a last path word naming a lookup, or a session segment. A
+ * tool with a redirected or unanswered call stays a write, as does one a read line its path relates
+ * to changes across, no write but the other read-only tools' calls between.
  */
 export const readOnlyTools = (
   tools: readonly StateToolFacts[],
@@ -138,33 +150,44 @@ export const readOnlyTools = (
   const position = new Map(
     records.map((record, index) => [record.ordinal, index]),
   );
-  const readOnly = new Set<string>();
+  const writesBetween =
+    (skip: ReadonlySet<number>) =>
+    (from: number, to: number): boolean =>
+      records
+        .slice(from + 1, to)
+        .some((record) => !skip.has(record.ordinal) && isStateWrite(record));
+  const candidates = new Map<string, readonly StateRecordFacts[]>();
   for (const tool of tools) {
     if (
       tool.method !== "POST" ||
       !changesState(tool.method, tool.path_template)
     )
       continue;
-    const own = new Set(tool.record_ordinals);
     const calls = tool.record_ordinals
       .map((ordinal) => records[position.get(ordinal) ?? -1])
       .filter((record): record is StateRecordFacts => record !== undefined);
-    if (!calls.some(succeeded)) continue;
-    const between = (from: number, to: number): boolean =>
-      records
-        .slice(from + 1, to)
-        .some((record) => !own.has(record.ordinal) && isStateWrite(record));
-    const evidence =
+    if (!calls.some(succeeded) || calls.some(unresolved)) continue;
+    const between = writesBetween(new Set(tool.record_ordinals));
+    if (
       repeatsRead(calls, records, { position, between, io }) ||
       namesReadOperations(calls, io) ||
-      namesLookup(tool.path_template);
-    if (
-      evidence &&
-      !changesReadsAcross(calls, records, { position, between, io })
+      namesLookup(tool.path_template)
     )
-      readOnly.add(tool.name);
+      candidates.set(tool.name, calls);
   }
-  return readOnly;
+  // No candidate's call explains a read change across another's, so drop vetoed candidates until none is.
+  for (let vetoed = true; vetoed;) {
+    const between = writesBetween(
+      new Set([...candidates.values()].flat().map((call) => call.ordinal)),
+    );
+    vetoed = false;
+    for (const [name, calls] of candidates)
+      if (changesReadsAcross(calls, records, { position, between, io })) {
+        candidates.delete(name);
+        vetoed = true;
+      }
+  }
+  return new Set(candidates.keys());
 };
 
 interface Timeline {
@@ -205,14 +228,16 @@ const namesReadOperations = (
     return operations.length > 0 && operations.every(readsOnly);
   });
 
-/** A path segment names a lookup by its last meaningful word, or is a session segment. */
-const namesLookup = (template: string): boolean =>
-  segmentsOf(template).some(
-    (segment) =>
-      !isParam(segment) &&
-      (SESSION_SEGMENTS.has(segment.toLowerCase()) ||
-        QUERY_WORDS.has(lastMeaningfulWord(segment) ?? "")),
+/** The path's last literal segment is a session segment, or names a lookup by its last meaningful word and no write word. */
+const namesLookup = (template: string): boolean => {
+  const last = segmentsOf(template).findLast((segment) => !isParam(segment));
+  if (last === undefined) return false;
+  return (
+    SESSION_SEGMENTS.has(last.toLowerCase()) ||
+    (QUERY_WORDS.has(lastMeaningfulWord(last) ?? "") &&
+      !words(last).some((word) => WRITE_OPERATION_WORDS.has(word)))
   );
+};
 
 /** A segment's last word that is not a trailing neutral word: `selection_data` names a selection, `query-history` a history. */
 const lastMeaningfulWord = (segment: string): string | undefined =>

@@ -21,8 +21,9 @@ its cause in the recordings and the code. The five largest shared causes:
 ## Behaviour
 
 - **Read-only calls.** A POST is not a state write when its response repeats the latest read of its path with no
-  write between, it tunnels only read operations, its path's last meaningful word names a lookup, or it renews a
-  session; it is replayed. It stays a write when a related read line changes across one of its calls.
+  write between, it tunnels only read operations, its last literal segment names a lookup and no write, or it renews
+  a session; it is replayed. It stays a write when one of its calls was redirected or unanswered, or when a related
+  read line changes across one of its calls with no write but other read-only calls between.
 - **Adopted entities.** A successful item read of an entity the gate's copy never held, after a write no built plan
   models, puts the entity into the copy; an entity a modelled write touched is never taken back.
 - **Linked creates.** A POST whose path names no state type becomes a create into the type whose item read first
