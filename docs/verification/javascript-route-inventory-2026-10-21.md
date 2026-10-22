@@ -1,7 +1,7 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`d7bbdece86dcf98856a4a3c97c09a39fed03e598`, tree `afb55f3c2881ec56adf2682d477e99799821b1cd`,
+`05e53c9de59d3def12da15aa22f0c71a9966a660`, tree `c9d857fcd903ca5d0c39eb5f0e386b59fe30a3f9`,
 on main `183b4d4e7e303561cb06617fa485d996a4c99f63`. Current public interface, worker fixtures,
 SDK, Chromium and the complete fresh 67-worker corpus measurements use this
 runtime. Verification-only
@@ -9,7 +9,7 @@ commits change this report, not the runtime. Exact inputs, commands, profiles, h
 controls and meaningful failed attempts are retained in the
 [verification record](javascript-route-inventory-2026-10-21.json).
 
-Current qualification was recorded at `2026-10-22T01:56:30.588Z`.
+Current qualification was recorded at `2026-10-22T02:28:00.647Z`.
 The source capture and initial report date remain pinned to the original inputs.
 The main integration includes the independently verified [CI fixture fix #6186](https://github.com/morluto/rea/pull/6186).
 Route facts, inventory and views now use the same JavaScript coordinate owner as
@@ -37,8 +37,8 @@ conditional classifier replay are used for this qualification.
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
 | shadcn-ui        |      38 | 2,465,078 |             37 |                37 |              18 |
 
-At the current runtime, the complete 67-worker task took **208.199 s elapsed**,
-**309.052 CPU s** and **491,433,984 bytes** sampled
+At the current runtime, the complete 67-worker task took **238.510 s elapsed**,
+**304.076 CPU s** and **525,287,424 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -59,8 +59,8 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **10.544 s elapsed**,
-**13.437 CPU s** and **2,170,097,664 bytes** sampled
+cleanup succeeded. This task took **11.957 s elapsed**,
+**13.284 CPU s** and **2,162,839,552 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
 The earlier c86 worker corpus, 55 filename-classifier replay and 658 narrow
@@ -76,16 +76,16 @@ Both fresh SDK sessions used the same selected production chunk, analysis
 budgets and `/docs` query, returning paths, confidence, mechanisms and provenance.
 Explicit source selection retains the 38-file inventory while analyzing only the
 selected file; other sources remain unknown. Both sessions retained the same
-complete parent Evidence `ev_8ed574a3a7a6fa16333857e921c69789dde59f7c61c5691225d1b3eaa114218d`,
+complete parent Evidence `ev_2fd5505290ac32a27a696198bbb8bbdc794c14cc26d2b968f4f70ee3c147609c`,
 performed three historical view reads and exported complete Evidence.
 
 | Completed workflow                                              | Complete analysis, then route view | Route view in analysis call |
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
-| Estimated tokens: used input declarations and all calls/replies |                          1,934,870 |                      58,840 |
-| Estimated tokens: entire catalog and all calls/replies          |                          3,027,813 |                   1,151,783 |
-| Elapsed seconds, including startup and cleanup                  |                             14.423 |                      13.446 |
-| CPU seconds, process family                                     |                             18.784 |                      17.826 |
-| Peak sampled process-family RSS bytes                           |                      1,683,005,440 |               1,360,859,136 |
+| Estimated tokens: used input declarations and all calls/replies |                          1,934,472 |                      58,840 |
+| Estimated tokens: entire catalog and all calls/replies          |                          3,027,415 |                   1,151,783 |
+| Elapsed seconds, including startup and cleanup                  |                             15.202 |                      14.793 |
+| CPU seconds, process family                                     |                             18.365 |                      18.441 |
+| Peak sampled process-family RSS bytes                           |                      1,312,194,560 |               1,330,761,728 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -171,7 +171,7 @@ before generic constants are admitted. This preserves optional pattern syntax
 such as `/users/:id?` without inventing `/users/:id`; a separate explicit URL
 navigation still keeps URL query semantics. Resolved literals retain initializer
 segment ranges. Ten regressions failed on the prior runtime (111 controls passed). Three
-additional callable-scope cases failed against the first fix. All 136 scanner
+additional callable-scope cases failed against the first fix. All 156 scanner
 tests now pass. Source ownership follows possible lexical identities while
 destination inference retains its per-use freshness checks. The explicit
 URL-navigation control already passed before the correction and remains covered.
@@ -179,15 +179,28 @@ Full/compact historical SDK reads after source deletion and both browser adapter
 exercise independent-route retention, query exclusion and optional patterns.
 
 Ten additional rest-copy regressions failed against the previous qualified
-runtime, with 126 existing controls passing. All 136 scanner tests now pass.
+runtime, with 126 existing controls passing. All 156 scanner tests now pass.
 The iterative selector charges work before retaining slots and shares object
 field parsing, copy-path normalization and key selection with the binding owner.
 Full/compact retained SDK queries and both browser adapters exclude route-shaped
 rest payload data while preserving excluded route siblings.
 
+## Recognized navigation and active defaults
+
+Fourteen new cases failed against the previous runtime (142 tests passed):
+ordinary array writes/string replacements were emitted as navigation, while
+unused destructuring defaults hid independent routes. Six new controls already
+passed, covering scalar aliases, actual used defaults and recognized navigation.
+All 156 scanner tests now pass. Call classification admits only recognized sinks
+to the positive navigation interpreter; its obsolete recognition mode and branches
+are removed. Data strings/aliases do not return through generic constants.
+Ownership reuses the semantic owner's inactive-source predicate before following
+initializers. Full/compact historical SDK views and both browser adapters retain
+independent unused defaults and exclude array/string data paths.
+
 ## Executed checks and limits
 
-**598/598 source/owner regressions** and **98/98 compiled
+**618/618 source/owner regressions** and **98/98 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
