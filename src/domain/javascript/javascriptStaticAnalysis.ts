@@ -1,3 +1,4 @@
+import { uniqueSortedBy } from "../canonicalOrdering.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
 import type { JavaScriptRouteSourceFacts } from "./javascriptRouteFacts.js";
@@ -22,7 +23,6 @@ import {
   detectVendors,
   failedJavaScriptStaticAnalysis,
   registrationKey,
-  sortedUnique,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -230,7 +230,7 @@ const finalizeStaticAnalysis = (
       accumulator.storage,
       accumulator.moduleRangeIndex,
     ),
-    bundler_registrations: sortedUnique(
+    bundler_registrations: uniqueSortedBy(
       accumulator.registrations,
       registrationKey,
     ),
