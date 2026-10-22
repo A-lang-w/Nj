@@ -78,6 +78,12 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     "5000 ms matching deadline (source default)",
   );
   expect(REGEX_MATCHING_LIMITATION).toContain("REA_REGEX_MATCHING_DEADLINE_MS");
+  expect(REGEX_MATCHING_LIMITATION).toContain(
+    "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
+  );
+  expect(REGEX_MATCHING_LIMITATION).toContain(
+    "source default; default 128 MiB, floor 8 MiB, maximum 16384 MiB",
+  );
   expect(REGEX_MATCHING_LIMITATION).toContain("floor 1 ms");
   expect(REGEX_MATCHING_LIMITATION).toContain("maximum 2147483647 ms");
   expect(REGEX_MATCHING_LIMITATION).not.toContain("no runtime override");
@@ -107,18 +113,28 @@ it("names the configurable regex deadline and the effective worker heap", () => 
   );
   expect(failure.remediation.action).not.toContain("no runtime override");
   expect(failure.remediation.action).toContain("--max-old-space-size");
+  expect(failure.remediation.action).toContain(
+    "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
+  );
+  expect(failure.remediation.action).toContain(
+    "source default; default 128 MiB, floor 8 MiB, maximum 16384 MiB",
+  );
   if (heap.kind === "effective") {
     expect(failure.message).toContain(`${String(heap.mib)} MiB`);
     expect(failure.details).toMatchObject({
       reported_limits: {
         worker_heap_mib: heap.mib,
         requested_worker_heap_mib: 128,
+        requested_worker_heap_source: "default",
       },
     });
   } else {
     expect(failure.message).toContain("was not established");
     expect(failure.details).toMatchObject({
-      reported_limits: { requested_worker_heap_mib: 128 },
+      reported_limits: {
+        requested_worker_heap_mib: 128,
+        requested_worker_heap_source: "default",
+      },
     });
   }
   for (const name of ["search_procedures", "search_strings"] as const) {
@@ -131,6 +147,10 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     );
     expect(description).toContain(String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS));
     expect(description).toContain("source (default or setting)");
+    expect(description).toContain("REA_REGEX_WORKER_HEAP_REQUEST_MIB");
+    expect(description).toContain("default 128");
+    expect(description).toContain("floor");
+    expect(description).toContain("maximum");
     expect(description).not.toContain("no runtime override");
   }
 });
