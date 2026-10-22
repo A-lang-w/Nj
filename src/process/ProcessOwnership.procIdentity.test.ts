@@ -56,18 +56,35 @@ const procStat = (
   return `${String(pid)} (fixture) ${fields.join(" ")}`;
 };
 
+/**
+ * Select REA's caller credentials for the simulated Linux host. Windows has no
+ * `process.geteuid`/`getegid`, so define them for the call and restore the
+ * original properties (or their absence) afterwards.
+ */
 const withCaller = async <T>(
   uid: number,
   gid: number,
   run: () => Promise<T>,
 ): Promise<T> => {
-  const effectiveUid = vi.spyOn(process, "geteuid").mockReturnValue(uid);
-  const effectiveGid = vi.spyOn(process, "getegid").mockReturnValue(gid);
+  const names = ["geteuid", "getegid"] as const;
+  const originals = names.map((name) =>
+    Object.getOwnPropertyDescriptor(process, name),
+  );
+  names.forEach((name, index) =>
+    Object.defineProperty(process, name, {
+      configurable: true,
+      writable: true,
+      value: () => (index === 0 ? uid : gid),
+    }),
+  );
   try {
     return await run();
   } finally {
-    effectiveUid.mockRestore();
-    effectiveGid.mockRestore();
+    names.forEach((name, index) => {
+      const original = originals[index];
+      if (original === undefined) Reflect.deleteProperty(process, name);
+      else Object.defineProperty(process, name, original);
+    });
   }
 };
 
