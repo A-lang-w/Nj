@@ -166,11 +166,15 @@ the initial state.
 **Writes.** Only a 2xx write is modelled. A modelled write applies its effect, using the values it recorded
 for generated fields and the stored values for fields it transformed. A
 modelled write whose call the plan does not explain brings its entity to the
-recorded outcome instead, without attribution. A later create whose generated
+recorded outcome instead, without attribution. So does an update of an unknown
+entity (below): its call cannot be checked, so it adds nothing to a built plan.
+A later create whose generated
 values take another form than serving gives them (a sequence value out of
 order, a clock in another format, a non-UUID unique value) makes the plan
 `unexplained-change`; integer identities are left to the id mapping. An update or
-delete names its entity as an item read does (below).
+delete names its entity as an item read does (below). A later update that does
+not answer with its entity is observed only by a read whose view shows every
+clock the plan learned, since serving stamps them; without one it is unmodelled.
 
 Any other write that may have changed state, including a redirected or
 unanswered one, is unmodelled, and what it may have changed
@@ -184,8 +188,10 @@ depends on where its path lies relative to each type's collection paths
 - **Above collection paths:** everything under the path is not checked again.
 
 An item read of an unknown entity shows it again: the copy takes its recorded
-values. Writes that changed it since its last check are checked only on the
-members they sent.
+values. A failed read that is no absence shows nothing, and the entity stays
+unknown. Writes that changed it since its last check are checked only on the
+members they sent, less those the view treats as volatile, which show nothing
+of a write.
 
 **Reads.** A read is checked when the served environment would answer it
 from the state:

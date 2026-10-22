@@ -554,8 +554,9 @@ export const checkDocumentRead = (
 
 /**
  * Check, field by field, the writes that changed an entity an unmodelled write also changed:
- * each write's own fields must show as the state holds them. A create wrote every field, so it
- * cannot be told apart from the unmodelled change and is not checked.
+ * each write's own fields must show as the state holds them, but for volatile ones, which take
+ * the read's value and so show nothing of a write. A create wrote every field, so it cannot be
+ * told apart from the unmodelled change and is not checked.
  */
 export const writtenFieldChecks = (
   entity: StateEntity,
@@ -570,7 +571,9 @@ export const writtenFieldChecks = (
   const outcomes = new Map<string, boolean>();
   for (const [tool, fields] of check.writes) {
     const compared = (fields ?? []).filter(
-      (field) => Object.hasOwn(observed, field) || Object.hasOwn(shown, field),
+      (field) =>
+        !check.volatile.has(field) &&
+        (Object.hasOwn(observed, field) || Object.hasOwn(shown, field)),
     );
     if (fields === null || compared.length === 0) continue;
     outcomes.set(

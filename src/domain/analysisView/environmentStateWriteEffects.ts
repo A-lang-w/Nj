@@ -252,36 +252,22 @@ const updatedObservation = (
       const found = itemTarget(context.state, entity.type, record);
       return found.collection === entity.collection && found.id === entity.id;
     },
-    ...(own === undefined
-      ? {}
-      : {
-          covers: (
-            view: Extract<StateView, { readonly shape: "item" | "list" }>,
-          ) => required.every((field) => view.fields.includes(field)),
-        }),
+    // With an answer or without one, only a read whose view shows every learned clock shows what this call stamped.
+    covers: (view) => required.every((field) => view.fields.includes(field)),
   });
-  if (later !== undefined) {
-    const readFields = viewFields(context.viewOf(later.ordinal));
-    const coversRequired = required.every((field) =>
-      readFields?.includes(field),
-    );
-    // A partial summary cannot replace members the write response did show. Only use it
-    // to fill an omitted generated field when that read view actually covers the field.
-    if (own === undefined || coversRequired) {
-      context.observed(later.ordinal);
-      const object = { ...own?.object, ...later.object };
-      // For covered fields, the later read's omission is evidence too; do not fill it back
-      // from an earlier write response. Fields outside that view retain response evidence.
-      for (const field of readFields ?? [])
-        if (!Object.hasOwn(later.object, field)) delete object[field];
-      return {
-        ...later,
-        object,
-        ...(readFields === undefined ? {} : { readFields }),
-      };
-    }
-  }
-  return own;
+  if (later === undefined) return own;
+  const readFields = viewFields(context.viewOf(later.ordinal));
+  context.observed(later.ordinal);
+  const object = { ...own?.object, ...later.object };
+  // For covered fields, the later read's omission is evidence too; do not fill it back
+  // from an earlier write response. Fields outside that view retain response evidence.
+  for (const field of readFields ?? [])
+    if (!Object.hasOwn(later.object, field)) delete object[field];
+  return {
+    ...later,
+    object,
+    ...(readFields === undefined ? {} : { readFields }),
+  };
 };
 
 /** Add what a later call of an update showed to its plan: members, fixed values and rules not seen before. */
@@ -457,20 +443,12 @@ export const applyUpdate = (
     refuse(draft, step, "unexplained-change");
     return recorded();
   }
-  // Rules for unsent changes hold for every call, so each call must agree with those of the others.
+  // Each call must agree with the plan; one on an unknown entity cannot be checked, so it adds nothing to the plan.
   if (
     built(draft) &&
-    !unknown &&
-    (contradictsEarlierCalls(draft, explained.rules) ||
-      contradictsGeneratedClock(
-        entity.fields,
-        after.object,
-        draft.plan.rules,
-        explained.rules,
-      ) ||
-      conflictsWithPlan(draft.plan, explained))
+    (unknown || contradictsPlan(draft, entity.fields, after.object, explained))
   ) {
-    refuse(draft, step, "unexplained-change");
+    if (!unknown) refuse(draft, step, "unexplained-change");
     return recorded();
   }
   buildUpdate(context, draft, step, { after, explained, idField });
@@ -537,6 +515,17 @@ const contradictsGeneratedClock = (
       next.ms <= previous.ms
     );
   });
+
+/** Whether a later call explains its changes otherwise than the plan: rules for unsent changes hold for every call, so each call must agree with the others. */
+const contradictsPlan = (
+  draft: WriteDraft,
+  before: JsonObject,
+  after: JsonObject,
+  explained: ReturnType<typeof explainUpdate>,
+): boolean =>
+  contradictsEarlierCalls(draft, explained.rules) ||
+  contradictsGeneratedClock(before, after, draft.plan.rules, explained.rules) ||
+  conflictsWithPlan(draft.plan, explained);
 
 /** Apply a recorded delete: the held entity leaves its collection. */
 export const applyDelete = (
