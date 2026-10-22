@@ -31,7 +31,7 @@ export const projectSazRecord = (
     if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
         "input-limit",
-        "SAZ projection exceeds the complete-evidence nesting budget.",
+        "SAZ projection exceeds the complete-evidence nesting budget. This release has no runtime override.",
         pointer,
       );
     const sourcePointer = pointer.endsWith("/value_unfolded")
