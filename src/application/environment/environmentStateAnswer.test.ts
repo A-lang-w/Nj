@@ -9,8 +9,10 @@ import {
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { REPLAY_BODY_LIMIT_BYTES } from "./environmentReplay.js";
-import type { EnvironmentSource } from "./environmentSource.js";
+import {
+  REPLAY_BODY_LIMIT_BYTES,
+  type EnvironmentSource,
+} from "./environmentSource.js";
 import {
   answerFromState,
   type StateServing,
@@ -308,6 +310,17 @@ describe("recorded and document answers", () => {
     });
     expect(answer(serving, "post_folders", {})).toMatchObject({
       state: { source: "recording", reason: "no-view" },
+    });
+  });
+
+  it("replays a read whose rendered document exceeds the body limit", () => {
+    const values = Array.from({ length: 60_000 }, () => "1e3").join(",");
+    const body = `{"values":[${values}]}`;
+    const serving = servingFrom([["GET", "/api/config", body]]);
+    expect(serving.store.state.documents).toEqual([]);
+    expect(answer(serving, "get_config", {})).toMatchObject({
+      replay: { record_ordinal: 0 },
+      state: { source: "recording", reason: "rendered-oversize" },
     });
   });
 
