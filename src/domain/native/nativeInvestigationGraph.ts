@@ -102,18 +102,23 @@ export const nativeInvestigationCoverageSchema = z.strictObject({
   facet: z.string().min(1),
   status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
   reason: z.string().nullable(),
-  examined: z.number().int().nonnegative(),
-  omitted: z.number().int().nonnegative(),
+  examined: z.int().nonnegative(),
+  omitted: z.int().nonnegative(),
+});
+
+export const nativeInvestigationProviderSchema = z.strictObject({
+  id: z.string().min(1),
+  version: z.string().nullable(),
+  tool_version: z.string().min(1),
 });
 
 /** Complete provider-neutral graph bound to one immutable target identity. */
 export const nativeInvestigationGraphSchema = z.strictObject({
-  target_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  provider: z.strictObject({
-    id: z.string().min(1),
-    version: z.string().nullable(),
-    tool_version: z.string().min(1),
-  }),
+  target_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .nullable(),
+  provider: nativeInvestigationProviderSchema,
   nodes: z.array(nativeInvestigationNodeSchema),
   edges: z.array(nativeInvestigationEdgeSchema),
   coverage: z.array(nativeInvestigationCoverageSchema),
@@ -126,9 +131,9 @@ export type NativeInvestigationGraph = z.infer<
 
 /** Caller-controlled hard limits for a bounded relationship trace. */
 export const nativeInvestigationTraceLimitsSchema = z.strictObject({
-  max_depth: z.number().int().min(0).max(32).default(8),
-  max_nodes: z.number().int().min(1).max(2000).default(250),
-  max_edges: z.number().int().min(1).max(5000).default(500),
+  max_depth: z.int().min(0).max(32).default(8),
+  max_nodes: z.int().min(1).max(2000).default(250),
+  max_edges: z.int().min(1).max(5000).default(500),
 });
 
 export type NativeInvestigationTraceLimits = z.infer<
@@ -137,14 +142,17 @@ export type NativeInvestigationTraceLimits = z.infer<
 
 /** Exact graph route and any unresolved edges encountered along the route. */
 export const nativeInvestigationTraceSchema = z.strictObject({
-  target_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  provider: nativeInvestigationGraphSchema.shape.provider,
+  target_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .nullable(),
+  provider: nativeInvestigationProviderSchema,
   start: z.string().min(1),
   direction: z.enum(["forward", "backward"]),
   nodes: z.array(nativeInvestigationNodeSchema),
   edges: z.array(nativeInvestigationEdgeSchema),
   unresolved: z.array(nativeInvestigationEdgeSchema),
-  reached_depth: z.number().int().nonnegative(),
+  reached_depth: z.int().nonnegative(),
   truncated: z.boolean(),
   reason: z.string().nullable(),
   coverage: z.array(nativeInvestigationCoverageSchema),
@@ -207,7 +215,6 @@ export const traceNativeInvestigationGraph = (
   while (queue.length > 0) {
     const current = queue.shift();
     if (current === undefined) break;
-    reachedDepth = Math.max(reachedDepth, current.depth);
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
@@ -227,19 +234,24 @@ export const traceNativeInvestigationGraph = (
         reason ??= "max_depth_reached";
         continue;
       }
-      selectedEdges.set(edge.id, edge);
-      if (alreadyVisited) continue;
-      if (visited.size >= limits.max_nodes) {
+      // Check destination capacity before retaining its edge. Otherwise the node
+      // bound leaves a resolved edge pointing outside the returned trace.
+      if (!alreadyVisited && visited.size >= limits.max_nodes) {
         truncated = true;
         reason = "max_nodes_reached";
         break;
       }
+      selectedEdges.set(edge.id, edge);
+      if (alreadyVisited) continue;
       if (!nodeById.has(nextId)) {
         truncated = true;
         reason ??= "edge_target_missing_from_graph";
         continue;
       }
       visited.add(nextId);
+      // A retained node has already been reached even if a later sibling
+      // exhausts a budget before this node is dequeued for expansion.
+      reachedDepth = Math.max(reachedDepth, current.depth + 1);
       queue.push({ id: nextId, depth: current.depth + 1 });
     }
     if (reason === "max_edges_reached" || reason === "max_nodes_reached") break;

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   mkdir,
   open as fsOpen,
@@ -19,6 +20,7 @@ import {
   readSkillFile,
   skillDestinations,
 } from "../../../src/application/SetupSkill.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { systemSetupHost } from "../../../src/application/SetupHost.js";
 import {
   runUninstall,
@@ -67,9 +69,61 @@ const failFirstCloses = (path: string) => {
 };
 
 describe("skill regular-file cleanup ownership", () => {
-  it("keeps setup skill reads owned until setup host disposal", async () => {
+  it.each(["first", "recovery", "verification"] as const)(
+    "retains a failed %s backup read until setup host disposal",
+    async (stage) => {
+      const home = await createTestTempDirectory(
+        "rea-setup-skill-backup-close-",
+      );
+      const [destination] = skillDestinations(home, [], {}, "linux");
+      if (destination === undefined)
+        throw new Error("Shared skill root missing");
+      const manifest = join(destination.path, "SKILL.md");
+      const original = "stale managed skill\n";
+      const firstBackup = `${manifest}.rea.backup`;
+      const backup =
+        stage === "recovery"
+          ? `${firstBackup}.${createHash("sha256").update(original).digest("hex")}.recovery`
+          : firstBackup;
+      await mkdir(dirname(manifest), { recursive: true });
+      await writeFile(manifest, original);
+      if (stage === "recovery")
+        await writeFile(firstBackup, "historical skill\n");
+      if (stage !== "verification") await writeFile(backup, original);
+      const close = failFirstCloses(backup);
+      const host = systemSetupHost(
+        { platform: "linux", homeDirectory: home } as DoctorHost,
+        { HOME: home },
+      );
+
+      try {
+        const result = await host.installSkill([]);
+        expect(result).toMatchObject({ ok: false, error: { stage: "backup" } });
+        expect(close.attempts.length).toBeGreaterThan(0);
+        expect(new Set(close.attempts).size).toBe(1);
+        const opensBeforeAdmission = openMock.mock.calls.length;
+        expect((await host.installSkill([])).ok).toBe(false);
+        expect(openMock).toHaveBeenCalledTimes(opensBeforeAdmission);
+        expect(new Set(close.attempts).size).toBe(1);
+        expect(await actualFs.readFile(manifest, "utf8")).toBe(original);
+        expect(await host.close?.()).toContain(backup);
+        const attemptsBeforeClose = close.attempts.length;
+        close.release();
+        expect(await host.close?.()).toBeUndefined();
+        expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
+        expect(close.attempts[0]?.fd).toBe(-1);
+      } finally {
+        close.release();
+        await host.close?.();
+        // Reclaim the real test descriptor even when the retention regression fails.
+        for (const handle of new Set(close.attempts)) await handle.close();
+      }
+    },
+  );
+
+  it("retains a failed setup skill read until setup host disposal", async () => {
     const home = await createTestTempDirectory("rea-setup-skill-close-");
-    const [destination] = skillDestinations(home, []);
+    const [destination] = skillDestinations(home, [], {}, "linux");
     if (destination === undefined) throw new Error("Shared skill root missing");
     const manifest = join(destination.path, "SKILL.md");
     await mkdir(dirname(manifest), { recursive: true });
@@ -81,7 +135,18 @@ describe("skill regular-file cleanup ownership", () => {
     );
 
     try {
-      expect(await host.skillNeedsInstall([])).toBe(true);
+      const failure = await host.skillNeedsInstall([]).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
+      expect(failure).toMatchObject({
+        path: manifest,
+        outcome: { kind: "completed" },
+        cleanupCause: expect.objectContaining({
+          message: "test holds the skill handle open",
+        }),
+      });
       expect(close.attempts.length).toBeGreaterThan(0);
       expect(new Set(close.attempts).size).toBe(1);
       const attemptsBeforeClose = close.attempts.length;
@@ -147,7 +212,7 @@ describe("skill regular-file cleanup ownership", () => {
 });
 
 describe("skill cleanup diagnostics", () => {
-  it("preserves a doctor report and cleanup diagnostic when host close still fails", async () => {
+  it("preserves read and host cleanup failures when doctor identity cannot complete", async () => {
     const home = await createTestTempDirectory("rea-doctor-skill-close-");
     const [destination] = skillDestinations(home, []);
     if (destination === undefined) throw new Error("Shared skill root missing");
@@ -172,15 +237,23 @@ describe("skill cleanup diagnostics", () => {
     });
 
     try {
-      const report = await runDoctorOwned(undefined, host, { skill: true });
-
-      expect(report.healthy).toBe(false);
-      expect(report.identity?.skill.installed_version).toBeNull();
-      expect(report.checks).toContainEqual(
+      const failure = await runDoctorOwned(undefined, host, {
+        skill: true,
+      }).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError))
+        throw new Error("Doctor cleanup should preserve both failures");
+      expect(failure.errors[0]).toBeInstanceOf(RegularFileCleanupFailure);
+      expect(failure.errors[0]).toMatchObject({
+        path: manifest,
+        outcome: { kind: "completed" },
+      });
+      expect(failure.errors[1]).toEqual(
         expect.objectContaining({
-          name: "doctor-resource-cleanup",
-          ok: false,
-          detail: expect.stringContaining(manifest),
+          message: expect.stringContaining(manifest),
         }),
       );
       expect(close.attempts.length).toBeGreaterThan(0);

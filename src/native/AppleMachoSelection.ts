@@ -1,7 +1,16 @@
+import { createHash } from "node:crypto";
+
 import type { FixupCommands } from "./AppleMachoFixups.js";
 import {
+  MACHO_ARCHITECTURE_POLICIES,
+  machoSubtypeRank,
+} from "./MachoArchitectureSelection.js";
+import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import {
+  machoLoadCommandAlignment,
   readFatSliceDeclarations,
   validateFatSlice,
+  type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 
 /** One mapped Mach-O segment with file-backed VA range. */
@@ -39,6 +48,15 @@ export interface MachoSlice {
 export interface MachoLayout {
   segments: Segment[];
   sections: Section[];
+  /** CPU identity and exact byte range selected from this source artifact. */
+  selectedImage: {
+    readonly container: "thin" | "fat";
+    readonly offset: number;
+    readonly byteLength: number;
+    readonly cpuType: number;
+    readonly cpuSubtype: number;
+    readonly containerTableSha256: string | null;
+  };
   /** Fixup load commands and dependent dylibs of the selected slice. */
   fixups: FixupCommands;
   /** VM address of the segment that maps file offset 0 (the preferred load address). */
@@ -90,51 +108,58 @@ export const selectMachoSlice = (
   const headerEnd = 8 + count * stride;
   if (count > 128 || headerEnd > bytes.length)
     throw malformed("Malformed FAT architecture table");
-  const cpu = MACHO_CPU_TYPE[architecture];
-  if (cpu === undefined) throw invalid("Requested FAT architecture is absent");
+  const policy = MACHO_ARCHITECTURE_POLICIES[architecture];
+  if (policy === undefined)
+    throw invalid("Requested FAT architecture is absent");
   const declarations = readFatSliceDeclarations(bytes.subarray(8, headerEnd), {
     count,
     wide: fat64,
     littleEndian,
   });
   if (declarations.status !== "parsed") throw malformed(declarations.reason);
-  let selected: MachoSlice | undefined;
+  let best: FatSliceDeclaration | undefined;
+  let bestRank = Number.POSITIVE_INFINITY;
+  let ambiguous = false;
   for (const declaration of declarations.slices) {
     const issue = validateFatSlice(declaration, bytes.length, headerEnd);
     if (issue !== null) throw malformed(issue);
-    if (declaration.cpuType !== cpu) continue;
-    if (selected !== undefined)
-      throw invalid("Ambiguous FAT architecture slice");
-    selected = {
-      slice: declaration.offset,
-      sliceEnd: declaration.offset + declaration.size,
-      fatDeclaration: {
-        ...declaration,
-        tableEnd: headerEnd,
-      },
-    };
+    if (declaration.cpuType !== policy.cpuType) continue;
+    const rank = machoSubtypeRank(policy, declaration.cpuSubtype);
+    if (best !== undefined && rank >= bestRank) {
+      // Equal ranks keep FAT table order unless the slices share a subtype.
+      if (
+        rank === bestRank &&
+        machoCpuSubtypeBase(declaration.cpuSubtype) ===
+          machoCpuSubtypeBase(best.cpuSubtype)
+      )
+        ambiguous = true;
+      continue;
+    }
+    best = declaration;
+    bestRank = rank;
+    ambiguous = false;
   }
-  if (selected === undefined)
-    throw invalid("Requested FAT architecture is absent");
-  if (selected.slice + 4 > bytes.length)
-    throw malformed("Truncated Mach-O header");
-  const sliceMagic = bytes.readUInt32LE(selected.slice);
-  if (sliceMagic === MH_MAGIC || sliceMagic === MH_CIGAM)
-    throw invalid(
-      `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
-    );
+  if (best === undefined) throw invalid("Requested FAT architecture is absent");
+  if (ambiguous) throw invalid("Ambiguous FAT architecture slice");
+  const selected: MachoSlice = {
+    slice: best.offset,
+    sliceEnd: best.offset + best.size,
+    fatDeclaration: { ...best, tableEnd: headerEnd },
+  };
   return selected;
 };
 
-/** CPU types admitted by `machArchitecture` in the domain binary target parser. */
-const MACHO_CPU_TYPE: Readonly<Record<string, number>> = {
-  x86: 7,
-  x86_64: 0x01000007,
-  arm: 12,
-  arm64: 0x0100000c,
-};
 const MH_MAGIC = 0xfeedface;
 const MH_CIGAM = 0xcefaedfe;
+const MH_CIGAM_64 = 0xcffaedfe;
+
+/** A recognized Mach-O class outside this metadata reader's supported formats. */
+export class UnsupportedMachoMetadataFormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedMachoMetadataFormatError";
+  }
+}
 
 /** Parse segments/sections for a little-endian 64-bit Mach-O architecture slice. */
 export const parseMachoLayout = (
@@ -144,19 +169,50 @@ export const parseMachoLayout = (
   if (bytes.length < 4) throw new RangeError("Truncated Mach-O header");
   const selection = selectMachoSlice(bytes, architecture);
   const { slice, sliceEnd } = selection;
-  if (slice === 0 && sliceEnd === bytes.length && bytes.length < 32)
+  if (slice + 4 > sliceEnd) throw new RangeError("Truncated Mach-O header");
+  const selectedMagic = bytes.readUInt32LE(slice);
+  const is32Bit = selectedMagic === MH_MAGIC || selectedMagic === MH_CIGAM;
+  const isBigEndian =
+    selectedMagic === MH_CIGAM || selectedMagic === MH_CIGAM_64;
+  const headerSize = is32Bit ? 28 : 32;
+  const recognizedMagic =
+    is32Bit || selectedMagic === 0xfeedfacf || selectedMagic === MH_CIGAM_64;
+  if (!recognizedMagic && slice + 32 > sliceEnd)
     throw new RangeError("Truncated Mach-O header");
-  if (slice + 32 > sliceEnd || bytes.readUInt32LE(slice) !== 0xfeedfacf)
+  if (!recognizedMagic)
     throw new TypeError(
       "Only little-endian 64-bit Mach-O metadata is supported",
     );
+  if (slice + headerSize > sliceEnd)
+    throw new RangeError("Truncated Mach-O header");
+  const readHeaderUInt32 = isBigEndian
+    ? (offset: number) => bytes.readUInt32BE(offset)
+    : (offset: number) => bytes.readUInt32LE(offset);
+  const cpuType = readHeaderUInt32(slice + 4);
+  const cpuSubtype = readHeaderUInt32(slice + 8);
   const fat = selection.fatDeclaration;
   if (fat !== undefined) {
     const issue = validateFatSlice(fat, bytes.length, fat.tableEnd, {
-      cpuType: bytes.readUInt32LE(slice + 4),
-      cpuSubtype: bytes.readUInt32LE(slice + 8),
+      cpuType,
+      cpuSubtype,
     });
     if (issue !== null) throw new TypeError(issue);
+  }
+  if (is32Bit) {
+    if (MACHO_ARCHITECTURE_POLICIES[architecture]?.cpuType !== cpuType)
+      throw new TypeError(
+        `Mach-O CPU type does not match requested architecture ${architecture}`,
+      );
+    throw new UnsupportedMachoMetadataFormatError(
+      `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
+    );
+  }
+  if (selectedMagic === MH_CIGAM_64) {
+    if (cpuType !== 0x01000012)
+      throw new TypeError("Unsupported big-endian Mach-O CPU type");
+    throw new UnsupportedMachoMetadataFormatError(
+      "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
+    );
   }
   const commands = bytes.readUInt32LE(slice + 16);
   const commandEnd = slice + 32 + bytes.readUInt32LE(slice + 20);
@@ -181,7 +237,11 @@ export const parseMachoLayout = (
       kind: bytes.readUInt32LE(cursor),
       size: bytes.readUInt32LE(cursor + 4),
     };
-    if (command.size < 8 || cursor + command.size > commandEnd)
+    if (
+      command.size < 8 ||
+      command.size % machoLoadCommandAlignment(true) !== 0 ||
+      cursor + command.size > commandEnd
+    )
       throw new RangeError("Invalid load command size");
     if (command.kind === 0x19) collectSegment(bytes, command, state);
     else collectFixupCommand(bytes, command, state);
@@ -205,6 +265,19 @@ export const parseMachoLayout = (
   return {
     segments,
     sections,
+    selectedImage: {
+      container: fat === undefined ? "thin" : "fat",
+      offset: slice,
+      byteLength: sliceEnd - slice,
+      cpuType,
+      cpuSubtype,
+      containerTableSha256:
+        fat === undefined
+          ? null
+          : createHash("sha256")
+              .update(bytes.subarray(0, fat.tableEnd))
+              .digest("hex"),
+    },
     offset,
     fixups: { chained, binds, rebases, dylibs },
     baseAddress: state.baseAddress ?? 0n,
@@ -260,7 +333,8 @@ const collectSegment = (
     state.sections.push({
       name: bytes
         .subarray(position, position + 16)
-        .toString("ascii")
+        // ASCII decoding masks high bits and can fabricate known metadata names.
+        .toString("latin1")
         .replace(/\0.*$/u, ""),
       address: bytes.readBigUInt64LE(position + 32),
       size: Number(sectionSize),

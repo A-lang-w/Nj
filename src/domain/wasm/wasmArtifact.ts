@@ -1,20 +1,35 @@
+import { wasmInterfaceSchema } from "./wasmInterface.js";
 import { z } from "zod";
+import { createHash } from "node:crypto";
+import type { EvidenceSubjectTarget } from "../evidence.js";
 
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const artifact = z.strictObject({
   path: z.string().min(1),
   sha256: digest,
-  bytes: z.number().int().nonnegative(),
+  bytes: z.int().nonnegative(),
 });
+/** Default execution budget; upper bound is the runtime's signed 32-bit timer range. */
+export const DEFAULT_WASM_COMMAND_TIMEOUT_MS = 30_000;
+export const MAX_WASM_COMMAND_TIMEOUT_MS = 2_147_483_647;
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
 export const inspectWasmArtifactInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute selected local WASM artifact path",
   ),
-  glue_paths: z.array(localPathStringSchema).max(16).default([]),
-  candidate_paths: z.array(localPathStringSchema).max(16).default([]),
+  glue_paths: z.array(absoluteLocalPathStringSchema).max(16).default([]),
+  candidate_paths: z.array(absoluteLocalPathStringSchema).max(16).default([]),
+  command_timeout_ms: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_WASM_COMMAND_TIMEOUT_MS)
+    .exactOptional()
+    .describe(
+      `Deadline in milliseconds for each WABT version/analysis command (default ${String(DEFAULT_WASM_COMMAND_TIMEOUT_MS)}), not the whole inspection. Allow additional client time for all commands, file checks and cleanup. Input/output safety limits remain fixed.`,
+    ),
 });
 /** Upstream output stays intact; import/export names are never split on ambiguous punctuation. */
 export const wasmArtifactSchema = z
@@ -24,12 +39,13 @@ export const wasmArtifactSchema = z
     sections: z.array(
       z.strictObject({
         kind: z.string().min(1),
-        start: z.number().int().nonnegative(),
-        end: z.number().int().nonnegative(),
-        bytes: z.number().int().nonnegative(),
+        start: z.int().nonnegative(),
+        end: z.int().nonnegative(),
+        bytes: z.int().nonnegative(),
         description: z.string(),
       }),
     ),
+    interface: wasmInterfaceSchema.exactOptional(),
     imports: z.array(z.string()),
     exports: z.array(z.string()),
     headers: z.string(),
@@ -54,8 +70,8 @@ export const wasmArtifactSchema = z
           }),
         )
         .length(3),
-      timeout_ms: z.number().int().positive(),
-      output_budget_bytes: z.number().int().positive(),
+      timeout_ms: z.int().positive(),
+      output_budget_bytes: z.int().positive(),
     }),
     candidates: z.array(artifact),
     glue: z.array(
@@ -65,8 +81,8 @@ export const wasmArtifactSchema = z
         references: z.array(
           z.strictObject({
             value: z.string(),
-            line: z.number().int().positive(),
-            column: z.number().int().nonnegative(),
+            line: z.int().positive(),
+            column: z.int().nonnegative(),
             candidate_paths: z.array(z.string()),
             association: z.enum([
               "local-path-candidate",
@@ -83,6 +99,15 @@ export const wasmArtifactSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((value, context) => {
+    if (
+      createHash("sha256").update(value.wat.text, "utf8").digest("hex") !==
+      value.wat.sha256
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["wat", "sha256"],
+        message: "Decoded WAT digest does not match its UTF-8 text.",
+      });
     const selected = value.candidates[0];
     if (
       selected?.path !== value.artifact.path ||
@@ -125,3 +150,22 @@ export const wasmArtifactSchema = z
 export type InspectWasmArtifactInput = z.infer<
   typeof inspectWasmArtifactInputSchema
 >;
+export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
+
+/** A WASM observation must identify the selected file path and byte digest. */
+export type WasmArtifactSubject = Pick<
+  EvidenceSubjectTarget,
+  "path" | "sha256" | "format"
+>;
+type WasmArtifactFileSubject = WasmArtifactSubject & {
+  readonly format: "file";
+};
+
+export const wasmArtifactMatchesSubject = (
+  artifact: WasmArtifact["artifact"],
+  subject: WasmArtifactSubject | null | undefined,
+): subject is WasmArtifactFileSubject =>
+  subject != null &&
+  subject.path === artifact.path &&
+  subject.sha256 === artifact.sha256 &&
+  subject.format === "file";

@@ -1,10 +1,11 @@
 import {
-  deliveredCodexEvidence,
   evaluateKnownAnswers,
+  parseCodexToolCall,
   type FixtureClaimExpectation,
   type KnownAnswerAssessment,
+  type ParsedCodexToolCall,
 } from "./KnownAnswerEvaluation.js";
-import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { canonicalJson } from "../domain/comparisonSemantics.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 
 /** One REA MCP invocation observed in a Codex JSONL transcript. */
@@ -57,86 +58,18 @@ const textValue = (value: unknown): string | undefined =>
 const numberValue = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
 
-const canonicalValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  const object = record(value);
-  if (object === undefined) return value;
-  return Object.fromEntries(
-    Object.entries(object)
-      .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
-      .map(([key, child]) => [key, canonicalValue(child)]),
-  );
-};
-
-const toolResultError = (
-  item: Record<string, unknown>,
-): Record<string, unknown> | undefined => {
-  const result = record(item.result ?? item.output);
-  const structured = record(
-    result?.structured_content ?? result?.structuredContent,
-  );
-  const direct = record(structured?.error ?? result?.error ?? item.error);
-  if (direct !== undefined || structured !== undefined) return direct;
-  // Codex preserves some REA failures only as one complete JSON text block.
-  // A client-truncated preview or SDK prose is not a structured error record.
-  const content = result?.content;
-  if (!Array.isArray(content) || content.length !== 1) return undefined;
-  const block = record(content[0]);
-  if (block?.type !== "text" || typeof block.text !== "string")
-    return undefined;
-  try {
-    return record(record(JSON.parse(block.text))?.error);
-  } catch (cause) {
-    if (cause instanceof SyntaxError || cause instanceof RangeError)
-      return undefined;
-    throw cause;
-  }
-};
-
-const toolResultFailed = (
-  item: Record<string, unknown>,
-  error: Record<string, unknown> | undefined,
-): boolean => {
-  if (
-    item.status === "failed" ||
-    (item.error !== undefined && item.error !== null)
-  )
-    return true;
-  const result = record(item.result ?? item.output);
-  const structured = record(
-    result?.structured_content ?? result?.structuredContent,
-  );
-  return (
-    result?.isError === true ||
-    structured?.error !== undefined ||
-    error !== undefined
-  );
-};
-
-const callFromEvent = (
-  event: Record<string, unknown>,
+const callFromParsed = (
+  parsed: ParsedCodexToolCall | undefined,
 ): CodexMcpCall | undefined => {
-  const item = record(
-    event.type === "item.completed"
-      ? event.item
-      : event.type === "mcp_tool_call"
-        ? event
-        : undefined,
-  );
-  if (item?.type !== "mcp_tool_call") return undefined;
-  const tool = textValue(item.tool) ?? textValue(item.name);
-  if (tool === undefined) return undefined;
-  const error = toolResultError(item);
+  if (parsed === undefined) return undefined;
   return {
-    id: textValue(item.id) ?? null,
-    server: textValue(item.server) ?? textValue(item.server_name) ?? null,
-    tool,
-    arguments: item.arguments ?? item.input ?? {},
-    evidenceIds: deliveredCodexEvidence(event).map(
-      ({ evidence_id }) => evidence_id,
-    ),
-    error: toolResultFailed(item, error),
-    errorCode: textValue(error?.code) ?? null,
+    id: parsed.id,
+    server: parsed.server,
+    tool: parsed.tool,
+    arguments: parsed.arguments,
+    evidenceIds: parsed.evidence.map(({ evidence_id }) => evidence_id),
+    error: parsed.error,
+    errorCode: parsed.errorCode,
   };
 };
 
@@ -163,16 +96,20 @@ interface EvaluationState {
   outputTokens: number;
 }
 
-const consumeEvent = (state: EvaluationState, value: unknown): void => {
+const consumeEvent = (
+  state: EvaluationState,
+  value: unknown,
+  parsedCall: ParsedCodexToolCall | undefined,
+): void => {
   const event = record(value);
   if (event === undefined) return;
   const completedItem =
     event.type === "item.completed" ? event.item : undefined;
-  const call = callFromEvent(event);
+  const call = callFromParsed(parsedCall);
   if (call !== undefined) {
     const identity =
       call.id ??
-      `${call.server ?? ""}:${call.tool}:${JSON.stringify(canonicalValue(call.arguments))}`;
+      `${call.server ?? ""}:${call.tool}:${canonicalJson(call.arguments)}`;
     if (!state.seenCallIds.has(identity)) {
       state.seenCallIds.add(identity);
       state.calls.push(call);
@@ -216,10 +153,13 @@ export const evaluateCodexEvents = (
     cachedInputTokens: 0,
     outputTokens: 0,
   };
-  for (const event of events) consumeEvent(state, event);
+  const parsedCalls = events.map(parseCodexToolCall);
+  events.forEach((event, index) =>
+    consumeEvent(state, event, parsedCalls[index]),
+  );
 
   const reaCalls = state.calls.filter(
-    ({ server }) => server === null || server.toLowerCase() === "rea",
+    ({ server }) => server?.toLowerCase() === "rea",
   );
   const signatures = new Map<string, number>();
   let targetRevision = 0;
@@ -228,7 +168,7 @@ export const evaluateCodexEvents = (
     // useful verification, not a duplicate analysis or unchanged failed retry.
     const context =
       call.tool === "binary_session" ? `${String(targetRevision)}:` : "";
-    const signature = `${context}${call.tool}:${JSON.stringify(canonicalValue(call.arguments))}`;
+    const signature = `${context}${call.tool}:${canonicalJson(call.arguments)}`;
     signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
     if (
       !call.error &&
@@ -271,7 +211,7 @@ export const evaluateCodexEvents = (
       finalMessage,
     );
   const factualAssessment = evaluateKnownAnswers(
-    events,
+    parsedCalls,
     finalMessage,
     options.fixtureClaims,
   );

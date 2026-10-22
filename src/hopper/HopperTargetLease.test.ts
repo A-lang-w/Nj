@@ -1,8 +1,18 @@
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdir, mkdtemp, readdir, rm, rmdir } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  rmdir,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,7 +20,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
-} from "./HopperTargetLease.js";
+} from "../process/HopperLease.js";
 
 const directories: string[] = [];
 
@@ -22,11 +32,90 @@ afterEach(async () => {
   );
 });
 
+describe.skipIf(process.platform === "win32")(
+  "Hopper lease directory admission",
+  () => {
+    it("secures an existing owned directory without replacing it", async () => {
+      const directory = await temporaryDirectory();
+      await chmod(directory, 0o755);
+      const before = await lstat(directory);
+      const acquired = await acquireLinuxHopperApplicationLease({
+        directory,
+        runId: "permission-hardening",
+      });
+      if (!acquired.acquired)
+        throw new Error("Expected the owned directory lease");
+      try {
+        const after = await lstat(directory);
+        expect(after.dev).toBe(before.dev);
+        expect(after.ino).toBe(before.ino);
+        expect(after.mode & 0o777).toBe(0o700);
+      } finally {
+        await acquired.lease.release();
+      }
+    });
+
+    it("rejects a directory symlink without changing its target", async () => {
+      const directory = await temporaryDirectory();
+      const realDirectory = join(directory, "actual");
+      const alias = join(directory, "selected");
+      await mkdir(realDirectory);
+      await chmod(realDirectory, 0o755);
+      await symlink(realDirectory, alias);
+      await expect(
+        acquireLinuxHopperApplicationLease({
+          directory: alias,
+          runId: "alias",
+        }),
+      ).rejects.toMatchObject({ _tag: "HopperStartError" });
+      expect(await readdir(realDirectory)).toEqual([]);
+      expect((await lstat(realDirectory)).mode & 0o777).toBe(0o755);
+      expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "explains unreadable directory recovery without changing unverified permissions",
+      async () => {
+        const directory = await temporaryDirectory();
+        await chmod(directory, 0o333);
+        try {
+          await expect(
+            acquireLinuxHopperApplicationLease({
+              directory,
+              runId: "unreadable",
+            }),
+          ).rejects.toMatchObject({
+            _tag: "HopperStartError",
+            cause: expect.objectContaining({ code: "EACCES" }),
+            userMessage: expect.stringContaining(
+              "restore owner-only read, write, and search permissions (0700)",
+            ),
+          });
+          expect((await lstat(directory)).mode & 0o777).toBe(0o333);
+          // This fixture owns the directory. Apply the documented recovery,
+          // then exercise the same production acquisition again.
+          await chmod(directory, 0o700);
+          const recovered = await acquireLinuxHopperApplicationLease({
+            directory,
+            runId: "recovered-access",
+          });
+          if (!recovered.acquired) throw new Error("Expected recovered access");
+          await recovered.lease.release();
+          expect(await readdir(directory)).toEqual([]);
+        } finally {
+          await chmod(directory, 0o700);
+        }
+      },
+    );
+  },
+);
+
 describe("Hopper target leases", () => {
   it("reports the owning REA session for a duplicate target and profile", async () => {
     const directory = await temporaryDirectory();
+    const targetPath = await temporaryTarget();
     const first = await acquireHopperTargetLease({
-      ...leaseInput,
+      ...leaseInput(targetPath),
       directory,
       runId: "session-first",
     });
@@ -34,7 +123,7 @@ describe("Hopper target leases", () => {
     if (!first.acquired) return;
 
     const duplicate = await acquireHopperTargetLease({
-      ...leaseInput,
+      ...leaseInput(targetPath),
       directory,
       runId: "session-second",
     });
@@ -45,7 +134,7 @@ describe("Hopper target leases", () => {
 
     await first.lease.release();
     const reopened = await acquireHopperTargetLease({
-      ...leaseInput,
+      ...leaseInput(targetPath),
       directory,
       runId: "session-third",
     });
@@ -55,13 +144,14 @@ describe("Hopper target leases", () => {
 
   it("keeps different Hopper profiles independent", async () => {
     const directory = await temporaryDirectory();
+    const targetPath = await temporaryTarget();
     const first = await acquireHopperTargetLease({
-      ...leaseInput,
+      ...leaseInput(targetPath),
       directory,
       runId: "session-one",
     });
     const second = await acquireHopperTargetLease({
-      ...leaseInput,
+      ...leaseInput(targetPath),
       directory,
       loaderArgs: ["--aarch64"],
       runId: "session-two",
@@ -71,6 +161,63 @@ describe("Hopper target leases", () => {
     if (first.acquired) await first.lease.release();
     if (second.acquired) await second.lease.release();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "shares one lease for symlink aliases of the same target",
+    async () => {
+      const directory = await temporaryDirectory();
+      const targetPath = await temporaryTarget();
+      const alias = join(dirname(targetPath), "sample-alias");
+      await symlink(targetPath, alias);
+      const first = await acquireHopperTargetLease({
+        ...leaseInput(targetPath),
+        directory,
+        runId: "canonical-owner",
+      });
+      expect(first.acquired).toBe(true);
+      if (!first.acquired) return;
+      try {
+        expect(
+          await acquireHopperTargetLease({
+            ...leaseInput(alias),
+            directory,
+            runId: "alias-request",
+          }),
+        ).toMatchObject({
+          acquired: false,
+          owner: { runId: "canonical-owner" },
+        });
+      } finally {
+        await first.lease.release();
+      }
+    },
+  );
+
+  it.each(["missing", "not-directory"] as const)(
+    "does not create a lease endpoint when target canonicalization fails for %s",
+    async (failure) => {
+      const directory = await temporaryDirectory();
+      const parent = await temporaryDirectory();
+      const targetPath =
+        failure === "missing"
+          ? join(parent, "missing-target")
+          : join(await temporaryTarget(parent), "child");
+      await expect(
+        acquireHopperTargetLease({
+          ...leaseInput(targetPath),
+          directory,
+          runId: "unresolvable-target",
+        }),
+      ).rejects.toMatchObject({
+        _tag: "HopperStartError",
+        userMessage: expect.stringContaining("canonical path"),
+        cause: expect.objectContaining({
+          code: failure === "missing" ? "ENOENT" : "ENOTDIR",
+        }),
+      });
+      expect(await readdir(directory)).toEqual([]);
+    },
+  );
 });
 
 describe("Linux Hopper application leases", () => {
@@ -149,6 +296,38 @@ describe("Linux Hopper application leases", () => {
     },
   );
 
+  it("preserves a Unicode owner identity split across socket writes", async () => {
+    const directory = await temporaryDirectory();
+    const socketPath = await releasedApplicationSocket(directory);
+    const owner = { runId: "session-中文-🔬", processId: process.pid };
+    const response = Buffer.from(`${JSON.stringify(owner)}\n`);
+    const split = response.indexOf(Buffer.from("中")) + 1;
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => undefined);
+      socket.write(response.subarray(0, split), () => {
+        // Let the client consume the incomplete UTF-8 sequence before the tail.
+        setImmediate(() =>
+          setImmediate(() => socket.end(response.subarray(split))),
+        );
+      });
+    });
+    server.listen(socketPath);
+    await once(server, "listening");
+    try {
+      expect(
+        await acquireLinuxHopperApplicationLease({ directory, runId: "next" }),
+      ).toEqual({ acquired: false, owner });
+      expect((await lstat(socketPath)).isSocket()).toBe(true);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  });
+
   it("recovers a socket left by a process that exited without releasing it", async () => {
     const directory = await temporaryDirectory();
     const socketPath = await releasedApplicationSocket(directory);
@@ -212,10 +391,17 @@ const releasedApplicationSocket = async (
   return join(directory, name);
 };
 
-const leaseInput = {
-  targetPath: "/tmp/sample-binary",
+const leaseInput = (targetPath: string) => ({
+  targetPath,
   targetKind: "executable" as const,
   loaderArgs: [],
+});
+
+const temporaryTarget = async (parent?: string): Promise<string> => {
+  const directory = parent ?? (await temporaryDirectory());
+  const targetPath = join(directory, "sample-binary");
+  await writeFile(targetPath, "admitted target bytes");
+  return targetPath;
 };
 
 const temporaryDirectory = async (): Promise<string> => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -11,6 +12,9 @@ import {
   AnalysisProtocolError,
   AnalysisOutputError,
   AnalysisInputError,
+  AnalysisTimeoutError,
+  AnalysisResourceConstraintError,
+  resourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -19,7 +23,9 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
+import { idaProtocol } from "./IdaConfiguration.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
+import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 import { isX86OnlyTarget } from "./IdaCallGraph.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
@@ -27,6 +33,7 @@ import {
   IDA_LIMITATIONS,
   IDA_OPERATIONS,
   IDA_PROVIDER_IDENTITY,
+  idaProfileAdmits,
   type IdaOperation,
 } from "./IdaProviderCapabilities.js";
 import {
@@ -36,6 +43,7 @@ import {
   legacyMetadataSchema,
   modernHealthSchema,
   openDatabaseSchema,
+  rejectedOpenDatabaseSchema,
 } from "./IdaProtocolValues.js";
 import {
   idaFileDigest,
@@ -43,6 +51,7 @@ import {
   sameIdaHostPath,
 } from "./IdaWorkspace.js";
 import { parseIdaInput } from "./IdaInput.js";
+import { createEvidence } from "../domain/evidence.js";
 
 const legacyTools = [
   "get_metadata",
@@ -70,28 +79,101 @@ const modernTools = [
   "xrefs_to",
 ];
 const operationSet: ReadonlySet<string> = new Set(IDA_OPERATIONS);
+
 const isIdaOperation = (operation: string): operation is IdaOperation =>
   operationSet.has(operation);
 const wasCancelled = (options: ExecutionOptions | undefined): boolean =>
   options?.signal?.aborted === true;
 
+interface IdaOperationFailureContext {
+  runner: IdaOperationRunner | undefined;
+  metadataBefore: JsonValue | undefined;
+  metadataAfter: JsonValue | undefined;
+  postOperationIdentityCheck: "not_attempted" | "started" | "verified";
+  parameters: Readonly<Record<string, JsonValue>>;
+}
+
+/** Upstream session ids of inventory entries, omitting unreported ones. */
+interface UpstreamSession {
+  readonly session_id: string;
+  readonly backend: "worker" | "gui";
+  /** Upstream ownership; null when no inventory has reported it. */
+  readonly owned: boolean | null;
+  /** Last inventoried input binding; null until upstream reports it. */
+  readonly input_path: string | null;
+  /** Last inventoried activity; null before upstream reports it. */
+  readonly is_active: boolean | null;
+}
+
 /** A failed cleanup retains its private workspace and reports the remaining resource. */
 class IdaCleanupError extends ProviderAdapterError {
   override readonly cleanupIncomplete = true;
-  override readonly cleanupResources: readonly string[];
-  constructor(path: string, cause: unknown) {
+  constructor(
+    path: string,
+    cause: unknown,
+    sessions?: readonly UpstreamSession[],
+  ) {
     super("ida", "close", {
       cause,
+      capturedOutput:
+        cause instanceof AnalysisError ? cause.capturedOutput : undefined,
       diagnostics: {
+        ...(cause instanceof AnalysisError ? cause.diagnostics : undefined),
         reason:
           "IDA cleanup could not be verified; the remaining connection or private workspace is retained for retry.",
-        failure_reason: cause instanceof Error ? cause.message : String(cause),
+        failure_reason:
+          cause instanceof AnalysisError
+            ? (cause.diagnostics?.reason ?? cause.message)
+            : cause instanceof Error
+              ? cause.message
+              : String(cause),
         workspace: path,
+        ...(sessions === undefined
+          ? {}
+          : {
+              upstream_sessions: {
+                state: "unverified",
+                sessions: sessions.map(
+                  ({ session_id, backend, owned, input_path, is_active }) => ({
+                    session_id,
+                    backend,
+                    owned,
+                    input_path,
+                    is_active,
+                  }),
+                ),
+                reason:
+                  "Release of upstream sessions matching the requested session ID or private input was not confirmed; input_path preserves the last observed binding and is null when no inventory has reported it. is_active preserves registry activity and is null when unknown; it does not establish process liveness. A worker outlives its supervisor and may keep running until it finishes and reaches its idle timeout; exiting REA does not stop it. A gui session belongs to an IDA instance REA does not control. An empty session_id means upstream reported none; owned is null when no inventory has reported ownership; an empty list means the requested worker's close was confirmed but no inventory has identified any remaining session.",
+              },
+            }),
       },
     });
-    this.cleanupResources = [path];
+    this.setCleanupResources([path]);
   }
 }
+
+/**
+ * A worker that is still tearing down can remain in inventory with its identity
+ * already cleared: an empty `session_id`, `owned: false` and `is_active: false`,
+ * while `input_path` still names the private copy. Such a row establishes no
+ * live session, so the private-input arm must not report it as a blocker. The
+ * owning worker is matched by its own session ID separately, and a genuine peer
+ * on the same input keeps a session ID, so neither case is weakened.
+ *
+ * Limited to `backend: "worker"`: a gui row belongs to an IDA instance REA does
+ * not control, and the observed teardown shape covers workers only, so a gui
+ * row keeps blocking release whatever its flags say.
+ */
+const isReleasedWorkerRow = (entry: {
+  readonly session_id: string;
+  readonly owned: boolean;
+  readonly is_active: boolean;
+  readonly backend: "worker" | "gui";
+}): boolean =>
+  entry.backend === "worker" &&
+  entry.session_id === "" &&
+  entry.owned === false &&
+  entry.is_active === false;
 
 /** Serial read-only session whose lifecycle authority excludes an attached GUI. */
 export class IdaSessionClient implements AnalysisClient {
@@ -105,7 +187,11 @@ export class IdaSessionClient implements AnalysisClient {
   #databaseCloseCompleted = false;
   #openAttempted = false;
   #openCompleted = false;
+  #ready = false;
+  #blockingSessions: readonly UpstreamSession[] | undefined;
+  #openRejected = false;
   #callGraphAdvertised = false;
+  #surveyAdvertised = false;
   #initialIdentity: string | undefined;
   #metadata: JsonValue = null;
   #lifecycle: JsonValue[] = [];
@@ -132,10 +218,34 @@ export class IdaSessionClient implements AnalysisClient {
     return call;
   }
 
+  async executeIfReady(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ) {
+    if (!this.#ready || this.#closed || this.#closing)
+      return Promise.resolve(undefined);
+    const call = this.#tail.then(() => {
+      if (!this.#ready || this.#closed || this.#closing) return undefined;
+      if (wasCancelled(options))
+        return err(new AnalysisCancelledError(operation));
+      return this.#execute(operation, parameters, options, true);
+    });
+    this.#tail = call.then(
+      () => undefined,
+      () => undefined,
+    );
+    const result = await waitForAbortable(call, options?.signal);
+    return result === ABORTED
+      ? err(new AnalysisCancelledError(operation))
+      : result;
+  }
+
   async #execute(
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
+    readyOnly = false,
   ) {
     if (this.#closed || this.#closing)
       return err(
@@ -153,12 +263,26 @@ export class IdaSessionClient implements AnalysisClient {
           "This integration admits read-only analysis operations only.",
         ),
       );
-    if (operation === "procedure_callers" && this.config.mode === "headless")
+    if (
+      operation !== "health" &&
+      !idaProfileAdmits(operation, this.config.mode)
+    )
       return err(
         new AnalysisCapabilityUnavailableError(
           "ida",
           operation,
-          "The modern upstream profile does not prove direct callers.",
+          "This operation is available for the modern headless profile only.",
+        ),
+      );
+    if (
+      operation === "procedure_callers" &&
+      idaProtocol(this.config) !== "legacy"
+    )
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "ida",
+          operation,
+          "This upstream profile does not prove direct callers.",
         ),
       );
     if (operation !== "health") {
@@ -185,23 +309,34 @@ export class IdaSessionClient implements AnalysisClient {
           },
         ]),
       );
+    const failureContext: IdaOperationFailureContext = {
+      runner: undefined,
+      metadataBefore: undefined,
+      metadataAfter: undefined,
+      postOperationIdentityCheck: "not_attempted",
+      parameters,
+    };
     try {
-      await this.#start();
+      if (!readyOnly) await this.#start(operation);
       const before = await this.#observe(options);
-      if (wasCancelled(options))
-        return err(new AnalysisCancelledError(operation));
+      failureContext.metadataBefore = before;
+      if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
       if (operation === "health") return this.#health(before);
       if (!isIdaOperation(operation))
         throw new AnalysisProtocolError(
           "IDA operation changed after validation.",
         );
       const runner = this.#runner(options);
+      failureContext.runner = runner;
       const result = await runner.run(operation, parameters);
-      if (wasCancelled(options))
-        return err(new AnalysisCancelledError(operation));
-      const after = await this.#observe(options);
-      if (wasCancelled(options))
-        return err(new AnalysisCancelledError(operation));
+      if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
+      failureContext.postOperationIdentityCheck = "started";
+      const after = await this.#observe(
+        options,
+        (observed) => (failureContext.metadataAfter = observed),
+      );
+      failureContext.postOperationIdentityCheck = "verified";
+      if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
       return ok(
         createAnalysisExecution(result, IDA_PROVIDER_IDENTITY, {
           rawResult: {
@@ -214,6 +349,9 @@ export class IdaSessionClient implements AnalysisClient {
           ...(runner.relationshipCoverage === undefined
             ? {}
             : { relationshipCoverage: runner.relationshipCoverage }),
+          ...(runner.referencesTruncated !== undefined
+            ? { referencesTruncated: runner.referencesTruncated }
+            : {}),
           locations: [
             { kind: "artifact-path", path: this.target.path },
             ...runner.locations,
@@ -224,20 +362,22 @@ export class IdaSessionClient implements AnalysisClient {
         }),
       );
     } catch (cause: unknown) {
-      return this.#failure(operation, cause, options);
+      return this.#failure(operation, cause, options, failureContext);
     }
   }
 
   #runner(options: ExecutionOptions | undefined): IdaOperationRunner {
     return new IdaOperationRunner(
       this.connection,
-      this.config.mode === "attached" ? "legacy" : "modern",
+      idaProtocol(this.config),
       this.#database,
       {
         signal: options?.signal,
         selectorOrigin: options?.selectorOrigin,
         x86Only: isX86OnlyTarget(this.target),
         callGraphAvailable: this.#callGraphAdvertised,
+        surveyAvailable: this.#surveyAdvertised,
+        admittedDocument: this.target.path,
       },
     );
   }
@@ -268,20 +408,56 @@ export class IdaSessionClient implements AnalysisClient {
     operation: string,
     cause: unknown,
     options: ExecutionOptions | undefined,
+    context: IdaOperationFailureContext,
   ) {
-    if (wasCancelled(options))
-      return err(new AnalysisCancelledError(operation));
-    if (cause instanceof AnalysisError) return err(cause);
-    if (cause instanceof z.ZodError)
-      return err(
-        new AnalysisOutputError(
-          operation,
-          `IDA MCP returned malformed or unsupported producer data: ${cause.issues.map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`).join("; ")}`,
-          { cause },
-        ),
+    let failure: AnalysisError;
+    if (wasCancelled(options)) {
+      failure = new AnalysisCancelledError(operation, {
+        cause,
+        ...(cause instanceof AnalysisError
+          ? {
+              capturedOutput: cause.capturedOutput,
+              diagnostics: cause.diagnostics,
+              partialObservation: cause.partialObservation,
+              cleanup:
+                cause.cleanup ??
+                (cause.cleanupIncomplete
+                  ? {
+                      reason: cause.message,
+                      resources: cause.cleanupResources,
+                    }
+                  : undefined),
+            }
+          : {}),
+      });
+      if (cause instanceof AnalysisError)
+        failure
+          .bindCleanupDependencies([cause])
+          .bindCleanupResourceOwner(cause);
+    } else if (
+      cause instanceof ProviderAdapterError &&
+      cause.operation === "transport"
+    )
+      failure = new ProviderAdapterError("ida", operation, {
+        cause,
+        capturedOutput: cause.capturedOutput,
+        partialObservation: cause.partialObservation,
+        cleanup: cause.cleanup,
+        diagnostics: {
+          ...cause.diagnostics,
+          recovery:
+            "Check the configured upstream MCP registration and selected target; see docs/ida-provider.md.",
+        },
+      });
+    else if (cause instanceof AnalysisError) failure = cause;
+    else if (cause instanceof z.ZodError)
+      failure = new AnalysisOutputError(
+        operation,
+        `IDA MCP returned malformed or unsupported producer data: ${cause.issues.map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`).join("; ")}`,
+        { cause },
       );
-    return err(
-      new ProviderAdapterError("ida", operation, {
+    else
+      failure = new ProviderAdapterError("ida", operation, {
         cause,
         diagnostics: {
           reason:
@@ -289,25 +465,165 @@ export class IdaSessionClient implements AnalysisClient {
           recovery:
             "Check the configured upstream MCP registration and selected target; see docs/ida-provider.md.",
         },
-      }),
-    );
+      });
+    // Only operation calls made after target identity/readiness validation can
+    // become partial Evidence. The failing call itself is absent from `raw`
+    // when its transport or MCP envelope could not be decoded.
+    const { runner, metadataBefore, metadataAfter } = context;
+    if (
+      runner !== undefined &&
+      runner.raw.length > 0 &&
+      metadataBefore !== undefined
+    ) {
+      const observations = jsonValueSchema.parse(runner.raw);
+      const upstream = this.connection.serverInfo();
+      const binding =
+        context.postOperationIdentityCheck !== "verified"
+          ? {
+              status: "not_verified",
+              reason:
+                cause instanceof Error
+                  ? cause.message
+                  : "Post-operation target identity was not observed.",
+            }
+          : { status: "verified" };
+      failure.retainPartialObservation(
+        createEvidence(this.target, IDA_PROVIDER_IDENTITY, {
+          predicateType: "analysis-observation",
+          operation,
+          parameters: context.parameters,
+          result: {
+            status: "partial",
+            failed_operation: operation,
+            observations,
+            metadata_before: metadataBefore,
+            target_binding: binding,
+            ...(metadataAfter === undefined
+              ? {}
+              : { metadata_after: metadataAfter }),
+          },
+          rawResult: {
+            upstream,
+            observations,
+            metadata_before: metadataBefore,
+            ...(metadataAfter === undefined
+              ? {}
+              : { metadata_after: metadataAfter }),
+            post_operation_identity_check: context.postOperationIdentityCheck,
+          },
+          confidence: "observed",
+          authority: "external-service",
+          limitations: [
+            ...IDA_LIMITATIONS,
+            ...runner.limitations,
+            "The requested IDA operation failed after these completed upstream replies; the partial Evidence does not establish a complete result.",
+            "Replies are bound to the selected target only by the pre-operation identity check unless post_operation_identity_check is verified.",
+          ],
+          locations: [
+            { kind: "artifact-path", path: this.target.path },
+            ...runner.locations,
+          ],
+          ...(this.profile === undefined
+            ? {}
+            : { analysisProfile: this.profile }),
+        }),
+      );
+    }
+    return err(failure);
   }
 
-  #start(): Promise<void> {
+  async #start(operation: string): Promise<void> {
     this.#startup ??= this.#initialize();
-    return this.#startup;
+    try {
+      await this.#startup;
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof AnalysisTimeoutError) &&
+        !(cause instanceof AnalysisResourceConstraintError) &&
+        !(cause instanceof ProviderAdapterError)
+      )
+        throw cause;
+      // Transport adapters already receive caller attribution in #failure.
+      if (
+        cause instanceof ProviderAdapterError &&
+        cause.operation === "transport"
+      )
+        throw cause;
+      const options = {
+        cause,
+        capturedOutput: cause.capturedOutput,
+        partialObservation: cause.partialObservation,
+        cleanup: cause.cleanup,
+        ...(cause.userMessage === undefined
+          ? {}
+          : { userMessage: cause.userMessage }),
+        diagnostics: {
+          ...cause.diagnostics,
+          startup_operation: cause.operation,
+        },
+      };
+      const action =
+        cause.remediationAction === undefined
+          ? {}
+          : { remediationAction: cause.remediationAction };
+      // Startup is shared, but each accepted operation owns its attribution.
+      // Keep the original cached failure unchanged for later callers.
+      const failure =
+        cause instanceof AnalysisTimeoutError
+          ? new AnalysisTimeoutError(operation, cause.timeoutMs, {
+              ...options,
+              ...action,
+            })
+          : cause instanceof AnalysisResourceConstraintError
+            ? new AnalysisResourceConstraintError(
+                operation,
+                cause.resource,
+                cause.reason,
+                cause.reportedLimits,
+                { ...options, ...resourceConstraintRecovery(cause) },
+              )
+            : new ProviderAdapterError(cause.providerId, operation, {
+                ...options,
+                ...action,
+              });
+      throw failure
+        .bindCleanupDependencies([cause])
+        .bindCleanupResourceOwner(cause);
+    }
   }
 
   async #initialize(): Promise<void> {
     const tools = new Set(await this.connection.connect());
     this.#callGraphAdvertised = tools.has("callgraph");
+    this.#surveyAdvertised = tools.has("survey_binary");
     const expected =
-      this.config.mode === "attached" ? legacyTools : modernTools;
+      this.config.protocol === "native"
+        ? nativeTools
+        : this.config.mode === "attached"
+          ? legacyTools
+          : modernTools;
     const missing = expected.filter((name) => !tools.has(name));
-    if (missing.length > 0)
-      throw new AnalysisProtocolError(
-        `IDA MCP ${this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`,
-      );
+    if (missing.length > 0) {
+      const summary = `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
+      // The caller cannot act on a profile mismatch it never sees, so the
+      // missing names travel as adapter diagnostics rather than a bare message.
+      throw new ProviderAdapterError("ida", "initialize", {
+        userMessage: summary,
+        diagnostics: {
+          reason: summary,
+          mode: this.config.mode,
+          expected_profile:
+            this.config.protocol === "native"
+              ? "native"
+              : this.config.mode === "attached"
+                ? "legacy-1.4"
+                : "database-supervisor",
+          missing_tools: [...missing],
+          recovery:
+            "Install an IDA MCP build that serves the selected profile; see docs/ida-provider.md.",
+        },
+      });
+    }
     if (this.config.mode === "headless") {
       this.#workspace = await IdaWorkspace.allocate(
         this.target,
@@ -324,6 +640,9 @@ export class IdaSessionClient implements AnalysisClient {
         preferred_session_id: this.#workspace.sessionId,
       });
       this.#openCompleted = true;
+      // A completed but malformed/positive open may still own a live Worker.
+      // Only an explicit producer rejection keeps the old no-worker branch.
+      this.#openRejected = rejectedOpenDatabaseSchema.safeParse(raw).success;
       this.#lifecycle.push(raw);
       const opened = openDatabaseSchema.parse(raw);
       if (
@@ -340,6 +659,14 @@ export class IdaSessionClient implements AnalysisClient {
         await this.connection.call("idb_list", {}),
       );
       this.#lifecycle.push(jsonValueSchema.parse(inventory));
+      const workspace = this.#workspace;
+      this.#recordBlockingSessions(
+        inventory.sessions.filter(
+          (entry) =>
+            entry.session_id === workspace.sessionId ||
+            sameIdaHostPath(entry.input_path, workspace.inputPath),
+        ),
+      );
       const entry = inventory.sessions.find(
         ({ session_id }) => session_id === opened.session.session_id,
       );
@@ -354,13 +681,30 @@ export class IdaSessionClient implements AnalysisClient {
         );
       this.#database = opened.session.session_id;
     }
+    this.#ready = true;
   }
 
-  async #observe(options?: ExecutionOptions): Promise<JsonValue> {
+  async #nativeMetadata(): Promise<JsonValue> {
+    if (this.connection.readResource === undefined)
+      throw new AnalysisProtocolError(
+        "Native IDA MCP requires resources/read for recorded input metadata.",
+      );
+    return this.connection.readResource("ida://idb/metadata");
+  }
+
+  async #observe(
+    options?: ExecutionOptions,
+    onObserved?: (metadata: JsonValue) => void,
+  ): Promise<JsonValue> {
     let identity: string;
     if (this.config.mode === "attached") {
-      const raw = await this.connection.call("get_metadata", {});
+      const raw =
+        this.config.protocol === "native"
+          ? await this.#nativeMetadata()
+          : await this.connection.call("get_metadata", {});
       const metadata = legacyMetadataSchema.parse(raw);
+      this.#metadata = raw;
+      onObserved?.(raw);
       if (metadata.sha256.toLowerCase() !== this.target.sha256.toLowerCase())
         throw new AnalysisProtocolError(
           `The attached IDA input SHA-256 does not match the selected target ${this.target.path}; open that target in IDA or use headless mode.`,
@@ -370,7 +714,6 @@ export class IdaSessionClient implements AnalysisClient {
         metadata.sha256.toLowerCase(),
         metadata.base,
       ]);
-      this.#metadata = raw;
     } else {
       if (this.#database === undefined || this.#workspace === undefined)
         throw new AnalysisProtocolError(
@@ -382,9 +725,12 @@ export class IdaSessionClient implements AnalysisClient {
         signal: options?.signal,
       });
       const metadata = modernHealthSchema.parse(raw);
+      this.#metadata = raw;
+      onObserved?.(raw);
       if (
         !sameIdaHostPath(metadata.input_path, this.#workspace.inputPath) ||
-        (await idaFileDigest(this.#workspace.inputPath)) !== this.target.sha256
+        (await idaFileDigest(this.#workspace.inputPath)) !==
+          this.#workspace.inputSha256
       )
         throw new AnalysisProtocolError(
           "IDA headless input identity changed after target admission.",
@@ -399,7 +745,6 @@ export class IdaSessionClient implements AnalysisClient {
         metadata.idb_path,
         metadata.imagebase,
       ]);
-      this.#metadata = raw;
     }
     if (
       this.#initialIdentity !== undefined &&
@@ -420,6 +765,61 @@ export class IdaSessionClient implements AnalysisClient {
     });
     this.#closePromise = shared;
     return shared;
+  }
+
+  /**
+   * Upstream sessions whose release cleanup has not confirmed: the entries
+   * the latest successful inventory found blocking release; else the
+   * requested private worker until its close is confirmed, and then none
+   * known.
+   */
+  #unreleasedSessions(): readonly UpstreamSession[] | undefined {
+    if (this.#blockingSessions !== undefined) return this.#blockingSessions;
+    if (
+      !this.#openAttempted ||
+      this.#workspace === undefined ||
+      this.#openRejected
+    )
+      return undefined;
+    return this.#databaseCloseCompleted
+      ? []
+      : [
+          {
+            session_id: this.#workspace.sessionId,
+            backend: "worker",
+            owned: null,
+            input_path: null,
+            is_active: null,
+          },
+        ];
+  }
+
+  /** Drop a session whose release upstream confirmed, keeping other blockers. */
+  #forgetReleasedSession(sessionId: string): void {
+    const remaining = this.#blockingSessions?.filter(
+      ({ session_id }) => session_id !== sessionId,
+    );
+    this.#blockingSessions =
+      remaining !== undefined && remaining.length > 0 ? remaining : undefined;
+  }
+
+  /** Replace blocker evidence from a successful inventory; true when blocked. */
+  #recordBlockingSessions(
+    entries: readonly (UpstreamSession & { readonly owned: boolean })[],
+  ): boolean {
+    this.#blockingSessions =
+      entries.length > 0
+        ? entries.map(
+            ({ session_id, backend, owned, input_path, is_active }) => ({
+              session_id,
+              backend,
+              owned,
+              input_path,
+              is_active,
+            }),
+          )
+        : undefined;
+    return entries.length > 0;
   }
 
   async #closeDatabase(database: string): Promise<void> {
@@ -462,34 +862,48 @@ export class IdaSessionClient implements AnalysisClient {
               entry.session_id === workspace.sessionId &&
               sameIdaHostPath(entry.input_path, workspace.inputPath),
           )?.session_id;
+          // Every same-input session and any entry under the requested ID,
+          // whatever its input, stays reported until a later successful
+          // inventory confirms release.
+          const blocked = this.#recordBlockingSessions(
+            inventory.sessions.filter(
+              (entry) =>
+                entry.session_id === workspace.sessionId ||
+                sameIdaHostPath(entry.input_path, workspace.inputPath),
+            ),
+          );
+          if (this.#database === undefined && blocked)
+            throw new AnalysisProtocolError(
+              "A registered session still matches the requested ID or private input without a verified private worker binding; the workspace was retained.",
+            );
           if (
             this.#database === undefined &&
-            inventory.sessions.some((entry) =>
-              sameIdaHostPath(entry.input_path, workspace.inputPath),
-            )
+            this.#openCompleted &&
+            !this.#openRejected
           )
             throw new AnalysisProtocolError(
-              "An unowned worker still uses the private workspace; it was retained.",
+              "IDA open returned without a verified private worker binding. An empty session inventory does not prove that its Worker exited; the private workspace was retained.",
             );
         }
         if (this.#database !== undefined) {
           if (!this.#databaseCloseCompleted) {
             await this.#closeDatabase(this.#database);
             this.#databaseCloseCompleted = true;
+            this.#forgetReleasedSession(this.#database);
           }
           const inventory = databaseListSchema.parse(
             await this.connection.call("idb_list", {}),
           );
-          if (
-            inventory.sessions.some(
-              (entry) =>
-                entry.session_id === this.#database ||
+          const remaining = inventory.sessions.filter(
+            (entry) =>
+              !isReleasedWorkerRow(entry) &&
+              (entry.session_id === this.#database ||
                 sameIdaHostPath(
                   entry.input_path,
                   this.#workspace?.inputPath ?? "",
-                ),
-            )
-          )
+                )),
+          );
+          if (this.#recordBlockingSessions(remaining))
             throw new AnalysisProtocolError(
               "IDA worker remains registered after close.",
             );
@@ -506,10 +920,12 @@ export class IdaSessionClient implements AnalysisClient {
       this.#closed = true;
       return ok(null);
     } catch (cause: unknown) {
+      this.connection.detach();
       return err(
         new IdaCleanupError(
           this.#workspace?.directory ?? "IDA MCP connection",
           cause,
+          this.#unreleasedSessions(),
         ),
       );
     }

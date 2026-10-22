@@ -64,8 +64,6 @@ export const READINESS_REQUIRED_CHECKS: Readonly<
   ],
 };
 
-export const READINESS_STAGE_IDS = readinessStageIdSchema.options;
-
 export const readinessJourneyFindings = (
   input: ReconstructionReadinessInput,
   evidenceIds: ReadonlySet<string>,
@@ -142,7 +140,7 @@ const stageFindings = (
   evidenceIds: ReadonlySet<string>,
 ): ReadinessFinding[] => {
   const findings: ReadinessFinding[] = [];
-  for (const stageId of READINESS_STAGE_IDS) {
+  for (const stageId of readinessStageIdSchema.options) {
     const matching = input.stages.filter(({ stage_id: id }) => id === stageId);
     if (matching.length !== 1) {
       findings.push(
@@ -178,6 +176,15 @@ const stageFindings = (
           "Stage check IDs must be unique.",
         ),
       );
+    addMissingEvidenceFindings(
+      findings,
+      stageId,
+      [
+        ...stage.evidence_ids,
+        ...stage.checks.flatMap((check) => check.evidence_ids),
+      ],
+      evidenceIds,
+    );
     for (const checkId of READINESS_REQUIRED_CHECKS[stageId]) {
       const check = checks.get(checkId);
       if (check === undefined) {
@@ -210,12 +217,6 @@ const stageFindings = (
             `${checkId} has no attributable Evidence.`,
           ),
         );
-      addMissingEvidenceFindings(
-        findings,
-        stageId,
-        [...stage.evidence_ids, ...check.evidence_ids],
-        evidenceIds,
-      );
     }
   }
   return findings;

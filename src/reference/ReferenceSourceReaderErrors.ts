@@ -1,3 +1,4 @@
+import type { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type {
   ReferenceSourceEntry,
   ReferenceSourceFailureCode,
@@ -16,6 +17,17 @@ export const failure = (
 export const cancelled = (): ReferenceSourceReaderError =>
   failure("cancelled", "Reference source traversal cancelled");
 
+/** Project resource failures into the reference-source error contract. */
+export const referenceSourceResourceFailure = (
+  cause: ArtifactReaderFailure,
+): ReferenceSourceReaderError => ({
+  tag: "reference-source-reader",
+  code: cause.reason === "cancelled" ? "cancelled" : "io",
+  message: cause.message,
+  ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+  cause,
+});
+
 export const safeSize = (size: bigint): number | undefined => {
   const value = Number(size);
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
@@ -29,6 +41,9 @@ const FILESYSTEM_ERROR_CODES = new Set([
   "EISDIR",
   "ELOOP",
   "EMFILE",
+  // A traversed child can exceed the platform's absolute path limit even
+  // though the selected root and every component are valid.
+  "ENAMETOOLONG",
   "ENFILE",
   "ENOENT",
   "ENOTDIR",
@@ -44,6 +59,8 @@ export const filesystemFailureDetail = (
 ): string | undefined => {
   if (!(cause instanceof Error)) return undefined;
   const code: unknown = Reflect.get(cause, "code");
+  if (code === "ENAMETOOLONG")
+    return `${operation}: ENAMETOOLONG (entry path exceeds the operating system path limit)`;
   return typeof code === "string" && FILESYSTEM_ERROR_CODES.has(code)
     ? `${operation}: ${cause.message}`
     : undefined;

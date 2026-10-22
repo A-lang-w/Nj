@@ -10,7 +10,7 @@ import { readFile, rm } from "node:fs/promises";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { MCP_STARTUP_POLICY } from "../dist/mcpStartupPolicy.js";
+import { resolveMcpStartupBudgets } from "../dist/config/mcpStartupBudgets.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import * as prompts from "./verify-package-prompts.mjs";
 import { json, verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
@@ -20,7 +20,7 @@ const execute = promisify(execFile);
 const verifyMcpToolsAndPrompts = async (client, mcpOptions) => {
   await verifyCompleteToolCatalog(client, mcpOptions);
   await prompts.verifyPromptCatalog(client, mcpOptions, prompts.names);
-  await prompts.verifyPromptCompletion(client, mcpOptions, false);
+  await prompts.verifyPromptCompletion(client, mcpOptions, []);
 };
 
 const verifyMcpTargetFree = async (client, mcpOptions) => {
@@ -121,11 +121,8 @@ const verifyMcpNonLinuxCurrentDocument = async (
 
 const verifyMcpBinaryLifecycle = async (client, mcpOptions) => {
   await verifyMcpOpenAndBind(client, mcpOptions);
-  await prompts.verifyPromptCompletion(
-    client,
-    mcpOptions,
-    process.platform !== "linux",
-  );
+  // Completion never starts a provider; only an ordinary operation readies it.
+  await prompts.verifyPromptCompletion(client, mcpOptions, []);
   if (process.platform === "linux") {
     await verifyMcpLinuxToolAvailability(client, mcpOptions);
   } else {
@@ -134,6 +131,7 @@ const verifyMcpBinaryLifecycle = async (client, mcpOptions) => {
       mcpOptions,
     );
     await verifyMcpNonLinuxCurrentDocument(client, mcpOptions, current);
+    await prompts.verifyPromptCompletion(client, mcpOptions, ["fixture"]);
   }
   const closed = await client.callTool(
     { name: "close_binary", arguments: {} },
@@ -141,7 +139,7 @@ const verifyMcpBinaryLifecycle = async (client, mcpOptions) => {
   );
   if (closed.isError === true)
     throw new Error("packaged MCP could not close its binary");
-  await prompts.verifyPromptCompletion(client, mcpOptions, false);
+  await prompts.verifyPromptCompletion(client, mcpOptions, []);
 };
 
 const verifyMcpEvidenceBundle = async (client, mcpOptions, evidenceRoot) => {
@@ -259,7 +257,7 @@ export async function verifyPackageMcp({
     (
       await execute(cli, ["mcp", "doctor", "--json"], {
         env: environment,
-        timeout: MCP_STARTUP_POLICY.doctorDeadlineMs,
+        timeout: resolveMcpStartupBudgets(environment).doctor.milliseconds,
       })
     ).stdout,
   );

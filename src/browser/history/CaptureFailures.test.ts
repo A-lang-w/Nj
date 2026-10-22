@@ -1,10 +1,14 @@
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  CAPTURE_DECODER_OLD_GENERATION_SETTING,
+  DEFAULT_CAPTURE_DECODER_HEAP,
+} from "../../config/captureDecoderHeap.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import { historicalCaptureFailure } from "./CaptureFailures.js";
-import { HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 
@@ -36,11 +40,11 @@ it.each([
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      message: expect.stringContaining("fixed V8 heap"),
+      message: expect.stringContaining(
+        `${String(DEFAULT_CAPTURE_DECODER_HEAP.oldGenerationMiB)} MiB`,
+      ),
       remediation: {
-        action: expect.stringContaining(
-          "smaller capture exported by its producer",
-        ),
+        action: expect.stringContaining(CAPTURE_DECODER_OLD_GENERATION_SETTING),
       },
       details: {
         resource: "memory",
@@ -51,9 +55,20 @@ it.each([
         captured_output: { stdout: "", stderr },
       },
     });
+    expect(projected.message).toContain(
+      `source ${DEFAULT_CAPTURE_DECODER_HEAP.source}`,
+    );
+    expect(projected.remediation.action).toContain(
+      `source ${DEFAULT_CAPTURE_DECODER_HEAP.source}`,
+    );
     expect(JSON.stringify(projected)).not.toContain("rea doctor");
+    expect(JSON.stringify(projected)).not.toContain("no runtime override");
     // Bun ignores the decoder's V8 heap flags, so no fixed heap is reported.
-    const heapLimits = { old_generation_heap_mib: 192, semi_space_heap_mib: 8 };
+    const heapLimits = {
+      old_generation_heap_mib: 192,
+      old_generation_heap_source: "default",
+      semi_space_heap_mib: 8,
+    };
     if (process.versions.bun === undefined)
       expect(projected).toMatchObject({
         details: { reported_limits: heapLimits },
@@ -118,7 +133,7 @@ it.each([
       },
     });
     // The enforced limit is reported only where Bun runs on Windows.
-    if (HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null)
+    if (NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null)
       expect(JSON.stringify(projected)).not.toContain(
         "process_memory_limit_bytes",
       );
@@ -126,12 +141,12 @@ it.each([
       expect(projected).toMatchObject({
         details: {
           reported_limits: {
-            process_memory_limit_bytes: HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+            process_memory_limit_bytes: NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
           },
         },
         remediation: {
           action: expect.stringContaining(
-            `${String(HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes`,
+            `${String(NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes`,
           ),
         },
       });
@@ -286,3 +301,43 @@ it.each(["io", "unavailable"] as const)(
     });
   },
 );
+
+it("preserves the exact cancellation reason and an earlier reader failure", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const reason = { request: "caller cancellation" };
+  const controller = new AbortController();
+  controller.abort(reason);
+  const cancelledCommand = new OwnedCommandFailure(
+    "cancelled",
+    "Command cancelled",
+    null,
+    null,
+    { cancellation: { reason } },
+  );
+  expect(
+    historicalCaptureFailure(input, cancelledCommand, "decoder", {
+      signal: controller.signal,
+    }).cause,
+  ).toBe(reason);
+  const cancelledRead = new ArtifactReaderFailure(
+    "cancelled",
+    "Read cancelled",
+    { cancellation: { reason } },
+  );
+  expect(
+    historicalCaptureFailure(input, cancelledRead, "capture-read", {
+      signal: controller.signal,
+    }).cause,
+  ).toBe(reason);
+
+  const changed = historicalCaptureFailure(
+    input,
+    new ArtifactReaderFailure("integrity", "Observed changed capture"),
+    "capture-read",
+    { signal: controller.signal },
+  );
+  expect(changed._tag).toBe("AnalysisArtifactChangedError");
+});

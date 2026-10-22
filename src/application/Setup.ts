@@ -17,7 +17,11 @@ import {
 } from "./SupportedClients.js";
 import type { DoctorReport, DoctorScope } from "./Doctor.js";
 import { configureDetectedClients } from "./SetupClients.js";
-import { discoverSetupState, planSetupActions } from "./SetupPlan.js";
+import {
+  discoverSetupState,
+  hopperInstallRefusal,
+  planSetupActions,
+} from "./SetupPlan.js";
 import {
   filterClientsNeedingConfigure,
   hostRemediation,
@@ -99,14 +103,21 @@ const runSetupWorkflow = async (
       [host, plannedActions, appliedActions, clients, clientStates],
       readinessScope,
     );
-  const unsupported = await hostRemediation(host, false);
+  const failSkill = async (
+    error: SetupSkillInstallError,
+  ): Promise<SetupResult> => ({
+    ...(await fail(error.remediation)),
+    code: "skill_install_failed",
+  });
+  const unsupported = hostRemediation(host);
   if (unsupported !== undefined) return fail(unsupported);
   const initialState = await host.initialSetupState(options.readinessScope);
   let { hopperPath, providerEnvironment } = initialState;
   const discovery = await discoverSetupState({
     host,
-    providerEnvironment,
+    providerConfigured: initialState.providerConfigured,
     forceHopperInstall: options.installHopper,
+    hopperLauncherConfigured: initialState.hopperLauncherConfigured === true,
     proposeHopper:
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
@@ -121,11 +132,15 @@ const runSetupWorkflow = async (
     options.installSkill === undefined;
   const interactiveSelection =
     confirm !== undefined && !options.structured && clientSelectionAllowed;
-  let selectedClientIds = options.allDetectedClients
-    ? discovery.detectedClientIds
-    : (options.clientIds ??
-      options.readinessScope?.clients ??
-      discovery.defaultClientIds);
+  const requestedClientIds =
+    options.clientIds ?? options.readinessScope?.clients;
+  let selectedClientIds = [
+    ...new Set(
+      options.allDetectedClients
+        ? [...(requestedClientIds ?? []), ...discovery.detectedClientIds]
+        : (requestedClientIds ?? discovery.defaultClientIds),
+    ),
+  ];
   let selectedSkillClientIds =
     options.skillClientIds ??
     options.readinessScope?.skillClients ??
@@ -215,11 +230,8 @@ const runSetupWorkflow = async (
   });
   plannedActions = planned.plannedActions;
   if (planned.blocker !== undefined) return fail(planned.blocker);
-  const hopperBlocker = await hostRemediation(
-    host,
-    planDiscovery.installHopper,
-  );
-  if (hopperBlocker !== undefined) return fail(hopperBlocker);
+  const hopperRefusal = hopperInstallRefusal(planDiscovery);
+  if (hopperRefusal !== undefined) return fail(hopperRefusal);
   const planSelection = {
     installHopper: planDiscovery.installHopper,
     installSkill,
@@ -234,6 +246,12 @@ const runSetupWorkflow = async (
   );
 
   const manualRemediation = manualClientsRemediation(planned.selectedClients);
+  if (skillSelected) {
+    const admission = await host.validateSkillDirectories(
+      selectedSkillClientIds,
+    );
+    if (!admission.ok) return failSkill(admission.error);
+  }
   if (options.dryRun === true)
     return {
       status: "planned",
@@ -284,8 +302,16 @@ const runSetupWorkflow = async (
         : {}),
     };
 
+  // Approval may pause while a skill manager changes a selected directory.
+  if (planSelection.skillSelected) {
+    const admission = await host.validateSkillDirectories(
+      selectedSkillClientIds,
+    );
+    if (!admission.ok) return failSkill(admission.error);
+  }
   let selectedClients: readonly SetupClient[] =
     planSelection.clientsToConfigure;
+  let hopperWarning: string | undefined;
   if (
     planSelection.installHopper &&
     (interactiveApproval || options.installHopper)
@@ -302,7 +328,12 @@ const runSetupWorkflow = async (
       clientStates,
     });
     if ("failure" in install) return install.failure;
-    ({ hopperPath, providerEnvironment, selectedClients } = install);
+    ({
+      hopperPath,
+      providerEnvironment,
+      selectedClients,
+      warning: hopperWarning,
+    } = install);
   }
   const clientFailure = await configureDetectedClients({
     host,
@@ -324,10 +355,7 @@ const runSetupWorkflow = async (
       selectedSkillClientIds,
     );
     if (skillFailure !== undefined) {
-      return {
-        ...(await fail(skillFailure.remediation)),
-        code: "skill_install_failed",
-      };
+      return failSkill(skillFailure);
     }
   }
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
@@ -336,8 +364,10 @@ const runSetupWorkflow = async (
       host.platform,
       appliedActions.includes("installed_hopper"),
       doctor.healthy,
-      hopperPath,
+      // Offer --install-hopper only where the explicit installation gate accepts it.
+      hopperPath === undefined && planDiscovery.hopperInstall.supported,
     ),
+    hopperWarning,
     manualRemediation,
   );
   return {
@@ -390,14 +420,17 @@ const installHopperAction = async (input: {
     };
   }
   input.appliedActions.push("installed_hopper");
+  const warning = [installed.warning, installed.cleanupFailure]
+    .filter((value): value is string => value !== undefined)
+    .join(" ");
   emitProgress(input.options, {
     actionId: "install_hopper",
     label,
-    state: installed.cleanupFailure === undefined ? "completed" : "warning",
+    state: warning === "" ? "completed" : "warning",
     detail:
-      installed.cleanupFailure === undefined
+      warning === ""
         ? installed.launcherPath
-        : `${installed.launcherPath}; ${installed.cleanupFailure}`,
+        : `${installed.launcherPath}; ${warning}`,
   });
   const providerEnvironment = {
     ...input.providerEnvironment,
@@ -406,6 +439,7 @@ const installHopperAction = async (input: {
   return {
     hopperPath: installed.launcherPath,
     providerEnvironment,
+    ...(warning === "" ? {} : { warning }),
     selectedClients: await filterClientsNeedingConfigure(
       input.host,
       input.selectedClients,
@@ -492,12 +526,12 @@ const finalSetupRemediation = (
   platform: NodeJS.Platform,
   installedHopper: boolean,
   healthy: boolean,
-  hopperPath: string | undefined,
+  offerHopperInstall: boolean,
 ): string | undefined => {
   if (platform === "darwin" && installedHopper)
     return "Open Hopper, choose its demo mode or activate a license, then rerun rea doctor --json.";
   if (healthy) return undefined;
-  return hopperPath === undefined
+  return offerHopperInstall
     ? "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis."
     : "Run rea doctor and apply each reported remediation.";
 };
@@ -552,7 +586,9 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
       ? ["hopper"]
       : []),
     ...(report.providerInspections ?? [])
-      .filter(({ available }) => available)
+      .filter(
+        ({ available, checks }) => available && checks.every(({ ok }) => ok),
+      )
       .map(({ id }) => id),
   ],
   ...(report.hopperPath === undefined ? {} : { hopperPath: report.hopperPath }),

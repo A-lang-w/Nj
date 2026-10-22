@@ -11,6 +11,7 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  RAW_ONLY_ARCHITECTURES,
   type BinaryArchitecture,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
@@ -23,6 +24,8 @@ import {
 } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  freezeOwnedJsonTreeSnapshot,
+  canBorrowParsedJsonSnapshot,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
@@ -33,66 +36,85 @@ import {
 } from "./relationshipCoverage.js";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
-export const providerSchema = z.object({
+export const providerSchema = z.strictObject({
   id: z.string().min(1),
   name: z.string().min(1),
   version: z.string().nullable(),
 });
-const subjectSchema = z.object({
+const subjectFormatSchema = z.enum([
+  "hopper",
+  "analysis-database",
+  "mach-o",
+  "elf",
+  "pe",
+  "dos-mz",
+  "dos-com",
+  "raw-binary",
+  "zip",
+  "ipa",
+  "apk",
+  "msix",
+  "appx",
+  "hap",
+  "hsp",
+  "app-pack",
+  "asar",
+  "godot-pck",
+  "dmg",
+  "pkg",
+  "plist",
+  "javascript",
+  "source-map",
+  "directory",
+  "file",
+  "unknown",
+  "mach-o-universal",
+  "javascript-bundle",
+  "entitlements",
+  "pyinstaller",
+]);
+const subjectBaseSchema = z.strictObject({
   name: z.string().min(1),
-  digest: z.object({ sha256: digestSchema }),
-  format: z.enum([
-    "hopper",
-    "analysis-database",
-    "mach-o",
-    "elf",
-    "pe",
-    "dos-mz",
-    "dos-com",
-    "raw-binary",
-    "zip",
-    "ipa",
-    "apk",
-    "msix",
-    "appx",
-    "hap",
-    "hsp",
-    "app-pack",
-    "asar",
-    "dmg",
-    "pkg",
-    "plist",
-    "javascript",
-    "source-map",
-    "directory",
-    "file",
-    "unknown",
-    "mach-o-universal",
-    "javascript-bundle",
-    "entitlements",
-  ]),
-  architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+  digest: z.strictObject({ sha256: digestSchema }),
   local_path: nulFreeStringSchema,
 });
+// The format owns the architecture claim, including nested Evidence subjects.
+const subjectSchema = z.discriminatedUnion("format", [
+  subjectBaseSchema.extend({
+    format: subjectFormatSchema.exclude(["raw-binary"]),
+    architecture: z
+      .enum(BINARY_ARCHITECTURES)
+      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .nullable(),
+  }),
+  subjectBaseSchema.extend({
+    format: z.literal("raw-binary"),
+    architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+  }),
+]);
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("address"), address: z.string().min(1) }),
-  z.object({
+  z.strictObject({ kind: z.literal("address"), address: z.string().min(1) }),
+  z.strictObject({
     kind: z.literal("address-range"),
     start: z.string().min(1),
     end: z.string().min(1),
   }),
-  z.object({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
-  z.object({ kind: z.literal("file-offset"), offset: z.number().int().min(0) }),
-  z.object({
+  z.strictObject({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
+  z.strictObject({
+    kind: z.literal("file-offset"),
+    offset: z.int().min(0),
+  }),
+  z.strictObject({
     kind: z.literal("file-offset-range"),
-    start: z.number().int().min(0),
-    end: z.number().int().min(0),
+    start: z.int().min(0),
+    end: z.int().min(0),
   }),
 ]);
 
-const evidenceAuthoritySchema = z.enum([
+/** Source authority vocabulary owned by Evidence and reused by its consumers. */
+export const evidenceAuthoritySchema = z.enum([
   "shipped-artifact",
   "controlled-replay",
   "historical-reference",
@@ -100,7 +122,7 @@ const evidenceAuthoritySchema = z.enum([
   "analyst-inference",
 ]);
 
-const executionEnvironmentSchema = z.object({
+const executionEnvironmentSchema = z.strictObject({
   id: z.string().min(1),
   platform: z.string().min(1),
   architecture: z.string().min(1),
@@ -122,7 +144,7 @@ const evidenceBaseSchema = z
     authority: evidenceAuthoritySchema,
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable().default(null),
+    relationship_coverage: relationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     evidence_links: z.array(prefixedDigestSchema("ev")),
   })
@@ -183,7 +205,7 @@ const immutableResultSchema = z
   });
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
-/** Minimal immutable local artifact identity accepted by Evidence. */
+/** Candidate local artifact identity validated by the Evidence subject schema. */
 export interface EvidenceSubjectTarget {
   readonly path: string;
   readonly sha256: string;
@@ -251,9 +273,7 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   authority: evidence.authority,
   environment: evidence.environment,
   limitations: evidence.limitations,
-  ...(evidence.relationship_coverage === null
-    ? {}
-    : { relationship_coverage: evidence.relationship_coverage }),
+  relationship_coverage: evidence.relationship_coverage,
   locations: evidence.locations,
   evidence_links: evidence.evidence_links,
 });
@@ -273,8 +293,12 @@ export const parseEvidence = (input: unknown): Evidence => {
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
-export const immutableEvidence = (input: unknown): Evidence =>
-  rememberImmutableEvidence(parseEvidence(input));
+export const immutableEvidence = (input: unknown): Evidence => {
+  const parsed = parseEvidence(input);
+  return rememberImmutableEvidence(
+    canBorrowParsedJsonSnapshot(input, parsed) ? input : parsed,
+  );
+};
 
 /** Rebind display path metadata when an authenticated record names this target. */
 export const rebindEvidenceToTargetPath = (
@@ -323,11 +347,17 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
   return evidence;
 };
 
+/** Ownership policy for the freshly parsed Evidence snapshot. */
+export interface EvidenceCreationOptions {
+  readonly immutable?: boolean;
+}
+
 /** Build deterministic Evidence from an immutable artifact subject. */
 export const createEvidence = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservation,
+  options?: EvidenceCreationOptions,
 ): Evidence => {
   const { normalized, sharedResult } = normalizeEvidenceObservation(
     target,
@@ -338,7 +368,15 @@ export const createEvidence = (
     ...normalized,
     evidence_id: computeEvidenceId(normalized),
   };
-  return sharedResult ? rememberImmutableEvidence(evidence) : evidence;
+  // Seal this already parsed, exclusively owned snapshot without authenticating
+  // or copying its payload again, including later partial-error delivery.
+  if (sharedResult || options?.immutable === true) {
+    // The normalizer's JSON parser clones mutable payloads into trees and only
+    // borrows previously sealed roots. No graph-sized sealing scratch is needed.
+    freezeOwnedJsonTreeSnapshot(evidence);
+    immutableEvidenceSnapshots.set(evidence, evidence);
+  }
+  return evidence;
 };
 
 /** Create Evidence from owned immutable JSON while exposing cooperative computation steps. */

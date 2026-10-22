@@ -1,27 +1,66 @@
-import { resolve } from "node:path";
+import { absoluteCallerPath } from "./filesystem/callerPath.js";
 
-import { readJsonInputFile } from "./application/JsonInputFile.js";
+import { sealOwnedJsonInput } from "./application/OwnedJsonInput.js";
+import {
+  JsonInputCancellationFailure,
+  JsonInputPhysicalReadFailure,
+  readJsonInputFile,
+} from "./application/JsonInputFile.js";
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisCancelledError,
   AnalysisInputError,
 } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { safeParseJson } from "./domain/safeJson.js";
 
-/** Parse inline JSON or one local JSON file for a CLI workflow. */
+/** Parse inline JSON or one local JSON file, honoring optional caller cancellation. */
 export const parseCliJsonInput = async (
   value: string,
   operation: string,
+  signal?: AbortSignal,
+  options?: { readonly snapshot?: boolean },
 ): Promise<
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
-  const inline = safeParseJson(value);
-  if (inline.ok) return { ok: true, value: inline.value };
+  const cancelled = (cause: unknown) => ({
+    ok: false as const,
+    error: {
+      error: "Application workflow failed",
+      ...projectAnalysisError(
+        new AnalysisCancelledError(operation, {
+          cause,
+        }),
+      ),
+    },
+  });
+  if (signal?.aborted) return cancelled(signal.reason);
   try {
-    const parsed = await readJsonInputFile(value, operation);
+    const inline = safeParseJson(value);
+    if (inline.ok) {
+      if (!options?.snapshot) return { ok: true, value: inline.value };
+      const sealed = await sealOwnedJsonInput(inline.value, operation, signal);
+      return sealed.ok
+        ? { ok: true, value: sealed.value }
+        : {
+            ok: false,
+            error: {
+              error: "Application workflow failed",
+              ...projectAnalysisError(sealed.error),
+            },
+          };
+    }
+    const parsed = await readJsonInputFile(
+      value,
+      operation,
+      signal,
+      undefined,
+      options?.snapshot ?? false,
+    );
+    if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
     return parsed.ok
       ? { ok: true, value: parsed.value }
       : {
@@ -37,6 +76,17 @@ export const parseCliJsonInput = async (
           },
         };
   } catch (cause: unknown) {
+    if (cause instanceof JsonInputCancellationFailure)
+      return cancelled(cause.reason);
+    if (cause instanceof JsonInputPhysicalReadFailure) {
+      const physicalCause = cause.physicalCause;
+      const systemCode = accessDeniedSystemCode(physicalCause);
+      return systemCode === undefined
+        ? jsonFileError(value, operation, "read-failed", physicalCause)
+        : jsonAccessDeniedError(value, operation, systemCode, physicalCause);
+    }
+    if (signal?.aborted && isJsonInputCancellation(cause, signal))
+      return cancelled(signal.reason);
     const systemCode = accessDeniedSystemCode(cause);
     if (systemCode !== undefined)
       return jsonAccessDeniedError(value, operation, systemCode, cause);
@@ -56,6 +106,17 @@ export const parseCliJsonInput = async (
   }
 };
 
+const isJsonInputCancellation = (
+  cause: unknown,
+  signal: AbortSignal,
+): boolean =>
+  cause === signal.reason ||
+  (cause instanceof Error &&
+    cause.name === "AbortError" &&
+    "code" in cause &&
+    cause.code === "ABORT_ERR" &&
+    cause.cause === signal.reason);
+
 const accessDeniedSystemCode = (
   cause: unknown,
 ): "EACCES" | "EPERM" | undefined => {
@@ -66,11 +127,18 @@ const accessDeniedSystemCode = (
 };
 
 /**
+ * A `file:` URL or `scheme://` URL is not an operator-relative filesystem path.
+ * One-letter prefixes stay paths so Windows drive paths resolve normally.
+ */
+const URL_REFERENCE = /^(?:file:|[A-Za-z][A-Za-z0-9+.-]+:\/\/)/iu;
+
+/**
  * Resolve named string fields of CLI-supplied JSON against the operator
  * working directory. Each entry is a key path from the document root; only
- * fields holding nonblank strings are resolved, everything else passes through
- * untouched so shared schemas can reject blank paths. Shared MCP contracts reject
- * relative paths, so CLI workflows resolve operator-relative values before validation.
+ * fields holding nonblank, non-URL strings are resolved, everything else passes
+ * through untouched so shared schemas can reject blank paths and URLs. Shared MCP
+ * contracts reject relative paths, so CLI workflows resolve operator-relative
+ * values before validation.
  */
 export const resolveCliJsonPaths = (
   value: unknown,
@@ -94,8 +162,10 @@ const resolveJsonPath = (
       if (tail.length === 0)
         return [
           key,
-          typeof entry === "string" && entry.trim().length > 0
-            ? resolve(entry)
+          typeof entry === "string" &&
+          entry.trim().length > 0 &&
+          !URL_REFERENCE.test(entry)
+            ? absoluteCallerPath(entry)
             : entry,
         ];
       return [key, resolveJsonPath(entry, tail)];

@@ -1,11 +1,12 @@
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { hasNibArchiveSignature } from "../../domain/apple/appleArchiveFormat.js";
+import { isInterfaceBuilderConnectionClass } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
 import { TextDecoder } from "node:util";
 import {
   InterfaceBuilderDecodeBudget,
   InterfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
 
-const MAGIC = Buffer.from("NIBArchive", "ascii");
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
 
 interface NibObjectRecord {
@@ -39,7 +40,7 @@ export const decodeNibArchive = (
   bytes: Buffer,
   budget = new InterfaceBuilderDecodeBudget(DEFAULT_DECODE_BUDGET_BYTES),
 ): NibArchiveDocument => {
-  if (bytes.length < 50 || !bytes.subarray(0, MAGIC.length).equals(MAGIC))
+  if (bytes.length < 50 || !hasNibArchiveSignature(bytes))
     throw new TypeError("NIBArchive magic or header is invalid");
 
   const formatVersion = readU32(bytes, 10);
@@ -134,15 +135,20 @@ export const decodeNibArchive = (
       const value = values.get(index);
       if (value === undefined) continue;
       const key = keys[value.key_index];
-      if (key !== undefined) fields[key] = value.value;
+      if (key !== undefined)
+        // Archive keys are data, including the legacy __proto__ setter name.
+        Object.defineProperty(fields, key, {
+          value: value.value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
     }
     return [{ id, class_name: className, values: fields }];
   });
   let connectionObjectCount = 0;
   for (const object of objects)
-    if (
-      /(?:Outlet|Connection|Segue|ActionConnection)/iu.test(object.class_name)
-    )
+    if (isInterfaceBuilderConnectionClass(object.class_name))
       connectionObjectCount += 1;
 
   return {
@@ -332,6 +338,24 @@ const parseValues = (
   return output;
 };
 
+/**
+ * Value type tags in a NIBArchive value table. The two boolean tags carry no
+ * payload; AppKit's own nib decoder reads tag 4 as NO and tag 5 as YES.
+ */
+const NibValueType = {
+  int8: 0,
+  int16: 1,
+  int32: 2,
+  int64: 3,
+  booleanFalse: 4,
+  booleanTrue: 5,
+  float32: 6,
+  float64: 7,
+  data: 8,
+  nil: 9,
+  objectReference: 10,
+} as const;
+
 const readValue = (
   bytes: Buffer,
   cursor: { offset: number },
@@ -341,24 +365,24 @@ const readValue = (
   budget: InterfaceBuilderDecodeBudget,
 ): JsonValue => {
   switch (type) {
-    case 0:
+    case NibValueType.int8:
       ensureRange(cursor.offset, 1, end, `value ${index}`);
       return bytes.readInt8(cursor.offset++);
-    case 1:
+    case NibValueType.int16:
       ensureRange(cursor.offset, 2, end, `value ${index}`);
       {
         const value = bytes.readInt16LE(cursor.offset);
         cursor.offset += 2;
         return value;
       }
-    case 2:
+    case NibValueType.int32:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       {
         const value = bytes.readInt32LE(cursor.offset);
         cursor.offset += 4;
         return value;
       }
-    case 3:
+    case NibValueType.int64:
       ensureRange(cursor.offset, 8, end, `value ${index}`);
       {
         const value = bytes.readBigInt64LE(cursor.offset);
@@ -368,25 +392,25 @@ const readValue = (
           ? Number(value)
           : value.toString();
       }
-    case 4:
-      return true;
-    case 5:
+    case NibValueType.booleanFalse:
       return false;
-    case 6:
+    case NibValueType.booleanTrue:
+      return true;
+    case NibValueType.float32:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       {
         const value = bytes.readFloatLE(cursor.offset);
         cursor.offset += 4;
         return Number.isFinite(value) ? value : null;
       }
-    case 7:
+    case NibValueType.float64:
       ensureRange(cursor.offset, 8, end, `value ${index}`);
       {
         const value = bytes.readDoubleLE(cursor.offset);
         cursor.offset += 8;
         return Number.isFinite(value) ? value : null;
       }
-    case 8: {
+    case NibValueType.data: {
       const length = readVarint(bytes, cursor, end);
       const next = checkedEnd(
         cursor.offset,
@@ -402,9 +426,9 @@ const readValue = (
       cursor.offset = next;
       return { $nib_data_base64: encoded };
     }
-    case 9:
+    case NibValueType.nil:
       return null;
-    case 10:
+    case NibValueType.objectReference:
       ensureRange(cursor.offset, 4, end, `value ${index} reference`);
       {
         const objectIndex = bytes.readUInt32LE(cursor.offset);
@@ -426,33 +450,33 @@ const skipValue = (
   index: number,
 ): void => {
   switch (type) {
-    case 0:
+    case NibValueType.int8:
       ensureRange(cursor.offset, 1, end, `value ${index}`);
       cursor.offset += 1;
       return;
-    case 1:
+    case NibValueType.int16:
       ensureRange(cursor.offset, 2, end, `value ${index}`);
       cursor.offset += 2;
       return;
-    case 2:
-    case 10:
+    case NibValueType.int32:
+    case NibValueType.objectReference:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       cursor.offset += 4;
       return;
-    case 3:
-    case 7:
+    case NibValueType.int64:
+    case NibValueType.float64:
       ensureRange(cursor.offset, 8, end, `value ${index}`);
       cursor.offset += 8;
       return;
-    case 6:
+    case NibValueType.float32:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       cursor.offset += 4;
       return;
-    case 4:
-    case 5:
-    case 9:
+    case NibValueType.booleanFalse:
+    case NibValueType.booleanTrue:
+    case NibValueType.nil:
       return;
-    case 8: {
+    case NibValueType.data: {
       const length = readVarint(bytes, cursor, end);
       cursor.offset = checkedEnd(
         cursor.offset,
@@ -519,7 +543,8 @@ const decodeUtf8 = (
   label: string,
 ): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(
+    // These are length-prefixed names, not standalone text documents.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       bytes.subarray(start, end),
     );
   } catch (cause: unknown) {

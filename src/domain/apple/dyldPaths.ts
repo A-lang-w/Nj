@@ -3,6 +3,7 @@ import type {
   DylibTreeView,
   MachoSlice,
 } from "./dylibResolution.js";
+import { machoCpuSubtypeBase } from "./machoCpuIdentity.js";
 
 const MAX_SYMLINK_HOPS = 32;
 
@@ -67,7 +68,13 @@ export const joinPath = (directory: string, rest: string): string =>
   directory === "" ? rest : rest === "" ? directory : `${directory}/${rest}`;
 
 export type Expansion =
-  | { readonly scope: "target"; readonly path: string }
+  | {
+      readonly scope: "target";
+      /** Source-facing expansion retained in candidate Evidence. */
+      readonly path: string;
+      /** Root-relative lookup identity when `path` is an absolute source path. */
+      readonly lookupPath?: string;
+    }
   | { readonly scope: "outside"; readonly path: string }
   | { readonly scope: "undetermined"; readonly path: string };
 
@@ -77,9 +84,11 @@ export const expandPrefix = (
   context: {
     readonly ownerDirectory: string;
     readonly executable: string | null;
+    readonly rootRelativePath: (absolutePath: string) => string | undefined;
   },
 ): Expansion => {
-  const variable = /^@(executable_path|loader_path)(?:\/(.*))?$/u.exec(raw);
+  // Load-command paths can contain line terminators; the suffix is not a text line.
+  const variable = /^@(executable_path|loader_path)(?:\/(.*))?$/su.exec(raw);
   if (variable !== null) {
     const rest = variable[2] ?? "";
     if (variable[1] === "loader_path")
@@ -91,7 +100,12 @@ export const expandPrefix = (
           path: joinPath(directoryOf(context.executable), rest),
         };
   }
-  if (raw.startsWith("/")) return { scope: "outside", path: raw };
+  if (raw.startsWith("/")) {
+    const lookupPath = context.rootRelativePath(raw);
+    return lookupPath === undefined
+      ? { scope: "outside", path: raw }
+      : { scope: "target", path: raw, lookupPath };
+  }
   return { scope: "undetermined", path: raw };
 };
 
@@ -105,10 +119,19 @@ const COMPATIBLE_ARCHITECTURES: Readonly<Record<string, readonly string[]>> = {
 
 export const compatibleSlice = (
   slices: readonly MachoSlice[],
-  process: string,
+  process: Pick<MachoSlice, "architecture" | "cpu_type" | "cpu_subtype">,
 ): MachoSlice | undefined => {
-  for (const architecture of COMPATIBLE_ARCHITECTURES[process] ?? [process]) {
-    const slice = slices.find((item) => item.architecture === architecture);
+  for (const architecture of COMPATIBLE_ARCHITECTURES[process.architecture] ?? [
+    process.architecture,
+  ]) {
+    const slice = slices.find(
+      (item) =>
+        item.architecture === architecture &&
+        (process.architecture !== "arm64e" ||
+          (item.cpu_type === process.cpu_type &&
+            machoCpuSubtypeBase(item.cpu_subtype) ===
+              machoCpuSubtypeBase(process.cpu_subtype))),
+    );
     if (slice !== undefined) return slice;
   }
   return undefined;

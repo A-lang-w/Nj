@@ -7,7 +7,10 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
-import { resolveProcessResult } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  resolveProcessResult,
+  type ProcessCaptureCleanupOutcome,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
 import { err } from "../../../src/domain/result.js";
@@ -23,10 +26,19 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
-import type { IncompleteProcessCaptureObservations } from "../../../src/domain/process/processCapture.js";
+import type {
+  IncompleteProcessCaptureObservations,
+  ProcessCaptureCleanupReport,
+} from "../../../src/domain/process/processCapture.js";
 const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const UNTRUSTED_TARGET_CONTENT = {
+  provenance: { untrusted_content: true, source: "analysis_target" },
+};
 const emptyFilesystemCoverage =
   emptyProcessCapture().truncation_details.filesystem_before;
+const historicalCleanupOutcome = (
+  report: ProcessCaptureCleanupReport,
+): ProcessCaptureCleanupOutcome => ({ report, cleanupLease: undefined });
 
 const captureWithObservedOutput = () =>
   accountFullyObservedProcessCapture({
@@ -60,6 +72,7 @@ const contract: ToolContract = {
     idempotentHint: true,
     openWorldHint: false,
   },
+  returnsTargetContent: false,
   examples: [{ title: "Example fixture request", input: {} }],
 };
 
@@ -76,7 +89,7 @@ describe("completed partial process capture MCP projection", () => {
       resolveProcessResult(
         capture,
         new Error("final filesystem snapshot failed"),
-        cleanup,
+        historicalCleanupOutcome(cleanup),
       );
     } catch (cause: unknown) {
       if (!(cause instanceof ProcessCaptureError)) throw cause;
@@ -106,6 +119,8 @@ describe("completed partial process capture MCP projection", () => {
         },
       },
     });
+    // The partial observation carries terminal output from the target.
+    expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
   });
 
   it("preserves partial capture details over the MCP SDK transport", async () => {
@@ -122,7 +137,11 @@ describe("completed partial process capture MCP projection", () => {
 
     let failure: ProcessCaptureError | undefined;
     try {
-      resolveProcessResult(capture, executionFailure, cleanup);
+      resolveProcessResult(
+        capture,
+        executionFailure,
+        historicalCleanupOutcome(cleanup),
+      );
     } catch (cause: unknown) {
       if (!(cause instanceof ProcessCaptureError)) throw cause;
       failure = cause;
@@ -176,6 +195,7 @@ describe("completed partial process capture MCP projection", () => {
       expect(textContent?.type === "text" ? textContent.text : undefined).toBe(
         JSON.stringify(result.structuredContent),
       );
+      expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
     } finally {
       await Promise.all([client.close(), server.close()]);
     }
@@ -260,7 +280,7 @@ describe("incomplete partial process observations MCP projection", () => {
       resolveProcessResult(
         undefined,
         new Error("capture failed before completion"),
-        cleanup,
+        historicalCleanupOutcome(cleanup),
         observations,
         { scenario, rootPid },
       );
@@ -436,4 +456,68 @@ describe("tool result projection", () => {
       );
     },
   );
+});
+
+describe("untrusted provenance on failed tool results", () => {
+  const failure = () => new HopperProcessError(76);
+
+  it("marks an error from a target-content tool", () => {
+    const targetContract = toolContract("procedure_pseudo_code");
+    expect(targetContract.returnsTargetContent).toBe(true);
+    const result = delivery.toCallToolResult(err(failure()), targetContract);
+    expect(result.isError).toBe(true);
+    expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    expect(delivery.toErrorToolResult(failure(), true)._meta).toEqual(
+      UNTRUSTED_TARGET_CONTENT,
+    );
+  });
+
+  it("leaves an error from a content-free tool unmarked", () => {
+    const recordContract = toolContract("record_unknown");
+    expect(recordContract.returnsTargetContent).toBe(false);
+    const result = delivery.toCallToolResult(err(failure()), recordContract);
+    expect(result.isError).toBe(true);
+    expect(result._meta).toBeUndefined();
+    expect(delivery.toErrorToolResult(failure(), false)._meta).toBeUndefined();
+  });
+
+  it("marks a recorded partial-observation error and its retention fallback", () => {
+    const recorded = delivery.toRecordedPartialErrorToolResult(
+      failure(),
+      "evidence-1",
+      { ok: true, value: "added" },
+      true,
+    );
+    expect(recorded.structuredContent).toMatchObject({
+      error: {
+        details: {
+          partial_observation: {
+            kind: "retained-evidence",
+            evidence_id: "evidence-1",
+          },
+        },
+      },
+    });
+    expect(recorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    const unrecorded = delivery.toRecordedPartialErrorToolResult(
+      failure(),
+      "evidence-1",
+      err(failure()),
+      true,
+    );
+    expect(unrecorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+  });
+
+  it("marks the response-budget error that replaces an oversized target-content result", () => {
+    const small = new ToolResultDelivery(4096);
+    const result = small.toCallToolResult(
+      { ok: true, value: { text: "x".repeat(8192) } },
+      toolContract("procedure_pseudo_code"),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "resource_constraint" },
+    });
+    expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+  });
 });

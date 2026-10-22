@@ -6,6 +6,7 @@ const paths = [
   "assets/app.js",
   "renderer/app.js",
   "renderer/a/app.js",
+  "renderer/assets/app.js",
   "app.js",
 ];
 const files = new Map<string, JavaScriptArtifactFile>(
@@ -104,6 +105,43 @@ describe("HTML base href dot segments", () => {
       });
     },
   );
+  it.each([
+    ["app.js/", "/assets/", "assets/app.js"],
+    ["app.js/.", "/assets/", "assets/app.js"],
+    ["?cache=1", "/assets/app.js/", "assets/app.js"],
+  ])(
+    "keeps directory-form HTML reference %s with base %s distinct from %s",
+    (declared, base, directory) => {
+      expect(resolve(declared, base)).toMatchObject({
+        declared_path: declared,
+        resolution_status: "not-found",
+        resolved_path: null,
+        limitations: [
+          `The HTML reference resolves to directory ${directory}, not an exact selected application file.`,
+        ],
+      });
+    },
+  );
+});
+describe("HTML base href empty segments", () => {
+  it("lets the script reference remove an empty segment from the base", () => {
+    // URL resolution keeps the base's empty segment until `..` removes it.
+    expect(
+      new URL("../app.js", new URL("./assets//", documentUrl)).pathname,
+    ).toBe("/renderer/assets/app.js");
+    expect(resolve("../app.js", "./assets//")).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "renderer/assets/app.js",
+    });
+  });
+  it("keeps an above-root base escape when the reference also climbs", () => {
+    expect(resolve("../app.js", "../../")).toMatchObject({
+      resolution_status: "rejected",
+      limitations: [
+        "The resolved candidate escapes the canonical artifact root.",
+      ],
+    });
+  });
 });
 describe("HTML base href path syntax", () => {
   it.each(["%2e%2e/secret/", "/a/%2e%2e/", "/a\\b/", "a\0b"])(

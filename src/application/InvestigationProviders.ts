@@ -3,7 +3,6 @@ import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
-
 /** Provider identity for deterministic composed analysis workflows. */
 export const REA_WORKFLOW_PROVIDER = {
   id: "rea-workflow",
@@ -18,11 +17,14 @@ export const workflowAnalysisProfile = (
 ): AnalysisProfileCommitment =>
   createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
     upstream_analysis_profile: upstream,
-    ...(operation === "binary_overview" ||
-    operation === "batch_decompile" ||
-    operation === "get_call_graph"
-      ? { workflow_revision: 2 }
-      : {}),
+    source_limitations: "provider-operation-caveats-v1",
+    ...(operation === "binary_overview"
+      ? { workflow_revision: 4 }
+      : operation === "batch_decompile" ||
+          operation === "get_call_graph" ||
+          operation === "trace_feature"
+        ? { workflow_revision: 3 }
+        : { workflow_revision: 1 }),
   });
 
 /** Provider identity for deterministic artifact inventories. */
@@ -43,6 +45,34 @@ export const MANAGED_STATIC_PROVIDER = Object.freeze({
 export const PE_RESOURCES_PROVIDER = Object.freeze({
   id: "rea-pe-resources",
   name: "REA PE resource parser",
+  version: "1",
+} as const);
+
+/** Provider identity for portable, execution-free PE Authenticode table decoding. */
+export const PE_CERTIFICATES_PROVIDER = Object.freeze({
+  id: "rea-pe-certificates",
+  name: "REA PE certificate parser",
+  version: "1",
+} as const);
+
+/** Provider identity for portable, execution-free ELF note-table decoding. */
+export const ELF_NOTES_PROVIDER = Object.freeze({
+  id: "rea-elf-notes",
+  name: "REA ELF note parser",
+  version: "1",
+} as const);
+
+/** Provider identity for execution-free Shannon byte-entropy profiling. */
+export const BYTE_ENTROPY_PROVIDER = Object.freeze({
+  id: "byte-entropy",
+  name: "REA byte entropy",
+  version: "1",
+} as const);
+
+/** Provider identity for portable, execution-free PE and ELF export tables. */
+export const NATIVE_EXPORTS_PROVIDER = Object.freeze({
+  id: "rea-native-exports",
+  name: "REA PE/ELF export table reader",
   version: "1",
 } as const);
 
@@ -106,20 +136,6 @@ export const ANALYSIS_VIEW_PROVIDER = {
 export const JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER = {
   id: "rea-javascript-application-workflows",
   name: "REA JavaScript application workflows",
-  version: "1",
-} as const;
-
-/** Provider identity for deterministic cross-artifact comparisons. */
-export const ARTIFACT_COMPARISON_PROVIDER = {
-  id: "rea-artifact-comparison",
-  name: "REA artifact comparison",
-  version: "1",
-} as const;
-
-/** Provider identity for deterministic cross-function comparisons. */
-export const FUNCTION_COMPARISON_PROVIDER = {
-  id: "rea-function-comparison",
-  name: "REA function comparison",
   version: "1",
 } as const;
 

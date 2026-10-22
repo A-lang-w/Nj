@@ -14,9 +14,20 @@ import {
 
 it("advertises exact valid schemas and records inline recorded-core evidence without a binary target", async () => {
   const value = recordedCrashFixture();
+  let providerClosed = false;
+  let providerCalls = 0;
   const service = new RecordedCrashService({
+    inspectAndClose(input, options) {
+      return this.inspect(input, options);
+    },
     identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => Promise.resolve(ok(value)),
+    inspect: () => {
+      providerCalls++;
+      return Promise.resolve(ok(value));
+    },
+    close: async () => {
+      providerClosed = true;
+    },
   });
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
@@ -29,6 +40,7 @@ it("advertises exact valid schemas and records inline recorded-core evidence wit
   onTestFinished(async () => {
     await client.close();
     await server.close();
+    expect(providerClosed).toBe(true);
     await session.close();
   });
   const [clientTransport, serverTransport] =
@@ -46,6 +58,7 @@ it("advertises exact valid schemas and records inline recorded-core evidence wit
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(inputSchema, { path: value.artifact.path })).toBe(true);
+  expect(ajv.validate(inputSchema, { path: "relative.elf" })).toBe(false);
   expect(
     ajv.validate(inputSchema, {
       path: value.artifact.path,
@@ -77,4 +90,5 @@ it("advertises exact valid schemas and records inline recorded-core evidence wit
       })
     ).isError,
   ).toBe(true);
+  expect(providerCalls).toBe(1);
 });

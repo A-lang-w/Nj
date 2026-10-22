@@ -1,12 +1,13 @@
 import canonicalize from "canonicalize";
 
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
 import type { ManagedMemberComparisonResult } from "./managedMemberComparison.js";
-import {
-  type ManagedFieldMatches,
-  type ManagedMethodMatches,
-  sha256,
+import type {
+  ManagedFieldMatches,
+  ManagedMethodMatches,
 } from "./managedMemberComparisonMatch.js";
+import { signatureIdentity } from "./managedMemberSignatureIdentity.js";
 
 type Method = ManagedMemberInspection["methods"][number];
 type Field = ManagedMemberInspection["fields"][number];
@@ -29,6 +30,8 @@ interface ComparisonItemContext {
   /** Declaring types each side selected; null when it inspected every type. */
   readonly leftSelection: ReadonlySet<string> | null;
   readonly rightSelection: ReadonlySet<string> | null;
+  /** Whether matching keyed signatures by resolved digests, not raw bytes. */
+  readonly signatureResolutionExamined: boolean;
 }
 
 /** Whether an inventory observed every member of this member's declaring type. */
@@ -41,10 +44,18 @@ const inventoryCovers = (
   (selection === null ||
     (member.declaring_type !== null && selection.has(member.declaring_type)));
 
-/** Declared type and name of each unpaired member, per side, whose signature was not decoded. */
+/**
+ * Declared type and name of each unpaired member, per side, whose signature
+ * was not decoded, or was decoded but not resolved while matching keyed
+ * resolved signatures.
+ */
 interface UndecodedOneSidedNames {
-  readonly left: ReadonlySet<string>;
-  readonly right: ReadonlySet<string>;
+  readonly resolved: boolean;
+  readonly undecoded: Readonly<Record<"left" | "right", ReadonlySet<string>>>;
+  readonly unresolved: Readonly<Record<"left" | "right", ReadonlySet<string>>>;
+  readonly unknownOwners: Readonly<
+    Record<"left" | "right", ReadonlySet<string>>
+  >;
 }
 
 const methodDimensions = (
@@ -55,9 +66,20 @@ const methodDimensions = (
   readonly bodyUnknown: boolean;
 } => {
   const dimensions: MethodItem["dimensions"] = [];
-  if (left.flags !== right.flags || left.impl_flags !== right.impl_flags)
+  const headerFields = ["max_stack", "init_locals"] as const;
+  const headerChanged = headerFields.some(
+    (field) =>
+      left.body[field] !== null &&
+      right.body[field] !== null &&
+      left.body[field] !== right.body[field],
+  );
+  if (
+    left.flags !== right.flags ||
+    left.impl_flags !== right.impl_flags ||
+    headerChanged
+  )
     dimensions.push("metadata");
-  if (left.signature.raw_sha256 !== right.signature.raw_sha256)
+  if (signatureIdentity(left.signature) !== signatureIdentity(right.signature))
     dimensions.push("signature");
   const leftBodyComplete =
     left.body.status === "present" && left.body.truncated_instructions === 0;
@@ -73,7 +95,11 @@ const methodDimensions = (
   if (bothAbsent) return { dimensions, bodyUnknown: false };
   if (!leftBodyComplete || !rightBodyComplete)
     return { dimensions, bodyUnknown: true };
-  if (left.body.normalized_il_sha256 !== right.body.normalized_il_sha256)
+  // The decoded fingerprint omits switch targets and is not exact CIL identity.
+  if (
+    left.body.il_sha256 !== right.body.il_sha256 ||
+    left.body.normalized_il_sha256 !== right.body.normalized_il_sha256
+  )
     dimensions.push("cil");
   if (
     canonicalize(left.body.opcode_counts) !==
@@ -89,7 +115,12 @@ const methodDimensions = (
     canonicalize(right.body.exception_regions)
   )
     dimensions.push("exception-shape");
-  return { dimensions, bodyUnknown: false };
+  return {
+    dimensions,
+    bodyUnknown: headerFields.some(
+      (field) => left.body[field] === null || right.body[field] === null,
+    ),
+  };
 };
 
 const callShape = (anchors: Method["body"]["anchors"]): string =>
@@ -131,22 +162,25 @@ const unmatchedComparison = (): UnmatchedComparison => ({
 
 const methodOnlyItem = (
   member: OneSided<Method>,
+  identity: string,
+  identityUnavailable: boolean,
   context: ComparisonItemContext,
   undecoded: UndecodedOneSidedNames,
 ): MethodItem => {
   if (member.left !== undefined) {
-    const limitations = absenceLimitations(member.left, {
+    const limitations = absenceLimitations(member.left, identity, {
       oppositeComplete: inventoryCovers(
         context.rightComplete,
         context.rightSelection,
         member.left,
       ),
-      oppositeUndecodedNames: undecoded.right,
+      unpaired: undecoded,
+      ownIdentityUnavailable: identityUnavailable,
       opposite: "right",
       inventory: "method",
     });
     return {
-      item_id: `mmc_method_${sha256({ token: member.left.token, side: "left" })}`,
+      item_id: `mmc_method_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
       status: limitations.length === 0 ? "removed" : "unknown",
       left: methodIdentity(member.left),
       right: null,
@@ -157,18 +191,19 @@ const methodOnlyItem = (
     };
   }
 
-  const limitations = absenceLimitations(member.right, {
+  const limitations = absenceLimitations(member.right, identity, {
     oppositeComplete: inventoryCovers(
       context.leftComplete,
       context.leftSelection,
       member.right,
     ),
-    oppositeUndecodedNames: undecoded.left,
+    unpaired: undecoded,
+    ownIdentityUnavailable: identityUnavailable,
     opposite: "left",
     inventory: "method",
   });
   return {
-    item_id: `mmc_method_${sha256({ token: member.right.token, side: "right" })}`,
+    item_id: `mmc_method_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
     status: limitations.length === 0 ? "added" : "unknown",
     left: null,
     right: methodIdentity(member.right),
@@ -185,17 +220,31 @@ const methodOnlyItem = (
  * decoded, so no shape round could seek a changed counterpart, or the other
  * inventory has an unpaired (one-sided or ambiguous) same-named member whose
  * signature was not decoded, which may be this member with a changed
- * signature.
+ * signature. A decoded signature that names a type REA could not name, while
+ * the comparison otherwise keys resolved signatures, is compared by raw bytes
+ * that name types by build-local row, so it is treated the same way.
  */
 const absenceLimitations = (
   member: Method | Field,
+  identity: string,
   opposite: {
     readonly oppositeComplete: boolean;
-    readonly oppositeUndecodedNames: ReadonlySet<string>;
+    readonly ownIdentityUnavailable: boolean;
+    readonly unpaired: UndecodedOneSidedNames;
     readonly opposite: "left" | "right";
     readonly inventory: "method" | "field";
   },
 ): string[] => [
+  ...(opposite.ownIdentityUnavailable
+    ? [
+        "declaring-type-name-not-resolved: Declared type identity could not be resolved; a bare display name cannot establish a counterpart or absence.",
+      ]
+    : []),
+  ...(opposite.unpaired.unknownOwners[opposite.opposite].has(member.name)
+    ? [
+        `counterpart-declaring-type-name-not-resolved: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired same-named member with unresolved enclosing-name identity, so absence was not established.`,
+      ]
+    : []),
   ...(opposite.oppositeComplete
     ? []
     : [
@@ -204,67 +253,131 @@ const absenceLimitations = (
   ...(member.signature.parse_status === "decoded"
     ? []
     : [
-        `signature-not-decoded: The member's ${member.signature.parse_status} signature was compared only by exact declared type, name, and raw bytes, so a changed or renamed counterpart could not be sought.`,
+        `signature-not-decoded: The member's ${member.signature.parse_status} signature was compared only by exact declared type, name, and signature bytes, so a changed or renamed counterpart could not be sought.`,
       ]),
   ...(member.signature.parse_status === "decoded" &&
-  opposite.oppositeUndecodedNames.has(declaredName(member))
+  opposite.unpaired.undecoded[opposite.opposite].has(identity)
     ? [
         `counterpart-signature-not-decoded: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature was not decoded, so it may be this member with a changed signature.`,
       ]
     : []),
+  ...(unresolved(member, opposite.unpaired.resolved)
+    ? [
+        `signature-not-resolved: The member's signature names a type REA could not name, so it was compared by raw bytes, which name types by build-local metadata row; a counterpart whose referenced type moved rows could not be found.`,
+      ]
+    : []),
+  ...(member.signature.parse_status === "decoded" &&
+  !unresolved(member, opposite.unpaired.resolved) &&
+  opposite.unpaired.unresolved[opposite.opposite].has(identity)
+    ? [
+        `counterpart-signature-not-resolved: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature names a type REA could not name, so it may be this member.`,
+      ]
+    : []),
 ];
 
-const declaredName = (member: Method | Field): string =>
-  JSON.stringify([member.declaring_type, member.name]);
+/** A known signature form whose type operands still compare by raw bytes. */
+const unresolved = (member: Method | Field, resolved: boolean): boolean =>
+  resolved &&
+  member.signature.kind !== "unknown" &&
+  member.signature.resolved_sha256 === null;
+
+/** Equal build-local bytes cannot establish equal unresolved type operands. */
+const pairedSignatureLimitations = (
+  left: Method | Field,
+  right: Method | Field,
+  examined: boolean,
+): string[] =>
+  unresolved(left, examined) || unresolved(right, examined)
+    ? [
+        "signature-not-resolved: At least one signature names a type REA could not resolve; equal build-local row bytes do not establish equivalent signature types.",
+      ]
+    : [];
 
 /**
  * Declared names of unpaired members whose signature was not decoded: one-sided
  * members and candidates of ambiguous groups, which also remain unpaired.
  */
-const undecodedOneSidedNames = (members: {
-  readonly leftOnly: readonly { readonly item: Method | Field }[];
-  readonly rightOnly: readonly { readonly item: Method | Field }[];
-  readonly ambiguous: readonly {
-    readonly left: readonly { readonly item: Method | Field }[];
-    readonly right: readonly { readonly item: Method | Field }[];
-  }[];
-}): UndecodedOneSidedNames => {
-  const names = (side: readonly { readonly item: Method | Field }[]) =>
-    new Set(
-      side
-        .filter(({ item }) => item.signature.parse_status !== "decoded")
-        .map(({ item }) => declaredName(item)),
-    );
-  return {
-    left: names([
+interface Unpaired {
+  readonly item: Method | Field;
+  readonly identity: string;
+  readonly identityUnavailable: boolean;
+}
+
+const undecodedOneSidedNames = (
+  members: {
+    readonly leftOnly: readonly Unpaired[];
+    readonly rightOnly: readonly Unpaired[];
+    readonly ambiguous: readonly {
+      readonly left: readonly Unpaired[];
+      readonly right: readonly Unpaired[];
+    }[];
+  },
+  resolved: boolean,
+): UndecodedOneSidedNames => {
+  const sides = {
+    left: [
       ...members.leftOnly,
       ...members.ambiguous.flatMap(({ left }) => left),
-    ]),
-    right: names([
+    ],
+    right: [
       ...members.rightOnly,
       ...members.ambiguous.flatMap(({ right }) => right),
-    ]),
+    ],
+  };
+  const names = (
+    side: readonly Unpaired[],
+    keep: (item: Method | Field) => boolean,
+  ) =>
+    new Set(
+      side.filter(({ item }) => keep(item)).map(({ identity }) => identity),
+    );
+  const undecoded = (item: Method | Field) =>
+    item.signature.parse_status !== "decoded";
+  const notResolved = (item: Method | Field) => unresolved(item, resolved);
+  return {
+    resolved,
+    unknownOwners: {
+      left: new Set(
+        sides.left.filter((x) => x.identityUnavailable).map((x) => x.item.name),
+      ),
+      right: new Set(
+        sides.right
+          .filter((x) => x.identityUnavailable)
+          .map((x) => x.item.name),
+      ),
+    },
+    undecoded: {
+      left: names(sides.left, undecoded),
+      right: names(sides.right, undecoded),
+    },
+    unresolved: {
+      left: names(sides.left, notResolved),
+      right: names(sides.right, notResolved),
+    },
   };
 };
 
 const fieldOnlyItem = (
   member: OneSided<Field>,
+  identity: string,
+  identityUnavailable: boolean,
   context: ComparisonItemContext,
   undecoded: UndecodedOneSidedNames,
 ): FieldItem => {
   if (member.left !== undefined) {
-    const limitations = absenceLimitations(member.left, {
+    const limitations = absenceLimitations(member.left, identity, {
       oppositeComplete: inventoryCovers(
         context.rightComplete,
         context.rightSelection,
         member.left,
       ),
-      oppositeUndecodedNames: undecoded.right,
+      unpaired: undecoded,
+      ownIdentityUnavailable: identityUnavailable,
       opposite: "right",
       inventory: "field",
     });
     return {
-      item_id: `mmc_field_${sha256({ token: member.left.token, side: "left" })}`,
+      item_id: `mmc_field_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
       status: limitations.length === 0 ? "removed" : "unknown",
       left: fieldIdentity(member.left),
       right: null,
@@ -274,18 +387,19 @@ const fieldOnlyItem = (
     };
   }
 
-  const limitations = absenceLimitations(member.right, {
+  const limitations = absenceLimitations(member.right, identity, {
     oppositeComplete: inventoryCovers(
       context.leftComplete,
       context.leftSelection,
       member.right,
     ),
-    oppositeUndecodedNames: undecoded.left,
+    unpaired: undecoded,
+    ownIdentityUnavailable: identityUnavailable,
     opposite: "left",
     inventory: "field",
   });
   return {
-    item_id: `mmc_field_${sha256({ token: member.right.token, side: "right" })}`,
+    item_id: `mmc_field_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
     status: limitations.length === 0 ? "added" : "unknown",
     left: null,
     right: fieldIdentity(member.right),
@@ -296,18 +410,23 @@ const fieldOnlyItem = (
 };
 
 /**
- * Name the identity key an ambiguous group shares. The exact-signature key
- * already includes the declared type and name, so names cannot separate it.
+ * Name only evidence shared by the whole group. Exact-signature ambiguities
+ * include both declared-identity collisions and unresolved signature choices.
  */
 const ambiguityLimitation = (
   members: "methods" | "fields",
   basis: MethodItem["match"]["basis"],
+  identityUnavailable: boolean,
 ): string =>
-  basis === "exact-signature"
-    ? `Multiple managed ${members} share the same declared type, name, and raw signature; REA did not guess a token remap.`
-    : members === "methods"
-      ? "Multiple managed methods share the same non-name identity key; REA did not guess a token remap."
-      : "Multiple managed fields share the same signature; REA did not guess a token remap from names.";
+  identityUnavailable
+    ? "declaring-type-name-not-resolved: Declared type identity remains unresolved; REA did not guess a counterpart from display names, signatures or CIL."
+    : basis === "exact-signature"
+      ? `Multiple managed ${members} share the same signature; REA did not guess declared ownership or a token remap.`
+      : basis === "exact-il-signature"
+        ? "Multiple managed methods share the same CIL and signature; REA did not guess a token remap."
+        : members === "methods"
+          ? "Multiple managed methods share the same structural shape; REA did not guess a token remap."
+          : "Multiple managed fields share the same signature; REA did not guess a token remap.";
 
 export const buildMethodItems = (
   matches: ManagedMethodMatches,
@@ -315,6 +434,11 @@ export const buildMethodItems = (
 ): MethodItem[] => {
   const items: MethodItem[] = [];
   for (const pair of matches.pairs) {
+    const signatureLimitations = pairedSignatureLimitations(
+      pair.left.item,
+      pair.right.item,
+      context.signatureResolutionExamined,
+    );
     const { dimensions: observedDimensions, bodyUnknown } = methodDimensions(
       pair.left.item,
       pair.right.item,
@@ -324,14 +448,17 @@ export const buildMethodItems = (
       : observedDimensions;
     const observedChange = observedDimensions.length > 0;
     items.push({
-      item_id: `mmc_method_${sha256({
-        left: pair.left.item.token,
-        right: pair.right.item.token,
-        basis: pair.basis,
-      })}`,
+      item_id: `mmc_method_${digestCanonicalValue(
+        {
+          left: pair.left.item.token,
+          right: pair.right.item.token,
+          basis: pair.basis,
+        },
+        "Managed comparison",
+      )}`,
       status: observedChange
         ? "changed"
-        : bodyUnknown
+        : bodyUnknown || signatureLimitations.length > 0
           ? "unknown"
           : "unchanged",
       left: methodIdentity(pair.left.item),
@@ -345,20 +472,26 @@ export const buildMethodItems = (
       },
       dimensions,
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: bodyUnknown
-        ? [
-            "Method body facets are unknown because at least one side has unavailable or partial body data.",
-          ]
-        : [],
+      limitations: [
+        ...signatureLimitations,
+        ...(bodyUnknown
+          ? [
+              "Method body facets are unknown because at least one side has unavailable or partial body data.",
+            ]
+          : []),
+      ],
     });
   }
   for (const ambiguous of matches.ambiguous) {
     items.push({
-      item_id: `mmc_method_${sha256({
-        left: ambiguous.left.map(({ item }) => item.token),
-        right: ambiguous.right.map(({ item }) => item.token),
-        basis: ambiguous.basis,
-      })}`,
+      item_id: `mmc_method_${digestCanonicalValue(
+        {
+          left: ambiguous.left.map(({ item }) => item.token),
+          right: ambiguous.right.map(({ item }) => item.token),
+          basis: ambiguous.basis,
+        },
+        "Managed comparison",
+      )}`,
       status: "unknown",
       left: null,
       right: null,
@@ -371,14 +504,40 @@ export const buildMethodItems = (
       },
       dimensions: ["availability"],
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [ambiguityLimitation("methods", ambiguous.basis)],
+      limitations: [
+        ambiguityLimitation(
+          "methods",
+          ambiguous.basis,
+          ambiguous.left.some((item) => item.identityUnavailable) ||
+            ambiguous.right.some((item) => item.identityUnavailable),
+        ),
+      ],
     });
   }
-  const undecoded = undecodedOneSidedNames(matches);
+  const undecoded = undecodedOneSidedNames(
+    matches,
+    context.signatureResolutionExamined,
+  );
   for (const item of matches.leftOnly)
-    items.push(methodOnlyItem({ left: item.item }, context, undecoded));
+    items.push(
+      methodOnlyItem(
+        { left: item.item },
+        item.identity,
+        item.identityUnavailable,
+        context,
+        undecoded,
+      ),
+    );
   for (const item of matches.rightOnly)
-    items.push(methodOnlyItem({ right: item.item }, context, undecoded));
+    items.push(
+      methodOnlyItem(
+        { right: item.item },
+        item.identity,
+        item.identityUnavailable,
+        context,
+        undecoded,
+      ),
+    );
   return items;
 };
 
@@ -388,16 +547,28 @@ export const buildFieldItems = (
 ): FieldItem[] => {
   const items: FieldItem[] = [];
   for (const pair of matches.pairs) {
+    const signatureLimitations = pairedSignatureLimitations(
+      pair.left.item,
+      pair.right.item,
+      context.signatureResolutionExamined,
+    );
     const changed =
-      pair.left.item.signature.raw_sha256 !==
-        pair.right.item.signature.raw_sha256 ||
+      signatureIdentity(pair.left.item.signature) !==
+        signatureIdentity(pair.right.item.signature) ||
       pair.left.item.flags !== pair.right.item.flags;
     items.push({
-      item_id: `mmc_field_${sha256({
-        left: pair.left.item.token,
-        right: pair.right.item.token,
-      })}`,
-      status: changed ? "changed" : "unchanged",
+      item_id: `mmc_field_${digestCanonicalValue(
+        {
+          left: pair.left.item.token,
+          right: pair.right.item.token,
+        },
+        "Managed comparison",
+      )}`,
+      status: changed
+        ? "changed"
+        : signatureLimitations.length > 0
+          ? "unknown"
+          : "unchanged",
       left: fieldIdentity(pair.left.item),
       right: fieldIdentity(pair.right.item),
       match: {
@@ -408,15 +579,18 @@ export const buildFieldItems = (
         candidate_right_tokens: [],
       },
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [],
+      limitations: signatureLimitations,
     });
   }
   for (const ambiguous of matches.ambiguous)
     items.push({
-      item_id: `mmc_field_${sha256({
-        left: ambiguous.left.map(({ item }) => item.token),
-        right: ambiguous.right.map(({ item }) => item.token),
-      })}`,
+      item_id: `mmc_field_${digestCanonicalValue(
+        {
+          left: ambiguous.left.map(({ item }) => item.token),
+          right: ambiguous.right.map(({ item }) => item.token),
+        },
+        "Managed comparison",
+      )}`,
       status: "unknown",
       left: null,
       right: null,
@@ -428,12 +602,38 @@ export const buildFieldItems = (
         candidate_right_tokens: ambiguous.right.map(({ item }) => item.token),
       },
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [ambiguityLimitation("fields", ambiguous.basis)],
+      limitations: [
+        ambiguityLimitation(
+          "fields",
+          ambiguous.basis,
+          ambiguous.left.some((item) => item.identityUnavailable) ||
+            ambiguous.right.some((item) => item.identityUnavailable),
+        ),
+      ],
     });
-  const undecoded = undecodedOneSidedNames(matches);
+  const undecoded = undecodedOneSidedNames(
+    matches,
+    context.signatureResolutionExamined,
+  );
   for (const item of matches.leftOnly)
-    items.push(fieldOnlyItem({ left: item.item }, context, undecoded));
+    items.push(
+      fieldOnlyItem(
+        { left: item.item },
+        item.identity,
+        item.identityUnavailable,
+        context,
+        undecoded,
+      ),
+    );
   for (const item of matches.rightOnly)
-    items.push(fieldOnlyItem({ right: item.item }, context, undecoded));
+    items.push(
+      fieldOnlyItem(
+        { right: item.item },
+        item.identity,
+        item.identityUnavailable,
+        context,
+        undecoded,
+      ),
+    );
   return items;
 };

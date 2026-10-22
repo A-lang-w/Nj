@@ -124,14 +124,23 @@ FileBytes digests, every source mapping and its memory digest, relocation record
 module partitions, relocation fixups and linear coordinates rather than relying
 on the imported executable SHA alone.
 
+Expected DOS relocation records retain each fixup's pre-application bytes and
+applied value. Their memory-byte windows come from the final relocated image,
+including changes made by later overlapping fixups.
+
 The result is `verified`, `mismatch`, or `unsupported`. Every check retains its
 expected and observed values. A memory-digest mismatch identifies the source
 range's file offset and analysis address; it does not locate the first differing
 byte inside that range. Mapping ends are **inclusive**, unlike the exclusive ends
 from `list_segments`. Appended overlays remain in source-file identity and are
 excluded from initialized module coverage. Uninitialized allocations are reported;
-their contents and DOS runtime semantics are not verified. Formats other than MZ and explicit COM return
-`unsupported` with measured observations, not a successful MZ verification.
+their contents and DOS runtime semantics are not verified. Independent verification
+also covers explicit [raw-binary imports](raw-binary.md); other formats return
+`unsupported` with measured observations.
+
+MZ verification retains the initialized image described by the header's page
+count and streams appended overlay bytes into the complete original and modified
+source digests. Overlay size does not increase the retained image allocation.
 
 `read_bytes` returns initialized provider memory, including loader fixups; an
 unmapped or uninitialized byte ends the read with an explicit returned length and
@@ -150,8 +159,10 @@ For a packed executable, importing the original can analyze its unpacking
 stub. Analyze a separately prepared unpacked copy to inspect the original
 program's recovered code. Retain both artifact digests and the transformation
 evidence; REA never silently replaces the admitted target. Appended overlays
-are separate from the initialized MZ module. Raw COM files and DOS extenders
-without an admitted MZ real-mode entry are outside this import boundary.
+are separate from the initialized MZ module. Headerless COM requires the
+[explicit COM interpretation](#headerless-com-images); REA does not guess it
+from the filename or unrecognized bytes. DOS extenders without an admitted
+MZ real-mode entry remain outside this import boundary.
 
 DOS MZ is available through Ghidra, with no Hopper support claim. It is outside
 the Windows native PE P0 boundary. macOS x64 DOS verification remains unverified.

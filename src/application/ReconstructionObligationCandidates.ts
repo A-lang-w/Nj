@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
+import { uniqueSorted, uniqueSortedBy } from "../domain/canonicalOrdering.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 
 import type { Evidence } from "../domain/evidence.js";
+import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
   parseEvidenceBundle,
   type EvidenceBundle,
@@ -34,6 +34,14 @@ export interface ReconstructionObligationCandidate extends CandidateFields {
 export interface ReconstructionObligationCandidateSet {
   readonly candidates: readonly ReconstructionObligationCandidate[];
   readonly limitations: readonly string[];
+}
+
+/** Caller input cites review Evidence that its bundle does not contain. */
+export class MissingReviewEvidenceError extends TypeError {
+  constructor(evidenceId: string) {
+    super(`Reviewed obligation Evidence is missing: ${evidenceId}`);
+    this.name = "MissingReviewEvidenceError";
+  }
 }
 
 /** Derive conservative candidates from graph, process, and reviewed inputs. */
@@ -105,7 +113,7 @@ const deriveApplicationCandidates = (
         candidates,
         generatedCandidate({
           key: `application:${node.node_id}:${candidatePolicy.family}`,
-          title: node.observations[0]?.label ?? `${node.kind} boundary`,
+          title: node.observations[0]?.label?.trim() || `${node.kind} boundary`,
           policy: candidatePolicy,
           artifactSha256: source.rootArtifactSha256,
           applicationNodeId: node.node_id,
@@ -116,13 +124,35 @@ const deriveApplicationCandidates = (
       );
     }
     if (source.semanticGraph !== null) {
+      const semanticGraph = source.semanticGraph;
+      const unknownIdsByNode = new Map<string, string[]>();
+      for (const unknown of semanticGraph.unknowns) {
+        // Candidate targets are possibilities, not established node bindings.
+        if (unknown.node_id !== null) {
+          const ids = unknownIdsByNode.get(unknown.node_id) ?? [];
+          ids.push(unknown.unknown_id);
+          unknownIdsByNode.set(unknown.node_id, ids);
+        }
+        // Keep every frontier visible, including families without a policy.
+        limitations.add(
+          `Semantic graph ${semanticGraph.graph_id} contains unresolved ${unknown.family} unknown ${unknown.unknown_id}: ${unknown.detail}`,
+        );
+      }
+      if (semanticGraph.coverage.status !== "complete")
+        limitations.add(
+          `Semantic graph ${semanticGraph.graph_id} coverage is ${semanticGraph.coverage.status}; omitted candidates remain unknown.`,
+        );
+      for (const limitation of semanticGraph.limitations)
+        limitations.add(
+          `Semantic graph ${semanticGraph.graph_id}: ${limitation}`,
+        );
       const evidenceContexts = new Map(
-        source.semanticGraph.evidence_contexts.map((context) => [
+        semanticGraph.evidence_contexts.map((context) => [
           context.context_id,
           context,
         ]),
       );
-      for (const node of source.semanticGraph.nodes) {
+      for (const node of semanticGraph.nodes) {
         const candidatePolicy = semanticObligationPolicy(node.kind);
         if (candidatePolicy === undefined) continue;
         const evidenceContext = evidenceContexts.get(node.evidence.context_id);
@@ -134,18 +164,19 @@ const deriveApplicationCandidates = (
           candidates,
           generatedCandidate({
             key: `semantic:${node.node_id}:${candidatePolicy.family}`,
-            title: node.label ?? `${node.kind} semantic boundary`,
+            title: node.label?.trim() || `${node.kind} semantic boundary`,
             policy: candidatePolicy,
             artifactSha256: node.identity.artifact_sha256,
             applicationNodeId: node.application_node_ids[0] ?? null,
             semanticNodeId: node.node_id,
-            location: `semantic-graph:${source.semanticGraph.graph_id}/nodes/${node.node_id}`,
+            residualUnknownIds: unknownIdsByNode.get(node.node_id) ?? [],
+            location: `semantic-graph:${semanticGraph.graph_id}/nodes/${node.node_id}`,
             authorityReferences: [
               graphReference(
                 evidence,
                 records,
                 evidenceContext,
-                `${source.semanticGraph.graph_id}/node/${node.node_id}`,
+                `${semanticGraph.graph_id}/node/${node.node_id}`,
               ),
             ],
           }),
@@ -158,7 +189,7 @@ const deriveApplicationCandidates = (
       );
   } catch (cause: unknown) {
     limitations.add(
-      `Application Evidence ${evidence.evidence_id} could not generate candidates: ${errorMessage(cause)}`,
+      `Application Evidence ${evidence.evidence_id} could not generate candidates: ${describeValidationFailure(cause)}`,
     );
   }
 };
@@ -250,7 +281,7 @@ const deriveProcessCandidate = (
       );
   } catch (cause: unknown) {
     limitations.add(
-      `Process Evidence ${evidence.evidence_id} could not generate candidates: ${errorMessage(cause)}`,
+      `Process Evidence ${evidence.evidence_id} could not generate candidates: ${describeValidationFailure(cause)}`,
     );
   }
 };
@@ -263,6 +294,7 @@ interface GeneratedCandidateInput {
   readonly applicationNodeId: string | null;
   readonly semanticNodeId: string | null;
   readonly location: string;
+  readonly residualUnknownIds?: ReconstructionObligation["residual_unknown_ids"];
   readonly authorityReferences: ReconstructionObligation["authority_references"];
 }
 
@@ -275,6 +307,7 @@ const generatedCandidate = ({
   semanticNodeId,
   location,
   authorityReferences,
+  residualUnknownIds = [],
 }: GeneratedCandidateInput): ReconstructionObligationCandidate => ({
   obligation_id: obligationId(key),
   obligation_version: 1,
@@ -298,7 +331,7 @@ const generatedCandidate = ({
   required_verifier_authority: candidatePolicy.verifierAuthority,
   requires_parser_type: candidatePolicy.requiresParserType,
   dependency_obligation_ids: [],
-  residual_unknown_ids: [],
+  residual_unknown_ids: residualUnknownIds,
   unavailable_authority: [],
   required_next_evidence: [
     `Obtain ${candidatePolicy.originalAuthority} authority for this finite ${candidatePolicy.family} claim.`,
@@ -322,9 +355,7 @@ const reviewedCandidate = (
     authority_references: reviewEvidenceIds.map((evidenceId) => {
       const evidence = records.get(evidenceId);
       if (evidence === undefined)
-        throw new TypeError(
-          `Reviewed obligation Evidence is missing: ${evidenceId}`,
-        );
+        throw new MissingReviewEvidenceError(evidenceId);
       return {
         evidence_id: evidenceId,
         authority: evidence.authority,
@@ -400,12 +431,12 @@ const addCandidate = (
   }
   candidates.set(candidate.obligation_id, {
     ...current,
-    authority_references: uniqueBy(
+    authority_references: uniqueSortedBy(
       [...current.authority_references, ...candidate.authority_references],
       (reference) =>
         `${reference.evidence_id}:${reference.state}:${reference.location}`,
     ),
-    observed_cases: uniqueBy(
+    observed_cases: uniqueSortedBy(
       [...current.observed_cases, ...candidate.observed_cases],
       (item) => `${item.kind}:${item.evidence_id}:${item.location}`,
     ),
@@ -413,7 +444,26 @@ const addCandidate = (
       ...current.authority_references,
       ...candidate.authority_references,
     ]),
-    definitionCount: current.definitionCount + candidate.definitionCount,
+    residual_unknown_ids: uniqueSorted([
+      ...current.residual_unknown_ids,
+      ...candidate.residual_unknown_ids,
+    ]),
+    // Each observation keeps its own unresolved authority and next steps.
+    unavailable_authority: uniqueSorted([
+      ...current.unavailable_authority,
+      ...candidate.unavailable_authority,
+    ]),
+    required_next_evidence: uniqueSorted([
+      ...current.required_next_evidence,
+      ...candidate.required_next_evidence,
+    ]),
+    // A generated ID digests its derivation key, so two generated candidates
+    // with one ID are the same claim seen by several records. Only another
+    // reviewed definition can introduce a competing definition.
+    definitionCount:
+      current.origin === "generated" && candidate.origin === "generated"
+        ? current.definitionCount
+        : current.definitionCount + candidate.definitionCount,
   });
 };
 
@@ -426,23 +476,5 @@ const sourceState = (
   return "unknown";
 };
 
-const uniqueBy = <Value>(
-  values: readonly Value[],
-  key: (value: Value) => string,
-): Value[] =>
-  [...new Map(values.map((value) => [key(value), value])).values()].sort(
-    (left, right) => compareUnicodeCodePoints(key(left), key(right)),
-  );
-
 const obligationId = (key: string): string =>
-  `obl_${digest({ schema: "ReconstructionObligation", key })}`;
-
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Reconstruction obligation key is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : "unknown validation failure";
+  `obl_${digestCanonicalValue({ schema: "ReconstructionObligation", key }, "Reconstruction obligation key")}`;

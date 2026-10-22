@@ -1,7 +1,10 @@
+import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+
+import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
-  createImmutableEvidenceBundle,
   describeEvidenceBundleFailure,
-  describeValidationFailure,
+  parseImmutableEvidenceBundle,
   parseEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
@@ -20,7 +23,6 @@ import {
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
 import { readJsonFile, writeTextParts } from "./JsonFiles.js";
-import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 type EvidenceReadFailure =
@@ -37,52 +39,65 @@ type EvidenceWriteFailure =
 export const readEvidenceBundle = (
   path: string,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(path, parseEvidenceBundle, signal);
+  readBundle(path, parseEvidenceBundle, signal, resources, operation);
 
 /** Read an authenticated immutable snapshot for a subsequent session import. */
 export const readImmutableEvidenceBundle = (
   path: string,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(
-    path,
-    (input) => {
-      const bundle = parseEvidenceBundle(input);
-      return createImmutableEvidenceBundle(bundle.records, bundle.unknowns);
-    },
-    signal,
-  );
+  readBundle(path, parseImmutableEvidenceBundle, signal, resources, operation);
 
 const readBundle = async (
   path: string,
   parseBundle: (input: unknown) => EvidenceBundle,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> => {
   if (signal?.aborted)
-    return err(new AnalysisCancelledError("import_evidence_bundle"));
-  const loaded = await readJsonFile(path, signal).catch((cause: unknown) => {
-    // A failed close transfers a live handle owner; preserve that failure.
-    if (
-      signal?.aborted === true &&
-      !(cause instanceof RegularFileCleanupFailure)
-    )
-      return err(
-        new AnalysisCancelledError("import_evidence_bundle", { cause }),
-      );
-    throw cause;
-  });
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: signal.reason,
+      }),
+    );
+  const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok) return loaded;
   if (signal?.aborted)
-    return err(new AnalysisCancelledError("import_evidence_bundle"));
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: signal.reason,
+      }),
+    );
+  const headroom = requireAuthenticationHeadroom(loaded.value, {
+    operation,
+    path: absoluteCallerPath(path),
+    description:
+      "Insufficient heap headroom to authenticate the Evidence bundle",
+  });
+  if (!headroom.ok) return headroom;
   let bundle: EvidenceBundle;
   try {
     bundle = parseBundle(loaded.value);
   } catch (cause: unknown) {
+    const failure = describeEvidenceBundleFailure(loaded.value, cause);
+    if (failure.kind === "single-record")
+      return err(
+        new EvidenceFileError("read", "wrong-kind", {
+          path: absoluteCallerPath(path),
+          cause,
+          userMessage: failure.message,
+        }),
+      );
     return err(
       new EvidenceIntegrityError("Evidence bundle validation failed", {
         cause,
-        userMessage: describeEvidenceBundleFailure(loaded.value, cause),
+        userMessage: failure.message,
       }),
     );
   }
@@ -109,6 +124,7 @@ export const writeEvidenceBundle = async (
   overwrite: boolean,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
+  operation = "export_evidence_bundle",
 ): Promise<
   Result<
     { readonly path: string; readonly bytes: number },
@@ -116,7 +132,11 @@ export const writeEvidenceBundle = async (
   >
 > => {
   if (signal?.aborted === true)
-    return err(new AnalysisCancelledError("export_evidence_bundle"));
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: signal.reason,
+      }),
+    );
   let checked: EvidenceBundle;
   try {
     checked = parseEvidenceBundle(bundle);
@@ -132,8 +152,6 @@ export const writeEvidenceBundle = async (
     path,
     overwrite,
     resources,
-    signal === undefined
-      ? undefined
-      : { signal, operation: "export_evidence_bundle" },
+    signal === undefined ? undefined : { signal, operation },
   );
 };

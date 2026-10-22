@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "39"
+  version: "45"
 ---
 
 # REA
@@ -30,13 +30,67 @@ unavailable, read [connection and recovery](references/connection-and-recovery.m
 Diagnose the observed blocker, continue useful supported work, and resume the
 original task after repair. Client approval, shell PATH, registration and engine
 availability have different remedies; avoid repeating setup for all of them.
+If the host times out without a REA result, do not repeat the unchanged call or
+assume work stopped. Read the recovery guide's deadline distinction before retrying.
+If the MCP connection drops, retry that call once only when it is safe to
+repeat or known not to have started. If it may already have changed the
+target, or it fails again, tell the user and ask them to restart the MCP
+client. If REA could not start its connection, retry once, then tell the user
+and ask them to restart the MCP client. Do not retry a startup failure that
+returns the same unchanged result. Run `rea doctor` when REA could not start
+or tools stay missing after that restart. For `cleanup_incomplete`, a retryable
+capacity limit, or `configuration_invalid`, follow the recovery guide's ladder
+before asking for a restart. Read that guide before a second repair attempt.
 
+1. Diagnose without changing REA or client configuration. `npx` may download
+   the package and write to npm's cache. For Codex, run
+   `npx -y rea-agents@latest doctor --client codex --json`. Substitute the current
+   supported client: `claude_code`, `claude_desktop`, `codex`, `cursor`,
+   `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`, `copilot_cli`,
+   `commandcode`, `vscode`, `grok_build`, `omp`, or `grok_bot`. `grok_bot` has no local
+   file registration: doctor reports the Grok Bot chat step, and setup does not
+   write `mcp.json`. If the client is unknown, use `doctor --json` and
+   inspect its registration results before choosing a setup scope.
+2. Distinguish the reason. Missing, malformed, or stale registration needs a
+   scoped configuration repair. An aligned registration with no tools in the
+   active session needs a restart/reconnection; doctor cannot prove that the
+   current agent has connected. A missing provider affects only tasks requiring
+   that provider: static JavaScript inspection needs neither Hopper nor Ghidra,
+   and Android inspection has separate bring-your-own JADX/Java prerequisites.
+3. For a configuration repair, prepare the read-only plan:
+   `npx -y rea-agents@latest setup --client codex --dry-run --json`.
+   Use the current client's ID, show its exact proposed paths, backups, and
+   changes, and obtain approval before setup writes configuration or installs
+   Hopper. Setup normally installs the matching bundled skill too; include that
+   replacement in the reviewed plan. After approval, apply the same scope with
+   `npx -y rea-agents@latest setup --client codex --yes`. Add `--install-hopper`
+   only if that separate installation was needed and explicitly approved.
+4. Restart/reconnect the affected agent. Verify that REA tools actually appear
+   in the session, then resume the original investigation. If they remain
+   absent, inspect the client's MCP launch error rather than repeating setup.
+
+REA setup never installs or upgrades Node.js, npm, Homebrew, Java, Ghidra, IDA,
+JADX, Kuna, Binwalk, or Unblob. Use existing prerequisites; do not install unrelated
+software to repair
+MCP registration. For an unsupported client, use manual stdio registration
+with a version-pinned `rea-agents` package or continue through the CLI.
+
+A concrete CLI fallback for an operator-supplied JavaScript tree or ASAR is:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+No MCP registration or native engine is required. Read the returned Evidence,
+graph, limitations, and unknowns with the same care as an MCP result; the CLI
+returns the Evidence record directly. This fallback does not establish that
+MCP is configured. Native CLI tasks still require their selected engine.
 Prefer an existing `rea` CLI. When none is installed and REA package acquisition
 is within the authorized scope, use `npx -y rea-agents@latest` in its place.
 Configuration repair starts with a read-only setup plan; show paths, backups and
 skill replacement before applying authorized changes. Preserve existing approval
 and target-execution boundaries. REA setup never installs or upgrades unrelated
-software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Binwalk or Unblob.
+software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Kuna, Binwalk or Unblob.
 
 ## Route the target first
 
@@ -46,9 +100,19 @@ explicit path or endpoint and do not need it.
 
 - ASAR or extracted JavaScript/Electron tree:
   `analyze_javascript_application`.
-- Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX or DMG):
-  `open_binary` with the supplied local path; use `inspect_artifact` when its
-  graph and findings help answer the question.
+- Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX, DMG, or a PyInstaller
+  executable): `open_binary` with the supplied local path; use `inspect_artifact`
+  when its graph and findings help answer the question. A PyInstaller CArchive
+  is the application layer; the bootloader is only the native prefix. Start with
+  `detail: "summary"` for large inventories, then use retained inventory views
+  for selected member fields/pages. A complete small inventory can cost less
+  than extra calls and schemas. Runtime options are metadata, not files.
+  Compact delivery still inventories and hashes members. See the
+  [Python packaged applications guide](https://github.com/morluto/rea/blob/main/docs/python-packaged-applications.md).
+- Apple app plist, Interface Builder, asset catalog, or keyed archive resources:
+  `open_bundle_resources`, then the selected resource tool. This does not
+  require `CFBundleExecutable` or a deep provider. Resource sessions have no
+  executable digest or binary snapshot; use `open_binary` for native code.
 - Android APK code, classes, methods, or incoming references:
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
@@ -61,21 +125,77 @@ explicit path or endpoint and do not need it.
   consult the NativeAOT workflow in `references/native-and-artifacts.md` for
   optional metadata recovery and its supported host/layout boundary.
 - User-owned browser page already open: `list_browser_targets`.
-- Retained HAR/native mitmproxy capture: `inspect_web_network_capture`. Select
+- Browser action the agent must perform (click, type, navigate):
+  `capture_browser_scenario` with declared actions. See
+  [runtime observation](references/runtime-observation.md) for connect/launch
+  and the focused follow-up browser tools.
+- Fiddler Everywhere traffic or a native `.saz` capture: read the
+  [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
+  Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
+  connect Everywhere's separate MCP server for live traffic.
+- Retained HAR/SAZ/native mitmproxy/aioquic qlog capture: `inspect_web_network_capture`. Select
   original record ordinals when useful; inspect producer fields and byte/number
-  sidecars without fetching recorded URLs or claiming live attribution. See
+  sidecars without fetching recorded URLs or claiming live attribution. HAR/SAZ/qlog
+  old-generation heap is `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` (default 192 MiB,
+  floor 8, maximum 16384), set where REA starts. Host memory and `NODE_OPTIONS` do not
+  raise it. See
   [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
-  profile and credential exclusions.
-- User-owned Electron runtime already open: `list_electron_targets`.
+  profile and credential exclusions. Qlog support starts with aioquic 1.5.0
+  JSON 0.3; stream coverage and endpoint loss declarations do not recover bodies
+  or establish network loss. Prefer detail summary, then kind qlog trace/stream
+  pages; select one trace, stream ID and direction for contribution/range pages.
+  Facts retain all-recorded-events-before-selection scope. Other qlog layouts
+  and PCAP correlation are unsupported.
+- User-owned Electron runtime already open: `list_electron_targets`. Before an electron-main Inspector attempt, check packaged fuses with `inspect_electron_fuses`; disabled `EnableNodeCliInspectArguments` means the app ignores `--inspect`.
+- Packet-field discovery: `inspect_packet_fields` searches installed protocols
+  and field names/types before choosing fields for `inspect_packet_capture`.
+  Query/page the relevant records; registrations do not establish observed traffic.
+- Recorded packet captures: `inspect_packet_capture` with selected TShark fields,
+  display filters and decode-as rules. Requires Linux, util-linux prlimit and `REA_TSHARK_COMMAND`; see
+  [capture guide](https://github.com/morluto/rea/blob/main/docs/packet-captures.md).
+  Packet limits count input packets before filtering. Output defaults to 50 matching
+  frames; use `match_offset` / `match_limit` for later pages, or explicit null
+  limit for complete matching output. Preserve the source digest across pages.
+  This does not perform live capture.
+  For address/DNS/SNI/protocol summaries use `inspect_pcap_capture` with MCP
+  detail summary, then retained kind pcap pages. Requires Wireshark 4.x tshark
+  and capinfos, with Linux prlimit or Windows Job Objects; see
+  [packet summaries](https://github.com/morluto/rea/blob/main/docs/pcap-analysis.md).
+  Select an exact DNS question for address pages; page exhaustion does not prove
+  network completeness. This reads recordings and does not acquire traffic.
+- Decoder discovery: `inspect_signal_decoders` searches installed decoder IDs
+  or selected decoder help, including channels and options. Query and page the
+  relevant details before choosing settings; this does not scan hardware.
+- Recorded logic/signal traces: `decode_signal_recording` with explicit decoder,
+  channel and protocol settings. On Linux with util-linux prlimit, supply sigrok-cli 0.7.2 through
+  `REA_SIGROK_COMMAND`; see [recording guide](https://github.com/morluto/rea/blob/main/docs/signal-recordings.md).
+  Output defaults to 50 literal lines; select annotation classes and page with
+  `line_offset` / `line_limit`, or explicit null for all remaining output.
+  Window counts are display lines, not annotations or samples. Preserve source digests across pages.
+  This reads existing files; it does not acquire hardware signals.
 - Explicit local WebAssembly artifact: `inspect_wasm_artifact`. Supply WABT 1.0.42
   through `REA_WABT_BIN_DIRECTORY`; retain exact byte/tool identity and decoded WAT.
   Select JavaScript glue and candidate paths explicitly and preserve URL/path
   ambiguity. No implicit fetch or target execution; WAT is not original source.
   See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/wasm-artifacts.md).
+- Explicit local Android APK (or ZIP/AAB) signing: `inspect_apk_signature`.
+  Prefer its summary or selected signer/digest/lineage page; retain complete
+  Evidence and use `inspect_analysis_view` kind `apk-signature` for follow-ups.
+  Reports which schemes are present (v1 JAR, v2, v3, v3.1), each signer's
+  certificate SHA-256 fingerprint (v1 included, from its PKCS#7 block), v3 key-rotation lineage, source stamp, and
+  whether each signed digest still matches the bytes (self-consistency). This
+  is identity and integrity, not a trust or authenticity verdict.
+  See the [APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md).
 - Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
-  `raw` or `hex` encoding. Preserve carrier/decoded digests and treat selectors,
+  `raw` or `hex` encoding. The owned worker deadline is `timeout_ms` (default
+  30000 ms, range 1..2147483647, next call). It does not raise the fixed byte,
+  address-space, or CPU allowances. Preserve carrier/decoded digests and treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
-  lookup or target execution. See the
+  lookup or target execution. For the complete inferred interface without hex or
+  duplicate stdout, discover support and select `detail: "summary"`; complete
+  Evidence stays retained under its original identity. Use the returned
+  `parent_evidence_id` for exact function or `bytecode_hex`/stdout/stderr pages.
+  Candidate coverage does not establish interface completeness. See the
   [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md).
 - Embedded Go compiler, module or build-setting metadata: `inspect_go_binary`
   with the explicit local file. This built-in target-free inspection requires no
@@ -83,6 +203,78 @@ explicit path or endpoint and do not need it.
   absent metadata does not prove a binary is not Go, and unparsed text records
   remain explicit. See the
   [Go binary guide](https://github.com/morluto/rea/blob/main/docs/go-binaries.md).
+- Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
+  first, then decode selected payloads and query retained GPU Evidence.
+- Bundled GGUF or safetensors model declarations: `inspect_model_artifact`
+  with the explicit local file. Default header hashing leaves full-file identity
+  unknown; `hash: "full"` additionally reads all weights for SHA-256. MCP returns
+  retained summaries; optional `view` selects one page in the initial call. Use
+  `inspect_analysis_view` kind `model-artifact` for
+  batched metadata keys, tensor names or type totals, selected fields and pages.
+  Preserve header-scoped indices and array preview omissions; do not infer model
+  behavior from declared architecture or tensor types. See the
+  [model file guide](https://github.com/morluto/rea/blob/main/docs/model-artifacts.md).
+- Unity IL2CPP names, member owners and string literals from `global-metadata.dat`:
+  `inspect_il2cpp_metadata` with the explicit local file; MCP defaults to compact
+  counts. Query sections, images, types, methods, fields, properties, events,
+  parameters or string_literals through `inspect_analysis_view`
+  with the returned `parent_evidence_id`, using exact filters, batch indices and
+  selected fields. Parameters accept `method_indices`, avoiding a scan of all
+  parameter pages. Missing collections in historical Evidence remain unknown.
+  Versions 24, 27, 29, 31 and 39; no Unity, IL2CPP
+  binary or disassembler is run. Unrecognized magic (possibly encrypted) and
+  other versions are unsupported. Optional matching `binary_path` enables static native addresses and type references; query `method_addresses` with indices or addresses/states, preserving every shared-body method and both artifact identities. Without a linked binary native counts remain unknown. Byte-pattern fallback is inferred; no runtime behavior or same-build pairing is proved. See the
+  [IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
+- Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
+  with the explicit local ELF, PE, or thin Mach-O file. This built-in
+  target-free inspection requires no Rust installation or disassembler. Preserve
+  package order, dependency indices, and the section file range. A missing
+  `.dep-v0` section is null metadata, not proof the binary has no dependencies.
+  A rustc commit hash is an inference from a read-only `/rustc/<40-hex>/` path.
+  For selected crates, use `view: {collection: "packages", names: [...],
+  fields: ["name", "version", "source"]}` on the first call; explicitly include
+  `dependencies` for direct index references. Use `detail: "summary"` for counts
+  and ranges, or retained `inspect_analysis_view` Rust package/edge pages for
+  subsequent filters. Keep the complete parent Evidence accessible; CLI compact
+  delivery requires `--evidence_output`.
+  See the
+  [Rust binary guide](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+- PE Authenticode certificate table: `inspect_pe_certificates` with the explicit
+  local PE32/PE32+ file. This built-in target-free inspection requires no
+  Windows SDK. Preserve WIN_CERTIFICATE ranges, types, payload SHA-256, and
+  PKCS#7 signer/X.509 identity fields, including `subject_key_identifier_hex`
+  when the signer uses that form. A missing security directory is observed
+  absence of that table, not proof the image is unsigned in every catalog sense.
+  Signatures are not verified. See the
+  [PE certificate guide](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).
+- ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
+  file. This built-in target-free inspection requires no disassembler. Preserve
+  PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU
+  build-id or ABI-tag fields. A missing table is observed absence of those
+  declarations, not proof the image never carried notes. See the
+  [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- CPython 3.7–3.13 `.pyc` header, nested marshal code objects and bytecode
+  identity: `inspect_python_pyc` with the explicit local file. This built-in
+  target-free inspection requires no Python installation. Preserve magic,
+  PEP 552 hash or mtime/size, nested names, and bytecode SHA-256. Bytecode is
+  not decompiled, and a decoded header does not prove the matching `.py` is
+  present. See the
+  [CPython pyc guide](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
+- Erlang BEAM IFF container: `inspect_erlang_beam` with the explicit local
+  `.beam` file. This built-in target-free inspection requires no Erlang
+  installation. Preserve chunk names, atom order, export/import/lambda tables,
+  and the Code header. Missing optional tables stay null. Bytecode is not
+  executed. See the
+  [Erlang BEAM guide](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+
+- Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
+  with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema
+  first (compact inventory by default), or select an exact ordinary table
+  and `columns` when rows are needed. Defaults are selected-table schema and
+  20 rows; request `schema_scope: "database"` for the complete stored schema. Preserve both database and existing sibling WAL identity; row samples
+  report truncation and have unspecified order. Use a quiescent snapshot rather
+  than assuming a live database/WAL pair was copied atomically. See the
+  [SQLite guide](https://github.com/morluto/rea/blob/main/docs/sqlite-databases.md).
 - Explicit Linux ELF file for offline layout, symbols, relocations or static
   mitigation evidence: `inspect_binary_layout`. This target-free operation uses
   caller-supplied pwntools without opening a disassembler database. Preserve its
@@ -96,6 +288,8 @@ explicit path or endpoint and do not need it.
 - PE resource type/name/language trees and static icon group references:
   `inspect_pe_resources` with an explicit path. This portable operation requires
   no active target or engine; opaque payloads retain file ranges and SHA-256.
+- PE export directories and ELF dynamic-symbol exports: `inspect_native_exports`
+  with an explicit path; portable, no active target or engine.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
   inventory context is useful and available from the selected provider.
@@ -111,6 +305,20 @@ Proceed directly to `analyze_function`, pseudocode, or function/string searches
 after opening; IDA does not supply `binary_overview`. Consult session availability
 when composing broader workflows. Modern direct callers and unsupported dossier
 facets remain unknown; live IDA results are not replayed from snapshots.
+
+With `REA_KUNA_COMMAND` configured, `provider_id: "kuna"` answers procedure
+lists, lookups, pseudocode, assembly and `analyze_function` from Kuna's cached
+whole-program export. Callers/callees use a separate body-free graph shared by
+the session; `xrefs` returns exact-address incoming sites and filters forwarding
+aliases. These queries and inventory lookups do not trigger a C export. Indirect
+targets remain unknown and can make relationship coverage partial. Reference
+caches expire on close; a fresh CLI process repeats the native reference walk.
+Typed references, CFG, raw-memory tools and annotations remain unsupported. A cold first
+answer can come from a single-function run (its limitations say so); assembly
+waits for the export. For pseudocode and assembly, `raw_result.source` names the
+cached `.c`/`.asm` file and byte span, which you may search directly instead of
+calling per function. See the
+[Kuna provider guide](https://github.com/morluto/rea/blob/main/docs/kuna-provider.md).
 
 If the user says only "my app" without a name, path, or target already selected
 for this task, ask which app before searching for artifacts. Paths in unrelated
@@ -129,6 +337,12 @@ is the complete tool inventory; use `tools/list` for canonical tool schemas.
 Provider candidate facts describe possible providers, while top-level session
 capabilities describe the current route and `analysis_provider_binding` names the
 selected provider. Do not treat those scopes as interchangeable.
+
+For a Ghidra startup timeout on a large native target, follow
+[deadline recovery](references/native-and-artifacts.md#ghidra-startup-deadline-recovery)
+before abandoning deep analysis or repeating the same cold import. The default
+330 seconds is configurable; changing the server's environment requires a new
+REA process.
 
 ## Work summary-first
 
@@ -224,7 +438,8 @@ as complete while required questions remain open.
   [references/javascript-applications.md](references/javascript-applications.md)
 - Android APK declarations, classes, methods, and static references:
   [references/android-applications.md](references/android-applications.md)
-- Passive browser/Electron observation and static/runtime reconciliation:
+- Browser/Electron observation (passive and scenario) and static/runtime
+  reconciliation:
   [references/runtime-observation.md](references/runtime-observation.md)
 - Evidence paging, comparisons, residual unknowns, and verification:
   [references/evidence-workflows.md](references/evidence-workflows.md)

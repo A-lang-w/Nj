@@ -6,6 +6,7 @@ import { createEvidence } from "../../../../src/domain/evidence.js";
 import {
   managedNativeVerificationInputSchema,
   managedNativeVerificationResultSchema,
+  pinvokeVerificationSchema,
 } from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
@@ -16,21 +17,27 @@ const exampleInput = () =>
     MANAGED_NATIVE_VERIFICATION_EXAMPLE,
   );
 
-const nativeEvidenceWithExports = (names: readonly string[], path?: string) => {
+const nativeEvidenceWithExports = (
+  names: readonly string[],
+  path?: string,
+  subjectless = false,
+) => {
   const input = exampleInput();
   const native = input.native_observations[0];
   if (native === undefined || native.subject === null)
     throw new Error("missing native example");
   const macho = inspectMachoSchema.parse(native.normalized_result);
   return createEvidence(
-    {
-      path: path ?? native.subject.local_path,
-      sha256: native.subject.digest.sha256,
-      format: native.subject.format,
-      ...(native.subject.architecture === null
-        ? {}
-        : { architecture: native.subject.architecture }),
-    },
+    subjectless
+      ? undefined
+      : {
+          path: path ?? native.subject.local_path,
+          sha256: native.subject.digest.sha256,
+          format: native.subject.format,
+          ...(native.subject.architecture === null
+            ? {}
+            : { architecture: native.subject.architecture }),
+        },
     native.provider,
     {
       operation: native.operation,
@@ -60,7 +67,7 @@ const nativeEvidenceWithExports = (names: readonly string[], path?: string) => {
   );
 };
 
-const inputWithImportScope = (scope: string) => {
+const inputWithImportScope = (scope: string | null) => {
   const input = exampleInput();
   const managed = input.managed_boundaries;
   const normalized = managedNativeBoundaryInspectionSchema.parse(
@@ -82,6 +89,31 @@ const inputWithImportScope = (scope: string) => {
     }),
   };
 };
+
+it("keeps empty import names readable in managed Evidence but invalid in verification output", () => {
+  const input = exampleInput();
+  const parsed = managedNativeBoundaryInspectionSchema.parse(
+    input.managed_boundaries.normalized_result,
+  );
+  const declaration = parsed.pinvoke_imports[0];
+  if (declaration === undefined) throw new Error("missing P/Invoke example");
+
+  const historicalBoundary = managedNativeBoundaryInspectionSchema.parse({
+    ...parsed,
+    pinvoke_imports: [{ ...declaration, import_name: "" }],
+  });
+  expect(historicalBoundary.pinvoke_imports[0]?.import_name).toBe("");
+
+  const verification = verifyManagedNativeBoundaries(input).pinvoke_imports[0];
+  if (verification === undefined)
+    throw new Error("missing verification result");
+  expect(
+    pinvokeVerificationSchema.safeParse({
+      ...verification,
+      managed: { ...verification.managed, import_name: "" },
+    }).success,
+  ).toBe(false);
+});
 
 describe("managed/native boundary Evidence identity", () => {
   it("rejects managed boundary Evidence whose subject digest differs from its artifact", () => {
@@ -156,6 +188,20 @@ it("verifies a P/Invoke declaration against native export Evidence", () => {
   });
 });
 
+it("treats a Mach-O ABI-prefixed export as an exact declared import", () => {
+  const result = verifyManagedNativeBoundaries({
+    ...exampleInput(),
+    native_observations: [nativeEvidenceWithExports(["_open_native"])],
+  });
+
+  expect(result.summary).toMatchObject({ verified: 1, inferred: 0 });
+  expect(result.pinvoke_imports[0]).toMatchObject({
+    status: "verified",
+    basis: "exact-export-name",
+    matched_native: { name: "_open_native" },
+  });
+});
+
 it("reports module mismatch as a contradiction within supplied Evidence", () => {
   const input = exampleInput();
   const native = input.native_observations[0];
@@ -223,6 +269,57 @@ it("keeps literal module names distinct and accepts the shared-library lib alias
     status: "verified",
     basis: "exact-export-name",
     matched_native: { module_path: "/examples/libfoo.dylib" },
+  });
+});
+
+it("keeps name candidates unresolved when a required module identity is absent", () => {
+  for (const scope of [null, "", "   "]) {
+    const result = verifyManagedNativeBoundaries({
+      ...inputWithImportScope(scope),
+      native_observations: [nativeEvidenceWithExports(["open_native"])],
+    });
+    expect(result.pinvoke_imports[0]).toMatchObject({
+      status: "unresolved",
+      basis: "module-identity-unknown",
+      matched_native: { name: "open_native" },
+      candidates: [{ name: "open_native" }],
+    });
+    expect(result.pinvoke_imports[0]?.limitations).toContain(
+      "A native name candidate exists, but a required module identity is unavailable; module correspondence is unknown.",
+    );
+  }
+
+  for (const path of [
+    "/examples/lib.dylib",
+    "/examples/lib.so",
+    "/examples/foo.dll",
+  ]) {
+    const extensionOnly = verifyManagedNativeBoundaries({
+      ...inputWithImportScope(".dll"),
+      native_observations: [nativeEvidenceWithExports(["open_native"], path)],
+    });
+    expect(extensionOnly.pinvoke_imports[0]).toMatchObject({
+      status: "unresolved",
+      basis: "module-identity-unknown",
+      candidates: [{ name: "open_native", module_path: path }],
+    });
+  }
+
+  const subjectless = verifyManagedNativeBoundaries({
+    ...inputWithImportScope("nativehelper.dll"),
+    native_observations: [
+      nativeEvidenceWithExports(["open_native"], undefined, true),
+    ],
+  });
+  expect(subjectless.pinvoke_imports[0]).toMatchObject({
+    status: "unresolved",
+    basis: "module-identity-unknown",
+    matched_native: {
+      name: "open_native",
+      module_name: null,
+      module_path: null,
+    },
+    candidates: [{ name: "open_native" }],
   });
 });
 

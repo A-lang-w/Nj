@@ -1,22 +1,30 @@
+import {
+  bridgeCandidateCoverageSchema,
+  projectCartesianCandidates,
+} from "../bridgeCandidateProjection.js";
 import { z } from "zod";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 
-import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
+import {
+  hasCompleteInventoryCoverage,
+  parseArtifactInventoryEvidence,
+} from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   applicationInventoryProjectionInputSchema,
-  bridgeCandidateCoverageSchema,
-  compareProjectionStrings,
-  projectCartesianCandidates,
+  type MobileApplicationProjectionWithSources,
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
-  projectedComponents,
+  projectedInventoryEntries,
+  projectedFileComponents,
   projectionCoverage,
-  projectionDigest,
   projectionEvidenceIdSchema,
-  projectionPathSchema,
+  unavailableComponentSchema,
 } from "../mobileApplicationGraphProjection.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 const evidenceIdSchema = projectionEvidenceIdSchema;
 const componentSchema = projectedComponentSchema;
@@ -43,16 +51,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     javascript: z.array(componentSchema),
     signing: z.array(componentSchema),
   }),
-  unavailable_components: z.array(
-    z.strictObject({
-      path: projectionPathSchema,
-      artifact_id: z.null(),
-      sha256: z.null(),
-      format: z.string().min(1),
-      encrypted: z.boolean(),
-      limitations: z.array(z.string()),
-    }),
-  ),
+  unavailable_components: z.array(unavailableComponentSchema),
   app_pack_children: z.array(componentSchema),
   runtime_families: z.array(
     z.enum(["ark", "native", "javascript", "react-native", "flutter", "unity"]),
@@ -66,9 +65,10 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
+    // Count completeness is separate from the declared coverage status.
     inventory_complete: z.boolean(),
   }),
-  limitations: z.array(z.string().min(1)),
+  limitations: z.array(z.string()),
 });
 
 export type HarmonyApplicationProjectionInput = z.infer<
@@ -82,34 +82,26 @@ type Component = z.infer<typeof componentSchema>;
 /** Project exact HarmonyOS package paths and hashes without decoding or executing target code. */
 export const projectHarmonyApplication = (
   input: HarmonyApplicationProjectionInput,
-): HarmonyApplicationProjectionResult => {
+): MobileApplicationProjectionWithSources<HarmonyApplicationProjectionResult> => {
   const parsed = harmonyApplicationProjectionInputSchema.parse(input);
   const { evidence, inventory } = parseArtifactInventoryEvidence(
     parsed.inventory_evidence,
   );
   const rootFormat = harmonyRootFormat(inventory.manifest.root_format);
-  const all = projectedComponents(inventory);
-  const unavailable = inventory.occurrences
-    .filter(
-      (occurrence) =>
-        occurrence.logical_path !== "." && occurrence.artifact_id === null,
-    )
-    .map((occurrence) => ({
-      path: occurrence.logical_path,
-      artifact_id: null,
-      sha256: null,
-      format: occurrence.artifact_format,
-      encrypted: occurrence.encrypted,
-      limitations: occurrence.limitations,
-    }));
+  const entries = projectedInventoryEntries(inventory);
+  const all = projectedFileComponents(entries);
+  const unavailable = entries.flatMap(({ unavailable }) =>
+    unavailable === undefined ? [] : [unavailable],
+  );
   const classified = classify(all);
   const bridgeProjection = bridgeCandidates(
     classified.bytecode,
     classified.native_libraries,
   );
   const limitations = [
-    ...(!inventory.complete
-      ? ["Source inventory pages are incomplete; absence is unknown."]
+    ...inventory.limitations,
+    ...(!hasCompleteInventoryCoverage(inventory, "container-entries")
+      ? ["Source inventory coverage is partial; absence is unknown."]
       : []),
     ...(unavailable.length > 0
       ? [
@@ -139,7 +131,7 @@ export const projectHarmonyApplication = (
     root_format: rootFormat,
     source_evidence_ids: evidence
       .map(({ evidence_id: id }) => id)
-      .sort(compareProjectionStrings),
+      .sort(compareUnicodeCodePoints),
     packaging_model: packagingModel(classified.manifests),
     components: classified,
     unavailable_components: unavailable,
@@ -147,7 +139,7 @@ export const projectHarmonyApplication = (
       rootFormat === "app-pack"
         ? all.filter(({ path }) => /\.(?:hap|hsp)$/iu.test(path))
         : [],
-    runtime_families: runtimeFamilies(all),
+    runtime_families: runtimeFamilies(all, classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: projectionCoverage(
@@ -157,18 +149,31 @@ export const projectHarmonyApplication = (
     ),
     limitations,
   };
-  return harmonyApplicationProjectionResultSchema.parse({
-    ...withoutId,
-    projection_id: `hmp_${projectionDigest(withoutId, "HarmonyOS application projection")}`,
-  });
+  return {
+    projection: harmonyApplicationProjectionResultSchema.parse({
+      ...withoutId,
+      projection_id: `hmp_${digestCanonicalValue(withoutId, "HarmonyOS application projection")}`,
+    }),
+    sources: evidence,
+  };
 };
 
 const harmonyRootFormat = (format: string): RootFormat => {
   const root = HARMONY_ROOT_FORMATS.find((candidate) => candidate === format);
   if (root === undefined)
-    throw new TypeError(
-      `HarmonyOS application projection requires HAP, HSP, or App Pack inventory Evidence (got ${format})`,
-    );
+    throw new AnalysisInputError("project_harmony_application_graph", {}, [
+      {
+        path: [
+          "inventory_evidence",
+          0,
+          "normalized_result",
+          "manifest",
+          "root_format",
+        ],
+        reason: "invalid_value",
+        message: `HarmonyOS application projection requires HAP, HSP, or App Pack inventory Evidence (got ${format})`,
+      },
+    ]);
   return root;
 };
 
@@ -207,21 +212,21 @@ const classify = (all: readonly Component[]) => ({
   ),
 });
 
-const runtimeFamilies = (all: readonly Component[]) => {
-  const paths = all.map(({ path }) => path.toLowerCase());
+const runtimeFamilies = (
+  all: readonly Component[],
+  components: HarmonyApplicationProjectionResult["components"],
+) => {
   const families = new Set<
     HarmonyApplicationProjectionResult["runtime_families"][number]
   >();
-  if (paths.some((path) => path.endsWith(".abc") || path.endsWith(".pa")))
-    families.add("ark");
+  if (components.bytecode.length > 0) families.add("ark");
   if (all.some(({ format }) => format === "elf")) families.add("native");
-  if (paths.some((path) => /\.(?:m?js|cjs)$/.test(path)))
-    families.add("javascript");
+  if (components.javascript.length > 0) families.add("javascript");
   for (const { path } of all) {
     const convention = nativeRuntimeConvention(path);
     if (convention !== null) families.add(convention);
   }
-  return [...families].sort(compareProjectionStrings);
+  return [...families].sort(compareUnicodeCodePoints);
 };
 
 const bridgeCandidates = (

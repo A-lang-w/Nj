@@ -1,24 +1,48 @@
 import { z } from "zod";
+import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 
 import { jsonValueSchema } from "../jsonValue.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
 
+const RESOURCE_KEY_FIELDS = new Set([
+  "image",
+  "imageName",
+  "image_name",
+  "resourceName",
+  "resource_name",
+  "assetName",
+  "asset_name",
+  "UIImageName",
+  "NSImageName",
+]);
+
+/** Recognized direct scalar resource fields; nested dictionaries are not inferred. */
+export const appleResourceKeyFields = (
+  attributes: Readonly<Record<string, unknown>>,
+): [string, string][] =>
+  Object.entries(attributes).filter(
+    (entry): entry is [string, string] =>
+      RESOURCE_KEY_FIELDS.has(entry[0]) &&
+      typeof entry[1] === "string" &&
+      entry[1].length > 0,
+  );
+
 /** Caller-controlled page bounds for compiled Apple asset metadata. */
 export const appleAssetCatalogInputSchema = z.strictObject({
-  offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(10_000).default(1_000),
+  offset: z.int().min(0).default(0),
+  limit: z.int().min(1).max(10_000).default(1_000),
 });
 
 const catalogSchema = z.strictObject({
   path: z.string().min(1),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  record_count: z.number().int().nonnegative(),
+  record_count: z.int().nonnegative(),
 });
 
 const recordSchema = z.strictObject({
   catalog_path: z.string().min(1),
   catalog_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  index: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
   kind: z.enum(["catalog", "rendition"]),
   asset_name: z.string().nullable(),
   rendition_name: z.string().nullable(),
@@ -36,25 +60,27 @@ const resourceKeyMatchSchema = z.strictObject({
     z.strictObject({
       catalog_path: z.string().min(1),
       catalog_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      record_index: z.number().int().nonnegative(),
+      record_index: z.int().nonnegative(),
       rendition_name: z.string().nullable(),
     }),
   ),
 });
 
 /** Normalized result returned by asset catalog inspection. */
-export const appleAssetCatalogResultSchema = z.strictObject({
-  target_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  catalogs: z.array(catalogSchema),
-  total_records: z.number().int().nonnegative(),
-  offset: z.number().int().nonnegative(),
-  limit: z.number().int().positive(),
-  records: z.array(recordSchema),
-  resource_key_matches: z.array(resourceKeyMatchSchema),
-  next_offset: z.number().int().nonnegative().nullable(),
-  truncated: z.boolean(),
-  limitations: z.array(z.string()),
-});
+export const appleAssetCatalogResultSchema = bundleResourceBoundResultSchema(
+  z.string().regex(/^[a-f0-9]{64}$/u),
+  {
+    catalogs: z.array(catalogSchema),
+    total_records: z.int().nonnegative(),
+    offset: z.int().nonnegative(),
+    limit: z.int().positive(),
+    records: z.array(recordSchema),
+    resource_key_matches: z.array(resourceKeyMatchSchema),
+    next_offset: z.int().nonnegative().nullable(),
+    truncated: z.boolean(),
+    limitations: z.array(z.string()),
+  },
+);
 
 export type AppleAssetCatalogRecord = z.infer<typeof recordSchema>;
 
@@ -83,7 +109,8 @@ export const parseAppleAssetCatalogRecords = (
 
 /** Project catalog records and apply stable global pagination. */
 export const projectAppleAssetCatalogPage = (input: {
-  readonly targetSha256: string;
+  readonly targetSha256: string | null;
+  readonly resourceRoot?: import("./bundleResourceRoot.js").BundleResourceRoot;
   readonly catalogs: readonly {
     readonly path: string;
     readonly sha256: string;
@@ -152,6 +179,9 @@ export const projectAppleAssetCatalogPage = (input: {
   });
   return appleAssetCatalogResultSchema.parse({
     target_sha256: input.targetSha256,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resource_root: input.resourceRoot }),
     catalogs: input.catalogs.map(
       ({ path, sha256, records: catalogRecords }) => ({
         path,
@@ -165,7 +195,7 @@ export const projectAppleAssetCatalogPage = (input: {
     records,
     resource_key_matches: resourceKeyMatches,
     next_offset: next < all.length ? next : null,
-    truncated: input.offset > 0 || next < all.length,
+    truncated: records.length !== all.length,
     limitations: [
       "Rendition metadata is reported as emitted by the installed assetutil version; private fields and platform-specific interpretations are not normalized.",
       "Asset catalog inspection does not decode or extract rendition image bytes.",

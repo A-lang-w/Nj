@@ -1,4 +1,8 @@
 import type { ElectronStaticFindings } from "./electronStaticAnalysisTypes.js";
+import type { JavaScriptRouteSourceFacts } from "./javascriptRouteFacts.js";
+
+/** Token semantics shared by bundle producers and worker admission. */
+export const JAVASCRIPT_AST_FINGERPRINT_ALGORITHM = "babel-ast-v3";
 
 /** Static syntax context retained for later artifact path resolution. */
 export type JavaScriptStaticPathContext =
@@ -42,13 +46,20 @@ export interface JavaScriptStaticEndpoint {
   readonly kind: "route" | "network";
   readonly value: string;
   readonly mechanism: string;
+  /**
+   * Only a name suggests this value: an overloaded callee whose network receiver
+   * is unproven, or a `path`/`route` property outside a router record.
+   */
+  readonly interpretation?: "candidate";
+  /** The request target is unresolved source text rather than an exact value. */
+  readonly resolution?: "partial";
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
 
-/** A storage surface observed without executing application code. */
+/** A storage API or explicitly uncertain candidate, without executing source. */
 export interface JavaScriptStaticStorage {
   readonly kind:
     | "local-storage"
@@ -56,6 +67,7 @@ export interface JavaScriptStaticStorage {
     | "indexed-db"
     | "cache-storage"
     | "sqlite";
+  readonly interpretation?: "candidate";
   readonly name: string | null;
   readonly mechanism: string;
   readonly module_key: string | null;
@@ -75,7 +87,7 @@ interface JavaScriptBundlerModuleState {
 /** One exact module factory recovered from a Webpack/Rspack registration. */
 export interface JavaScriptBundlerModule extends JavaScriptBundlerModuleState {
   readonly structural_fingerprint_sha256: string;
-  readonly structural_fingerprint_algorithm: "babel-ast-v1";
+  readonly structural_fingerprint_algorithm: typeof JAVASCRIPT_AST_FINGERPRINT_ALGORITHM;
 }
 
 /** One statically recognized bundler chunk or module registration. */
@@ -113,6 +125,8 @@ export interface JavaScriptStaticAnalysis {
   readonly visited_ast_nodes: number;
   readonly references: readonly JavaScriptStaticReference[];
   readonly endpoints: readonly JavaScriptStaticEndpoint[];
+  /** Missing in historical analyses; absence means unmeasured route coverage. */
+  readonly routes?: JavaScriptRouteSourceFacts;
   readonly storage: readonly JavaScriptStaticStorage[];
   readonly bundler_registrations: readonly JavaScriptBundlerRegistration[];
   readonly role_paths: readonly JavaScriptRolePath[];

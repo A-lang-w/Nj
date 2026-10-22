@@ -36,6 +36,22 @@ const archiveWithOverlappingObjectRanges = (objectCount: number): Buffer => {
 };
 
 describe("NIBArchive decoder", () => {
+  it("keeps leading U+FEFF in length-prefixed keys and class names", () => {
+    const archive = encodeArchive({
+      classes: ["\uFEFFWidget"],
+      objects: [{ classIndex: 0, values: { count: 1, "\uFEFFcount": 2 } }],
+    });
+    expect(decodeNibArchive(archive).objects).toEqual([
+      {
+        id: 0,
+        class_name: "\uFEFFWidget",
+        values: { count: 1, "\uFEFFcount": 2 },
+      },
+    ]);
+    const invalid = Buffer.from(archive);
+    invalid[invalid.indexOf(Buffer.from("\uFEFFcount"))] = 0xff;
+    expect(() => decodeNibArchive(invalid)).toThrow(/not valid UTF-8/u);
+  });
   it("decodes bounded object, key, class, and reference tables", () => {
     const archive = encodeArchive({
       classes: ["NSView\0", "NSString\0"],
@@ -59,6 +75,54 @@ describe("NIBArchive decoder", () => {
       },
     ]);
     expect(decoded.coder_version).toBe(10);
+  });
+
+  it("reads boolean value tags with AppKit's polarity", () => {
+    // Raw tags, independent of the fixture encoder's boolean encoding: AppKit's
+    // decodeBoolForKey: returns NO for tag 4 and YES for tag 5 in compiled nibs.
+    const archive = encodeArchive({
+      classes: ["NSButton"],
+      objects: [
+        {
+          classIndex: 0,
+          values: {
+            NSControlContinuous: null,
+            NSControlRefusesFirstResponder: null,
+            NSEnabled: 0,
+          },
+        },
+      ],
+    });
+    const values = archive.readUInt32LE(38);
+    // Value records: key varint, then type tag; both fields start as nil (9).
+    expect([...archive.subarray(values, values + 4)]).toEqual([
+      0x80, 9, 0x81, 9,
+    ]);
+    const tagged = Buffer.from(archive);
+    tagged[values + 1] = 4;
+    tagged[values + 3] = 5;
+    expect(decodeNibArchive(tagged).objects[0]?.values).toEqual({
+      NSControlContinuous: false,
+      NSControlRefusesFirstResponder: true,
+      NSEnabled: 0,
+    });
+  });
+
+  it("counts AppKit outlet, action, and binding connector objects", () => {
+    const archive = encodeArchive({
+      classes: [
+        "NSNibOutletConnector",
+        "NSNibControlConnector",
+        "NSNibBindingConnector",
+      ],
+      objects: [
+        { classIndex: 0, values: {} },
+        { classIndex: 1, values: {} },
+        { classIndex: 2, values: {} },
+      ],
+    });
+
+    expect(decodeNibArchive(archive).connection_object_count).toBe(3);
   });
 
   it("rejects malformed references and unsupported format versions", () => {

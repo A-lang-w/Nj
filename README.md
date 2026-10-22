@@ -1,6 +1,7 @@
 <div align="center">
 
-**English** · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
+**English** · [简体中文](docs/readme/README_zh.md) · [繁體中文](docs/readme/README_zh-TW.md) · [日本語](docs/readme/README_ja.md) · [한국어](docs/readme/README_ko.md) · [Türkçe](docs/readme/README_tr.md) · [Русский](docs/readme/README_ru.md) · [Tiếng Việt](docs/readme/README_vi.md) · [ไทย](docs/readme/README_th.md) · [Deutsch](docs/readme/README_de.md) · [Español](docs/readme/README_es.md) · [Français](docs/readme/README_fr.md) · [Українська](docs/readme/README_uk.md) · [Polski](docs/readme/README_pl.md) · [Português (Brasil)](docs/readme/README_pt-BR.md) · [العربية](docs/readme/README_ar.md) · [فارسی](docs/readme/README_fa.md) · [Bahasa Indonesia](docs/readme/README_id.md) · [Italiano](docs/readme/README_it.md)
+· [Ελληνικά](docs/readme/README_el.md) · [മലയാളം](docs/readme/README_ml.md)
 
 # REA: Reverse Engineer Anything
 
@@ -22,6 +23,16 @@
 [Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
+
+</div>
+
+> [!IMPORTANT]
+> Get REA from [morluto/rea](https://github.com/morluto/rea),
+> [rea.tools](https://rea.tools/), or the [rea-agents npm package](https://www.npmjs.com/package/rea-agents).
+> Follow the installation and release links from these official sources. A similar
+> repository name or copied README does not establish that a download is official.
+
+<div align="center">
 
 <br />
 
@@ -57,6 +68,11 @@ Setup registers REA with your agent and installs matching workflow instructions.
 
 ## Quick start
 
+On Linux, Ghidra, JADX, firmware tool launches and static JavaScript/Electron
+analysis require a procps-compatible `ps` on REA's `PATH` for process ownership
+checks. Recovery steps are in `docs/installation.md` under
+"Linux owned-process prerequisite".
+
 ### Set up your agent
 
 With Node.js and npm installed, run:
@@ -73,6 +89,12 @@ Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/installation.md#supported-agents). See
 [installation and setup](docs/installation.md) for provider configuration and
 manual MCP registration.
+
+MCP uses compact input schemas by default to reduce context overhead. Set
+`REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
+complete advertised field guidance and nested validation details. Both profiles
+keep the full tool set and canonical server validation. See
+"Compact input schema profile" in the MCP contracts guide.
 
 ### Ask your agent
 
@@ -116,6 +138,14 @@ For a CLI installed with `npm install --global` or `bun add --global`:
 rea update
 ```
 
+`rea --update` is an alias for this verified workflow and accepts the same global
+output flags. Use `rea update` when combining it with other command controls.
+
+Updater commands retain at most 4 MiB of stdout and stderr combined. Oversized
+metadata replies are rejected after the command exits; verbose installs continue
+with bounded diagnostics. Human progress output respects terminal backpressure
+and waits for submitted writes to finish.
+
 Bun global updates require Bun 1.2.17 or later. With an older Bun release,
 upgrade Bun manually before running `rea update`.
 
@@ -150,35 +180,57 @@ CLI commands use the same workflows.
 REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+, plus npm.
 Additional tools and host support depend on the target:
 
-| Target                 | What REA returns                                                                     | Requirements and guide                                                                                                                |
-| ---------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Native binaries        | Pseudocode, assembly, strings, symbols, calls and references                         | Hopper, Ghidra or IDA; [native analysis](https://rea.tools/guides/native/)                                                            |
-| Offline ELF layout     | Sections, segments, original symbols/relocations and static mitigation candidates    | Caller-supplied pwntools on Linux x64; [binary diagnostics](docs/binary-diagnostics.md)                                               |
-| Go binaries            | Embedded compiler version, modules, replacements and build settings                  | Built-in static ELF/PE/thin Mach-O inspection; no Go installation required                                                            |
-| WASM artifact          | Validation, sections, exact import/export WAT forms and decoded WAT                  | Caller-supplied WABT 1.0.42; `inspect_wasm_artifact`                                                                                  |
-| EVM bytecode           | Dispatch selectors, byte offsets, inferred arguments and mutability                  | Local raw/hex carrier on Linux x64; [offline EVM guide](docs/evm-bytecode.md)                                                         |
-| Recorded Linux crashes | Raw notes, every recorded thread's registers/signals and optional mapping candidates | Caller-supplied pwntools on Linux x64; optional GDB/pwndbg; [recorded crashes](docs/recorded-crashes.md)                              |
-| JavaScript / Electron  | Modules, imports, source maps, routes, IPC and native add-on relationships           | Node.js and npm; [application analysis](https://rea.tools/guides/javascript/)                                                         |
-| Websites               | Page structure, scripts, network observations and requested screenshots              | A Chrome-family browser; [browser analysis](https://rea.tools/guides/browser/)                                                        |
-| Saved network captures | Requests, responses, exposed payloads and source locations                           | HAR; mitmdump on Linux for native mitmproxy captures; [capture guide](docs/web-network-captures.md)                                   |
-| .NET assemblies        | Metadata, CIL instructions, declared native dependencies and build comparisons       | None (static only); [managed-code guide](docs/managed-code-analysis.md)                                                               |
-| Android APKs           | Manifest declarations, classes, decompiled methods and references                    | Headless JADX and a full JDK on Linux/macOS/Windows x64; [Android guide](docs/android-analysis.md)                                    |
-| Android devices        | Devices, packages, processes, logs, dumps, screen captures, and APK/file transfers   | Caller-supplied adb (emulator or hardware); [ADB guide](docs/adb-device-analysis.md)                                                  |
-| JEB projects           | Engine-backed project units, artifact digests and type/method pseudo-code            | A caller-started JEB client serving MCP, selected with REA_JEB_MCP_URL; [JEB guide](docs/jeb-analysis.md)                             |
-| Android resources      | Decoded manifest, string tables, locales and version facts                           | Caller-supplied Apktool launcher; [resource guide](docs/apktool-resource-analysis.md)                                                 |
-| Firmware               | Regions, extraction results and native-analysis handoffs                             | Binwalk / Unblob on Linux; [firmware guide](docs/firmware-analysis.md)                                                                |
-| Packages and resources | File inventories, digests, plists, Apple bundle anatomy and extracted resources      | [Artifact and JavaScript guide](docs/javascript-artifact-reconstruction.md), [Apple applications](docs/apple-application-analysis.md) |
-| Process behavior       | Terminal output, interactions, exit and filesystem observations, and run comparisons | Linux/macOS with a native PTY; [process capture](docs/process-capture.md)                                                             |
+| Target                  | What REA returns                                                                                  | Requirements and guide                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop installations   | Runtime candidates, supporting files, component markers and next probes                           | Built-in bounded directory/header inspection; [desktop applications](docs/desktop-applications.md)                                    |
+| Native binaries         | Pseudocode, assembly, strings, symbols, calls and references                                      | Hopper, Ghidra or IDA; [native analysis](docs/native-investigation.md)                                                                |
+| Offline ELF layout      | Sections, segments, original symbols/relocations and static mitigation candidates                 | Caller-supplied pwntools on Linux x64; [binary diagnostics](docs/binary-diagnostics.md)                                               |
+| Go binaries             | Embedded compiler version, modules, replacements and build settings                               | Built-in static ELF/PE/thin Mach-O inspection; no Go installation required                                                            |
+| GPU code objects        | CUDA/HIP targets, selected kernel parameters and resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](docs/gpu-code-objects.md)                                      |
+| Model artifacts         | GGUF / safetensors metadata, tensor declarations and derived totals                               | Built-in header inspection; optional full-file hash; [model files](docs/model-artifacts.md)                                           |
+| IL2CPP metadata         | Unity global-metadata.dat assembly images, type and method names and index ranges                 | Built-in static decoding of versions 24, 27, 29, 31 and 39; no Unity required                                                         |
+| Godot PCK               | Archive inventory and extraction, original header/directory facts and selected content identities | Built-in static formats 2, 3 and 4; no Godot required                                                                                 |
+| Rust binaries           | Embedded cargo-auditable crate names, versions, sources and dependency edges                      | Built-in static ELF/PE/thin Mach-O inspection; [Rust binaries](docs/rust-binaries.md)                                                 |
+| PE certificates         | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                      | Built-in static PE inspection; [PE certificates](docs/pe-certificates.md)                                                             |
+| ELF notes               | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                   | Built-in static ELF inspection; [ELF notes](docs/elf-notes.md)                                                                        |
+| Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas and the Code header                                  | Built-in static BEAM inspection; [Erlang BEAM](docs/erlang-beam.md)                                                                   |
+| WASM artifact           | Validation, sections, exact import/export WAT forms and decoded WAT                               | Caller-supplied WABT 1.0.42; `inspect_wasm_artifact`                                                                                  |
+| EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments and mutability                               | Local raw/hex carrier on Linux x64; [offline EVM guide](docs/evm-bytecode.md)                                                         |
+| SQLite databases        | Tables, columns, indexes, views, triggers and selected ordinary-table rows                        | Local database/WAL snapshot; Node.js 24.x >=24.15 or 26+ with native SQLite limits                                                    |
+| Recorded Linux crashes  | Raw notes, every recorded thread's registers/signals and optional mapping candidates              | Caller-supplied pwntools on Linux x64; optional GDB/pwndbg; [recorded crashes](docs/recorded-crashes.md)                              |
+| JavaScript / Electron   | Modules, imports, source maps, routes, IPC and native add-on relationships                        | Node.js and npm; Linux: procps-compatible `ps`; [application analysis](docs/javascript-application-workflows.md)                      |
+| Websites                | Page structure, scripts, network observations and requested screenshots                           | A Chrome-family browser; [browser analysis](docs/browser-observation.md)                                                              |
+| Saved network captures  | Requests, responses, exposed payloads and source locations                                        | HAR or Fiddler Everywhere SAZ; mitmdump on Linux for native mitmproxy; [capture guide](docs/web-network-captures.md)                  |
+| .NET assemblies         | Metadata, CIL instructions, declared native dependencies and build comparisons                    | None (static only); [managed-code guide](docs/managed-code-analysis.md)                                                               |
+| Android APKs            | Manifest declarations, classes, decompiled methods and references                                 | Headless JADX and a full JDK on Linux/macOS/Windows x64; [Android guide](docs/android-analysis.md)                                    |
+| APK signatures          | v1/v2/v3/v3.1 signers, certificate fingerprints, key rotation and digest self-consistency         | None (static only); `inspect_apk_signature`                                                                                           |
+| Android devices         | Devices, packages, processes, logs, dumps, screen captures, and APK/file transfers                | Caller-supplied adb (emulator or hardware); [ADB guide](docs/adb-device-analysis.md)                                                  |
+| JEB projects            | Engine-backed project units, artifact digests and type/method pseudo-code                         | A caller-started JEB client serving MCP, selected with REA_JEB_MCP_URL; [JEB guide](docs/jeb-analysis.md)                             |
+| Android resources       | Decoded manifest, string tables, locales and version facts                                        | Caller-supplied Apktool launcher; [resource guide](docs/apktool-resource-analysis.md)                                                 |
+| Flutter apps            | Dart snapshot hash, per-ABI library digests and engine build provenance                           | None (static APK parsing); [Flutter guide](docs/flutter-analysis.md)                                                                  |
+| Firmware                | Regions, extraction results and native-analysis handoffs                                          | Binwalk / Unblob on Linux; [firmware guide](docs/firmware-analysis.md)                                                                |
+| Recorded packets        | Selected fields, repeated values, filters and decode-as rules                                     | Linux: TShark 4.x + prlimit; [capture guide](docs/packet-captures.md)                                                                 |
+| Packet summaries        | Endpoints, DNS, TLS SNI, protocol distribution and HTTP requests                                  | Caller-supplied tshark and capinfos (Linux-verified); [pcap guide](docs/pcap-analysis.md)                                             |
+| Recorded logic signals  | Decoder annotations, sample ranges and diagnostics                                                | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](docs/signal-recordings.md)                                                     |
+| Packages and resources  | File inventories, digests, plists, Apple bundle anatomy and extracted resources                   | [Artifact and JavaScript guide](docs/javascript-artifact-reconstruction.md), [Apple applications](docs/apple-application-analysis.md) |
+| Process behavior        | Terminal output, interactions, exit and filesystem observations, and run comparisons              | Linux/macOS with a native PTY; [process capture](docs/process-capture.md)                                                             |
+| PyInstaller executables | CArchive members, Python version, entry scripts and extracted bytecode                            | None (static only); [Python packaged applications](docs/python-packaged-applications.md)                                              |
 
 Static JavaScript and .NET inspection read the supplied files without running
 the application. Runtime capture runs or interacts with the selected target
 using your user permissions; each runtime guide describes its effects.
 
+For offline native-binary inspection, REA also supports caller-supplied GNU
+objdump and Rizin. See the [reverse-engineering tools guide](docs/reverse-engineering-tools.md)
+for provider setup, CLI commands, and Evidence limitations. REA does not install
+or update either provider.
+
 <a id="choosing-a-deep-analysis-provider"></a>
 
 Native formats and host support vary by provider. See
 [Hopper and Ghidra setup](docs/installation.md#hopper), the
-[IDA guide](docs/ida-provider.md), and
+[IDA guide](docs/ida-provider.md) (including an optional native MCP bridge), the
+[Kuna decompiler guide](docs/kuna-provider.md), and
 [experimental Windows Ghidra support](docs/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/ghidra-dos.md).
 For large binaries, raise the provider's startup deadline with
@@ -317,7 +369,7 @@ Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Star history
 
-🎉 **110,000 GitHub stars — thank you!**
+🎉 **300,000 GitHub stars — thank you!**
 
 Thanks to everyone using REA, reporting bugs, requesting features, testing builds, and contributing fixes.
 
@@ -331,9 +383,13 @@ Thanks to everyone using REA, reporting bugs, requesting features, testing build
 
 ## Disclaimer
 
-REA provides tools for lawful reverse-engineering research, analysis, and reconstruction. You are responsible for obtaining any required authorization and complying with applicable laws. The project does not endorse illegal or unauthorized use.
+See [DISCLAIMER.md](DISCLAIMER.md) for responsible-use guidance.
 
-REA is an open-source software project. We have not issued or endorsed any cryptocurrency or token. Tokens using the REA name are not affiliated with the project.
+The project's position on illegal or unauthorized use covers all REA versions,
+distribution channels, and platforms; each copy retains its applicable licenses.
+
+REA is for lawful research, education, interoperability, software preservation,
+and analysis of software you own or are authorized to examine.
 
 ## Contributing
 
@@ -348,3 +404,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
 ## License
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see
+[Third-party notices](THIRD_PARTY_NOTICES.md) for the dependency inventory,
+preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable
+licenses. REA grants no tool license, key, or activation entitlement. Trials and
+demos remain subject to vendor terms, including user, feature, automation, and
+output sharing restrictions. Cracked copies, stolen keys, unauthorized key
+sharing, and bypassing license restrictions are not authorized. This guidance
+does not amend MIT or third-party licenses.

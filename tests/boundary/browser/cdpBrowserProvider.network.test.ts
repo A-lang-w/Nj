@@ -5,6 +5,82 @@ import { inspectWebPageInputSchema } from "../../../src/domain/browserObservatio
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
+it("preserves Document Link fields, structured policies and derived agent hints", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents(command, origin) {
+      if (command.method !== "Network.enable") return undefined;
+      const session =
+        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+      return [
+        {
+          ...session,
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId: "repeated-document",
+            type: "Document",
+            request: { url: `${origin}/frame`, method: "GET" },
+            initiator: { type: "parser" },
+          },
+        },
+        {
+          ...session,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "repeated-document",
+            type: "Document",
+            response: {
+              url: `${origin}/frame`,
+              status: 200,
+              mimeType: "text/html",
+              headers: {
+                Link: "</next>; rel=next\n</agent>; rel=mcp",
+                "Cross-Origin-Opener-Policy": 'same-origin; report-to="coop"',
+                "Cross-Origin-Embedder-Policy":
+                  'require-corp; report-to="coep"',
+              },
+            },
+          },
+        },
+      ];
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 1,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.metadata.responses).toContainEqual(
+    expect.objectContaining({
+      request_id: "repeated-document",
+      policies: expect.objectContaining({
+        coop: "same-origin",
+        coep: "require-corp",
+      }),
+      links: [
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/next`,
+          rel: ["next"],
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/agent`,
+          rel: ["mcp"],
+        }),
+      ],
+    }),
+  );
+  expect(result.value.metadata.agent_hints).toContainEqual({
+    mechanism: "link_rel",
+    declaration: "mcp",
+    url: `${browser.allowedOrigin}/agent`,
+    trust: "page-declared-untrusted",
+  });
+});
+
 it("preserves unavailable response observations and captures completed peers", async () => {
   const browser = await startFakeCdpBrowser({
     commandEvents(command, origin) {
@@ -129,6 +205,203 @@ it("preserves unavailable response observations and captures completed peers", a
       .filter(({ method }) => method === "Network.getResponseBody")
       .map(({ params }) => params.requestId),
   ).toEqual(["missing-body", "available"]);
+});
+
+it("marks JSON response bodies unavailable when their events arrive during body capture", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents(command, origin) {
+      const session =
+        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+      if (command.method === "Network.enable") {
+        const url = `${origin}/initial.json`;
+        return [
+          {
+            ...session,
+            method: "Network.requestWillBeSent",
+            params: {
+              requestId: "initial",
+              request: { url, method: "GET" },
+              initiator: { type: "other" },
+            },
+          },
+          {
+            ...session,
+            method: "Network.responseReceived",
+            params: {
+              requestId: "initial",
+              response: { url, status: 200, mimeType: "application/json" },
+            },
+          },
+          {
+            ...session,
+            method: "Network.loadingFinished",
+            params: { requestId: "initial", encodedDataLength: 16 },
+          },
+        ];
+      }
+      if (command.method !== "Network.getResponseBody") return undefined;
+      const url = `${origin}/late.json`;
+      return [
+        {
+          ...session,
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId: "late",
+            request: { url, method: "GET" },
+            initiator: { type: "other" },
+          },
+        },
+        {
+          ...session,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "late",
+            response: { url, status: 200, mimeType: "application/json" },
+          },
+        },
+        {
+          ...session,
+          method: "Network.loadingFinished",
+          params: { requestId: "late", encodedDataLength: 14 },
+        },
+      ];
+    },
+    commandResult(command) {
+      return command.method === "Network.getResponseBody"
+        ? { body: '{"initial":true}', base64Encoded: false }
+        : undefined;
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 20,
+      include_json_body_shapes: true,
+    }),
+  );
+
+  if (!result.ok) throw result.error;
+  expect(result.value.network.requests).toEqual([
+    expect.objectContaining({
+      request_id: "initial",
+      body_shapes: {
+        status: "included",
+        request: null,
+        response: expect.any(Object),
+      },
+    }),
+    expect.objectContaining({
+      request_id: "late",
+      body_shapes: { status: "unavailable", request: null, response: null },
+    }),
+  ]);
+  expect(result.value.completeness.unavailable_sections).toContain(
+    "json_body_shapes",
+  );
+});
+
+it("does not attach a redirect response body to the reused request ID", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents(command, origin) {
+      const session =
+        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+      if (command.method === "Network.enable") {
+        const url = `${origin}/before-redirect.json`;
+        return [
+          {
+            ...session,
+            method: "Network.requestWillBeSent",
+            params: {
+              requestId: "reused",
+              request: { url, method: "GET" },
+              initiator: { type: "other" },
+            },
+          },
+          {
+            ...session,
+            method: "Network.responseReceived",
+            params: {
+              requestId: "reused",
+              response: { url, status: 302, mimeType: "application/json" },
+            },
+          },
+          {
+            ...session,
+            method: "Network.loadingFinished",
+            params: { requestId: "reused", encodedDataLength: 12 },
+          },
+        ];
+      }
+      if (command.method !== "Network.getResponseBody") return undefined;
+      const previousUrl = `${origin}/before-redirect.json`;
+      const nextUrl = `${origin}/after-redirect.json`;
+      return [
+        {
+          ...session,
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId: "reused",
+            request: { url: nextUrl, method: "GET" },
+            initiator: { type: "other" },
+            redirectResponse: {
+              url: previousUrl,
+              status: 302,
+              mimeType: "application/json",
+              encodedDataLength: 12,
+            },
+          },
+        },
+        {
+          ...session,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "reused",
+            response: {
+              url: nextUrl,
+              status: 200,
+              mimeType: "application/json",
+            },
+          },
+        },
+        {
+          ...session,
+          method: "Network.loadingFinished",
+          params: { requestId: "reused", encodedDataLength: 14 },
+        },
+      ];
+    },
+    commandResult(command) {
+      return command.method === "Network.getResponseBody"
+        ? { body: '{"belongs":"redirect"}', base64Encoded: false }
+        : undefined;
+    },
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 20,
+      include_json_body_shapes: true,
+    }),
+  );
+
+  if (!result.ok) throw result.error;
+  expect(result.value.network.requests).toEqual([
+    expect.objectContaining({
+      request_id: "reused",
+      url: `${browser.allowedOrigin}/after-redirect.json`,
+      redirects: [expect.objectContaining({ status: 302 })],
+      body_shapes: { status: "unavailable", request: null, response: null },
+    }),
+  ]);
+  expect(result.value.completeness.unavailable_sections).toContain(
+    "json_body_shapes",
+  );
 });
 
 it("marks malformed JSON body shapes unavailable while preserving partial request shapes", async () => {
@@ -301,6 +574,12 @@ it("rejects malformed response-body envelopes and preserves request shapes", asy
     reason: "invalid_protocol_value",
     count: 2,
   });
+  expect(result.value.completeness.excluded).not.toContainEqual(
+    expect.objectContaining({
+      section: "json_body_shapes",
+      reason: "provider_unavailable",
+    }),
+  );
 });
 
 it.each([

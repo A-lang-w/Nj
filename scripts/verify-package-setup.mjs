@@ -21,6 +21,13 @@ import {
 } from "./lib/verify-package-core.mjs";
 import { parse as parseJsonc } from "jsonc-parser";
 import { skillReferenceIssues } from "./lib/docs-facts.mjs";
+import { setupPlanFailureMessage } from "./verify-package-setup-plan.mjs";
+
+export const terminalModesRestored = (termios) => {
+  if (typeof termios !== "string") return false;
+  const modes = new Set(termios.trim().split(/\s+/u));
+  return modes.has("icanon") && modes.has("echo");
+};
 
 const OPENCODE_ORIGINAL = `{
   // OpenCode preferences must survive setup.
@@ -131,8 +138,7 @@ const verifyInteractiveSetup = async ({
         childResult?.status !== 0 ||
         !output.includes("\u001b[?25h") ||
         (process.platform !== "win32" &&
-          (!childResult.termios?.includes("icanon") ||
-            !childResult.termios?.includes("echo"))) ||
+          !terminalModesRestored(childResult.termios)) ||
         !output.includes("No changes were made.")
       ) {
         finish(
@@ -245,23 +251,37 @@ const verifySetupPlan = async ({
   );
   const planned = json(plannedExecution.stdout);
   if (supportedSetupHost) {
+    const plannedActions = Array.isArray(planned?.plannedActions)
+      ? planned.plannedActions
+      : undefined;
+    const appliedActions = Array.isArray(planned?.appliedActions)
+      ? planned.appliedActions
+      : undefined;
     const plannedClaudeConfig = await readFile(claudeConfig, "utf8");
     const plannedCodexConfig = await readFile(codexTarget, "utf8");
     const plannedCursorConfig = await readFile(cursorConfig, "utf8");
     const plannedOpenCodeConfig = await readFile(opencodeConfig, "utf8");
     if (
-      planned.status !== "planned" ||
+      planned?.status !== "planned" ||
       plannedExecution.status !== 0 ||
-      planned.appliedActions.length !== 0 ||
-      !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
-      !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
+      plannedActions === undefined ||
+      appliedActions === undefined ||
+      appliedActions.length !== 0 ||
+      !plannedActions.some((action) => action?.kind === "configure_client") ||
+      !plannedActions.some((action) => action?.kind === "install_skill") ||
       plannedClaudeConfig !== '{"existing":true}\n' ||
       plannedCodexConfig !== CODEX_ORIGINAL ||
       plannedCursorConfig !== '{"existing":true}\n' ||
       plannedOpenCodeConfig !== opencodeOriginal
     )
       throw new Error(
-        `packaged setup plan was not read-only: ${JSON.stringify({ status: planned.status, exitCode: plannedExecution.status, plannedKinds: planned.plannedActions.map(({ kind }) => kind), appliedKinds: planned.appliedActions.map(({ kind }) => kind), claudeConfig: plannedClaudeConfig, codexConfig: plannedCodexConfig, cursorConfig: plannedCursorConfig })}`,
+        setupPlanFailureMessage({
+          planned,
+          plannedExecution,
+          plannedClaudeConfig,
+          plannedCodexConfig,
+          plannedCursorConfig,
+        }),
       );
   }
   return { planned };
@@ -356,9 +376,8 @@ const verifySetupApply = async ({
   hopperSetupSupported,
 }) => {
   const status = "ready";
-  const hopperStatus = hopperSetupSupported
-    ? "needs_confirmation"
-    : "needs_human";
+  const hopperStatus =
+    hopperSetupSupported === true ? "needs_confirmation" : "needs_human";
   const firstExecution = await runWithStatus(
     cli,
     ["setup", "--yes", "--all-detected", "--json"],
@@ -415,7 +434,8 @@ const verifySetupApply = async ({
   };
 };
 
-const assertClientConfig = async (cli, configPath) => {
+/** Verify the live registration and exact pre-setup backup bytes. */
+export const assertClientConfig = async (cli, configPath, original) => {
   const config = json(await readFile(configPath, "utf8"));
   if (
     config.existing !== true ||
@@ -423,9 +443,7 @@ const assertClientConfig = async (cli, configPath) => {
     JSON.stringify(config.mcpServers?.rea?.args) !== JSON.stringify(["mcp"])
   )
     throw new Error("packaged client readback failed");
-  if (
-    !(await readFile(`${configPath}.rea.backup`, "utf8")).includes("existing")
-  )
+  if (!(await readFile(`${configPath}.rea.backup`)).equals(original))
     throw new Error("packaged client backup failed");
 };
 
@@ -468,9 +486,7 @@ const assertCodexSymlink = async ({
     !codex.includes(`command = "${cli}"`) ||
     !codex.includes("startup_timeout_sec = 30") ||
     !codex.startsWith(CODEX_ORIGINAL) ||
-    (await readFile(`${codexConfig}.rea.backup`, "utf8")) !== CODEX_ORIGINAL ||
-    (await readFile(`${cursorConfig}.rea.backup`, "utf8")) !==
-      '{"existing":true}\n'
+    (await readFile(`${codexConfig}.rea.backup`, "utf8")) !== CODEX_ORIGINAL
   )
     throw new Error("packaged setup did not preserve config symlinks");
 };
@@ -535,9 +551,11 @@ const verifyConfigReadback = async ({
   siblingSkillPath,
   opencodeConfig,
   opencodeOriginal,
+  claudeOriginal,
+  cursorOriginal,
 }) => {
-  await assertClientConfig(cli, claudeConfig);
-  await assertClientConfig(cli, cursorConfig);
+  await assertClientConfig(cli, claudeConfig, claudeOriginal);
+  await assertClientConfig(cli, cursorConfig, cursorOriginal);
   await assertCodexSymlink({
     cli,
     codexConfig,
@@ -730,6 +748,9 @@ export async function verifyPackageSetup({
     opencodeConfig,
     skillPath,
   ];
+  const [claudeOriginal, cursorOriginal] = supportedSetupHost
+    ? await Promise.all([readFile(claudeConfig), readFile(cursorConfig)])
+    : [];
   await verifyInteractiveSetup({
     command: packageRunnerCli,
     environment,
@@ -773,6 +794,8 @@ export async function verifyPackageSetup({
       siblingSkillPath,
       opencodeConfig,
       opencodeOriginal: OPENCODE_ORIGINAL,
+      claudeOriginal,
+      cursorOriginal,
     });
     await verifySetupFailureRecovery({
       cli,

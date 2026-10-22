@@ -9,7 +9,11 @@ import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnaly
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
+  HTML_INLINE_SCRIPT_LOCATION_COVERAGE_LIMIT,
+  omittedHtmlInlineScriptLocations,
   selfReferenceOmissions,
+  dependencyManifest,
+  applicationContainerIdentity,
   type JavaScriptArtifactGraphContext,
 } from "./JavaScriptArtifactGraphContext.js";
 import {
@@ -25,6 +29,7 @@ import {
 import {
   completeApplicationCoverage,
   partialApplicationCoverage,
+  truncatedApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSemanticResourceLimit } from "../../domain/javascript/javascriptSemanticValueTypes.js";
 import {
@@ -90,19 +95,86 @@ function* buildJavaScriptArtifactGraphInputSteps(
 ): Generator<void, unknown> {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
+  const parsedPackages = new Set(
+    analysis.packages
+      .filter((metadata) => metadata.status === "included")
+      .map(({ path }) => path),
+  );
+  const applicationOwnershipUnknownContainers = new Set<string>();
+  const applicationModuleGapSources = new Map<string, Set<string>>();
+  const applicationModuleReferencesRetained = new Set<string>();
+  const recordModuleGap = (file: {
+    path: string;
+    container_sha256: string;
+  }) => {
+    const container = applicationContainerIdentity(fileSet, file);
+    const sources =
+      applicationModuleGapSources.get(container) ?? new Set<string>();
+    sources.add(file.path);
+    applicationModuleGapSources.set(container, sources);
+  };
+  for (const files of [fileSet.files, fileSet.unavailable_relevant_files]) {
+    for (const file of files) {
+      if (
+        file.kind === "package-json" &&
+        !dependencyManifest(file.path) &&
+        !parsedPackages.has(file.path)
+      )
+        applicationOwnershipUnknownContainers.add(
+          applicationContainerIdentity(fileSet, file),
+        );
+      if (
+        file.kind === "javascript" &&
+        (!("text" in file) || !file.text.included)
+      )
+        recordModuleGap(file);
+    }
+  }
+  // Omitted module relationships can hide another launch owner. Do not expand
+  // retained facts beyond the projection guard merely to recover ownership.
+  for (const analyzed of analysis.files) {
+    if (
+      analyzed.application_projection_failure !== undefined ||
+      analyzed.analysis_failure !== undefined ||
+      analyzed.javascript?.parse_status === "failed" ||
+      (analyzed.javascript?.parse_error_count ?? 0) > 0
+    )
+      recordModuleGap(analyzed.file);
+    else if (analyzed.javascript !== null)
+      applicationModuleReferencesRetained.add(analyzed.file.path);
+  }
+  const unavailableFilesByPath = new Map(
+    fileSet.unavailable_relevant_files.map((file) => [file.path, file]),
+  );
   const context: JavaScriptArtifactGraphContext = {
     accumulator,
     snapshot,
     fileSet,
     analysis,
+    directoryPaths: new Set(
+      snapshot.occurrences
+        .filter(({ entry_kind }) => entry_kind === "directory")
+        .map(({ logical_path }) => logical_path),
+    ),
     root,
     filesByPath: new Map(fileSet.files.map((file) => [file.path, file])),
+    unanalyzedFiles: {
+      get: (path) =>
+        unavailableFilesByPath.get(path) ?? fileSet.unanalyzed_files?.get(path),
+      hasDirectory: (path, container) =>
+        fileSet.unanalyzed_files?.hasDirectory(path, container) ?? false,
+    },
     fileNodes: new Map(),
     assetNodes: new Map(),
     sourceModuleNodes: new Map(),
     chunkNodes: new Map(),
     moduleNodes: new Map(),
     containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
+    applicationRootsBySource: new Map(),
+    applicationOwnershipUnknownContainers,
+    applicationModuleGapSources,
+    applicationModuleReferencesRetained,
+    applicationPossibleRootsByContainer: new Map(),
   };
   addJavaScriptArtifactContainers(context);
   yield;
@@ -169,6 +241,7 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
   );
   const unknownGap =
     (context.fileSet.source_selection?.unselected_files ?? 0) > 0 ||
+    context.fileSet.unavailable_relevant_files.length > 0 ||
     context.analysis.files.some(
       ({ analysis_failure, application_projection_failure }) =>
         analysis_failure !== undefined ||
@@ -176,6 +249,7 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     ) ||
     context.analysis.parse_failures > 0 ||
     context.fileSet.invalid_utf8_files > 0 ||
+    context.analysis.html_inline_scripts.length > 0 ||
     sourceMapPolicyGap ||
     malformedStructuredData ||
     partialJavaScript;
@@ -187,18 +261,30 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
           : javaScriptAnalysisCoverageLimits(failure.limits),
       ),
   );
-  if (resourceLimits.length > 0 || executionLimits.length > 0)
-    return partialApplicationCoverage(
-      [
-        ...new Map(
-          [
-            ...semanticResourceLimitCoverage(resourceLimits),
-            ...executionLimits,
-          ].map((limit) => [JSON.stringify(limit), limit]),
-        ).values(),
-      ],
-      null,
-    );
+  // Capped inline script locations truncate the result. The total omission
+  // stays unknown because the unanalyzed bodies hide an unknown fact count.
+  const inlineScriptsTruncated =
+    omittedHtmlInlineScriptLocations(context.analysis.html_inline_scripts) > 0;
+  if (
+    resourceLimits.length > 0 ||
+    executionLimits.length > 0 ||
+    inlineScriptsTruncated
+  ) {
+    const limits = [
+      ...new Map(
+        [
+          ...semanticResourceLimitCoverage(resourceLimits),
+          ...executionLimits,
+          ...(inlineScriptsTruncated
+            ? [HTML_INLINE_SCRIPT_LOCATION_COVERAGE_LIMIT]
+            : []),
+        ].map((limit) => [JSON.stringify(limit), limit]),
+      ).values(),
+    ];
+    return inlineScriptsTruncated
+      ? truncatedApplicationCoverage(limits, null)
+      : partialApplicationCoverage(limits, null);
+  }
   if (unknownGap) return partialApplicationCoverage([], null);
   if (context.snapshot.integrity_contradictions.length > 0) {
     const nestedArchiveWasOpaque =

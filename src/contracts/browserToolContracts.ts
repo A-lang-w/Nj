@@ -1,3 +1,9 @@
+import { z } from "zod";
+import {
+  javaScriptRoutesCompleteDeliveryShape,
+  webRoutesSummaryDeliveryShape,
+} from "../domain/analysisView/javascriptRoutesView.js";
+import { javaScriptRoutesViewResultSchema } from "../domain/analysisView/analysisView.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,
@@ -23,6 +29,7 @@ import {
   browserCaptureComparisonInputSchema,
   browserCaptureComparisonSchema,
 } from "../domain/browserCaptureComparison.js";
+import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 import {
   captureWebScreenshotInputSchema,
   compareWebScreenshotsInputSchema,
@@ -34,7 +41,15 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(webPageInspectionSchema);
-const bundleOutputSchema = evidenceResultOf(webBundleAnalysisSchema);
+export const analyzeWebBundleRequestSchema = z
+  .discriminatedUnion("detail", [
+    analyzeWebBundleInputSchema.extend(javaScriptRoutesCompleteDeliveryShape),
+    analyzeWebBundleInputSchema.extend(webRoutesSummaryDeliveryShape),
+  ])
+  .meta({ "x-rea-root-discriminator": "detail" });
+const bundleOutputSchema = evidenceResultOf(
+  z.union([webBundleAnalysisSchema, javaScriptRoutesViewResultSchema]),
+);
 const observationSessionOutputSchema = evidenceResultOf(
   webObservationSessionSchema,
 );
@@ -84,6 +99,8 @@ const exampleScenarioCapture = () => ({
       response_body: false,
       header_values: false,
     },
+    event_families: [],
+    limits: DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS,
   },
   duration_ms: 10,
   steps: [
@@ -116,7 +133,16 @@ const exampleScenarioCapture = () => ({
       completeness: scenarioCompleteness,
     },
   ],
-  events: { retained: 0, dropped: 0, items: [] },
+  events: {
+    retained: 0,
+    dropped: 0,
+    items: [],
+    omissions: {
+      by_kind: [],
+      network_transactions: [],
+      network_transaction_range: null,
+    },
+  },
   completeness: scenarioCompleteness,
   limitations: [],
 });
@@ -127,7 +153,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "list_browser_targets",
     ...toolContractMetadata("list_browser_targets"),
     description:
-      "List page targets exposed by the selected loopback Chrome DevTools Protocol endpoint. Optionally filter by exact origin. URLs preserve query values and fragments; only URL userinfo credentials are removed.",
+      "List page targets exposed by the selected loopback Chrome DevTools Protocol endpoint. Optionally filter by exact origin. URLs preserve query values and fragments; only URL userinfo credentials are removed. HTTP discovery and browser-socket discovery use the fixed 10-second discovery deadline, then the socket closes without a later command. This operation accepts no command_timeout_ms; that listing deadline has no runtime override.",
     kind: "browser-provider",
     inputSchema: listBrowserTargetsInputSchema,
     outputSchema: listOutputSchema,
@@ -162,9 +188,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "analyze_web_bundle",
     ...toolContractMetadata("analyze_web_bundle"),
     description:
-      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed.",
+      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed. Select detail summary and an explicit javascript-routes view for filtered route patterns, occurrences, sources, unknowns or summary counts; complete Evidence remains retained for later views. Static candidates do not establish reachability or a complete application route denominator.",
     kind: "browser-provider",
-    inputSchema: analyzeWebBundleInputSchema,
+    inputSchema: analyzeWebBundleRequestSchema,
     outputSchema: bundleOutputSchema,
     examples: [
       {

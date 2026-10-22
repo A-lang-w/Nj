@@ -19,7 +19,47 @@ const hash = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 describe("managed member partial body comparison", () => {
-  it("keeps unavailable body facets unknown while retaining an observed signature change", () => {
+  it.each(["max_stack", "init_locals"] as const)(
+    "keeps an unavailable %s header fact unknown",
+    (field) => {
+      const left = inspect(buildManagedPeFixture(), "/tmp/header-known.dll");
+      const right = {
+        ...left,
+        result: {
+          ...left.result,
+          methods: left.result.methods.map((method) => ({
+            ...method,
+            body: { ...method.body, [field]: null },
+          })),
+        },
+      };
+      expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
+        status: "unknown",
+        dimensions: ["body-coverage"],
+      });
+    },
+  );
+
+  it("retains known header differences beside incomplete CIL", () => {
+    const left = inspect(buildManagedPeFixture(), "/tmp/header-partial.dll");
+    const right = {
+      ...left,
+      result: {
+        ...left.result,
+        methods: left.result.methods.map((method) => ({
+          ...method,
+          body: { ...method.body, status: "partial" as const, max_stack: 16 },
+        })),
+      },
+    };
+    expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["metadata", "body-coverage"],
+      limitations: expect.arrayContaining([expect.stringContaining("unknown")]),
+    });
+  });
+
+  it("keeps unavailable body facets unknown and a raw-only signature difference unchanged", () => {
     const left = inspect(buildManagedPeFixture(), "/tmp/left-body-partial.dll");
     const right = inspect(
       buildManagedPeFixture(),
@@ -85,9 +125,11 @@ describe("managed member partial body comparison", () => {
         result: rightSignatureChanged,
       },
     );
+    // Raw bytes that resolve to the same types, as when a rebuild moves a
+    // referenced type to another metadata row, are not a signature change.
     expect(signatureChanged.methods[0]).toMatchObject({
-      status: "changed",
-      dimensions: ["signature"],
+      status: "unchanged",
+      dimensions: [],
     });
 
     const bothAbsent = compareManagedMembers(

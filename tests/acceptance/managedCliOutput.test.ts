@@ -3,9 +3,55 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
+import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "managed CLI preserves malformed prefix evidence without a complete CIL fingerprint",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cil-prefix-");
+    for (const [name, il, status, coverage] of [
+      ["dangling", [0xfe, 0x13], "malformed", "partial"],
+      ["complete", [0x00, 0x2a], "present", "complete"],
+    ] as const) {
+      const path = join(root, `${name}.dll`);
+      await writeFile(
+        path,
+        buildManagedPeFixture({
+          ilBody: Buffer.from([(il.length << 2) | 2, ...il]),
+        }),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-managed-members", path, "--json"],
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.json).toMatchObject({
+        operation: "inspect_managed_members",
+        subject: { local_path: path },
+        normalized_result: {
+          coverage: { state: coverage },
+          user_strings: { state: coverage },
+          methods: [
+            expect.objectContaining({
+              body: expect.objectContaining({
+                status,
+                il_sha256: expect.any(String),
+                normalized_il_sha256:
+                  status === "malformed" ? null : expect.any(String),
+                issue:
+                  status === "malformed"
+                    ? "CIL prefix chain at IL offset 0 has no following instruction"
+                    : null,
+              }),
+            }),
+          ],
+        },
+      });
+    }
+  },
+);
 
 cliTest(
   "managed CLI retains metadata and CIL after repeated local constructor owner lookups",
@@ -128,7 +174,12 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-managed-cli-output-");
     const path = join(root, "fixture.dll");
-    await writeFile(path, buildManagedPeFixture());
+    await writeFile(
+      path,
+      buildManagedPeFixture({
+        ilBody: Buffer.from([0x0e, 0x17, 0x26, 0x2a]),
+      }),
+    );
     const argv = ["inspect-managed-members", path, "--json"];
     const result = await cli.run({ arguments: argv });
     expect(result.exitCode).toBe(0);
@@ -137,7 +188,35 @@ cliTest(
       provider: { id: "rea-dotnet-static" },
       subject: { local_path: path },
       normalized_result: {
-        methods: [expect.objectContaining({ token: expect.any(String) })],
+        methods: [
+          expect.objectContaining({
+            token: expect.any(String),
+            body: expect.objectContaining({
+              status: "present",
+              decoded_instruction_count: 3,
+              anchors: [
+                {
+                  il_offset: 0,
+                  opcode: "ldc.i4.1",
+                  operand_kind: "none",
+                  operand: null,
+                },
+                {
+                  il_offset: 1,
+                  opcode: "pop",
+                  operand_kind: "none",
+                  operand: null,
+                },
+                {
+                  il_offset: 2,
+                  opcode: "ret",
+                  operand_kind: "none",
+                  operand: null,
+                },
+              ],
+            }),
+          }),
+        ],
       },
     });
     const filtered = await cli.run({
@@ -174,6 +253,38 @@ cliTest(
     });
     expect(jsonl.exitCode).toBe(0);
     expect(jsonl.json).toBe("inspect_managed_members");
+  },
+);
+
+cliTest(
+  "managed CLI rejects repeated or empty type selections as invalid input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cli-types-");
+    const path = join(root, "fixture.dll");
+    await writeFile(path, buildManagedPeFixture());
+    for (const [types, message] of [
+      [["Fixture.Empty0", "Fixture.Empty0"], "must not repeat a name"],
+      [[""], ">=1 characters"],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-managed-members",
+          path,
+          ...types.flatMap((type) => ["--type", type]),
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: expect.stringMatching(/^type/u),
+            message: expect.stringContaining(message),
+          }),
+        ],
+      });
+    }
   },
 );
 
@@ -272,6 +383,75 @@ cliTest(
           },
         },
       });
+    }
+  },
+);
+
+cliTest(
+  "managed CLI reports a section table past EOF as invalid input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cli-sections-");
+    const path = join(root, "fixture.dll");
+    const bytes = buildManagedPeFixture();
+    const pe = bytes.readUInt32LE(0x3c);
+    const sections = pe + 24 + bytes.readUInt16LE(pe + 20);
+    bytes.writeUInt32LE(bytes.length + 0x1000, sections + 20);
+    await writeFile(path, bytes);
+    for (const command of [
+      "inspect-managed-artifact",
+      "inspect-managed-members",
+      "inspect-managed-native-boundaries",
+    ]) {
+      const result = await cli.run({ arguments: [command, path, "--json"] });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: expect.stringContaining("pe.section-data"),
+            },
+          ],
+        },
+      });
+    }
+  },
+);
+
+cliTest(
+  "managed CLI refuses non-PE executables as unsupported targets",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-non-pe-");
+    for (const [name, bytes, format] of [
+      ["native.elf", elf(2, 1, 0x3e), "elf"],
+      ["native.macho", thinMach(0xfeedfacf, 0x01000007), "mach-o"],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      for (const command of [
+        "inspect-managed-artifact",
+        "inspect-managed-members",
+        "inspect-managed-native-boundaries",
+      ]) {
+        const result = await cli.run({ arguments: [command, path, "--json"] });
+        expect(result.exitCode).not.toBe(0);
+        expect(result.json).toMatchObject({
+          code: "unsupported_target",
+          category: "unsupported_target",
+          retryable: false,
+          remediation: {
+            action:
+              "Select a target supported by this operation or choose an operation supporting the reported target format.",
+          },
+          details: {
+            operation: command.replaceAll("-", "_"),
+            path,
+            reason: `Managed static triage requires a PE target; observed ${format}.`,
+          },
+        });
+      }
     }
   },
 );

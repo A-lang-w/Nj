@@ -47,7 +47,7 @@ interface EvaluationContext {
   readonly candidates: ReadonlyMap<string, ReconstructionObligationCandidate>;
   readonly evidence: ReadonlyMap<string, Evidence>;
   readonly bindings: ReadonlyMap<string, readonly Binding[]>;
-  readonly contradictions: ReadonlyMap<string, readonly string[]>;
+  readonly contradictions: ReturnType<typeof groupManifestContradictions>;
 }
 
 export const evaluateReconstructionObligationLedger = ({
@@ -268,6 +268,14 @@ const evaluateBinding = (
       );
       continue;
     }
+    for (const fixture of fixtures)
+      for (const evidenceId of fixture.evidence_ids)
+        if (!context.evidence.has(evidenceId))
+          addDiagnostic(
+            diagnostics,
+            "missing-case",
+            `${caseKind} fixture ${fixture.fixture_id} references Evidence ${evidenceId}, which is absent from the bundle.`,
+          );
     if (
       !fixtures.some(
         (fixture) =>

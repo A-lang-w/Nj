@@ -1,4 +1,5 @@
 import canonicalize from "canonicalize";
+import { z } from "zod";
 
 import {
   createEvidenceBundle,
@@ -8,13 +9,10 @@ import {
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
-import {
-  immutableEvidence,
-  parseEvidence,
-  type Evidence,
-} from "../../domain/evidence.js";
+import { immutableEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   createResidualUnknown,
   updateResidualUnknown,
@@ -25,6 +23,8 @@ import {
 } from "../../domain/residualUnknown.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import type { UnknownPage, UnknownQuery } from "./InvestigationRecordPort.js";
+import { requestInputError } from "../workflowInputError.js";
 
 type EvidenceLedgerFailure = EvidenceIntegrityError;
 type RecordResult = Result<"added" | "duplicate", EvidenceLedgerFailure>;
@@ -37,7 +37,10 @@ export interface EvidenceImportDelta {
   readonly metadataChanged: boolean;
 }
 
-type ImportResult = Result<EvidenceImportDelta, EvidenceLedgerFailure>;
+type ImportResult = Result<
+  EvidenceImportDelta,
+  EvidenceLedgerFailure | AnalysisInputError
+>;
 
 /** Session-owned set of immutable evidence records. */
 export class EvidenceLedger {
@@ -76,10 +79,18 @@ export class EvidenceLedger {
     try {
       bundle = parseEvidenceBundle(input);
     } catch (cause: unknown) {
+      const failure = describeEvidenceBundleFailure(input, cause);
+      if (failure.kind === "single-record")
+        return err(
+          new AnalysisInputError("import_evidence_bundle", {
+            cause,
+            userMessage: failure.message,
+          }),
+        );
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {
           cause,
-          userMessage: describeEvidenceBundleFailure(input, cause),
+          userMessage: failure.message,
         }),
       );
     }
@@ -204,10 +215,13 @@ export class EvidenceLedger {
   recordUnknown(
     input: RecordUnknownInput,
     mutationEvidence: Evidence,
-  ): Result<ResidualUnknown, EvidenceIntegrityError | UnknownRegistryError> {
+  ): Result<
+    ResidualUnknown,
+    EvidenceIntegrityError | UnknownRegistryError | AnalysisInputError
+  > {
     let parsedMutation: Evidence;
     try {
-      parsedMutation = parseEvidence(mutationEvidence);
+      parsedMutation = immutableEvidence(mutationEvidence);
     } catch (cause: unknown) {
       return err(
         new EvidenceIntegrityError("Unknown mutation evidence is invalid", {
@@ -223,7 +237,7 @@ export class EvidenceLedger {
         parsedMutation.subject?.digest.sha256 ?? null,
       );
     } catch (cause: unknown) {
-      return err(new UnknownRegistryError("invalid-transition", { cause }));
+      return err(unknownInputError("record_unknown", cause, input));
     }
     if (this.#unknownHeads.has(unknown.unknown_id))
       return err(new UnknownRegistryError("already-exists"));
@@ -242,8 +256,8 @@ export class EvidenceLedger {
     let evidence: Evidence;
     let mutation: Evidence;
     try {
-      evidence = parseEvidence(evidenceInput);
-      mutation = parseEvidence(mutationInput);
+      evidence = immutableEvidence(evidenceInput);
+      mutation = immutableEvidence(mutationInput);
     } catch (cause: unknown) {
       return err(
         new EvidenceIntegrityError("Atomic Evidence validation failed", {
@@ -267,12 +281,11 @@ export class EvidenceLedger {
     } catch (cause: unknown) {
       return err(new UnknownRegistryError("invalid-transition", { cause }));
     }
-    const existingUnknown = this.#unknownHeads.get(unknown.unknown_id);
-    if (existingUnknown !== undefined) {
-      if (
-        existingUnknown.revision !== 1 ||
-        existingUnknown.revision_digest !== unknown.revision_digest
-      )
+    const creationUnknown = this.#unknownRevisions.get(
+      unknownRevisionKey(unknown),
+    );
+    if (creationUnknown !== undefined) {
+      if (creationUnknown.revision_digest !== unknown.revision_digest)
         return err(new UnknownRegistryError("already-exists"));
       const checked = this.#appendIncremental([evidence]);
       if (!checked.ok) return checked;
@@ -287,7 +300,10 @@ export class EvidenceLedger {
   updateUnknown(
     input: UpdateUnknownInput,
     mutationEvidence: Evidence,
-  ): Result<ResidualUnknown, EvidenceIntegrityError | UnknownRegistryError> {
+  ): Result<
+    ResidualUnknown,
+    EvidenceIntegrityError | UnknownRegistryError | AnalysisInputError
+  > {
     const current = this.#unknownHeads.get(input.unknown_id);
     if (current === undefined)
       return err(new UnknownRegistryError("not-found"));
@@ -301,7 +317,7 @@ export class EvidenceLedger {
         mutationEvidence.evidence_id,
       );
     } catch (cause: unknown) {
-      return err(new UnknownRegistryError("invalid-transition", { cause }));
+      return err(unknownInputError("update_unknown", cause, input));
     }
     return this.#appendUnknown(unknown, mutationEvidence);
   }
@@ -314,18 +330,39 @@ export class EvidenceLedger {
       readonly domain?: string;
     } = {},
   ): ResidualUnknown[] {
-    return [...this.#unknownHeads.values()]
+    return this.listUnknownsPage(filters).items;
+  }
+
+  /** Select a stable page of current heads before detaching record payloads. */
+  listUnknownsPage(query: UnknownQuery = {}): UnknownPage {
+    const offset = query.offset ?? 0;
+    const matching = [...this.#unknownHeads.values()]
       .filter(
         (unknown) =>
-          (filters.status === undefined || unknown.status === filters.status) &&
-          (filters.severity === undefined ||
-            unknown.severity === filters.severity) &&
-          (filters.domain === undefined || unknown.domain === filters.domain),
+          (query.status === undefined || unknown.status === query.status) &&
+          (query.severity === undefined ||
+            unknown.severity === query.severity) &&
+          (query.domain === undefined || unknown.domain === query.domain),
       )
       .sort((left, right) =>
         compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
-      )
-      .map((unknown) => structuredClone(unknown));
+      );
+    const start = Math.min(offset, matching.length);
+    const end =
+      query.limit === undefined
+        ? undefined
+        : start + Math.min(query.limit, matching.length - start);
+    const page = matching.slice(start, end);
+    const nextOffset =
+      offset <= matching.length && start + page.length < matching.length
+        ? start + page.length
+        : null;
+    return {
+      items: page.map((unknown) => structuredClone(unknown)),
+      total: matching.length,
+      offset,
+      next_offset: nextOffset,
+    };
   }
 
   /** Return current resolution validity; imported invalid states are rejected. */
@@ -360,7 +397,7 @@ export class EvidenceLedger {
   ): Result<ResidualUnknown, EvidenceIntegrityError | UnknownRegistryError> {
     let mutationEvidence: Evidence;
     try {
-      mutationEvidence = parseEvidence(mutationEvidenceInput);
+      mutationEvidence = immutableEvidence(mutationEvidenceInput);
     } catch (cause: unknown) {
       return err(
         new EvidenceIntegrityError("Unknown mutation evidence is invalid", {
@@ -447,6 +484,16 @@ export class EvidenceLedger {
     }
   }
 }
+
+/** A caller's unknown that fails its schema is an input mistake, not a state change. */
+const unknownInputError = (
+  operation: "record_unknown" | "update_unknown",
+  cause: unknown,
+  input: RecordUnknownInput | UpdateUnknownInput,
+): UnknownRegistryError | AnalysisInputError =>
+  cause instanceof z.ZodError
+    ? requestInputError(operation, cause, input)
+    : new UnknownRegistryError("invalid-transition", { cause });
 
 const unknownRevisionKey = (unknown: ResidualUnknown): string =>
   `${unknown.unknown_id}:${String(unknown.revision)}`;

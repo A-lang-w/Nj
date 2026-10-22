@@ -1,12 +1,22 @@
 import {
+  decodeCaptureProtobuf,
+  prepareCaptureProtobuf,
+} from "./protobuf/ProtobufCapture.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
+import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
   captureMemoryFailure,
+  withCaptureReaderCleanup,
 } from "./CaptureFailures.js";
 import {
-  HAR_CAPTURE_HEAP_ENFORCED,
-  HAR_CAPTURE_HEAP_LIMITS,
-  HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+  captureDecoderHeapRecovery,
+  resolveCaptureDecoderHeap,
+  type CaptureDecoderHeap,
+} from "../../config/captureDecoderHeap.js";
+import {
+  NODE_CAPTURE_HEAP_ENFORCED,
+  captureDecoderProcessMemoryLimitBytes,
 } from "./CaptureRelease.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
@@ -17,18 +27,26 @@ import { z } from "zod";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactResourceScope,
+  type ArtifactCleanupAttempt,
+} from "../../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLeaseGroup } from "../../artifacts/AnalysisCleanupLease.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
+  selectedWebNetworkCaptureTimeoutMs,
   webNetworkCapturePayloadSchema,
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
@@ -49,6 +67,7 @@ const replySchema = z.discriminatedUnion("ok", [
       "format",
       "unsupported",
       "input-limit",
+      "expanded-limit",
       "resource-limit",
       "decoder",
       "limit",
@@ -60,26 +79,77 @@ const replySchema = z.discriminatedUnion("ok", [
 
 /** One owned snapshot/process/root lifecycle for replaceable historical format decoders. */
 export class HistoricalCaptureDecoder {
+  readonly #resources: ArtifactResourceScope;
+  readonly #heap: CaptureDecoderHeap;
+
   constructor(
     readonly adapters: readonly HistoricalCaptureFormatAdapter[],
     readonly environment: Readonly<NodeJS.ProcessEnv>,
     readonly createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-web-capture-" }),
-  ) {}
+    resources = new ArtifactResourceScope(),
+  ) {
+    this.#resources = resources;
+    // Adapters that launch the Node decoder already carry its parsed heap.
+    // Reuse that fact. This environment is only the fallback when none do,
+    // or when those facts disagree.
+    const shared = sharedCaptureDecoderHeap(adapters);
+    this.#heap = shared ?? resolveCaptureDecoderHeap(environment);
+  }
+
+  /** Heap the selected adapter launches, or the shared fallback when it has none. */
+  #reportedHeap(
+    adapter: HistoricalCaptureFormatAdapter | undefined,
+  ): CaptureDecoderHeap {
+    return adapter?.heap ?? this.#heap;
+  }
+
+  /** Retry retained readers and private roots at service shutdown. */
+  close(): Promise<void> {
+    return this.#resources.close();
+  }
 
   /** Snapshot the selected artifact, decode it offline, and release private credentials and processes. */
   async inspect(
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
+    try {
+      return await this.#resources.run(() =>
+        this.inspectAdmitted(input, options),
+      );
+    } catch (cause: unknown) {
+      const error = historicalCaptureFailure(
+        input,
+        cause,
+        "capture-read",
+        options,
+        this.#heap,
+      );
+      return err(
+        redactExplicitFailure(
+          withCaptureReaderCleanup(error, cause),
+          input.sensitive_values,
+        ),
+      );
+    }
+  }
+
+  private async inspectAdmitted(
+    input: InspectWebNetworkCaptureInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<WebNetworkCapture, AnalysisError>> {
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
+    let encodedReplyBytes = 0;
+    let reportedHeap = this.#heap;
     try {
       const adapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
       );
+      reportedHeap = this.#reportedHeap(adapter);
       if (adapter === undefined)
         throw new AnalysisCapabilityUnavailableError(
           input.format,
@@ -90,6 +160,8 @@ export class HistoricalCaptureDecoder {
         input.capture_path,
         WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
         options?.signal,
+        undefined,
+        this.#resources,
       );
       phase = "decoder";
       runtime = await this.createRuntime();
@@ -124,7 +196,9 @@ export class HistoricalCaptureDecoder {
           hostEnvironment: environment,
         },
         {
-          timeoutMs: WEB_NETWORK_CAPTURE_LIMITS.timeoutMs,
+          timeoutMs: selectedWebNetworkCaptureTimeoutMs(
+            input.capture_timeout_ms,
+          ),
           diagnosticBytes: 1024 * 1024,
         },
         options?.signal === undefined ? {} : { signal: options.signal },
@@ -132,18 +206,34 @@ export class HistoricalCaptureDecoder {
       // A decoder that survived a failed allocation may still reply; its
       // reply is not trusted as complete once the limit was reached.
       if (completed.memoryLimitReached === true)
-        throw captureMemoryFailure(input, CAPTURE_PROCESS_MEMORY_LIMIT_REASON);
+        throw captureMemoryFailure(
+          input,
+          CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
+          undefined,
+          reportedHeap,
+        );
       let reply: z.output<typeof replySchema>;
       try {
         const replyFile = await readStableArtifact(
           replyPath,
           WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
           options?.signal,
+          undefined,
+          this.#resources,
         );
+        encodedReplyBytes = replyFile.bytes.length;
         reply = replySchema.parse(JSON.parse(replyFile.bytes.toString("utf8")));
       } catch (cause: unknown) {
-        if (options?.signal?.aborted)
-          throw new AnalysisCancelledError(OPERATION);
+        if (cause instanceof ArtifactReaderFailure) throw cause;
+        if (
+          options?.signal?.aborted === true &&
+          (cause === options.signal.reason ||
+            (cause instanceof Error &&
+              cause.name === "AbortError" &&
+              "code" in cause &&
+              cause.code === "ABORT_ERR"))
+        )
+          throw cause;
         throw new AnalysisOutputError(
           OPERATION,
           `Owned capture decoder reply failed for ${input.capture_path}: ${replyFailureReason(cause)}`,
@@ -170,8 +260,25 @@ export class HistoricalCaptureDecoder {
               },
             },
           ]);
+        if (reply.reason === "expanded-limit")
+          throw new AnalysisInputError(OPERATION, undefined, [
+            {
+              path: ["capture_path", reply.pointer],
+              reason: "out_of_range",
+              message: reply.message,
+              expected: {
+                maximum_expanded_capture_bytes:
+                  WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+              },
+            },
+          ]);
         if (reply.reason === "resource-limit")
-          throw captureMemoryFailure(input, reply.message);
+          throw captureMemoryFailure(
+            input,
+            reply.message,
+            undefined,
+            reportedHeap,
+          );
         if (reply.reason === "decoder")
           throw new ProviderAdapterError(input.format, OPERATION, {
             diagnostics: {
@@ -198,66 +305,191 @@ export class HistoricalCaptureDecoder {
           OPERATION,
           "Capture decoder changed the selected upstream profile identity.",
         );
-      result = ok({
-        ...reply.value,
+      const common = {
         artifact: {
           path: input.capture_path,
           sha256: snapshot.sha256,
           bytes: snapshot.bytes.length,
         },
-        format: input.format,
-        runtime_attribution: "unknown",
+
+        runtime_attribution: "unknown" as const,
         limitations: [
+          ...(adapter.limitations ?? []),
           "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
           "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
           "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          `A 32 MiB input, 96 MiB reply and 64-level nesting budget bound complete evidence. ${harMemoryLimitation()}; native decoding uses a 768 MiB Linux address-space limit. Each owned command has a 30-second deadline with independent cleanup.`,
+          `Complete evidence is bounded by a ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, a ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, and a ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap. Those have no runtime override. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
         ],
-      });
+      };
+      if (input.format === "qlog") {
+        if (!("qlog" in reply.value))
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Capture decoder omitted qlog transport facts.",
+          );
+        result = ok({ ...reply.value, ...common, format: "qlog" });
+      } else {
+        if ("qlog" in reply.value)
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Capture decoder supplied inapplicable qlog transport facts.",
+          );
+        result = ok({ ...reply.value, ...common, format: input.format });
+      }
+      if (result.ok) {
+        let safePartialSource = false;
+        try {
+          const prepared = await prepareCaptureProtobuf(
+            result.value,
+            input,
+            options?.signal,
+          );
+          safePartialSource = true;
+          await decodeCaptureProtobuf(
+            result.value,
+            input,
+            this.#resources,
+            prepared,
+            options?.signal,
+            encodedReplyBytes + Buffer.byteLength(JSON.stringify(common)) + 16,
+          );
+        } catch (cause) {
+          const error =
+            cause instanceof CaptureFormatError && cause.reason === "limit"
+              ? new AnalysisResourceConstraintError(
+                  OPERATION,
+                  "capacity",
+                  cause.message,
+                  {
+                    maximum_encoded_capture_bytes:
+                      WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+                  },
+                  {
+                    retryable: false,
+                    remediationAction:
+                      "Select smaller records, or inspect the retained original source bytes.",
+                  },
+                )
+              : cause instanceof CaptureFormatError
+                ? new AnalysisInputError(OPERATION, undefined, [
+                    {
+                      path: ["protobuf"],
+                      reason: "invalid_format",
+                      message: cause.message,
+                    },
+                  ])
+                : historicalCaptureFailure(
+                    input,
+                    cause,
+                    phase,
+                    options,
+                    reportedHeap,
+                  );
+          if (safePartialSource) error.retainPartialObservation(result.value);
+          throw error;
+        }
+      }
     } catch (cause: unknown) {
+      const error = historicalCaptureFailure(
+        input,
+        cause,
+        phase,
+        options,
+        reportedHeap,
+      );
       result = err(
         redactExplicitFailure(
-          historicalCaptureFailure(input, cause, phase, options),
+          withCaptureReaderCleanup(error, cause),
           input.sensitive_values,
         ),
       );
     }
+    const completedCapture = result.ok ? result.value : undefined;
+    let cleanupFailure:
+      | Extract<ArtifactCleanupAttempt, { readonly kind: "failed" }>
+      | undefined;
     if (runtime !== undefined) {
-      try {
-        await runtime.close();
-      } catch (cause: unknown) {
-        return err(
-          redactExplicitFailure(
-            new ProviderCleanupError(
-              input.format,
-              [runtime.path],
-              {
-                capture_path: input.capture_path,
-                previous_error: result.ok
-                  ? null
-                  : projectAnalysisError(result.error),
-                reason: cause instanceof Error ? cause.message : String(cause),
-              },
-              { operation: OPERATION },
-            ),
-            input.sensitive_values,
-          ),
-        );
-      }
+      const cleanup = await this.#resources.release({
+        kind: "private-runtime-root",
+        resource: runtime.path,
+        root: runtime,
+      });
+      if (cleanup.kind === "failed") cleanupFailure = cleanup;
     }
-    return result.ok && options?.signal?.aborted
-      ? err(new AnalysisCancelledError(OPERATION))
-      : result;
+    if (result.ok && options?.signal?.aborted)
+      result = err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+        }),
+      );
+    if (cleanupFailure !== undefined) {
+      const cleanupError = new ProviderCleanupError(
+        input.format,
+        [cleanupFailure.owner.resource],
+        {
+          capture_path: input.capture_path,
+          reason:
+            cleanupFailure.cause instanceof Error
+              ? cleanupFailure.cause.message
+              : String(cleanupFailure.cause),
+        },
+        {
+          operation: OPERATION,
+          cause: cleanupFailure.cause,
+        },
+      );
+      const failure = result.ok
+        ? cleanupError
+        : analysisErrorWithCleanupFailure(
+            result.error,
+            cleanupError,
+            OPERATION,
+          );
+      if (completedCapture !== undefined)
+        failure.retainPartialObservation(completedCapture);
+      new AnalysisCleanupLeaseGroup(cleanupError, [cleanupFailure.lease]);
+      const redacted = redactExplicitFailure(failure, input.sensitive_values);
+      if (!result.ok)
+        redacted.bindCleanupDependencies([result.error, cleanupError]);
+      new AnalysisCleanupLeaseGroup(redacted, [cleanupFailure.lease]);
+      return err(redacted);
+    }
+    if (!result.ok && completedCapture !== undefined)
+      result.error.retainPartialObservation(completedCapture);
+    return result;
   }
 }
 
-/** The HAR decoder runs on this executable; only Node.js enforces its V8 heap flags. */
-const harMemoryLimitation = (): string => {
-  if (HAR_CAPTURE_HEAP_ENFORCED)
-    return `HAR uses a ${String(HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB)} MiB Node old-generation heap`;
-  return HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null
-    ? "HAR runs on Bun, which does not enforce REA's V8 heap flags"
-    : `HAR runs on Bun, which does not enforce REA's V8 heap flags, under a ${String(HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)}-byte Windows Job Object commit limit`;
+/** One shared parsed heap, when every Node adapter agrees. Disagreement stays unresolved here. */
+const sharedCaptureDecoderHeap = (
+  adapters: readonly HistoricalCaptureFormatAdapter[],
+): CaptureDecoderHeap | undefined => {
+  const heaps = adapters.flatMap((adapter) =>
+    adapter.heap === undefined ? [] : [adapter.heap],
+  );
+  const first = heaps[0];
+  if (first === undefined) return undefined;
+  return heaps.every(
+    (heap) =>
+      heap === first ||
+      (heap.oldGenerationMiB === first.oldGenerationMiB &&
+        heap.source === first.source),
+  )
+    ? first
+    : undefined;
+};
+
+/** The Node capture decoder runs on this executable; only Node.js enforces its V8 heap flags. */
+const nodeMemoryLimitation = (heap: CaptureDecoderHeap): string => {
+  const recovery = captureDecoderHeapRecovery(heap);
+  if (NODE_CAPTURE_HEAP_ENFORCED)
+    return `HAR/SAZ/qlog use a ${String(heap.oldGenerationMiB)} MiB Node old-generation heap (source ${heap.source}). ${recovery}`;
+  const commitLimit = captureDecoderProcessMemoryLimitBytes(
+    heap.oldGenerationMiB,
+  );
+  return commitLimit === null
+    ? `HAR/SAZ/qlog run on Bun, which does not enforce REA's V8 heap flags. ${recovery}`
+    : `HAR/SAZ/qlog run on Bun, which does not enforce REA's V8 heap flags, under a ${String(commitLimit)}-byte Windows Job Object commit limit. ${recovery}`;
 };
 
 const replyFailureReason = (cause: unknown): string => {

@@ -18,7 +18,7 @@ const relativePathSchema = z
   .refine(
     (path) =>
       !path.startsWith("/") &&
-      !path.includes("\\") &&
+      !path.includes("\0") &&
       path
         .split("/")
         .every((part) => part !== "" && part !== "." && part !== ".."),
@@ -52,13 +52,13 @@ const sourceFileSchema = z.union([
   z.strictObject({
     ...sourceFileBaseShape,
     sha256: digestSchema,
-    size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    size: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     content_state: z.literal("hashed"),
   }),
   z.strictObject({
     ...sourceFileBaseShape,
     sha256: z.null(),
-    size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+    size: z.int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
     content_state: z.enum([
       "redacted-secret",
       "excluded",
@@ -85,10 +85,9 @@ const symlinkTargetSchema = z
   .min(1)
   .refine(
     (target) =>
-      isPortableAbsoluteReferenceTarget(target) ||
-      (!target.startsWith("/") &&
-        !target.includes("\\") &&
-        posix.normalize(target) === target),
+      !target.includes("\0") &&
+      (isPortableAbsoluteReferenceTarget(target) ||
+        (!target.startsWith("/") && posix.normalize(target) === target)),
     "Expected a normalized POSIX symlink target",
   );
 
@@ -111,6 +110,10 @@ const sourceEntrySchema = z.union([
   sourceFileSchema,
   sourceDirectorySchema,
   sourceSymlinkSchema,
+  z.strictObject({
+    ...entryBaseShape,
+    kind: z.literal("unknown"),
+  }),
 ]);
 
 const sourceRelationshipSchema = z.strictObject({
@@ -130,6 +133,9 @@ const parseFailureSchema = z.strictObject({
 const exclusionSchema = z.discriminatedUnion("reason", [
   z.strictObject({
     path: relativePathSchema,
+    entry_kind: z
+      .enum(["file", "directory", "symlink", "other", "unknown"])
+      .exactOptional(),
     reason: z.enum([
       "configured-secret",
       "project-ignored",
@@ -140,6 +146,9 @@ const exclusionSchema = z.discriminatedUnion("reason", [
   }),
   z.strictObject({
     path: relativePathSchema,
+    entry_kind: z
+      .enum(["file", "directory", "symlink", "other", "unknown"])
+      .exactOptional(),
     reason: z.enum(["symlink-escape", "unreadable"]),
   }),
 ]);
@@ -216,8 +225,8 @@ const historicalSourceManifestBaseSchema = z.strictObject({
   graph_sha256: digestSchema,
   root_sha256: digestSchema,
   inventory_state: z.enum(["complete", "partial", "unknown"]),
-  entry_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  relationship_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  entry_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  relationship_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
 
 export type HistoricalSourceGraph = z.infer<typeof historicalSourceGraphSchema>;
@@ -228,13 +237,43 @@ export type HistoricalSourceManifest = z.infer<
   typeof historicalSourceManifestBaseSchema
 >;
 
+/** Whether source facts prevent an inventory from being claimed complete. */
+export const historicalSourceInventoryHasPartialFacts = (
+  input: Pick<
+    HistoricalSourceGraphInput,
+    | "entries"
+    | "relationships"
+    | "parse_failures"
+    | "exclusions"
+    | "limitations"
+  >,
+): boolean =>
+  input.limitations.length > 0 ||
+  input.exclusions.length > 0 ||
+  input.parse_failures.length > 0 ||
+  input.entries.some(
+    (entry) =>
+      entry.limitations.length > 0 ||
+      (entry.kind === "file" && entry.content_state !== "hashed") ||
+      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
+      (entry.kind === "symlink" && entry.target_state !== "internal") ||
+      entry.kind === "unknown",
+  ) ||
+  input.relationships.some(
+    ({ parse_state, resolution }) =>
+      parse_state !== "parsed" ||
+      resolution === "unresolved" ||
+      resolution === "unknown",
+  );
+
 /** Stable identity used to sort and deduplicate source parse failures. */
 export const historicalSourceParseFailureKey = (
   failure: HistoricalSourceGraphInput["parse_failures"][number],
 ): string => `${failure.path}\u0000${failure.parser}\u0000${failure.reason}`;
 
-const relationshipKey = (
-  relationship: z.infer<typeof sourceRelationshipSchema>,
+/** Stable identity used to sort and deduplicate source relationships. */
+export const historicalSourceRelationshipKey = (
+  relationship: HistoricalSourceGraphInput["relationships"][number],
 ): string =>
   `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}`;
 
@@ -320,10 +359,50 @@ const checkSymlinks = (
   context: z.RefinementCtx,
 ): void => {
   const lookupPath = createReferenceSourcePathLookup(paths);
+  const excludedPaths = createReferenceSourcePathLookup(
+    graph.exclusions.map(({ path }) => path),
+  );
+  const excludedKinds = new Map<
+    string,
+    Set<"file" | "directory" | "symlink" | "other" | "unknown" | undefined>
+  >();
+  for (const { path, entry_kind } of graph.exclusions) {
+    const kinds = excludedKinds.get(path) ?? new Set();
+    kinds.add(entry_kind);
+    excludedKinds.set(path, kinds);
+  }
   for (const [index, entry] of graph.entries.entries()) {
     if (entry.kind !== "symlink") continue;
     if (entry.target === null) continue;
-    const absolute = isPortableAbsoluteReferenceTarget(entry.target);
+    const resolved = posix.normalize(
+      posix.join(posix.dirname(entry.path), entry.target),
+    );
+    const escapesRoot = resolved.startsWith("../") || resolved === "..";
+    // The root is implicit; every other internal target needs an exact or
+    // uniquely Unicode-equivalent recorded inventory identity.
+    const inventoried =
+      resolved === "." || lookupPath.resolve(resolved) !== undefined;
+    const exactExcluded = excludedPaths.resolve(resolved);
+    let excluded = exactExcluded !== undefined;
+    for (
+      let candidate = posix.dirname(resolved);
+      candidate !== "." && candidate !== "/";
+      candidate = posix.dirname(candidate)
+    ) {
+      const excludedAncestor = excludedPaths.resolve(candidate);
+      if (excludedAncestor === undefined) continue;
+      const kinds = excludedKinds.get(excludedAncestor);
+      if (kinds?.size !== 1 || !kinds.has("directory")) {
+        excluded = false;
+        break;
+      }
+      excluded = true;
+    }
+    const ownedRelativeTarget =
+      !entry.target.startsWith("/") && !escapesRoot && inventoried;
+    const absolute =
+      isPortableAbsoluteReferenceTarget(entry.target) &&
+      !(entry.target_state === "internal" && ownedRelativeTarget);
     if (
       (entry.target_state === "external" && !absolute) ||
       (entry.target_state === "internal" && absolute)
@@ -334,18 +413,11 @@ const checkSymlinks = (
         path: ["entries", index, "target"],
       });
     if (entry.target_state !== "internal") continue;
-    const resolved = posix.normalize(
-      posix.join(posix.dirname(entry.path), entry.target),
-    );
-    if (
-      resolved.startsWith("../") ||
-      resolved === ".." ||
-      // The inventory root is implicit rather than an entry with path ".".
-      (resolved !== "." && lookupPath.resolve(resolved) === undefined)
-    )
+    if (escapesRoot || (!inventoried && !excluded))
       context.addIssue({
         code: "custom",
-        message: "Internal symlink target must resolve to an inventoried entry",
+        message:
+          "Internal symlink target must resolve to an inventoried entry or a recorded exclusion",
         path: ["entries", index, "target"],
       });
   }
@@ -355,25 +427,9 @@ const checkCompleteInventory = (
   graph: GraphStructure,
   context: z.RefinementCtx,
 ): void => {
-  if (graph.inventory_state !== "complete") return;
-  const partialEntry = graph.entries.some(
-    (entry) =>
-      entry.limitations.length > 0 ||
-      (entry.kind === "file" && entry.content_state !== "hashed") ||
-      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
-      (entry.kind === "symlink" && entry.target_state !== "internal"),
-  );
-  const partialRelationship = graph.relationships.some(
-    ({ parse_state, resolution }) =>
-      parse_state !== "parsed" ||
-      ["unresolved", "unknown"].includes(resolution),
-  );
   if (
-    !partialEntry &&
-    !partialRelationship &&
-    graph.parse_failures.length === 0 &&
-    graph.exclusions.length === 0 &&
-    graph.limitations.length === 0
+    graph.inventory_state !== "complete" ||
+    !historicalSourceInventoryHasPartialFacts(graph)
   )
     return;
   context.addIssue({
@@ -402,7 +458,7 @@ function checkGraphInvariants(
   checkSortedUnique(graph.languages, "languages", context);
   checkSortedUnique(graph.manifests, "manifests", context);
   checkSortedUnique(
-    graph.relationships.map(relationshipKey),
+    graph.relationships.map(historicalSourceRelationshipKey),
     "relationships",
     context,
   );
@@ -477,6 +533,11 @@ const rootCommitment = (
           path: entry.path,
           target: entry.target,
           target_state: entry.target_state,
+        };
+      case "unknown":
+        return {
+          kind: entry.kind,
+          path: entry.path,
         };
     }
   }),
