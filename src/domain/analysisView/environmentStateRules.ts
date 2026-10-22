@@ -1,3 +1,4 @@
+import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
@@ -108,8 +109,23 @@ export type StateItemView = EntityViewPlan & {
 export type StateListView = EntityViewPlan & {
   readonly shape: "list";
   readonly membership: "all" | "recorded";
+  /** With recorded membership, the checked lines that each list their whole collection. */
+  readonly all_record_ordinals?: number[] | undefined;
   readonly counters: string[];
+  /** The query the view's other lines follow, when one explains any of them. */
+  readonly query?: ListQuery | undefined;
 };
+
+/** Whether a list view answers on a checked line with every entity of the collection. */
+export const listsAll = (view: StateListView, ordinal: number): boolean =>
+  view.membership === "all" ||
+  (view.all_record_ordinals?.includes(ordinal) ?? false);
+
+/** The checked lines a list view answers with every entity of the collection. */
+export const allLines = (view: StateListView): readonly number[] =>
+  view.membership === "all"
+    ? view.checked_record_ordinals
+    : (view.all_record_ordinals ?? []);
 
 export type StateView =
   | StateItemView
@@ -196,6 +212,60 @@ export const decodedSegment = (segment: string): string => {
   } catch {
     return segment;
   }
+};
+
+/**
+ * Whether two path spellings name one segment: they are equal, or either decodes once to the other.
+ * Decoding both would make `book%2531` match `book1`.
+ */
+export const pathSegmentMatches = (segment: string, value: string): boolean =>
+  segment === value ||
+  decodedSegment(segment) === value ||
+  decodedSegment(value) === segment;
+
+/** One segment of a call: a template literal, or a supplied path value. */
+export interface SuppliedSegment {
+  readonly text: string;
+  readonly supplied: boolean;
+}
+
+/** How many supplied segments a held collection matches verbatim, when it matches the call under the path rule. */
+export const collectionMatch = (
+  collection: string,
+  segments: readonly SuppliedSegment[],
+): number | undefined => {
+  const held = segmentsOf(collection);
+  if (held.length !== segments.length) return undefined;
+  let verbatim = 0;
+  for (const [index, { text, supplied }] of segments.entries()) {
+    const segment = held[index]!;
+    if (supplied ? !pathSegmentMatches(segment, text) : segment !== text)
+      return undefined;
+    if (supplied && segment === text) verbatim += 1;
+  }
+  return verbatim;
+};
+
+/** The collection a create writes: the candidate with the most verbatim supplied segments, the earliest on a tie, else the call with each supplied segment encoded. */
+export const selectedCollection = (
+  segments: readonly SuppliedSegment[],
+  candidates: readonly string[],
+): string => {
+  let chosen: string | undefined;
+  let verbatim = -1;
+  for (const collection of candidates) {
+    const matched = collectionMatch(collection, segments);
+    if (matched !== undefined && matched > verbatim) {
+      chosen = collection;
+      verbatim = matched;
+    }
+  }
+  return (
+    chosen ??
+    `/${segments
+      .map(({ text, supplied }) => (supplied ? encodeURIComponent(text) : text))
+      .join("/")}`
+  );
 };
 
 /** The decoded final path segment, which an item request names its entity by. */
@@ -530,13 +600,21 @@ export const missingRequiredFields = (
   return view.required_fields.filter((name) => !Object.hasOwn(shown, name));
 };
 
-/** A list response rendered from `base`: its array replaced by `items` and its counters set to their number. */
+/**
+ * A list response rendered from `base`: its array replaced by `items`, and set to their number each counter that
+ * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value.
+ */
 export const renderStateList = (
   view: Pick<StateListView, "pointer" | "counters">,
   base: JsonValue,
   items: readonly JsonObject[],
-): JsonValue =>
-  view.counters.reduce(
-    (body, name) => replaceAt(body, pointerTo(name), items.length),
+): JsonValue => {
+  const listed = listItems(base, view.pointer)?.length;
+  return view.counters.reduce(
+    (body, name) =>
+      at(base, pointerTo(name)) === listed
+        ? replaceAt(body, pointerTo(name), items.length)
+        : body,
     replaceAt(base, view.pointer, [...items]),
   );
+};

@@ -502,6 +502,11 @@ it.each([
     "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
   ],
   [
+    "regex worker heap request below its floor",
+    { REA_REGEX_WORKER_HEAP_REQUEST_MIB: "6" },
+    "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
+  ],
+  [
     "malformed loader JSON",
     { HOPPER_LOADER_ARGS_JSON: "{" },
     "HOPPER_LOADER_ARGS_JSON",

@@ -10,17 +10,23 @@ import { registerSignalTools } from "./registerSignalTools.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { registerWasmTools } from "./registerWasmTools.js";
+import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
+import { apkSignatureModule } from "../composition/apkSignature.js";
+import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
   createElfNotesService,
+  createPeCertificatesService,
   createNativeExportsService,
   createPeResourcesService,
 } from "../composition/binaryDiagnostics.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
+import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
@@ -49,6 +55,12 @@ import { registerIl2cppTools } from "./registerIl2cppTools.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import { registerRustTools } from "./registerRustTools.js";
+import { createPythonPycService } from "../composition/pythonPyc.js";
+import type { PythonPycService } from "../application/python/PythonPycService.js";
+import { registerPythonPycTool } from "./registerPythonPycTool.js";
+import { createBeamService } from "../composition/erlang.js";
+import type { BeamService } from "../application/erlang/BeamService.js";
+import { registerErlangTools } from "./registerErlangTools.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
@@ -182,6 +194,7 @@ export interface CreateServerOptions {
   readonly packetCapture?: PacketCaptureService;
   readonly signalRecording?: SignalRecordingService;
   readonly wasmArtifact?: WasmArtifactService;
+  readonly apkSignature?: ApkSignatureService;
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly evmInterface?: EvmInterfaceService;
   readonly sqliteDatabase?: SqliteDatabaseService;
@@ -190,6 +203,8 @@ export interface CreateServerOptions {
   readonly goBinary?: GoBinaryService;
   readonly il2cppMetadata?: Il2cppMetadataService;
   readonly rustBinary?: RustBinaryService;
+  readonly pythonPyc?: PythonPycService;
+  readonly erlangBeam?: BeamService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
@@ -353,6 +368,7 @@ export const createServer = (
   const desktopApplication = createDesktopApplicationService();
   const goBinary = options.goBinary ?? createGoBinaryService();
   const rustBinary = options.rustBinary ?? createRustBinaryService();
+  const erlangBeam = options.erlangBeam ?? createBeamService();
   const modelArtifact = createModelArtifactService();
   const gpuCodeObjects = createGpuCodeObjectsService();
   const il2cppMetadata =
@@ -360,7 +376,9 @@ export const createServer = (
   const peResources = createPeResourcesService();
   const nativeExports = createNativeExportsService();
   const elfNotes = createElfNotesService();
+  const peCertificates = createPeCertificatesService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
+  const pythonPyc = options.pythonPyc ?? createPythonPycService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
   const javascriptRecovery =
@@ -420,6 +438,10 @@ export const createServer = (
     environment,
     options.wasmArtifact,
   );
+  const apkSignature = apkSignatureModule.create(
+    environment,
+    options.apkSignature,
+  );
   const packetCapture =
     options.packetCapture ?? createPacketCaptureService(environment);
   const signalRecording =
@@ -441,6 +463,7 @@ export const createServer = (
       cutter.close(),
       fridaInstrumentation.closeAll(),
       wasmArtifact.close(),
+      apkSignature.close(),
       packetCapture.close(),
       signalRecording.close(),
       apktool.close(),
@@ -457,13 +480,16 @@ export const createServer = (
       desktopApplication.close(),
       goBinary.close(),
       rustBinary.close(),
+      erlangBeam.close(),
       il2cppMetadata.close(),
       modelArtifact.close(),
       gpuCodeObjects.close(),
       peResources.close(),
       nativeExports.close(),
       elfNotes.close(),
+      peCertificates.close(),
       electronFuses.close(),
+      pythonPyc.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
       ...(options.optionalObservationProviderOwner === "caller"
@@ -524,11 +550,14 @@ export const createServer = (
     artifactResources,
     goBinary,
     rustBinary,
+    erlangBeam,
     il2cppMetadata,
     peResources,
     nativeExports,
     elfNotes,
+    peCertificates,
     electronFuses,
+    pythonPyc,
     webNetworkCapture,
   };
   registerDesktopApplicationTool(
@@ -654,6 +683,7 @@ export const createServer = (
     toolContext,
     android,
     wasmArtifact,
+    apkSignature,
     evmInterface,
     jeb,
     firmwareAnalysis,
@@ -757,15 +787,19 @@ const registerConfiguredAnalysisTools = (
     withAdmittedAnalysis,
     goBinary,
     rustBinary,
+    erlangBeam,
     il2cppMetadata,
     peResources,
     nativeExports,
     elfNotes,
+    peCertificates,
+    pythonPyc,
     webNetworkCapture,
     artifactResources,
   }: ServerToolContext,
   android: AndroidAnalysisPort,
   wasmArtifact: Pick<WasmArtifactService, "inspect" | "close">,
+  apkSignature: Pick<ApkSignatureService, "inspect" | "close">,
   evmInterface: EvmInterfaceService,
   jeb: JebAnalysisPort,
   firmwareAnalysis: FirmwareAnalysisService,
@@ -824,6 +858,13 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
     withAdmittedAnalysis,
   );
+  registerPeCertificatesTool(
+    server,
+    peCertificates,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   registerGoTools(
     server,
     goBinary,
@@ -848,9 +889,31 @@ const registerConfiguredAnalysisTools = (
     withAdmittedAnalysis,
     evidenceById,
   );
+  registerPythonPycTool(
+    server,
+    pythonPyc,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerErlangTools(
+    server,
+    erlangBeam,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   registerWasmTools(
     server,
     wasmArtifact,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+    evidenceById,
+  );
+  registerApkSignatureTools(
+    server,
+    apkSignature,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -955,11 +1018,14 @@ const createSessionRecorders = (
 interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly goBinary: GoBinaryService;
   readonly rustBinary: RustBinaryService;
+  readonly erlangBeam: BeamService;
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
   readonly nativeExports: NativeExportsService;
   readonly elfNotes: ElfNotesService;
+  readonly peCertificates: PeCertificatesService;
   readonly electronFuses: ElectronFuseService;
+  readonly pythonPyc: PythonPycService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
   readonly server: EvidenceMcpServer;

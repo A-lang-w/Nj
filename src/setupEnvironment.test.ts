@@ -187,6 +187,7 @@ it.each([
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
+      REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
     },
     providerConfigured: false,
     installHopper: true,
@@ -221,6 +222,7 @@ it.each([
           REA_MCP_INPUT_SCHEMA_PROFILE: "full",
           REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
           REA_REGEX_MATCHING_DEADLINE_MS: "10000",
+          REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
         });
       } else {
         expect(initial.providerEnvironment).not.toHaveProperty(
