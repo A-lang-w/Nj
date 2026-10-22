@@ -10,6 +10,9 @@ import { registerSignalTools } from "./registerSignalTools.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { registerWasmTools } from "./registerWasmTools.js";
+import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
+import { apkSignatureModule } from "../composition/apkSignature.js";
+import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
@@ -52,6 +55,9 @@ import { registerIl2cppTools } from "./registerIl2cppTools.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import { registerRustTools } from "./registerRustTools.js";
+import { createPythonPycService } from "../composition/pythonPyc.js";
+import type { PythonPycService } from "../application/python/PythonPycService.js";
+import { registerPythonPycTool } from "./registerPythonPycTool.js";
 import { createBeamService } from "../composition/erlang.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import { registerErlangTools } from "./registerErlangTools.js";
@@ -188,6 +194,7 @@ export interface CreateServerOptions {
   readonly packetCapture?: PacketCaptureService;
   readonly signalRecording?: SignalRecordingService;
   readonly wasmArtifact?: WasmArtifactService;
+  readonly apkSignature?: ApkSignatureService;
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly evmInterface?: EvmInterfaceService;
   readonly sqliteDatabase?: SqliteDatabaseService;
@@ -196,6 +203,7 @@ export interface CreateServerOptions {
   readonly goBinary?: GoBinaryService;
   readonly il2cppMetadata?: Il2cppMetadataService;
   readonly rustBinary?: RustBinaryService;
+  readonly pythonPyc?: PythonPycService;
   readonly erlangBeam?: BeamService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
@@ -370,6 +378,7 @@ export const createServer = (
   const elfNotes = createElfNotesService();
   const peCertificates = createPeCertificatesService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
+  const pythonPyc = options.pythonPyc ?? createPythonPycService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
   const javascriptRecovery =
@@ -429,6 +438,10 @@ export const createServer = (
     environment,
     options.wasmArtifact,
   );
+  const apkSignature = apkSignatureModule.create(
+    environment,
+    options.apkSignature,
+  );
   const packetCapture =
     options.packetCapture ?? createPacketCaptureService(environment);
   const signalRecording =
@@ -450,6 +463,7 @@ export const createServer = (
       cutter.close(),
       fridaInstrumentation.closeAll(),
       wasmArtifact.close(),
+      apkSignature.close(),
       packetCapture.close(),
       signalRecording.close(),
       apktool.close(),
@@ -475,6 +489,7 @@ export const createServer = (
       elfNotes.close(),
       peCertificates.close(),
       electronFuses.close(),
+      pythonPyc.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
       ...(options.optionalObservationProviderOwner === "caller"
@@ -542,6 +557,7 @@ export const createServer = (
     elfNotes,
     peCertificates,
     electronFuses,
+    pythonPyc,
     webNetworkCapture,
   };
   registerDesktopApplicationTool(
@@ -667,6 +683,7 @@ export const createServer = (
     toolContext,
     android,
     wasmArtifact,
+    apkSignature,
     evmInterface,
     jeb,
     firmwareAnalysis,
@@ -776,11 +793,13 @@ const registerConfiguredAnalysisTools = (
     nativeExports,
     elfNotes,
     peCertificates,
+    pythonPyc,
     webNetworkCapture,
     artifactResources,
   }: ServerToolContext,
   android: AndroidAnalysisPort,
   wasmArtifact: Pick<WasmArtifactService, "inspect" | "close">,
+  apkSignature: Pick<ApkSignatureService, "inspect" | "close">,
   evmInterface: EvmInterfaceService,
   jeb: JebAnalysisPort,
   firmwareAnalysis: FirmwareAnalysisService,
@@ -870,6 +889,13 @@ const registerConfiguredAnalysisTools = (
     withAdmittedAnalysis,
     evidenceById,
   );
+  registerPythonPycTool(
+    server,
+    pythonPyc,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   registerErlangTools(
     server,
     erlangBeam,
@@ -880,6 +906,14 @@ const registerConfiguredAnalysisTools = (
   registerWasmTools(
     server,
     wasmArtifact,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+    evidenceById,
+  );
+  registerApkSignatureTools(
+    server,
+    apkSignature,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -991,6 +1025,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly elfNotes: ElfNotesService;
   readonly peCertificates: PeCertificatesService;
   readonly electronFuses: ElectronFuseService;
+  readonly pythonPyc: PythonPycService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
   readonly server: EvidenceMcpServer;

@@ -177,6 +177,17 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](elf-notes.md).
 
+Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects
+without executing bytecode or installing Python:
+
+```bash
+rea inspect-python-pyc /absolute/path/to/module.pyc --json
+```
+
+The workflow reports the pinned CPython version for the magic, PEP 552 hash or
+mtime/size fields, nested function names, and bytecode SHA-256. Bytecode is
+not decompiled. See [CPython pyc inspection](python-pyc.md).
+
 Inspect an Erlang BEAM file without executing bytecode:
 
 ```bash
@@ -502,6 +513,22 @@ the pinned package source, the served `tool_count`, and `state` in the shape
 of the serve command's stopped document. See
 [agent environments](agent-environments.md#export-a-bundle) for the folder
 layout and what the smoke task checks.
+
+## Compare an environment with its application
+
+`rea environment-compare <manifest.json> --evidence <capture.json> --probe <probe.json> [--probe <probe.json> ...]`
+compares the environment the pair serves with probe captures of the application it came from. Each probe is capture
+Evidence of one call sequence recorded against the application after a reset; the environment's state is reset before
+each probe, every request to the application's origin is answered as the served environment answers it, and the
+answer is compared with the application's after ids are mapped and clocks and generated values are normalised. The command reads files only and
+makes no network call. It prints the report and exits `0`, or prints a structured `invalid_request` error and exits `1`
+for the same pair refusals as `environment-serve`, a probe that is not capture Evidence, or a browser probe captured
+without response bodies, or without the request bodies its writes need. See
+[agent environments](agent-environments.md#measure-fidelity-against-the-application) for the report.
+
+```sh
+rea environment-compare manifest.json --evidence capture.json --probe probe.json --json
+```
 
 ## Output and exit status
 

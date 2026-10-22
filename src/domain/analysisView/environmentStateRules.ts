@@ -1,3 +1,4 @@
+import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
@@ -111,6 +112,8 @@ export type StateListView = EntityViewPlan & {
   /** With recorded membership, the checked lines that each list their whole collection. */
   readonly all_record_ordinals?: number[] | undefined;
   readonly counters: string[];
+  /** The query the view's other lines follow, when one explains any of them. */
+  readonly query?: ListQuery | undefined;
 };
 
 /** Whether a list view answers on a checked line with every entity of the collection. */
@@ -209,6 +212,60 @@ export const decodedSegment = (segment: string): string => {
   } catch {
     return segment;
   }
+};
+
+/**
+ * Whether two path spellings name one segment: they are equal, or either decodes once to the other.
+ * Decoding both would make `book%2531` match `book1`.
+ */
+export const pathSegmentMatches = (segment: string, value: string): boolean =>
+  segment === value ||
+  decodedSegment(segment) === value ||
+  decodedSegment(value) === segment;
+
+/** One segment of a call: a template literal, or a supplied path value. */
+export interface SuppliedSegment {
+  readonly text: string;
+  readonly supplied: boolean;
+}
+
+/** How many supplied segments a held collection matches verbatim, when it matches the call under the path rule. */
+export const collectionMatch = (
+  collection: string,
+  segments: readonly SuppliedSegment[],
+): number | undefined => {
+  const held = segmentsOf(collection);
+  if (held.length !== segments.length) return undefined;
+  let verbatim = 0;
+  for (const [index, { text, supplied }] of segments.entries()) {
+    const segment = held[index]!;
+    if (supplied ? !pathSegmentMatches(segment, text) : segment !== text)
+      return undefined;
+    if (supplied && segment === text) verbatim += 1;
+  }
+  return verbatim;
+};
+
+/** The collection a create writes: the candidate with the most verbatim supplied segments, the earliest on a tie, else the call with each supplied segment encoded. */
+export const selectedCollection = (
+  segments: readonly SuppliedSegment[],
+  candidates: readonly string[],
+): string => {
+  let chosen: string | undefined;
+  let verbatim = -1;
+  for (const collection of candidates) {
+    const matched = collectionMatch(collection, segments);
+    if (matched !== undefined && matched > verbatim) {
+      chosen = collection;
+      verbatim = matched;
+    }
+  }
+  return (
+    chosen ??
+    `/${segments
+      .map(({ text, supplied }) => (supplied ? encodeURIComponent(text) : text))
+      .join("/")}`
+  );
 };
 
 /** The decoded final path segment, which an item request names its entity by. */
