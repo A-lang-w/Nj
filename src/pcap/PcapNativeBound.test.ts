@@ -35,13 +35,11 @@ const withPlatform = async (
 
 it("uses the shared 1 GiB ceiling for the Windows job memory limit", async () => {
   await withPlatform("win32", async () => {
-    await expect(preparePcapNativeBound({}, resources)).resolves.toMatchObject(
-      {
-        nativeBound: {
-          memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
-        },
+    await expect(preparePcapNativeBound({}, resources)).resolves.toMatchObject({
+      nativeBound: {
+        memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
       },
-    );
+    });
   });
 });
 
