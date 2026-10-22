@@ -47,22 +47,47 @@ export interface TextWriteCancellation {
 type TextWriteResult<Failure = EvidenceFileError | AnalysisCancelledError> =
   Result<{ readonly path: string; readonly bytes: number }, Failure>;
 
-/** Read JSON data from a regular file at the caller-supplied path. */
+/** Read JSON data without changing the caller's existing data-only contract. */
 export const readJsonFile = async (
   path: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "read_evidence_file",
 ): Promise<
   Result<
     unknown,
     EvidenceFileError | AnalysisResourceConstraintError | AnalysisCancelledError
   >
+> => {
+  const read = await readJsonFileWithSource(path, signal, resources, operation);
+  return read.ok ? ok(read.value.data) : read;
+};
+
+/** Read data and the absolute selected path at the same owning regular-file boundary. */
+export const readJsonFileWithSource = (
+  path: string,
+  signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
+  operation = "read_evidence_file",
+): Promise<
+  Result<
+    { readonly data: unknown; readonly path: string },
+    EvidenceFileError | AnalysisResourceConstraintError | AnalysisCancelledError
+  >
 > =>
   readJsonFileInput(
     path,
-    (selected) =>
-      readJsonInputFile(selected, "read_evidence_file", signal, resources),
+    async (selected) => {
+      const read = await readJsonInputFile(
+        selected,
+        operation,
+        signal,
+        resources,
+      );
+      return read.ok ? ok({ data: read.value, path: selected }) : read;
+    },
     signal,
+    operation,
   );
 
 /** Read selected JSON members through the same regular-file error boundary. */
@@ -102,6 +127,7 @@ const readJsonFileInput = async <Value>(
     >
   >,
   signal?: AbortSignal,
+  operation = "read_evidence_file",
 ): Promise<
   Result<
     Value,
@@ -131,7 +157,7 @@ const readJsonFileInput = async <Value>(
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     if (cause instanceof JsonInputCancellationFailure)
       return err(
-        new AnalysisCancelledError("read_evidence_file", {
+        new AnalysisCancelledError(operation, {
           cause: cause.reason,
         }),
       );
@@ -144,7 +170,7 @@ const readJsonFileInput = async <Value>(
       );
     if (isJsonReadCancellation(cause, signal))
       return err(
-        new AnalysisCancelledError("read_evidence_file", {
+        new AnalysisCancelledError(operation, {
           cause: signal?.reason,
         }),
       );
