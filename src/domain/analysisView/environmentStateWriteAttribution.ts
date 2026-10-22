@@ -1,4 +1,11 @@
-import type { StateView } from "./environmentStateRules.js";
+import {
+  renderStateEntity,
+  same,
+  type JsonObject,
+  type StateEntity,
+  type StateItemView,
+  type StateView,
+} from "./environmentStateRules.js";
 
 /** The fields a read of a view shows of its entities, less volatile ones it does not compare; all of a document's. */
 export const shownFields = (
@@ -347,4 +354,36 @@ export const forgetChecked = (
       at?.delete(name);
     }
   pending.effects.checked(key, unseen);
+};
+
+/**
+ * Check, field by field, the writes that changed an entity an unmodelled write also changed:
+ * each write's own fields must show as the state holds them, but for volatile ones, which take
+ * the read's value and so show nothing of a write. A create wrote every field, so it cannot be
+ * told apart from the unmodelled change and is not checked.
+ */
+export const writtenFieldChecks = (
+  entity: StateEntity,
+  view: StateItemView,
+  observed: JsonObject,
+  check: {
+    readonly volatile: ReadonlySet<string>;
+    readonly writes: ReadonlyMap<string, readonly string[] | null>;
+  },
+): Map<string, boolean> => {
+  const shown = renderStateEntity(entity, view, check.volatile, observed);
+  const outcomes = new Map<string, boolean>();
+  for (const [tool, fields] of check.writes) {
+    const compared = (fields ?? []).filter(
+      (field) =>
+        !check.volatile.has(field) &&
+        (Object.hasOwn(observed, field) || Object.hasOwn(shown, field)),
+    );
+    if (fields === null || compared.length === 0) continue;
+    outcomes.set(
+      tool,
+      compared.every((field) => same(shown[field], observed[field])),
+    );
+  }
+  return outcomes;
 };
