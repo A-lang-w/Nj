@@ -580,8 +580,13 @@ describe("attached IDA regex supervision", () => {
         mode: "regex",
       });
       expect(recovered.ok && recovered.value.result).toHaveLength(1);
-      expect(recovered.ok && recovered.value.limitations).toContain(
-        "Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a 5-second matching deadline; matching failure leaves the service available.",
+      expect(recovered.ok && recovered.value.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("5000 ms matching deadline (source default)"),
+          expect.stringContaining(
+            "Matching failure leaves the service available.",
+          ),
+        ]),
       );
     } finally {
       await client.close();
