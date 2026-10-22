@@ -101,12 +101,13 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
     code: "resource_constraint",
     details: { resource: "memory" },
   });
-  expect(projected.message).toContain("256");
-  expect(projected.message).toContain("source setting");
+  expect(projected.message).toContain(
+    "256 MiB V8 old-generation heap (source setting)",
+  );
   expect(projected.remediation.action).toContain(
     CAPTURE_DECODER_OLD_GENERATION_SETTING,
   );
-  expect(projected.remediation.action).toContain("source setting");
+  expect(projected.remediation.action).toContain("256 MiB (source setting");
   expect(projected.message).not.toContain("no runtime override");
   if (process.versions.bun === undefined)
     expect(projected.details).toMatchObject({
@@ -163,8 +164,7 @@ it("reports the heap the selected adapter launches when decoder environment diff
       throw new Error(projectAnalysisError(reported.error).message);
     const limitations = reported.value.limitations.join("\n");
     expect(limitations).toContain(CAPTURE_DECODER_OLD_GENERATION_SETTING);
-    expect(limitations).toContain("256");
-    expect(limitations).toContain("source setting");
+    expect(limitations).toContain("256 MiB (source setting");
     expect(limitations).not.toContain("source default");
     expect(limitations).not.toContain("512 MiB (source setting)");
 
@@ -173,11 +173,13 @@ it("reports the heap the selected adapter launches when decoder environment diff
     if (exhausted.ok) throw new Error("Heap exhaustion must fail inspection");
     const projected = projectAnalysisError(exhausted.error);
     expect(projected.code).toBe("resource_constraint");
-    expect(projected.message).toContain("256");
-    expect(projected.message).toContain("source setting");
+    expect(projected.message).toContain(
+      "256 MiB V8 old-generation heap (source setting)",
+    );
     expect(projected.remediation.action).toContain(
       CAPTURE_DECODER_OLD_GENERATION_SETTING,
     );
+    expect(projected.remediation.action).toContain("256 MiB (source setting");
     expect(projected.message).not.toContain("192 MiB");
     expect(projected.remediation.action).not.toContain(
       "512 MiB (source setting)",
