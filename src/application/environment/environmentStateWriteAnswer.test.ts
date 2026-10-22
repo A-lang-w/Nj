@@ -10,17 +10,22 @@ import {
   BOOK_ROWS,
   DELETE_NOT_FOUND,
   FIRST_BOOK,
+  LIST_LINE_ROWS,
+  QUERY_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
   book,
   bookClock,
+  bookPage,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import { seededUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
+import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
+import { describeWrite } from "./environmentStateWriteDescription.js";
 import {
   environmentToolArguments,
   environmentToolDefinitions,
@@ -471,6 +476,41 @@ describe("served catalog", () => {
     );
   });
 
+  it("quotes body member names and omits one that exceeds the sample budget", () => {
+    const plan: StateWritePlan = {
+      tool: "post_books",
+      effect: "create",
+      target: "/api/books",
+      served: true,
+      reason: null,
+      exemplar_ordinal: null,
+      observation: null,
+      response: null,
+      body: {
+        accepted: ["name, title", "note\nline"],
+        fixed: [],
+        required: [],
+        identity: null,
+        kinds: [],
+      },
+      rules: [],
+      collection: null,
+      insert: null,
+      merge: null,
+      checked_record_ordinals: [],
+      contradicted_by: null,
+    };
+    expect(describeWrite(plan)).toContain(
+      'body members "name, title", "note\\nline"',
+    );
+    const long = describeWrite({
+      ...plan,
+      body: { ...plan.body!, accepted: ["m".repeat(2000)] },
+    });
+    expect(long).not.toContain("m".repeat(2000));
+    expect(Buffer.byteLength(long ?? "", "utf8")).toBeLessThan(1200);
+  });
+
   it("quotes the member names a write's description lists and samples a long one", () => {
     const long = "n".repeat(90_000);
     const item = (id: number, name: string) => ({
@@ -535,6 +575,224 @@ describe("paged list lines", () => {
     expect(paged.answer("get_books", { limit: "10" })).toMatchObject({
       body: [FIRST_BOOK, SECOND_BOOK],
       state: { source: "recording", reason: "unrecorded-request" },
+    });
+  });
+});
+
+describe("list lines", () => {
+  it("keeps an empty later page recorded after data/add, while a first line lists the loaded entity", () => {
+    for (const [query, whole] of [
+      ["offset=0", true],
+      ["start=0", true],
+      ["_start=0", true],
+      ["page=0", true],
+      ["offset=2", false],
+      ["start=2", false],
+      ["_start=2", false],
+      ["page=1", false],
+      ["offset=-1", false],
+      ["offset=unknown", false],
+    ] as const) {
+      const alpha = { id: 1, name: "Alpha", org: "1" };
+      const beta = { id: 2, name: "Beta", org: "2" };
+      const books = servedFrom([
+        ["GET", "/api/orgs/1/books", [alpha]],
+        ["GET", "/api/orgs/1/books?name=Alpha", [alpha]],
+        ["GET", `/api/orgs/2/books?${query}&limit=50`, []],
+        ["GET", "/api/orgs/1/books/1", alpha],
+      ]);
+      const held = books.store.snapshot().rea_state;
+      const loaded = books.store.replace({
+        rea_state: {
+          ...held,
+          entities: [
+            ...held.entities,
+            {
+              type: held.entities[0]!.type,
+              collection: "/api/orgs/2/books",
+              id: "2",
+              fields: beta,
+              view_fields: [],
+              record_ordinals: [],
+            },
+          ],
+        },
+      });
+      if (!loaded.ok) throw loaded.error;
+      const answer = books.answer("get_orgs_books_by_id", {
+        id: "2",
+        ...Object.fromEntries(new URLSearchParams(query)),
+        limit: "50",
+      });
+      expect(answer.body, query).toEqual(whole ? [beta] : []);
+      if (whole)
+        expect(answer).toMatchObject({
+          state: { source: "state", membership: "all", listed: 1 },
+        });
+      else {
+        expect(answer).toMatchObject({
+          state: { source: expect.stringMatching(/^(state|recording)$/u) },
+        });
+        expect(answer).not.toMatchObject({ state: { membership: "all" } });
+      }
+    }
+  });
+
+  it("lists a created book on the line that lists every book, and a filtered line by its filter", () => {
+    const books = servedFrom(LIST_LINE_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books")).toMatchObject({
+      body: bookPage([FIRST_BOOK, SECOND_BOOK, created]),
+      state: { source: "state", membership: "all", listed: 3 },
+    });
+    expect(books.answer("get_books", { name: "First Book" })).toMatchObject({
+      body: bookPage([FIRST_BOOK]),
+      state: { source: "state", membership: "query", listed: 1 },
+    });
+  });
+});
+
+describe("list queries", () => {
+  it.each([3, "3"])(
+    "preserves query total %j across omission, retaining its type and rejecting contradictions",
+    (initialTotal) => {
+      const alpha = { id: 1, name: "Alpha" },
+        beta = { id: 2, name: "Beta" },
+        gamma = { id: 3, name: "Gamma" };
+      for (const contradicts of [false, true]) {
+        const books = servedFrom([
+          ["GET", "/api/books", { items: [alpha, beta, gamma] }],
+          [
+            "GET",
+            "/api/books?limit=1",
+            { items: [alpha], total: initialTotal },
+          ],
+          [
+            "GET",
+            "/api/books?limit=2",
+            { items: [alpha, beta], ...(contradicts ? { total: 20 } : {}) },
+          ],
+        ]);
+        expect(books.state.views.get("get_books")).toMatchObject({
+          query: { totals: contradicts ? [] : ["total"] },
+        });
+        const snapshot = books.store.snapshot();
+        const loaded = books.store.replace({
+          ...snapshot,
+          rea_state: {
+            ...snapshot.rea_state,
+            entities: snapshot.rea_state.entities.filter(
+              (entity) => entity.id !== "3",
+            ),
+          },
+        });
+        if (!loaded.ok) throw loaded.error;
+        expect(books.answer("get_books", { limit: "1" })).toMatchObject({
+          body: {
+            items: [alpha],
+            total: contradicts
+              ? initialTotal
+              : typeof initialTotal === "string"
+                ? "2"
+                : 2,
+          },
+          state: { source: "state", membership: "query" },
+        });
+        if (!contradicts)
+          expect(
+            books.answer("get_books", { limit: "2" }).body,
+          ).not.toHaveProperty("total");
+      }
+    },
+  );
+
+  it("replays unsupported search syntax instead of inventing an empty state-backed result", () => {
+    const books = servedFrom(QUERY_ROWS);
+    for (const q of ["title:Gamma", "#sea", '"First Book"']) {
+      expect(books.answer("get_books", { q }), q).toMatchObject({
+        state: { source: "recording", reason: "unrecorded-request" },
+      });
+    }
+    expect(books.answer("get_books", { q: "SECOND" })).toMatchObject({
+      state: { source: "state", membership: "query", listed: 1 },
+    });
+  });
+
+  it("updates a query-only page counter without adding it to an envelope that never recorded it", () => {
+    const alpha = { id: 1, name: "Alpha", shelf: "a" };
+    const beta = { id: 2, name: "Beta", shelf: "b" };
+    const gamma = { id: 3, name: "Gamma", shelf: "a" };
+    const books = servedFrom([
+      ["GET", "/api/books", { items: [alpha, beta], total: 2 }],
+      [
+        "GET",
+        "/api/books?shelf=a",
+        { items: [alpha], total: 1, numberOfElements: 1 },
+      ],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/2", beta],
+      ["POST", "/api/books", gamma, 201, { name: "Gamma", shelf: "a" }],
+      ["GET", "/api/books/3", gamma],
+      ["GET", "/api/books", { items: [alpha, beta, gamma], total: 3 }],
+    ]);
+    const created = books.answer("post_books", {
+      body: { name: "Delta", shelf: "a" },
+    }).body;
+    expect(books.answer("get_books", { shelf: "a" })).toMatchObject({
+      body: { items: [alpha, created], total: 2, numberOfElements: 2 },
+      state: { source: "state", membership: "query", listed: 2 },
+    });
+    expect(books.answer("get_books").body).toEqual({
+      items: [alpha, beta, created],
+      total: 3,
+    });
+  });
+
+  it("filters, searches and sorts the state for values no line recorded, created books included", () => {
+    const books = servedFrom(QUERY_ROWS);
+    const created = books.answer("post_books", {
+      body: { name: "New Book", shelf: "b" },
+    }).body as Book;
+    const listed = (args: Record<string, string>) => {
+      const answer = books.answer("get_books", args);
+      return {
+        ids: (answer.body as Book[]).map((entry) => entry["id"]),
+        state: (answer as { readonly state?: unknown }).state,
+      };
+    };
+    expect(listed({ shelf: "b" })).toMatchObject({
+      ids: [2, created["id"]],
+      state: { source: "state", membership: "query", listed: 2 },
+    });
+    expect(listed({ q: "NEW" }).ids).toEqual([created["id"]]);
+    expect(listed({ sort: "-id" }).ids).toEqual([created["id"], 2, 1]);
+    expect(listed({ sort: "-id", shelf: "a" }).ids).toEqual([1]);
+    // A value the flag never recorded, or a parameter the query has no role for, replays as before.
+    expect(listed({ include: "none" }).state).toMatchObject({
+      source: "recording",
+      reason: "unrecorded-request",
+    });
+  });
+
+  it("keeps a whole line's total following the state beside a partial page, which its query now answers", () => {
+    const partial = {
+      content: [FIRST_BOOK],
+      totalElements: 2,
+      numberOfElements: 1,
+    };
+    const books = servedFrom([
+      ["GET", "/api/books", bookPage([FIRST_BOOK, SECOND_BOOK])],
+      ["GET", "/api/books?page=1&size=1", partial],
+      ...LIST_LINE_ROWS.slice(2),
+    ]);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books")).toMatchObject({
+      body: bookPage([FIRST_BOOK, SECOND_BOOK, created]),
+    });
+    // The partial page is a query line here: its page and total come from the state, which now holds three books.
+    expect(books.answer("get_books", { page: "1", size: "1" })).toMatchObject({
+      body: { ...partial, totalElements: 3 },
+      state: { membership: "query" },
     });
   });
 });
@@ -883,6 +1141,67 @@ describe("paged lines", () => {
       state: { source: "state", membership: "all", listed: 3 },
     });
   });
+
+  it("does not list an entity a confirmed create adds on an empty ?page=2&per_page=1 page", () => {
+    const alpha = { id: 1, name: "Alpha", org: "1" };
+    const beta = { id: 2, name: "Beta", org: "2" };
+    const books = servedFrom([
+      ["GET", "/api/orgs/1/books", [alpha]],
+      ["GET", "/api/orgs/1/books/1", alpha],
+      ["GET", "/api/orgs/2/books?page=2&per_page=1", []],
+      ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+      ["GET", "/api/orgs/2/books/2", beta],
+    ]);
+    const created = books.answer("post_orgs_books_by_id", {
+      id: "2",
+      body: { name: "Gamma" },
+    }).body as Book;
+    expect(created).toMatchObject({ name: "Gamma" });
+    expect(books.answer("get_orgs_books_by_id", { id: "2" })).toMatchObject({
+      body: [],
+      state: { source: "recording", reason: "unrecorded-request" },
+    });
+    expect(
+      books.answer("get_orgs_books_by_id", {
+        id: "2",
+        page: "2",
+        per_page: "1",
+      }),
+    ).toMatchObject({
+      body: [],
+      state: { source: "state", membership: "recorded", listed: 0 },
+    });
+  });
+
+  it.each(["offset", "start", "_start"])(
+    "does not list an entity a confirmed create adds on an empty ?%s=1 page",
+    (name) => {
+      const alpha = { id: 1, name: "Alpha", org: "1" };
+      const beta = { id: 2, name: "Beta", org: "2" };
+      const books = servedFrom([
+        ["GET", "/api/orgs/1/books", [alpha]],
+        ["GET", "/api/orgs/1/books/1", alpha],
+        ["GET", `/api/orgs/2/books?${name}=1`, []],
+        ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+        ["GET", "/api/orgs/2/books/2", beta],
+      ]);
+      const created = books.answer("post_orgs_books_by_id", {
+        id: "2",
+        body: { name: "Gamma" },
+      }).body as Book;
+      expect(created).toMatchObject({ name: "Gamma" });
+      expect(books.answer("get_orgs_books_by_id", { id: "2" })).toMatchObject({
+        body: [],
+        state: { source: "state", membership: "recorded", listed: 0 },
+      });
+      expect(
+        books.answer("get_orgs_books_by_id", { id: "2", [name]: "1" }),
+      ).toMatchObject({
+        body: [],
+        state: { source: "state", membership: "query", listed: 0 },
+      });
+    },
+  );
 
   it("answers a zero limit a whole line recorded empty from that recording once a create fills its collection", () => {
     const alpha = { id: 1, name: "Alpha", org: "1" };

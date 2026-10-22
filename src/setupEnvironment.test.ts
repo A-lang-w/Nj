@@ -186,6 +186,7 @@ it.each([
       REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
+      REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
       REA_MCP_INITIALIZE_BUDGET_MS: "16000",
       REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
       REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
@@ -223,6 +224,7 @@ it.each([
           REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
           REA_MCP_INPUT_SCHEMA_PROFILE: "full",
           REA_REGEX_MATCHING_DEADLINE_MS: "10000",
+          REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
           REA_MCP_INITIALIZE_BUDGET_MS: "16000",
           REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
           REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
@@ -231,6 +233,9 @@ it.each([
       } else {
         expect(initial.providerEnvironment).not.toHaveProperty(
           "REA_REGEX_MATCHING_DEADLINE_MS",
+        );
+        expect(initial.providerEnvironment).not.toHaveProperty(
+          "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
         );
         expect(initial.providerEnvironment).not.toHaveProperty(
           "REA_MCP_INITIALIZE_BUDGET_MS",

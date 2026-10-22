@@ -497,6 +497,11 @@ it.each([
     "REA_REGEX_MATCHING_DEADLINE_MS",
   ],
   [
+    "regex worker heap request below its floor",
+    { REA_REGEX_WORKER_HEAP_REQUEST_MIB: "6" },
+    "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
+  ],
+  [
     "MCP initialize budget of zero",
     { REA_MCP_INITIALIZE_BUDGET_MS: "0" },
     "REA_MCP_INITIALIZE_BUDGET_MS",

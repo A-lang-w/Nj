@@ -1,4 +1,4 @@
-import { Client } from "@modelcontextprotocol/client";
+import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Formatter, Help, z } from "incur";
 import { performance } from "node:perf_hooks";
@@ -158,7 +158,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         {
           name: "transport",
           ok: false,
-          detail: doctorTransportDetail(cause, budget),
+          detail: doctorTransportDetail(cause, budget, controller.signal),
         },
       ],
     };
@@ -250,7 +250,7 @@ const inspectProductionMcpSession = async (
     .then(ok, (cause: unknown) =>
       err({
         kind: "request-flow" as const,
-        detail: doctorTransportDetail(cause, budget),
+        detail: doctorTransportDetail(cause, budget, signal),
       }),
     );
   const inventory = {
@@ -580,29 +580,21 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-const doctorDeadlineFired = (cause: unknown): boolean => {
-  const message = errorMessage(cause);
-  return (
-    message.includes("Production MCP doctor deadline expired") ||
-    message.includes("Request timed out") ||
-    message.includes("Maximum total timeout exceeded") ||
-    (cause instanceof Error &&
-      (cause.name === "TimeoutError" || cause.name === "AbortError"))
-  );
-};
-
 /**
- * Name the applied doctor deadline when it fires. Codex's 30 second startup
+ * Name the applied doctor deadline when an owned abort or SDK request timeout
+ * fires. Remote failure text is not a deadline. Codex's 30 second startup
  * figure stays client guidance and is not this deadline.
  */
 const doctorTransportDetail = (
   cause: unknown,
   budget: McpPhaseBudget,
+  signal: AbortSignal,
 ): string => {
   const message = errorMessage(cause);
-  return doctorDeadlineFired(cause)
-    ? `${message} ${mcpDoctorDeadlineRecovery(budget)}`
-    : message;
+  const timedOut =
+    (signal.aborted && cause === signal.reason) ||
+    (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout);
+  return timedOut ? `${message} ${mcpDoctorDeadlineRecovery(budget)}` : message;
 };
 
 /**
