@@ -153,9 +153,9 @@ it("lists a code object shared through TYPE_REF once and refers to it by index",
     "leaf",
   ]);
   expect(small.code_objects.map((code) => code.nested_code)).toEqual([
-    [1, 1, 1],
-    [2, 2, 2],
-    [3, 3, 3],
+    [1],
+    [2],
+    [3],
     [],
   ]);
   expect(small.coverage.code_objects).toBe(4);
@@ -678,6 +678,158 @@ it("applies Python container rules before reporting lengths", () => {
   expect(() =>
     parse(withConsts([setOf(Buffer.concat([Buffer.from([0x5b]), u32(0)]))])),
   ).toThrow(PythonPycFormatFailure);
+});
+
+it("rejects a shared tuple key before its expansion doubles without bound", () => {
+  const depth = 30;
+  let body = Buffer.concat([Buffer.from([0xe9]), i32(1)]);
+  for (let index = depth - 1; index >= 0; index -= 1)
+    body = Buffer.concat([
+      Buffer.from([0x29 | 0x80, 2]),
+      body,
+      marshalRef(index + 1),
+    ]);
+  const bytes = withConsts([
+    Buffer.concat([Buffer.from([0x3c]), u32(1), body]),
+  ]);
+  const started = Date.now();
+  expect(() => parse(bytes)).toThrow(PythonPycResourceFailure);
+  expect(Date.now() - started).toBeLessThan(1000);
+  let shallow = Buffer.concat([Buffer.from([0xe9]), i32(1)]);
+  for (let index = 7; index >= 0; index -= 1)
+    shallow = Buffer.concat([
+      Buffer.from([0x29 | 0x80, 2]),
+      shallow,
+      marshalRef(index + 1),
+    ]);
+  expect(
+    root(
+      parse(
+        withConsts([Buffer.concat([Buffer.from([0x3c]), u32(1), shallow])]),
+      ),
+    ).consts[0],
+  ).toEqual({ kind: "set", length: 1 });
+});
+
+it("lists a shared container's code objects once per owner and charges each copy", () => {
+  const child = marshalCode("py311", { name: "child", flagged: true });
+  const copies = 40;
+  const container = Buffer.concat([
+    Buffer.from([0x28 | 0x80]),
+    u32(copies),
+    child,
+    ...Array.from({ length: copies - 1 }, () => marshalRef(1)),
+  ]);
+  const repeated = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      consts: [container, ...Array.from({ length: 7 }, () => marshalRef(0))],
+    }),
+  ]);
+  const started = Date.now();
+  const shared = parse(repeated);
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(shared.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "child",
+  ]);
+  expect(root(shared).nested_code).toEqual([1]);
+  expect(JSON.stringify(shared).length).toBeLessThan(64 * 1024);
+
+  const owners = 8;
+  const ownedContainer = Buffer.concat([
+    Buffer.from([0x28 | 0x80]),
+    u32(copies),
+    child,
+    ...Array.from({ length: copies - 1 }, () => marshalRef(2)),
+  ]);
+  const first = marshalCode("py311", {
+    name: "owner0",
+    flagged: true,
+    constsObject: ownedContainer,
+  });
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      consts: [
+        first,
+        ...Array.from({ length: owners - 1 }, (_, index) =>
+          marshalCode("py311", {
+            name: `owner${index + 1}`,
+            constsObject: marshalRef(1),
+          }),
+        ),
+      ],
+    }),
+  ]);
+  const report = parse(bytes);
+  expect(report.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "owner0",
+    "child",
+    ...Array.from({ length: owners - 1 }, (_, index) => `owner${index + 1}`),
+  ]);
+  expect(report.code_objects[1]?.nested_code).toEqual([2]);
+  expect(report.code_objects[3]?.nested_code).toEqual([2]);
+  const relationships = report.code_objects.reduce(
+    (sum, code) => sum + code.nested_code.length,
+    0,
+  );
+  const constants = report.code_objects.reduce(
+    (sum, code) => sum + code.consts.length,
+    0,
+  );
+  expect(relationships).toBe(owners + owners);
+  expect(constants).toBeGreaterThan(report.coverage.objects);
+  const artifact = {
+    path: defaults.path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  };
+  expect(() =>
+    parsePythonPyc(bytes, artifact, { ...defaults, max_objects: constants }),
+  ).toThrow(PythonPycResourceFailure);
+  expect(
+    parsePythonPyc(bytes, artifact, {
+      ...defaults,
+      max_objects: constants + relationships,
+    }).coverage.status,
+  ).toBe("complete");
+});
+
+it("accepts code objects as set members and dictionary keys", () => {
+  const setOf = (...members: Buffer[]): Buffer =>
+    Buffer.concat([Buffer.from([0x3c]), u32(members.length), ...members]);
+  const same = (filename: string): Buffer =>
+    marshalCode("py311", { name: "f", filename, firstlineno: 3 });
+  expect(
+    root(parse(withConsts([setOf(same("a.py"), same("b.py"))]))).consts[0],
+  ).toEqual({ kind: "set", length: 1 });
+  expect(
+    root(
+      parse(
+        withConsts([
+          setOf(
+            same("a.py"),
+            marshalCode("py311", { name: "g", firstlineno: 3 }),
+          ),
+        ]),
+      ),
+    ).consts[0],
+  ).toEqual({ kind: "set", length: 2 });
+  const produced = Buffer.from(
+    "cb0d0d0a000000000000000000000000e30000000000000000000000000000000000000000f3040000009700790029033e02000000e30000000000000000000000000100000000000000f308000000970064005a0079012902e9010000004e2901da0178a900f300000000fa04692e7079fa083c6d6f64756c653e720900000001000000730a000000f003010101d8020381017207000000e30000000000000000000000000100000000000000f308000000970064005a007901290272040000004e2901da01797206000000720700000072080000007209000000720900000001000000730a000000f003010101d80203810172070000007b7202000000e902000000304e720600000072060000007207000000fa046f2e707972090000007209000000010000007308000000f003010101d800047207000000",
+    "hex",
+  );
+  const report = parse(produced);
+  expect(root(report).consts[0]).toEqual({ kind: "frozenset", length: 2 });
+  expect(root(report).consts[1]).toEqual({ kind: "dict", length: 1 });
+  expect(report.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "<module>",
+    "<module>",
+  ]);
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
 it("leaves 3.11 alpha magics with other code layouts unsupported", () => {

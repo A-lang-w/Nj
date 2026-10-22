@@ -72,6 +72,17 @@ type CodeNode = Omit<PythonPycCodeObject, "nested_code"> & {
   readonly nested: readonly CodeNode[];
 };
 
+/**
+ * Fields CPython uses for code equality that the public report does not keep.
+ * `consts` stays the decoded graph so a code key can follow Python's rules
+ * without rebuilding marshal text.
+ */
+type CodeEquality = {
+  readonly consts: readonly MarshalValue[];
+  readonly linetable: string;
+  readonly exceptiontable: string;
+};
+
 const malformed = (message: string): never => {
   throw new PythonPycFormatFailure("malformed", message);
 };
@@ -172,9 +183,21 @@ class MarshalReader {
   #reportedStringBytes = 0;
   /** Const summaries the report copies, including tables shared by TYPE_REF. */
   #reportedConsts = 0;
+  /** Bytes of hash keys materialized for set and dict rules. */
+  #keyBytes = 0;
   /** Identity keys for NaN values, which are not equal to themselves. */
   readonly #identities = new WeakMap<MarshalValue, number>();
   #identityNext = 0;
+  /** One Python equality key per object. Null means the value is unhashable. */
+  readonly #keyCache = new WeakMap<MarshalValue, string | null>();
+  /** One code-equality key per code object. Empty while that key is in progress. */
+  readonly #codeKeys = new WeakMap<CodeNode, string>();
+  readonly #codeIdentities = new WeakMap<CodeNode, number>();
+  readonly #codeEquality = new WeakMap<CodeNode, CodeEquality>();
+  /** Constant keys are not set-equality keys: -0 stays distinct from 0. */
+  readonly #constCache = new WeakMap<MarshalValue, string>();
+  /** Distinct nested code objects reached from a container, including cycles. */
+  readonly #nestedCache = new WeakMap<MarshalValue, readonly CodeNode[]>();
 
   constructor(
     readonly bytes: Buffer,
@@ -321,9 +344,11 @@ class MarshalReader {
         ? asString(this.readObject(depth + 1), "co_qualname")
         : null;
     const firstlineno = this.u32();
-    asBytes(this.readObject(depth + 1), "co_linetable");
-    if (this.layout === "py311")
-      asBytes(this.readObject(depth + 1), "co_exceptiontable");
+    const linetable = asBytes(this.readObject(depth + 1), "co_linetable");
+    const exceptiontable =
+      this.layout === "py311"
+        ? asBytes(this.readObject(depth + 1), "co_exceptiontable")
+        : Buffer.alloc(0);
     this.#reportStrings([
       name,
       qualname ?? "",
@@ -335,7 +360,7 @@ class MarshalReader {
       ...(localsplusnames ?? []),
       localspluskinds_hex ?? "",
     ]);
-    return {
+    const node: CodeNode = {
       name,
       qualname,
       filename,
@@ -354,8 +379,14 @@ class MarshalReader {
       localspluskinds_hex,
       bytecode: { bytes: bytecode.length, sha256: sha256(bytecode) },
       consts: this.#summarizeConsts(consts),
-      nested: nestedCodeObjects(consts),
+      nested: this.#nestedCodeObjects(consts),
     };
+    this.#codeEquality.set(node, {
+      consts,
+      linetable: `${linetable.length}:${sha256(linetable)}`,
+      exceptiontable: `${exceptiontable.length}:${sha256(exceptiontable)}`,
+    });
+    return node;
   }
 
   /**
@@ -391,13 +422,71 @@ class MarshalReader {
    * every code object. Stop before those copies are built.
    */
   #chargeConsts(count: number): void {
+    this.#chargeReported(count, "constants");
+  }
+
+  /**
+   * Charge copies the report will carry. Nested relationships are separate
+   * from the immediate const tuple, which misses a shared container repeated
+   * by many owners.
+   */
+  #chargeReported(
+    count: number,
+    what: "constants" | "nested code relationships",
+  ): void {
     this.#reportedConsts += count;
     if (this.#reportedConsts > this.input.max_objects)
       throw new PythonPycResourceFailure(
         "objects",
         { max_objects: this.input.max_objects },
-        `Reported constants exceed max_objects ${this.input.max_objects}.`,
+        `Reported ${what} exceed max_objects ${this.input.max_objects}.`,
       );
+  }
+
+  /**
+   * Distinct code objects reachable from this constant tuple. A shared
+   * container is walked once. Charge the owner's reported relationships
+   * before the array the report keeps is built.
+   */
+  #nestedCodeObjects(items: readonly MarshalValue[]): CodeNode[] {
+    const seen = new Set<CodeNode>();
+    for (const item of items)
+      for (const code of this.#nestedCodes(item)) seen.add(code);
+    this.#chargeReported(seen.size, "nested code relationships");
+    return [...seen];
+  }
+
+  #nestedCodes(value: MarshalValue): readonly CodeNode[] {
+    if (value.kind === "code") return [value.value];
+    if (
+      value.kind !== "tuple" &&
+      value.kind !== "list" &&
+      value.kind !== "set" &&
+      value.kind !== "frozenset" &&
+      value.kind !== "dict"
+    )
+      return [];
+    const cached = this.#nestedCache.get(value);
+    if (cached !== undefined) return cached;
+    const building: CodeNode[] = [];
+    this.#nestedCache.set(value, building);
+    const seen = new Set<CodeNode>();
+    const add = (nodes: readonly CodeNode[]): void => {
+      for (const code of nodes) {
+        if (seen.has(code)) continue;
+        seen.add(code);
+        building.push(code);
+      }
+    };
+    if (value.kind === "dict") {
+      for (const [key, mapped] of value.items) {
+        add([...this.#nestedCodes(key)]);
+        add([...this.#nestedCodes(mapped)]);
+      }
+    } else {
+      for (const item of value.items) add([...this.#nestedCodes(item)]);
+    }
+    return building;
   }
 
   readRef(): MarshalValue {
@@ -508,8 +597,20 @@ class MarshalReader {
   /**
    * Python equality key for hash-based containers. Null means the value is
    * unhashable. NaN uses object identity because NaN is not equal to NaN.
+   * Shared tuples are cached, and the joined key is charged before it is built.
    */
   #pythonKey(value: MarshalValue, stack: Set<MarshalValue>): string | null {
+    const cached = this.#keyCache.get(value);
+    if (cached !== undefined) return cached;
+    const key = this.#pythonKeyUncached(value, stack);
+    if (!stack.has(value)) this.#keyCache.set(value, key);
+    return key;
+  }
+
+  #pythonKeyUncached(
+    value: MarshalValue,
+    stack: Set<MarshalValue>,
+  ): string | null {
     switch (value.kind) {
       case "none":
         return "N";
@@ -520,7 +621,9 @@ class MarshalReader {
       case "bool":
         return value.value ? "i1" : "i0";
       case "int":
-        return `i${value.value.toString()}`;
+        if (value.bits > this.input.max_string_bytes * 3)
+          this.#keyTooLarge(value.bits);
+        return this.#boundedJoin("i", [value.value.toString()], "");
       case "float":
         return Number.isNaN(value.value)
           ? this.#identity(value)
@@ -529,11 +632,18 @@ class MarshalReader {
         if (Number.isNaN(value.real) || Number.isNaN(value.imag))
           return this.#identity(value);
         if (value.imag === 0) return this.#numberKey(value.real);
-        return `c${this.#numberKey(value.real)}:${this.#numberKey(value.imag)}`;
+        return this.#boundedJoin(
+          "c",
+          [this.#numberKey(value.real), this.#numberKey(value.imag)],
+          ":",
+        );
       case "str":
-        return `s${value.bytes}:${value.value}`;
+        return this.#boundedJoin(`s${value.bytes}:`, [value.value], "");
       case "bytes":
+        this.#reserveKey(value.value.length * 2 + 8);
         return `b${value.value.length}:${value.value.toString("hex")}`;
+      case "code":
+        return this.#codeKey(value.value);
       case "tuple":
       case "frozenset": {
         if (stack.has(value)) return null;
@@ -549,11 +659,176 @@ class MarshalReader {
         }
         stack.delete(value);
         if (value.kind === "frozenset") parts.sort();
-        return `${value.kind === "tuple" ? "t" : "f"}${parts.join(",")}`;
+        return this.#boundedJoin(
+          value.kind === "tuple" ? "t" : "f",
+          parts,
+          ",",
+        );
       }
       default:
         return null;
     }
+  }
+
+  /**
+   * CPython code equality ignores filename, qualname, and stack size. Consts
+   * use the constant-key rules, which keep -0 distinct from 0.
+   */
+  #codeKey(node: CodeNode): string {
+    const existing = this.#codeKeys.get(node);
+    if (existing !== undefined && existing !== "") return existing;
+    if (existing === "") return `cycle${this.#codeIdentity(node)}`;
+    this.#codeKeys.set(node, "");
+    const material =
+      this.#codeEquality.get(node) ??
+      malformed("Code object is missing equality material.");
+    const locals = node.localsplusnames ?? [
+      ...(node.varnames ?? []),
+      ...(node.cellvars ?? []),
+      ...(node.freevars ?? []),
+    ];
+    const key = this.#boundedJoin(
+      "",
+      [
+        node.name,
+        String(node.argcount),
+        String(node.posonlyargcount ?? 0),
+        String(node.kwonlyargcount),
+        String(node.flags),
+        String(node.firstlineno),
+        `${node.bytecode.bytes}:${node.bytecode.sha256}`,
+        this.#constKeyItems(material.consts),
+        node.names.join("\0"),
+        locals.join("\0"),
+        material.linetable,
+        material.exceptiontable,
+      ],
+      "|",
+    );
+    this.#codeKeys.set(node, key);
+    return key;
+  }
+
+  #codeIdentity(node: CodeNode): number {
+    const existing = this.#codeIdentities.get(node);
+    if (existing !== undefined) return existing;
+    this.#identityNext += 1;
+    this.#codeIdentities.set(node, this.#identityNext);
+    return this.#identityNext;
+  }
+
+  /** Constant key used when two code objects compare their co_consts. */
+  #constKeyItems(items: readonly MarshalValue[]): string {
+    const parts: string[] = [];
+    for (const item of items) parts.push(this.#constKey(item, new Set()));
+    return this.#boundedJoin("k", parts, ",");
+  }
+
+  #constKey(value: MarshalValue, stack: Set<MarshalValue>): string {
+    const cached = this.#constCache.get(value);
+    if (cached !== undefined) return cached;
+    const key = this.#constKeyUncached(value, stack);
+    if (!stack.has(value)) this.#constCache.set(value, key);
+    return key;
+  }
+
+  #constKeyUncached(value: MarshalValue, stack: Set<MarshalValue>): string {
+    switch (value.kind) {
+      case "none":
+        return "N";
+      case "ellipsis":
+        return "E";
+      case "stopiter":
+        return "S";
+      case "bool":
+        return value.value ? "B1" : "B0";
+      case "int":
+        if (value.bits > this.input.max_string_bytes * 3)
+          this.#keyTooLarge(value.bits);
+        return this.#boundedJoin("i", [value.value.toString()], "");
+      case "float":
+        if (Number.isNaN(value.value)) return this.#identity(value);
+        if (Object.is(value.value, -0)) return "z-0";
+        if (Object.is(value.value, 0)) return "z0";
+        return `z${this.#numberKey(value.value)}`;
+      case "complex":
+        if (Number.isNaN(value.real) || Number.isNaN(value.imag))
+          return this.#identity(value);
+        return this.#boundedJoin(
+          "c",
+          [
+            this.#signedZero(value.real),
+            this.#signedZero(value.imag),
+            this.#numberKey(value.real),
+            this.#numberKey(value.imag),
+          ],
+          ":",
+        );
+      case "str":
+        return this.#boundedJoin(`s${value.bytes}:`, [value.value], "");
+      case "bytes":
+        this.#reserveKey(value.value.length * 2 + 8);
+        return `y${value.value.length}:${value.value.toString("hex")}`;
+      case "code":
+        return this.#codeKey(value.value);
+      case "tuple":
+      case "frozenset": {
+        if (stack.has(value)) return this.#identity(value);
+        stack.add(value);
+        const parts = value.items.map((item) => this.#constKey(item, stack));
+        stack.delete(value);
+        if (value.kind === "frozenset") parts.sort();
+        const key = this.#boundedJoin(
+          value.kind === "tuple" ? "t" : "f",
+          parts,
+          ",",
+        );
+        return key;
+      }
+      default:
+        return this.#identity(value);
+    }
+  }
+
+  #signedZero(value: number): string {
+    if (Object.is(value, -0)) return "-";
+    if (Object.is(value, 0)) return "+";
+    return "n";
+  }
+
+  /**
+   * Join a key only after its size fits the string budget and the running
+   * key-byte budget. Caching the result does not make an oversized key safe.
+   */
+  #boundedJoin(
+    prefix: string,
+    parts: readonly string[],
+    separator: string,
+  ): string {
+    let size = prefix.length;
+    if (parts.length > 0) size += (parts.length - 1) * separator.length;
+    for (const part of parts) size += part.length;
+    this.#reserveKey(size);
+    return prefix + parts.join(separator);
+  }
+
+  #reserveKey(size: number): void {
+    if (size > this.input.max_string_bytes) this.#keyTooLarge(size);
+    this.#keyBytes += size;
+    if (this.#keyBytes > this.input.max_file_bytes)
+      throw new PythonPycResourceFailure(
+        "string",
+        { max_file_bytes: this.input.max_file_bytes },
+        `Marshal key expansion exceeds max_file_bytes ${this.input.max_file_bytes}.`,
+      );
+  }
+
+  #keyTooLarge(size: number): never {
+    throw new PythonPycResourceFailure(
+      "string",
+      { max_string_bytes: this.input.max_string_bytes },
+      `Marshal key of ${size} bytes exceeds max_string_bytes ${this.input.max_string_bytes}.`,
+    );
   }
 
   #numberKey(value: number): string {
@@ -793,43 +1068,6 @@ const flattenCode = (root: CodeNode): PythonPycCodeObject[] => {
         indexes.get(child) ?? malformed("Nested code object was not listed."),
     ),
   }));
-};
-
-/**
- * Code objects anywhere in a constant, including inside tuples and other
- * containers. Cycles are containers that refer to themselves; a code object
- * stops the walk so its own constants stay on that object.
- */
-const nestedCodeObjects = (items: readonly MarshalValue[]): CodeNode[] => {
-  const nested: CodeNode[] = [];
-  const seen = new Set<MarshalValue>();
-  const visit = (value: MarshalValue): void => {
-    switch (value.kind) {
-      case "code":
-        nested.push(value.value);
-        return;
-      case "tuple":
-      case "list":
-      case "set":
-      case "frozenset":
-        if (seen.has(value)) return;
-        seen.add(value);
-        for (const item of value.items) visit(item);
-        return;
-      case "dict":
-        if (seen.has(value)) return;
-        seen.add(value);
-        for (const [key, mapped] of value.items) {
-          visit(key);
-          visit(mapped);
-        }
-        return;
-      default:
-        return;
-    }
-  };
-  for (const item of items) visit(item);
-  return nested;
 };
 
 const asBytes = (value: MarshalValue, field: string): Buffer => {
