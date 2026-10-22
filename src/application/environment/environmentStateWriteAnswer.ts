@@ -26,6 +26,7 @@ import {
   spelledLike,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
+  collectionMatch,
   isObject,
   scalarText,
   type JsonObject,
@@ -40,9 +41,8 @@ import {
   type ReplayArguments,
 } from "./environmentReplay.js";
 import type { EnvironmentManifestTool } from "./environmentSource.js";
+import { callSegments } from "./environmentStateCallLines.js";
 import {
-  callSegments,
-  collectionMatch,
   itemCall,
   missingAnswer,
   namedEntity,

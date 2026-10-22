@@ -3,6 +3,7 @@ import {
   changesState,
   isObject,
   isStateWrite,
+  listsAll,
   normalizedPath,
   type JsonObject,
   type StateEntity,
@@ -16,20 +17,24 @@ import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import {
   checkDocumentRead,
-  checkedLines,
+  checkItemRead,
+  checkListRead,
   collectionTarget,
   entityTarget,
   isAbsence,
   itemTarget,
-  servedLine,
   succeeded,
   withBodies,
-  writtenFieldChecks,
+  showsPlacement,
   SimulatedState,
   type CheckOutcome,
+} from "./environmentStateWriteChecks.js";
+import {
+  checkedLines,
+  servedLine,
   type CheckedLines,
   type ServedLine,
-} from "./environmentStateWriteChecks.js";
+} from "./environmentStateCheckedLines.js";
 import {
   exercisedBy,
   interference,
@@ -42,6 +47,7 @@ import {
   WriteEffects,
   type PendingTargets,
   type TouchedTargets,
+  writtenFieldChecks,
 } from "./environmentStateWriteAttribution.js";
 import { applyCreate } from "./environmentStateWriteCreate.js";
 import { applyDocument } from "./environmentStateWriteDocument.js";
@@ -54,7 +60,6 @@ import {
   type WriteSimulationInput,
   type WriteStep,
 } from "./environmentStateWriteEffects.js";
-import { insertIndex } from "./environmentStateWriteExplain.js";
 import {
   classifyWrite,
   prefixRelated,
@@ -272,7 +277,7 @@ export class EnvironmentStateWriteSimulation {
     this.#taint.known(entity.type, entity.collection, entity.id);
     this.#touched.delete(target);
     if (isAbsence(record.status)) {
-      this.#state.remove(entity);
+      this.#removeEntity(entity);
       return;
     }
     const object = this.#checkFields(view, record, entity, writes);
@@ -336,7 +341,14 @@ export class EnvironmentStateWriteSimulation {
         volatile: this.#input.volatileOf(view.type),
         collection,
       };
-      return this.omitted.check(this.#state, view, record, check);
+      return this.omitted.check(this.#state, view, record, check, (loosened) =>
+        loosened.shape === "item"
+          ? checkItemRead(this.#state, loosened, record, check)
+          : checkListRead(this.#state, loosened, record, {
+              ...check,
+              line: line!,
+            }),
+      );
     });
   }
 
@@ -351,32 +363,45 @@ export class EnvironmentStateWriteSimulation {
       return;
     const borrowers = this.#observations.get(record.ordinal);
     if (!borrowers && this.#resynced(view, record)) return;
-    const outcome = this.#check(view, record);
+    let outcome = this.#check(view, record);
     if (outcome === undefined) return;
-    const keys = [...outcome.targets, ...outcome.unheld];
-    if (
-      keys.some(
+    let keys = [...outcome.targets, ...outcome.unheld];
+    const blocked = (targets: readonly string[]) =>
+      targets.some(
         (key) =>
           this.#taint.tainted(key) ||
           runningAt(this.#touchedSince, key, record.start),
-      )
-    )
-      return;
-    // Only a read the gate counts shows which fields the application leaves out.
-    this.omitted.keep(view, outcome);
-    const exercised = exercisedBy(this.#touched, keys, borrowers);
-    const interferes = interference(this.#history, outcome);
+      );
+    if (blocked(keys)) return;
+    let exercised = exercisedBy(this.#touched, keys, borrowers);
     if (borrowers !== undefined) {
-      if (!outcome.pass) this.#contradictOthers(exercised, record, interferes);
+      this.omitted.keep(view, outcome);
+      if (!outcome.pass)
+        this.#contradictOthers(
+          exercised,
+          record,
+          interference(this.#history, outcome),
+        );
       return;
     }
-    const pass =
-      outcome.pass ||
-      (view.shape === "list" && this.#retryInsert(view, record, exercised));
-    const unseen = pass
-      ? this.#confirm(view, record, keys, exercised)
+    if (!outcome.pass && view.shape === "list") {
+      const retried = this.#retryInsert(view, record, exercised);
+      if (retried !== undefined) {
+        // Reordering can replace the entities on a query page. Confirmation
+        // and pending-write cleanup must use the successful check's coverage.
+        outcome = retried;
+        keys = [...outcome.targets, ...outcome.unheld];
+        if (blocked(keys)) return;
+        exercised = exercisedBy(this.#touched, keys, borrowers);
+      }
+    }
+    // Retain omissions only after the final check's coverage passes the ownership guards.
+    this.omitted.keep(view, outcome);
+    const interferes = interference(this.#history, outcome);
+    const unseen = outcome.pass
+      ? this.#confirm(view, record, outcome, exercised)
       : undefined;
-    if (!pass) {
+    if (!outcome.pass) {
       const interfered = new Set([...exercised].filter(interferes));
       if (interfered.size === 0)
         this.#mismatch({ record, index, keys, exercised, view });
@@ -414,17 +439,18 @@ export class EnvironmentStateWriteSimulation {
   #confirm(
     view: StateView,
     record: StateRecordFacts,
-    keys: readonly string[],
+    outcome: CheckOutcome,
     exercised: ReadonlySet<string>,
   ): Map<string, Set<string>> {
     const shown = shownWrites(this.#touched, this.#effects, {
-      keys,
+      keys: [...outcome.targets, ...outcome.unheld],
       exercised,
       fields: shownFields(view, this.#input.volatileOf),
     });
     for (const name of shown.confirmed) {
       this.#drafts.get(name)!.confirmed.push(record.ordinal);
-      if (view.shape === "list") this.#placed.add(name);
+      if (showsPlacement(view, outcome, this.#inserted, name))
+        this.#placed.add(name);
     }
     return shown.unseen;
   }
@@ -487,7 +513,13 @@ export class EnvironmentStateWriteSimulation {
     );
     if (isObject(object))
       this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
-    else this.#state.remove(entity);
+    else this.#removeEntity(entity);
+  }
+
+  /** A read showed the entity gone: the state drops it, and no write keeps a claim on its collection through it. */
+  #removeEntity(entity: StateEntity): void {
+    this.#state.remove(entity);
+    this.#effects.removed(this.#touched, entity);
   }
 
   /** Contradict the writes a failed check exercised, or, when none, the related writes since its targets were last checked; a failed list stops being checked. */
@@ -518,15 +550,15 @@ export class EnvironmentStateWriteSimulation {
       for (const key of failed.keys) this.#taint.fail(key);
   }
 
-  /** A list that fails only for where one create placed its entities passes under another of that create's insert candidates. */
+  /** The successful check under another create insertion candidate, including its possibly different query-page coverage. */
   #retryInsert(
     view: Extract<StateView, { shape: "list" }>,
     record: StateRecordFacts,
     exercised: ReadonlySet<string>,
-  ): boolean {
-    const collection = this.#line(view, record)?.collection;
-    if (view.membership !== "all" || collection === undefined) return false;
-    const members = this.#state.members(view.type, collection);
+  ): CheckOutcome | undefined {
+    const line = this.#line(view, record);
+    if (line === undefined || !listsAll(view, line.ordinal)) return undefined;
+    const members = this.#state.members(view.type, line.collection);
     const key = (entity: StateEntity) =>
       entityTarget(entity.type, entity.collection, entity.id);
     const inserted = members.filter((entity) =>
@@ -535,24 +567,19 @@ export class EnvironmentStateWriteSimulation {
     const creates = new Set(
       inserted.map((entity) => this.#inserted.get(key(entity))!),
     );
-    if (creates.size !== 1) return false;
+    if (creates.size !== 1) return undefined;
     const [name] = creates;
     const draft = this.#drafts.get(name!)!;
     // An item read confirms the entity, not where a list places it.
-    if (!exercised.has(name!) || this.#placed.has(name!)) return false;
+    if (!exercised.has(name!) || this.#placed.has(name!)) return undefined;
     for (const candidate of draft.candidates.slice(1)) {
-      for (const entity of inserted) this.#state.remove(entity);
-      for (const entity of inserted) {
-        const order = this.#state
-          .members(view.type, collection)
-          .map((member) => member.fields);
-        this.#state.put(entity, insertIndex(candidate, order, entity.fields));
-      }
-      if (this.#check(view, record)?.pass === true) {
+      this.#state.reinsert(view.type, line.collection, inserted, candidate);
+      const outcome = this.#check(view, record);
+      if (outcome?.pass === true) {
         draft.plan.insert = candidate;
-        return true;
+        return outcome;
       }
     }
-    return false;
+    return undefined;
   }
 }

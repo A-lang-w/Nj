@@ -12,8 +12,6 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import {
-  checkItemRead,
-  checkListRead,
   succeeded,
   type CheckOutcome,
   type ReadBodies,
@@ -31,14 +29,15 @@ export class OmittedFields {
   constructor(private readonly retain: (bytes: number) => void) {}
 
   /** Check an item or list read with the fields reads showed omitted, this one's included, no longer required, naming this one's in the outcome. */
-  check(
+  check<View extends StateItemView | StateListView>(
     state: SimulatedState,
-    view: StateItemView | StateListView,
+    view: View,
     record: StateRecordFacts,
     read: ReadBodies & {
       readonly idField: string;
       readonly collection: string;
     },
+    compare: (view: View) => CheckOutcome | undefined,
   ): CheckOutcome | undefined {
     const omitted = lackedFields(state, view, record, read);
     const noted = this.#omitted.get(view.type);
@@ -46,10 +45,7 @@ export class OmittedFields {
       view,
       omitted.length === 0 ? noted : new Set([...(noted ?? []), ...omitted]),
     );
-    const outcome =
-      loosened.shape === "item"
-        ? checkItemRead(state, loosened, record, read)
-        : checkListRead(state, loosened, record, read);
+    const outcome = compare(loosened);
     return outcome === undefined ? undefined : { ...outcome, omitted };
   }
 

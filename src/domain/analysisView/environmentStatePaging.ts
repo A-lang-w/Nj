@@ -18,12 +18,28 @@ const PAGING_PARAMETERS = new Set([
   "_end",
 ]);
 
+/** Whether a query parameter pages or bounds a list rather than filtering it. */
+export const isPagingParameter = (name: string): boolean =>
+  PAGING_PARAMETERS.has(name.toLowerCase());
+
 /** Whether a query only pages its list: no parameters, or paging parameters alone. */
 export const pagesOnly = (query: string | undefined): boolean =>
   query === undefined ||
-  [...parseUrlQueryParameterNames(query)].every((name) =>
-    PAGING_PARAMETERS.has(name.toLowerCase()),
-  );
+  [...parseUrlQueryParameterNames(query)].every(isPagingParameter);
+
+const PAGE_POSITION_PARAMETERS = new Set(["offset", "start", "_start", "page"]);
+
+/** A paging-only line that can start at the collection's beginning. Positive page numbers are ambiguous (zero- or one-based); malformed or conflicting positions do not establish whole membership. */
+export const startsAtBeginning = (query: string | undefined): boolean => {
+  if (!pagesOnly(query)) return false;
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
+    const number = Number(value);
+    if (!/^\d+$/u.test(value) || !Number.isSafeInteger(number)) return false;
+    if (PAGE_POSITION_PARAMETERS.has(name.toLowerCase()) && number !== 0)
+      return false;
+  }
+  return true;
+};
 
 /** Paging parameters that bound how many items a page holds. */
 const PAGE_SIZE_PARAMETERS = new Set([
