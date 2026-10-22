@@ -18,8 +18,10 @@ import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
-  type JavaScriptSemanticInitializer,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
   JavaScriptRouteCandidate,
@@ -312,8 +314,8 @@ export class JavaScriptRouteScan {
             binding.referenceInitializers,
           ])
             for (const initializer of initializers) {
-              const selected = this.#initializerValue(initializer);
-              if (selected !== undefined) admit(selected);
+              for (const selected of this.#initializerValues(initializer))
+                admit(selected);
             }
         },
       });
@@ -844,20 +846,55 @@ export class JavaScriptRouteScan {
     }
   }
 
-  /** Select own literal fields at the initializer's capture, never its namespace. */
-  #initializerValue(
-    initializer: JavaScriptSemanticInitializer,
-  ): t.Node | undefined {
-    let node: t.Node | undefined = initializer.node;
-    for (const key of initializer.projection) {
-      if (key === null || node === undefined) return;
-      // Ownership follows possible source identities, including escaped data.
-      // Unlike a destination value, it makes no claim about freshness at a call.
+  /** Follow copied data slots without claiming their excluded source siblings. */
+  *#initializerValues(
+    initializer: JavaScriptSemanticBindingState["referenceInitializers"][number],
+  ): Generator<t.Node> {
+    const projection = semanticCopiedReferencePath(initializer, [], "escape");
+    if (projection === null) return;
+    if (!this.#queue(initializer.node)) return;
+    const pending = [{ node: initializer.node, depth: 0 }];
+    const retain = (node: t.Node, depth: number): boolean => {
+      if (!this.#queue(node)) return false;
+      pending.push({ node, depth });
+      return true;
+    };
+    while (pending.length > 0 && this.#result.capacity === null) {
+      const { node, depth } = pending.pop()!;
+      if (depth === projection.length) {
+        yield node;
+        continue;
+      }
+      const key = projection[depth]!;
+      if (key === null) continue;
+      // Source ownership retains possible identities even after an escape;
+      // positive destination inference separately requires per-call freshness.
       const selected = this.#resolve(node, undefined, this.index);
-      if (selected === undefined || !t.isObjectExpression(selected)) return;
-      node = this.#fields(selected).values.get(String(key))?.value;
+      if (selected !== undefined && t.isObjectExpression(selected)) {
+        const fields = this.#fields(selected).values;
+        if (typeof key !== "object") {
+          const property = fields.get(String(key));
+          if (property !== undefined && !retain(property.value, depth + 1))
+            return;
+        } else {
+          for (const [name, property] of fields)
+            if (
+              semanticPropertyPathKeyMatches(key, name) &&
+              !retain(property.value, depth + 1)
+            )
+              return;
+        }
+      } else if (selected !== undefined && t.isArrayExpression(selected)) {
+        for (const [index, element] of selected.elements.entries()) {
+          // A spread leaves all subsequent element indices unknown.
+          if (t.isSpreadElement(element)) break;
+          if (element === null) continue;
+          if (!this.#queue(element)) return;
+          if (semanticPropertyPathKeyMatches(key, String(index)))
+            pending.push({ node: element, depth: depth + 1 });
+        }
+      }
     }
-    return node;
   }
 
   /** Ownership is per interpretation; return whether inferred roots were found. */

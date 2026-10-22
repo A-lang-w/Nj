@@ -830,6 +830,11 @@ it.each(
     "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query:payload}=registry;router.push({pathname:'/users',query:payload});",
     "const registry={route:{path:'/independent',component:View},settings:{query:{path:'/query-data',component:Preview}}};const {settings:{query}}=registry;router.push({pathname:'/users',query});",
     "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {route,...query}=registry;router.push({pathname:'/users',query});",
+    "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};const {route,...payload}=registry;router.push({pathname:'/users',query:payload});",
+    "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View},other:{path:'/other-data',component:Preview}};const {route,...payload}=registry;router.push({pathname:'/users',query:payload});",
+    "const registry={settings:{query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}}};const {settings:{route,...payload}}=registry;router.push({pathname:'/users',query:payload});",
+    "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};const alias=registry;const {route,...payload}=alias;router.push({pathname:'/users',query:payload});",
+    "const registry=[{path:'/independent',component:View},{path:'/query-data',component:Preview}];const [route,...payload]=registry;router.push({pathname:'/users',query:payload});",
   ].flatMap((source) => [source, `function module(){${source}}`]),
 )(
   "preserves independent routes beside selected query projections: %s",
