@@ -25,12 +25,17 @@ what the writes did:
   reads it checks return, when the read names no projection parameter: the item whose id the path names, or the listed
   items. No view of the type requires them any more. A read that checks nothing, such as one begun while a modelled
   write to its targets still ran or a page the collection has outgrown, notes none.
+  Established omissions apply when classifying subsequent reads and choosing later write observations, not just
+  when serializing final views. A complete `fields=*` read is not partial solely for lacking a known optional field.
 - **Projected reads.** An item read naming `fields`, `fields[...]`, `select` or `$select` that does not return the item
   is left out of the identity proof and the view's checks. The view lists it in `projected_record_ordinals`, and serving
   replays a call to that tool naming such a parameter, for an entity the state holds, with the reason `projection`;
   the replay shows the recording, not served writes. The write gate neither checks nor learns a write's effect from a
   successful read that names such a parameter and leaves out a field its view requires; a 400, 404 or 410 such a read
   answers is still the absence it checks.
+  Identity-free projection evidence after the initial-state cutoff is retained too, without seeding later values
+  into initial entities. Failed responses are classified before the projection-replay shortcut, so a projected
+  absence can confirm a delete or contradict an unexplained disappearance.
 - **Sequences.** A sequence value may be `-`-separated digit groups of one width of at least two digits, not a date,
   version or address. The next value keeps the exemplar's groups and zero padding; digits that outgrow them lead. A
   later create must record its value spelled that way. A held value whose digits outgrew the mask (`100-00` after

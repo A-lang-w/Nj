@@ -182,8 +182,12 @@ export class EnvironmentStateWriteSimulation {
       io: this.#input.io,
       records: this.#input.records,
       timed: this.#input.timed,
-      viewOf: (ordinal) =>
-        this.#input.views.get(this.#toolOf.get(ordinal)?.name ?? ""),
+      viewOf: (ordinal) => {
+        const view = this.#input.views.get(
+          this.#toolOf.get(ordinal)?.name ?? "",
+        );
+        return view === undefined ? undefined : this.omitted.view(view);
+      },
       idField: (type) => this.#types.get(type)!.id_field,
       observed: (ordinal) =>
         this.#observations.set(
@@ -361,9 +365,10 @@ export class EnvironmentStateWriteSimulation {
   }
 
   #read(record: StateRecordFacts, index: number, tool: StateToolFacts): void {
-    const view = this.#input.views.get(tool.name);
-    if (view === undefined || projectedRead(view, record, this.#input.io))
-      return;
+    const original = this.#input.views.get(tool.name);
+    if (original === undefined) return;
+    const view = this.omitted.view(original);
+    if (projectedRead(view, record, this.#input.io)) return;
     const borrowers = this.#observations.get(record.ordinal);
     if (!borrowers && this.#resynced(view, record)) return;
     let outcome = this.#check(view, record);

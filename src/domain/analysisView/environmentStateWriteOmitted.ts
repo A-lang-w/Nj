@@ -55,13 +55,16 @@ export class OmittedFields {
     for (const field of outcome.omitted ?? []) this.#note(view.type, field);
   }
 
+  /** The current required-field facts, shared by observations, checks and final output. */
+  view(view: StateView): StateView {
+    return view.shape === "item" || view.shape === "list"
+      ? relaxed(view, this.#omitted.get(view.type))
+      : view;
+  }
+
   /** The views with the fields reads showed omitted no longer required. */
   views(views: readonly StateView[]): StateView[] {
-    return views.map((view) =>
-      view.shape === "item" || view.shape === "list"
-        ? relaxed(view, this.#omitted.get(view.type))
-        : view,
-    );
+    return views.map((view) => this.view(view));
   }
 
   #note(type: string, field: string): void {
