@@ -497,3 +497,168 @@ it("parses the Rizin inferior TTY as an option and passes it to the manager", as
     inferiorTty: "/dev/pts/7",
   });
 });
+
+it("runs execute-radare2-command through the reverse-engineering service", async () => {
+  const evidence = createEvidence(
+    undefined,
+    { id: "radare2", name: "Radare2", version: null },
+    {
+      predicateType: "rea.reverse-engineering.command-observation",
+      operation: "execute_radare2_command",
+      parameters: { path: "/tmp/sample", command: "ij" },
+      result: { completion_status: "complete" },
+      rawResult: { completion_status: "complete" },
+    },
+  );
+  const executeRadare2Command = vi.fn(async () => ok(evidence));
+  const commands = new Map<
+    string,
+    {
+      run(input: {
+        args: Record<string, unknown>;
+        options: Record<string, unknown>;
+      }): Promise<unknown>;
+    }
+  >();
+  const cli = {
+    command: (
+      name: string,
+      definition: {
+        run(input: {
+          args: Record<string, unknown>;
+          options: Record<string, unknown>;
+        }): Promise<unknown>;
+      },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    () =>
+      ({
+        executeRadare2Command,
+        close: vi.fn(async () => undefined),
+      }) as unknown as ReverseEngineeringService,
+  );
+  const command = commands.get(CLI_COMMANDS.executeRadare2Command);
+  if (command === undefined)
+    throw new Error("Radare2 CLI command was not registered");
+
+  const result = await command.run({
+    args: { path: "/tmp/sample", command: "ij" },
+    options: {},
+  });
+
+  expect(result).toEqual(evidence);
+  expect(executeRadare2Command).toHaveBeenCalledWith(
+    { path: "/tmp/sample", command: "ij" },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+
+  await command.run({
+    args: { path: "/tmp/sample", command: "ij" },
+    options: { commandTimeoutMs: 5_000 },
+  });
+  expect(executeRadare2Command).toHaveBeenLastCalledWith(
+    { path: "/tmp/sample", command: "ij", command_timeout_ms: 5_000 },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
+
+it("runs compare-with-radiff2 through the reverse-engineering service", async () => {
+  const evidence = createEvidence(
+    undefined,
+    { id: "radiff2", name: "radiff2", version: null },
+    {
+      predicateType: "rea.reverse-engineering.command-observation",
+      operation: "compare_with_radiff2",
+      parameters: {
+        path_a: "/tmp/sample-a",
+        path_b: "/tmp/sample-b",
+        operation: "functions",
+      },
+      result: { completion_status: "complete" },
+      rawResult: { completion_status: "complete" },
+    },
+  );
+  const compareWithRadiff2 = vi.fn(async () => ok(evidence));
+  const commands = new Map<
+    string,
+    {
+      run(input: {
+        args: Record<string, unknown>;
+        options: Record<string, unknown>;
+      }): Promise<unknown>;
+    }
+  >();
+  const cli = {
+    command: (
+      name: string,
+      definition: {
+        run(input: {
+          args: Record<string, unknown>;
+          options: Record<string, unknown>;
+        }): Promise<unknown>;
+      },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    () =>
+      ({
+        compareWithRadiff2,
+        close: vi.fn(async () => undefined),
+      }) as unknown as ReverseEngineeringService,
+  );
+  const command = commands.get(CLI_COMMANDS.compareWithRadiff2);
+  if (command === undefined)
+    throw new Error("radiff2 CLI command was not registered");
+
+  const result = await command.run({
+    args: {
+      pathA: "/tmp/sample-a",
+      pathB: "/tmp/sample-b",
+      operation: "functions",
+    },
+    options: {},
+  });
+
+  expect(result).toEqual(evidence);
+  expect(compareWithRadiff2).toHaveBeenCalledWith(
+    {
+      path_a: "/tmp/sample-a",
+      path_b: "/tmp/sample-b",
+      operation: "functions",
+    },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+
+  await command.run({
+    args: {
+      pathA: "/tmp/sample-a",
+      pathB: "/tmp/sample-b",
+      operation: "bytes",
+    },
+    options: { commandTimeoutMs: 5_000 },
+  });
+  expect(compareWithRadiff2).toHaveBeenLastCalledWith(
+    {
+      path_a: "/tmp/sample-a",
+      path_b: "/tmp/sample-b",
+      operation: "bytes",
+      command_timeout_ms: 5_000,
+    },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
