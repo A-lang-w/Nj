@@ -12,9 +12,10 @@ const clockStart = (
     (latest, record) => Math.max(latest, record.end),
     Number.NEGATIVE_INFINITY,
   );
-  return Number.isFinite(end)
-    ? new Date(Math.ceil(end / 1000) * 1000).toISOString()
-    : null;
+  if (!Number.isFinite(end)) return null;
+  const start = new Date(Math.ceil(end / 1000) * 1000);
+  // A recorded time past the range a date can hold gives no served clock.
+  return Number.isNaN(start.getTime()) ? null : start.toISOString();
 };
 
 /** The write plans a capture's own timeline confirms against an extracted state, and the served clock's start. */
