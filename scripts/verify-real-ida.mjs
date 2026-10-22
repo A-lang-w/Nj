@@ -399,18 +399,36 @@ const mcp = async (cliDossier) => {
     phase = completedPhase;
   }
 };
-/** A fresh official connection must bind the GUI database before queries. */
+/** A fresh official connection must bind the GUI database matching the target. */
 const openHexraysGuiDatabase = async (upstream) => {
+  const expected = (await digest()).toLowerCase();
   const list = await upstream.call("list_databases", {});
-  const gui = (list.instances ?? []).find(
-    (instance) => instance.backend === "gui",
+  const candidates = (list.instances ?? []).filter(
+    (instance) => instance.backend === "gui" && instance.status === "available",
   );
-  if (gui === undefined)
+  if (candidates.length === 0)
     throw new Error("The official IDA MCP no longer reports a GUI database.");
-  const opened = await upstream.call("open_database", { path: gui.path });
-  return typeof opened.instance_id === "string"
-    ? { instance_id: opened.instance_id }
-    : {};
+  const tried = [];
+  for (const candidate of candidates) {
+    const opened = await upstream.call("open_database", {
+      path: candidate.path,
+    });
+    const binding =
+      typeof opened.instance_id === "string"
+        ? { instance_id: opened.instance_id }
+        : {};
+    const metadata = unwrapHexraysExecuteResult(
+      await upstream.call("execute_python", {
+        code: hexraysMetadataQuery(),
+        ...binding,
+      }),
+    );
+    if (String(metadata.sha256).toLowerCase() === expected) return binding;
+    tried.push(candidate.path);
+  }
+  throw new Error(
+    `No GUI database in the official IDA MCP matches the target digest; GUI databases tried: ${tried.join(", ")}.`,
+  );
 };
 const cleanup = async () => {
   phase = "upstream lifecycle verification";

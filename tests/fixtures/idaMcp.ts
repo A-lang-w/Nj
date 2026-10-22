@@ -104,6 +104,8 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   tools?: readonly string[];
   /** GUI databases the fake official server reports, with recorded digests. */
   guiDatabases: readonly { path: string; sha256: string }[] = [];
+  /** Backend the fake server reports for opening a GUI-listed database. */
+  guiOpenBackend: "gui" | "idalib" = "gui";
   #hexraysInstance: { id: string; path: string } | undefined;
   #hexraysCurrentGui: { path: string; sha256: string } | undefined;
   async connect() {
@@ -177,7 +179,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
           this.#hexraysCurrentGui = gui;
           return {
             instance_id: null,
-            backend: "gui",
+            backend: this.guiOpenBackend,
             status: "current",
             recovery: "none",
           };

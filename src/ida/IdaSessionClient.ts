@@ -769,6 +769,12 @@ export class IdaSessionClient implements AnalysisClient {
         await this.connection.call("open_database", { path: candidate.path }),
       );
       this.#lifecycle.push(jsonValueSchema.parse(opened));
+      // An attached lease must bind the GUI database the caller admitted; a
+      // worker opened for a GUI-listed path is a different database.
+      if (opened.backend !== "gui") {
+        tried.push(`${candidate.path} (opened as ${opened.backend} worker)`);
+        continue;
+      }
       let metadata: JsonValue | undefined;
       let readFailure: string | undefined;
       try {

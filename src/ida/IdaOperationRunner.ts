@@ -138,7 +138,11 @@ export class IdaOperationRunner {
     return result;
   }
 
-  /** One legacy-shaped request, translated to the official execute_python call. */
+  /**
+   * One legacy-shaped request, translated to the official execute_python
+   * call. The complete execute envelope is recorded before unwrapping, so a
+   * failed query keeps its decoded reply as Evidence.
+   */
   private async callHexrays(
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
@@ -149,12 +153,12 @@ export class IdaOperationRunner {
         `The official IDA MCP server does not expose a translation for ${tool}.`,
       );
     const reply = await this.connection.call(translated.name, translated.args);
-    const result = unwrapHexraysExecuteResult(reply);
     this.raw.push({
       tool: translated.name,
       arguments: translated.args,
-      result,
+      result: reply,
     });
+    const result = unwrapHexraysExecuteResult(reply);
     if (this.options.signal?.aborted) throw new AnalysisCancelledError(tool);
     return result;
   }
@@ -366,6 +370,8 @@ export class IdaOperationRunner {
       this.limitations.push(IDA_NATIVE_STRING_LIMITATION);
     const result: { address: string; value: string }[] = [];
     let offset: number | null = 0;
+    let dropped = 0;
+    let dropReason: string | undefined;
     while (offset !== null) {
       const current: number = offset;
       if (this.legacyShaped) {
@@ -376,6 +382,8 @@ export class IdaOperationRunner {
           const s = legacyStringSchema.parse(item);
           result.push({ address: s.address, value: s.string });
         }
+        dropped += page.dropped ?? 0;
+        if (dropReason === undefined) dropReason = page.drop_reason;
         offset = page.next_offset;
       } else {
         const page = idaStringsPageSchema.parse(
@@ -402,6 +410,12 @@ export class IdaOperationRunner {
           "IDA MCP string pagination did not advance.",
         );
     }
+    if (dropped > 0)
+      this.limitations.push(
+        `Upstream string pages dropped ${dropped} unreadable string item(s): ${
+          dropReason ?? "reason unavailable"
+        }; the dropped strings remain unknown.`,
+      );
     return result;
   }
 

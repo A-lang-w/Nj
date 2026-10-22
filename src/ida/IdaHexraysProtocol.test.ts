@@ -151,13 +151,80 @@ describe("official IDA MCP request translation", () => {
       hexraysRequest("list_functions", { offset: 0, count: 100 }, "i")?.args
         .code,
     );
-    expect(functions).toContain("for _f in idautils.Functions():");
+    expect(functions).toContain("idautils.Functions()");
     expect(functions).not.toContain("list(idautils.Functions())");
     const strings = String(
       hexraysRequest("list_strings", { offset: 0, count: 0 }, "i")?.args.code,
     );
     expect(strings).toContain("for _s in idautils.Strings():");
     expect(strings).not.toContain("list(idautils.Strings())");
+  });
+
+  it("resumes sequential function pages from a cursor cache", () => {
+    const functions = String(
+      hexraysRequest("list_functions", { offset: 0, count: 100 }, "i")?.args
+        .code,
+    );
+    expect(functions).toContain("_rea_functions_cursor");
+    expect(functions).toContain(
+      "idautils.Functions(_cache['last_address'] + 1)",
+    );
+    expect(functions).toContain("ida_nalt.get_path(ida_nalt.PATH_TYPE_IDB)");
+  });
+
+  it("reports the digest recorded in the database, not the on-disk file", () => {
+    const metadata = String(
+      hexraysRequest("get_metadata", {}, undefined)?.args.code,
+    );
+    expect(metadata).toContain("retrieve_input_file_sha256");
+    expect(metadata).not.toContain("hashlib");
+    expect(metadata).not.toContain("os.stat");
+  });
+
+  it("counts dropped string rows with a reason instead of dropping silently", () => {
+    const strings = String(
+      hexraysRequest("list_strings", { offset: 0, count: 0 }, "i")?.args.code,
+    );
+    expect(strings).toContain("except Exception as _e:");
+    expect(strings).toContain("_dropped += 1");
+    expect(strings).toContain("_drop_reason = str(_e)");
+    expect(strings).toContain("'dropped': _dropped");
+    expect(strings).toContain("'drop_reason': _drop_reason");
+    expect(strings).not.toContain("pass");
+  });
+
+  it("reports decompiler exceptions through the envelope's stderr", () => {
+    const decompile = String(
+      hexraysRequest("decompile_function", { address: "0x1000" }, "i")?.args
+        .code,
+    );
+    expect(decompile).toContain("sys.stderr.write(traceback.format_exc())");
+  });
+
+  it("walks every function chunk for disassembly and callees", () => {
+    const disassembly = String(
+      hexraysRequest("disassemble_function", { start_address: "0x1000" }, "i")
+        ?.args.code,
+    );
+    expect(disassembly).toContain("for _h in idautils.FuncItems(_start):");
+    expect(disassembly).not.toContain("idautils.Heads(");
+    const callees = String(
+      hexraysRequest("get_callees", { function_address: "0x1000" }, "i")?.args
+        .code,
+    );
+    expect(callees).toContain("for _h in idautils.FuncItems(_start):");
+    expect(callees).not.toContain("idautils.Heads(");
+  });
+
+  it("filters callers to call edges, keeping recursion", () => {
+    const callers = String(
+      hexraysRequest("get_callers", { function_address: "0x1000" }, "i")?.args
+        .code,
+    );
+    expect(callers).toContain(
+      "if _x.type not in (idaapi.fl_CN, idaapi.fl_CF):",
+    );
+    expect(callers).not.toContain("iscode");
   });
 
   it("embeds hostile names as JSON literals only", () => {

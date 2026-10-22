@@ -108,6 +108,73 @@ describe("official hexrays attached sessions", () => {
     expect((await client.close()).ok).toBe(true);
   });
 
+  it("rejects a GUI-listed candidate that opens as a worker", async () => {
+    const { producer, client } = await fixture("attached");
+    producer.guiOpenBackend = "idalib";
+    const result = await client.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.message).toContain("(opened as idalib worker)");
+    await client.close();
+  });
+
+  it("keeps the decoded reply as evidence when the first query fails", async () => {
+    const { producer, client } = await fixture("attached");
+    producer.overrideCall = (name, args) =>
+      name === "execute_python" &&
+      typeof args.code === "string" &&
+      args.code.includes("idautils.Functions()")
+        ? { error: "boom", stdout: "", stderr: "" }
+        : undefined;
+    const result = await client.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisProtocolError);
+      expect(result.error.message).toContain("boom");
+      expect(result.error.partialObservation).toMatchObject({
+        normalized_result: {
+          observations: [
+            {
+              tool: "execute_python",
+              result: { error: "boom", stdout: "", stderr: "" },
+            },
+          ],
+        },
+      });
+    }
+    await client.close();
+  });
+
+  it("reports string rows the database could not render", async () => {
+    const { producer, client } = await fixture("attached");
+    producer.overrideCall = (name, args) =>
+      name === "execute_python" &&
+      typeof args.code === "string" &&
+      args.code.includes("idautils.Strings()")
+        ? {
+            result: {
+              data: [{ address: "0x3000", string: "a.b\nC", length: 5 }],
+              next_offset: null,
+              dropped: 2,
+              drop_reason: "unrenderable string",
+            },
+            stdout: "",
+            stderr: "",
+          }
+        : undefined;
+    const result = await client.execute("list_strings", {});
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(
+        result.value.limitations.some((value) =>
+          value.includes(
+            "dropped 2 unreadable string item(s): unrenderable string",
+          ),
+        ),
+      ).toBe(true);
+    await client.close();
+  });
+
   it("rejects startup when the IDA GUI has no database", async () => {
     const { producer, client } = await fixture("attached");
     producer.guiDatabases = [];

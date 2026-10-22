@@ -75,6 +75,9 @@ export const nextOffset = (
 export const legacyPageSchema = z.object({
   data: z.array(jsonValueSchema),
   next_offset: z.number().int().nonnegative().nullable(),
+  /** Official-profile string pages count rows the database could not render. */
+  dropped: z.number().int().nonnegative().optional(),
+  drop_reason: z.string().optional(),
 });
 export const modernPageSchema = z
   .array(

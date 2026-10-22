@@ -94,42 +94,24 @@ export const hexraysLookupMisses = {
   byAddress: "Not a function",
 } as const;
 
-/** The input digest is cached per (path, size, mtime) inside the database. */
-const METADATA_AND_HEALTH_PREFIX = "import hashlib, os\n";
-
 /**
  * Metadata of the bound database in the legacy attached shape. The digest is
- * recomputed whenever the recorded input file's stat changes, so repeated
- * identity observations stay meaningful without rehashing on every request.
+ * the input digest recorded in the database, not the digest of the current
+ * on-disk file, so a rebuilt file at the same path can no longer make an old
+ * database pass identity checks. A database without a recorded digest yields
+ * '' and fails the match closed.
  */
 export const hexraysMetadataQuery = () =>
-  METADATA_AND_HEALTH_PREFIX +
   "import ida_nalt, idaapi\n" +
   "def _rea_metadata():\n" +
   "    p = ida_nalt.get_input_file_path()\n" +
-  "    sha = ''\n" +
-  "    try:\n" +
-  "        st = os.stat(p)\n" +
-  "        key = (p, st.st_size, st.st_mtime)\n" +
-  "        cache = globals().get('_rea_sha256_cache')\n" +
-  "        if cache is None or cache[0] != key:\n" +
-  "            h = hashlib.sha256()\n" +
-  "            with open(p, 'rb') as f:\n" +
-  "                for chunk in iter(lambda: f.read(1048576), b''):\n" +
-  "                    h.update(chunk)\n" +
-  "            sha = h.hexdigest()\n" +
-  "            globals()['_rea_sha256_cache'] = (key, sha)\n" +
-  "        else:\n" +
-  "            sha = cache[1]\n" +
-  "    except Exception:\n" +
-  "        sha = ''\n" +
+  "    _sha = ida_nalt.retrieve_input_file_sha256()\n" +
   "    return {'path': p, 'module': ida_nalt.get_root_filename() or ''," +
-  " 'sha256': sha, 'base': hex(idaapi.get_imagebase())}\n" +
+  " 'sha256': (_sha.hex() if _sha else ''), 'base': hex(idaapi.get_imagebase())}\n" +
   "_rea_metadata()";
 
 /** Health of the bound database in the modern supervisor shape. */
 export const hexraysHealthQuery = () =>
-  METADATA_AND_HEALTH_PREFIX +
   "import ida_nalt, idaapi, ida_auto\n" +
   "def _rea_health():\n" +
   "    p = ida_nalt.get_input_file_path()\n" +
@@ -143,27 +125,46 @@ export const hexraysHealthQuery = () =>
   " 'module': ida_nalt.get_root_filename() or ''}\n" +
   "_rea_health()";
 
-/** One function page, walked incrementally so memory stays bounded per page. */
+/**
+ * One function page, walked incrementally so memory stays bounded per page;
+ * sequential pages resume from the cached address. The cursor cache is keyed
+ * by IDB, so a rebound database invalidates it, and a non-sequential request
+ * falls back to the full walk.
+ */
 export const hexraysFunctionsPageQuery = (offset: number, count: number) =>
-  "import idautils, ida_funcs, idc\n" +
+  "import idautils, ida_funcs, idc, ida_nalt\n" +
   `_start = ${JSON.stringify(offset)}\n` +
   `_count = ${JSON.stringify(count)}\n` +
   "_data = []\n" +
   "_next = None\n" +
-  "_i = 0\n" +
-  "for _f in idautils.Functions():\n" +
-  "    if _i >= _start + _count:\n" +
+  "_last = None\n" +
+  "_idb = ida_nalt.get_path(ida_nalt.PATH_TYPE_IDB)\n" +
+  "_cache = globals().get('_rea_functions_cursor')\n" +
+  "if _cache is not None and _cache.get('idb') == _idb and" +
+  " _cache.get('next_offset') == _start and _cache.get('last_address')" +
+  " is not None:\n" +
+  "    _iter = idautils.Functions(_cache['last_address'] + 1)\n" +
+  "    _i = _start\n" +
+  "else:\n" +
+  "    _iter = idautils.Functions()\n" +
+  "    _i = 0\n" +
+  "for _f in _iter:\n" +
+  "    if _count > 0 and _i >= _start + _count:\n" +
   "        _next = _start + _count\n" +
   "        break\n" +
   "    if _i >= _start and _count > 0:\n" +
   "        _data.append({'address': hex(_f), 'name': idc.get_func_name(_f)," +
   " 'size': str(ida_funcs.get_func(_f).size())})\n" +
+  "        _last = _f\n" +
   "    _i += 1\n" +
+  "globals()['_rea_functions_cursor'] = {'idb': _idb, 'next_offset': _next," +
+  " 'last_address': _last}\n" +
   "{'data': _data, 'next_offset': _next}";
 
 /**
  * One string page, walked incrementally; a nonpositive count lists every
- * remaining string in the legacy shape.
+ * remaining string in the legacy shape. A row the database cannot render is
+ * counted with the first reason instead of dropped silently.
  */
 export const hexraysStringsPageQuery = (offset: number, count: number) =>
   "import idautils\n" +
@@ -173,6 +174,8 @@ export const hexraysStringsPageQuery = (offset: number, count: number) =>
   "_data = []\n" +
   "_next = None\n" +
   "_i = 0\n" +
+  "_dropped = 0\n" +
+  "_drop_reason = ''\n" +
   "for _s in idautils.Strings():\n" +
   "    if _count > 0 and _i >= _limit:\n" +
   "        _next = _limit\n" +
@@ -181,10 +184,13 @@ export const hexraysStringsPageQuery = (offset: number, count: number) =>
   "        try:\n" +
   "            _data.append({'address': hex(int(_s.ea)), 'string': str(_s)," +
   " 'length': int(_s.length)})\n" +
-  "        except Exception:\n" +
-  "            pass\n" +
+  "        except Exception as _e:\n" +
+  "            _dropped += 1\n" +
+  "            if not _drop_reason:\n" +
+  "                _drop_reason = str(_e)\n" +
   "    _i += 1\n" +
-  "{'data': _data, 'next_offset': _next}";
+  "{'data': _data, 'next_offset': _next, 'dropped': _dropped," +
+  " 'drop_reason': _drop_reason}";
 
 /** Function object for a name, or null when no such function exists. */
 export const hexraysFunctionByNameQuery = (name: string) =>
@@ -202,8 +208,13 @@ export const hexraysFunctionByAddressQuery = (address: string) =>
   "None if _f is None else {'address': hex(_f.start_ea)," +
   " 'name': idc.get_func_name(_f.start_ea), 'size': str(_f.size())}";
 
+/**
+ * Pseudocode of the function containing the address in the legacy shape. A
+ * decompiler exception is reported through the envelope's stderr; a function
+ * without pseudocode stays a null miss.
+ */
 export const hexraysDecompileQuery = (address: string) =>
-  "import ida_funcs, ida_hexrays\n" +
+  "import ida_funcs, ida_hexrays, sys, traceback\n" +
   `_ea = int(${JSON.stringify(address)}, 16)\n` +
   "_f = ida_funcs.get_func(_ea)\n" +
   "_start = _f.start_ea if _f else _ea\n" +
@@ -215,21 +226,20 @@ export const hexraysDecompileQuery = (address: string) =>
   "            _out = str(_cf)\n" +
   "except Exception:\n" +
   "    _out = None\n" +
+  "    sys.stderr.write(traceback.format_exc())\n" +
   "_out";
 
 /**
  * Disassembly echoing the resolved entry, as the legacy profile's identity
- * verification requires.
+ * verification requires, walking every chunk of the function.
  */
 export const hexraysDisassemblyQuery = (address: string) =>
   "import idautils, ida_funcs, idc, idaapi, ida_lines\n" +
   `_ea = int(${JSON.stringify(address)}, 16)\n` +
   "_f = ida_funcs.get_func(_ea)\n" +
   "_start = _f.start_ea if _f else _ea\n" +
-  "_f2 = ida_funcs.get_func(_start)\n" +
-  "_end = _f2.end_ea if _f2 else _start\n" +
   "_lines = []\n" +
-  "for _h in idautils.Heads(_start, _end):\n" +
+  "for _h in idautils.FuncItems(_start):\n" +
   "    _t = idaapi.generate_disasm_line(_h, 0)\n" +
   "    if _t is None:\n" +
   "        continue\n" +
@@ -252,15 +262,19 @@ export const hexraysXrefsToQuery = (address: string) =>
   " 'type': 'code' if _x.iscode else 'data', 'function': _fn})\n" +
   "_out";
 
-/** Direct callers, deduplicated to their function entries. */
+/**
+ * Direct callers, deduplicated to their function entries: call edges only,
+ * so jumps and data references are filtered. A self-entry that survives the
+ * filter is a real recursive call.
+ */
 export const hexraysCallersQuery = (address: string) =>
-  "import idautils, ida_funcs, idc\n" +
+  "import idautils, ida_funcs, idc, idaapi\n" +
   `_ea = int(${JSON.stringify(address)}, 16)\n` +
   "_f = ida_funcs.get_func(_ea)\n" +
   "_start = _f.start_ea if _f else _ea\n" +
   "_seen = {}\n" +
   "for _x in idautils.XrefsTo(_start, 0):\n" +
-  "    if not _x.iscode:\n" +
+  "    if _x.type not in (idaapi.fl_CN, idaapi.fl_CF):\n" +
   "        continue\n" +
   "    _cf = ida_funcs.get_func(_x.frm)\n" +
   "    if _cf:\n" +
@@ -280,7 +294,7 @@ export const hexraysCalleesQuery = (address: string) =>
   "_f2 = ida_funcs.get_func(_start)\n" +
   "_out = {}\n" +
   "if _f2:\n" +
-  "    for _h in idautils.Heads(_f2.start_ea, _f2.end_ea):\n" +
+  "    for _h in idautils.FuncItems(_start):\n" +
   "        for _x in idautils.XrefsFrom(_h, 0):\n" +
   "            if _x.type not in (idaapi.fl_CN, idaapi.fl_CF):\n" +
   "                continue\n" +
