@@ -77,12 +77,15 @@ for case in inputs['cases']:
         assert identities.setdefault('prompts', report['prompts_sha256']) == report['prompts_sha256']
         tokens['prompt_directory'] = count(prompts.decode())
     tokens['whole_task'] = sum(tokens.values())
+    resource = module.resource(directory)
+    for name, digest in resource['guard_sources_sha256'].items():
+        assert digest == inputs['harness_sources_sha256'][name]
     row = {**case, 'runtime_binding': report['runtime_binding'], 'runtime_audit_ms': report['runtime_audit_ms'],
            'catalog_sha256': digest, 'parent_evidence_id': report.get('parent_evidence_id'),
            'parent_semantic_sha256': report.get('parent_semantic_sha256'),
            'answer_sha256': sha(compact(report['answer']).encode()), 'tokens_estimated': tokens,
            'actual_model_usage': None, 'protocol_requests': requests, 'calls': report['calls'],
-           **module.resource(directory),
+           **resource,
            'receipt_sha256': {name: sha((directory / name).read_bytes()) for name in ['report.json', 'catalog.json', 'server.json', 'transcript.json']}}
     rows.append(row)
 assert len(rows) == 72
@@ -93,7 +96,7 @@ for phase in ['discovery', 'analysis']:
             for artifact in ([None] if phase == 'discovery' else ['ripgrep', 'zellij']):
                 item = {'phase': phase, 'cache': cache, 'profile': profile, 'artifact': artifact}
                 for role in ['baseline', 'candidate']:
-                    selected = [row for row in rows if all(row[key] == value for key, value in item.items()) and row['role'] == role]
+                    selected = [row for row in rows if all(row[key] == item[key] for key in ['phase', 'cache', 'profile', 'artifact']) and row['role'] == role]
                     assert len(selected) == 3
                     item[role] = {metric: {'median': statistics.median(row[metric] for row in selected),
                                            'min': min(row[metric] for row in selected), 'max': max(row[metric] for row in selected)}
@@ -101,7 +104,7 @@ for phase in ['discovery', 'analysis']:
                     item[role]['tokens_estimated'] = [row['tokens_estimated']['whole_task'] for row in selected]
                 summary.append(item)
 result = {'status': 'passed', 'tokenizer': f'tiktoken=={tiktoken.__version__}/cl100k_base; estimates, not model usage',
-          'aggregation_source_sha256': sha(Path(__file__).read_bytes()),
+          'aggregation_sources_sha256': {path.name: sha(path.read_bytes()) for path in [Path(__file__), Path(spec.origin)]},
           'context_scope': 'Question, explicit recipe, server instructions, one complete name/description/input-schema directory, every tool argument and text reply, plus prompt directory for discovery. Raw output-schema transport tokens are separate. SDK initialization framing, reasoning and actual model usage are unmeasured. The analysis task includes retained-read, rejection, export/oracle and post-materialization directory checks.',
           'cache_scope': 'Cold disables server Node compile cache. Warm enables a prepopulated role/profile-specific cache after one complete analysis priming run. Fresh server/client processes and HOME each trial. Driver compile cache disabled in both cohorts. Cache hit rate and OS page cache are unmeasured; source/runtime audits warm compiled-file pages before startup.',
           'resource_scope': 'Whole SDK driver, resource observer and owned REA process family. Includes before/after source-and-all-compiled-JS/JSON binding, SDK schema checks, extra validation calls, bundle export and independent oracle checking. Kernel cgroup peak includes file cache. Build/download/oracle preparation and cache priming excluded. Retained V8 heap and forced-GC diagnostics were not separately measured.',
