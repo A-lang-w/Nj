@@ -24,6 +24,19 @@ it.skipIf(process.platform !== "darwin")(
     expect(JSON.stringify(result.structuredContent)).toContain(
       "dev.rea.fixture",
     );
+    // Target-format detection does not recognize suffixless OpenStep text.
+    for (const name of ["Settings", "Localizable.strings"]) {
+      const openStep = join(root, name);
+      await writeFile(openStep, "{ Name = Example; }\n");
+      const read = await call("inspect_plist", { path: openStep });
+      expect(read.isError).not.toBe(true);
+      expect(read.structuredContent).toMatchObject({
+        normalized_result: {
+          value: { Name: "Example" },
+          source_path: openStep,
+        },
+      });
+    }
     const status = await call("binary_session", {});
     expect(status.structuredContent).toMatchObject({
       result: { open: false },

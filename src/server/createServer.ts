@@ -79,7 +79,7 @@ import {
   registerNativeTools,
   type StandalonePlistInspection,
 } from "./registerNativeTools.js";
-import { runNativeProviderExecution } from "../composition/directAnalysis.js";
+import { inspectStandalonePlist } from "../composition/directAnalysis.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
@@ -974,14 +974,7 @@ const registerBinaryAnalysisTools = ({
       session.activeBundleResourceRoot?.() !== undefined,
     standalonePlistInspection:
       options.standalonePlistInspection ??
-      ((path, parameters, signal) =>
-        runNativeProviderExecution(
-          environment,
-          path,
-          "inspect_plist",
-          signal,
-          parameters,
-        )),
+      ((path, signal) => inspectStandalonePlist(environment, path, signal)),
   });
   registerArtifactTools(server, { ...evidenceOptions, evidenceById });
   registerManagedTools(server, { ...evidenceOptions, evidenceById });

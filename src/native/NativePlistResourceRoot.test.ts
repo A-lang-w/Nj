@@ -5,6 +5,7 @@ import { resolveBundleResourcePlistSelection } from "./NativePlistSource.js";
 import { NativeFixtureRunner } from "../../tests/fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { writeFile } from "node:fs/promises";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 it("inspects a resolved app plist without executable identity", async () => {
   const bundle = await createTestTempDirectory("rea-plist-resource-root-");
@@ -43,4 +44,44 @@ it("inspects a resolved app plist without executable identity", async () => {
         executable_sha256: null,
       },
     });
+});
+
+it("reads only absolute plist selections without a target or app root", async () => {
+  const directory = await createTestTempDirectory("rea-plist-standalone-");
+  const selected = join(directory, "Settings");
+  await writeFile(selected, '<?xml version="1.0"?><plist><dict/></plist>');
+  const client = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner(),
+    "darwin",
+  ).createStandalonePlistClient();
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const inspected = await client.execute("inspect_plist", { path: selected });
+  expect(inspected.ok).toBe(true);
+  if (inspected.ok)
+    expect(inspected.value.result).toMatchObject({ source_path: selected });
+  for (const parameters of [{ path: "Settings" }, {}]) {
+    const refused = await client.execute("inspect_plist", parameters);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(projectAnalysisError(refused.error).code).toBe("invalid_request");
+  }
+  const hostless = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner(),
+    "linux",
+  ).createStandalonePlistClient();
+  onTestFinished(async () => {
+    await hostless.close();
+  });
+  const unsupported = await hostless.execute("inspect_plist", {
+    path: selected,
+  });
+  expect(unsupported.ok).toBe(false);
+  if (!unsupported.ok)
+    expect(projectAnalysisError(unsupported.error).code).toBe(
+      "capability_unavailable",
+    );
 });

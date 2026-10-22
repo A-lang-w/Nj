@@ -2,7 +2,6 @@ import { isAbsolute } from "node:path";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { AnalysisExecution } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
@@ -15,10 +14,9 @@ import {
 
 const SUMMARY_DELIVERY: ReadonlySet<string> = new Set(["inspect_macho"]);
 
-/** Inspect one absolutely selected plist without the session's target. */
+/** Inspect one absolutely selected plist without a target. */
 export type StandalonePlistInspection = (
   path: string,
-  parameters: Readonly<Record<string, JsonValue>>,
   signal: AbortSignal | undefined,
 ) => Promise<Result<AnalysisExecution, AnalysisError>>;
 
@@ -43,11 +41,7 @@ export const registerNativeTools = (
           typeof path === "string" &&
           isAbsolute(path) &&
           !options.targetSelected()
-          ? options.standalonePlistInspection(
-              path,
-              parameters,
-              executionOptions?.signal,
-            )
+          ? options.standalonePlistInspection(path, executionOptions?.signal)
           : analysis.execute(operation, parameters, executionOptions);
       },
     }),

@@ -1,6 +1,9 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { DirectAnalysisDependencies } from "../application/DirectAnalysisDependencies.js";
+import type { AnalysisExecution } from "../application/AnalysisProvider.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ok, type Result } from "../domain/result.js";
 
 type DirectAnalysisRuntime = typeof import("../application/DirectAnalysis.js");
 type DirectAnalysisStatusRuntime =
@@ -72,26 +75,38 @@ export const createDirectAnalysis = (
 /** Bound operations used by CLI command registration. */
 export type DirectAnalysis = ReturnType<typeof createDirectAnalysis>;
 
-/** Execute one native inspection without configuration or deep provider candidates. */
-export const runNativeProviderExecution = async (
+/** Read one absolutely selected plist without a target, session, or provider candidates. */
+export const inspectStandalonePlist = async (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  ...args: Parameters<
-    BoundOperation<DirectAnalysisRuntime["runNativeProviderExecution"]>
-  >
-): ReturnType<
-  BoundOperation<DirectAnalysisRuntime["runNativeProviderExecution"]>
-> => {
-  const { runNativeProviderExecution } =
-    await import("../application/DirectAnalysis.js");
-  return runNativeProviderExecution(
-    {
-      createNativeBinarySession: async () => {
-        const { createNativeBinarySession } = await import("./binary.js");
-        return createNativeBinarySession(selectedEnvironment);
-      },
-    },
-    ...args,
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<AnalysisExecution, AnalysisError>> => {
+  const [
+    { NativeMacOSProvider },
+    { NATIVE_MACOS_PROVIDER_IDENTITY },
+    { closeAnalysisClient },
+    { managedAnalysisCleanupFailure },
+  ] = await Promise.all([
+    import("../native/NativeMacOSProvider.js"),
+    import("../native/NativeMacOSProviderMetadata.js"),
+    import("../providers/AnalysisClientCleanup.js"),
+    import("../application/DirectAnalysisCleanup.js"),
+  ]);
+  const client = new NativeMacOSProvider(
+    snapshotEnvironment(selectedEnvironment),
+  ).createStandalonePlistClient();
+  const result = await client.execute(
+    "inspect_plist",
+    { path },
+    signal === undefined ? {} : { signal },
   );
+  const closed = await closeAnalysisClient(
+    client,
+    NATIVE_MACOS_PROVIDER_IDENTITY.id,
+  );
+  if (!closed.ok) return managedAnalysisCleanupFailure(result, closed.error);
+  // No target exists, so the Evidence subject is explicitly absent.
+  return result.ok ? ok({ ...result.value, subject: null }) : result;
 };
 
 /** Execute managed metadata without configuration or native provider candidates. */
