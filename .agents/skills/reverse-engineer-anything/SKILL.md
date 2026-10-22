@@ -226,6 +226,12 @@ explicit path or endpoint and do not need it.
   absence of that table, not proof the image is unsigned in every catalog sense.
   Signatures are not verified. See the
   [PE certificate guide](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).
+- ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
+  file. This built-in target-free inspection requires no disassembler. Preserve
+  PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU
+  build-id or ABI-tag fields. A missing table is observed absence of those
+  declarations, not proof the image never carried notes. See the
+  [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema

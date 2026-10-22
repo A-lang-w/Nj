@@ -33,6 +33,7 @@ export default defineConfig({
           { text: "Model artifacts", link: "/model-artifacts" },
           { text: "Rust dependencies", link: "/rust-binaries" },
           { text: "PE certificates", link: "/pe-certificates" },
+          { text: "ELF notes", link: "/elf-notes" },
           {
             text: "JavaScript and Electron",
             link: "/javascript-artifact-reconstruction",

@@ -13,14 +13,14 @@ import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
-  createByteEntropyService,
-  createBinaryLayoutService,
+  createElfNotesService,
   createPeCertificatesService,
   createPeResourcesService,
-  createRecordedCrashService,
 } from "../composition/binaryDiagnostics.js";
+import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
+import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
@@ -33,6 +33,7 @@ import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabase
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
+import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
 import { createGoBinaryService } from "../composition/go.js";
@@ -53,6 +54,10 @@ import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
 import { registerFridaTools } from "./registerFridaTools.js";
+import {
+  createByteEntropyService,
+  createBinaryLayoutService,
+} from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { createCatalogIdentity } from "../catalogIdentity.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -353,6 +358,7 @@ export const createServer = (
   const il2cppMetadata =
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
+  const elfNotes = createElfNotesService();
   const peCertificates = createPeCertificatesService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const webNetworkCapture =
@@ -455,6 +461,7 @@ export const createServer = (
       modelArtifact.close(),
       gpuCodeObjects.close(),
       peResources.close(),
+      elfNotes.close(),
       peCertificates.close(),
       electronFuses.close(),
       webNetworkCapture.close(),
@@ -519,6 +526,7 @@ export const createServer = (
     rustBinary,
     il2cppMetadata,
     peResources,
+    elfNotes,
     peCertificates,
     electronFuses,
     webNetworkCapture,
@@ -751,6 +759,7 @@ const registerConfiguredAnalysisTools = (
     rustBinary,
     il2cppMetadata,
     peResources,
+    elfNotes,
     peCertificates,
     webNetworkCapture,
     artifactResources,
@@ -797,6 +806,13 @@ const registerConfiguredAnalysisTools = (
   registerPeResourcesTool(
     server,
     peResources,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerElfNotesTool(
+    server,
+    elfNotes,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -941,6 +957,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly rustBinary: RustBinaryService;
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
+  readonly elfNotes: ElfNotesService;
   readonly peCertificates: PeCertificatesService;
   readonly electronFuses: ElectronFuseService;
   readonly webNetworkCapture: WebNetworkCaptureService;

@@ -7,6 +7,8 @@ import { PeResourcesService } from "../application/binaryDiagnostics/PeResources
 import { PeResourcesProvider } from "../native/pe/PeResourcesProvider.js";
 import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import { PeCertificatesProvider } from "../native/pe/PeCertificatesProvider.js";
+import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
+import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 /** Portable PE inspection with no engine, installation or target acquisition. */
@@ -16,6 +18,10 @@ export const createPeResourcesService = (): PeResourcesService =>
 /** Portable Authenticode table inspection with no engine or catalog verification. */
 export const createPeCertificatesService = (): PeCertificatesService =>
   new PeCertificatesService(new PeCertificatesProvider());
+
+/** Portable ELF note-table inspection with no engine or package catalog. */
+export const createElfNotesService = (): ElfNotesService =>
+  new ElfNotesService(new ElfNotesProvider());
 
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (
