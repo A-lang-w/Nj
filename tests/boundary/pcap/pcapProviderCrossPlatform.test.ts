@@ -322,7 +322,11 @@ it.runIf(!hasNativeBound)(
       typeof projected.details.reason === "string"
         ? projected.details.reason
         : "";
+    expect(reason).toContain("Linux");
+    expect(reason).toContain("util-linux");
     expect(reason).toContain("prlimit");
+    expect(reason).toContain("Windows");
+    expect(reason).toContain("owned");
     expect(reason).toContain("Job Objects");
     expect(projected.remediation.action).toBe(projected.message);
   },

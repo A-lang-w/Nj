@@ -518,8 +518,7 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
   );
   expect(selected).toContain("effective 256 MiB");
   expect(selected).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
-  expect(selected).toContain("256");
-  expect(selected).toContain("source setting");
+  expect(selected).toContain("256 MiB (source setting");
   const overridden = regexMatchingLimitation(
     effective(64, true),
     DEFAULT_REGEX_MATCHING_DEADLINE,
@@ -527,7 +526,7 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
   );
   expect(overridden).toContain("effective 64 MiB");
   expect(overridden).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
-  expect(overridden).toContain("source setting");
+  expect(overridden).toContain("256 MiB (source setting");
   const projected = projectAnalysisError(
     regexWorkerHeapError(
       "search_procedures",
@@ -546,6 +545,6 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
   expect(projected.remediation.action).toContain(
     REGEX_WORKER_HEAP_REQUEST_SETTING,
   );
-  expect(projected.remediation.action).toContain("source setting");
+  expect(projected.remediation.action).toContain("256 MiB (source setting");
   expect(projected.remediation.action).not.toContain("no runtime override");
 });

@@ -100,8 +100,7 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
     .find((capability) => capability.operation === "search_procedures")
     ?.limitations.join(" ");
   expect(hopperText).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
-  expect(hopperText).toContain("256");
-  expect(hopperText).toContain("source setting");
+  expect(hopperText).toContain("256 MiB (source setting");
   expect(hopperText).not.toMatch(/\b8 MiB\b/u);
   expect(hopperText).not.toContain("no runtime override");
 
@@ -115,8 +114,7 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .find((capability) => capability.operation === "search_strings")
       ?.limitations.join(" ");
     expect(kunaText).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
-    expect(kunaText).toContain("256");
-    expect(kunaText).toContain("source setting");
+    expect(kunaText).toContain("256 MiB (source setting");
     expect(kunaText).not.toMatch(/\b8 MiB\b/u);
   } finally {
     vi.unstubAllEnvs();
@@ -134,7 +132,9 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_procedures")
       ?.limitations.join(" "),
-  ).toContain(`source ${DEFAULT_REGEX_WORKER_HEAP_REQUEST.source}`);
+  ).toContain(
+    `${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST.heapMiB)} MiB (source ${DEFAULT_REGEX_WORKER_HEAP_REQUEST.source}`,
+  );
 });
 
 it.each([
