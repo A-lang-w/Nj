@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { McapIndexedReader } from "@mcap/core";
+import { McapIndexedReader, Opcode } from "@mcap/core";
 import type { IReadable } from "@mcap/core";
 import { err, ok } from "../../src/domain/result.js";
+import { validateSummaryRecords } from "./records.ts";
 import {
   BoundedReadable,
   boundedJson,
-  failure,
+  diagnostic,
   InspectionFailure,
   OUTPUT_BYTES,
   READ_BYTES,
@@ -95,7 +96,18 @@ function summarize(reader: McapIndexedReader, schemaId?: number) {
 export async function inspectSummary(source: IReadable, schemaId?: number) {
   const readable = new BoundedReadable(source);
   try {
-    const reader = await McapIndexedReader.Initialize({ readable });
+    const reader = await McapIndexedReader.Initialize({
+      readable: {
+        size: () => readable.size(),
+        read: async (offset, size) => {
+          const data = await readable.read(offset, size);
+          // The pinned reader requests DataEnd and the summary together. Its parser
+          // otherwise lets fields consume bytes beyond their individual record.
+          if (data[0] === Opcode.DATA_END) validateSummaryRecords(data);
+          return data;
+        },
+      },
+    });
     const report = {
       ...summarize(reader, schemaId),
       read_ranges: readable.reads,
@@ -103,10 +115,8 @@ export async function inspectSummary(source: IReadable, schemaId?: number) {
     boundedJson(report);
     return ok(report);
   } catch (cause) {
-    const problem = failure(cause);
     return err({
-      kind: problem.kind,
-      message: problem.message,
+      ...diagnostic(cause),
       read_ranges: readable.reads,
     });
   }

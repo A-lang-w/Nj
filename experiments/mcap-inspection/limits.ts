@@ -13,6 +13,7 @@ export class InspectionFailure extends Error {
     | "selection"
     | "limit"
     | "io"
+    | "io_or_usage"
     | "input"
     | "changed";
   constructor(kind: InspectionFailure["kind"], message: string) {
@@ -21,13 +22,23 @@ export class InspectionFailure extends Error {
   }
 }
 
-export const failure = (cause: unknown): InspectionFailure =>
-  cause instanceof InspectionFailure
-    ? cause
-    : new InspectionFailure(
-        "reader_rejected",
-        cause instanceof Error ? cause.message : String(cause),
-      );
+export function diagnostic(
+  cause: unknown,
+  fallback: InspectionFailure["kind"] = "reader_rejected",
+) {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return {
+    kind: cause instanceof InspectionFailure ? cause.kind : fallback,
+    message: message.slice(0, 1024),
+    ...(message.length > 1024
+      ? {
+          message_truncated: true,
+          message_utf8_bytes: Buffer.byteLength(message),
+          message_sha256: createHash("sha256").update(message).digest("hex"),
+        }
+      : {}),
+  };
+}
 
 export function boundedJson(value: JsonValue): string {
   if (jsonValueByteLength(value, OUTPUT_BYTES) > OUTPUT_BYTES)

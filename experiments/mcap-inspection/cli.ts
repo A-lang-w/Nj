@@ -11,14 +11,8 @@ import { parseArgs } from "node:util";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import { sameRegularFileState } from "../../src/filesystem/RegularFile.js";
 import { inspectSummary } from "./summary.ts";
-import { boundedJson, InspectionFailure } from "./limits.ts";
-
-function diagnostic(cause: unknown) {
-  return {
-    kind: cause instanceof InspectionFailure ? cause.kind : "io_or_usage",
-    message: cause instanceof Error ? cause.message : String(cause),
-  };
-}
+import { boundedJson, diagnostic, InspectionFailure } from "./limits.ts";
+import type { BoundedReadable } from "./limits.ts";
 
 function readRange(fd: number, offset: bigint, size: bigint): Buffer {
   const buffer = Buffer.alloc(Number(size));
@@ -34,7 +28,10 @@ function readRange(fd: number, offset: bigint, size: bigint): Buffer {
         Number(offset) + received,
       );
     } catch (cause) {
-      throw new InspectionFailure("io", diagnostic(cause).message);
+      throw new InspectionFailure(
+        "io",
+        cause instanceof Error ? cause.message : String(cause),
+      );
     }
     if (bytes === 0)
       throw new InspectionFailure(
@@ -48,7 +45,12 @@ function readRange(fd: number, offset: bigint, size: bigint): Buffer {
 
 async function main(): Promise<void> {
   let descriptor: number | undefined;
-  let document: JsonValue = null;
+  let source: JsonValue = { input: null };
+  let report: Record<string, JsonValue> = {};
+  let readRanges: BoundedReadable["reads"] = [];
+  let error: ReturnType<typeof diagnostic> | null = null;
+  let fileError: ReturnType<typeof diagnostic> | null = null;
+  let cleanupError: ReturnType<typeof diagnostic> | null = null;
   let input: string | undefined;
   try {
     const { positionals, values } = parseArgs({
@@ -56,6 +58,7 @@ async function main(): Promise<void> {
       options: { schema: { type: "string" } },
     });
     input = positionals[0];
+    source = { input: input ?? null };
     if (input === undefined || positionals.length !== 1)
       throw new InspectionFailure(
         "input",
@@ -85,6 +88,16 @@ async function main(): Promise<void> {
     const initial = fstatSync(fd, { bigint: true });
     if (!sameRegularFileState(named, initial))
       throw new InspectionFailure("changed", "File changed during admission");
+    source = {
+      input,
+      path,
+      size_bytes: String(initial.size),
+      device: String(initial.dev),
+      inode: String(initial.ino),
+      modified_ns: String(initial.mtimeNs),
+      changed_ns: String(initial.ctimeNs),
+      hash_scope: "individual_read_ranges_not_whole_file",
+    };
     const result = await inspectSummary(
       {
         size: async () => initial.size,
@@ -93,23 +106,15 @@ async function main(): Promise<void> {
       values.schema === undefined ? undefined : Number(values.schema),
     );
     if (!result.ok) {
-      document = { ok: false, input, path, error: result.error };
+      const { read_ranges, ...problem } = result.error;
+      readRanges = read_ranges;
+      error = problem;
       process.exitCode = 1;
-    } else
-      document = {
-        ok: true,
-        source: {
-          input,
-          path,
-          size_bytes: String(initial.size),
-          device: String(initial.dev),
-          inode: String(initial.ino),
-          modified_ns: String(initial.mtimeNs),
-          changed_ns: String(initial.ctimeNs),
-          hash_scope: "individual_read_ranges_not_whole_file",
-        },
-        ...result.value,
-      };
+    } else {
+      const { read_ranges, ...summary } = result.value;
+      readRanges = read_ranges;
+      report = summary;
+    }
     if (
       !sameRegularFileState(initial, fstatSync(fd, { bigint: true })) ||
       !sameRegularFileState(initial, lstatSync(path, { bigint: true }))
@@ -119,32 +124,41 @@ async function main(): Promise<void> {
         "File identity or metadata changed during inspection",
       );
   } catch (cause) {
-    document = {
-      ok: false,
-      input: input ?? null,
-      error: diagnostic(cause),
-      inspection: document,
-    };
+    const problem = diagnostic(cause, "io_or_usage");
+    if (error === null) error = problem;
+    else fileError = problem;
     process.exitCode = 1;
   } finally {
     if (descriptor !== undefined) {
       try {
         closeSync(descriptor);
       } catch (cause) {
-        document = {
-          ok: false,
-          cleanup_error: diagnostic(cause),
-          inspection: document,
-        };
+        cleanupError = diagnostic(cause, "io");
         process.exitCode = 1;
       }
     }
   }
+  const receipt = {
+    source,
+    read_ranges: readRanges,
+    error,
+    file_error: fileError,
+    cleanup_error: cleanupError,
+  };
   let output: string;
   try {
-    output = boundedJson(document);
+    output = boundedJson({
+      ok: error === null && cleanupError === null,
+      ...receipt,
+      ...report,
+    });
   } catch (cause) {
-    output = JSON.stringify({ ok: false, error: diagnostic(cause) });
+    output = boundedJson({
+      ok: false,
+      ...receipt,
+      output_error: diagnostic(cause),
+      report_omitted: "json_limit",
+    });
     process.exitCode = 1;
   }
   process.stdout.write(`${output}\n`);

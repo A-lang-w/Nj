@@ -2,13 +2,49 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recording } from "./fixtures.ts";
 
 const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
+
+test("CLI rejects a real symbolic link", async (t) => {
+  const folder = mkdtempSync(join(tmpdir(), "mcap-symlink-"));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const target = join(folder, "target.mcap");
+  const link = join(folder, "link.mcap");
+  const bytes = await recording();
+  writeFileSync(target, bytes);
+  try {
+    symlinkSync(target, link, "file");
+  } catch (cause) {
+    if (
+      process.platform === "win32" &&
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EPERM" || cause.code === "EACCES")
+    ) {
+      t.skip(
+        "Windows symlink creation requires privileges unavailable in this run",
+      );
+      return;
+    }
+    throw cause;
+  }
+  const run = spawnSync(process.execPath, [cli, link], { encoding: "utf8" });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stdout, /"kind":"input"/);
+  assert.match(run.stdout, /symlink/);
+  assert.deepEqual(readFileSync(target), bytes);
+});
 
 test("CLI returns attributable JSON and leaves the recording unchanged", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-prototype-"));

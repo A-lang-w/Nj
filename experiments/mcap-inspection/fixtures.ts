@@ -6,10 +6,11 @@ export const timestamp = 9_007_199_254_740_993n;
 export async function recording(
   options: Partial<Omit<McapWriterOptions, "writable">> = {},
   schemaData = Buffer.from('{"type":"object"}'),
+  library = "rea-mcap-test",
 ): Promise<Buffer> {
   const buffer = new TempBuffer();
   const writer = new McapWriter({ writable: buffer, ...options });
-  await writer.start({ profile: "", library: "rea-mcap-test" });
+  await writer.start({ profile: "", library });
   const schemaId = await writer.registerSchema({
     name: "Sample",
     encoding: "jsonschema",

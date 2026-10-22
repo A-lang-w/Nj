@@ -50,8 +50,16 @@ The reader allocates the complete summary, so cumulative reads are capped at
 4 MiB **before** a file buffer is allocated. Repeated/overlapping reads count
 again. JSON is capped at 1 MiB, with escaping checked before serialization and
 base64 expansion checked before encoding. Over-budget requests fail explicitly.
+If the full response exceeds the budget, a smaller failure receipt retains the
+source, read-range hashes and errors; the report is explicitly omitted. Error
+messages longer than 1,024 characters retain a prefix, full byte length and hash.
 These are experimental resource budgets, not MCAP format limits or a bound on
 total Node memory. There is no paging or runtime override yet.
+
+The pinned reader can consume a field beyond its declared record length when
+given a whole summary buffer. Before that parse, the experiment checks each
+summary record with the same SDK parser restricted to the record's own bytes.
+This adds a parsing pass without duplicating MCAP field definitions.
 
 The command admits a regular local file, rejects symlinks and checks its metadata
 again after reading. These checks can detect a changed file; they do not provide
@@ -74,9 +82,15 @@ Controlled filesystem faults cover read denial, mutation after the final read,
 and close failure after success or a parse failure. These are simulated failures,
 not claims of naturally occurring OS permission or close-denial coverage.
 
-Executed with Node 24.18.0 on Windows x64 and Ubuntu under WSL2: all 15 tests
-passed on both. The Linux run used the same emitted JavaScript and portable
-reader dependencies; it did not repeat npm installation or TypeScript compilation.
+The suite also checks short summary-record boundaries, final-response overflow,
+large reader diagnostics, and preservation of simultaneous failures.
+
+Executed with Node 24.18.0 on Windows x64: 19 passed and the real symlink test
+was skipped because symlink creation required unavailable OS privileges. Ubuntu
+under WSL2 passed all 20 tests, including real symlink rejection. The Linux run
+used the same emitted JavaScript and portable reader dependencies; it did not
+repeat npm installation or TypeScript compilation. Root CI currently does not
+install or run this standalone package's tests.
 
 The [990-byte upstream demo](https://github.com/foxglove/mcap/blob/9b4d3e36c7f7742541df33e0cff35c95de6af2a1/testdata/mcap/demo.mcap)
 returned profile `ros1`, `/chatter` (2 messages), `/diagnostics` (1), schema
@@ -92,13 +106,16 @@ did not reproduce it. The historical cause is unknown; file-change checks remain
 enabled.
 
 On that sample, the Windows command read 651 bytes in four requests (including
-overlap) and returned 2,205 JSON bytes with `--schema 1`. One fresh process took
-162 ms from a preload measurement hook to exit, 327 ms total CPU and 45.4 MiB peak
-RSS. Three subsequent fresh processes took 61–74 ms, 139–186 ms CPU and 45.1–45.3 MiB
+overlap) and returned 2,250 JSON bytes with `--schema 1`. One fresh process took
+376 ms from a preload measurement hook to exit, 483 ms total CPU and 46.5 MiB peak
+RSS. Three subsequent fresh processes took 215–236 ms, 436–468 ms CPU and 46.4–46.6 MiB
 peak RSS. CPU and RSS came from `process.resourceUsage()`; the command launches no
 children. Node bootstrap before the hook is excluded, OS caches were uncontrolled,
-and other checks were running. These are small-sample observations, not a speedup
-claim. Whole agent-task tokens, a cold-storage run, macOS, and large real robot
+and other checks were running. Before the record-boundary and failure-receipt
+fixes, the same small sample took 61–162 ms and 139–327 ms CPU with 45.1–45.4 MiB
+peak RSS. Different concurrent load prevents attributing the timing difference to
+the extra parsing pass. These are observations, not a speedup claim.
+Whole agent-task tokens, a cold-storage run, macOS, and large real robot
 recordings remain unmeasured/unverified.
 
 ## Decision for maintainers

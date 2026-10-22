@@ -45,11 +45,11 @@ syncBuiltinESMExports();
     const output: unknown = JSON.parse(run.stdout);
     assert.ok(output !== null && typeof output === "object" && "ok" in output);
     assert.equal(output.ok, false);
-    assert.ok("cleanup_error" in output && "inspection" in output);
+    assert.ok("cleanup_error" in output && "error" in output);
     assert.match(JSON.stringify(output.cleanup_error), /injected close denial/);
     assert.match(
-      JSON.stringify(output.inspection),
-      bytes.length > 100 ? /"ok":true/ : /"reader_rejected"/,
+      JSON.stringify(output),
+      bytes.length > 100 ? /"message_count":"2"/ : /"reader_rejected"/,
     );
   }
 });
@@ -86,8 +86,14 @@ process.on('exit', () => { if (!closed) process.exitCode = 9; });
 syncBuiltinESMExports();
 `,
   );
-  for (const fault of ["read", "mutation"]) {
-    writeFileSync(path, await recording());
+  for (const fault of ["read", "mutation", "parse-and-mutation"]) {
+    const bytes = await recording();
+    if (fault === "parse-and-mutation")
+      bytes.writeUInt8(
+        bytes.readUInt8(bytes.length - 12) ^ 1,
+        bytes.length - 12,
+      );
+    writeFileSync(path, bytes);
     const run = spawnSync(
       process.execPath,
       ["--import", pathToFileURL(preload).href, cli, path],
@@ -103,11 +109,21 @@ syncBuiltinESMExports();
     );
     assert.match(
       JSON.stringify(output.error),
-      fault === "read" ? /"kind":"io"/ : /"kind":"changed"/,
+      fault === "read"
+        ? /"kind":"io"/
+        : fault === "mutation"
+          ? /"kind":"changed"/
+          : /"kind":"reader_rejected"/,
     );
-    if (fault === "mutation") {
-      assert.ok("inspection" in output);
-      assert.match(JSON.stringify(output.inspection), /"read_ranges":\[/);
+    if (fault !== "read") {
+      assert.ok("read_ranges" in output);
+      assert.ok(
+        Array.isArray(output.read_ranges) && output.read_ranges.length === 4,
+      );
+    }
+    if (fault === "parse-and-mutation") {
+      assert.ok("file_error" in output);
+      assert.match(JSON.stringify(output.file_error), /"kind":"changed"/);
     }
   }
 });
