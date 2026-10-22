@@ -81,6 +81,18 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   project_android_application_graph: "execution-free inventory",
   project_apple_application_graph: "execution-free inventory",
   project_harmony_application_graph: "execution-free inventory",
+  inspect_harmony_abc:
+    "states that Ark bytecode is parsed and rendered, never executed",
+  list_harmony_abc_classes:
+    "states that Ark bytecode is parsed and rendered, never executed",
+  decompile_harmony_abc_class:
+    "states that Ark bytecode is parsed and rendered, never executed",
+  decompile_harmony_abc:
+    "states that Ark bytecode is parsed and rendered, never executed",
+  disassemble_harmony_abc_method:
+    "states that Ark bytecode is parsed and rendered, never executed",
+  search_harmony_abc_strings:
+    "states that Ark bytecode is parsed and rendered, never executed",
   trace_web_source_location: "states there is no application execution",
   trace_web_module_imports:
     "runs only REA's resolver stub in operator-configured Chromium",

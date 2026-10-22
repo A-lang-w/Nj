@@ -29,6 +29,7 @@ import { registerUtilityCommands } from "./cli/utilityCommands.js";
 import { registerArtifactCommands } from "./cli/artifactCommands.js";
 import { registerManagedCommands } from "./cli/managedCommands.js";
 import { registerFirmwareCommands } from "./cli/firmwareCommands.js";
+import { registerHarmonyAbcCommands } from "./cli/harmonyAbcCommands.js";
 import { registerAndroidCommands } from "./cli/androidCommands.js";
 import { registerApktoolCommands } from "./cli/apktoolCommands.js";
 import { registerPcapCommands } from "./cli/pcapCommands.js";
@@ -148,6 +149,7 @@ export const createCli = (
   registerJebCommands(cli, logger, environment);
   registerAdbCommands(cli, logger, environment);
   registerFirmwareCommands(cli, logger, environment);
+  registerHarmonyAbcCommands(cli, logger, environment);
   registerBinaryDiagnosticsCommands(cli, logger, environment);
   registerAnalysisViewCommands(cli, logger);
   registerNativeFunctionMatchingCommands(cli, logger);

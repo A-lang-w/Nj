@@ -23,6 +23,7 @@ export interface SessionAvailabilityDefaults {
     | "recordedCrashEnabled"
     | "firmwareInspectionEnabled"
     | "firmwareExtractionEnabled"
+    | "harmonyAbcEnabled"
   >;
 }
 
@@ -51,6 +52,7 @@ export const sessionAvailabilityPolicy = (
         defaults.optionalFeatures?.firmwareInspectionEnabled ?? false,
       firmwareExtractionEnabled:
         defaults.optionalFeatures?.firmwareExtractionEnabled ?? false,
+      harmonyAbcEnabled: defaults.optionalFeatures?.harmonyAbcEnabled ?? false,
       javascriptRecoveryEnabled:
         defaults.optionalFeatures?.javascriptRecoveryEnabled ?? false,
       webModuleResolutionEnabled:

@@ -15,6 +15,7 @@ import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
+import { HARMONY_ABC_TOOL_CONTRACTS } from "./harmony/harmonyAbcToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
 import { APKTOOL_TOOL_CONTRACTS } from "./apktool/apktoolToolContracts.js";
 import { PCAP_TOOL_CONTRACTS } from "./pcap/pcapToolContracts.js";
@@ -66,6 +67,7 @@ export const TOOL_CONTRACTS = [
   ...JEB_TOOL_CONTRACTS,
   ...ADB_TOOL_CONTRACTS,
   ...FIRMWARE_TOOL_CONTRACTS,
+  ...HARMONY_ABC_TOOL_CONTRACTS,
   ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
   ...BROWSER_PROVIDER_TOOL_CONTRACTS,
   ...ELECTRON_TOOL_CONTRACTS,

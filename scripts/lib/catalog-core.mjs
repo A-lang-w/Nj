@@ -82,6 +82,8 @@ const SOURCE_PATHS = {
   managedContracts: "dist/contracts/managed/managedToolContracts.js",
   firmwareContracts: "dist/contracts/firmware/firmwareToolContracts.js",
   firmwareProvider: "dist/firmware/FirmwareRelease.js",
+  harmonyAbcContracts: "dist/contracts/harmony/harmonyAbcToolContracts.js",
+  xpandaProvider: "dist/harmony/XpandaRelease.js",
   androidContracts: "dist/contracts/android/androidToolContracts.js",
   flutterContracts: "dist/contracts/flutter/flutterToolContracts.js",
   flutterProvider: "dist/flutter/FlutterBuildProvider.js",

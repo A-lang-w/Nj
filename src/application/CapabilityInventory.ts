@@ -64,6 +64,8 @@ export type AvailabilityPolicy = {
   readonly recordedCrashEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
+  /** Caller-supplied xpanda checkout configured for HarmonyOS Ark bytecode. */
+  readonly harmonyAbcEnabled?: boolean;
   readonly androidAnalysisAvailability?: ProviderAvailability;
   readonly adbAnalysisAvailability?: ProviderAvailability;
   readonly apktoolAnalysisAvailability?: ProviderAvailability;
@@ -533,6 +535,14 @@ const workflowAvailabilityFor = ({
             "On Linux, provide an absolute REA_BINWALK_COMMAND (Binwalk 3.1.x, verified with 3.1.0) or REA_UNBLOB_COMMAND (Unblob 26.6.x, verified with 26.6.4) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.",
         };
   }
+  if (kind === "harmony-provider")
+    return policy.harmonyAbcEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "Set REA_XPANDA_ROOT to the absolute path of a caller-supplied xpanda checkout with dependencies installed (verified with 2.1.0). REA does not install or update xpanda.",
+        };
   if (kind === "android-provider")
     return policy.androidAnalysisAvailability?.status === "available"
       ? { reason: "available", remediation: null }

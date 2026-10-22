@@ -156,8 +156,9 @@ null metadata, not proof that the binary has no dependencies. See
 [Rust binaries](rust-binaries.md).
 
 Configure [Hopper or Ghidra](installation.md#hopper), the
-[IDA adapter](ida-provider.md), or [Kuna](kuna-provider.md) before analyzing a
-native target. Substitute
+[IDA adapter](ida-provider.md), [Kuna](kuna-provider.md), or the
+[HarmonyOS Ark bytecode provider](harmony-abc-analysis.md) before analyzing a
+native or bytecode target. Substitute
 your target, search text and function name or address in these examples:
 
 ```bash
@@ -544,9 +545,10 @@ selects the JavaScript lane, and `analyze-javascript-application`), selected
 browser, web and Electron commands (including `analyze-web-bundle`,
 `observe-web-execution`, `capture-browser-scenario` and
 `capture-electron-scenario`), and the platform and provider command families
-for Android/ADB, Apktool/JEB/Flutter, firmware, PCAP and signal analysis,
-WASM/EVM, Go/Rust and binary diagnostics, Frida instrumentation, the Cutter
-command, objdump, Rizin and GDB, and the agent environment server
+for Android/ADB, Apktool/JEB/Flutter, firmware, HarmonyOS Ark bytecode, PCAP and
+signal analysis, WASM/EVM, Go/Rust and binary diagnostics, Frida
+instrumentation, the Cutter command, objdump, Rizin and GDB, and the agent
+environment server
 (`environment-serve`). In these paths, a returned structured
 `cancelled` result can be printed before the wrapper assigns the
 signal-derived status. This describes the current source routing; it is not a

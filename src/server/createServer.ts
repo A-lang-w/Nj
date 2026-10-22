@@ -108,6 +108,10 @@ import { registerFirmwareTools } from "./registerFirmwareTools.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
+import { registerHarmonyAbcTools } from "./registerHarmonyAbcTools.js";
+import { HarmonyAbcAnalysisService } from "../application/harmony/HarmonyAbcAnalysisService.js";
+import type { HarmonyAbcAnalysisPort } from "../application/harmony/HarmonyAbcAnalysisPort.js";
+import { createHarmonyAbcAnalysisProvider } from "../composition/harmonyAbc.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
 import { registerApktoolTools } from "./registerApktoolTools.js";
 import { registerPcapTools } from "./registerPcapTools.js";
@@ -185,6 +189,7 @@ export interface CreateServerOptions {
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
+  readonly harmonyAbcAnalysis?: HarmonyAbcAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
   readonly webSourceLocation?: WebSourceLocationService;
@@ -243,6 +248,9 @@ const installSessionToolAvailability = (
       firmwareExtractionEnabled:
         options.firmwareAnalysis !== undefined ||
         (linux && isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
+      harmonyAbcEnabled:
+        options.harmonyAbcAnalysis !== undefined ||
+        isAbsolute(environment.REA_XPANDA_ROOT ?? ""),
       browserObservationEnabled: options.browserObservation !== undefined,
       javascriptRecoveryEnabled:
         options.javascriptRecovery !== undefined ||
@@ -361,6 +369,9 @@ export const createServer = (
   const firmwareAnalysis = new FirmwareAnalysisService(
     options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
   );
+  const harmonyAbcAnalysis = new HarmonyAbcAnalysisService(
+    options.harmonyAbcAnalysis ?? createHarmonyAbcAnalysisProvider(environment),
+  );
   const selectedOptions = {
     ...options,
     environment,
@@ -468,6 +479,7 @@ export const createServer = (
       artifactResources.close(),
       reverseEngineering.close(),
       firmwareAnalysis.close(),
+      harmonyAbcAnalysis.close(),
       gdbSessions.closeAll(),
       rizinDebugSessions.closeAll(),
     ])
@@ -644,6 +656,7 @@ export const createServer = (
     jeb,
     firmwareAnalysis,
     webRuntime,
+    harmonyAbcAnalysis,
   );
   registerAdbTools(
     server,
@@ -754,6 +767,7 @@ const registerConfiguredAnalysisTools = (
   jeb: JebAnalysisPort,
   firmwareAnalysis: FirmwareAnalysisService,
   webRuntime: WebRuntimeService,
+  harmonyAbcAnalysis: HarmonyAbcAnalysisService,
 ): void => {
   registerAndroidTools(
     server,
@@ -851,6 +865,13 @@ const registerConfiguredAnalysisTools = (
   registerFirmwareTools(
     server,
     firmwareAnalysis,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerHarmonyAbcTools(
+    server,
+    harmonyAbcAnalysis,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,

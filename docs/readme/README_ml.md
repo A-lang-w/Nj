@@ -166,7 +166,7 @@ REA-യ്ക്ക് Node.js 22.x (>=22.19), 24.x (>=24.11), അല്ലെ�
 | JEB projects           | Engine-backed project units, artifact digests, type/method pseudo-code              | MCP സേവനം നൽകുന്ന caller ആരംഭിച്ച JEB client; REA_JEB_MCP_URL ഉപയോഗിച്ച് തിരഞ്ഞെടുക്കുക; [JEB guide](../jeb-analysis.md)                   |
 | Android resources      | Decoded manifest, string tables, locales, version വിവരങ്ങൾ                           | Caller നൽകുന്ന Apktool launcher; [resource guide](../apktool-resource-analysis.md)                                                  |
 | Flutter apps           | Dart snapshot hash, ഓരോ ABI-യിലെയും library digests, engine build provenance         | ഒന്നും ആവശ്യമില്ല (static APK parsing); [Flutter guide](../flutter-analysis.md)                                                       |
-| Firmware               | Regions, extraction results, native-analysis handoffs                               | Linux-ൽ Binwalk / Unblob; [firmware guide](../firmware-analysis.md)                                                               |
+| Firmware               | Regions, extraction results, native-analysis handoffs                               | Linux-ൽ Binwalk / Unblob; [firmware guide](../firmware-analysis.md) [HarmonyOS Ark bytecode](../harmony-abc-analysis.md)          |
 | Recorded packets       | തിരഞ്ഞെടുത്ത fields, ആവർത്തിക്കുന്ന values, filters, decode-as rules                       | Linux: TShark 4.x + prlimit; [capture guide](../packet-captures.md)                                                               |
 | Packet summaries       | Endpoints, DNS, TLS SNI, protocol distribution, HTTP requests                       | Caller നൽകുന്ന tshark, capinfos (Linux-ൽ പരിശോധിച്ചത്); [pcap guide](../pcap-analysis.md)                                             |
 | Recorded logic signals | Decoder annotations, sample ranges, diagnostics                                     | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](../signal-recordings.md)                                                   |
@@ -179,7 +179,7 @@ Offline native-binary പരിശോധനയ്ക്കായി REA, caller 
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Native formats-ഉം host support-ഉം provider അനുസരിച്ച് വ്യത്യാസപ്പെടും. [Hopper and Ghidra setup](../installation.md#hopper), [IDA guide](../ida-provider.md) (ഐച്ഛിക native MCP bridge ഉൾപ്പെടെ), [Kuna decompiler guide](../kuna-provider.md), [പരീക്ഷണഘട്ടത്തിലുള്ള Windows Ghidra support](../windows-ghidra-p0.md) എന്നിവ കാണുക.
+Native formats-ഉം host support-ഉം provider അനുസരിച്ച് വ്യത്യാസപ്പെടും. [Hopper and Ghidra setup](../installation.md#hopper), [IDA guide](../ida-provider.md) (ഐച്ഛിക native MCP bridge ഉൾപ്പെടെ), [Kuna decompiler guide](../kuna-provider.md) [HarmonyOS Ark bytecode](../harmony-abc-analysis.md), [പരീക്ഷണഘട്ടത്തിലുള്ള Windows Ghidra support](../windows-ghidra-p0.md) എന്നിവ കാണുക.
 Ghidra, [16-bit DOS analysis](../ghidra-dos.md)-ഉം പിന്തുണയ്ക്കുന്നു.
 വലിയ binaries-നായി `REA_GHIDRA_STARTUP_TIMEOUT_MS` അല്ലെങ്കിൽ `REA_HOPPER_STARTUP_TIMEOUT_MS` ഉപയോഗിച്ച് provider-ന്റെ startup deadline വർധിപ്പിക്കുക.
 Provider തിരഞ്ഞെടുക്കാൻ [CLI guide](../cli.md#choose-a-provider) കാണുക.

@@ -205,6 +205,7 @@ Additional tools and host support depend on the target:
 | Android resources       | Decoded manifest, string tables, locales and version facts                                        | Caller-supplied Apktool launcher; [resource guide](docs/apktool-resource-analysis.md)                                                 |
 | Flutter apps            | Dart snapshot hash, per-ABI library digests and engine build provenance                           | None (static APK parsing); [Flutter guide](docs/flutter-analysis.md)                                                                  |
 | Firmware                | Regions, extraction results and native-analysis handoffs                                          | Binwalk / Unblob on Linux; [firmware guide](docs/firmware-analysis.md)                                                                |
+| HarmonyOS bytecode      | Ark (`.abc`) headers, classes, decompiled JavaScript, disassembly and string search               | Caller-supplied xpanda checkout on Linux/macOS; [HarmonyOS Ark bytecode](docs/harmony-abc-analysis.md)                                |
 | Recorded packets        | Selected fields, repeated values, filters and decode-as rules                                     | Linux: TShark 4.x + prlimit; [capture guide](docs/packet-captures.md)                                                                 |
 | Packet summaries        | Endpoints, DNS, TLS SNI, protocol distribution and HTTP requests                                  | Caller-supplied tshark and capinfos (Linux-verified); [pcap guide](docs/pcap-analysis.md)                                             |
 | Recorded logic signals  | Decoder annotations, sample ranges and diagnostics                                                | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](docs/signal-recordings.md)                                                     |
@@ -226,7 +227,8 @@ or update either provider.
 Native formats and host support vary by provider. See
 [Hopper and Ghidra setup](docs/installation.md#hopper), the
 [IDA guide](docs/ida-provider.md) (including an optional native MCP bridge), the
-[Kuna decompiler guide](docs/kuna-provider.md), and
+[Kuna decompiler guide](docs/kuna-provider.md), the
+[HarmonyOS Ark bytecode guide](docs/harmony-abc-analysis.md), and
 [experimental Windows Ghidra support](docs/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/ghidra-dos.md).
 For large binaries, raise the provider's startup deadline with

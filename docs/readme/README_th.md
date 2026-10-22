@@ -158,7 +158,7 @@ REA ต้องใช้ Node.js 22.x (>=22.19), 24.x (>=24.11) หรือ 26
 | โปรเจกต์ JEB                  | หน่วยโปรเจกต์จากเอนจิน, แฮชของอาร์ติแฟกต์ และซูโดโค้ดของไทป์/เมท็อด                       | ไคลเอนต์ JEB ที่ผู้เรียกเริ่มและให้บริการ MCP เลือกด้วย REA_JEB_MCP_URL; [คู่มือ JEB](../jeb-analysis.md)                                 |
 | ทรัพยากร Android              | ไฟล์ manifest ที่ถอดรหัสแล้ว ตารางสตริง ภาษา และข้อมูลเวอร์ชัน                            | ตัวเรียก Apktool ที่ผู้เรียกจัดเตรียม; [คู่มือทรัพยากร](../apktool-resource-analysis.md)                                                |
 | แอป Flutter                  | แฮชสแนปชอต Dart, แฮชไลบรารีราย ABI และที่มาของบิลด์เอนจิน                             | ไม่ต้อง (วิเคราะห์ APK แบบ static); [คู่มือ Flutter](../flutter-analysis.md)                                                      |
-| เฟิร์มแวร์                      | พื้นที่ข้อมูล ผลการแตกไฟล์ และการส่งต่อไปวิเคราะห์เนทีฟ                                     | Binwalk / Unblob บน Linux; [คู่มือเฟิร์มแวร์](../firmware-analysis.md)                                                           |
+| เฟิร์มแวร์                      | พื้นที่ข้อมูล ผลการแตกไฟล์ และการส่งต่อไปวิเคราะห์เนทีฟ                                     | Binwalk / Unblob บน Linux; [คู่มือเฟิร์มแวร์](../firmware-analysis.md) [HarmonyOS Ark bytecode](../harmony-abc-analysis.md)      |
 | แพ็กเก็ตที่บันทึกไว้                | ฟิลด์ที่เลือก ค่าซ้ำ ตัวกรอง และกฎการถอดรหัส                                             | Linux: TShark 4.x + prlimit; [คู่มือไฟล์แคปเจอร์](../packet-captures.md)                                                        |
 | สัญญาณลอจิกที่บันทึกไว้             | คำอธิบายจากตัวถอดรหัส ช่วงตัวอย่าง และข้อมูลวินิจฉัย                                       | Linux: sigrok-cli 0.7.2 + prlimit; [คู่มือสัญญาณ](../signal-recordings.md)                                                     |
 | แพ็กเกจและทรัพยากร             | รายการไฟล์ ค่าแฮช plist โครงสร้างบันเดิลของ Apple และทรัพยากรที่แตกออกมา                | [คู่มืออาร์ติแฟกต์และ JavaScript](../javascript-artifact-reconstruction.md), [แอปพลิเคชัน Apple](../apple-application-analysis.md) |
@@ -168,7 +168,7 @@ REA ต้องใช้ Node.js 22.x (>=22.19), 24.x (>=24.11) หรือ 26
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-รูปแบบไบนารีเนทีฟและแพลตฟอร์มที่รองรับแตกต่างกันตามผู้ให้บริการวิเคราะห์ ดู[การตั้งค่า Hopper และ Ghidra](../installation.md#hopper), [คู่มือ IDA](../ida-provider.md) [Kuna](../kuna-provider.md) และ[การรองรับ Ghidra บน Windows แบบทดลอง](../windows-ghidra-p0.md) Ghidra ยังรองรับ[การวิเคราะห์ DOS แบบ 16 บิต](../ghidra-dos.md) สำหรับการเลือกผู้ให้บริการ ดู[คู่มือ CLI](../cli.md#choose-a-provider) ตรวจสอบ[ความพร้อมใช้งานในแต่ละรุ่น](../installation.md#released-package-and-main) สำหรับฟีเจอร์ที่เพิ่มหลังรุ่นล่าสุดบน npm
+รูปแบบไบนารีเนทีฟและแพลตฟอร์มที่รองรับแตกต่างกันตามผู้ให้บริการวิเคราะห์ ดู[การตั้งค่า Hopper และ Ghidra](../installation.md#hopper), [คู่มือ IDA](../ida-provider.md) [Kuna](../kuna-provider.md) [HarmonyOS Ark bytecode](../harmony-abc-analysis.md) และ[การรองรับ Ghidra บน Windows แบบทดลอง](../windows-ghidra-p0.md) Ghidra ยังรองรับ[การวิเคราะห์ DOS แบบ 16 บิต](../ghidra-dos.md) สำหรับการเลือกผู้ให้บริการ ดู[คู่มือ CLI](../cli.md#choose-a-provider) ตรวจสอบ[ความพร้อมใช้งานในแต่ละรุ่น](../installation.md#released-package-and-main) สำหรับฟีเจอร์ที่เพิ่มหลังรุ่นล่าสุดบน npm
 
 ## ตัวอย่างการใช้งาน
 

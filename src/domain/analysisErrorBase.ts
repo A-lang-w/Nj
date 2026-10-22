@@ -232,6 +232,7 @@ import type { Evidence } from "./evidence.js";
 import type { ElectronPagePartialObservation } from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
+import type { HarmonyAbcPartialObservation } from "./harmony/harmonyAbcAnalysis.js";
 import type {
   AdbActivityStartPartialObservation,
   AdbAcquiredFilePartialObservation,
@@ -283,6 +284,7 @@ export type AnalysisPartialObservation =
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation
+  | HarmonyAbcPartialObservation
   | NativeUiObservationResult
   | InspectSignature
   | ElectronPagePartialObservation

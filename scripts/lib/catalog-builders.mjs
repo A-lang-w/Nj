@@ -58,6 +58,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS,
     },
     {
+      id: "harmony-abc",
+      surface: "harmony-provider",
+      contracts: sources.harmonyAbcContracts.HARMONY_ABC_TOOL_CONTRACTS,
+    },
+    {
       id: "android",
       surface: "android-provider",
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
@@ -330,6 +335,10 @@ export const providerCatalog = (sources) => {
       contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS.filter(
         ({ name }) => name === "extract_firmware",
       ),
+    },
+    {
+      identity: sources.xpandaProvider.XPANDA_PROVIDER_IDENTITY,
+      contracts: sources.harmonyAbcContracts.HARMONY_ABC_TOOL_CONTRACTS,
     },
     {
       identity: sources.androidProvider.JADX_PROVIDER_IDENTITY,
