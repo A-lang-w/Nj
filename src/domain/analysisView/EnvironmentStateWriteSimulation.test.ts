@@ -867,6 +867,67 @@ describe("what a read shows of a write", () => {
   });
 });
 
+describe("document writes later writes overwrite", () => {
+  it("confirms no document replacement a later merge overwrote", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/settings", { theme: "light", lang: "en" }],
+      [
+        "PUT",
+        "/api/settings",
+        { theme: "dark", lang: "fr" },
+        200,
+        { theme: "dark", lang: "fr" },
+      ],
+      [
+        "PATCH",
+        "/api/settings",
+        { theme: "blue", lang: "de" },
+        200,
+        { theme: "blue", lang: "de" },
+      ],
+      ["GET", "/api/settings", { theme: "blue", lang: "de" }],
+    ];
+    expect(gated(rows, "put_settings")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+    expect(gated(rows, "patch_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+  });
+
+  it("confirms no document merge a later replacement of its object overwrote", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/settings", { prefs: { lang: "en" }, theme: "light" }],
+      [
+        "PATCH",
+        "/api/settings",
+        { prefs: { lang: "fr" }, theme: "light" },
+        200,
+        { prefs: { lang: "fr" } },
+      ],
+      // The replacement holds `lang`, so it replaces all of `prefs`, which the merge wrote.
+      [
+        "PUT",
+        "/api/settings",
+        { prefs: { lang: "de" }, theme: "light" },
+        200,
+        { lang: "de" },
+      ],
+      ["GET", "/api/settings", { prefs: { lang: "de" }, theme: "light" }],
+    ];
+    expect(gated(rows, "patch_settings")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+    expect(gated(rows, "put_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+  });
+});
+
 describe("reads named as serving names them", () => {
   const orgBook = (id: number, org: string, name: string): Book => ({
     id,
@@ -1851,6 +1912,88 @@ describe("reads and calls on an entity an unmodelled write left unknown", () => 
       body: { accepted: ["name"], fixed: [] },
       rules: [{ field: "name", rule: "echo" }],
       checked_record_ordinals: [4],
+    });
+  });
+});
+
+describe("volatile fields", () => {
+  it("confirms no write through a volatile field a read renders from itself", () => {
+    const seen = (id: number, name: string, at: string) => ({
+      id,
+      name,
+      seen: at,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [seen(1, "A", "t1"), seen(2, "B", "t1")]],
+      ["GET", "/api/books/1", seen(1, "A", "t1")],
+      // A repeated read with no write between shows `seen` changing on its own, so it is volatile.
+      ["GET", "/api/books/1", seen(1, "A", "t2")],
+      ["GET", "/api/books/2", seen(2, "B", "t1")],
+      ["PATCH", "/api/books/1", seen(1, "A", "t3"), 200, { seen: "t3" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      // The export may explain the new name, and `seen` renders from the read, so nothing shows the patch.
+      ["GET", "/api/books/1", seen(1, "Z", "t9")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+});
+
+describe("an unmodelled write under another collection spelling", () => {
+  it("keeps a confirmed update when the write spells the held collection plainly", () => {
+    const acme = (name: string, status: string) => ({
+      id: 1,
+      org: "acme1",
+      name,
+      status,
+    });
+    const beta = (name: string) => ({
+      id: 2,
+      org: "beta2",
+      name,
+      status: "open",
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [acme("Alpha", "open")]],
+      ["GET", "/api/orgs/beta2/books", [beta("Beta")]],
+      ["GET", "/api/orgs/%61cme1/books/1", acme("Alpha", "open")],
+      ["GET", "/api/orgs/beta2/books/2", beta("Beta")],
+      [
+        "PATCH",
+        "/api/orgs/acme1/books/1",
+        acme("Renamed", "open"),
+        200,
+        { name: "Renamed" },
+      ],
+      [
+        "PATCH",
+        "/api/orgs/beta2/books/2",
+        beta("Renamed Beta"),
+        200,
+        { name: "Renamed Beta" },
+      ],
+      ["GET", "/api/orgs/%61cme1/books/1", acme("Renamed", "open")],
+      ["GET", "/api/orgs/beta2/books/2", beta("Renamed Beta")],
+      // Book 1 is held under the encoded collection. This archive spells it plainly.
+      ["POST", "/api/orgs/acme1/books/1/archive", null, 204, {}],
+      // The response shows the status the archive changed. The patch sent only the name.
+      [
+        "PATCH",
+        "/api/orgs/%61cme1/books/1",
+        acme("Retitled", "archived"),
+        200,
+        { name: "Retitled" },
+      ],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "update")).toMatchObject({
+      served: true,
+      reason: null,
+      checked_record_ordinals: [6, 7],
     });
   });
 });
