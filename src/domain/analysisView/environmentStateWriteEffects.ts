@@ -24,6 +24,7 @@ import {
 import {
   conflictsWithPlan,
   explainUpdate,
+  refinedBody,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
 import {
@@ -270,34 +271,26 @@ const updatedObservation = (
   };
 };
 
-/** Add what a later call of an update showed to its plan: members, fixed values and rules not seen before. */
+/** Add what a later call of an update showed to its plan: members, their stored types, fixed values and rules not seen before. */
 const refineUpdate = (
   context: EffectContext,
-  plan: WriteDraft["plan"],
-  explained: ReturnType<typeof explainUpdate>,
+  draft: WriteDraft,
+  evidence: {
+    readonly after: Observed;
+    readonly explained: ReturnType<typeof explainUpdate>;
+  },
 ): void => {
-  const body = plan.body!;
-  const fixed = new Set(body.fixed.map((entry) => entry.member));
-  const added = explained.body.fixed.filter(
-    (entry) => !fixed.has(entry.member),
-  );
-  retainFixed(context, added);
-  plan.body = {
-    ...body,
-    // A later call may be the first to show the body repeating the path's id.
-    identity: body.identity ?? explained.body.identity,
-    accepted: [
-      ...body.accepted,
-      ...explained.body.accepted.filter(
-        (member) => !body.accepted.includes(member),
-      ),
-    ],
-    fixed: [...body.fixed, ...added],
-  };
+  const { plan } = draft;
+  const body = refinedBody(plan.body!, evidence.explained.body, {
+    observed: draft.observed!,
+    stored: evidence.after.object,
+  });
+  retainFixed(context, body.fixed.slice(plan.body!.fixed.length));
+  plan.body = body;
   const ruled = new Set(plan.rules.map((rule) => rule.field));
   plan.rules = [
     ...plan.rules,
-    ...explained.rules.filter((rule) => !ruled.has(rule.field)),
+    ...evidence.explained.rules.filter((rule) => !ruled.has(rule.field)),
   ];
 };
 
@@ -357,7 +350,7 @@ const buildUpdate = (
   },
 ): void => {
   if (built(draft)) {
-    refineUpdate(context, draft.plan, evidence.explained);
+    refineUpdate(context, draft, evidence);
     return;
   }
   retainFixed(context, evidence.explained.body.fixed);

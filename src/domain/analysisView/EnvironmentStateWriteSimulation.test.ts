@@ -1005,6 +1005,127 @@ describe("reads named as serving names them", () => {
   });
 });
 
+describe("writes named as serving names them", () => {
+  const orgBook = (
+    id: number,
+    org: string,
+    name: string,
+    archived = false,
+  ) => ({
+    id,
+    org,
+    name,
+    archived,
+  });
+  const ALPHA = orgBook(1, "acme1", "Alpha");
+  const BETA = orgBook(2, "beta2", "Beta");
+  const RENAMED_BETA = orgBook(2, "beta2", "Renamed Beta");
+  const INIT_ROWS: readonly TimedCaptureRow[] = [
+    ["GET", "/api/orgs/%61cme1/books", [ALPHA]],
+    ["GET", "/api/orgs/beta2/books", [BETA]],
+    ["GET", "/api/orgs/%61cme1/books/1", ALPHA],
+    ["GET", "/api/orgs/beta2/books/2", BETA],
+  ];
+  const RENAME_BETA: readonly TimedCaptureRow[] = [
+    [
+      "PATCH",
+      "/api/orgs/beta2/books/2",
+      RENAMED_BETA,
+      200,
+      { name: "Renamed Beta" },
+    ],
+    ["GET", "/api/orgs/beta2/books/2", RENAMED_BETA],
+  ];
+  const CREATE_DELTA: readonly TimedCaptureRow[] = [
+    [
+      "POST",
+      "/api/orgs/beta2/books",
+      orgBook(4, "beta2", "Delta"),
+      201,
+      { name: "Delta" },
+    ],
+  ];
+  const planned = (rows: readonly TimedCaptureRow[], effect: string) =>
+    environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]).writes.find((plan) => plan.effect === effect);
+
+  it("contradicts a create named plainly by a list of the encoded collection it went to that omits it", () => {
+    const gamma = orgBook(3, "acme1", "Gamma");
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      ["POST", "/api/orgs/acme1/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/orgs/acme1/books/3", gamma],
+      // Serving lists the create in the encoded collection, which the recording shows without it.
+      ["GET", "/api/orgs/%61cme1/books", [ALPHA]],
+      ...CREATE_DELTA,
+    ];
+    expect(planned(rows, "create")).toMatchObject({
+      served: false,
+      contradicted_by: 6,
+    });
+  });
+
+  it("leaves unknown the entity a plainly named action changed under the encoded collection", () => {
+    const archived = orgBook(1, "acme1", "Alpha", true);
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      ["POST", "/api/orgs/acme1/books/1/archive", archived, 200],
+      // The rename's answer also shows the archive, which no rule of the rename explains.
+      [
+        "PATCH",
+        "/api/orgs/acme1/books/1",
+        orgBook(1, "acme1", "Renamed", true),
+        200,
+        { name: "Renamed" },
+      ],
+      ...RENAME_BETA,
+    ];
+    expect(planned(rows, "update")).toMatchObject({
+      served: true,
+      reason: null,
+    });
+  });
+
+  it("checks no list of the encoded collection after a plainly named write at the collection", () => {
+    const gamma = orgBook(3, "acme1", "Gamma");
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      ["DELETE", "/api/orgs/acme1/books", "", 204],
+      ["POST", "/api/orgs/acme1/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/orgs/acme1/books/3", gamma],
+      // The cleared collection now lists only the create, which the state alone cannot show.
+      ["GET", "/api/orgs/%61cme1/books", [gamma]],
+      ...CREATE_DELTA,
+    ];
+    expect(planned(rows, "create")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+    });
+  });
+
+  it("checks no read under the encoded collection after a plainly named write above it", () => {
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      [
+        "PATCH",
+        "/api/orgs/%61cme1/books/1",
+        orgBook(1, "acme1", "Renamed"),
+        200,
+        { name: "Renamed" },
+      ],
+      ["DELETE", "/api/orgs/acme1", "", 204],
+      // The organisation's books went with it, which the state alone cannot show.
+      ["GET", "/api/orgs/%61cme1/books/1", BOOK_NOT_FOUND, 404],
+      ...RENAME_BETA,
+    ];
+    expect(planned(rows, "update")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+    });
+  });
+});
+
 describe("resolved encoded item observations", () => {
   it("matches the resolved raw ID when the collection alias and response ID are encoded", () => {
     const collection = "/api/orgs/%61cme1/books";

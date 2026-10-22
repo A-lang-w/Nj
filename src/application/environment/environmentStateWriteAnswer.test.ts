@@ -324,6 +324,35 @@ describe("refusals", () => {
     ).toMatchObject({ id: 3, name: "Hard", format: "HARDCOVER" });
   });
 
+  it("holds a member a later update first stored to the JSON type it stored", () => {
+    const shelved = { ...SECOND_BOOK, tags: ["a"] };
+    const renamed = renamedBook(FIRST_BOOK, "Renamed Book", 3);
+    const retagged = { ...shelved, tags: ["x"], updated_at: bookClock(5) };
+    // The rename the plan was built from shows no tags, which the first book never had.
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK, shelved]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", shelved],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", renamed],
+      ["PATCH", "/api/books/2", retagged, 200, { tags: ["x"] }],
+      ["GET", "/api/books/2", retagged],
+    ]);
+    expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+      served: true,
+      body: { kinds: [{ member: "tags", kind: "array" }] },
+    });
+    const before = books.snapshot();
+    expect(
+      books.refusal("patch_books_by_id", { id: "1", body: { tags: "x" } }),
+    ).toMatchObject({
+      message: expect.stringContaining("Member tags must be a JSON array"),
+    });
+    expect(books.snapshot()).toBe(before);
+    books.answer("patch_books_by_id", { id: "1", body: { tags: ["y"] } });
+    expect(entityOf(books, "1")?.fields).toMatchObject({ tags: ["y"] });
+  });
+
   it("generates the same values after a refused call as without it", () => {
     const refusedFirst = servedFrom();
     refusedFirst.refusal("post_books", { body: {} });
