@@ -226,3 +226,16 @@ Microsoft HostModel-generated Windows x64 hosts (v1, v2, plain v6 and
 compressed v6). Extracted DLL/resource bytes matched the producer files, and
 the source hashes were unchanged. The generated hosts were not executed.
 Current-head upstream CI remains to be checked after the merge is pushed.
+
+Upstream main advanced again to `4a4bbab3c337701febeb6b532ace49041c4876e0`
+before publication, and that commit merged without textual conflict. On the
+resulting tree, the 29 bundle boundary tests and two compiled CLI/stdio MCP
+acceptance tests passed. The two newly added upstream Evidence-publication
+test files had 27 passes when run outside the sandbox; their sandbox run
+failed at Windows hard-link publication. No PR production file changed in
+that second merge. The four-host compiled CLI/stdio MCP workflow was repeated
+on this tree and passed with byte-equal DLL/resource output and unchanged
+source hashes. `npm run docs:check` passed again. `npm run check:ci` again
+passed its static/deep stages and stopped at the unavailable Windows
+`python3` command; the WSL Python results above were obtained before this
+second merge, which changed no Python source.
