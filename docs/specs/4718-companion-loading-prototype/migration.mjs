@@ -20,6 +20,7 @@ export function planLegacyRemoval(input) {
   // This is a named fixture state, not the released updater's production schema.
   let state;
   try { state = strictJson(stateBytes); } catch { return refuse("State is invalid"); }
+  if (state === null || typeof state !== "object" || Array.isArray(state)) return refuse("State must be a non-null record");
   if (state.fixtureSchema !== 1 || !["claude-code", "claude_code", "codex"].includes(state.client)) return refuse("Unknown fixture schema or client");
   const begin = reaBytes.indexOf(BEGIN);
   const end = reaBytes.indexOf(END);

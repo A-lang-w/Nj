@@ -182,6 +182,50 @@ test("interrupted package update suspends old grant; new bytes cannot reuse old 
   refusal(await resolveManual({ ...f.input, expectedIdentity: JSON.parse(old).entries[0].manifestDigest }), "identity");
 });
 
+const invalidMigrationStates = [
+  ["null", null],
+  ["empty array", []],
+  ["array containing a valid-looking record", [{ fixtureSchema: 1, client: "codex" }]],
+  ["true", true],
+  ["false", false],
+  ["number", 7],
+  ["zero", 0],
+  ["string", "codex"],
+  ["empty string", ""],
+  ["empty record", {}],
+  ["missing schema", { client: "codex" }],
+  ["unknown schema", { fixtureSchema: 2, client: "codex" }],
+  ["zero schema", { fixtureSchema: 0, client: "codex" }],
+  ["null schema", { fixtureSchema: null, client: "codex" }],
+  ["string schema", { fixtureSchema: "1", client: "codex" }],
+  ["missing client", { fixtureSchema: 1 }],
+  ["unknown client", { fixtureSchema: 1, client: "unsupported" }],
+  ["null client", { fixtureSchema: 1, client: null }],
+  ["numeric client", { fixtureSchema: 1, client: 7 }],
+  ["array client", { fixtureSchema: 1, client: ["codex"] }],
+  ["object client", { fixtureSchema: 1, client: { name: "codex" } }],
+];
+
+for (const [name, state] of invalidMigrationStates) {
+  test(`migration refuses malformed state: ${name}`, async () => {
+    const block = (await readFile(new URL("./legacy-block.fixture.md", import.meta.url), "utf8")).replaceAll("\r\n", "\n").trimEnd();
+    const reaBytes = Buffer.from(`Current REA header\n${block}\nCurrent REA references\n`);
+    const stateBytes = json(state);
+    const originalReaBytes = Buffer.from(reaBytes);
+    const originalStateBytes = Buffer.from(stateBytes);
+    const input = { reaBytes, stateBytes, expectedReaDigest: digest(reaBytes), expectedStateDigest: digest(stateBytes) };
+    let result;
+    assert.doesNotThrow(() => { result = planLegacyRemoval(input); });
+    assert.equal(result.ok, false);
+    assert.deepEqual(Object.keys(result).sort(), ["error", "ok"]);
+    assert.equal(result.error.tag, "migration-refused");
+    assert.equal(typeof result.error.detail, "string");
+    assert.ok(result.error.detail.length > 0);
+    assert.deepEqual(reaBytes, originalReaBytes, "Refusal must preserve current REA bytes");
+    assert.deepEqual(stateBytes, originalStateBytes, "Refusal must preserve malformed state bytes");
+  });
+}
+
 test("fixture migration preserves surrounding bytes, aliases, all state and disabled intent", async () => {
   const block = (await readFile(new URL("./legacy-block.fixture.md", import.meta.url), "utf8")).replaceAll("\r\n", "\n").trimEnd();
   for (const client of ["claude-code", "claude_code", "codex"]) for (const lineEnding of ["\n", "\r\n"]) {
