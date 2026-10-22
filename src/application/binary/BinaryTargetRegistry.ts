@@ -147,6 +147,15 @@ interface AnalysisJob {
   /** Completion time of a terminal job; undefined while the job is starting. */
   finishedAt: number | undefined;
   promise: Promise<void>;
+  /**
+   * The cancellation of this job, shared by every request that cancels it.
+   *
+   * The cancellation belongs to the job, so two requests that cancel the same
+   * job wait for the same operation: the slot is force-closed once and the
+   * job leaves the slot once. A cancellation that failed is given up, so a
+   * later request retries the cleanup instead of replaying the failure.
+   */
+  cancellation: Promise<Result<null, AnalysisError>> | undefined;
 }
 
 /**
@@ -737,6 +746,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       error: undefined,
       finishedAt: undefined,
       promise: Promise.resolve(),
+      cancellation: undefined,
     };
     this.#releaseReservation(slot);
     this.#syncHandle(slot, target);
@@ -1348,22 +1358,54 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    * abort holds the session transition, and the ordinary open serializes
    * behind it, so the slot is released with the forced close before it is
    * reused.
+   *
+   * The cancellation belongs to the job, so two requests that cancel the same
+   * job wait for the same cancellation and the slot is force-closed once. The
+   * cleanup only runs while the job still holds the slot, so a slot that took
+   * on another analysis in the meantime keeps that analysis.
    */
   async #cancelJobAndWait(
     slot: TargetSlot,
   ): Promise<Result<null, AnalysisError>> {
     const job = this.#jobs.get(slot.id);
     if (job === undefined) return ok(null);
-    job.controller.abort();
-    if (await this.#waitForJobSettle(job)) {
-      this.#jobs.delete(slot.id);
-      return ok(null);
+    const cancellation = job.cancellation ?? this.#cancelJob(slot, job);
+    job.cancellation = cancellation;
+    const cancelled = await cancellation;
+    if (!cancelled.ok) {
+      // The failed cancellation keeps the job registered, so the shared
+      // operation is given up and a later cancel retries the cleanup.
+      if (job.cancellation === cancellation) job.cancellation = undefined;
+      return cancelled;
     }
+    // The job leaves the slot when its cancellation released it. A slot that
+    // took on another analysis keeps that analysis and the job it holds.
+    this.#releaseJob(slot, job);
+    return cancelled;
+  }
+
+  /**
+   * Cancel one job and release the slot it holds.
+   *
+   * The start is aborted and the interrupted start is awaited, bounded. A
+   * start that ignores its abort never settles, so the wait stops at the
+   * bound and the slot is released with the forced close that releases the
+   * pending client and retires the transition the wedged start holds.
+   */
+  async #cancelJob(
+    slot: TargetSlot,
+    job: AnalysisJob,
+  ): Promise<Result<null, AnalysisError>> {
+    job.controller.abort();
+    if (await this.#waitForJobSettle(job)) return ok(null);
     // The start ignored its abort and still holds the session transition, so
     // the open that replaces it would queue behind that transition forever.
     // The forced close releases the pending client and retires the
     // transition, and the slot is reusable once the client is released.
-    const closed = await this.#closeSlotWithoutTransition(
+    // The forced close belongs to the job that holds the slot: a slot that
+    // took on another analysis in the meantime keeps that analysis.
+    if (!this.#ownsJob(slot, job)) return ok(null);
+    return this.#closeSlotWithoutTransition(
       slot,
       {},
       {
@@ -1371,8 +1413,17 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         closeOwnedProviderResources: false,
       },
     );
-    if (closed.ok) this.#jobs.delete(slot.id);
-    return closed;
+  }
+
+  /** Whether the slot still holds the job that owns an operation. */
+  #ownsJob(slot: TargetSlot, job: AnalysisJob): boolean {
+    return this.#jobs.get(slot.id) === job;
+  }
+
+  /** Remove a job from its slot, if the slot still holds that job. */
+  #releaseJob(slot: TargetSlot, job: AnalysisJob): void {
+    if (!this.#ownsJob(slot, job)) return;
+    this.#jobs.delete(slot.id);
   }
 
   async status(
