@@ -1,9 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { Errors, z, type MiddlewareHandler } from "incur";
+import { Errors, Formatter, z, type MiddlewareHandler } from "incur";
 
 import {
-  rejectsCliOutputValue,
+  cliOutputValueRejection,
   splitIncurBuiltinArguments,
   type IncurBuiltinArgumentSplit,
 } from "../cliOutput.js";
@@ -52,41 +52,39 @@ const declaredSensitiveValues = (
   return [...values];
 };
 
+type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
+
 /**
- * Incur reports a rejected output value before resolving the command and never
- * uses it otherwise, so declarations apply here whichever command follows.
- * Substitute a literal-free value that Incur still rejects, so the same failure
- * is reported without repeating a declaration.
+ * Incur rejects an output value in its builtin pass, before command resolution
+ * and outside any middleware, then renders the message it built. Report that
+ * same first rejection here so the whole message follows the declarations,
+ * as parser failures do; the code and Incur's rendering stay unchanged. It
+ * precedes command resolution, so declarations apply whichever command follows.
  */
-const withoutDeclaredOutputValues = (
+const reportDeclaredOutputRejection = (
   arguments_: readonly string[],
   outputValues: IncurBuiltinArgumentSplit["outputValues"],
   values: readonly string[],
-): string[] => {
-  const result = [...arguments_];
-  for (const { flag, index } of outputValues) {
-    const value = result[index]!;
-    if (
-      !rejectsCliOutputValue(flag, value) ||
-      values.every((literal) => !value.includes(literal))
-    )
-      continue;
-    // Distinct one-character values contain only an identical declaration, so
-    // one more candidate than there are declarations always qualifies.
-    const candidates = [
-      redactExplicitText(value, values),
-      ...Array.from({ length: values.length + 1 }, (_, offset) =>
-        String.fromCodePoint(0x41 + offset),
-      ),
-    ];
-    result[index] = candidates.find(
-      (candidate) =>
-        candidate !== "" &&
-        rejectsCliOutputValue(flag, candidate) &&
-        values.every((literal) => !candidate.includes(literal)),
-    )!;
-  }
-  return result;
+  options: ServeOptions,
+): boolean => {
+  const rejection = outputValues
+    .map(({ flag, index }) => cliOutputValueRejection(flag, arguments_[index]!))
+    .find((message) => message !== undefined);
+  if (rejection === undefined) return false;
+  const error = {
+    code: "UNKNOWN",
+    message: redactExplicitText(rejection, values),
+  };
+  // Incur has not seen --format or --json yet, so only a TTY selects prose.
+  const output =
+    process.stdout.isTTY === true
+      ? `Error: ${error.message}`
+      : Formatter.format(error, "toon");
+  (options.stdout ?? ((text: string) => process.stdout.write(text)))(
+    output.endsWith("\n") ? output : `${output}\n`,
+  );
+  (options.exit ?? ((code: number) => process.exit(code)))(1);
+  return true;
 };
 
 /** Keep the thrown type, code and exit status; exclude declared literals from text. */
@@ -138,14 +136,16 @@ const withoutDeclaredText = (
  * Apply `--sensitive-value` declarations to diagnostics produced before the
  * command's own service sees them: rejected output values and the parse,
  * validation and thrown failures of every command that accepts the option.
+ * Diagnostic text is redacted whole; codes, keys and rendering stay intact.
  * Returns the serve step; command results keep their own redaction owners.
  */
 export const excludeDeclaredSensitiveArguments = (
   cli: CliInstance,
-): (<T>(
+): ((
   arguments_: readonly string[],
-  serve: (arguments_: string[]) => T,
-) => T) => {
+  options: ServeOptions,
+  serve: (arguments_: string[], options: ServeOptions) => Promise<void>,
+) => Promise<void>) => {
   const declarations = new AsyncLocalStorage<readonly string[]>();
   const excludeFromFailures: MiddlewareHandler = async (_context, next) => {
     const values = declarations.getStore();
@@ -165,15 +165,19 @@ export const excludeDeclaredSensitiveArguments = (
       // as the parsing and run that Incur executes inside the chain.
       command.middleware = [excludeFromFailures, ...(command.middleware ?? [])];
   });
-  return (arguments_, serve) => {
+  return async (arguments_, options, serve) => {
     const split = splitIncurBuiltinArguments(arguments_);
     const values = declaredSensitiveValues(split.command);
-    return values.length === 0
-      ? serve([...arguments_])
-      : declarations.run(values, () =>
-          serve(
-            withoutDeclaredOutputValues(arguments_, split.outputValues, values),
-          ),
-        );
+    if (values.length === 0) return serve([...arguments_], options);
+    if (
+      reportDeclaredOutputRejection(
+        arguments_,
+        split.outputValues,
+        values,
+        options,
+      )
+    )
+      return;
+    return declarations.run(values, () => serve([...arguments_], options));
   };
 };

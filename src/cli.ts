@@ -173,8 +173,6 @@ export const createCli = (
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   const serve = cli.serve.bind(cli);
   cli.serve = (arguments_ = process.argv.slice(2), options) =>
-    serveDeclared(normalizeCliArguments(arguments_), (normalized) =>
-      serve(normalized, options),
-    );
+    serveDeclared(normalizeCliArguments(arguments_), options ?? {}, serve);
   return cli;
 };

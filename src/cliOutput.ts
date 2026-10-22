@@ -33,12 +33,25 @@ const INCUR_BUILTIN_FLAGS = new Set([
   "--token-count",
 ]);
 
-/** True when Incur rejects this spaced value of a valued output flag. */
-export const rejectsCliOutputValue = (flag: string, value: string): boolean =>
-  flag === "--format"
-    ? !INCUR_OUTPUT_FORMATS.has(value)
-    : (flag === "--token-limit" || flag === "--token-offset") &&
-      (!Number.isFinite(Number(value)) || value.trim() === "");
+/**
+ * Incur's message when its builtin pass rejects this spaced value of a valued
+ * output flag, or undefined when Incur accepts it.
+ */
+export const cliOutputValueRejection = (
+  flag: string,
+  value: string,
+): string | undefined => {
+  if (flag === "--format")
+    return INCUR_OUTPUT_FORMATS.has(value)
+      ? undefined
+      : `Invalid format: "${value}". Expected one of: ${[...INCUR_OUTPUT_FORMATS].join(", ")}`;
+  if (
+    (flag === "--token-limit" || flag === "--token-offset") &&
+    (!Number.isFinite(Number(value)) || value.trim() === "")
+  )
+    return `Invalid value for ${flag}: "${value}"`;
+  return undefined;
+};
 
 /** Command tokens and output-flag values as Incur's builtin pass assigns them. */
 export interface IncurBuiltinArgumentSplit {
@@ -178,7 +191,8 @@ export const parseCliOutputArguments = (
       if (value) {
         // Incur stops parsing at an invalid format before applying any later
         // output controls. Let it report that malformed flag itself.
-        if (rejectsCliOutputValue(argument, value)) return parsed(true);
+        if (cliOutputValueRejection(argument, value) !== undefined)
+          return parsed(true);
         format = value;
         index += 1;
       } else missingValue ??= argument;
@@ -194,7 +208,8 @@ export const parseCliOutputArguments = (
     if (argument === "--token-limit" || argument === "--token-offset") {
       const value = arguments_[index + 1];
       if (value) {
-        if (rejectsCliOutputValue(argument, value)) return parsed(true);
+        if (cliOutputValueRejection(argument, value) !== undefined)
+          return parsed(true);
         const numericValue = Number(value);
         if (argument === "--token-limit") tokenLimit = numericValue;
         else tokenOffset = numericValue;
