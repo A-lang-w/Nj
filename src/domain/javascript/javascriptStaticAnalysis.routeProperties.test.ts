@@ -69,3 +69,15 @@ it("reports path properties outside router records only as candidates", () => {
     },
   ]);
 });
+
+it("scans an object's route fields once for repeated path keys", () => {
+  const start = performance.now();
+  const endpoints = routeEndpoints(
+    `const record = { ${Array.from({ length: 20_000 }, (_, i) => `path: "p${String(i)}"`).join(", ")} };`,
+  );
+  expect(endpoints).toHaveLength(20_000);
+  expect(
+    endpoints.every(({ interpretation }) => interpretation === "candidate"),
+  ).toBe(true);
+  expect(performance.now() - start).toBeLessThan(2000);
+}, 30000);
