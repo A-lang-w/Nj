@@ -6,15 +6,20 @@ import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,
+  DEFAULT_ASAR_HEADER_ADMISSION,
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
 
-/** Resolve the effective header/index admission; an invalid setting is refused, not ignored. */
+/**
+ * Resolve the admission from a composition root's selected environment; an
+ * invalid setting is refused, not ignored. Callers without an environment use
+ * the default.
+ */
 export const resolveAsarHeaderAdmission = (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  environment: Readonly<Record<string, string | undefined>>,
 ): AsarHeaderAdmission => {
   const parsed = parseAsarHeaderAdmission(
     environment[ASAR_HEADER_ADMISSION_SETTING],
@@ -372,7 +377,7 @@ const isJsonWhitespace = (value: number): boolean =>
 export const admitAsarHeader = async (
   handle: Pick<FileHandle, "read"> & { stat(): Promise<Stats> },
   signal?: AbortSignal,
-  admission: AsarHeaderAdmission = resolveAsarHeaderAdmission(),
+  admission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
 ): Promise<AsarHeaderExtents> => {
   assertArtifactReadActive(signal);
   const observed = await handle.stat();
@@ -408,5 +413,5 @@ export const admitAsarHeader = async (
 };
 
 export const createAsarHeaderSignatureProbe = (
-  admission: AsarHeaderAdmission = resolveAsarHeaderAdmission(),
+  admission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
 ): AsarHeaderSignatureProbe => new AsarHeaderSignatureProbeImpl(admission);

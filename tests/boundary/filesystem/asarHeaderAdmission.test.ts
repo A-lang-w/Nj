@@ -10,11 +10,12 @@ import {
   asarHeaderAdmissionRecovery,
 } from "../../../src/artifacts/AsarHeader.js";
 import { parseEnvironment } from "../../../src/config/environment.js";
-import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
+import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
+  type AsarHeaderAdmission,
   DEFAULT_ASAR_MAX_HEADER_BYTES,
 } from "../../../src/config/asarHeaderAdmission.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
@@ -33,11 +34,11 @@ const createFixture = async () => {
   return { archive, original: await readFile(archive) };
 };
 
-const admit = async (path: string) => {
+const admit = async (path: string, admission?: AsarHeaderAdmission) => {
   const handle = await open(path, "r");
   const read = vi.spyOn(handle, "read");
   try {
-    return await admitAsarHeader(handle);
+    return await admitAsarHeader(handle, undefined, admission);
   } finally {
     // Admission must inspect only the fixed prefix, even for forged extents.
     const calls = [...read.mock.calls];
@@ -258,61 +259,71 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("admits a header above the default when REA_ASAR_MAX_HEADER_BYTES raises the budget", async () => {
+it("admits a header above the default when the selected admission raises the budget", async () => {
   const archive = await writeOversizedHeaderArchive();
   const headerBytes = DEFAULT_ASAR_MAX_HEADER_BYTES + 4;
-  vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", String(headerBytes - 1));
-  await expect(admit(archive)).rejects.toMatchObject({
+  await expect(
+    admit(archive, { maximumBytes: headerBytes - 1, source: "setting" }),
+  ).rejects.toMatchObject({
     reason: "limit",
     admission: { maximumBytes: headerBytes - 1, source: "setting" },
   });
-  vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", String(headerBytes));
-  await expect(admit(archive)).resolves.toEqual({
+  await expect(
+    admit(archive, { maximumBytes: headerBytes, source: "setting" }),
+  ).resolves.toEqual({
     archiveBytes: headerBytes + 8,
     headerBytes,
     jsonBytes: 2,
   });
 });
 
-it("applies a lowered setting to inventory and JavaScript analysis of a real archive", async () => {
+it("applies the caller-selected environment, not the ambient one, to inventory and JavaScript analysis", async () => {
   const { archive, original } = await createFixture();
   const headerBytes = original.readUInt32LE(4);
-  const admission = {
+  const lowered = { REA_ASAR_MAX_HEADER_BYTES: String(headerBytes - 1) };
+  const recovery = asarHeaderAdmissionRecovery({
     maximumBytes: headerBytes - 1,
     source: "setting",
-  } as const;
-  const recovery = asarHeaderAdmissionRecovery(admission);
+  });
   expect(recovery).toContain(
     `limited to ${String(headerBytes - 1)} bytes by REA_ASAR_MAX_HEADER_BYTES.`,
   );
-  vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", String(headerBytes - 1));
-  const inventory = await inventoryArtifact(archive).then(
-    () => undefined,
-    (cause: unknown) => cause,
+  // An ambient value that would refuse the archive must not reach callers
+  // whose selected environment leaves the setting unset.
+  vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", "1");
+  for (const operation of ["inventory_artifact", "inspect_artifact"] as const) {
+    await expect(
+      createDirectAnalysis(lowered).runProviderAnalysis(archive, operation, {}),
+    ).resolves.toMatchObject({
+      code: "truncated",
+      message: recovery,
+      details: {
+        maximum_header_bytes: headerBytes - 1,
+        maximum_header_bytes_source: "setting",
+        setting: "REA_ASAR_MAX_HEADER_BYTES",
+      },
+    });
+    await expect(
+      createDirectAnalysis({}).runProviderAnalysis(archive, operation, {}),
+    ).resolves.toMatchObject({ operation });
+  }
+  const refused = await analyzeJavaScriptApplication(
+    { input_path: archive },
+    { environment: lowered },
   );
-  expect(
-    projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", inventory),
-    ),
-  ).toMatchObject({
-    message: recovery,
-    details: {
-      maximum_header_bytes: headerBytes - 1,
-      maximum_header_bytes_source: "setting",
-      setting: "REA_ASAR_MAX_HEADER_BYTES",
-    },
-  });
-  const refused = await analyzeJavaScriptApplication({ input_path: archive });
   if (refused.ok) throw new Error("Lowered ASAR header admission succeeded");
   expect(projectAnalysisError(refused.error).message).toBe(recovery);
-
-  vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", String(headerBytes));
-  await expect(inventoryArtifact(archive)).resolves.toBeDefined();
-  const admitted = await analyzeJavaScriptApplication({ input_path: archive });
+  const admitted = await analyzeJavaScriptApplication(
+    { input_path: archive },
+    { environment: { REA_ASAR_MAX_HEADER_BYTES: String(headerBytes) } },
+  );
   expect(admitted.ok).toBe(true);
+  expect((await analyzeJavaScriptApplication({ input_path: archive })).ok).toBe(
+    true,
+  );
 });
 
-it("refuses invalid settings at startup validation and at admission", async () => {
+it("refuses invalid settings at startup validation and at each owner", async () => {
   expect(parseAsarHeaderAdmission(undefined)).toEqual({
     ok: true,
     value: DEFAULT_ASAR_HEADER_ADMISSION,
@@ -350,17 +361,22 @@ it("refuses invalid settings at startup validation and at admission", async () =
     });
   }
 
-  // Without startup validation, admission refuses rather than falling back to the default.
+  // Owners refuse rather than falling back to the default.
   const { archive } = await createFixture();
-  vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", "0");
-  const failure = await inventoryArtifact(archive).then(
-    () => undefined,
-    (cause: unknown) => cause,
-  );
-  expect(failure).toBeInstanceOf(ConfigurationError);
-  expect(
-    projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", failure),
+  const invalid = { REA_ASAR_MAX_HEADER_BYTES: "0" };
+  await expect(
+    createDirectAnalysis(invalid).runProviderAnalysis(
+      archive,
+      "inventory_artifact",
+      {},
     ),
-  ).toMatchObject({ code: "configuration_invalid" });
+  ).resolves.toMatchObject({ code: "configuration_invalid" });
+  const analyzed = await analyzeJavaScriptApplication(
+    { input_path: archive },
+    { environment: invalid },
+  );
+  if (analyzed.ok) throw new Error("Invalid setting was ignored");
+  expect(projectAnalysisError(analyzed.error)).toMatchObject({
+    code: "configuration_invalid",
+  });
 });

@@ -26,7 +26,7 @@ for (const path of [
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 it("retries failed process-owned optional cleanup without reclosing completed peers", async () => {
-  const runtime = createJavaScriptRuntimeObservationProvider();
+  const runtime = createJavaScriptRuntimeObservationProvider({});
   const browser = createBrowserObservationProvider();
   const closeRuntime = runtime.close?.bind(runtime);
   const runtimeClose = vi.spyOn(runtime, "close");
