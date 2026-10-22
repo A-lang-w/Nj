@@ -13,6 +13,7 @@ import {
 import type {
   FieldRule,
   GeneratedRule,
+  JsonKind,
   StateWritePlan,
   WriteBody,
   WriteCall,
@@ -35,6 +36,21 @@ export type GenerateValue = (
 
 const kindOf = (value: JsonValue | undefined): string =>
   value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+
+/** The JSON types `stored` holds members in, for those `observed` shows no value of. */
+export const storedKinds = (
+  members: readonly string[],
+  observed: JsonObject,
+  stored: JsonObject,
+): WriteBody["kinds"] =>
+  members.flatMap((member) => {
+    const value = stored[member];
+    return (observed[member] ?? null) === null &&
+      value !== undefined &&
+      value !== null
+      ? [{ member, kind: kindOf(value) as JsonKind }]
+      : [];
+  });
 
 /** Members a refusal names, each cut to `LISTED_NAME_CHARS`; the plan in the state Evidence holds every one whole. */
 const LISTED_MEMBERS = 12;
@@ -62,7 +78,7 @@ const listed = (members: readonly string[]): string => {
 const bodyContract = (body: WriteBody): string =>
   `accepted members: ${listed(body.accepted)}; members accepted only with their recorded value: ${listed(body.fixed.map(({ member }) => member))}; required: ${listed(body.required)}`;
 
-/** Why a call's body does not fit the members the capture showed, if it does not; `shapes` gives each accepted member's JSON type. */
+/** Why a call's body does not fit the members the capture showed, if it does not; `shapes` gives each accepted member's JSON type, else the body's recorded kind. */
 export const bodyProblem = (
   body: WriteBody,
   call: WriteCall,
@@ -70,6 +86,7 @@ export const bodyProblem = (
 ): string | undefined => {
   const sent = call.body ?? {};
   const fixed = new Map(body.fixed.map((entry) => [entry.member, entry.sent]));
+  const kinds = new Map(body.kinds.map((entry) => [entry.member, entry.kind]));
   for (const [member, value] of Object.entries(sent)) {
     if (member === body.identity) {
       if (scalarText(value) !== shapes.id)
@@ -84,12 +101,12 @@ export const bodyProblem = (
     if (!body.accepted.includes(member))
       return `Member ${member} is not one the capture showed stored (${bodyContract(body)}).`;
     const recorded = shapes.entity[member];
-    if (
-      recorded !== undefined &&
-      recorded !== null &&
-      kindOf(recorded) !== kindOf(value)
-    )
-      return `Member ${member} must be a JSON ${kindOf(recorded)}, as the capture stored it.`;
+    const kind =
+      recorded === undefined || recorded === null
+        ? kinds.get(member)
+        : kindOf(recorded);
+    if (kind !== undefined && kind !== kindOf(value))
+      return `Member ${member} must be a JSON ${kind}, as the capture stored it.`;
   }
   const missing = body.required.filter(
     (member) => !Object.hasOwn(sent, member),

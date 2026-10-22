@@ -89,6 +89,7 @@ describe("served write plans", () => {
         fixed: [],
         required: ["name"],
         identity: null,
+        kinds: [],
       },
       rules: [
         { field: "id", rule: "identity", generator: "sequence" },
@@ -325,6 +326,38 @@ describe("delete confirmation", () => {
     expect(answered(SECOND_BOOK)).toMatchObject({
       served: true,
       response: { shape: "entity", pointer: "/previous" },
+    });
+  });
+});
+
+describe("update answers", () => {
+  it("serves an update whose recorded answer shows a field only the update writes", () => {
+    const summary = (name: string) => [
+      { id: 1, name },
+      { id: 2, name: "B" },
+    ];
+    // No read showed a note before the update sent one, which its answer echoes.
+    const plan = planOf(
+      stateOf([
+        ["GET", "/api/books", summary("A")],
+        ["GET", "/api/books/1", { id: 1, name: "A" }],
+        ["GET", "/api/books/2", { id: 2, name: "B" }],
+        [
+          "PATCH",
+          "/api/books/1",
+          { id: 1, name: "Z", note: "n" },
+          200,
+          { name: "Z", note: "n" },
+        ],
+        ["GET", "/api/books", summary("Z")],
+      ]),
+      "patch_books_by_id",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      reason: null,
+      response: { shape: "entity", pointer: "" },
+      checked_record_ordinals: [4],
     });
   });
 });

@@ -76,6 +76,7 @@ const buildDocument = (
       fixed: [],
       required: [],
       identity: null,
+      kinds: [],
     },
   });
 };
