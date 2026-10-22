@@ -157,6 +157,14 @@ sliceTest(
       digest: { sha256: sha256(universal.bytes) },
     });
     expect(evidence.parameters).toEqual({ path, architecture: "arm64" });
+    // A retained report cannot claim a slice its own container or CPU contradicts.
+    for (const contradiction of [
+      { architecture: "amd64" },
+      { format: "elf" as const },
+    ])
+      expect(
+        goBinarySchema.safeParse({ ...report, ...contradiction }).success,
+      ).toBe(false);
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
 
     const summary = await client.callTool({
@@ -251,6 +259,32 @@ sliceTest(
     ).toBe(
       "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x2)); no slice was selected.",
     );
+
+    // A slice that runs past the file is damaged, not a selection to correct.
+    const truncated = universalMacho([
+      {
+        bytes: createGoBinaryFixture({ format: "macho" }).bytes,
+        cpuType: CPU_ARM64,
+        cpuSubtype: 0,
+      },
+    ]).bytes;
+    truncated.writeUInt32BE(truncated.length, 8 + 12);
+    const damaged = await write("damaged", truncated);
+    for (const architecture of [undefined, "arm64"] as const)
+      expect(
+        issues(
+          await client.callTool({
+            name: "inspect_go_binary",
+            arguments: {
+              path: damaged,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+          }),
+        ).details.issues[0],
+      ).toMatchObject({
+        path: ["path"],
+        message: expect.stringContaining(`Selected artifact ${damaged}: FAT`),
+      });
 
     // The FAT table and the slice header must agree before the slice is read.
     const disagreeing = await write(

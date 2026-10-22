@@ -2,6 +2,7 @@ import { z } from "zod";
 import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
 import {
   machoSelectionContainsRange,
+  selectedSliceAgreesWithReport,
   machoSliceArchitectureSchema,
   machoTargetSelectionSchema,
 } from "../apple/machoTargetSelection.js";
@@ -101,7 +102,11 @@ export const goBinarySchema = z
     const slice = report.selected_slice;
     if (
       slice !== undefined &&
-      (slice.container !== "fat" ||
+      (!selectedSliceAgreesWithReport(
+        slice,
+        report.format,
+        goArchitectureForSubject(report.architecture),
+      ) ||
         !machoSelectionContainsRange(
           slice,
           report.artifact.bytes,
@@ -127,7 +132,7 @@ export const goBinarySchema = z
         code: "custom",
         path: ["selected_slice"],
         message:
-          "Selected universal slice is not a FAT slice of the artifact or does not contain the build-info source ranges.",
+          "Selected universal slice must be a FAT slice of the artifact whose CPU matches the report's Mach-O architecture and that contains the build-info source ranges.",
       });
     if (info === null) return;
     if (info.header_offset > report.artifact.bytes - 32)

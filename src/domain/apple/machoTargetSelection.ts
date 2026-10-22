@@ -112,3 +112,17 @@ export const metadataReportSubjectFormat = (report: {
     : report.selected_slice === undefined
       ? "mach-o"
       : "mach-o-universal";
+
+/**
+ * Whether a metadata report's own container and CPU agree with the universal
+ * slice it says it read: the report must be Mach-O and name the slice's CPU family.
+ */
+export const selectedSliceAgreesWithReport = (
+  selection: MachoTargetSelection,
+  format: "elf" | "pe" | "macho",
+  architecture: BinaryArchitecture | undefined,
+): boolean =>
+  selection.container === "fat" &&
+  format === "macho" &&
+  architecture !== undefined &&
+  machoTargetSelectionMatchesArchitecture(selection, architecture);

@@ -55,6 +55,10 @@ export const selectNativeImage = (
           offset + 4 > bytes.length ? null : bytes.readUInt32BE(offset),
         )
       : undefined;
+  // A table whose slices declare known Mach-O CPUs but cannot be read is a
+  // damaged universal file; no architecture selection can repair it.
+  if (identity?.state === "malformed")
+    return err({ kind: "malformed", message: identity.reason });
   // A FAT-shaped table is not a universal Mach-O until its slices prove it;
   // JVM class files share the magic. Leave such files to the image reader.
   if (

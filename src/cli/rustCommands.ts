@@ -31,7 +31,11 @@ export const registerRustCommands = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      architecture: machoSliceArchitectureSchema.optional(),
+      architecture: machoSliceArchitectureSchema
+        .optional()
+        .describe(
+          "CPU family of the slice to read from a universal Mach-O; required for universal files",
+        ),
       detail: z
         .enum(["complete", "summary"])
         .optional()

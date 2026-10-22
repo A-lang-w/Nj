@@ -7,6 +7,7 @@ import {
 import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
 import {
   machoSelectionContainsRange,
+  selectedSliceAgreesWithReport,
   machoSliceArchitectureSchema,
   machoTargetSelectionSchema,
 } from "../apple/machoTargetSelection.js";
@@ -323,7 +324,11 @@ const checkSlice = (report: RustBinary, context: z.RefinementCtx): void => {
     })) ?? []),
   ];
   if (
-    slice.container !== "fat" ||
+    !selectedSliceAgreesWithReport(
+      slice,
+      report.format,
+      rustArchitectureForSubject(report.architecture),
+    ) ||
     ranges.some(
       ({ offset, bytes }) =>
         !machoSelectionContainsRange(
@@ -337,7 +342,7 @@ const checkSlice = (report: RustBinary, context: z.RefinementCtx): void => {
     issue(
       context,
       ["selected_slice"],
-      "Selected universal slice is not a FAT slice of the artifact or does not contain the reported file offsets.",
+      "Selected universal slice must be a FAT slice of the artifact whose CPU matches the report's Mach-O architecture and that contains the reported file offsets.",
     );
 };
 
