@@ -100,22 +100,6 @@ export interface NativeOpenCliFlags {
   readonly "analysis-mode"?: CliAnalysisMode | undefined;
 }
 
-export const directAnalysisOptions = (
-  logger: Logger,
-  snapshotPath: string | undefined,
-  providerId: AnalysisProviderSelector | undefined,
-  formatHint?: ExecutableFormatHint,
-  architecture?: BinaryArchitecture,
-  entryPoint?: string,
-) => ({
-  logger,
-  snapshotPath,
-  ...(formatHint === undefined ? {} : { formatHint }),
-  ...(architecture === undefined ? {} : { architecture }),
-  ...(entryPoint === undefined ? {} : { entryPoint }),
-  ...(providerId === undefined ? {} : { providerId }),
-});
-
 /** Map native CLI flags onto the shared one-shot analysis options. */
 export const directAnalysisOptionsFromCli = (
   logger: Logger,
@@ -124,12 +108,18 @@ export const directAnalysisOptionsFromCli = (
   // The one-shot CLI has no owner for a background job, so it refuses the
   // request at the boundary that owns the open options.
   assertCliAnalysisMode(options["analysis-mode"]);
-  return directAnalysisOptions(
+  return {
     logger,
-    options.snapshot,
-    options.provider,
-    options["target-format"],
-    options.architecture,
-    options["entry-point"],
-  );
+    snapshotPath: options.snapshot,
+    ...(options["target-format"] === undefined
+      ? {}
+      : { formatHint: options["target-format"] }),
+    ...(options.architecture === undefined
+      ? {}
+      : { architecture: options.architecture }),
+    ...(options["entry-point"] === undefined
+      ? {}
+      : { entryPoint: options["entry-point"] }),
+    ...(options.provider === undefined ? {} : { providerId: options.provider }),
+  };
 };
