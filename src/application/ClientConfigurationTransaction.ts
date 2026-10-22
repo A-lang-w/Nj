@@ -2,7 +2,10 @@ import { resolve } from "node:path";
 
 const activeTransactions = new Map<string, Promise<void>>();
 
-/** Serialize the full read/merge/publish operation for one normalized path. */
+/**
+ * Serialize the full read/merge/publish operation for one resolved
+ * configuration path.
+ */
 export const withClientConfigurationTransaction = async <Value>(
   path: string,
   operation: () => Promise<Value>,

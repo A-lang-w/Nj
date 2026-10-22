@@ -1,6 +1,7 @@
 import {
   chmod,
   lstat,
+  mkdir,
   readFile,
   readdir,
   rename,
@@ -313,6 +314,87 @@ it.each(["absolute", "relative"])(
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       mcpServers: { rea: { env: { FIRST: "1", SECOND: "2" } } },
     });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "serializes setup through a directory symlink and its real directory",
+  async () => {
+    for (const presence of ["missing", "existing"] as const) {
+      const root = await createTestTempDirectory(
+        `rea-config-dir-alias-${presence}-`,
+      );
+      const realDirectory = join(root, "real");
+      const alias = join(root, "alias");
+      await mkdir(realDirectory);
+      await symlink(realDirectory, alias, "dir");
+      const realPath = join(realDirectory, "config.json");
+      const aliasPath = join(alias, "config.json");
+      if (presence === "existing") await writeFile(realPath, "{}\n");
+
+      const entered: string[] = [];
+      let releaseFirst!: () => void;
+      const release = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      writers.before = async (target) => {
+        entered.push(target);
+        if (entered.length === 1) {
+          markStarted();
+          await release;
+        }
+      };
+
+      const first = configureClientConfiguration(
+        { name: "cursor", configPath: realPath, format: "json" },
+        { FIRST: "1" },
+      );
+      try {
+        await started;
+        const second = configureClientConfiguration(
+          { name: "cursor", configPath: aliasPath, format: "json" },
+          { SECOND: "2" },
+        );
+        const secondReachedWriter = await new Promise<boolean>((resolve) => {
+          let giveUp: ReturnType<typeof setTimeout> | undefined;
+          const timer = setInterval(() => {
+            if (entered.length > 1) {
+              clearInterval(timer);
+              clearTimeout(giveUp);
+              resolve(true);
+            }
+          }, 15);
+          giveUp = setTimeout(() => {
+            clearInterval(timer);
+            resolve(false);
+          }, 1_000);
+        });
+        expect(secondReachedWriter).toBe(false);
+        expect(entered).toEqual([realPath]);
+        releaseFirst();
+        const [firstResult, secondResult] = await Promise.all([
+          first,
+          second,
+        ]);
+        expect([firstResult.status, secondResult.status]).toEqual([
+          "configured",
+          "configured",
+        ]);
+        expect(JSON.parse(await readFile(realPath, "utf8"))).toMatchObject({
+          mcpServers: { rea: { env: { FIRST: "1", SECOND: "2" } } },
+        });
+        expect(await readFile(aliasPath, "utf8")).toBe(
+          await readFile(realPath, "utf8"),
+        );
+      } finally {
+        releaseFirst();
+        writers.before = undefined;
+      }
+    }
   },
 );
 

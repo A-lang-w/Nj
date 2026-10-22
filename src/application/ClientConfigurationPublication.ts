@@ -219,9 +219,43 @@ const assertRequestedConfigurationPath = async (
     throw new ConfigurationError(
       `Client configuration path could not be safely verified: ${requestedPath}`,
     );
-  if (resolve(current) !== resolve(path))
-    throw new RegularFileChangedError(path);
+  if (resolve(current) === resolve(path)) return;
+  // `path` is the canonical file selected for this transaction. A later
+  // retarget of a parent-directory alias keeps that file. A configuration
+  // symlink that now names another target, or a path whose parent is already
+  // canonical, still conflicts.
+  if (await isParentAliasRetarget(requestedPath, path, current)) return;
+  throw new RegularFileChangedError(path);
 };
+
+const isParentAliasRetarget = async (
+  requestedPath: string,
+  path: string,
+  current: string,
+): Promise<boolean> => {
+  if (basename(current) !== basename(path)) return false;
+  let requestedStats: { isSymbolicLink(): boolean };
+  try {
+    requestedStats = await lstat(requestedPath);
+  } catch (cause: unknown) {
+    if (isNodeErrorCode(cause, "ENOENT")) return false;
+    throw new ConfigurationError(
+      `Client configuration path could not be safely verified: ${requestedPath}`,
+    );
+  }
+  if (requestedStats.isSymbolicLink()) return false;
+  const requestedParent = dirname(resolve(requestedPath));
+  try {
+    const canonicalParent = await realpath(requestedParent);
+    return resolve(canonicalParent) !== requestedParent;
+  } catch (cause: unknown) {
+    void cause;
+    return false;
+  }
+};
+
+const isNodeErrorCode = (cause: unknown, code: string): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === code;
 
 const selectedConfiguration = async (
   path: string,
