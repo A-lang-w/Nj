@@ -80,6 +80,28 @@ interface DynamicRouteValueOwner {
   readonly structured: boolean;
   reported: boolean;
 }
+interface SelectedRouteValue {
+  readonly kind: "value";
+  readonly node: t.Node;
+  readonly projection: SemanticAliasSelectionPath;
+  readonly depth: number;
+}
+interface SelectedRouteLookup {
+  readonly kind: "lookup";
+  readonly node: t.Node;
+  readonly receiver: t.ObjectExpression | t.ArrayExpression;
+  readonly key: ReturnType<typeof semanticAliasSelectionChoices>[number];
+  readonly projection: SemanticAliasSelectionPath;
+  readonly depth: number;
+}
+type RouteSelectionWork =
+  | SelectedRouteValue
+  | SelectedRouteLookup
+  | {
+      readonly kind: "leave";
+      readonly receiver: t.Node;
+      readonly key: string;
+    };
 interface Fields {
   readonly values: ReadonlyMap<string, t.ObjectProperty>;
   readonly unknownKeys: boolean;
@@ -928,6 +950,7 @@ export class JavaScriptRouteScan {
   /** Select members without admitting their entire receiver as navigation data. */
   *#memberValues(
     node: t.MemberExpression | t.OptionalMemberExpression,
+    mechanism: Mechanism = "navigation-target",
   ): Generator<t.Node> {
     const chain = semanticMemberChain(node, (part) => this.#queue(part));
     if (chain === undefined || !t.isIdentifier(chain.root)) return;
@@ -953,119 +976,169 @@ export class JavaScriptRouteScan {
       node,
     );
     for (const source of sources ?? [])
-      yield* this.#selectedValues(source.node, source.path);
+      yield* this.#selectedValues(source.node, source.path, mechanism);
   }
 
   /** Follow copied data slots without claiming their excluded source siblings. */
   *#initializerValues(
     initializer: JavaScriptSemanticBindingState["referenceInitializers"][number],
+    mechanism: Mechanism = "navigation-target",
   ): Generator<t.Node> {
     const projection = semanticCopiedReferencePath(initializer, [], "escape");
     if (projection === null) return;
-    yield* this.#selectedValues(initializer.node, projection);
+    yield* this.#selectedValues(initializer.node, projection, mechanism);
   }
 
   /** Member reads and copied initializers share the same selected-slot walk. */
   *#selectedValues(
     source: t.Node,
     projection: SemanticAliasSelectionPath,
+    mechanism: Mechanism,
   ): Generator<t.Node> {
     if (!this.#queue(source)) return;
-    const pending = [{ node: source, projection, depth: 0 }];
+    const pending: RouteSelectionWork[] = [
+      { kind: "value", node: source, projection, depth: 0 },
+    ];
     const visited = new WeakMap<
       t.Node,
       Map<SemanticAliasSelectionPath, Set<number>>
     >();
-    const retain = (
-      node: t.Node,
-      projection: SemanticAliasSelectionPath,
-      depth: number,
-    ): boolean => {
-      if (!this.#queue(node)) return false;
-      pending.push({ node, projection, depth });
-      return true;
-    };
+    // Depth-first enter/leave frames keep receiver/key ancestry in constant-time
+    // stacks. Equal or growing suffixes recurse; shorter suffixes still finish.
+    const active = new WeakMap<t.Node, Map<string, number[]>>();
     while (pending.length > 0 && this.#result.capacity === null) {
-      const { node, projection, depth } = pending.pop()!;
-      const paths =
-        visited.get(node) ?? new Map<SemanticAliasSelectionPath, Set<number>>();
-      const depths = paths.get(projection) ?? new Set<number>();
-      if (depths.has(depth)) continue;
-      depths.add(depth);
-      paths.set(projection, depths);
-      visited.set(node, paths);
-      if (depth === projection.length) {
-        yield node;
+      const work = pending.pop()!;
+      if (work.kind === "leave") {
+        active.get(work.receiver)?.get(work.key)?.pop();
         continue;
       }
-      for (const key of semanticAliasSelectionChoices(projection[depth]!)) {
-        if (!this.#queue(node)) return;
-        // Ownership retains possible source identities; positive navigation
-        // inference separately requires per-call freshness.
+      const { node, projection, depth } = work;
+      if (work.kind === "value") {
+        const paths =
+          visited.get(node) ??
+          new Map<SemanticAliasSelectionPath, Set<number>>();
+        const depths = paths.get(projection) ?? new Set<number>();
+        if (depths.has(depth)) continue;
+        depths.add(depth);
+        paths.set(projection, depths);
+        visited.set(node, paths);
+        if (depth === projection.length) {
+          yield node;
+          continue;
+        }
         const selected = this.#resolve(node, undefined, this.index);
         if (selected === undefined) continue;
-        const branches = t.isConditionalExpression(selected)
-          ? [selected.consequent, selected.alternate]
-          : t.isLogicalExpression(selected)
-            ? [selected.left, selected.right]
-            : t.isSequenceExpression(selected)
-              ? selected.expressions
-              : t.isAssignmentExpression(selected)
-                ? [selected.right]
-                : undefined;
-        if (branches !== undefined) {
-          for (const branch of branches)
-            if (
-              isNavigationDataEdge(branch, selected) &&
-              !retain(branch, projection, depth)
-            )
+        if (!t.isObjectExpression(selected) && !t.isArrayExpression(selected)) {
+          for (const branch of this.#selectionBranches(selected))
+            if (!this.#retainSelection(pending, branch, projection, depth))
               return;
           continue;
         }
-        let references: readonly JavaScriptSemanticObjectReference[];
-        if (t.isObjectExpression(selected)) {
-          // Charge the literal before the shared possible-slot owner indexes it.
-          this.#fields(selected);
-          if (this.#result.capacity !== null) return;
-          references = semanticObjectPropertyReferences(
-            selected,
-            [key],
-            this.index.bindings,
-          );
-        } else if (t.isArrayExpression(selected)) {
-          for (const element of selected.elements)
-            if (element !== null && !this.#queue(element)) return;
-          references = semanticArrayPropertyReferences(selected, [key]);
-        } else continue;
-        for (const reference of references) {
-          if (reference.path.length === 0) {
-            if (!retain(reference.node, projection, depth + 1)) return;
-          } else if (
-            reference.path.length === 1 &&
-            JSON.stringify(reference.path[0]) ===
-              JSON.stringify(projection[depth])
-          ) {
-            if (!retain(reference.node, projection, depth)) return;
-          } else {
-            // Ordinary members advance an offset without copying their suffix.
-            // Copied/getter projections charge expansion before allocating it.
-            for (const part of reference.path)
-              if (!this.#queue(reference.node, JSON.stringify(part))) return;
-            for (let at = depth + 1; at < projection.length; at++)
-              if (!this.#queue(reference.node, JSON.stringify(projection[at])))
-                return;
-            if (
-              !retain(
-                reference.node,
-                [...reference.path, ...projection.slice(depth + 1)],
-                0,
-              )
-            )
-              return;
-          }
+        for (const key of semanticAliasSelectionChoices(projection[depth]!)) {
+          if (!this.#queue(node)) return;
+          pending.push({
+            kind: "lookup",
+            node,
+            receiver: selected,
+            key,
+            projection,
+            depth,
+          });
         }
+        continue;
       }
+      const key = JSON.stringify(work.key);
+      const keys = active.get(work.receiver) ?? new Map<string, number[]>();
+      const lengths = keys.get(key) ?? [];
+      const previous = lengths.at(-1);
+      const remaining = projection.length - depth;
+      if (previous !== undefined && remaining >= previous) {
+        this.#unknown(
+          mechanism,
+          node,
+          "A cyclic selected-value lookup cannot establish its possible data sources.",
+        );
+        continue;
+      }
+      lengths.push(remaining);
+      keys.set(key, lengths);
+      active.set(work.receiver, keys);
+      pending.push({ kind: "leave", receiver: work.receiver, key });
+      for (const reference of this.#selectedReferences(work.receiver, work.key))
+        if (!this.#retainSelectedReference(pending, reference, work)) return;
     }
+  }
+
+  #selectionBranches(node: t.Node): readonly t.Node[] {
+    const branches = t.isConditionalExpression(node)
+      ? [node.consequent, node.alternate]
+      : t.isLogicalExpression(node)
+        ? [node.left, node.right]
+        : t.isSequenceExpression(node)
+          ? node.expressions
+          : t.isAssignmentExpression(node)
+            ? [node.right]
+            : [];
+    return branches.filter((branch) => isNavigationDataEdge(branch, node));
+  }
+
+  #selectedReferences(
+    node: t.ObjectExpression | t.ArrayExpression,
+    key: SelectedRouteLookup["key"],
+  ): readonly JavaScriptSemanticObjectReference[] {
+    // Admit the literal before canonical owners allocate their indexed results.
+    if (t.isObjectExpression(node)) {
+      this.#fields(node);
+      return this.#result.capacity === null
+        ? semanticObjectPropertyReferences(node, [key], this.index.bindings)
+        : [];
+    }
+    for (const element of node.elements)
+      if (element !== null && !this.#queue(element)) return [];
+    return semanticArrayPropertyReferences(node, [key]);
+  }
+
+  #retainSelection(
+    pending: RouteSelectionWork[],
+    node: t.Node,
+    projection: SemanticAliasSelectionPath,
+    depth: number,
+  ): boolean {
+    if (!this.#queue(node)) return false;
+    pending.push({ kind: "value", node, projection, depth });
+    return true;
+  }
+
+  #retainSelectedReference(
+    pending: RouteSelectionWork[],
+    reference: JavaScriptSemanticObjectReference,
+    { projection, depth }: SelectedRouteLookup,
+  ): boolean {
+    if (reference.path.length === 0)
+      return this.#retainSelection(
+        pending,
+        reference.node,
+        projection,
+        depth + 1,
+      );
+    if (
+      reference.path.length === 1 &&
+      JSON.stringify(reference.path[0]) === JSON.stringify(projection[depth])
+    )
+      return this.#retainSelection(pending, reference.node, projection, depth);
+    // Ordinary members keep offsets. Charge exceptional copy/getter expansion
+    // before allocating a new suffix.
+    for (const part of reference.path)
+      if (!this.#queue(reference.node, JSON.stringify(part))) return false;
+    for (let at = depth + 1; at < projection.length; at++)
+      if (!this.#queue(reference.node, JSON.stringify(projection[at])))
+        return false;
+    return this.#retainSelection(
+      pending,
+      reference.node,
+      [...reference.path, ...projection.slice(depth + 1)],
+      0,
+    );
   }
 
   /** Ownership is per interpretation; return whether inferred roots were found. */
@@ -1132,7 +1205,10 @@ export class JavaScriptRouteScan {
           binding?.referenceInitializers ?? [],
         ])
           for (const value of sources)
-            for (const selected of this.#initializerValues(value))
+            for (const selected of this.#initializerValues(
+              value,
+              typed ? "typed-route-tree" : "nested-route-object",
+            ))
               admit(selected, typed);
       } else if (t.isObjectExpression(node)) {
         for (const property of node.properties) {
@@ -1154,7 +1230,11 @@ export class JavaScriptRouteScan {
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)
       ) {
-        for (const selected of this.#memberValues(node)) admit(selected, typed);
+        for (const selected of this.#memberValues(
+          node,
+          typed ? "typed-route-tree" : "nested-route-object",
+        ))
+          admit(selected, typed);
       } else if (t.isConditionalExpression(node)) {
         admit(node.consequent, typed);
         admit(node.alternate, typed);

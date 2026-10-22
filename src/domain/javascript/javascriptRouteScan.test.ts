@@ -1156,3 +1156,53 @@ it("preserves array siblings outside a selected configuration", () => {
     "/independent",
   ]);
 });
+
+it.each([
+  "const registry={get a(){return this.a.b}};",
+  "const registry={get a(){return this.b.x},get b(){return this.a.y}};",
+])("keeps unrelated routes when a getter projection grows: %s", (registry) => {
+  const facts = analyze(
+    `${registry}router.push({pathname:'/p',query:registry.a});route('/independent');`,
+  );
+  expect(facts.capacity).toBeNull();
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/p",
+  ]);
+  expect(facts.unresolved).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ reason: expect.stringMatching(/cycl/i) }),
+    ]),
+  );
+});
+
+it("consumes finite repeated getter selections", () => {
+  const facts = analyze(
+    "const registry={get a(){return this}};router.push({pathname:'/p',query:registry.a.a.a});route('/independent');",
+  );
+  expect(facts.capacity).toBeNull();
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/p",
+  ]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it("keeps configuration cycles in their source interpretation", () => {
+  const facts = analyze(
+    "const registry={get a(){return this.a.b}};createBrowserRouter(registry.a);route('/independent');",
+  );
+  expect(facts.capacity).toBeNull();
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/independent"]);
+  expect(facts.unresolved).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        mechanism: "nested-route-object",
+        reason: expect.stringMatching(/cyclic/i),
+      }),
+    ]),
+  );
+  expect(
+    facts.unresolved.some(({ mechanism }) => mechanism === "navigation-target"),
+  ).toBe(false);
+});
