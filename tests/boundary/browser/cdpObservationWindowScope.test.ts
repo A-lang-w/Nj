@@ -586,6 +586,57 @@ it("reports a possible document failure without a request ID as unknown coverage
   ).toEqual([expect.objectContaining({ count: 1 })]);
 });
 
+it("keeps main-frame ownership across a redirect hop that omits its frame", async () => {
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "redirected-document",
+            timestamp: 21,
+            type: "Document",
+            frameId: "frame-main",
+            request: { url: `${origin}/first-hop` },
+          },
+        },
+        {
+          // The continuation reuses the request ID and omits its frame.
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "redirected-document",
+            timestamp: 21.5,
+            type: "Document",
+            redirectResponse: { url: `${origin}/first-hop`, status: 302 },
+            request: { url: `${origin}/second-hop` },
+          },
+        },
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "redirected-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_CONNECTION_REFUSED",
+          },
+        },
+      ];
+    },
+  });
+
+  expect(observation.timeline).toContainEqual(
+    expect.objectContaining({
+      type: "load_failed",
+      request_id: "redirected-document",
+    }),
+  );
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],

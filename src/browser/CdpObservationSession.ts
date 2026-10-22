@@ -462,15 +462,28 @@ class TimelineCapture {
 
   #trackDocumentRequest(params: UnknownRecord): void {
     const requestId = cdpStringValue(params.requestId);
-    const resourceType = cdpStringValue(params.type);
     if (requestId === undefined) return;
-    if (resourceType !== undefined && resourceType !== "Document") return;
-    // An omitted frame leaves ownership unknown; another frame excludes it.
+    const resourceType = cdpStringValue(params.type);
     const frame = cdpStringValue(params.frameId);
-    if (frame !== undefined && frame !== this.mainFrameId) return;
+    const otherType = resourceType !== undefined && resourceType !== "Document";
+    // An omitted frame leaves ownership unknown; another frame excludes it.
+    const otherFrame = frame !== undefined && frame !== this.mainFrameId;
+    const previous = this.#documentCandidates.get(requestId);
+    if (previous === undefined) {
+      if (otherType || otherFrame) return;
+      this.#documentCandidates.set(requestId, {
+        declaredDocument: resourceType === "Document",
+        mainFrame: frame !== undefined,
+      });
+      return;
+    }
+    // A redirect continues under the same ID: an omitted fact keeps what an
+    // earlier hop established, and a contradiction leaves it unknown.
     this.#documentCandidates.set(requestId, {
-      declaredDocument: resourceType === "Document",
-      mainFrame: frame !== undefined,
+      declaredDocument:
+        !otherType &&
+        (previous.declaredDocument || resourceType === "Document"),
+      mainFrame: !otherFrame && (previous.mainFrame || frame !== undefined),
     });
   }
 
