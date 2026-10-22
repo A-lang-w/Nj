@@ -278,4 +278,54 @@ describe("PyInstallerExtractor", () => {
     expect(extracted[0]?.decompressed).toBe(false);
     expect(extracted[0]?.limitations[0]).toContain("Decompression error");
   });
+
+  it("rejects non-string names in PYZ table to prevent expansion bombs", () => {
+    const header = Buffer.alloc(12);
+    PYZ_MAGIC.copy(header, 0);
+    Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]).copy(header, 4);
+    header.writeUInt32BE(12, 8);
+
+    // Marshal table containing a tuple with a nested list instead of string name:
+    // [ ( [1, 2], (0, 12, 0) ) ]
+    const table = Buffer.from([
+      0x5b,
+      0x01,
+      0x00,
+      0x00,
+      0x00, // list of 1 element
+      0x28,
+      0x02,
+      0x00,
+      0x00,
+      0x00, // tuple of 2 elements:
+      0x5b,
+      0x00,
+      0x00,
+      0x00,
+      0x00, // element 0: empty list (not string!)
+      0x28,
+      0x03,
+      0x00,
+      0x00,
+      0x00, // element 1: tuple of 3 integers:
+      0xe9,
+      0x00,
+      0x00,
+      0x00,
+      0x00, // 0 (typeCode)
+      0xe9,
+      0x0c,
+      0x00,
+      0x00,
+      0x00, // 12 (offset)
+      0xe9,
+      0x00,
+      0x00,
+      0x00,
+      0x00, // 0 (length)
+    ]);
+    const pyz = parsePyzArchive(Buffer.concat([header, table]));
+    expect(pyz).not.toBeNull();
+    expect(pyz?.modules).toEqual([]);
+  });
 });

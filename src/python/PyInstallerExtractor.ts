@@ -230,25 +230,40 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
   if (table.length <= MAX_PYZ_TABLE_BYTES) {
     const marshalled = readMarshalSubset(table);
     if (marshalled.ok && Array.isArray(marshalled.value)) {
+      let nameBytes = 0;
       for (const item of marshalled.value) {
-        if (!Array.isArray(item) || item.length < 2) continue;
-        const name = typeof item[0] === "string" ? item[0] : String(item[0]);
-        const val = item[1];
-        if (!Array.isArray(val) || val.length < 3) continue;
-        const typeCode = Number(val[0]);
-        const dataOffset = Number(val[1]);
-        const dataLength = Number(val[2]);
+        if (!Array.isArray(item) || item.length !== 2) continue;
+        const [rawName, position] = item;
         if (
-          Number.isSafeInteger(typeCode) &&
-          Number.isSafeInteger(dataOffset) &&
-          Number.isSafeInteger(dataLength) &&
+          typeof rawName !== "string" ||
+          !Array.isArray(position) ||
+          position.length !== 3
+        )
+          continue;
+        const [typeCode, dataOffset, dataLength] = position;
+        if (
+          typeof typeCode !== "number" ||
+          typeof dataOffset !== "number" ||
+          typeof dataLength !== "number" ||
+          !Number.isSafeInteger(typeCode) ||
+          !Number.isSafeInteger(dataOffset) ||
+          !Number.isSafeInteger(dataLength)
+        )
+          continue;
+
+        nameBytes += Buffer.byteLength(rawName, "utf8");
+        if (nameBytes > table.length) break;
+
+        if (
+          typeCode >= 0 &&
+          typeCode <= 3 &&
           dataOffset >= 0 &&
           dataLength >= 0 &&
           dataOffset <= tocOffset &&
           dataLength <= tocOffset - dataOffset
         ) {
           modules.push({
-            name,
+            name: rawName,
             typeCode,
             isPackage: typeCode === 1 || typeCode === 3,
             dataOffset,
