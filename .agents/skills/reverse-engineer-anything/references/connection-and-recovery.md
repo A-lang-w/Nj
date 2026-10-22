@@ -16,6 +16,7 @@ main and an older release expose the same arguments.
 | No REA tools in the active session                              | Inspect registration with `rea doctor --client codex --json`. A skill installation alone does not register MCP.                                                                                                                                                                                                       |
 | Missing, malformed or stale registration                        | Prepare a scoped setup plan; apply only authorized changes with backups.                                                                                                                                                                                                                                              |
 | Aligned registration, but no connected tools                    | Restart/reconnect the client. Doctor checks registration; it cannot establish the current agent's connection. Inspect the client's launch error if reconnection fails.                                                                                                                                                |
+| MCP connection dropped or REA could not start                   | Retry that call once. If the same failure returns, tell the user REA's connection failed and ask them to restart the MCP client. Run `rea doctor` when REA could not start or tools stay missing after restart. Doctor cannot restore a live connection by itself.                                                    |
 | `MCP tool call requires approval, but approval policy is never` | Codex rejected the call before REA executed it. Do not install an engine or repeat setup to solve this client-policy decision. See the approval section below.                                                                                                                                                        |
 | REA returns `provider_unavailable` or an unavailable tool entry | Read that operation's provider diagnostics or `binary_session.result.tool_availability`. Expand each group's tool names and inherit the shared client requirements unless overridden. Use the operation's availability, reason, and remediation; a complete tool catalog does not imply every operation is available. |
 | `rea` is missing in a child shell, or Node is incompatible      | Inspect the actual shell PATH and launcher/runtime. A prefix installation may be absent from a login shell's PATH; this does not establish a broken MCP registration.                                                                                                                                                 |
@@ -56,8 +57,11 @@ authorized CLI fallback. Do not silently broaden permissions or switch targets.
 
 A returned REA `provider_timeout` instead means the **server/provider** reached
 its deadline. Follow its `remediation.action`, reuse accessible partial Evidence,
-and resolve reported incomplete cleanup before retrying. Raising only the
-client deadline does not change this server budget. For static JavaScript,
+and resolve reported incomplete cleanup before retrying. When that remediation
+names a request field or a `REA_*` setting, apply that value and restart REA
+when the text says the setting is read at startup. Do not invent a setting the
+remediation does not name. Raising only the client deadline does not change
+this server budget. For static JavaScript,
 `analysis_timeout_ms` (CLI `rea analyze-javascript-application <path>
 --analysis-timeout-ms <milliseconds>`) controls each source's
 startup, analysis and transfer deadline in **milliseconds**. Increase that

@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "44"
+  version: "45"
 ---
 
 # REA
@@ -32,6 +32,10 @@ original task after repair. Client approval, shell PATH, registration and engine
 availability have different remedies; avoid repeating setup for all of them.
 If the host times out without a REA result, do not repeat the unchanged call or
 assume work stopped. Read the recovery guide's deadline distinction before retrying.
+If the MCP connection drops or REA cannot start, retry that call once. If it
+fails again, tell the user and ask them to restart the MCP client. Run
+`rea doctor` only when REA could not start or tools stay missing after that
+restart. Read the recovery guide before a second repair attempt.
 
 1. Diagnose without changing REA or client configuration. `npx` may download
    the package and write to npm's cache. For Codex, run

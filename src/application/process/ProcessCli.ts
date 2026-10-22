@@ -265,6 +265,13 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
   ...projectAnalysisError(error),
 });
 
+/**
+ * `retryable` stays false so clients do not loop. The text allows one retry,
+ * then tells the user to check the inputs and run doctor.
+ */
+export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
+  "Retry the command once. If it fails again, tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
+
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
 export const projectProcessCliError = (
   cause: unknown,
@@ -276,6 +283,7 @@ export const projectProcessCliError = (
       cause,
       diagnostics: { phase: "process_cli" },
       userMessage: `Process command could not complete: ${describeValidationFailure(cause)}`,
+      remediationAction: PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
     }),
   );
 };
