@@ -19,7 +19,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { pagesOnly } from "./environmentStatePaging.js";
+import { pageStart, pagesOnly } from "./environmentStatePaging.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** A read tool whose recordings locate entities of one type at one pointer. */
@@ -167,6 +167,8 @@ const listFacts = (
 ): { readonly all: boolean; readonly counters: string[] } => {
   const field = context.idField(plan.type);
   let all = true;
+  // A zero-start line listed its whole collection. A nonzero start never proves that.
+  let proved = false;
   let counters: string[] | undefined;
   for (const record of plan.latest)
     context.withBody(record.ordinal, (body) => {
@@ -174,14 +176,17 @@ const listFacts = (
         body === undefined ? undefined : listItems(body, plan.pointer);
       if (body === undefined || items === undefined) return;
       items.forEach((item) => union.add(item));
-      // Once a list cannot be the whole collection, its membership is not compared again; a line
-      // that only pages its list can still hold all of it.
+      // A line that only pages its list can still hold all of it. A nonzero
+      // offset, start or _start, or a page after the first, is not item 0, so
+      // it does not prove membership all; a page that is not the collection
+      // keeps the view recorded, as an unmatched page already does.
       if (all && pagesOnly(record.query)) {
         const ids = items.map((item) => scalarText(item[field]) ?? "");
         const expected = context
           .inCollection(plan.type, collectionPathOf(record, false))
           .map((entity) => entity.id);
         if (!same(ids, expected)) all = false;
+        else if (pageStart(record.query) === 0) proved = true;
       } else all = false;
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
       const counted = Object.keys(parent).filter(
@@ -196,7 +201,7 @@ const listFacts = (
       const names = counted.filter((name) => parent[name] === items.length);
       counters = (counters ?? names).filter((name) => names.includes(name));
     });
-  return { all, counters: (counters ?? []).sort(compare) };
+  return { all: all && proved, counters: (counters ?? []).sort(compare) };
 };
 
 const nameTokens = (name: string): string[] =>

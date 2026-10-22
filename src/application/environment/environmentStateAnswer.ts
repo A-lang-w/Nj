@@ -1,5 +1,6 @@
 import { stateBodyJson } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
+  collectionMatch,
   collectionPathOf,
   listItems,
   missingRequiredFields,
@@ -7,7 +8,6 @@ import {
   renderStateList,
   replaceAt,
   scalarText,
-  segmentsOf,
   type JsonObject,
   type RecordedViewReason,
   type StateEntity,
@@ -17,6 +17,7 @@ import {
 } from "../../domain/analysisView/environmentStateRules.js";
 import {
   pageBound,
+  pageStart,
   pagesOnly,
 } from "../../domain/analysisView/environmentStatePaging.js";
 import { isAbsence } from "../../domain/analysisView/environmentStateWriteChecks.js";
@@ -29,7 +30,6 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   decodedPathSegment,
-  pathValueMatches,
   replayAnswer,
   replayEnvironmentTool,
   selectReplayExchange,
@@ -218,23 +218,6 @@ export const itemCall = (
   return segments !== undefined && last?.supplied === true
     ? { segments, id: last.text }
     : undefined;
-};
-
-/** How many supplied segments a held collection matches verbatim, when it matches the call under replay's path rule. */
-export const collectionMatch = (
-  collection: string,
-  segments: readonly CallSegment[],
-): number | undefined => {
-  const held = segmentsOf(collection);
-  if (held.length !== segments.length) return undefined;
-  let verbatim = 0;
-  for (const [index, { text, supplied }] of segments.entries()) {
-    const segment = held[index]!;
-    if (supplied ? !pathValueMatches(segment, text) : segment !== text)
-      return undefined;
-    if (supplied && segment === text) verbatim += 1;
-  }
-  return verbatim;
 };
 
 /** The entity an item call names, preferring verbatim collection spellings as replay does; the id is tried percent-decoded, then as written. */
@@ -427,27 +410,33 @@ const answerList = (
     return fromRecording(source, tool, args, "body-unusable");
   const collection = collectionPathOf(base, false);
   const type = store.type(view.type);
+  // A call that names a nonzero offset, start or _start, or a page after the
+  // first, stays on the recorded path: serving does not skip to that index.
+  // An argument-less call still lists the collection, using a paging line only
+  // as its envelope.
+  const whole =
+    view.membership === "all" &&
+    !(exact && pageStart(base.query ?? undefined) > 0);
   // A requested page the collection has outgrown is answered as recorded, never with more items than it asked for.
   const size = exact
     ? pageBound(base.query ?? undefined, recorded.length)
     : undefined;
   if (
-    view.membership === "all" &&
+    whole &&
     size !== undefined &&
     store.inCollection(view.type, collection).length > size
   )
     return fromRecording(source, tool, args, "page-exceeded");
-  const members: readonly StateEntity[] =
-    view.membership === "all"
-      ? store.inCollection(view.type, collection)
-      : recorded.flatMap((item) => {
-          const id = scalarText(item[type?.id_field ?? ""]);
-          const entity =
-            id === undefined
-              ? undefined
-              : store.entity(view.type, collection, id);
-          return entity === undefined ? [] : [entity];
-        });
+  const members: readonly StateEntity[] = whole
+    ? store.inCollection(view.type, collection)
+    : recorded.flatMap((item) => {
+        const id = scalarText(item[type?.id_field ?? ""]);
+        const entity =
+          id === undefined
+            ? undefined
+            : store.entity(view.type, collection, id);
+        return entity === undefined ? [] : [entity];
+      });
   const volatile = new Set(type?.volatile_fields);
   const items: JsonObject[] = [];
   for (const entity of members) {

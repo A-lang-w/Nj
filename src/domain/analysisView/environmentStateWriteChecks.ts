@@ -11,6 +11,7 @@ import {
   isParam,
   listItems,
   missingRequiredFields,
+  pathSegmentMatches,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -26,7 +27,8 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { pageBound, pagesOnly } from "./environmentStatePaging.js";
+import { pageBound, pageStart, pagesOnly } from "./environmentStatePaging.js";
+import { ServedOrder } from "./environmentStateWriteOrder.js";
 
 /** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name with another value, which no call's arguments can carry. */
 const queryKey = (query: string | undefined): string | undefined => {
@@ -97,9 +99,9 @@ export const checkedLines = (input: {
 
 /**
  * The checked line serving answers a read's call from, ranked as replay ranks lines: every
- * parameter the read's value verbatim or once percent-decoded and the query the read's, then the
- * most verbatim parameters, then recorded order. A read with no query falls back, as serving does,
- * on a whole list's lines that only page it.
+ * parameter the read's value verbatim or either spelling once percent-decoded and the query the
+ * read's, then the most verbatim parameters, then recorded order. A read with no query falls back,
+ * as serving does, on a whole list's lines that only page it.
  */
 export const servedLine = (
   lines: CheckedLines | undefined,
@@ -130,7 +132,11 @@ const bestLine = (
         if (lines.params.has(index)) verbatim += 1;
         return true;
       }
-      return lines.params.has(index) && decodedSegment(segment) === read[index];
+      return (
+        lines.params.has(index) &&
+        read[index] !== undefined &&
+        pathSegmentMatches(segment, read[index])
+      );
     });
     if (matches && (best === undefined || verbatim > best.verbatim))
       best = {
@@ -160,12 +166,18 @@ export class SimulatedState {
   readonly #collections = new Map<string, string[]>();
   readonly #documents = new Map<string, JsonValue>();
   readonly #removed: RemovedTarget[] = [];
+  readonly #served = new ServedOrder();
 
   constructor(
     entities: readonly StateEntity[],
     documents: readonly StateDocument[],
   ) {
     for (const entity of entities) this.put(entity);
+    this.#served.reset(
+      entities.map(({ type, collection, id }) =>
+        entityTarget(type, collection, id),
+      ),
+    );
     for (const document of documents)
       this.#documents.set(document.tool, document.value);
   }
@@ -185,9 +197,13 @@ export class SimulatedState {
   }
 
   ofType(type: string): StateEntity[] {
-    return [...this.#entities.values()].filter(
-      (entity) => entity.type === type,
-    );
+    return this.#served.keys
+      .map((key) => this.#entities.get(key)!)
+      .filter((entity) => entity.type === type);
+  }
+
+  knownCollections(type: string): readonly string[] {
+    return this.#served.known(type);
   }
 
   /** Replace an entity in place, or add it at `index` of its collection (the end when omitted). */
@@ -198,13 +214,17 @@ export class SimulatedState {
     if (known) return;
     const collection = collectionTarget(entity.type, entity.collection);
     const order = this.#collections.get(collection) ?? [];
-    order.splice(index ?? order.length, 0, key);
+    const at = index ?? order.length;
+    this.#served.place(key, order, at);
+    order.splice(at, 0, key);
     this.#collections.set(collection, order);
+    this.#served.remember(entity.type, entity.collection);
   }
 
   remove(entity: StateEntity): void {
     const key = entityTarget(entity.type, entity.collection, entity.id);
     this.#entities.delete(key);
+    this.#served.remove(key);
     const collection = collectionTarget(entity.type, entity.collection);
     const order = this.#collections.get(collection) ?? [];
     this.#collections.set(
@@ -282,16 +302,18 @@ interface ReadBodies {
 }
 
 /** An item read: the answer the held entity renders into the served envelope must equal the recording; a recorded 404 or 410 agrees with none held. */
-/** How many of a held collection's segments match a path's verbatim, or undefined when one matches neither verbatim nor once percent-decoded. */
+/** How many of a held collection's segments match a path's verbatim, or undefined when one matches neither verbatim nor either spelling once percent-decoded. */
 const segmentMatch = (
   held: readonly string[],
   read: readonly string[],
 ): number | undefined => {
   if (held.length !== read.length) return undefined;
   let verbatim = 0;
-  for (const [index, segment] of held.entries())
-    if (segment === read[index]) verbatim += 1;
-    else if (decodedSegment(segment) !== read[index]) return undefined;
+  for (const [index, segment] of held.entries()) {
+    const value = read[index]!;
+    if (segment === value) verbatim += 1;
+    else if (!pathSegmentMatches(segment, value)) return undefined;
+  }
   return verbatim;
 };
 
@@ -517,10 +539,14 @@ export const checkListRead = (
     base === undefined ? undefined : listItems(base, view.pointer);
   if (body === undefined || base === undefined || baseItems === undefined)
     return undefined;
+  // A nonzero offset, start or _start, or a page after the first, stays on the
+  // recorded path, as serving lists it: the page skips a prefix the
+  // whole-collection answer would include.
+  const whole = view.membership === "all" && pageStart(record.query) === 0;
   // Serving answers a page too small for the collection from its recording, so such a read checks nothing.
   const size = pageBound(record.query, baseItems.length);
   if (
-    view.membership === "all" &&
+    whole &&
     size !== undefined &&
     state.members(view.type, check.collection).length > size
   )
@@ -528,10 +554,9 @@ export const checkListRead = (
   // A usable body that no longer holds the list is not what serving answers on this line.
   const items = listItems(body, view.pointer);
   const bodies = { ...check, body, base, items: items ?? [], baseItems };
-  const outcome =
-    view.membership === "all"
-      ? checkAllList(state, view, bodies)
-      : checkRecordedList(state, view, bodies);
+  const outcome = whole
+    ? checkAllList(state, view, bodies)
+    : checkRecordedList(state, view, bodies);
   return items === undefined ? { ...outcome, pass: false } : outcome;
 };
 
@@ -550,36 +575,4 @@ export const checkDocumentRead = (
     targets: [documentTarget(tool)],
     unheld: [],
   };
-};
-
-/**
- * Check, field by field, the writes that changed an entity an unmodelled write also changed:
- * each write's own fields must show as the state holds them, but for volatile ones, which take
- * the read's value and so show nothing of a write. A create wrote every field, so it cannot be
- * told apart from the unmodelled change and is not checked.
- */
-export const writtenFieldChecks = (
-  entity: StateEntity,
-  view: StateItemView,
-  observed: JsonObject,
-  check: {
-    readonly volatile: ReadonlySet<string>;
-    readonly writes: ReadonlyMap<string, readonly string[] | null>;
-  },
-): Map<string, boolean> => {
-  const shown = renderStateEntity(entity, view, check.volatile, observed);
-  const outcomes = new Map<string, boolean>();
-  for (const [tool, fields] of check.writes) {
-    const compared = (fields ?? []).filter(
-      (field) =>
-        !check.volatile.has(field) &&
-        (Object.hasOwn(observed, field) || Object.hasOwn(shown, field)),
-    );
-    if (fields === null || compared.length === 0) continue;
-    outcomes.set(
-      tool,
-      compared.every((field) => same(shown[field], observed[field])),
-    );
-  }
-  return outcomes;
 };

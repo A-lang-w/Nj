@@ -62,6 +62,47 @@ const refusal = (
   return projectAnalysisError(result.error);
 };
 
+/** A membership-all list keeps an entity added to an empty later page off that page. */
+const expectAddedEntityStaysOffPage = (
+  query: string,
+  args: Readonly<Record<string, unknown>>,
+): void => {
+  const alpha = { id: 1, name: "Alpha" };
+  const serving = servingFrom([
+    ["GET", "/api/orgs/1/books", [alpha]],
+    ["GET", "/api/orgs/1/books/1", alpha],
+    ["GET", `/api/orgs/2/books?${query}`, []],
+  ]);
+  expect(serving.store.state.views.get("get_orgs_books_by_id")).toMatchObject({
+    shape: "list",
+    membership: "all",
+  });
+  load(serving, (entities) => [
+    ...entities,
+    {
+      type: "/api/orgs/{numeric}/books",
+      collection: "/api/orgs/2/books",
+      id: "9",
+      fields: { id: 9, name: "Added" },
+    },
+  ]);
+  expect(
+    answer(serving, "get_orgs_books_by_id", { id: "2", ...args }),
+  ).toMatchObject({
+    body: [],
+    state: { source: "state", membership: "all", listed: 0 },
+  });
+  // A call that does not name the later page still lists the grown collection.
+  expect(answer(serving, "get_orgs_books_by_id", { id: "2" })).toMatchObject({
+    body: [{ id: 9, name: "Added" }],
+    state: { source: "state", membership: "all", listed: 1 },
+  });
+};
+
+/** A membership-all list keeps an entity added to an empty start page off that page. */
+const expectAddedEntityStaysOffStartPage = (name: string): void =>
+  expectAddedEntityStaysOffPage(`${name}=1`, { [name]: "1" });
+
 /** Replace the served state with the initial one changed by `edit`. */
 const load = (
   serving: ReturnType<typeof servingOf>,
@@ -265,6 +306,15 @@ describe("list answers", () => {
       replay: { record_ordinal: 0 },
       state: { source: "state", listed: 1 },
     });
+  });
+
+  it.each(["offset", "start", "_start"])(
+    "skips an entity added under an empty ?%s=1 page of a membership-all list",
+    expectAddedEntityStaysOffStartPage,
+  );
+
+  it("does not list an entity added under an empty ?page=2 page", () => {
+    expectAddedEntityStaysOffPage("page=2", { page: "2" });
   });
 
   it("answers an unfiltered call from a paging-only line of the parent its path arguments name", () => {

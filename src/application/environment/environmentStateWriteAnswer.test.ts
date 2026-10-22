@@ -19,8 +19,10 @@ import {
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import { seededUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
+import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
+import { describeWrite } from "./environmentStateWriteDescription.js";
 import {
   environmentToolArguments,
   environmentToolDefinitions,
@@ -471,6 +473,41 @@ describe("served catalog", () => {
     );
   });
 
+  it("quotes body member names and omits one that exceeds the sample budget", () => {
+    const plan: StateWritePlan = {
+      tool: "post_books",
+      effect: "create",
+      target: "/api/books",
+      served: true,
+      reason: null,
+      exemplar_ordinal: null,
+      observation: null,
+      response: null,
+      body: {
+        accepted: ["name, title", "note\nline"],
+        fixed: [],
+        required: [],
+        identity: null,
+        kinds: [],
+      },
+      rules: [],
+      collection: null,
+      insert: null,
+      merge: null,
+      checked_record_ordinals: [],
+      contradicted_by: null,
+    };
+    expect(describeWrite(plan)).toContain(
+      'body members "name, title", "note\\nline"',
+    );
+    const long = describeWrite({
+      ...plan,
+      body: { ...plan.body!, accepted: ["m".repeat(2000)] },
+    });
+    expect(long).not.toContain("m".repeat(2000));
+    expect(Buffer.byteLength(long ?? "", "utf8")).toBeLessThan(1200);
+  });
+
   it("quotes the member names a write's description lists and samples a long one", () => {
     const long = "n".repeat(90_000);
     const item = (id: number, name: string) => ({
@@ -883,6 +920,59 @@ describe("paged lines", () => {
       state: { source: "state", membership: "all", listed: 3 },
     });
   });
+
+  it("does not list an entity a confirmed create adds on an empty ?page=2 page", () => {
+    const alpha = { id: 1, name: "Alpha", org: "1" };
+    const beta = { id: 2, name: "Beta", org: "2" };
+    const books = servedFrom([
+      ["GET", "/api/orgs/1/books", [alpha]],
+      ["GET", "/api/orgs/1/books/1", alpha],
+      ["GET", "/api/orgs/2/books?page=2", []],
+      ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+      ["GET", "/api/orgs/2/books/2", beta],
+    ]);
+    const created = books.answer("post_orgs_books_by_id", {
+      id: "2",
+      body: { name: "Gamma" },
+    }).body as Book;
+    expect(books.answer("get_orgs_books_by_id", { id: "2" }).body).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: created.id })]),
+    );
+    expect(
+      books.answer("get_orgs_books_by_id", { id: "2", page: "2" }),
+    ).toMatchObject({
+      body: [],
+      state: { source: "state", membership: "all", listed: 0 },
+    });
+  });
+
+  it.each(["offset", "start", "_start"])(
+    "does not list an entity a confirmed create adds on an empty ?%s=1 page",
+    (name) => {
+      const alpha = { id: 1, name: "Alpha", org: "1" };
+      const beta = { id: 2, name: "Beta", org: "2" };
+      const books = servedFrom([
+        ["GET", "/api/orgs/1/books", [alpha]],
+        ["GET", "/api/orgs/1/books/1", alpha],
+        ["GET", `/api/orgs/2/books?${name}=1`, []],
+        ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+        ["GET", "/api/orgs/2/books/2", beta],
+      ]);
+      const created = books.answer("post_orgs_books_by_id", {
+        id: "2",
+        body: { name: "Gamma" },
+      }).body as Book;
+      expect(books.answer("get_orgs_books_by_id", { id: "2" }).body).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: created.id })]),
+      );
+      expect(
+        books.answer("get_orgs_books_by_id", { id: "2", [name]: "1" }),
+      ).toMatchObject({
+        body: [],
+        state: { source: "state", membership: "all", listed: 0 },
+      });
+    },
+  );
 
   it("answers a zero limit a whole line recorded empty from that recording once a create fills its collection", () => {
     const alpha = { id: 1, name: "Alpha", org: "1" };
