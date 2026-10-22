@@ -1,7 +1,47 @@
 import {
+  apkSignatureViewRequestSchema,
+  apkSignatureViewItemsSchema,
+} from "../apkSignature/apkSignatureQuery.js";
+import {
+  projectApkSignatureView,
+  apkSignatureSummarySchema,
+  apkSignatureSourceCoverageSchema,
+} from "./apkSignatureView.js";
+import { byteEntropySchema } from "../native/byteEntropy.js";
+import {
+  byteEntropySummarySchema,
+  projectByteEntropyView,
+} from "./byteEntropyView.js";
+import {
+  parseAnalysisViewResult,
+  analysisViewResultInputError,
+} from "./analysisViewParent.js";
+import {
+  javaScriptRoutesViewRequestSchema,
+  javaScriptRoutesViewItemsSchema,
+  javaScriptRoutesViewSummarySchema,
+  javaScriptRoutesSourceReferenceSchema,
+  projectJavaScriptRoutesView,
+} from "./javascriptRoutesView.js";
+import { javaScriptRouteInventorySchema } from "../javascript/javascriptRouteInventory.js";
+import {
+  sourceToBundleViewRequestSchema,
+  sourceToBundleViewItemsSchema,
+  sourceToBundleViewContextSchema,
+  projectSourceToBundleView,
+} from "./sourceToBundleView.js";
+import {
+  gpuCodeObjectsViewRequestSchema,
+  gpuCodeObjectsSummarySchema,
+  gpuCodeObjectsItemsSchema,
+  gpuCodeObjectsPtxPageSchema,
+  projectGpuCodeObjectsView,
+} from "./gpuCodeObjectsView.js";
+import { gpuCodeObjectsObjectSchema } from "../gpu/gpuCodeObjects.js";
+import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
+import {
   projectModelArtifactView,
   modelArtifactSummarySchema,
-  modelArtifactViewRequestSchema,
   modelArtifactViewItemsSchema,
   modelArtifactViewContextSchema,
 } from "./modelArtifactView.js";
@@ -17,12 +57,21 @@ import {
 } from "./fridaSessionStatusView.js";
 import { commandObservationSchema } from "../commandObservation.js";
 import {
+  rustBinaryViewPageSchema,
+  rustBinaryViewRequestSchema,
+} from "../rust/rustBinaryQuery.js";
+import {
   goBinarySummarySchema,
   goBinaryViewContextSchema,
   goBinaryViewPageSchema,
   goBinaryViewRequestSchema,
   projectGoBinaryView,
 } from "./goBinaryView.js";
+import {
+  rustBinarySummarySchema,
+  rustBinaryViewContextSchema,
+  projectRustBinaryView,
+} from "./rustBinaryView.js";
 import {
   projectNativeFunctionMatchingView,
   nativeFunctionMatchingViewRequestSchema,
@@ -77,7 +126,10 @@ import { evidenceSchema, type Evidence } from "../evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
+import {
+  binaryLayoutSchema,
+  safeParseOwnedBinaryLayout,
+} from "../native/binaryLayout.js";
 import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
 import { functionDossierSchema } from "../hopperValues.js";
 import {
@@ -89,7 +141,6 @@ import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type JavaScriptApplicationAnalysisResult,
 } from "../javascript/javascriptApplicationAnalysis.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { projectBinaryLayoutView } from "./binaryLayoutView.js";
 import { projectJavaScriptApplicationView } from "./javascriptApplicationView.js";
 import {
@@ -200,7 +251,7 @@ const facetViewSchema = z.strictObject({
   facet: z.enum(["mitigations", "linkage"]),
 });
 const indexSelectorSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
 });
 const nameSelectorSchema = z.strictObject({ name: z.string() });
 const pathSelectorSchema = z.strictObject({
@@ -238,8 +289,8 @@ const itemViewSchema = z.discriminatedUnion("collection", [
 const pageViewSchema = z.strictObject({
   kind: z.literal("page"),
   collection: z.enum(["sections", "symbols", "modules"]),
-  offset: z.number().int().nonnegative(),
-  limit: z.number().int().positive(),
+  offset: z.int().nonnegative(),
+  limit: z.int().positive(),
 });
 
 /** Bounded native function facets of already authenticated analyze_function Evidence. */
@@ -268,15 +319,18 @@ const nativeViewSchema = z.strictObject({
     "value_flow_parameters",
     "value_flow_parameter_uses",
   ]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  javaScriptRoutesViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
+  sourceToBundleViewRequestSchema,
   summaryViewSchema,
   goBinaryViewRequestSchema,
+  rustBinaryViewRequestSchema,
   desktopViewRequestSchema,
   facetViewSchema,
   itemViewSchema,
@@ -302,7 +356,9 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   pcapViewRequestSchema,
   dartAotViewRequestSchema,
   il2cppMetadataViewRequestSchema,
+  apkSignatureViewRequestSchema,
   modelArtifactViewRequestSchema,
+  gpuCodeObjectsViewRequestSchema,
 ]);
 
 // The application owns admission and authenticated Evidence parsing. SDK and
@@ -338,9 +394,9 @@ export const inspectAnalysisViewInputSchema = z.strictObject({
 
 const coverageSchema = z.strictObject({
   status: z.enum(["complete-within-view", "page", "empty"]),
-  examined: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative(),
-  next_offset: z.number().int().nonnegative().nullable(),
+  examined: z.int().nonnegative(),
+  total: z.int().nonnegative(),
+  next_offset: z.int().nonnegative().nullable(),
   exhausted: z.boolean(),
 });
 
@@ -354,26 +410,22 @@ const artifactSchema = z.strictObject({
 });
 
 const layoutSummarySchema = z.strictObject({
-  bytes: z.number().int().nonnegative(),
-  format: z.literal("elf"),
-  architecture: z.strictObject({
-    machine: z.literal("EM_X86_64"),
-    bits: z.literal(64),
-    byte_order: z.literal("little"),
-  }),
-  image_type: z.enum(["ET_EXEC", "ET_DYN", "ET_REL"]),
+  bytes: binaryLayoutSchema.shape.artifact.shape.bytes,
+  format: binaryLayoutSchema.shape.format,
+  architecture: binaryLayoutSchema.shape.architecture,
+  image_type: binaryLayoutSchema.shape.image_type,
   entry: z.strictObject({
     reported_value: z.string().min(1),
     meaning: z.enum(["linked-virtual-address", "not-applicable", "absent"]),
     execution_status: z.literal("unknown"),
   }),
   counts: z.strictObject({
-    sections: z.number().int().nonnegative(),
-    segments: z.number().int().nonnegative(),
-    symbols: z.number().int().nonnegative(),
-    relocations: z.number().int().nonnegative(),
+    sections: z.int().nonnegative(),
+    segments: z.int().nonnegative(),
+    symbols: z.int().nonnegative(),
+    relocations: z.int().nonnegative(),
   }),
-  limitation_count: z.number().int().nonnegative(),
+  limitation_count: z.int().nonnegative(),
 });
 
 const javascriptSummarySchema = z.strictObject({
@@ -384,12 +436,13 @@ const javascriptSummarySchema = z.strictObject({
   statistics: jsonObjectSchema,
   electron: jsonObjectSchema,
   coverage: jsonObjectSchema,
-  limitation_count: z.number().int().nonnegative(),
+  limitation_count: z.int().nonnegative(),
 });
 
 const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
+    "inspect_byte_entropy",
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
@@ -397,6 +450,7 @@ const viewResultBase = {
     "inspect_with_objdump",
     "inspect_desktop_application",
     "analyze_javascript_application",
+    "analyze_web_bundle",
     "analyze_function",
     "inspect_artifact",
     "inventory_artifact",
@@ -412,6 +466,7 @@ const viewResultBase = {
     "inspect_dart_aot",
     "inspect_il2cpp_metadata",
     "inspect_model_artifact",
+    "inspect_gpu_code_objects",
     ...NATIVE_INVENTORY_OPERATIONS,
     "match_native_functions",
   ]),
@@ -428,6 +483,12 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+export const byteEntropySummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  summary: byteEntropySummarySchema,
+  parent_operation: z.literal("inspect_byte_entropy"),
+});
 
 /** Opt-in command delivery keeps output once and retains the complete parent. */
 export const gdbCommandSummaryViewResultSchema = z.strictObject({
@@ -460,6 +521,24 @@ export const goBinarySummaryViewResultSchema = z.strictObject({
   ...goBinaryViewContextSchema.shape,
   parent_operation: z.literal("inspect_go_binary"),
   summary: goBinarySummarySchema,
+});
+
+/** Compact source identity and counts, retaining the complete embedded graph. */
+export const rustBinarySummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...rustBinaryViewContextSchema.shape,
+  parent_operation: z.literal("inspect_rust_binary"),
+  summary: rustBinarySummarySchema,
+});
+
+export const rustBinaryPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...rustBinaryViewContextSchema.shape,
+  kind: z.literal("rust"),
+  parent_operation: z.literal("inspect_rust_binary"),
+  view: rustBinaryViewRequestSchema,
+  rust: rustBinarySummarySchema,
+  page: rustBinaryViewPageSchema,
 });
 
 /** Summary `inspect_binary_layout` detail returns; no other view kind. */
@@ -579,6 +658,55 @@ export const dartAotSummaryViewResultSchema = z.strictObject({
   summary: dartAotSummarySchema,
 });
 
+export const javaScriptRoutesViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  artifact: artifactSchema.nullable(),
+  kind: z.literal("javascript-routes"),
+  parent_operation: z.enum([
+    "analyze_javascript_application",
+    "analyze_web_bundle",
+  ]),
+  view: javaScriptRoutesViewRequestSchema,
+  inventory_id: javaScriptRouteInventorySchema.shape.inventory_id,
+  source_manifest_sha256: digestSchema,
+  source_coverage: javaScriptRouteInventorySchema.shape.coverage,
+  inventory_capacity: javaScriptRouteInventorySchema.shape.capacity,
+  capture_url: z.string().nullable(),
+  items: javaScriptRoutesViewItemsSchema,
+  sources: z.array(javaScriptRoutesSourceReferenceSchema),
+  summary: javaScriptRoutesViewSummarySchema.nullable(),
+  byte_limited: z.boolean(),
+});
+
+export const gpuCodeObjectsSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_gpu_code_objects"),
+  summary: gpuCodeObjectsSummarySchema,
+});
+export const gpuCodeObjectsPageViewResultSchema = z.strictObject({
+  kind: z.literal("gpu-code-objects"),
+  view: gpuCodeObjectsViewRequestSchema,
+  items: gpuCodeObjectsItemsSchema,
+  ptx: gpuCodeObjectsPtxPageSchema.nullable(),
+  source_coverage: gpuCodeObjectsObjectSchema.shape.coverage,
+  ...viewResultBase,
+  parent_operation: z.literal("inspect_gpu_code_objects"),
+});
+
+export const apkSignatureSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_apk_signature"),
+  summary: apkSignatureSummarySchema,
+});
+export const apkSignaturePageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("apk-signature"),
+  parent_operation: z.literal("inspect_apk_signature"),
+  view: apkSignatureViewRequestSchema,
+  items: apkSignatureViewItemsSchema,
+  source_coverage: apkSignatureSourceCoverageSchema,
+});
+
 export const modelArtifactSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_model_artifact"),
@@ -618,8 +746,26 @@ export const nativeFunctionMatchingSummaryViewResultSchema = z.strictObject({
   summary: nativeFunctionMatchingViewContextSchema,
 });
 
+export const sourceToBundleSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("compare_source_to_bundle"),
+  summary: sourceToBundleViewContextSchema,
+});
+export const sourceToBundlePageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...sourceToBundleViewContextSchema.shape,
+  kind: z.literal("source-to-bundle"),
+  artifact: z.null(),
+  parent_operation: z.literal("compare_source_to_bundle"),
+  view: sourceToBundleViewRequestSchema,
+  items: sourceToBundleViewItemsSchema,
+});
+
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  javaScriptRoutesViewResultSchema,
+  sourceToBundlePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeFunctionMatchingViewContextSchema.shape,
@@ -661,10 +807,12 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentStateViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
     fridaSessionStatusSummaryViewResultSchema,
     goBinarySummaryViewResultSchema,
+    rustBinarySummaryViewResultSchema,
     binaryLayoutSummaryViewResultSchema,
     desktopApplicationSummaryViewResultSchema,
     javascriptApplicationSummaryViewResultSchema,
@@ -680,9 +828,12 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     pcapCaptureSummaryViewResultSchema,
     dartAotSummaryViewResultSchema,
     il2cppMetadataSummaryViewResultSchema,
+    apkSignatureSummaryViewResultSchema,
     modelArtifactSummaryViewResultSchema,
+    gpuCodeObjectsSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
     nativeFunctionMatchingSummaryViewResultSchema,
+    sourceToBundleSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,
@@ -738,6 +889,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: goBinaryViewRequestSchema,
     page: goBinaryViewPageSchema,
   }),
+  rustBinaryPageViewResultSchema,
   z.strictObject({
     kind: z.literal("item"),
     view: itemViewSchema,
@@ -828,7 +980,9 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ...dartAotViewContextSchema.shape,
     parent_operation: z.literal("inspect_dart_aot"),
   }),
+  apkSignaturePageViewResultSchema,
   modelArtifactPageViewResultSchema,
+  gpuCodeObjectsPageViewResultSchema,
   z.strictObject({
     kind: z.literal("il2cpp-metadata"),
     view: il2cppMetadataViewRequestSchema,
@@ -902,17 +1056,7 @@ const parseJavaScriptParent = (
     return ok(step.value);
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
-    return err(
-      analysisInputErrorFromIssues(
-        INSPECT_ANALYSIS_VIEW_OPERATION,
-        cause.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: input } },
-        { cause },
-      ),
-    );
+    return err(analysisViewResultInputError(input, cause));
   }
 };
 
@@ -954,6 +1098,7 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["gdb_console", projectCommandObservationView],
   ["inspect_with_objdump", projectCommandObservationView],
   ["inspect_go_binary", projectGoBinaryView],
+  ["inspect_rust_binary", projectRustBinaryView],
   ...NATIVE_INVENTORY_OPERATIONS.map(
     (operation) => [operation, projectNativeInventoryView] as const,
   ),
@@ -967,8 +1112,11 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_android_package", projectAndroidPackageView],
   ["inspect_dart_aot", projectDartAotView],
   ["inspect_il2cpp_metadata", projectIl2cppMetadataView],
+  ["inspect_apk_signature", projectApkSignatureView],
   ["inspect_model_artifact", projectModelArtifactView],
+  ["inspect_gpu_code_objects", projectGpuCodeObjectsView],
   ["match_native_functions", projectNativeFunctionMatchingView],
+  ["compare_source_to_bundle", projectSourceToBundleView],
   ["inspect_artifact", projectArtifactInventoryView],
   ["inventory_artifact", projectArtifactInventoryView],
 ]);
@@ -1026,6 +1174,10 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "javascript-routes") {
+    const projected = projectJavaScriptRoutesView(parent, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
   if (isGroupingView(view)) {
     const grouped = projectGroupingView(parent, view, accumulators);
     return grouped.ok ? ok(sealAnalysisView(grouped.value)) : grouped;
@@ -1036,6 +1188,22 @@ export const projectAnalysisView = (
   }
   if (parent.operation === "inspect_pcap_capture") {
     const projected = projectPcapCaptureView(parent, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (parent.operation === "inspect_byte_entropy") {
+    const report = byteEntropySchema.safeParse(parent.normalizedResult);
+    if (!report.success)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["source"],
+            reason: "invalid_value",
+            message:
+              "Parent Evidence result does not match inspect_byte_entropy.",
+          },
+        ]),
+      );
+    const projected = projectByteEntropyView(parent, report.data, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "inspect_binary_layout") {
@@ -1065,20 +1233,9 @@ export const projectAnalysisView = (
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "analyze_function") {
-    const native = functionDossierSchema.safeParse(parent.normalizedResult);
-    if (!native.success)
-      return err(
-        analysisInputErrorFromIssues(
-          INSPECT_ANALYSIS_VIEW_OPERATION,
-          native.error.issues.map((issue) => ({
-            ...issue,
-            path: ["source", "normalized_result", ...issue.path],
-          })),
-          { source: { normalized_result: parent.normalizedResult } },
-          { cause: native.error },
-        ),
-      );
-    const projected = projectNativeFunctionView(parent, native.data, view);
+    const native = parseAnalysisViewResult(functionDossierSchema, parent);
+    if (!native.ok) return native;
+    const projected = projectNativeFunctionView(parent, native.value, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   const project = retainedViewProjectors.get(parent.operation);

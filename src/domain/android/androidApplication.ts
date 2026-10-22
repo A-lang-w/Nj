@@ -1,4 +1,9 @@
+import {
+  bridgeCandidateCoverageSchema,
+  projectCartesianCandidates,
+} from "../bridgeCandidateProjection.js";
 import { z } from "zod";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 
 import {
   hasCompleteInventoryCoverage,
@@ -6,17 +11,16 @@ import {
 } from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   applicationInventoryProjectionInputSchema,
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
+  type MobileApplicationProjectionWithSources,
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
   projectionCoverage,
-  projectionDigest,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
 } from "../mobileApplicationGraphProjection.js";
@@ -85,15 +89,25 @@ type Component = z.infer<typeof componentSchema>;
 /** Project exact APK paths and hashes without decoding or executing target code. */
 export const projectAndroidApplication = (
   input: AndroidApplicationProjectionInput,
-): AndroidApplicationProjectionResult => {
+): MobileApplicationProjectionWithSources<AndroidApplicationProjectionResult> => {
   const parsed = androidApplicationProjectionInputSchema.parse(input);
   const { evidence, inventory } = parseArtifactInventoryEvidence(
     parsed.inventory_evidence,
   );
   if (inventory.manifest.root_format !== "apk")
-    throw new TypeError(
-      `Android application projection requires APK inventory Evidence; the inventory root format is ${inventory.manifest.root_format}. APK is chosen for a ZIP archive whose name ends in .apk.`,
-    );
+    throw new AnalysisInputError("project_android_application_graph", {}, [
+      {
+        path: [
+          "inventory_evidence",
+          0,
+          "normalized_result",
+          "manifest",
+          "root_format",
+        ],
+        reason: "invalid_value",
+        message: `Android application projection requires APK inventory Evidence; the inventory root format is ${inventory.manifest.root_format}. APK is chosen for a ZIP archive whose name ends in .apk.`,
+      },
+    ]);
   const entries = projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
   const unavailable = entries.flatMap(({ unavailable }) =>
@@ -149,10 +163,13 @@ export const projectAndroidApplication = (
     ),
     limitations,
   };
-  return androidApplicationProjectionResultSchema.parse({
-    ...withoutId,
-    projection_id: `adp_${projectionDigest(withoutId, "Android application projection")}`,
-  });
+  return {
+    projection: androidApplicationProjectionResultSchema.parse({
+      ...withoutId,
+      projection_id: `adp_${digestCanonicalValue(withoutId, "Android application projection")}`,
+    }),
+    sources: evidence,
+  };
 };
 
 const classify = (all: readonly Component[]) => ({
