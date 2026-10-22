@@ -2028,3 +2028,42 @@ describe("what later calls must keep consistent", () => {
     });
   });
 });
+
+describe("path fields of a create", () => {
+  const held = "/api/orgs/uid/%2561cme1/books";
+  /** A create held under a doubly encoded parent, then one whose call spells the parent once encoded, read back with `org`. */
+  const rowsWith = (org: string): TimedCaptureRow[] => {
+    const alpha = {
+      ...book(1, "Alpha", "2026-10-01T09:00:00Z"),
+      org: "%61cme1",
+    };
+    const made = { ...book(2, "Made", bookClock(2)), org: "%61cme1" };
+    const other = { ...book(3, "Other", bookClock(3)), org };
+    return [
+      ["GET", held, [alpha]],
+      ["GET", `${held}/1`, alpha],
+      ["POST", held, made, 201, { name: "Made" }],
+      ["POST", "/api/orgs/uid/%61cme1/books", other, 201, { name: "Other" }],
+      ["GET", `${held}/3`, other],
+    ];
+  };
+  const planOf = (rows: TimedCaptureRow[]) =>
+    environmentStateViewOf(timedCaptureEvidence(rows), [
+      "after-uid-literal",
+    ]).writes.find((candidate) => candidate.effect === "create");
+
+  it("contradicts a later create whose read shows a parent serving would not write", () => {
+    expect(planOf(rowsWith("acme1"))).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+      contradicted_by: 4,
+    });
+  });
+
+  it("confirms a later create whose read shows the parent decoded from the collection serving selects", () => {
+    expect(planOf(rowsWith("%61cme1"))).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+});

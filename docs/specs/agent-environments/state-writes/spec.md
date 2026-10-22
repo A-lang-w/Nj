@@ -69,7 +69,8 @@ identity the client sends is an echo:
    the body (the shallowest match).
 3. **Path.** The value of a path parameter of the call, percent-decoded.
    Serving decodes it from the collection the call names, whichever spelling
-   the call uses.
+   the call uses, and the gate fills a recorded call's path fields from that
+   collection too.
 4. **Slug.** The slug of a body string member: lower case, runs of other
    characters joined by `-`.
 5. **Identity.** The type's `id_field` is generated. A sequence when it is an
