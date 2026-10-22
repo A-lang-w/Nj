@@ -150,9 +150,11 @@ const sessionCleanupOwner = (
   retainProviderDocuments: () => boolean,
 ): ShutdownCleanupOwner =>
   cleanupOwner(async () => {
-    const closed = await session.close(
-      retainProviderDocuments() ? { retainProviderDocuments: true } : {},
-    );
+    // Explicit on every attempt: an omitted option keeps the policy an
+    // earlier attempt saved on the session's pending cleanup.
+    const closed = await session.close({
+      retainProviderDocuments: retainProviderDocuments(),
+    });
     if (!closed.ok) throw closed.error;
   });
 

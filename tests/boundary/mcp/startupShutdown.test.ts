@@ -387,10 +387,12 @@ it.each([
     const releaseClose = createDeferred<void>();
     let closeFails = cleanupFails;
     let clientCloses = 0;
+    const closeOptions: unknown[] = [];
     const session = createTestBinarySession((): AnalysisClient => ({
       execute: async () => err(openFailure),
-      close: async () => {
+      close: async (options) => {
         clientCloses += 1;
+        closeOptions.push(options);
         closeStarted.resolve();
         await releaseClose.promise;
         return closeFails
@@ -443,6 +445,11 @@ it.each([
     await unregistered.promise;
     expect(clientCloses).toBe(attempts + 1);
     expect(await session.status()).toMatchObject({ open: false });
+    // The raced shutdown saved a retaining policy; the failed open's retry
+    // must still close provider documents.
+    expect(closeOptions.at(-1)).not.toEqual(
+      expect.objectContaining({ retainDocument: true }),
+    );
   },
 );
 
