@@ -1,4 +1,7 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { z } from "zod";
 
 import {
@@ -80,8 +83,12 @@ import {
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
@@ -174,6 +181,29 @@ const failure = (operation: string, cause: unknown): AnalysisError =>
         userMessage: `Kuna ${operation} failed: ${message(cause)}`,
       });
 
+/** Bind a refused descriptor retry to the leases that still own those handles. */
+const descriptorCleanupError = (
+  cause: ArtifactReaderFailure,
+  operation: string,
+): ProviderCleanupError => {
+  const observation = ArtifactReaderFailure.cleanupObservation(
+    cause,
+    "Kuna provider file descriptor",
+  );
+  const error = new ProviderCleanupError(
+    KUNA_PROVIDER_ID,
+    observation.resources,
+    { reason: observation.reason },
+    { cause, operation },
+  );
+  if (
+    cause instanceof ArtifactResourceRetryFailure &&
+    cause.cleanupLeases.length > 0
+  )
+    new AnalysisCleanupLeaseGroup(error, cause.cleanupLeases);
+  return error;
+};
+
 /**
  * How a request that needs the export reports the export's failure. A session
  * never rebuilds a failed export, so repeating the request cannot succeed; the
@@ -240,6 +270,7 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #runSlots: KunaRunSlots;
   readonly #launcher: KunaProcessLauncher | undefined;
   readonly #resourceScope = new ArtifactResourceScope();
+  readonly #spanLeases = new Map<OwnedFileHandle, AnalysisCleanupLease>();
   /** Single-function runs in flight, by entry address. */
   readonly #singleFunctionRuns = new Map<string, SingleFunctionRun>();
   /** Completed single-function texts by address, least recently used first. */
@@ -349,6 +380,8 @@ export class KunaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const pendingDescriptors = await this.#pendingDescriptorCleanup(operation);
+    if (pendingDescriptors !== undefined) return err(pendingDescriptors);
     if (cancelled(options.signal))
       return err(
         new AnalysisCancelledError(operation, {
@@ -467,18 +500,8 @@ export class KunaSessionClient implements AnalysisClient {
     try {
       await this.#resourceScope.close();
     } catch (cause: unknown) {
-      const observation = ArtifactReaderFailure.cleanupObservation(
-        cause,
-        "Kuna provider file descriptor",
-      );
-      failures.push(
-        new ProviderCleanupError(
-          KUNA_PROVIDER_ID,
-          observation.resources,
-          { reason: observation.reason },
-          { cause, operation: "close_binary" },
-        ),
-      );
+      if (!(cause instanceof ArtifactReaderFailure)) throw cause;
+      failures.push(descriptorCleanupError(cause, "close_binary"));
     }
     if (failures.length > 0)
       return err(
@@ -1555,7 +1578,74 @@ export class KunaSessionClient implements AnalysisClient {
       : new KunaProjectReader(project, {
           signal: this.#session.signal,
           own: (work) => this.#own(work),
+          retainFailedClose: (path, owner) => {
+            const lease = AnalysisCleanupLease.forCloseOwner(owner, path);
+            this.#spanLeases.set(owner, lease);
+            this.#resourceScope.retain({
+              kind: "lease",
+              resource: path,
+              lease,
+            });
+          },
+          bindSpanCleanup: (owner, marker) => {
+            this.#spanLeases.get(owner)?.bindCleanupError(marker);
+          },
         });
+  }
+
+  /**
+   * Retry span descriptors before another read. Installation cleanup stays on
+   * the shared scope and is not re-adjudicated here.
+   */
+  async #pendingDescriptorCleanup(
+    operation: string,
+  ): Promise<AnalysisError | undefined> {
+    const pending = [...this.#spanLeases.entries()].filter(
+      ([, lease]) => !lease.released,
+    );
+    if (pending.length === 0) return undefined;
+    const failures: {
+      readonly lease: AnalysisCleanupLease;
+      readonly cause: unknown;
+      readonly path: string;
+    }[] = [];
+    for (const [owner, lease] of pending) {
+      try {
+        await lease.release();
+      } catch (cause: unknown) {
+        failures.push({
+          lease,
+          cause,
+          path: lease.cleanupResources?.[0] ?? "Kuna span descriptor",
+        });
+        continue;
+      }
+      this.#spanLeases.delete(owner);
+    }
+    if (failures.length === 0) return undefined;
+    const error = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      failures.map(({ path }) => path),
+      {
+        reason: failures
+          .map(({ cause }) =>
+            cause instanceof Error ? cause.message : String(cause),
+          )
+          .join("; "),
+      },
+      {
+        operation,
+        cause: new AggregateError(
+          failures.map(({ cause }) => cause),
+          "Kuna span descriptor cleanup remains incomplete",
+        ),
+      },
+    );
+    new AnalysisCleanupLeaseGroup(
+      error,
+      failures.map(({ lease }) => lease),
+    );
+    return error;
   }
 
   /** The export's failure once it has settled; undefined while it builds or after success. */
