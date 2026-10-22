@@ -46,18 +46,28 @@ import {
   isMachOFormat,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
-import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadata.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import {
+  isAppleDispatchMetadataTarget,
+  nativeDispatchMetadataInputSchema,
+} from "../domain/native/objcSwiftMetadata.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
+  DEFAULT_NATIVE_UI_DEADLINE_MS,
+  MAX_NATIVE_TIMER_MS,
+  fixedNativeAllowance,
+  nativeDeadlineRecovery,
+  readNativeDeadline,
+} from "../domain/native/nativeDeadlines.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -88,8 +98,8 @@ import {
 } from "../domain/native/nativeInspection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
-  NATIVE_COMMAND_TIMEOUT_MS,
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
+  NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
   failureCapture,
@@ -136,6 +146,7 @@ interface NativePlistReadContext {
   readonly selection: NativePlistSelection;
   readonly resources: ArtifactResourceScope;
   readonly signal: AbortSignal | undefined;
+  readonly timeoutMs: number;
 }
 
 /** Read-only semantic provider composed from Xcode command-line utilities. */
@@ -261,7 +272,7 @@ class NativeMacOSClient implements AnalysisClient {
         ),
       );
     if (operation === "inspect_native_dispatch_metadata") {
-      const input = toolContract(operation).inputSchema.safeParse(parameters);
+      const input = nativeDispatchMetadataInputSchema.safeParse(parameters);
       if (!input.success)
         return err(
           analysisInputErrorFromIssues(
@@ -287,9 +298,13 @@ class NativeMacOSClient implements AnalysisClient {
             this.target,
             input.data.max_records,
             this.#dispatchResources,
-            options?.signal,
-            input.data.objc_class_import_addresses,
-            input.data.objc_class_import_addresses_complete ?? true,
+            {
+              signal: options?.signal,
+              objcClassImportAddresses: input.data.objc_class_import_addresses,
+              objcClassImportAddressesComplete:
+                input.data.objc_class_import_addresses_complete ?? true,
+              maxInputBytes: input.data.max_input_bytes,
+            },
           ),
         );
         return ok(
@@ -420,10 +435,30 @@ class NativeMacOSClient implements AnalysisClient {
         return err(
           this.#nativeUiCleanupFailure(earlierCleanupFailures, operation),
         );
-      const runtime = createNativeUiHelperRuntime(this.environment);
+      const deadline = readNativeDeadline(
+        parameters.native_ui_deadline_ms,
+        DEFAULT_NATIVE_UI_DEADLINE_MS,
+      );
+      if (!deadline.ok)
+        return err(
+          new AnalysisInputError(operation, { userMessage: deadline.message }, [
+            {
+              path: ["native_ui_deadline_ms"],
+              reason: deadline.reason,
+              message: deadline.message,
+              minimum: 1,
+              maximum: MAX_NATIVE_TIMER_MS,
+            },
+          ]),
+        );
+      const runtime = createNativeUiHelperRuntime(
+        this.environment,
+        deadline.timeoutMs,
+      );
       const interruption = new NativeUiInterruptionControl(
         signal,
         runtime.signal,
+        deadline.timeoutMs,
       );
       try {
         this.#pendingNativeUiRuntimes.add(runtime);
@@ -554,20 +589,60 @@ class NativeMacOSClient implements AnalysisClient {
           ),
         );
       case "inspect_macho":
-        return this.#inspectMacho(signal);
       case "inspect_signature":
-        return this.#inspectSignature(signal);
       case "inspect_plist":
-        return this.#inspectPlist(parameters, signal);
       case "list_architectures":
-        return this.#listArchitectures(signal);
       case "demangle_swift":
-        return this.#demangle(parameters, signal);
+        return this.#dispatchCommand(operation, parameters, signal);
+    }
+  }
+
+  #dispatchCommand(
+    operation:
+      | "inspect_macho"
+      | "inspect_signature"
+      | "inspect_plist"
+      | "list_architectures"
+      | "demangle_swift",
+    parameters: Readonly<Record<string, JsonValue>>,
+    signal: AbortSignal | undefined,
+  ): Promise<Result<NativeObservation, AnalysisError>> {
+    const timeout = readNativeDeadline(
+      parameters.native_command_timeout_ms,
+      DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
+    );
+    if (!timeout.ok)
+      return Promise.resolve(
+        err(
+          new AnalysisInputError(operation, { userMessage: timeout.message }, [
+            {
+              path: ["native_command_timeout_ms"],
+              reason: timeout.reason,
+              message: timeout.message,
+              minimum: 1,
+              maximum: MAX_NATIVE_TIMER_MS,
+            },
+          ]),
+        ),
+      );
+    const timeoutMs = timeout.timeoutMs;
+    switch (operation) {
+      case "inspect_macho":
+        return this.#inspectMacho(signal, timeoutMs);
+      case "inspect_signature":
+        return this.#inspectSignature(signal, timeoutMs);
+      case "inspect_plist":
+        return this.#inspectPlist(parameters, signal, timeoutMs);
+      case "list_architectures":
+        return this.#listArchitectures(signal, timeoutMs);
+      case "demangle_swift":
+        return this.#demangle(parameters, signal, timeoutMs);
     }
   }
 
   async #listArchitectures(
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     // lipo reads only Mach-O; its refusal of a PE, ELF, or plist target is not
     // a tool failure that a retry or `rea doctor` could repair.
@@ -583,7 +658,7 @@ class NativeMacOSClient implements AnalysisClient {
       "list_architectures",
       "lipo",
       ["-detailed_info", this.target.path],
-      { signal },
+      { signal, timeoutMs },
     );
     if (!capture.ok) return capture;
     const provenance = [invocation(capture.value, this.target.path)];
@@ -610,7 +685,8 @@ class NativeMacOSClient implements AnalysisClient {
 
   async #demangle(
     parameters: Readonly<Record<string, JsonValue>>,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     const symbols = z.array(z.string()).safeParse(parameters.symbols);
     if (!symbols.success)
@@ -625,7 +701,7 @@ class NativeMacOSClient implements AnalysisClient {
       "swift-demangle",
       // `--` keeps symbols that begin with `-` from selecting demangler options.
       ["--compact", "--", ...symbols.data],
-      { signal },
+      { signal, timeoutMs },
     );
     if (!capture.ok) return capture;
     const provenance = [invocation(capture.value, this.target.path)];
@@ -642,7 +718,8 @@ class NativeMacOSClient implements AnalysisClient {
   }
 
   async #inspectSignature(
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     // This provider's signature inspection covers Mach-O code signatures
     // only. On another container, codesign's "not signed" verdict cannot
@@ -660,7 +737,7 @@ class NativeMacOSClient implements AnalysisClient {
     const inspected = await withSignatureTarget(
       this.target,
       this.#signatureResources,
-      (binding) => this.#inspectBoundSignature(binding, signal),
+      (binding) => this.#inspectBoundSignature(binding, signal, timeoutMs),
       signal,
       this.privateRuntimeRootFactory,
     );
@@ -675,7 +752,8 @@ class NativeMacOSClient implements AnalysisClient {
 
   async #inspectBoundSignature(
     binding: SignatureTargetBinding,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<InspectSignature, AnalysisError>> {
     const executablePaths = [
       binding.snapshotPath,
@@ -685,6 +763,7 @@ class NativeMacOSClient implements AnalysisClient {
       binding,
       ["-d", "--verbose=4"],
       signal,
+      timeoutMs,
     );
     if (!display.ok) return display;
     const unsigned = isNonzeroUnsignedObservation(
@@ -702,6 +781,7 @@ class NativeMacOSClient implements AnalysisClient {
       binding,
       ["-d", "-r-"],
       signal,
+      timeoutMs,
     );
     if (!requirements.ok) return requirements;
     const requirementsFailure = codeSignCaptureFailure(
@@ -714,6 +794,7 @@ class NativeMacOSClient implements AnalysisClient {
       binding,
       ["-d", "--entitlements", ":-"],
       signal,
+      timeoutMs,
     );
     if (!entitlements.ok) return entitlements;
     const entitlementsFailure = codeSignCaptureFailure(
@@ -780,6 +861,7 @@ class NativeMacOSClient implements AnalysisClient {
           entitlements: entitlements.value.exitCode,
         },
         signal,
+        timeoutMs,
       );
       if (!slices.ok) {
         limitations.push(
@@ -803,7 +885,8 @@ class NativeMacOSClient implements AnalysisClient {
       requirements: number | null;
       entitlements: number | null;
     }>,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<void, AnalysisError>> {
     const { captures, limitations } = observation;
     const unsigned: string[] = [];
@@ -824,6 +907,7 @@ class NativeMacOSClient implements AnalysisClient {
         binding,
         ["-d", "-a", architecture, "--verbose=4"],
         signal,
+        timeoutMs,
       );
       if (!slice.ok) return slice;
       captures.push(slice.value);
@@ -844,7 +928,8 @@ class NativeMacOSClient implements AnalysisClient {
   async #captureSignature(
     binding: SignatureTargetBinding,
     args: readonly string[],
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<NativeCommandCapture, AnalysisError>> {
     const before = await verifySignatureTarget(this.target, binding, signal);
     if (!before.ok) return before;
@@ -857,6 +942,7 @@ class NativeMacOSClient implements AnalysisClient {
         {
           signal,
           acceptNonZero: true,
+          timeoutMs,
         },
       );
     } catch (cause: unknown) {
@@ -879,7 +965,8 @@ class NativeMacOSClient implements AnalysisClient {
 
   async #inspectPlist(
     parameters: Readonly<Record<string, JsonValue>>,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     const requested = parameters.path;
     if (requested !== undefined && typeof requested !== "string")
@@ -901,6 +988,7 @@ class NativeMacOSClient implements AnalysisClient {
             selection: plist.value,
             resources: this.#plistResources,
             signal,
+            timeoutMs,
           };
           const selected = await requireRegularPlist(fileInput);
           if (!selected.ok) return selected;
@@ -908,7 +996,7 @@ class NativeMacOSClient implements AnalysisClient {
             "inspect_plist",
             "file",
             ["-b", plist.value.path],
-            { signal },
+            { signal, timeoutMs },
           );
           if (!classified.ok) return classified;
           const binary = await this.#inspectBinaryPlist(
@@ -964,12 +1052,12 @@ class NativeMacOSClient implements AnalysisClient {
     classified: NativeCommandCapture,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     const { path } = fileInput.selection;
-    const { signal } = fileInput;
+    const { signal, timeoutMs } = fileInput;
     const json = await this.#run(
       "inspect_plist",
       "plutil",
       ["-convert", "json", "-o", "-", "--", path],
-      { signal, acceptNonZero: true },
+      { signal, acceptNonZero: true, timeoutMs },
     );
     if (!json.ok) return json;
     // JSON cannot express data, dates, or non-finite reals; plutil rejects
@@ -983,7 +1071,7 @@ class NativeMacOSClient implements AnalysisClient {
             "inspect_plist",
             "plutil",
             ["-convert", "xml1", "-o", "-", "--", path],
-            { signal, acceptNonZero: !jsonDecoded },
+            { signal, acceptNonZero: !jsonDecoded, timeoutMs },
           );
     if (xml !== undefined && !xml.ok) return xml;
     if (xml !== undefined && xml.value.exitCode !== 0) {
@@ -1044,7 +1132,8 @@ class NativeMacOSClient implements AnalysisClient {
   }
 
   async #inspectMacho(
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     if (!isMachOFormat(this.target.format))
       return err(
@@ -1060,6 +1149,7 @@ class NativeMacOSClient implements AnalysisClient {
       run: (tool, arguments_, commandSignal, acceptNonZeroIf) =>
         this.#run("inspect_macho", tool, arguments_, {
           signal: commandSignal,
+          timeoutMs,
           ...(acceptNonZeroIf === undefined ? {} : { acceptNonZeroIf }),
         }),
       invocation: (capture) => invocation(capture, this.target.path),
@@ -1072,11 +1162,12 @@ class NativeMacOSClient implements AnalysisClient {
     arguments_: readonly string[],
     options: {
       readonly signal?: AbortSignal | undefined;
+      readonly timeoutMs: number;
       readonly acceptNonZero?: boolean;
       readonly acceptNonZeroIf?:
         | ((capture: NativeCommandCapture) => boolean)
         | undefined;
-    } = {},
+    },
   ): Promise<Result<NativeCommandCapture, AnalysisError>> {
     if (this.#closed)
       return err(
@@ -1088,6 +1179,7 @@ class NativeMacOSClient implements AnalysisClient {
       );
     const command = this.runner.run(tool, arguments_, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      timeoutMs: options.timeoutMs,
       acceptNonZero:
         options.acceptNonZero ?? options.acceptNonZeroIf !== undefined,
     });
@@ -1132,7 +1224,9 @@ class NativeMacOSClient implements AnalysisClient {
         );
       return captured;
     }
-    return err(translateCommandFailure(operation, captured.error));
+    return err(
+      translateCommandFailure(operation, captured.error, options.timeoutMs),
+    );
   }
 }
 
@@ -1207,6 +1301,7 @@ const isNativeOperation = (
 const translateCommandFailure = (
   operation: NativeToolName,
   failure: NativeCommandFailure,
+  timeoutMs = DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
 ): AnalysisError => {
   const cleanupOwners = [
     ...failure.cleanupFailures,
@@ -1271,9 +1366,17 @@ const translateCommandFailure = (
       preparation.cancellation === undefined
         ? new ProviderAdapterError(IDENTITY.id, operation, options)
         : failure.reason === "timeout"
-          ? new AnalysisTimeoutError(operation, NATIVE_COMMAND_TIMEOUT_MS, {
+          ? new AnalysisTimeoutError(operation, timeoutMs, {
               ...options,
               cause: preparation.cancellation.reason,
+              ...nativeDeadlineRecovery({
+                timeoutMs,
+                setting: "native_command_timeout_ms",
+                cliFlag: "--native-command-timeout-ms",
+                defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
+                phase: "macOS native command deadline",
+                unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
+              }),
             })
           : new AnalysisCancelledError(operation, {
               ...options,
@@ -1326,24 +1429,31 @@ const translateCommandFailure = (
     );
   if (failure.reason === "timeout")
     return bindCleanup(
-      new AnalysisTimeoutError(
-        operation,
-        NATIVE_COMMAND_TIMEOUT_MS,
-        errorOptions,
-      ),
+      new AnalysisTimeoutError(operation, timeoutMs, {
+        ...errorOptions,
+        ...nativeDeadlineRecovery({
+          timeoutMs,
+          setting: "native_command_timeout_ms",
+          cliFlag: "--native-command-timeout-ms",
+          defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
+          phase: "macOS native command deadline",
+          unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
+        }),
+      }),
     );
   if (failure.reason === "output-limit")
     return bindCleanup(
       new AnalysisResourceConstraintError(
         operation,
         "memory",
-        `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
+        `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes. Complete output is required for analysis. This release has no runtime override. native_command_timeout_ms does not raise this allowance.`,
         { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
         {
           ...errorOptions,
-          ...fixedAllowanceOptions(
+          ...fixedNativeAllowance(
             "The native command output capture allowance",
             "capture",
+            `${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes`,
           ),
         },
       ),

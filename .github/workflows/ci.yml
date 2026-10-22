@@ -72,6 +72,7 @@ jobs:
       browser: ${{ steps.plan.outputs.browser }}
       binary_layout: ${{ steps.plan.outputs.binary_layout }}
       evm: ${{ steps.plan.outputs.evm }}
+      apk_signature: ${{ steps.plan.outputs.apk_signature }}
       javascript_recovery: ${{ steps.plan.outputs.javascript_recovery }}
       recorded_crash: ${{ steps.plan.outputs.recorded_crash }}
       web_network: ${{ steps.plan.outputs.web_network }}
@@ -384,6 +385,7 @@ jobs:
       needs.changes.outputs.browser == 'true' ||
       needs.changes.outputs.binary_layout == 'true' ||
       needs.changes.outputs.evm == 'true' ||
+      needs.changes.outputs.apk_signature == 'true' ||
       needs.changes.outputs.javascript_recovery == 'true' ||
       needs.changes.outputs.recorded_crash == 'true' ||
       needs.changes.outputs.web_network == 'true' ||
@@ -762,6 +764,7 @@ jobs:
           tests/boundary/mcp/nativeDemangleMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
+          tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
@@ -819,6 +822,11 @@ jobs:
         with:
           save: "true"
       - run: npm ci
+      - name: Typecheck with the official Windows compiler
+        env:
+          GOMAXPROCS: "2"
+          GOMEMLIMIT: "3GiB"
+        run: npm run typecheck -- --checkers 2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: rea-build-cache
@@ -849,7 +857,11 @@ jobs:
           npx vitest run --coverage.enabled=false
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
+          tests/boundary/filesystem/typescriptCompiler.test.ts
           tests/boundary/filesystem/binaryTarget.test.ts
+          src/contracts/sessionPathInputs.test.ts
+          tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
+          tests/boundary/mcp/rawBinaryMcp.test.ts
           tests/boundary/filesystem/safeOutputTree.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
@@ -994,6 +1006,16 @@ jobs:
       build_cache_artifact: rea-build-cache
       remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
+  apk_signature:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.apk_signature == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-apk-signature.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
   javascript_recovery:
     needs: [changes, static, build]
     if: needs.changes.outputs.javascript_recovery == 'true'
@@ -1094,6 +1116,7 @@ jobs:
         browser,
         binary_layout,
         evm,
+        apk_signature,
         javascript_recovery,
         recorded_crash,
         web_network,
