@@ -33,8 +33,11 @@ export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
  * counted once. Node's single-string ceiling is 536870888 UTF-16 code units.
  * The payload budget excludes the terminating LF, and that LF is the one code
  * unit appended after the check. The maximum leaves room for it. Cutter signs
- * that payload from bounded JSON pieces and writes it in 64 KiB chunks, so a
- * fitting response does not retain several frame-sized copies.
+ * that payload from bounded JSON pieces and writes it in 64 KiB chunks. The
+ * bridge looks for the framing LF only in the bytes just read. The client
+ * unescapes each socket chunk into one response string, checks the proof, and
+ * then parses that string. A fitting response does not keep the paged wire
+ * frame, a second concatenated copy, and an outer JSON string.
  */
 const NODE_MAX_STRING_LENGTH = 536_870_888;
 const FRAMING_LF_CODE_UNITS = 1;

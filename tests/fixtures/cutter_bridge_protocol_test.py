@@ -666,6 +666,25 @@ class RequestFrameLimitTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "frame-limit-exceeded"):
             bridge._BridgeServer._receive_frame(BufferedSocket(payload + b" " + b"\n"))
 
+    def test_delimiter_in_a_later_chunk_is_accepted(self):
+        class ShortReads:
+            def __init__(self, data, size):
+                self.data = data
+                self.size = size
+
+            def settimeout(self, _timeout):
+                pass
+
+            def recv(self, _count):
+                part, self.data = self.data[: self.size], self.data[self.size :]
+                return part
+
+        payload = b'{"value":"' + b"A" * 70 + b'"}'
+        received = bridge._BridgeServer._receive_frame(ShortReads(payload + b"\n", 3))
+        self.assertEqual(received["value"], "A" * 70)
+        with self.assertRaisesRegex(ValueError, "invalid framed request"):
+            bridge._BridgeServer._receive_frame(ShortReads(payload + b"\n{}", 3))
+
 
 def _load_cutter_bridge(suffix, raw):
     """Import a fresh plugin module under one explicit ceiling."""

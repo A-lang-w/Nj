@@ -306,8 +306,10 @@ its session id and up to 64 completion receipts. Its path is included when it
 fits, and is unknown when it does not, so an older descriptor path is not
 paired with the new generation. The maximum is the encoded payload, one byte under Node's string ceiling so
 the framing LF still fits. Cutter measures, signs, and writes a fitting
-response in bounded chunks, so this ceiling does not keep several copies of
-the frame. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
+response in bounded chunks. The bridge searches only the newly read bytes
+for the framing LF. The client unescapes each socket chunk into one response
+string before parsing it, so this ceiling does not keep the paged wire frame
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
 and start Hopper or Cutter from that same environment. An out-of-band bridge
 without the setting stays at 16777216 bytes. The client reports that mismatch
 during discovery and does not send the command. A hello that never sends its

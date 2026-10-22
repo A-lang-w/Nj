@@ -85,8 +85,8 @@ escape is measured before serialization and is not divided into the maximum
 again. A structured Cutter reply is admitted when that encoded payload fits,
 including a dense array of numbers. Cutter hashes the HMAC prefix and the payload as separate updates, so
 an exact-limit frame does not build one preimage string. The plugin measures and signs the response
-from bounded JSON pieces, then writes the authenticated frame in 64 KiB chunks. A fitting reply keeps
-the original output and does not retain extra copies of the frame. Zero, negative, non-decimal, and out-of-range
+from bounded JSON pieces, then writes the authenticated frame in 64 KiB chunks. The bridge searches only the newly read bytes for the framing LF. The client unescapes each socket chunk into one response string, checks the proof, and then parses that string. A fitting reply keeps
+the original output and does not retain the paged wire frame plus another concatenated copy. Zero, negative, non-decimal, and out-of-range
 values are `configuration_invalid` and do not fall back to the default. The
 bridge accepts that full payload size and rejects a larger payload while
 bounding the read. An incomplete frame is still `Incomplete bridge request

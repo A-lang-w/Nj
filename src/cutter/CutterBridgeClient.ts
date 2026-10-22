@@ -30,13 +30,13 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cutterBridgeMac } from "./cutterBridgeMac.js";
+import { CutterBridgeResponseFrames } from "./cutterAuthenticatedResponse.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import {
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
-  bridgeResponseOversizeError,
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   resolveBridgeMaxRequestBytes,
   type BridgeMaxRequestBytes,
@@ -94,7 +94,6 @@ const acknowledgementSchema = z.object({
   acknowledged: z.boolean(),
 });
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
-const FRAME_PAGE_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 25_000;
 // Discovery stays at the historical 16 MiB descriptor budget. It does not
 // follow REA_BRIDGE_MAX_REQUEST_BYTES.
@@ -140,68 +139,6 @@ const serializeRequest = (
     );
   return requestBytes as AuthenticatedRequestBytes;
 };
-
-class CutterBridgeResponseFrames {
-  readonly #limit: BridgeMaxRequestBytes;
-  #parts: Buffer[] = [];
-  #page = Buffer.allocUnsafe(FRAME_PAGE_BYTES);
-  #pageLength = 0;
-  #contentBytes = 0;
-  #framesRead = 0;
-
-  constructor(limit: BridgeMaxRequestBytes) {
-    this.#limit = limit;
-  }
-
-  push(chunk: Buffer, onFrame: (line: Buffer) => boolean): void {
-    let offset = 0;
-    while (offset < chunk.length) {
-      const delimiter = chunk.indexOf(0x0a, offset);
-      const end = delimiter < 0 ? chunk.length : delimiter;
-      const segment = chunk.subarray(offset, end);
-      // The ceiling counts payload bytes only. A following LF is framing
-      // and may be the one byte beyond that payload.
-      if (this.#contentBytes + segment.length > this.#limit.maximumBytes)
-        throw bridgeResponseOversizeError(this.#limit);
-      this.#append(segment);
-      if (delimiter < 0) return;
-      if (this.#pageLength > 0)
-        this.#parts.push(this.#page.subarray(0, this.#pageLength));
-      const line = Buffer.concat(this.#parts, this.#contentBytes);
-      this.#reset();
-      if (++this.#framesRead > 2)
-        throw new Error("Cutter bridge sent more than two protocol frames");
-      offset = delimiter + 1;
-      if (!onFrame(line)) return;
-    }
-  }
-
-  #append(segment: Buffer): void {
-    let copied = 0;
-    while (copied < segment.length) {
-      const length = Math.min(
-        segment.length - copied,
-        FRAME_PAGE_BYTES - this.#pageLength,
-      );
-      segment.copy(this.#page, this.#pageLength, copied, copied + length);
-      this.#pageLength += length;
-      this.#contentBytes += length;
-      copied += length;
-      if (this.#pageLength === FRAME_PAGE_BYTES) {
-        this.#parts.push(this.#page);
-        this.#page = Buffer.allocUnsafe(FRAME_PAGE_BYTES);
-        this.#pageLength = 0;
-      }
-    }
-  }
-
-  #reset(): void {
-    this.#parts = [];
-    this.#page = Buffer.allocUnsafe(FRAME_PAGE_BYTES);
-    this.#pageLength = 0;
-    this.#contentBytes = 0;
-  }
-}
 
 const assertBridgeActive = (
   signal: AbortSignal | undefined,
@@ -1059,16 +996,16 @@ export class CutterBridgeClient {
       connection.on("data", (chunk: Buffer) => {
         if (completion !== undefined) return;
         try {
-          frames.push(chunk, (line) => {
-            const frame: unknown = JSON.parse(line.toString("utf8"));
-            if (!authenticated) {
+          frames.push(chunk, (frame) => {
+            if (frame.kind === "challenge") {
+              if (authenticated) throw new Error("unexpected challenge");
               const challenge = z
                 .object({
                   session_id: z.string().uuid(),
                   nonce: z.string().regex(/^[0-9a-f]{64}$/),
                   proof: z.string().regex(/^[0-9a-f]{64}$/),
                 })
-                .parse(frame);
+                .parse(frame.value);
               if (challenge.session_id !== descriptor.session_id)
                 throw new Error("unexpected peer session");
               serverNonce = challenge.nonce;
@@ -1093,25 +1030,17 @@ export class CutterBridgeClient {
                 `${JSON.stringify({ request: requestBytes, proof })}\n`,
               );
               return true;
-            } else {
-              const envelope = z
-                .object({
-                  response: z.string(),
-                  proof: z.string().regex(/^[0-9a-f]{64}$/),
-                })
-                .parse(frame);
-              const expected = cutterBridgeMac(descriptor.token, [
-                `rea-cutter-response-v2:${descriptor.session_id}:${clientNonce}:${serverNonce}:`,
-                envelope.response,
-              ]);
-              if (
-                !timingSafeEqual(expected, Buffer.from(envelope.proof, "hex"))
-              )
-                throw new Error("response proof failed");
-              const response: unknown = JSON.parse(envelope.response);
-              finish(() => resolve(response));
-              return false;
             }
+            // One decoded payload. The wire pages and outer JSON string are gone.
+            const expected = cutterBridgeMac(descriptor.token, [
+              `rea-cutter-response-v2:${descriptor.session_id}:${clientNonce}:${serverNonce}:`,
+              frame.response,
+            ]);
+            if (!timingSafeEqual(expected, Buffer.from(frame.proof, "hex")))
+              throw new Error("response proof failed");
+            const response: unknown = JSON.parse(frame.response);
+            finish(() => resolve(response));
+            return false;
           });
         } catch (cause) {
           if (cause instanceof AnalysisResourceConstraintError) {

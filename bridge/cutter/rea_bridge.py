@@ -794,7 +794,8 @@ class _BridgeServer(threading.Thread):
     ) -> dict[str, Any]:
         data = bytearray()
         deadline = time.monotonic() + timeout_seconds
-        while b"\n" not in data:
+        newline = -1
+        while newline < 0:
             if len(data) > MAX_FRAME_BYTES:
                 raise _frame_limit_exceeded()
             remaining = deadline - time.monotonic()
@@ -806,13 +807,16 @@ class _BridgeServer(threading.Thread):
             part = connection.recv(min(65536, MAX_FRAME_BYTES + 1 - len(data)))
             if not part:
                 raise ValueError("incomplete authentication frame")
+            scanned = len(data)
             data.extend(part)
-        line, remainder = bytes(data).split(b"\n", 1)
-        if len(line) > MAX_FRAME_BYTES:
+            # The delimiter is one byte, so it cannot straddle a chunk.
+            # Search only the bytes just received.
+            newline = data.find(b"\n", scanned)
+        if newline > MAX_FRAME_BYTES:
             raise _frame_limit_exceeded()
-        if remainder:
+        if newline != len(data) - 1:
             raise ValueError("invalid framed request")
-        value = json.loads(line)
+        value = json.loads(bytes(data[:newline]))
         return value if isinstance(value, dict) else {}
 
     def _send_authenticated(self, connection: socket.socket, value: dict[str, Any], client_nonce: str, server_nonce: str) -> None:
