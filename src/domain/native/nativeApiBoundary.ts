@@ -18,10 +18,10 @@ const inferenceEvidenceSchema = z
   .strict();
 
 const inferredBoundaryTypeFacts = {
-  ordinal: z.number().int().min(0).nullable(),
+  ordinal: z.int().min(0).nullable(),
   name: z.string().min(1).nullable(),
   data_type: z.string().min(1),
-  size_bytes: z.number().int().min(0).nullable(),
+  size_bytes: z.int().min(0).nullable(),
   storage: z.string().min(1).nullable(),
   confidence: inferenceConfidenceSchema,
   evidence: z.array(inferenceEvidenceSchema).min(1),
@@ -44,7 +44,7 @@ const inferredReturnTypeSchema = z.strictObject({
 const inferredParameterTypeSchema = z.strictObject({
   ...inferredBoundaryTypeFacts,
   role: z.literal("parameter"),
-  ordinal: z.number().int().min(0),
+  ordinal: z.int().min(0),
 });
 
 const jumpTableDataSourceSchema = z
@@ -56,8 +56,8 @@ const jumpTableDataSourceSchema = z
       "ghidra-aarch64-byte-table",
       "ghidra-aarch64-halfword-table",
     ]),
-    entry_size_bytes: z.number().int().min(1).nullable(),
-    entry_count: z.number().int().min(0).nullable(),
+    entry_size_bytes: z.int().min(1).nullable(),
+    entry_count: z.int().min(0).nullable(),
     confidence: inferenceConfidenceSchema,
     evidence: z.array(inferenceEvidenceSchema).min(1),
   })
@@ -65,7 +65,7 @@ const jumpTableDataSourceSchema = z
 
 const jumpTableMappingSchema = z
   .object({
-    case_value: z.number().int().nullable(),
+    case_value: z.int().nullable(),
     target_address: z.string().min(1),
     confidence: inferenceConfidenceSchema,
     evidence: z.array(inferenceEvidenceSchema).min(1),

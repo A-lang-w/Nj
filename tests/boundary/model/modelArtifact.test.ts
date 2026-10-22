@@ -4,6 +4,13 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { ModelHeaderReader } from "../../../src/model/ModelHeaderReader.js";
+import {
+  MODEL_METADATA_NESTING,
+  MODEL_REPORT_BYTES,
+  ModelFormatFailure,
+  modelCapacityRemediation,
+  modelCapacityReportedLimits,
+} from "../../../src/model/ModelFormat.js";
 import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
 import { GgufHeader } from "../../../src/model/GgufHeader.js";
 import { createModelArtifactService } from "../../../src/composition/model.js";
@@ -309,7 +316,64 @@ it("retains the absolute header budget for GGUF without allocating that extent",
   await file.truncate(100_000_009);
   const reader = new ModelHeaderReader(file, 100_000_009);
   expect(() => reader.guarantee(100_000_000)).not.toThrow();
-  expect(() => reader.guarantee(100_000_001)).toThrow("100,000,000 bytes");
+  expect(() => reader.guarantee(100_000_001)).toThrow(ModelFormatFailure);
+  try {
+    reader.guarantee(100_000_001);
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ModelFormatFailure);
+    if (!(cause instanceof ModelFormatFailure))
+      throw new Error("Expected a model header capacity failure");
+    expect(cause.limit).toBe("header-bytes");
+    expect(cause.message).toContain("100,000,000 bytes");
+    expect(cause.message).not.toContain("Safetensors");
+  }
+});
+
+it("names exact offset and nesting limits instead of the retained report allowance", async () => {
+  const base = ggufFixture({ tensors: [] });
+  const oversized = ggufFixture({
+    metadata: [
+      {
+        key: "custom.length",
+        type: 8,
+        value: base.u64(BigInt(Number.MAX_SAFE_INTEGER) + 1n),
+      },
+    ],
+    tensors: [],
+  });
+  let nested = Buffer.from([1]);
+  for (let frame = 0; frame < 33; frame += 1)
+    nested = Buffer.concat([
+      base.u32(frame === 0 ? 7 : 9),
+      base.u64(1n),
+      nested,
+    ]);
+  const deep = ggufFixture({
+    metadata: [{ key: "custom.nested", type: 9, value: nested }],
+    tensors: [],
+  });
+  for (const [label, bytes, allowance] of [
+    ["offset", oversized.bytes, String(Number.MAX_SAFE_INTEGER)],
+    ["nesting", deep.bytes, "32 array frames"],
+  ] as const) {
+    const { path, provider } = await providerAt(bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error(`${label} capacity was accepted`);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      retryable: false,
+      remediationAction: expect.stringContaining(allowance),
+    });
+    const remediation =
+      "remediationAction" in result.error ? result.error.remediationAction : "";
+    expect(remediation).not.toContain(String(MODEL_REPORT_BYTES));
+    expect(remediation).not.toContain("100,000,000");
+    expect(result.error).toMatchObject({
+      reportedLimits: expect.not.objectContaining({
+        maximum_report_bytes: MODEL_REPORT_BYTES,
+      }),
+    });
+  }
 });
 
 it("preserves safetensors scalar, empty and packed tensor declarations and raw string metadata", async () => {
@@ -504,6 +568,31 @@ it.each([
   },
 );
 
+it("chooses model recovery from the producing limit", () => {
+  const header = modelCapacityRemediation("header-bytes");
+  expect(header).toContain("100,000,000 bytes");
+  expect(header).not.toContain("Safetensors");
+  expect(header).not.toContain(String(MODEL_REPORT_BYTES));
+  const report = modelCapacityRemediation("report-bytes");
+  expect(report).toContain(`report allowance is ${String(MODEL_REPORT_BYTES)}`);
+  expect(report).not.toContain("representation");
+  const representation = modelCapacityRemediation("representation-bytes");
+  expect(representation).toContain("representation allowance");
+  expect(representation).not.toContain("report allowance");
+  const offset = modelCapacityRemediation("exact-offset");
+  expect(offset).toContain(String(Number.MAX_SAFE_INTEGER));
+  expect(offset).not.toContain(String(MODEL_REPORT_BYTES));
+  const nesting = modelCapacityRemediation("metadata-nesting");
+  expect(nesting).toContain(`${String(MODEL_METADATA_NESTING)} array frames`);
+  expect(nesting).not.toContain(String(MODEL_REPORT_BYTES));
+  expect(modelCapacityReportedLimits("report-bytes")).toEqual({
+    maximum_report_bytes: MODEL_REPORT_BYTES,
+  });
+  expect(modelCapacityReportedLimits("exact-offset")).toEqual({
+    maximum_exact_offset: Number.MAX_SAFE_INTEGER,
+  });
+});
+
 it("refuses an oversized declared header before reading or expanding it", async () => {
   const bytes = Buffer.alloc(9);
   bytes.writeBigUInt64LE(100_000_001n);
@@ -521,7 +610,15 @@ it("refuses an oversized declared header before reading or expanding it", async 
     _tag: "AnalysisResourceConstraintError",
     retryable: false,
     reportedLimits: { maximum_header_bytes: 100_000_000 },
+    remediationAction: expect.stringContaining("100,000,000"),
   });
+  expect(result.error.message).not.toContain("Safetensors");
+  expect(
+    "remediationAction" in result.error ? result.error.remediationAction : "",
+  ).not.toContain("Safetensors");
+  expect(
+    "reportedLimits" in result.error ? result.error.reportedLimits : {},
+  ).not.toHaveProperty("maximum_report_bytes");
 });
 
 const malformed = [
@@ -640,6 +737,80 @@ it.each(malformed)(
     });
   },
 );
+
+it.each([640, 896, 1152, 1408, 66_176])(
+  "admits safetensors header length %s whose prefix bytes resemble a pickle protocol marker",
+  async (length) => {
+    const header = JSON.stringify({
+      weight: { dtype: "F32", shape: [1], data_offsets: [0, 4] },
+    });
+    const fixture = safetensorsFixture(
+      header.padEnd(length, " "),
+      Buffer.alloc(4),
+    );
+    const { provider, path } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({ format: "safetensors" });
+    expect(result.value.tensors.map(({ name }) => name)).toEqual(["weight"]);
+  },
+);
+
+it.each([
+  // Protocol 2 pickle of {"a": 1}: PROTO 2, EMPTY_DICT, BINPUT 0, ...
+  ["a real pickle", Buffer.from("80027d710058010000006171014b01732e", "hex")],
+  // Protocol 2 pickle of {}: six bytes, shorter than a safetensors prefix.
+  ["an empty dict", Buffer.from("80027d71002e", "hex")],
+  // Protocol 4 FRAME pickle of {"a": 1}.
+  [
+    "a protocol 4 frame",
+    Buffer.from("8004950a000000000000007d948c0161944b01732e", "hex"),
+  ],
+  // The magic number torch.save writes first in its legacy format.
+  [
+    "the legacy torch.save magic",
+    Buffer.from("80028a0a6cfc9c46f9206aa850192e", "hex"),
+  ],
+  // Protocol 2 pickle of "x{": its brace lands at offset 8.
+  [
+    "a brace after an inadmissible length",
+    Buffer.from("80025802000000787b71002e", "hex"),
+  ],
+  [
+    "an in-file length without a JSON brace",
+    Buffer.concat([
+      Buffer.from("8002000000000000", "hex"),
+      Buffer.alloc(644, 0x2e),
+    ]),
+  ],
+] as const)(
+  "refuses pickle protocol bytes followed by %s",
+  async (_case, bytes) => {
+    const { provider, path } = await providerAt(bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Pickle admitted");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisUnsupportedTargetError",
+      reason: expect.stringContaining("PyTorch pickle"),
+    });
+  },
+);
+
+it("reports a truncated safetensors header whose length resembles a pickle marker as malformed", async () => {
+  const fixture = safetensorsFixture(
+    JSON.stringify({
+      weight: { dtype: "F32", shape: [1], data_offsets: [0, 4] },
+    }).padEnd(896, " "),
+    Buffer.alloc(4),
+  );
+  const { provider, path } = await providerAt(fixture.bytes.subarray(0, 500));
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Truncated model was accepted");
+  expect(result.error).toMatchObject({
+    _tag: "BinaryTargetError",
+    constraint: "file_format_rejected",
+  });
+});
 
 it("bounds expansion before allocation and distinguishes unsupported pickle, version and paths", async () => {
   const fixture = ggufFixture();

@@ -13,13 +13,14 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
   REPLAY_BODY_LIMIT_BYTES,
+  type EnvironmentSource,
+  type RecordedExchange,
+} from "./environmentSource.js";
+import {
+  pathValueMatches,
   replayEnvironmentTool,
   selectReplayExchange,
 } from "./environmentReplay.js";
-import type {
-  EnvironmentSource,
-  RecordedExchange,
-} from "./environmentSource.js";
 
 const source = environmentServeSource();
 
@@ -111,6 +112,16 @@ describe("replay argument mapping and query admission", () => {
     expect(
       selectReplayExchange(long, source.exchanges, { path_1: "3" }),
     ).toMatchObject({ exchange: { path: "/api/users/3" }, exact: true });
+  });
+});
+
+describe("pathValueMatches", () => {
+  it("matches one decode of either side and not a second decode of both", () => {
+    expect(pathValueMatches("2", "%32")).toBe(true);
+    expect(pathValueMatches("%32", "2")).toBe(true);
+    expect(pathValueMatches("book1", "book%2531")).toBe(false);
+    expect(pathValueMatches("book%2531", "book1")).toBe(false);
+    expect(pathValueMatches("book%31", "book%2531")).toBe(true);
   });
 });
 

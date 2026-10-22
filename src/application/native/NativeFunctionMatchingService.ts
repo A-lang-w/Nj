@@ -1,6 +1,6 @@
 import { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
 import { loadNativeMatchingBundleSources } from "./NativeMatchingBundleSources.js";
-import { RegularFileCleanupFailure } from "../RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { matchFunctionInventories } from "../../domain/native/matchFunctionInventories.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { setImmediate } from "node:timers/promises";
@@ -25,7 +25,7 @@ import {
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
-import { FUNCTION_COMPARISON_PROVIDER } from "../InvestigationProviders.js";
+import { FUNCTION_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
 
 const OPERATION = "match_native_functions";
 export interface NativeFunctionMatchingResult {

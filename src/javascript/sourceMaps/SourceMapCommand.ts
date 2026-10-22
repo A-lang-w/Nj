@@ -6,7 +6,6 @@ import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -15,9 +14,17 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
+import { noRuntimeOverrideSentence } from "../../domain/browserDeadline.js";
+import {
+  DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
+  WEB_SOURCE_MAP_LIMITS,
+  webSourceMapDecodeTimeoutRecovery,
+} from "../../domain/webSourceLocation.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import { PrivateRuntimeRootUnavailableError } from "../../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../../process/RuntimeControlUnavailableError.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
@@ -95,6 +102,7 @@ export const runSourceMapCommand = async (
   path: string,
   options: ExecutionOptions | undefined,
   dependencies: SourceMapDecoderDependencies,
+  decodeTimeoutMs: number = DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
 ): Promise<Result<string, AnalysisError>> => {
   try {
     await (dependencies.prepareOwnership ?? prepareProcessOwnershipInspection)(
@@ -106,21 +114,23 @@ export const runSourceMapCommand = async (
         ? new AnalysisCancelledError(OPERATION, {
             cause: options.signal.reason,
           })
-        : new ProviderAdapterError(PROVIDER, OPERATION, {
-            cause,
-            diagnostics: {
-              map_path: path,
-              error_message: message(cause),
-              phase: "process_ownership_preparation",
-            },
-          }),
+        : cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(PROVIDER, OPERATION, {
+              cause,
+              diagnostics: {
+                map_path: path,
+                error_message: message(cause),
+                phase: "process_ownership_preparation",
+              },
+            }),
     );
   }
   const deadline = new ProviderStartupDeadline(
-    WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs,
+    decodeTimeoutMs,
     options?.signal,
   );
-  const command = new OwnedCodec(path, dependencies, deadline);
+  const command = new OwnedCodec(path, dependencies, deadline, decodeTimeoutMs);
   let result: Result<string, AnalysisError>;
   try {
     await command.start(request);
@@ -151,6 +161,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     readonly path: string,
     readonly dependencies: SourceMapDecoderDependencies,
     readonly deadline: ProviderStartupDeadline,
+    readonly decodeTimeoutMs: number,
   ) {
     this.#onInterruption = () => this.#observeInterruption();
     if (deadline.signal.aborted) this.#observeInterruption();
@@ -280,7 +291,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "timeout")
       throw new AnalysisTimeoutError(
         OPERATION,
-        WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs,
+        this.decodeTimeoutMs,
+        webSourceMapDecodeTimeoutRecovery(this.decodeTimeoutMs),
       );
   }
 
@@ -296,16 +308,12 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "timeout")
       return new AnalysisTimeoutError(
         OPERATION,
-        WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs,
+        this.decodeTimeoutMs,
+        webSourceMapDecodeTimeoutRecovery(this.decodeTimeoutMs),
       );
     if (cause instanceof AnalysisError) return cause;
-    return cause instanceof PrivateRuntimeRootUnavailableError
-      ? new AnalysisCapabilityUnavailableError(
-          PROVIDER,
-          OPERATION,
-          cause.message,
-          { cause, retryable: cause.retryable },
-        )
+    return cause instanceof RuntimeControlUnavailableError
+      ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
       : new ProviderAdapterError(PROVIDER, OPERATION, {
           cause,
           diagnostics: { map_path: this.path, error_message: message(cause) },
@@ -434,7 +442,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     return new AnalysisResourceConstraintError(
       OPERATION,
       "memory",
-      `Source-map codec reached its ${SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES === null ? "" : `${String(SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES)}-byte `}process memory limit for ${this.path}; no partial evidence was returned.`,
+      `Source-map codec reached its ${SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES === null ? "" : `${String(SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES)}-byte `}process memory limit for ${this.path}; no partial evidence was returned. ${noRuntimeOverrideSentence(`The ${String(WEB_SOURCE_MAP_LIMITS.codecHeapMiB)} MiB codec heap stays fixed.`, "decode_timeout_ms")}`,
       {
         codec_process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
       },
@@ -446,6 +454,10 @@ class OwnedCodec implements SourceMapCleanupOwner {
             snapshot.diagnosticTruncated === true ||
             !(this.#supervisor?.observedOutputClose() ?? false),
         },
+        remediationAction: noRuntimeOverrideSentence(
+          `The ${String(WEB_SOURCE_MAP_LIMITS.codecHeapMiB)} MiB codec heap, ${String(WEB_SOURCE_MAP_LIMITS.mapBytes)}-byte map budget, and ${String(WEB_SOURCE_MAP_LIMITS.outputBytes)}-byte reply budget stay fixed.`,
+          "decode_timeout_ms",
+        ),
       },
     );
   }
