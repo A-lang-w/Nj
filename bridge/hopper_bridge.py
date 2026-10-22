@@ -14,6 +14,9 @@ from typing import Any, Optional, Protocol, Sequence
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 # The native label setter truncates NSString names at this UTF-16 extent.
 HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
+# Maximum request JSON payload size in bytes, excluding its trailing LF.
+# Matches the Cutter bridge's MAX_FRAME_BYTES payload ceiling.
+MAX_REQUEST_BYTES = 16 * 1024 * 1024
 _rea_session_document = None
 _search_inventory_cache = {}
 _pseudocode_cache = {}
@@ -234,6 +237,15 @@ def _symbol_name(value, field):
 def _name_matches(document, address, name):
     observed = _segment(document, address).getNameAtAddress(address)
     return observed == name or (not name and observed is None)
+
+
+def _bookmark_name(document, address):
+    getter = getattr(document, "getBookmarkName", None)
+    if not callable(getter):
+        raise CapabilityUnavailableError(
+            "Hopper's public Python API does not expose getBookmarkName"
+        )
+    return getter(address)
 
 
 def _address(document, value=None):
@@ -994,15 +1006,46 @@ def _dispatch(method, params):
         observed = getter(address)
         return observed == comment or (comment == "" and observed is None)
     if method == "list_bookmarks":
-        return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]
+        return [{"address": _hex(item), "name": _bookmark_name(document, item)} for item in document.getBookmarks()]
     if method == "set_bookmark":
         address = _address(document, params.get("address"))
         _segment(document, address)
         name = params.get("name")
         if name is not None:
             _api_text(name, "Bookmark name")
-        document.setBookmarkAtAddress(address, name)
-        return document.hasBookmarkAtAddress(address)
+        has_bookmark = getattr(document, "hasBookmarkAtAddress", None)
+        if not callable(has_bookmark):
+            raise CapabilityUnavailableError(
+                "Hopper's public Python API does not expose hasBookmarkAtAddress"
+            )
+        exists = has_bookmark(address)
+        if name is None and exists:
+            # Omission means preserve the existing bookmark and its name.
+            return True
+        if not callable(getattr(document, "getBookmarkName", None)):
+            raise CapabilityUnavailableError(
+                "Hopper's public Python API does not expose getBookmarkName"
+            )
+        if name == "" and exists:
+            rename = getattr(document, "renameBookmarkAtAddress", None)
+            if not callable(rename):
+                raise CapabilityUnavailableError(
+                    "Hopper's public Python API does not expose renameBookmarkAtAddress"
+                )
+            rename(address, name)
+        else:
+            setter = getattr(document, "setBookmarkAtAddress", None)
+            if not callable(setter):
+                raise CapabilityUnavailableError(
+                    "Hopper's public Python API does not expose setBookmarkAtAddress"
+                )
+            setter(address, name)
+        if not has_bookmark(address):
+            return False
+        observed = _bookmark_name(document, address)
+        if name is None:
+            return observed is None or observed == ""
+        return observed == name or (name == "" and observed is None)
     if method == "unset_bookmark":
         address = _address(document, params.get("address"))
         # Permit removing a legacy orphan bookmark, but do not report success
@@ -1020,8 +1063,22 @@ def _serve_connection(connection):
     should_stop = False
     try:
         while True:
-            line = file.readline()
+            # Bound the read itself. The payload budget excludes LF, so permit
+            # one additional byte for the delimiter while still refusing an
+            # oversized unterminated peer without waiting for EOF.
+            line = file.readline(MAX_REQUEST_BYTES + 1)
             if not line:
+                break
+            if not line.endswith(b"\n"):
+                message = (
+                    "Bridge request exceeds the %d-byte payload limit"
+                    % MAX_REQUEST_BYTES
+                    if len(line) > MAX_REQUEST_BYTES
+                    else "Incomplete bridge request frame"
+                )
+                _write_message(file, {"id": 0, "error": _safe_diagnostic(
+                    InvalidRequestError(message)
+                )})
                 break
             request_id = None
             authenticated = False

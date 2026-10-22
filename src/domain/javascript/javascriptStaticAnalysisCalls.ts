@@ -9,7 +9,6 @@ import {
   addLocatedFinding,
 } from "./javascriptStaticAnalysisFindings.js";
 import {
-  STATIC_ROUTE_CALL_NAMES,
   argumentNode,
   argumentValue,
   calleeName,
@@ -50,8 +49,9 @@ import {
 import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
-  semanticFactoryRequireLoaderAt,
-  semanticRequireLoaderAt,
+  semanticRequireCallAt,
+  semanticModuleRequireCallAt,
+  semanticModuleRequireReceiver,
 } from "./javascriptSemanticRequireOrigin.js";
 
 type JavaScriptCallLike =
@@ -69,7 +69,13 @@ export const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  const requireCall = requireCallSpecifier(node, bindings, context);
+  const deferredModuleRequire =
+    semanticModuleRequireReceiver(node) !== undefined ||
+    semanticModuleRequireCallAt(node, bindings, false);
+  if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
+  const requireCall = deferredModuleRequire
+    ? null
+    : requireCallSpecifier(node, bindings, context);
   if (requireCall !== null)
     addReference(context, {
       node,
@@ -249,43 +255,37 @@ const requireCallSpecifier = (
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
 ): { readonly specifier: string | undefined } | null => {
-  const bareRequire = t.isIdentifier(node.callee, { name: "require" });
-  if (bareRequire) {
-    const loader = semanticRequireLoaderAt(
-      node,
-      bindings,
-      context.accumulator.factoryRequireBindingIds,
-    );
-    if (loader === "local") return null;
-    if (loader === "unknown") context.accumulator.unknownFindings += 1;
-    return {
-      specifier:
-        loader === "unknown" ? undefined : argumentValue(node.arguments[0]),
-    };
-  }
-  const factoryLoader = semanticFactoryRequireLoaderAt(
+  const call = semanticRequireCallAt(
     node,
     bindings,
     context.accumulator.factoryRequireBindingIds,
   );
-  if (factoryLoader === "factory-loader")
-    return {
-      specifier: argumentValue(
-        node.arguments[
-          t.isMemberExpression(unwrapJavaScriptExpression(node.callee).node) ||
-          t.isOptionalMemberExpression(
-            unwrapJavaScriptExpression(node.callee).node,
-          )
-            ? 1
-            : 0
-        ],
-      ),
-    };
-  if (factoryLoader === "unknown") {
+  if (call === undefined || call.loader === "local") return null;
+  if (call.loader === "unknown" || !call.sourceRelative) {
     context.accumulator.unknownFindings += 1;
     return { specifier: undefined };
   }
-  return null;
+  return { specifier: argumentValue(call.arguments?.[0]) };
+};
+
+/** Examine member-loader receivers only after shared alias mutation facts settle. */
+export const finishModuleRequireCalls = (
+  context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  for (const node of context.accumulator.pendingModuleRequireCalls) {
+    const call = requireCallSpecifier(node, bindings, context);
+    if (call !== null)
+      addReference(context, {
+        node,
+        kind: "require",
+        specifier: call.specifier,
+      });
+  }
+  context.accumulator.pendingModuleRequireCalls.length = 0;
+  context.accumulator.references.sort(
+    (left, right) => left.offset - right.offset,
+  );
 };
 
 const chunkLoadSpecifier = (
@@ -397,7 +397,14 @@ export const indexVitePreloadDependencyTable = (
   if (tables.length !== 1) return [];
   const table = tables[0];
   if (table === undefined) return [];
-  const dependencies = table.elements.map((element) =>
+  // A spread contributes an unknown number of entries, so every later slot
+  // has an unknown index; leave those out instead of shifting them.
+  const spread = table.elements.findIndex((element) =>
+    t.isSpreadElement(element),
+  );
+  const dependencies = (
+    spread === -1 ? table.elements : table.elements.slice(0, spread)
+  ).map((element) =>
     element === null || t.isSpreadElement(element)
       ? undefined
       : stringValue(element),
@@ -434,16 +441,6 @@ const inspectEndpointCall = (
   context: FindingContext,
   bindings: JavaScriptSemanticAnalysisState,
 ): void => {
-  const route = STATIC_ROUTE_CALL_NAMES.some(
-    (candidate) => name === candidate || name.endsWith(`.${candidate}`),
-  );
-  if (route && first !== undefined)
-    addEndpoint(context, {
-      node,
-      kind: "route",
-      value: first,
-      mechanism: `call:${name}`,
-    });
   if (isKnownNetworkRequest(node, bindings)) {
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) return;
@@ -739,28 +736,13 @@ export function* finishRpcScanSteps(
   }
 }
 
-export const inspectRouteProperty = (
-  node: t.ObjectProperty,
-  context: FindingContext,
-): void => {
-  const key = semanticStaticPropertyName(node.key, node.computed);
-  const value = stringValue(node.value);
-  if ((key === "path" || key === "route") && value !== undefined)
-    addEndpoint(context, {
-      node,
-      kind: "route",
-      value,
-      mechanism: `property:${key}`,
-    });
-};
-
 export const inspectRoleProperty = (
   node: t.ObjectProperty,
   context: FindingContext,
 ): void => {
   if (semanticStaticPropertyName(node.key, node.computed) !== "preload") return;
   if (context.accumulator.mediaElementPreloads.has(node)) return;
-  const path = staticPath(node.value);
+  const path = staticPath(node.value, context.nodePathResolve);
   if (path === undefined) return;
   addLocatedFinding(context, {
     collection: context.accumulator.roles,
@@ -769,7 +751,10 @@ export const inspectRoleProperty = (
     value: {
       role: "preload",
       path,
-      resolution_context: staticPathResolutionContext(node.value),
+      resolution_context: staticPathResolutionContext(
+        node.value,
+        context.nodePathResolve,
+      ),
       mechanism: "property:preload",
       module_key: null,
       location: range(node),
@@ -885,7 +870,10 @@ export const addReference = (
   });
 };
 
-const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
+export const addEndpoint = (
+  context: FindingContext,
+  input: EndpointInput,
+): void =>
   addLocatedFinding(context, {
     collection: context.accumulator.endpoints,
     key: `endpoint\0${input.kind}\0${input.interpretation ?? "literal"}\0${input.resolution ?? "exact"}\0${input.value}`,

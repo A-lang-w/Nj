@@ -342,15 +342,26 @@ it("releases a failed setup transaction so a queued request can configure the fi
   const root = await createTestTempDirectory("rea-config-queued-failure-");
   const path = join(root, "config.json");
   const client = { name: "cursor", configPath: path, format: "json" } as const;
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let releaseWriter!: () => void;
+  const release = new Promise<void>((resolve) => {
+    releaseWriter = resolve;
+  });
   writers.before = async () => {
     writers.before = undefined;
+    markStarted();
+    await release;
     throw new Error("The first writer could not stage its configuration");
   };
 
-  const [failed, queued] = await Promise.all([
-    configureClientConfiguration(client, { FIRST: "1" }),
-    configureClientConfiguration(client, { SECOND: "2" }),
-  ]);
+  const first = configureClientConfiguration(client, { FIRST: "1" });
+  await started;
+  const second = configureClientConfiguration(client, { SECOND: "2" });
+  releaseWriter();
+  const [failed, queued] = await Promise.all([first, second]);
 
   expect(failed).toEqual({ status: "failed", reason: "write" });
   expect(queued.status).toBe("configured");

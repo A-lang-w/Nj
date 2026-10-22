@@ -24,6 +24,10 @@ Restart the agents named in the completion message. Quit Claude Desktop fully
 before approving, because a running app can overwrite the registration; on
 Windows, see [where Claude Desktop reads its configuration](client-configuration.md#claude-desktop).
 
+During package resolution, npm may print a deprecation warning for `prebuild-install`
+from transitive native dependencies (such as Frida). This warning originates from
+the upstream dependency tree and does not affect REA or indicate setup failure.
+
 For the latest published release, use `npx rea-agents@latest setup`.
 [Package-runner and global-installation options](#package-runners-and-global-installation)
 cover explicit versions, Bun, runtime requirements, and the curl wrapper.
@@ -100,9 +104,11 @@ your investigation. Failed steps and diagnostics remain in terminal history.
 
 Select exact clients in scripts with repeatable `--client` flags. Each explicit
 client skips interactive selection. Use `--all-detected` only when you intend
-to configure every detected supported client. `--skill=false` omits the
-workflow, and `--dry-run` returns a read-only plan with status `planned` and
-exit code 0:
+to configure every detected supported client. Combining `--client` with
+`--all-detected` configures both the explicitly selected and detected clients,
+even when an explicit client is not detected. Each client is configured once.
+`--skill=false` omits the workflow, and `--dry-run` returns a read-only plan
+with status `planned` and exit code 0:
 
 ```bash
 rea setup --client codex --client cursor --skill=false --dry-run
@@ -349,6 +355,13 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
+An invalid `REA_LOG_LEVEL` fails every scope, including one client or the
+installed skill, because the executable rejects it before any command. A
+selected client also fails for every other setting that MCP startup rejects,
+including `REA_GHIDRA_STARTUP_TIMEOUT_MS` and `REA_HOPPER_STARTUP_TIMEOUT_MS`.
+Those settings still fail a selected provider and the audit-wide result. A
+skill-only report leaves them informational.
+
 Follow the remediation for the failed check. If a native target has several
 available providers, choose one with `--provider` on the CLI or `provider_id`
 on `open_binary`. A `capability_unavailable` failure carries
@@ -385,7 +398,17 @@ Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills
 and other MCP servers. Purging removes only REA's cache and state under
 `~/.rea`. A client configuration that is malformed, unreadable, or at an unsafe
 path stops the operation before anything is removed, and a client that fails
-while being updated stops the remaining removals. A purge path that is a
+while being updated stops the remaining removals. Uninstall reports each
+candidate `configuration_path` with its outcome. A client with multiple files
+keeps their individual `actions` alongside its aggregate status and detail,
+including earlier removals when a later file fails. The paths name
+the discovered configuration candidates, not resolved physical file identities.
+For JSON clients, uninstall removes every repeated `rea` member in the effective
+server table only when each registration is REA-owned. An unowned earlier
+member, or an unowned OpenCode V1 entry that removing V2 would expose, stops
+preflight before any
+removal. Repeats inside an inactive earlier copy of the server table stay
+unchanged. A purge path that is a
 symbolic link is retained and reported rather than followed. Uninstall checks
 REA's managed shared and Claude Code personal skill locations. See the
 [CLI guide](cli.md#output-and-exit-status) for exit statuses.
@@ -528,8 +551,10 @@ Hopper is separate commercial software with its own license. Its free demo has
 vendor-defined limits, and a paid license is optional. REA reuses any detected
 installation and preserves Hopper during uninstall.
 
-The automated Hopper installer supports macOS 12+, Ubuntu 24.04+, Fedora 41+,
-Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy. REA itself runs on any
+The automated Hopper installer supports macOS 12+ and x86_64 hosts running
+Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy. The
+official Linux packages are x86_64-only, so setup does not offer Hopper on other
+Linux architectures; configure [Ghidra](#ghidra) there instead. REA itself runs on any
 Linux distribution with a recognized apt, dnf, or pacman package family, where
 an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
 and IDA have their own provider-specific host requirements; Windows Ghidra uses
@@ -607,6 +632,20 @@ mount namespace with a private mode-1777 tmpfs over that directory only. The
 host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
+
+Hopper also embeds Python; the Python executable and standard library alone
+are insufficient on Ubuntu. Approved setup checks the system interpreter
+at `/usr/bin/python3` and, when necessary, installs its matching
+`libpython3.X` package, then verifies that its shared library can load.
+APT resolves the concrete package (for example, `libpython3.12t64` on Ubuntu
+24.04). Doctor includes these fresh observations in the `embedded_python`
+details of its `hopper-demo-runtime` check, alongside the private-display
+diagnostic. Failed inspections remain unknown rather than proving a library
+absent. Run `rea setup --yes --install-hopper` to repair a supported install.
+This prerequisite check does not launch the bridge or validate a custom Python
+interpreter configured inside Hopper; that interpreter needs its own matching
+shared runtime. Custom installation prefixes or shared-library ABIs require
+manual dependency repair.
 
 When the package-manager step fails, setup reports the failing command and its
 captured output, so a package conflict is distinguishable from an authorization
@@ -897,7 +936,17 @@ It also checks that the reported JVM `os.arch` and `os.name` map to the same nat
 directory validated for the host; unrecognized reported architectures or a
 non-host operating system are refused. LaunchSupport overrides of either
 property, including through helper-environment JVM option variables, are
-rejected at launch.
+rejected at launch. `JDK_JAVA_OPTIONS` argument files (`@file`) are expanded
+and inspected with that same check using the Java launcher's argfile quoting,
+comments and continuation rules. The reader admits regular UTF-8 files, retains
+failed descriptor cleanup, and bounds all admitted file contents and the prepared
+environment to 64 KiB per launch. Unreadable, oversized or nested `@` references
+are refused before the analysis JVM starts. Validated bytes are snapshotted under
+the owned runtime root, so later helpers and the analysis JVM do not reopen mutable
+caller files. Repeated references share that launch's snapshot; no live state is
+cached across launches. `JAVA_TOOL_OPTIONS`
+and `_JAVA_OPTIONS` do not expand `@file` tokens, so they remain
+literal-token checks.
 When Java is found through `PATH`, setup records its observed JDK home so GUI
 MCP clients do not depend on an incidental shell path. Setup shows every exact
 environment entry in its plan, writes only after approval, and never downloads,
@@ -971,6 +1020,24 @@ initialization and the client's deadline for that individual tool call. A client
 can time out earlier even when Ghidra would complete within its startup deadline.
 See [Ghidra first-query deadlines and recovery](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for client options and the close/reopen recovery flow.
+
+The 330-second default is configurable. Configuration is read when REA starts:
+changing an environment variable in another shell, or closing and reopening a
+binary in the same MCP server, does not change that server's startup allowance.
+For a CLI retry with an example 30-minute allowance:
+
+```sh
+REA_GHIDRA_STARTUP_TIMEOUT_MS=1800000 rea analyze /absolute/path/to/app.exe --provider ghidra --json
+```
+
+For MCP, export useful Evidence before restarting, close the binary and resolve
+any cleanup failure, update the environment in the client's REA server launch
+configuration, then restart REA and reconnect before reopening the target. Allow
+startup plus the query in the client's own tool-call deadline. Every retry uses
+a fresh ephemeral import; smaller result requests do not reduce the prerequisite
+auto-analysis. A larger time allowance does not raise the JVM heap limit or
+guarantee completion. Keep [heap and host CPU controls](#ghidra-heap-and-cpu-controls)
+appropriate for the machine.
 
 One session contains exactly one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
 `REA_ANALYSIS_PROVIDER=ghidra` when both Hopper and Ghidra support the target.
@@ -1071,12 +1138,22 @@ override in `analyzer_preset` (for example
 open when its committed profile and the setting differ. A name starts with a
 letter or digit and contains only letters, digits, spaces, periods, underscores,
 and hyphens; at most 32 names are admitted, each at most 120 characters.
-Names must identify analyzers registered for the selected program. Unknown names
-or options that remain enabled abort the headless import before auto-analysis
-and the bridge, so an unsuccessful override cannot produce a session claiming
-that the analyzer was disabled. For Windows PE resource analysis, the exact name
-is `WindowsResourceReference`. Disabling an analyzer skips the facts it would
-have produced.
+
+The setting applies to every import in the REA server, but Ghidra registers
+format-specific analyzers, such as `Objective-C Message Analyzer` or
+`Demangler Swift`, only for programs they can analyze. A name that the Ghidra
+installation provides but did not register for the selected program is not
+applicable: the import continues, the profile still commits the configured
+names, and result limitations report the applied preset with that name marked,
+for example `ghidra-default+disabled:Objective-C Message Analyzer(n/a)`. A name
+that no installed analyzer provides, or an option that remains enabled, aborts
+the headless import before auto-analysis and the bridge with an error naming
+`REA_GHIDRA_DISABLED_ANALYZERS` and the analyzer, so a misspelled override
+cannot produce a session claiming that the analyzer was disabled. Changing the
+environment requires restarting the server; reopening a target alone keeps the
+current setting. For Windows PE resource analysis, the exact name is
+`WindowsResourceReference`. Disabling an analyzer skips the facts it would have
+produced.
 
 ### Ghidra heap and CPU controls
 
@@ -1144,8 +1221,10 @@ truncation markers. Darwin ownership-helper compilation failures also retain
 the compiler outcome, exit code or signal, and bounded stderr; a timed-out
 compiler remains distinguishable from a compiler that exited with an error.
 The helper compile deadline defaults to 120,000 ms; set
-`REA_SWIFTC_COMPILE_TIMEOUT_MS` to an integer between 1 and 2,147,483,647 when
-a busy host needs longer.
+`REA_SWIFTC_COMPILE_TIMEOUT_MS` to an integer between 1 and 2,147,483,647 in
+the environment that starts REA when a busy host needs longer. Restart REA to
+apply a change; the next ownership-helper compile uses the new value. A
+timeout names that effective deadline.
 On macOS, the Java prerequisite probe waits for this independently bounded
 preparation before starting its five-second command deadline. Caller cancellation
 still interrupts preparation, and failed helper cleanup remains owned for retry.
