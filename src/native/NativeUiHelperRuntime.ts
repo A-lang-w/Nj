@@ -29,7 +29,7 @@ export const createNativeUiHelperRuntime = (
   deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
 ): NativeUiHelperRuntime => {
   if (process.platform === "win32")
-    return createWindowsNativeUiHelperRuntime(environment);
+    return createWindowsNativeUiHelperRuntime(environment, deadlineMs);
   const selectedEnvironment = snapshotEnvironment(environment);
   const deadlineSignal = AbortSignal.timeout(deadlineMs);
   const operations = new ArtifactResourceScope();

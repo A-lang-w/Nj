@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { DEFAULT_NATIVE_UI_DEADLINE_MS } from "../domain/native/nativeDeadlines.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -22,11 +24,20 @@ const compiler = join(framework, "csc.exe");
 
 export const createWindowsNativeUiHelperRuntime = (
   environment: Readonly<NodeJS.ProcessEnv>,
+  deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
 ) => {
   const selectedEnvironment = snapshotEnvironment(environment);
+  const deadlineSignal = AbortSignal.timeout(deadlineMs);
   let root: string | undefined;
   let executable: string | undefined;
-  const invoke: NativeUiHelper = async (parameters, signal) => {
+  const cleanupLease = new AnalysisCleanupLease(async () => {
+    if (root !== undefined) await rm(root, { recursive: true, force: true });
+  });
+  const invoke: NativeUiHelper = async (parameters, callerSignal) => {
+    const signal =
+      callerSignal === undefined
+        ? deadlineSignal
+        : AbortSignal.any([callerSignal, deadlineSignal]);
     if (executable === undefined) {
       root = await mkdtemp(join(tmpdir(), "rea-windows-ui-"));
       executable = join(root, "ReaWindowsUi.exe");
@@ -44,10 +55,10 @@ export const createWindowsNativeUiHelperRuntime = (
           source,
         ],
         {
-          timeout: 60_000,
+          timeout: deadlineMs,
           maxBuffer: 1024 * 1024,
           env: selectedEnvironment,
-          ...(signal === undefined ? {} : { signal }),
+          signal,
         },
       );
     }
@@ -55,10 +66,10 @@ export const createWindowsNativeUiHelperRuntime = (
       executable,
       [JSON.stringify(parameters)],
       {
-        timeout: 30_000,
+        timeout: deadlineMs,
         maxBuffer: NATIVE_UI_HELPER_MAX_BUFFER,
         env: selectedEnvironment,
-        ...(signal === undefined ? {} : { signal }),
+        signal,
       },
     );
     const parsed = safeParseJson(output.stdout);
@@ -70,9 +81,10 @@ export const createWindowsNativeUiHelperRuntime = (
   };
   return {
     invoke,
-    close: async () => {
-      if (root !== undefined) await rm(root, { recursive: true, force: true });
-    },
+    cleanupLease,
+    signal: deadlineSignal,
+    deadlineMs,
+    close: () => cleanupLease.release(),
     resources: () => (root === undefined ? [] : [root]),
   };
 };
