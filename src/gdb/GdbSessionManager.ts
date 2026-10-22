@@ -2460,7 +2460,18 @@ const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
         index += 2;
       } else {
         const next = tail[index + 1];
-        if (next === "<" || next === ">") outputOrControl = true;
+        if (next === ">") {
+          // POSIX `<>` opens stdin for reading and writing when no descriptor
+          // is supplied. It does not redirect stdout or stderr.
+          if (descriptor !== undefined && descriptor !== "0")
+            outputOrControl = true;
+          inputs.push({ descriptor, target: "missing" });
+          index += 1;
+          awaitingInputTarget = true;
+          previousToken = undefined;
+          continue;
+        }
+        if (next === "<") outputOrControl = true;
         inputs.push({ descriptor, target: "missing" });
         awaitingInputTarget = true;
       }
