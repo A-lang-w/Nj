@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 
 import {
   anatomyNameIs,
@@ -34,6 +35,7 @@ import {
   unavailableComponentSchema,
   type ProjectedInventoryEntry,
 } from "../mobileApplicationGraphProjection.js";
+import { uniqueSortedBy } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -145,10 +147,10 @@ export const projectAppleApplication = (
   const runtimeFamilies = identifyRuntimeFamilies(all);
   const bridgeProjection = identifyBridgeCandidates(
     classified.javascript,
-    deduplicateComponents([
-      ...classified.executables,
-      ...classified.native_libraries,
-    ]),
+    uniqueSortedBy(
+      [...classified.executables, ...classified.native_libraries],
+      (component) => component.path,
+    ),
     roots,
   );
   const uninventoriedImage =
@@ -236,9 +238,19 @@ const attributeComponents = <Entry extends { readonly path: string }>(
 const appleRootFormat = (format: string): RootFormat => {
   const root = APPLE_ROOT_FORMATS.find((candidate) => candidate === format);
   if (root === undefined)
-    throw new TypeError(
-      `Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got ${format})`,
-    );
+    throw new AnalysisInputError("project_apple_application_graph", {}, [
+      {
+        path: [
+          "inventory_evidence",
+          0,
+          "normalized_result",
+          "manifest",
+          "root_format",
+        ],
+        reason: "invalid_value",
+        message: `Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got ${format})`,
+      },
+    ]);
   return root;
 };
 
@@ -303,11 +315,6 @@ const classifyComponents = (
     ),
   };
 };
-
-const deduplicateComponents = (values: readonly Component[]): Component[] =>
-  [...new Map(values.map((value) => [value.path, value])).values()].sort(
-    (left, right) => compare(left.path, right.path),
-  );
 
 const identifyRuntimeFamilies = (all: readonly Component[]) => {
   const families = new Set<
