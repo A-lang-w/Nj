@@ -2,9 +2,24 @@ import { posix } from "node:path";
 
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 
 const DRIVE_PREFIX = /^[A-Za-z]:/u;
+
+// Bound diagnostic JSON expansion to 768 characters before formatting. This is
+// a presentation budget, never a limit on accepted paths or retained facts.
+const PATH_DIAGNOSTIC_CODE_UNITS = 128;
+const pathDiagnostic = (path: string): string =>
+  path.length <= PATH_DIAGNOSTIC_CODE_UNITS
+    ? JSON.stringify(path)
+    : `${JSON.stringify(path.slice(0, PATH_DIAGNOSTIC_CODE_UNITS))}… (${String(path.length)} UTF-16 code units)`;
+
+type DestinationEntryKind = Exclude<ArtifactEntry["kind"], "metadata">;
+
+/** Declarations have query identities, but never claim a destination path. */
+export const hasDestinationPath = (
+  kind: ArtifactEntry["kind"],
+): kind is DestinationEntryKind => kind !== "metadata";
 
 /**
  * English Unicode case folding used only to describe logical names a
@@ -25,7 +40,7 @@ export const normalizeArtifactPath = (input: string): string => {
   if (input.includes("\0") || input.startsWith("/") || DRIVE_PREFIX.test(input))
     throw new ArtifactReaderFailure(
       "path",
-      `Artifact path is absolute or unsafe: ${JSON.stringify(input)}`,
+      `Artifact path is absolute or unsafe: ${pathDiagnostic(input)}`,
     );
   const normalized = logicalPathNfc(input).replace(/\/+$/u, "");
   const parts = normalized.split("/");
@@ -36,7 +51,7 @@ export const normalizeArtifactPath = (input: string): string => {
   )
     throw new ArtifactReaderFailure(
       "path",
-      `Artifact path is not normalized: ${JSON.stringify(input)}`,
+      `Artifact path is not normalized: ${pathDiagnostic(input)}`,
     );
   return normalized;
 };
@@ -53,7 +68,8 @@ export class ArtifactPathRegistry {
     },
   ) {}
 
-  add(path: string, kind: "file" | "directory" | "symlink" | "slice"): void {
+  add(path: string, kind: ArtifactEntry["kind"]): void {
+    if (!hasDestinationPath(kind)) return;
     const parts = path.split("/");
     if (this.budget !== undefined && parts.length > this.budget.maxParts)
       throw new ArtifactReaderFailure(
@@ -65,7 +81,7 @@ export class ArtifactPathRegistry {
       if (node.kind !== undefined && node.kind !== "directory")
         throw new ArtifactReaderFailure(
           "path",
-          `Artifact prefix conflict: ${path}`,
+          `Artifact prefix conflict: ${pathDiagnostic(path)}`,
         );
       let child = node.children.get(part);
       if (child === undefined) {
@@ -86,12 +102,12 @@ export class ArtifactPathRegistry {
         if (node.kind !== undefined && node.kind !== kind)
           throw new ArtifactReaderFailure(
             "path",
-            `Artifact path collision: ${path}`,
+            `Artifact path collision: ${pathDiagnostic(path)}`,
           );
         if (kind !== "directory" && node.children.size > 0)
           throw new ArtifactReaderFailure(
             "path",
-            `Artifact prefix conflict: ${path}`,
+            `Artifact prefix conflict: ${pathDiagnostic(path)}`,
           );
       }
     }
@@ -100,7 +116,7 @@ export class ArtifactPathRegistry {
 }
 
 interface PathTrieNode {
-  kind: "file" | "directory" | "symlink" | "slice" | undefined;
+  kind: DestinationEntryKind | undefined;
   readonly children: Map<string, PathTrieNode>;
 }
 
@@ -125,15 +141,19 @@ const englishCaseFold = (part: string): string =>
  */
 export const annotateEnglishUnicodeCaseCollisions = (
   occurrences: readonly {
+    readonly entry_kind: ArtifactEntry["kind"];
     readonly logical_path: string;
     limitations: string[];
   }[],
 ): string | undefined => {
+  const destinations = occurrences.filter(({ entry_kind }) =>
+    hasDestinationPath(entry_kind),
+  );
   const collisions = englishUnicodeCaseCollisions(
-    occurrences.map(({ logical_path }) => logical_path),
+    destinations.map(({ logical_path }) => logical_path),
   );
   if (collisions.size === 0) return undefined;
-  for (const occurrence of occurrences)
+  for (const occurrence of destinations)
     for (const collision of collisions.get(occurrence.logical_path) ?? [])
       occurrence.limitations.push(
         caseCollisionLimitation(occurrence.logical_path, collision),

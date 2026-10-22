@@ -48,7 +48,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
   }
 
   /** Bind extraction to the whole host that produced its inventory snapshot. */
-  async verifyRootDigest(
+  async prepareContainer(
     expectedSha256: string,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -101,10 +101,11 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         byteLength: file.compressedSize || file.size,
         executable: false,
         encrypted: false,
-        declaredSha256: null,
+        declaredIntegrity: null,
         unpacked: false,
         adapterKey: String(index),
-        dotnetBundle: {
+        formatMetadata: {
+          kind: "dotnet-bundle-entry",
           major_version: bundle.majorVersion,
           minor_version: bundle.minorVersion,
           file_type: file.fileType,

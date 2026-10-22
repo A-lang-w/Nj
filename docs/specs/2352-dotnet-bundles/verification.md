@@ -194,3 +194,35 @@ cache directories on E:, after `npm ci` for the merged lockfile:
   compressed v6). The extracted DLL and resource bytes matched the producer
   files, and each source host's SHA-256 remained unchanged. These hosts were
   not executed.
+
+## Upstream format-contract integration (2026-10-22)
+
+Locally merged upstream main `6f28b3633ba2e9ae54e8a0de39b5921502dd8443`.
+Six textual conflicts were resolved by adopting the shared format-metadata
+and container-preparation contracts while retaining the .NET bundle's bounded
+parser, physical compressed-member extent, host-digest check and extraction
+reader. Godot PCK and PyInstaller classification and extraction remain in the
+shared paths. The PR diff against this main commit is 25 files.
+
+On Windows x64 with Node 24.18.0/npm 11.16.0 and E:-scoped temporary/cache
+directories, `npm run typecheck`, `npm run compile`, `npm run docs:check`, and
+the nine-file `npm run test:focused` selection passed (100 tests). The selection
+includes .NET bundle parser, inventory, extraction, ownership, compiled CLI
+and stdio MCP tests. A separate six-file Godot PCK/PyInstaller selection had
+70 passes and two failures: Windows refused to rename an open Godot test file;
+the sandbox refused an evidence-output hard link. The evidence-output test
+passed when rerun outside the sandbox; the open-file rename still failed there.
+These Godot files and the evidence writer are unchanged by this PR.
+
+`npm run check:ci` passed its static, metadata, duplication, TODO,
+architecture and test-discovery stages, then failed at `test:python` because
+Windows has no executable `python3` command for this Linux-oriented suite.
+The Python suite passed separately in WSL Ubuntu (41 and 91 tests) with its
+small test temporary directory on ext4; DrvFS does not support the FIFO tests.
+This does not establish that the single Windows `check:ci` command passed.
+
+The compiled CLI and stdio MCP again inspected and extracted four existing
+Microsoft HostModel-generated Windows x64 hosts (v1, v2, plain v6 and
+compressed v6). Extracted DLL/resource bytes matched the producer files, and
+the source hashes were unchanged. The generated hosts were not executed.
+Current-head upstream CI remains to be checked after the merge is pushed.

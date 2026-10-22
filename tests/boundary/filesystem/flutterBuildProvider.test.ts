@@ -371,6 +371,48 @@ it.each(["close", "elf", "pool", "cleanup"] as const)(
   },
 );
 
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s keeps completed Evidence when cancelled during successful snapshot removal",
+  async (operation) => {
+    const path = await buildApk("removal-cancellation.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+      { path: "lib/arm64-v8a/libflutter.so", bytes: libflutter() },
+    ]);
+    const controlProvider = new FlutterBuildProvider();
+    onTestFinished(() => controlProvider.close());
+    const control = await new FlutterBuildAnalysisService(
+      controlProvider,
+    ).execute(operation, { path });
+    if (!control.ok) throw control.error;
+
+    const controller = new AbortController();
+    const reason = new Error("caller interrupted snapshot removal");
+    const removedRoots: string[] = [];
+    const provider = new FlutterBuildProvider({
+      removeRoot: async (root) => {
+        await rm(root, { recursive: true, force: true });
+        removedRoots.push(root);
+        controller.abort(reason);
+      },
+    });
+    const result = await new FlutterBuildAnalysisService(provider).execute(
+      operation,
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("cancellation must prevent success");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.partialObservation).toEqual(control.value);
+    expect(removedRoots).toHaveLength(1);
+    await expect(stat(removedRoots[0]!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await provider.close();
+    expect(removedRoots).toHaveLength(1);
+  },
+);
+
 it("projects each payload shape through the owned snapshot", async () => {
   const hash = REFERENCE_HASH;
   const agreeBoth = await buildApk("agree.apk", [
@@ -642,6 +684,7 @@ it("retains failed snapshot cleanup and retries it on close", async () => {
     { close: () => provider.close() },
     "flutter",
     "identify_flutter_build",
+    new AbortController().signal,
   );
   expect(result).toMatchObject({
     code: "cleanup_incomplete",
@@ -885,7 +928,11 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const result = await provider.execute({ operation, input: { path } });
     if (result.ok) throw new Error("expected a size refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.retryable).toBe(false);
+    expect(projected.remediation.action).toContain("APK snapshot allowance");
+    expect(projected.remediation.action).not.toMatch(/evidence reply/u);
     expect(result.error).toMatchObject({
       operation,
       reportedLimits: {

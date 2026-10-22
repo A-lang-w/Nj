@@ -28,7 +28,7 @@ Encrypted/protected wrappers and recovering their payloads are outside this
 reader's scope.
 
 The host keeps its whole-file SHA-256. Each embedded file gets its expanded-byte
-SHA-256, path, declared size, compressed size, and `dotnet_bundle` declaration
+SHA-256, path, declared size, compressed size, and `format_metadata` declaration
 (`major_version`, `minor_version`, `file_type`). Its `source_location` describes
 the stored host extent, including the compressed length when applicable.
 The root manifest's `root_format` is `dotnet-bundle`; the root content node

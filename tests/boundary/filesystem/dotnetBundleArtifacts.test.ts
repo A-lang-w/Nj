@@ -52,7 +52,8 @@ it.each([1, 2, 6])(
     const member = inventory.occurrences.find(
       (item) => item.logical_path === "内容/data.txt",
     );
-    expect(member?.dotnet_bundle).toEqual({
+    expect(member?.format_metadata).toEqual({
+      kind: "dotnet-bundle-entry",
       major_version: version,
       minor_version: 0,
       file_type: 0,
