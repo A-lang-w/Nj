@@ -1549,3 +1549,18 @@ describe("asset sequence inference", () => {
     ).toEqual(gamma);
   });
 });
+
+describe("served catalog of calls that only read", () => {
+  it("serves a lookup POST the capture shows reading only, by replay", () => {
+    const { source, state } = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books/ids", [FIRST_BOOK], 200, { ids: [1] }],
+    ]);
+    const catalog = servedCatalog(source, state, "books");
+    if (!catalog.ok) throw catalog.error;
+    expect(catalog.value.tools.map((tool) => tool.name)).toContain(
+      "post_books_ids",
+    );
+    expect(state.writes.has("post_books_ids")).toBe(false);
+  });
+});

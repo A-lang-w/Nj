@@ -143,7 +143,11 @@ export class EnvironmentStateWriteSimulation {
         documents.set(normalizedPath(tool.path_template), tool.name);
     const types = new Set(this.#types.keys());
     for (const tool of this.#input.tools) {
-      if (!changesState(tool.method, tool.path_template)) continue;
+      if (
+        !changesState(tool.method, tool.path_template) ||
+        this.#input.readOnly.has(tool.name)
+      )
+        continue;
       const { effect, target } = classifyWrite(tool, types, documents);
       this.#input.io.retain(512);
       this.#drafts.set(tool.name, {
@@ -170,14 +174,23 @@ export class EnvironmentStateWriteSimulation {
   #step(record: StateRecordFacts, index: number): void {
     const tool = this.#toolOf.get(record.ordinal);
     // A redirected or unanswered write may have changed state, but only a 2xx one shows its effect.
-    if (isStateWrite(record) && !succeeded(record))
+    if (this.#isWrite(record) && !succeeded(record))
       this.#unmodelled(record.path, index);
-    else if (isStateWrite(record)) this.#write(record, index, tool);
+    else if (this.#isWrite(record)) this.#write(record, index, tool);
     else if (tool?.method === "GET") this.#read(record, index, tool);
+  }
+
+  /** Whether a record may change state: a state write whose tool the capture does not show reading only. */
+  #isWrite(record: StateRecordFacts): boolean {
+    return (
+      isStateWrite(record) &&
+      !this.#input.readOnly.has(this.#toolOf.get(record.ordinal)?.name ?? "")
+    );
   }
 
   #context(writer: string): EffectContext {
     return {
+      isWrite: (record) => this.#isWrite(record),
       state: this.#state,
       io: this.#input.io,
       records: this.#input.records,

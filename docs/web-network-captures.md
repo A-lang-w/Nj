@@ -612,7 +612,7 @@ recording of each request line from the state, comparing JSON values without
 regard to member order; a volatile field compares its recorded value. Each
 plan lists the `checked_record_ordinals`. Otherwise the tool is a recorded view
 with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
-reasons are `query-body` (a query `POST`), `no-init-recording`,
+reasons are `query-body` (a query `POST`, or one the capture shows only reading), `no-init-recording`,
 `body-unusable`, `no-identity` (an item read without a proved identity),
 `path-varies` (another read under more than one path, as a template with a
 parameter before its end), `query-varies` (another read of one path under

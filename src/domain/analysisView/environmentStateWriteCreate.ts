@@ -4,7 +4,6 @@ import {
   collectionPathOf,
   isObject,
   isParam,
-  isStateWrite,
   normalizedPath,
   scalarText,
   segmentsOf,
@@ -94,7 +93,7 @@ const createdObservation = (
     ...target,
     ...(id === undefined ? {} : { id }),
     held,
-    isWrite: isStateWrite,
+    isWrite: context.isWrite,
   });
   if (later !== undefined) context.observed(later.ordinal);
   return later;

@@ -1259,3 +1259,38 @@ describe("what a list query read shows of writes", () => {
     });
   });
 });
+
+describe("calls the capture shows reading only", () => {
+  const LOOKUP: TimedCaptureRow = [
+    "POST",
+    "/api/books/ids",
+    [FIRST_BOOK, SECOND_BOOK],
+    200,
+    { ids: [1, 2] },
+  ];
+
+  it("replays a lookup POST and plans no write for it", () => {
+    const state = stateOf([...BOOK_INIT_ROWS, LOOKUP]);
+    expect(state.writes.map((plan) => plan.tool)).not.toContain(
+      "post_books_ids",
+    );
+    expect(state.views).toContainEqual({
+      tool: "post_books_ids",
+      shape: "recorded",
+      reason: "query-body",
+    });
+  });
+
+  it("keeps a read after a lookup POST among the initial recordings", () => {
+    // The lookup changes nothing, so the second book's only read, after it, still seeds the state.
+    const state = stateOf([
+      ["GET", "/api/books/1", FIRST_BOOK],
+      LOOKUP,
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]);
+    expect(state.entities.map((entity) => entity.id).sort()).toEqual([
+      "1",
+      "2",
+    ]);
+  });
+});

@@ -177,7 +177,7 @@ export interface ExtractedState {
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** A POST whose path names one of these segments queries state rather than changing it. */
-const QUERY_SEGMENTS = new Set([
+export const QUERY_SEGMENTS = new Set([
   "search",
   "query",
   "list",

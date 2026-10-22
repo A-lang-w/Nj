@@ -31,8 +31,36 @@ a reset give the same state.
 The view adds two members to its result:
 
 - `writes`: one plan per manifest tool whose method may change state
-  (`changesState`);
+  (`changesState`), less the `POST` tools the capture shows only reading (below);
 - `write_clock`: the instant the served clock starts from.
+
+**Calls that only read.** A `POST` tool whose calls read state is no write: it
+gets no plan, stays a recorded view with the reason `query-body`, is served by
+replay, and its calls bound no initial-recording window and end no observation
+search. The capture shows it by the first of these that applies:
+
+1. every successful call answers as the latest earlier successful `GET` of its
+   path did, with no write between (a status lookup posting the jobs it names);
+2. every call names read operations only, in its body's `operation` or
+   `operations[].operation`, else its query's `operation`, `op` or `action`
+   (`batch` and similar only wrap them); an operation reads when its words name
+   one of `list`, `get`, `count`, `aggregate`, `info`, `search`, `find`, `read`,
+   `query`, `schema`, `describe`, `fetch` or `lookup`, and none of `create`,
+   `insert`, `update`, `delete`, `remove`, `upsert`, `add`, `set`, `save` and
+   similar;
+3. a path segment's last meaningful word, split on `_`, `-`, `.` and case and
+   skipping trailing `data`, `info` and `results`, is a query word (`search`,
+   `query`, `list`, `find`, `lookup`, `count`, `aggregate`, `stats`, `ids`,
+   `selection`, `discover`, …): `selection_data` names a lookup, while
+   `query-history` names a history and stays a write;
+4. a path segment renews or opens a session: `auth-refresh`,
+   `auth-with-password`, `login`, `logout`, `refresh` or `token`.
+
+A tool stays a write when a `GET` line whose path its call's path relates to
+(segment by segment, a parameter matching any value) reads differently just
+before and just after one of its calls with no other write between. Reads of
+unrelated paths do not count, so a session renewal stays read-only although an
+endpoint under the same root regenerates values on every read.
 
 **Effects.** Each plan classifies its tool:
 

@@ -14,7 +14,6 @@ import {
   isObject,
   isParam,
   isQueryPost,
-  isStateWrite,
   jsonBytes,
   lastSegmentValue,
   STATE_BODY_LIMIT_BYTES,
@@ -56,6 +55,7 @@ import {
 } from "./environmentStateGate.js";
 import { StateWriteCutoffs } from "./environmentStateWriteCutoffs.js";
 import { extractWrites } from "./environmentStateWrites.js";
+import { stateWritesOf } from "./environmentStateQueryCalls.js";
 
 class StateBudgetExhausted extends Error {}
 
@@ -81,8 +81,10 @@ export class EnvironmentStateExtraction {
   readonly #budget: StateBudget;
   readonly #position: ReadonlyMap<number, number>;
   readonly #byOrdinal: ReadonlyMap<number, StateRecordFacts>;
-  readonly #writes: readonly StateRecordFacts[];
-  readonly #writeWithin: ReturnType<typeof writeSpanCheck>;
+  /** POST tools whose calls the capture shows read state rather than change it. */
+  #readOnly: ReadonlySet<string> = new Set();
+  #writes: readonly StateRecordFacts[] = [];
+  #writeWithin: ReturnType<typeof writeSpanCheck> = writeSpanCheck([]);
   readonly #bases: ReadonlyMap<string, number>;
   #writeCutoffs: StateWriteCutoffs | undefined;
   readonly #initLimits = new Map<string, StateRecordFacts | undefined>();
@@ -116,14 +118,26 @@ export class EnvironmentStateExtraction {
     this.#byOrdinal = new Map(
       input.records.map((record) => [record.ordinal, record]),
     );
-    this.#writes = input.records.filter(isStateWrite);
-    this.#writeWithin = writeSpanCheck(this.#writes);
     this.#bases = apiBaseLengths(input.tools.map((tool) => tool.path_template));
+  }
+
+  /** The timeline's state writes, less the calls of tools that only read. */
+  #findWrites(): void {
+    ({ readOnly: this.#readOnly, writes: this.#writes } = stateWritesOf(
+      this.#tools,
+      this.#records,
+      {
+        response: (ordinal) => this.#withBody(ordinal, (body) => body),
+        request: (ordinal) => this.#requestBody(ordinal),
+      },
+    ));
+    this.#writeWithin = writeSpanCheck(this.#writes);
   }
 
   /** The extracted state, or null when the representation budget is exhausted. */
   run(): ExtractedState | null {
     try {
+      this.#findWrites();
       if (this.#writes.length > 0)
         this.#writeCutoffs = new StateWriteCutoffs(
           this.#writes,
@@ -166,20 +180,23 @@ export class EnvironmentStateExtraction {
       ...extractWrites(state, {
         tools: this.#tools,
         records: this.#records,
+        readOnly: this.#readOnly,
         timed: this.#timeline === "recorded-start-time",
         volatileOf: (type) => this.#volatileOf(type),
         io: {
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
-          requestBody: (ordinal) => {
-            const parsed = this.#budget.requestBody(ordinal);
-            if (parsed === null) throw new StateBudgetExhausted();
-            return parsed.kind === "json" ? parsed.value : undefined;
-          },
+          requestBody: (ordinal) => this.#requestBody(ordinal),
           emptyResponse: (ordinal) => this.#budget.emptyResponse(ordinal),
           retain: (bytes) => this.#retain(bytes),
         },
       }),
     };
+  }
+
+  #requestBody(ordinal: number): JsonValue | undefined {
+    const parsed = this.#budget.requestBody(ordinal);
+    if (parsed === null) throw new StateBudgetExhausted();
+    return parsed.kind === "json" ? parsed.value : undefined;
   }
 
   #retain(bytes: number): void {
@@ -205,7 +222,10 @@ export class EnvironmentStateExtraction {
   #candidates(): Candidate[] {
     const candidates: Candidate[] = [];
     for (const tool of this.#tools) {
-      if (isQueryPost(tool.method, tool.path_template))
+      if (
+        isQueryPost(tool.method, tool.path_template) ||
+        this.#readOnly.has(tool.name)
+      )
         this.#recorded(tool, "query-body");
       if (tool.method !== "GET") continue;
       const segments = segmentsOf(tool.path_template);

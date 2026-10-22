@@ -443,8 +443,11 @@ state answer carries the base record's status, content type and `replay`
 provenance with `truncated: false`; one whose JSON would exceed 256 KiB is
 refused as a `resource_constraint` tool error rather than cut. Extraction does
 not state-back a document whose rendered JSON exceeds 256 KiB; that read stays
-recorded (`rendered-oversize`) and replays the captured body. Query `POST`s
-stay served and answer from their recordings with the reason `query-body`.
+recorded (`rendered-oversize`) and replays the captured body. Query `POST`s,
+and `POST` tools the capture shows only reading (a lookup answering as a `GET`
+did, an RPC tunnel naming read operations, a session renewal), stay served and
+answer from their recordings with the reason `query-body`; they are not write
+tools.
 
 A line establishes whole-collection membership only from the beginning:
 `offset`, `start`, `_start` and `page` must be zero when present. Positive or
