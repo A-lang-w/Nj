@@ -22,6 +22,7 @@ const independentPaths = [
   "/checks/inactive-branch",
   "/checks/overwritten",
   "/checks/member",
+  "/checks/config-sibling",
   "/checks/optional/:id?",
 ];
 
@@ -29,7 +30,7 @@ const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});const aliasQuery={path:'/download/alias',component:'preview',href:'/alias-query-data',module:'app/fake/page.tsx'};const target={pathname:'/reports/aliased',query:aliasQuery};router.push(target);const independent={path:'/checks/independent',component:View};router.push({pathname:'/reports/aliased',query:independent ? {ok:1}:{ok:2}});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const registry={route:{path:'/checks/projected',component:View},query:{path:'/download/projected-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased',query:payload});const pattern='/checks/optional/:id?';createBrowserRouter([{path:pattern}]);const restRegistry={query:{path:'/download/rest-query',component:Preview},route:{path:'/checks/rest',component:View}};const {route,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased',query:restPayload});const fallback={path:'/checks/inactive-default',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased',query:actualQuery});const cache=[];cache.push('/checks/array-data');text.replace('/checks/string-data','');const inactiveBranch={path:'/checks/inactive-branch',component:View};router.push({pathname:'/reports/aliased',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten',component:View};router.push({pathname:'/reports/aliased',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query',component:Preview},route:{path:'/checks/member',component:View}};router.push({pathname:'/reports/aliased',query:memberRegistry.query});const protoPayload={path:'/download/proto-query',component:Preview};router.push({pathname:'/reports/aliased',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased',query:uncertainRegistry.query});const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
+    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});const aliasQuery={path:'/download/alias',component:'preview',href:'/alias-query-data',module:'app/fake/page.tsx'};const target={pathname:'/reports/aliased',query:aliasQuery};router.push(target);const independent={path:'/checks/independent',component:View};router.push({pathname:'/reports/aliased',query:independent ? {ok:1}:{ok:2}});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const registry={route:{path:'/checks/projected',component:View},query:{path:'/download/projected-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased',query:payload});const pattern='/checks/optional/:id?';createBrowserRouter([{path:pattern}]);const restRegistry={query:{path:'/download/rest-query',component:Preview},route:{path:'/checks/rest',component:View}};const {route,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased',query:restPayload});const fallback={path:'/checks/inactive-default',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased',query:actualQuery});const cache=[];cache.push('/checks/array-data');text.replace('/checks/string-data','');const inactiveBranch={path:'/checks/inactive-branch',component:View};router.push({pathname:'/reports/aliased',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten',component:View};router.push({pathname:'/reports/aliased',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query',component:Preview},route:{path:'/checks/member',component:View}};router.push({pathname:'/reports/aliased',query:memberRegistry.query});const protoPayload={path:'/download/proto-query',component:Preview};router.push({pathname:'/reports/aliased',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased',query:uncertainRegistry.query});const possiblePayload={path:'/download/possible-query',component:Preview};const possibleRegistry={query:possiblePayload,...unknown};router.push({pathname:'/reports/aliased',query:possibleRegistry.query});const configurationRegistry={children:[{path:'/checks/config-sibling',component:View}],routes:[]};createBrowserRouter(configurationRegistry.routes);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
   );
   const intercepted = join(path, "app/feed/(.)photo");
   await mkdir(intercepted, { recursive: true });
@@ -215,6 +216,7 @@ it.each(["full", "compact"] as const)(
             "/download/member-query",
             "/download/proto-query",
             "/download/uncertain-query",
+            "/download/possible-query",
             "/checks/optional/:id",
             "/download/rest-query",
             "/checks/array-data",
@@ -291,7 +293,7 @@ cliTest(
       commandResult: ({ method }) =>
         method === "Debugger.getScriptSource"
           ? {
-              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});const registry={route:{path:'/checks/projected-web',component:View},query:{path:'/download/projected-web-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased-web',query:payload});route(('/checks/optional-web/:id?'));const restRegistry={query:{path:'/download/rest-web-query',component:Preview},route:{path:'/checks/rest-web',component:View}};const {route:excluded,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased-web',query:restPayload});const fallback={path:'/checks/inactive-default-web',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased-web',query:actualQuery});const cache=[];cache.push('/checks/array-data-web');text.replace('/checks/string-data-web','');const inactiveBranch={path:'/checks/inactive-branch-web',component:View};router.push({pathname:'/reports/aliased-web',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten-web',component:View};router.push({pathname:'/reports/aliased-web',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query-web',component:Preview},route:{path:'/checks/member-web',component:View}};router.push({pathname:'/reports/aliased-web',query:memberRegistry.query});const protoPayload={path:'/download/proto-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query-web',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased-web',query:uncertainRegistry.query});`,
+              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});const registry={route:{path:'/checks/projected-web',component:View},query:{path:'/download/projected-web-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased-web',query:payload});route(('/checks/optional-web/:id?'));const restRegistry={query:{path:'/download/rest-web-query',component:Preview},route:{path:'/checks/rest-web',component:View}};const {route:excluded,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased-web',query:restPayload});const fallback={path:'/checks/inactive-default-web',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased-web',query:actualQuery});const cache=[];cache.push('/checks/array-data-web');text.replace('/checks/string-data-web','');const inactiveBranch={path:'/checks/inactive-branch-web',component:View};router.push({pathname:'/reports/aliased-web',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten-web',component:View};router.push({pathname:'/reports/aliased-web',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query-web',component:Preview},route:{path:'/checks/member-web',component:View}};router.push({pathname:'/reports/aliased-web',query:memberRegistry.query});const protoPayload={path:'/download/proto-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query-web',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased-web',query:uncertainRegistry.query});const possiblePayload={path:'/download/possible-query-web',component:Preview};const possibleRegistry={query:possiblePayload,...unknown};router.push({pathname:'/reports/aliased-web',query:possibleRegistry.query});const configurationRegistry={children:[{path:'/checks/config-sibling-web',component:View}],routes:[]};createBrowserRouter(configurationRegistry.routes);`,
             }
           : undefined,
     });
@@ -320,9 +322,11 @@ cliTest(
             "/checks/inactive-branch-web",
             "/checks/overwritten-web",
             "/checks/member-web",
+            "/checks/config-sibling-web",
             "/download/member-query-web",
             "/download/proto-query-web",
             "/download/uncertain-query-web",
+            "/download/possible-query-web",
           ],
         },
       };
@@ -351,7 +355,7 @@ cliTest(
       expect(response.exitCode, response.stderr).toBe(0);
       const envelope = response.json as { summary: unknown };
       const selected = routeViewFromEvidence(envelope.summary);
-      expect(selected.items).toHaveLength(11);
+      expect(selected.items).toHaveLength(12);
       expect(selected.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "/reports/aliased-web" }),
@@ -362,6 +366,7 @@ cliTest(
           expect.objectContaining({ path: "/checks/inactive-branch-web" }),
           expect.objectContaining({ path: "/checks/overwritten-web" }),
           expect.objectContaining({ path: "/checks/member-web" }),
+          expect.objectContaining({ path: "/checks/config-sibling-web" }),
           expect.objectContaining({ path: "/checks/optional-web/:id?" }),
         ]),
       );
@@ -377,7 +382,7 @@ cliTest(
       });
       expect(observed.isError).not.toBe(true);
       const result = routeViewFromEvidence(observed.structuredContent);
-      expect(result.items).toHaveLength(11);
+      expect(result.items).toHaveLength(12);
       expect(result.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "/reports/aliased-web" }),
@@ -388,6 +393,7 @@ cliTest(
           expect.objectContaining({ path: "/checks/inactive-branch-web" }),
           expect.objectContaining({ path: "/checks/overwritten-web" }),
           expect.objectContaining({ path: "/checks/member-web" }),
+          expect.objectContaining({ path: "/checks/config-sibling-web" }),
           expect.objectContaining({ path: "/checks/optional-web/:id?" }),
         ]),
       );

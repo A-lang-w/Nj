@@ -33,7 +33,11 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticObjectPropertyReferences,
+  semanticArrayPropertyReferences,
+  type JavaScriptSemanticObjectReference,
+} from "./javascriptSemanticObjectReferences.js";
 import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
   JavaScriptRouteCandidate,
@@ -967,44 +971,97 @@ export class JavaScriptRouteScan {
     projection: SemanticAliasSelectionPath,
   ): Generator<t.Node> {
     if (!this.#queue(source)) return;
-    const pending = [{ node: source, depth: 0 }];
-    const retain = (node: t.Node, depth: number): boolean => {
+    const pending = [{ node: source, projection, depth: 0 }];
+    const visited = new WeakMap<
+      t.Node,
+      Map<SemanticAliasSelectionPath, Set<number>>
+    >();
+    const retain = (
+      node: t.Node,
+      projection: SemanticAliasSelectionPath,
+      depth: number,
+    ): boolean => {
       if (!this.#queue(node)) return false;
-      pending.push({ node, depth });
+      pending.push({ node, projection, depth });
       return true;
     };
     while (pending.length > 0 && this.#result.capacity === null) {
-      const { node, depth } = pending.pop()!;
+      const { node, projection, depth } = pending.pop()!;
+      const paths =
+        visited.get(node) ?? new Map<SemanticAliasSelectionPath, Set<number>>();
+      const depths = paths.get(projection) ?? new Set<number>();
+      if (depths.has(depth)) continue;
+      depths.add(depth);
+      paths.set(projection, depths);
+      visited.set(node, paths);
       if (depth === projection.length) {
         yield node;
         continue;
       }
       for (const key of semanticAliasSelectionChoices(projection[depth]!)) {
-        if (key === null || !this.#queue(node)) continue;
+        if (!this.#queue(node)) return;
         // Ownership retains possible source identities; positive navigation
         // inference separately requires per-call freshness.
         const selected = this.#resolve(node, undefined, this.index);
-        if (selected !== undefined && t.isObjectExpression(selected)) {
-          const fields = this.#fields(selected).values;
-          if (typeof key !== "object") {
-            const property = fields.get(String(key));
-            if (property !== undefined && !retain(property.value, depth + 1))
+        if (selected === undefined) continue;
+        const branches = t.isConditionalExpression(selected)
+          ? [selected.consequent, selected.alternate]
+          : t.isLogicalExpression(selected)
+            ? [selected.left, selected.right]
+            : t.isSequenceExpression(selected)
+              ? selected.expressions
+              : t.isAssignmentExpression(selected)
+                ? [selected.right]
+                : undefined;
+        if (branches !== undefined) {
+          for (const branch of branches)
+            if (
+              isNavigationDataEdge(branch, selected) &&
+              !retain(branch, projection, depth)
+            )
               return;
+          continue;
+        }
+        let references: readonly JavaScriptSemanticObjectReference[];
+        if (t.isObjectExpression(selected)) {
+          // Charge the literal before the shared possible-slot owner indexes it.
+          this.#fields(selected);
+          if (this.#result.capacity !== null) return;
+          references = semanticObjectPropertyReferences(
+            selected,
+            [key],
+            this.index.bindings,
+          );
+        } else if (t.isArrayExpression(selected)) {
+          for (const element of selected.elements)
+            if (element !== null && !this.#queue(element)) return;
+          references = semanticArrayPropertyReferences(selected, [key]);
+        } else continue;
+        for (const reference of references) {
+          if (reference.path.length === 0) {
+            if (!retain(reference.node, projection, depth + 1)) return;
+          } else if (
+            reference.path.length === 1 &&
+            JSON.stringify(reference.path[0]) ===
+              JSON.stringify(projection[depth])
+          ) {
+            if (!retain(reference.node, projection, depth)) return;
           } else {
-            for (const [name, property] of fields)
-              if (
-                semanticPropertyPathKeyMatches(key, name) &&
-                !retain(property.value, depth + 1)
-              )
+            // Ordinary members advance an offset without copying their suffix.
+            // Copied/getter projections charge expansion before allocating it.
+            for (const part of reference.path)
+              if (!this.#queue(reference.node, JSON.stringify(part))) return;
+            for (let at = depth + 1; at < projection.length; at++)
+              if (!this.#queue(reference.node, JSON.stringify(projection[at])))
                 return;
-          }
-        } else if (selected !== undefined && t.isArrayExpression(selected)) {
-          for (const [index, element] of selected.elements.entries()) {
-            if (t.isSpreadElement(element)) break;
-            if (element === null) continue;
-            if (!this.#queue(element)) return;
-            if (semanticPropertyPathKeyMatches(key, String(index)))
-              pending.push({ node: element, depth: depth + 1 });
+            if (
+              !retain(
+                reference.node,
+                [...reference.path, ...projection.slice(depth + 1)],
+                0,
+              )
+            )
+              return;
           }
         }
       }
@@ -1070,10 +1127,13 @@ export class JavaScriptRouteScan {
         const binding = index.bindingForReferenceAt(node);
         // All source initializers belong to this binding, even when mutation,
         // conditional execution or projection prevents trusting a current value.
-        for (const value of binding?.initializers ?? [])
-          admit(value.node, typed);
-        for (const value of binding?.referenceInitializers ?? [])
-          admit(value.node, typed);
+        for (const sources of [
+          binding?.initializers ?? [],
+          binding?.referenceInitializers ?? [],
+        ])
+          for (const value of sources)
+            for (const selected of this.#initializerValues(value))
+              admit(selected, typed);
       } else if (t.isObjectExpression(node)) {
         for (const property of node.properties) {
           if (t.isObjectProperty(property)) {
@@ -1090,9 +1150,12 @@ export class JavaScriptRouteScan {
         }
       } else if (t.isArrayExpression(node))
         for (const child of node.elements) admit(child, typed);
-      else if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
-        admit(node.object, typed);
-      else if (t.isConditionalExpression(node)) {
+      else if (
+        t.isMemberExpression(node) ||
+        t.isOptionalMemberExpression(node)
+      ) {
+        for (const selected of this.#memberValues(node)) admit(selected, typed);
+      } else if (t.isConditionalExpression(node)) {
         admit(node.consequent, typed);
         admit(node.alternate, typed);
       } else if (t.isLogicalExpression(node)) {

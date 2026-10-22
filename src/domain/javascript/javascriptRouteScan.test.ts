@@ -1095,3 +1095,64 @@ it("proves a write through the same uncertain receiver at its own read", () => {
     "/users",
   ]);
 });
+
+it.each([
+  "const registry={query:payload,...unknown};router.push({pathname:'/users',query:registry.query});",
+  "const registry={query:payload,[key]:0};router.push({pathname:'/users',query:registry.query});",
+  "const registry={settings:{query:payload,...unknown}};router.push({pathname:'/users',query:registry.settings.query});",
+  "const registry={...{query:payload}};router.push({pathname:'/users',query:registry.query});",
+  "const registry={query:payload,...unknown};const {query}=registry;router.push({pathname:'/users',query});",
+  "const registry=[...unknown,payload];router.push({pathname:'/users',query:registry[0]});",
+  "const registry={get [key](){return payload},set query(value){}};router.push({pathname:'/users',query:registry.query});",
+  "const registry=flag?{query:payload}:{query:{ok:1}};router.push({pathname:'/users',query:registry.query});",
+  "const other=flag?{query:payload}:{};const registry={...other};router.push({pathname:'/users',query:registry.query});",
+])("retains possible selected query values: %s", (navigation) => {
+  const facts = analyze(
+    `const payload={path:'/query-data',component:Preview};${navigation}`,
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/users",
+  ]);
+});
+
+it.each([
+  "const registry={query:payload,...{query:{ok:1}}};",
+  "const registry={query:payload,...unknown,query:{ok:1}};",
+  "const registry={[key]:payload,query:{ok:1}};",
+  "const registry={get [key](){return payload},get query(){return {ok:1}}};",
+  "const registry=true?{query:{ok:1}}:{query:payload};",
+])("preserves query values proved overwritten: %s", (registry) => {
+  const facts = analyze(
+    `const payload={path:'/independent',component:View};${registry}router.push({pathname:'/users',query:registry.query});`,
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/users",
+  ]);
+});
+
+it.each([
+  "createBrowserRouter(registry.routes);",
+  "createBrowserRouter(registry?.routes);",
+  "const selected=registry.routes;createBrowserRouter(selected);",
+  "const {routes}=registry;createBrowserRouter(routes);",
+])(
+  "preserves siblings outside a selected configuration: %s",
+  (registration) => {
+    const facts = analyze(
+      `const registry={children:[{path:'/independent',component:View}],routes:[]};${registration}`,
+    );
+    expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+      "/independent",
+    ]);
+  },
+);
+
+it("preserves array siblings outside a selected configuration", () => {
+  const facts = analyze(
+    "const registry=[{children:[{path:'/independent',component:View}]},[]];createBrowserRouter(registry[1]);",
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/independent",
+  ]);
+});
