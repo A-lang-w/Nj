@@ -89,9 +89,13 @@ const importOptionOwnKeysStable = (
   node: t.Node,
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  attributes = false,
 ): boolean =>
-  !(t.isObjectExpression(node) || t.isArrayExpression(node)) ||
-  semanticLiteralOwnKeysStable(node, capture, state, capture);
+  !(
+    t.isObjectExpression(node) ||
+    t.isArrayExpression(node) ||
+    (attributes && t.isFunction(node))
+  ) || semanticLiteralOwnKeysStable(node, capture, state, capture);
 
 /** A valid options record is separate from evaluating the options expression. */
 const importOptionsCanComplete = (
@@ -132,7 +136,8 @@ const importOptionsCanComplete = (
     // Reading an ordinary method returns its inert function object. Its
     // built-in own properties are non-enumerable, so attribute validation has
     // no user-defined entry to evaluate.
-    if (t.isObjectMethod(attributes, { kind: "method" })) return true;
+    if (t.isObjectMethod(attributes, { kind: "method" }))
+      return importOptionOwnKeysStable(attributes, capture, state, true);
     // Get(options, "with") invokes an own getter before validating attributes.
     // Only a direct normal result is evidence; arbitrary getter bodies stay unknown.
     const getter = t.isObjectMethod(attributes, { kind: "get" })
@@ -172,7 +177,7 @@ const importOptionsCanComplete = (
             : t.isArrayExpression(value)
               ? value.elements.length === 0
               : true) &&
-          importOptionOwnKeysStable(value, capture, state);
+          importOptionOwnKeysStable(value, capture, state, true);
   }
   const prototype = t.isObjectExpression(node)
     ? node.properties.find(

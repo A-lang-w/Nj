@@ -60,7 +60,7 @@ const literalEffectCanPrecede = (
 
 /** Enumeration cannot ignore newly added own keys, even for an empty remainder. */
 export const semanticLiteralOwnKeysStable = (
-  container: t.ObjectExpression | t.ArrayExpression,
+  container: t.ObjectExpression | t.ArrayExpression | t.Function,
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
   ownedResultEscape?: t.Node,

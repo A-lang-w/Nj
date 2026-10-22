@@ -24,7 +24,10 @@ import {
   semanticLiteralRestSlots,
   semanticLiteralOwnKeysStable,
 } from "./javascriptSemanticLiteralProjection.js";
-import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
+import {
+  semanticExpressionCannotThrow,
+  semanticAssignmentTargetCompletion,
+} from "./javascriptSemanticExpressionResults.js";
 import {
   semanticInitializerPrecedesRead,
   type SemanticExecutionFrame,
@@ -150,6 +153,7 @@ const generatorPrefixes = (
                   !expression.delegate &&
                   (expression.argument == null ||
                     syntaxEvaluationCannotThrow(expression.argument) ||
+                    t.isIdentifier(patternValueNode(expression.argument)) ||
                     undefinedPatternValue(
                       { known: true, node: expression.argument },
                       state,
@@ -887,6 +891,21 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
       if (element == null) continue;
       const yielded = facts.yielded[index];
       if (yielded === undefined) break;
+      const argument =
+        yielded.argument == null
+          ? undefined
+          : patternValueNode(yielded.argument);
+      // A slot cannot bind, or lend its wait, before its yielded value completes.
+      // Preserve already settled slots so an abrupt later yield can still close
+      // the iterator after an earlier binding suspension.
+      if (
+        t.isIdentifier(argument) &&
+        !isUnshadowedGlobal(argument, state, "undefined") &&
+        !semanticExpressionCannotThrow(argument, state, executionFrames)
+      ) {
+        blockedAt = index;
+        break;
+      }
       const completion = patternCompletedSuspension(
         element,
         {

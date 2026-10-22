@@ -5,6 +5,102 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "assignment null",
+    '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-null")}})()){null.x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-assignment-null"],
+  ],
+  [
+    "assignment void",
+    '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-void")}})()){(void 0).x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-assignment-void"],
+  ],
+  [
+    "assignment computed",
+    '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-computed")}})()){null["x"]=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-assignment-computed"],
+  ],
+  [
+    "assignment sequence",
+    '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-sequence")}})()){(0,null).x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-assignment-sequence"],
+  ],
+  [
+    "assignment compound",
+    '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-compound")}})()){null.x+=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "assignment throwing-key",
+    '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-throwing-key")}})()){null[null.x]=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "import attributes number",
+    'export {};const options={with(){}};options.with.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-number");',
+    [],
+  ],
+  [
+    "import attributes method-alias",
+    'export {};const options={with(){}};const attrs=options.with;attrs.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-method-alias");',
+    [],
+  ],
+  [
+    "import attributes escaped",
+    'export {};const options={with(){}};mutate(options.with);const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-escaped");',
+    [],
+  ],
+  [
+    "import attributes unchanged",
+    'export {};const options={with(){}};const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-unchanged");',
+    ["wss://example.test/review-import-unchanged"],
+  ],
+  [
+    "import attributes later-write",
+    'export {};const options={with(){}};const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-later-write");options.with.type=1;',
+    ["wss://example.test/review-import-later-write"],
+  ],
+  [
+    "import attributes function-value",
+    'export {};const attrs=function(){};const options={with:attrs};attrs.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-function-value");',
+    [],
+  ],
+  [
+    "import attributes unrelated",
+    'export {};const options={with(){},other:{}};options.other.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-unrelated");',
+    ["wss://example.test/review-import-unrelated"],
+  ],
+  [
+    "failed yielded object",
+    '(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-object");yield 2})()}catch{}const u={}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "failed yielded number",
+    '(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-number");yield 2})()}catch{}const u=1})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "failed yielded function",
+    '(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-function");yield 2})()}catch{}const u=function(){}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "yield initialized",
+    'const u={};(async()=>{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-initialized");yield 2})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-yield-initialized"],
+  ],
+  [
+    "yield parameter",
+    '(async(u)=>{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-parameter");yield 2})()})({});const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-yield-parameter"],
+  ],
+  [
+    "yield earlier-cleanup",
+    '(async()=>{try{const[a=await 0,b,c]=(function*(){try{yield;yield u;yield 2}finally{new Socket("wss://example.test/review-yield-earlier-cleanup")}})()}catch{}const u={};})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-yield-earlier-cleanup"],
+  ],
+
+  [
     "dense alias defaults reuse settled prefixes",
     'const u=undefined;(async()=>{const[x0=await 0,x1=await 0,x2=await 0,x3=await 0,x4=await 0,x5=await 0,x6=await 0,x7=await 0,x8=await 0,x9=await 0,x10=await 0,x11=await 0,x12=await 0,x13=await 0,x14=await 0,x15=await 0,x16=await 0,x17=await 0,x18=await 0,x19=await 0,x20=await 0,x21=await 0,x22=await 0,x23=await 0,x24=await 0,x25=await 0,x26=await 0,x27=await 0,x28=await 0,x29=await 0,x30=await 0,x31=await 0,x32=await 0,x33=await 0,x34=await 0,x35=await 0,x36=await 0,x37=await 0,x38=await 0,x39=await 0,x40=await 0,x41=await 0,x42=await 0,x43=await 0,x44=await 0,x45=await 0,x46=await 0,x47=await 0,x48=await 0,x49=await 0,x50=await 0,x51=await 0,x52=await 0,x53=await 0,x54=await 0,x55=await 0,x56=await 0,x57=await 0,x58=await 0,x59=await 0,x60=await 0,x61=await 0,x62=await 0,x63=await 0,x64=await 0,x65=await 0,x66=await 0,x67=await 0,x68=await 0,x69=await 0,x70=await 0,x71=await 0,x72=await 0,x73=await 0,x74=await 0,x75=await 0,x76=await 0,x77=await 0,x78=await 0,x79=await 0,x80=await 0,x81=await 0,x82=await 0,x83=await 0,x84=await 0,x85=await 0,x86=await 0,x87=await 0,x88=await 0,x89=await 0,x90=await 0,x91=await 0,x92=await 0,x93=await 0,x94=await 0,x95=await 0,x96=await 0,x97=await 0,x98=await 0,x99=await 0,x100=await 0,x101=await 0,x102=await 0,x103=await 0,x104=await 0,x105=await 0,x106=await 0,x107=await 0,x108=await 0,x109=await 0,x110=await 0,x111=await 0,x112=await 0,x113=await 0,x114=await 0,x115=await 0,x116=await 0,x117=await 0,x118=await 0,x119=await 0,x120=await 0,x121=await 0,x122=await 0,x123=await 0,x124=await 0,x125=await 0,x126=await 0,x127=await 0,last]=(function*(){yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;new Socket("wss://example.test/resume-dense");yield 1})()})();const Socket=globalThis.WebSocket;',
     ["wss://example.test/resume-dense"],

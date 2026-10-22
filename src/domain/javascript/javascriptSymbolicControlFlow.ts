@@ -91,6 +91,14 @@ export const syntaxUnconditionalOperands = (
       (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
     )
       return [node.right, node.left];
+    // The target reference evaluates its base/key without reading the value.
+    // Its PutValue failure occurs only after the RHS has completed.
+    if (node.operator === "=" && t.isMemberExpression(node.left))
+      return [
+        node.left.object,
+        ...(node.left.computed ? [node.left.property] : []),
+        node.right,
+      ];
     // Only logical assignments can short-circuit the RHS. Non-logical
     // compound operators read the left value, then always evaluate the RHS.
     return ["&&=", "||=", "??="].includes(node.operator)
@@ -255,6 +263,16 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
       : [node.callee, ...node.arguments];
     return syntaxReachablePrefix(node, operands);
   }
+  if (
+    t.isAssignmentExpression(node) &&
+    node.operator === "=" &&
+    t.isMemberExpression(node.left)
+  )
+    return syntaxReachablePrefix(node, [
+      node.left.object,
+      ...(node.left.computed ? [node.left.property] : []),
+      node.right,
+    ]);
   if (t.isAssignmentExpression(node))
     return node.operator === "=" &&
       (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
@@ -1033,6 +1051,12 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
       t.isThrowStatement(node) ||
       (t.isWithStatement(node) &&
         syntaxWithObjectCoercion(node.object) === "failed") ||
+      (t.isAssignmentExpression(node, { operator: "=" }) &&
+        t.isMemberExpression(node.left) &&
+        (t.isNullLiteral(syntaxExactResultNode(node.left.object)) ||
+          t.isUnaryExpression(syntaxExactResultNode(node.left.object), {
+            operator: "void",
+          }))) ||
       javaScriptUnaryAlwaysThrows(node) ||
       syntaxCallOnPrimitiveAlwaysFails(node) ||
       ((t.isNullLiteral(object) ||

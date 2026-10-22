@@ -12,6 +12,112 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "review32-0.mjs",
+    source:
+      '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-null")}})()){null.x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-assignment-null",
+  },
+  {
+    file: "review32-1.mjs",
+    source:
+      '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-void")}})()){(void 0).x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-assignment-void",
+  },
+  {
+    file: "review32-2.mjs",
+    source:
+      '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-computed")}})()){null["x"]=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-assignment-computed",
+  },
+  {
+    file: "review32-3.mjs",
+    source:
+      '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-sequence")}})()){(0,null).x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-assignment-sequence",
+  },
+  {
+    file: "review32-4.mjs",
+    source:
+      '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-compound")}})()){null.x+=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32-5.mjs",
+    source:
+      '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-throwing-key")}})()){null[null.x]=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32-6.mjs",
+    source:
+      'export {};const options={with(){}};options.with.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-number");',
+  },
+  {
+    file: "review32-7.mjs",
+    source:
+      'export {};const options={with(){}};const attrs=options.with;attrs.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-method-alias");',
+  },
+  {
+    file: "review32-8.mjs",
+    source:
+      'export {};const options={with(){}};mutate(options.with);const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-escaped");',
+  },
+  {
+    file: "review32-9.mjs",
+    source:
+      'export {};const options={with(){}};const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-unchanged");',
+    endpoint: "wss://example.test/review-import-unchanged",
+  },
+  {
+    file: "review32-10.mjs",
+    source:
+      'export {};const options={with(){}};const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-later-write");options.with.type=1;',
+    endpoint: "wss://example.test/review-import-later-write",
+  },
+  {
+    file: "review32-11.mjs",
+    source:
+      'export {};const attrs=function(){};const options={with:attrs};attrs.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-function-value");',
+  },
+  {
+    file: "review32-12.mjs",
+    source:
+      'export {};const options={with(){},other:{}};options.other.type=1;const {WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-import-unrelated");',
+    endpoint: "wss://example.test/review-import-unrelated",
+  },
+  {
+    file: "review32-13.mjs",
+    source:
+      '(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-object");yield 2})()}catch{}const u={}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32-14.mjs",
+    source:
+      '(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-number");yield 2})()}catch{}const u=1})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32-15.mjs",
+    source:
+      '(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-function");yield 2})()}catch{}const u=function(){}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32-16.mjs",
+    source:
+      'const u={};(async()=>{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-initialized");yield 2})()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-yield-initialized",
+  },
+  {
+    file: "review32-17.mjs",
+    source:
+      '(async(u)=>{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/review-yield-parameter");yield 2})()})({});const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-yield-parameter",
+  },
+  {
+    file: "review32-18.mjs",
+    source:
+      '(async()=>{try{const[a=await 0,b,c]=(function*(){try{yield;yield u;yield 2}finally{new Socket("wss://example.test/review-yield-earlier-cleanup")}})()}catch{}const u={};})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-yield-earlier-cleanup",
+  },
+
+  {
     file: "resume-alias-0.js",
     source:
       'const u=undefined;(async()=>{const[a,b=await 0,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-default");yield 2})()})();const Socket=globalThis.WebSocket;',
