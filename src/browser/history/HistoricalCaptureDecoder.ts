@@ -1,7 +1,13 @@
 import {
+  decodeCaptureProtobuf,
+  prepareCaptureProtobuf,
+} from "./protobuf/ProtobufCapture.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
+import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
   captureMemoryFailure,
+  withCaptureReaderCleanup,
 } from "./CaptureFailures.js";
 import {
   NODE_CAPTURE_HEAP_ENFORCED,
@@ -17,7 +23,6 @@ import { z } from "zod";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
@@ -29,6 +34,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -36,6 +42,7 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
+  selectedWebNetworkCaptureTimeoutMs,
   webNetworkCapturePayloadSchema,
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
@@ -104,7 +111,7 @@ export class HistoricalCaptureDecoder {
       );
       return err(
         redactExplicitFailure(
-          this.withReaderCleanup(error, cause),
+          withCaptureReaderCleanup(error, cause),
           input.sensitive_values,
         ),
       );
@@ -118,6 +125,7 @@ export class HistoricalCaptureDecoder {
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
+    let encodedReplyBytes = 0;
     try {
       const adapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
@@ -168,7 +176,9 @@ export class HistoricalCaptureDecoder {
           hostEnvironment: environment,
         },
         {
-          timeoutMs: WEB_NETWORK_CAPTURE_LIMITS.timeoutMs,
+          timeoutMs: selectedWebNetworkCaptureTimeoutMs(
+            input.capture_timeout_ms,
+          ),
           diagnosticBytes: 1024 * 1024,
         },
         options?.signal === undefined ? {} : { signal: options.signal },
@@ -186,6 +196,7 @@ export class HistoricalCaptureDecoder {
           undefined,
           this.#resources,
         );
+        encodedReplyBytes = replyFile.bytes.length;
         reply = replySchema.parse(JSON.parse(replyFile.bytes.toString("utf8")));
       } catch (cause: unknown) {
         if (cause instanceof ArtifactReaderFailure) throw cause;
@@ -277,7 +288,7 @@ export class HistoricalCaptureDecoder {
           "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
           "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
           "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          `A 32 MiB input, 96 MiB reply and 64-level nesting budget bound complete evidence. ${nodeMemoryLimitation()}; mitmproxy decoding uses a 768 MiB Linux address-space limit. Each owned command has a 30-second deadline with independent cleanup.`,
+          `Complete evidence is bounded by a ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget, a ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}-byte reply budget, and a ${String(WEB_NETWORK_CAPTURE_LIMITS.depth)}-level nesting cap. Those have no runtime override. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation()}; mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
         ],
       };
       if (input.format === "qlog") {
@@ -295,11 +306,58 @@ export class HistoricalCaptureDecoder {
           );
         result = ok({ ...reply.value, ...common, format: input.format });
       }
+      if (result.ok) {
+        let safePartialSource = false;
+        try {
+          const prepared = await prepareCaptureProtobuf(
+            result.value,
+            input,
+            options?.signal,
+          );
+          safePartialSource = true;
+          await decodeCaptureProtobuf(
+            result.value,
+            input,
+            this.#resources,
+            prepared,
+            options?.signal,
+            encodedReplyBytes + Buffer.byteLength(JSON.stringify(common)) + 16,
+          );
+        } catch (cause) {
+          const error =
+            cause instanceof CaptureFormatError && cause.reason === "limit"
+              ? new AnalysisResourceConstraintError(
+                  OPERATION,
+                  "capacity",
+                  cause.message,
+                  {
+                    maximum_encoded_capture_bytes:
+                      WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+                  },
+                  {
+                    retryable: false,
+                    remediationAction:
+                      "Select smaller records, or inspect the retained original source bytes.",
+                  },
+                )
+              : cause instanceof CaptureFormatError
+                ? new AnalysisInputError(OPERATION, undefined, [
+                    {
+                      path: ["protobuf"],
+                      reason: "invalid_format",
+                      message: cause.message,
+                    },
+                  ])
+                : historicalCaptureFailure(input, cause, phase, options);
+          if (safePartialSource) error.retainPartialObservation(result.value);
+          throw error;
+        }
+      }
     } catch (cause: unknown) {
       const error = historicalCaptureFailure(input, cause, phase, options);
       result = err(
         redactExplicitFailure(
-          this.withReaderCleanup(error, cause),
+          withCaptureReaderCleanup(error, cause),
           input.sensitive_values,
         ),
       );
@@ -357,41 +415,6 @@ export class HistoricalCaptureDecoder {
     if (!result.ok && completedCapture !== undefined)
       result.error.retainPartialObservation(completedCapture);
     return result;
-  }
-
-  private withReaderCleanup(
-    primary: AnalysisError,
-    cause: unknown,
-  ): AnalysisError {
-    if (
-      !(cause instanceof ArtifactReaderFailure) ||
-      cause.cleanup === undefined
-    )
-      return primary;
-    if (cause.reason === "unavailable") {
-      const cleanup = new ProviderCleanupError(
-        "web-network-capture",
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { operation: OPERATION, cause },
-      );
-      bindArtifactFileCleanup(cause, cleanup);
-      return cleanup;
-    }
-    const cleanup = new ProviderCleanupError(
-      "web-network-capture",
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { operation: OPERATION, cause },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
-    const composed = analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      OPERATION,
-    ).bindCleanupDependencies([primary, cleanup]);
-    bindArtifactFileCleanup(cause, composed);
-    return composed;
   }
 }
 
