@@ -91,32 +91,39 @@ export const createSystemDoctorHost = (
       resourceScope,
       inspectionSignal,
     ) => {
-      if (analysisProvider === "binary-ninja") {
-        const path = registrationEnvironment.REA_BINARY_NINJA_MCP_CONFIG;
-        if (path === undefined) return ok(undefined);
-        const registration = await readBinaryNinjaRegistration(
+      if (
+        analysisProvider !== "ida" &&
+        analysisProvider !== "binary-ninja" &&
+        analysisProvider !== "auto"
+      )
+        return ok(undefined);
+      const providers = {
+        ida: { setting: "REA_IDA_MCP_CONFIG", read: readRegistration },
+        "binary-ninja": {
+          setting: "REA_BINARY_NINJA_MCP_CONFIG",
+          read: readBinaryNinjaRegistration,
+        },
+      } as const;
+      const candidates =
+        analysisProvider === "auto"
+          ? [providers.ida, providers["binary-ninja"]]
+          : [providers[analysisProvider]];
+      let budget: number | undefined;
+      for (const provider of candidates) {
+        const path = registrationEnvironment[provider.setting];
+        if (path === undefined) continue;
+        const registration = await provider.read(
           path,
           resourceScope,
           inspectionSignal,
         );
-        return registration.ok
-          ? ok(registration.value.timeoutMs)
-          : registration;
+        if (registration.ok)
+          budget = Math.max(budget ?? 0, registration.value.timeoutMs);
+        // Invalid registrations cannot be selected automatically. Explicit
+        // selection still reports the parser-owned error.
+        else if (analysisProvider !== "auto") return registration;
       }
-      if (analysisProvider !== "ida" && analysisProvider !== "auto")
-        return ok(undefined);
-      const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
-      if (path === undefined) return ok(undefined);
-      const registration = await readRegistration(
-        path,
-        resourceScope,
-        inspectionSignal,
-      );
-      if (registration.ok) return ok(registration.value.timeoutMs);
-      // An invalid IDA registration cannot be selected automatically. Keep it
-      // out of recommendations for another available provider, but surface the
-      // parser-owned error when IDA itself was explicitly selected.
-      return analysisProvider === "ida" ? registration : ok(undefined);
+      return ok(budget);
     },
     providerInspections: async (resourceScope, inspectionSignal) => [
       await inspectSystemGhidraProvider(

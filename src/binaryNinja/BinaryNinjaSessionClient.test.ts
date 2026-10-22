@@ -5,6 +5,7 @@ import {
   RecordingBinaryNinjaMcp,
 } from "../../tests/fixtures/binaryNinjaMcp.js";
 import {
+  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
@@ -65,7 +66,7 @@ describe("Binary Ninja target binding", () => {
       producer.calls.filter(
         ({ name, args }) => name === "bn_memory_read" && args.address === "0x0",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(producer.active).toBe("view_1");
   });
 
@@ -82,6 +83,91 @@ describe("Binary Ninja target binding", () => {
     // The shared selection is never left on the Raw view REA chose for hashing.
     expect(producer.active).toBe("view_1");
   });
+
+  it("rejects bytes patched after the first successful request", async () => {
+    const { client, producer } = await fixture();
+    await value(client, "list_procedures");
+    producer.rawBytes = Buffer.from(producer.rawBytes).fill(0, 0, 4);
+    const callsBefore = producer.calls.length;
+    const result = await client.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.diagnostics).toMatchObject({
+        reason: "target_digest_mismatch",
+      });
+    expect(
+      producer.calls.slice(callsBefore).map(({ name }) => name),
+    ).not.toContain("bn_function_list");
+    expect(producer.active).toBe("view_1");
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("rejects bytes patched during a request and retains only partial evidence", async () => {
+    const { client, producer } = await fixture();
+    producer.beforeCall = (name) => {
+      if (name === "bn_function_list")
+        producer.rawBytes = Buffer.from(producer.rawBytes).fill(0, 0, 4);
+    };
+    const result = await client.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.diagnostics).toMatchObject({
+        reason: "target_digest_mismatch",
+      });
+      expect(result.error.partialObservation).toMatchObject({
+        normalized_result: { target_binding: { status: "not_verified" } },
+      });
+    }
+    expect(producer.active).toBe("view_1");
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("restores the analysis view when cancellation arrives with the final Raw read", async () => {
+    const { client, producer } = await fixture();
+    await value(client, "list_procedures");
+    const controller = new AbortController();
+    producer.beforeCall = (name) => {
+      if (name === "bn_memory_read") controller.abort("cancel identity check");
+    };
+    const result = await client.execute(
+      "list_procedures",
+      {},
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(producer.active).toBe("view_1");
+    expect((await client.close()).ok).toBe(true);
+  });
+});
+
+describe("Binary Ninja startup and lifecycle", () => {
+  it.each(["stalled", "changing total"])(
+    "rejects %s startup pages and allows cleanup",
+    async (mode) => {
+      const { client, producer } = await fixture();
+      producer.pageSize = 1;
+      let pages = 0;
+      producer.beforeCall = (name) => {
+        if (name !== "bn_binary_view_list") return;
+        pages++;
+        if (pages > 2) throw new Error("Fixture stopped a repeated page");
+        if (pages === 2) {
+          if (mode === "stalled") producer.pageSize = 0;
+          else producer.views.pop();
+        }
+      };
+      const result = await client.execute("list_procedures", {});
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error.message).toContain(
+          mode === "stalled" ? "did not advance" : "changed its total",
+        );
+      expect(pages).toBe(2);
+      expect((await client.close()).ok).toBe(true);
+      expect(producer.closes).toBe(1);
+    },
+  );
 
   it("names the target when it is not open and retries after it opens", async () => {
     const { client, producer } = await fixture();

@@ -20,6 +20,7 @@ import {
   type BinaryNinjaMcpConnection,
   type BinaryNinjaToolReply,
 } from "./BinaryNinjaMcpConnection.js";
+import { drainBinaryNinjaPages } from "./BinaryNinjaPaging.js";
 import {
   BINARY_NINJA_LIMITATIONS,
   BINARY_NINJA_XREF_LIMITATION,
@@ -29,7 +30,6 @@ import {
   BINARY_NINJA_COLUMNS,
   binaryNinjaAddressSchema,
   binaryNinjaMemoryReadSchema,
-  binaryNinjaPageSchema,
   parseBinaryNinjaCodeBlock,
   parseBinaryNinjaDocument,
   parseBinaryNinjaFunctionReferences,
@@ -53,8 +53,6 @@ export interface BinaryNinjaFunction {
   readonly name: string;
 }
 
-/** The largest page each Binary Ninja list or function-text tool accepts. */
-const PAGE_LIMIT = 1000;
 /** The largest byte span one `bn_memory_read` call accepts. */
 export const BINARY_NINJA_MEMORY_READ_LIMIT = 65_536;
 /** The largest string preview `bn_string_list` renders. */
@@ -155,32 +153,11 @@ export class BinaryNinjaOperationRunner {
     args: Readonly<Record<string, JsonValue>>,
     consume: (document: BinaryNinjaDocument, page: BinaryNinjaPage) => void,
   ): Promise<void> {
-    let offset = 0;
-    let total: number | undefined;
-    for (;;) {
-      const document = await this.document(tool, {
-        ...args,
-        offset,
-        limit: PAGE_LIMIT,
-      });
-      const page = binaryNinjaPageSchema.parse(document.metadata);
-      if (page.offset !== offset)
-        throw new AnalysisProtocolError(
-          `Binary Ninja ${tool} answered offset ${String(page.offset)} for a request at ${String(offset)}.`,
-        );
-      if (total !== undefined && page.total !== total)
-        throw new AnalysisProtocolError(
-          `Binary Ninja ${tool} changed its total while paging; retry after analysis settles.`,
-        );
-      total = page.total;
-      consume(document, page);
-      if (page.nextOffset === null) return;
-      if (page.nextOffset <= offset)
-        throw new AnalysisProtocolError(
-          `Binary Ninja ${tool} pagination did not advance.`,
-        );
-      offset = page.nextOffset;
-    }
+    await drainBinaryNinjaPages(
+      tool,
+      (offset, limit) => this.document(tool, { ...args, offset, limit }),
+      consume,
+    );
   }
 
   private async table(

@@ -32,6 +32,7 @@ import {
   BINARY_NINJA_MEMORY_READ_LIMIT,
   BinaryNinjaOperationRunner,
 } from "./BinaryNinjaOperationRunner.js";
+import { drainBinaryNinjaPages } from "./BinaryNinjaPaging.js";
 import {
   BINARY_NINJA_LIMITATIONS,
   BINARY_NINJA_OPERATIONS,
@@ -43,7 +44,6 @@ import {
   binaryNinjaActiveViewSchema,
   binaryNinjaAnalysisStatusSchema,
   binaryNinjaMemoryReadSchema,
-  binaryNinjaPageSchema,
   binaryNinjaSetActiveSchema,
   parseBinaryNinjaDocument,
   parseBinaryNinjaTable,
@@ -376,24 +376,26 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     signal?: AbortSignal,
   ): Promise<Record<string, string>[]> {
     const rows: Record<string, string>[] = [];
-    let offset = 0;
-    for (;;) {
-      const reply = await this.#call(tool, { offset, limit: 1000 }, signal);
-      const document = parseBinaryNinjaDocument(reply.text ?? "", tool);
-      const page = binaryNinjaPageSchema.parse(document.metadata);
-      const pageRows = parseBinaryNinjaTable(
-        document.body,
-        BINARY_NINJA_COLUMNS[tool],
-        tool,
-      );
-      if (page.offset !== offset || pageRows.length !== page.count)
-        throw new AnalysisProtocolError(
-          `Binary Ninja ${tool} returned an inconsistent page.`,
+    await drainBinaryNinjaPages(
+      tool,
+      async (offset, limit) => {
+        const reply = await this.#call(tool, { offset, limit }, signal);
+        return parseBinaryNinjaDocument(reply.text ?? "", tool);
+      },
+      (document, page) => {
+        const pageRows = parseBinaryNinjaTable(
+          document.body,
+          BINARY_NINJA_COLUMNS[tool],
+          tool,
         );
-      rows.push(...pageRows);
-      if (page.nextOffset === null) return rows;
-      offset = page.nextOffset;
-    }
+        if (pageRows.length !== page.count)
+          throw new AnalysisProtocolError(
+            `Binary Ninja ${tool} returned an inconsistent page.`,
+          );
+        rows.push(...pageRows);
+      },
+    );
+    return rows;
   }
 
   async #setActive(handle: string, signal?: AbortSignal) {
@@ -439,7 +441,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     return items[0] as Record<string, string>;
   }
 
-  /** Bind the already-open GUI file whose Raw bytes hash to the admitted target. */
+  /** Locate the already-open GUI file; selection verifies its Raw bytes before use. */
   async #initialize(signal?: AbortSignal): Promise<void> {
     const tools = new Set(await this.connection.connect(signal));
     const missing = BINARY_NINJA_REQUIRED_TOOLS.filter(
@@ -478,40 +480,6 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     this.#previousActiveView = active.binaryView?.handle ?? null;
     const rawHandle = raw.binaryView ?? "";
     const analysisHandle = analysis[0]?.binaryView ?? "";
-    let digest: string;
-    try {
-      const rawView = (await this.#setActive(rawHandle, signal)).binaryView;
-      digest = await this.#rawDigest(rawView, signal);
-    } catch (cause: unknown) {
-      // Never leave the shared selection on the Raw view REA chose for hashing.
-      await this.#setActive(this.#previousActiveView ?? analysisHandle).catch(
-        () => undefined,
-      );
-      throw cause;
-    }
-    this.#lifecycle.push({
-      open_item: item.openItem ?? "",
-      raw_view: rawHandle,
-      sha256: digest,
-    });
-    if (digest !== this.target.sha256.toLowerCase()) {
-      await this.#setActive(this.#previousActiveView ?? analysisHandle).catch(
-        () => undefined,
-      );
-      throw new ProviderAdapterError(
-        BINARY_NINJA_PROVIDER_IDENTITY.id,
-        "initialize",
-        {
-          userMessage: `The bytes Binary Ninja loaded for ${this.target.path} do not match the selected target. Reopen the current file in Binary Ninja, then retry.`,
-          diagnostics: {
-            reason: "target_digest_mismatch",
-            expected_sha256: this.target.sha256.toLowerCase(),
-            observed_sha256: digest,
-            recovery: RECOVERY,
-          },
-        },
-      );
-    }
     const selected = await this.#setActive(analysisHandle, signal);
     this.#binding = {
       openItem: item.openItem ?? "",
@@ -519,6 +487,41 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
       analysis: selected.binaryView,
       raw: rawHandle,
     };
+    this.#lifecycle.push({
+      open_item: item.openItem ?? "",
+      raw_view: rawHandle,
+    });
+  }
+
+  /** Rehash the live Raw bytes and restore the analysis view, including after failure. */
+  async #verifyTargetBytes(
+    rawHandle: string,
+    analysisHandle: string,
+    signal?: AbortSignal,
+  ) {
+    try {
+      const rawView = (await this.#setActive(rawHandle, signal)).binaryView;
+      const digest = await this.#rawDigest(rawView, signal);
+      if (digest !== this.target.sha256.toLowerCase())
+        throw new ProviderAdapterError(
+          BINARY_NINJA_PROVIDER_IDENTITY.id,
+          "verify_target",
+          {
+            userMessage: `The bytes Binary Ninja loaded for ${this.target.path} do not match the selected target. Reopen the current file in Binary Ninja, then retry.`,
+            diagnostics: {
+              reason: "target_digest_mismatch",
+              expected_sha256: this.target.sha256.toLowerCase(),
+              observed_sha256: digest,
+              recovery: RECOVERY,
+            },
+          },
+        );
+      return await this.#setActive(analysisHandle, signal);
+    } catch (cause: unknown) {
+      // Restore even if cancellation arrives after the final Raw read.
+      await this.#setActive(analysisHandle).catch(() => undefined);
+      throw cause;
+    }
   }
 
   /** Hash the Raw view in bounded reads; its bytes are the file Binary Ninja loaded. */
@@ -567,7 +570,8 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
   /** Re-select the bound analysis view and require settled analysis before a request. */
   async #select(options?: ExecutionOptions): Promise<JsonValue> {
     const binding = this.#requireBinding();
-    const selected = await this.#setActive(
+    const selected = await this.#verifyTargetBytes(
+      binding.raw,
       binding.analysis.handle,
       options?.signal,
     );
@@ -593,7 +597,14 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
         "The Binary Ninja active view was cleared during the request; retry.",
       );
     this.#requireSameView(active.binaryView);
-    return jsonValueSchema.parse(active.binaryView);
+    const binding = this.#requireBinding();
+    const selected = await this.#verifyTargetBytes(
+      binding.raw,
+      binding.analysis.handle,
+      options?.signal,
+    );
+    this.#requireSameView(selected.binaryView);
+    return jsonValueSchema.parse(selected.binaryView);
   }
 
   #requireSameView(view: BinaryNinjaView): void {

@@ -63,7 +63,7 @@ To use it from an agent, add the registration path to REA's own MCP entry, keepi
 
 ## Target binding
 
-Open the **original input** in both Binary Ninja and REA, not a `.bndb` database. REA finds the one open file whose path equals the selected target, then reads that file's Raw view through `bn_memory_read` in 64 KiB pieces and requires its SHA-256 to match the target. A file opened twice, an absent file, or different bytes fail with recovery guidance; open the file and retry in the same session. Inputs larger than `maxInputBytes` are refused rather than partially verified.
+Open the **original input** in both Binary Ninja and REA, not a `.bndb` database. REA finds the one open file whose path equals the selected target, then reads that file's Raw view through `bn_memory_read` in 64 KiB pieces and requires its SHA-256 to match the target. It repeats this check before each request and after reading analysis results, so edits between requests or during a request cannot reuse the original digest. Each check reads the whole Raw view; larger inputs require more MCP calls. The GUI does not provide an atomic snapshot, so concurrent edits that are undone between checks remain unobservable. A file opened twice, an absent file, or different bytes fail with recovery guidance; open the file and retry in the same session. Inputs larger than `maxInputBytes` are refused rather than partially verified.
 
 REA admits PE, ELF, and thin Mach-O executables. Universal Mach-O files are refused because the Raw view holds the whole file; extract a slice with `lipo -thin` and open it in both tools. Managed .NET assemblies belong to REA's managed-code tools.
 
