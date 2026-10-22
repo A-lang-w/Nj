@@ -122,6 +122,7 @@ export const SCOPES = {
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
     "tests/process-global/portableCommand.test.ts",
+    "tests/process-global/portableInventory.test.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
