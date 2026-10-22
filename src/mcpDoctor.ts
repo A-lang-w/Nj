@@ -9,6 +9,7 @@ import { createCatalogIdentity } from "./catalogIdentity.js";
 import {
   compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
+  resolveMcpInputSchemaProfile,
 } from "./config/mcpInputSchemaProfile.js";
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
@@ -19,6 +20,7 @@ import {
   MCP_STARTUP_POLICY,
   mcpDoctorDeadlineRecovery,
 } from "./mcpStartupPolicy.js";
+import { measureMcpDoctorCatalog } from "./mcpDoctorCatalog.js";
 
 const OUTPUT_FORMATS = ["toon", "json", "yaml", "md", "jsonl"] as const;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -83,7 +85,7 @@ interface McpDoctorCheck {
 
 /** Diagnose the actual production stdio adapter with one startup-bounded SDK session. */
 export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
-  const catalog = catalogIdentityForEnvironment(options.environment);
+  const catalog = catalogSelectionForEnvironment(options.environment);
   const budgetMs = options.deadlineMs ?? MCP_STARTUP_POLICY.doctorDeadlineMs;
   const deadline = performance.now() + budgetMs;
   const controller = new AbortController();
@@ -121,6 +123,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       adapter: "production-stdio" as const,
       server: null,
       inventory: null,
+      catalog: null,
       identity: null,
       request_flow: { tool: "binary_session", ok: false },
       checks: [
@@ -177,6 +180,7 @@ type ProductionMcpDoctorResult =
       readonly adapter: "production-stdio";
       readonly server: null;
       readonly inventory: null;
+      readonly catalog: null;
       readonly identity: null;
       readonly request_flow: {
         readonly tool: "binary_session";
@@ -199,7 +203,7 @@ const inspectProductionMcpSession = async (
   client: Client,
   deadline: number,
   signal: AbortSignal,
-  catalog: ReturnType<typeof createCatalogIdentity>,
+  catalog: ReturnType<typeof catalogSelectionForEnvironment>,
   budgetMs: number,
 ) => {
   const request = requestOptions(deadline, signal);
@@ -253,7 +257,8 @@ const inspectProductionMcpSession = async (
       name: "server-identity",
       ok:
         observedIdentity.packageVersion === PRODUCT_IDENTITY.packageVersion &&
-        observedIdentity.catalogDigest === catalog.digests.combined_sha256,
+        observedIdentity.catalogDigest ===
+          catalog.identity.digests.combined_sha256,
       detail: `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`,
     },
     {
@@ -273,10 +278,11 @@ const inspectProductionMcpSession = async (
       protocol_version: protocolVersion ?? null,
     },
     inventory,
+    catalog: measureMcpDoctorCatalog(tools, catalog.profiles),
     identity: {
       expected_package_version: PRODUCT_IDENTITY.packageVersion,
       observed_package_version: observedIdentity.packageVersion,
-      expected_catalog_digest: catalog.digests.combined_sha256,
+      expected_catalog_digest: catalog.identity.digests.combined_sha256,
       observed_catalog_digest: observedIdentity.catalogDigest,
     },
     request_flow: {
@@ -497,21 +503,29 @@ const targetFreeEnvironment = (
   return result;
 };
 
-const catalogIdentityForEnvironment = (
+const catalogSelectionForEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
-): ReturnType<typeof createCatalogIdentity> => {
+) => {
   const inputProfile = parseMcpInputSchemaProfile(
     environment.REA_MCP_INPUT_SCHEMA_PROFILE,
   );
   const outputProfile = parseMcpOutputSchemaProfile(
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
   );
-  return createCatalogIdentity(
-    compactPresentationForMcpInputSchemaProfile(
-      inputProfile.ok ? inputProfile.value : undefined,
+  return {
+    profiles: {
+      input_schema: inputProfile.ok
+        ? resolveMcpInputSchemaProfile(inputProfile.value)
+        : null,
+      output_schema: outputProfile.ok ? (outputProfile.value ?? "full") : null,
+    },
+    identity: createCatalogIdentity(
+      compactPresentationForMcpInputSchemaProfile(
+        inputProfile.ok ? inputProfile.value : undefined,
+      ),
+      outputProfile.ok ? (outputProfile.value ?? "full") : "full",
     ),
-    outputProfile.ok ? (outputProfile.value ?? "full") : "full",
-  );
+  };
 };
 
 const captureStderr = () => {
