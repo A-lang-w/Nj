@@ -246,9 +246,11 @@ describe("Electron fuse reader resource boundaries", () => {
   });
 });
 
-describe("Electron fuse path and container admission", () => {
+describe("Electron fuse file reads", () => {
   it("completes short positional reads before interpreting the image", async () => {
-    const root = await createTestTempDirectory("rea-electron-fuses-short-read-");
+    const root = await createTestTempDirectory(
+      "rea-electron-fuses-short-read-",
+    );
     const image = thinFuseImage(OBSIDIAN_FUSE_BYTES);
     const path = join(root, "Electron Framework");
     await writeFile(path, image.bytes);
@@ -302,7 +304,9 @@ describe("Electron fuse path and container admission", () => {
       reads.mockRestore();
     }
   });
+});
 
+describe("Electron fuse path and container admission", () => {
   it("finds a sentinel that crosses a read window", async () => {
     const root = await createTestTempDirectory("rea-electron-fuses-window-");
     const image = thinFuseImage(OBSIDIAN_FUSE_BYTES);
