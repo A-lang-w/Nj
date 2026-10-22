@@ -70,6 +70,48 @@ export const readElfFixedHeader = (
   });
 };
 
+/**
+ * Check that the program header table the ELF header declares lies inside the
+ * file. A table that runs past the end of the file cannot be read by any
+ * loader, so the image is truncated or corrupt rather than merely unusual.
+ *
+ * `bytes` may be a bounded prefix that holds the fixed header; the declared
+ * extent is compared with `totalBytes`, the containing file size. An
+ * `e_phnum` of `PN_XNUM` (0xffff) keeps the real count in the first section
+ * header, which a header prefix does not show, so that case is not judged.
+ */
+export const checkElfProgramHeaderTable = (
+  bytes: Buffer,
+  header: Pick<ElfFixedHeader, "elfClass" | "byteOrder">,
+  totalBytes: number,
+): Result<null, string> => {
+  const little = header.byteOrder === "little";
+  const readU16 = (offset: number): number =>
+    little ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
+  const wide = header.elfClass === 64;
+  const offset = wide
+    ? little
+      ? bytes.readBigUInt64LE(32)
+      : bytes.readBigUInt64BE(32)
+    : BigInt(little ? bytes.readUInt32LE(28) : bytes.readUInt32BE(28));
+  const entrySize = readU16(wide ? 54 : 42);
+  const count = readU16(wide ? 56 : 44);
+  if (count === 0 || count === 0xffff) return ok(null);
+  // Entries narrower than a program header cannot hold one, whatever extent
+  // their declared width produces.
+  const minimumEntrySize = wide ? 56 : 32;
+  if (entrySize < minimumEntrySize)
+    return err(
+      `invalid ELF program header entry size: the header declares ${entrySize} bytes per entry; an ELF${header.elfClass} program header needs ${minimumEntrySize}`,
+    );
+  const end = offset + BigInt(entrySize) * BigInt(count);
+  if (end > BigInt(totalBytes))
+    return err(
+      `truncated ELF program header table: the header declares ${count} entries of ${entrySize} bytes at offset ${offset}; the file has ${totalBytes}`,
+    );
+  return ok(null);
+};
+
 const elfArchitecture = (
   machine: number,
 ): Exclude<BinaryArchitecture, RawOnlyArchitecture> | undefined => {

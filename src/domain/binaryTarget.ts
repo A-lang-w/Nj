@@ -9,7 +9,10 @@ import type {
   UniversalMachOSlice,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
-import { readElfFixedHeader } from "./elfFixedHeader.js";
+import {
+  checkElfProgramHeaderTable,
+  readElfFixedHeader,
+} from "./elfFixedHeader.js";
 import { observeMzWindowsHeader, parseDosMzHeader } from "./dosMz.js";
 import {
   decodePeMachine,
@@ -300,6 +303,12 @@ const parseElf = (
   const { elfClass, byteOrder, architecture } = fixedHeader.value;
   const little = byteOrder === "little";
   if (architecture === null) return err("unsupported ELF architecture");
+  const programHeaders = checkElfProgramHeaderTable(
+    bytes,
+    fixedHeader.value,
+    fileSize,
+  );
+  if (!programHeaders.ok) return programHeaders;
   if (
     architecture === "mips" ||
     architecture === "riscv" ||
