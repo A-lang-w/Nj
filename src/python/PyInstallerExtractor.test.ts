@@ -165,7 +165,7 @@ const createMockPyInstallerBinary = (): Buffer => {
   return Buffer.concat([bootloaderPrefix, carchiveData, tocEntries, cookie]);
 };
 
-describe("PyInstallerExtractor", () => {
+describe("PyInstallerExtractor - archive parsing", () => {
   it("detects PyInstaller cookie and extracts metadata", () => {
     const mockBinary = createMockPyInstallerBinary();
     expect(isPyInstallerBinary(mockBinary)).toBe(true);
@@ -199,7 +199,9 @@ describe("PyInstallerExtractor", () => {
     expect(archive?.embeddedPyz).toBeDefined();
     expect(archive?.embeddedPyz?.pythonVersion).toBe("3.10");
   });
+});
 
+describe("PyInstallerExtractor - entry extraction and safety limits", () => {
   it("extracts all entries and reconstructs valid .pyc bytecode files", () => {
     const mockBinary = createMockPyInstallerBinary();
     const extracted = extractPyInstallerEntries(mockBinary);
@@ -327,5 +329,39 @@ describe("PyInstallerExtractor", () => {
     const pyz = parsePyzArchive(Buffer.concat([header, table]));
     expect(pyz).not.toBeNull();
     expect(pyz?.modules).toEqual([]);
+  });
+
+  it("charges failed or corrupt inflations against remaining budget", () => {
+    // Construct mock binary with corrupt compressed entry
+    const corruptData = Buffer.from("not_valid_deflate_data");
+    const nameBytes = Buffer.from("corrupt.py\0", "utf8");
+    const structLen = 18 + nameBytes.length;
+    const entry = Buffer.alloc(structLen);
+    entry.writeUInt32BE(structLen, 0);
+    entry.writeUInt32BE(0, 4); // offset 0
+    entry.writeUInt32BE(corruptData.length, 8);
+    entry.writeUInt32BE(100, 12);
+    entry.writeUInt8(1, 16); // compressionFlag = 1 (zlib)
+    entry.writeUInt8("s".charCodeAt(0), 17);
+    nameBytes.copy(entry, 18);
+
+    const carchiveData = corruptData;
+    const tocEntries = entry;
+    const tocOffset = carchiveData.length;
+    const tocLength = tocEntries.length;
+    const pkgLength = carchiveData.length + tocLength + 88;
+
+    const cookie = Buffer.alloc(88);
+    PYINSTALLER_MAGIC.copy(cookie, 0);
+    cookie.writeUInt32BE(pkgLength, 8);
+    cookie.writeUInt32BE(tocOffset, 12);
+    cookie.writeUInt32BE(tocLength, 16);
+    cookie.writeInt32BE(310, 20);
+
+    const mockBinary = Buffer.concat([carchiveData, tocEntries, cookie]);
+    const extracted = extractPyInstallerEntries(mockBinary);
+    expect(extracted).toHaveLength(1);
+    expect(extracted[0]!.decompressed).toBe(false);
+    expect(extracted[0]!.limitations[0]).toMatch(/Decompression error/);
   });
 });

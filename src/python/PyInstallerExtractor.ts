@@ -285,6 +285,13 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
 
 export const MAX_PER_ENTRY_BYTES = 64 * 1024 * 1024; // 64 MiB per entry limit
 
+const isExpansionLimitError = (error?: string): boolean => {
+  if (!error) return false;
+  return /budget|maxoutputlength|buffer too large|err_buffer_too_large/i.test(
+    error,
+  );
+};
+
 const inflatePayload = (
   raw: Buffer,
   flag: number,
@@ -315,10 +322,17 @@ const inflatePayload = (
       decompressed: true,
     };
   } catch (err) {
+    const isLimit =
+      (err as { code?: string })?.code === "ERR_BUFFER_TOO_LARGE" ||
+      (err instanceof Error &&
+        /maxOutputLength|output budget/i.test(err.message));
+    const prefix = isLimit
+      ? "Decompression error: expansion budget exceeded: "
+      : "Decompression error: ";
     return {
       data: raw,
       decompressed: false,
-      error: `Decompression error: ${err instanceof Error ? err.message : String(err)}`,
+      error: `${prefix}${err instanceof Error ? err.message : String(err)}`,
     };
   }
 };
@@ -495,6 +509,10 @@ export const extractPyInstallerEntries = (
     const limitations = inflated.error ? [inflated.error] : [];
     if (inflated.decompressed) {
       remainingBudget -= inflated.data.length;
+    } else if (isExpansionLimitError(inflated.error)) {
+      remainingBudget -= entryBudget;
+    } else {
+      remainingBudget -= rawData.length;
     }
 
     if (entry.typeFlag === "z" || entry.name.toLowerCase().endsWith(".pyz")) {
@@ -507,23 +525,29 @@ export const extractPyInstallerEntries = (
         limitations,
       });
 
-      const pyz = parsePyzArchive(inflated.data);
-      const modules = pyz?.modules ?? [];
-      for (const mod of modules) {
-        if (remainingBudget <= 0) break;
-        const modBudget = Math.min(MAX_PER_ENTRY_BYTES, remainingBudget);
-        const extractedMod = extractPyzModule(
-          inflated.data,
-          pyz!.pycMagic,
-          pyz!.pythonVersion,
-          mod,
-          modBudget,
-        );
-        if (extractedMod) {
-          if (extractedMod.decompressed) {
-            remainingBudget -= extractedMod.data.length;
+      if (remainingBudget > 0 && inflated.decompressed) {
+        const pyz = parsePyzArchive(inflated.data);
+        const modules = pyz?.modules ?? [];
+        for (const mod of modules) {
+          if (remainingBudget <= 0) break;
+          const modBudget = Math.min(MAX_PER_ENTRY_BYTES, remainingBudget);
+          const extractedMod = extractPyzModule(
+            inflated.data,
+            pyz!.pycMagic,
+            pyz!.pythonVersion,
+            mod,
+            modBudget,
+          );
+          if (extractedMod) {
+            if (extractedMod.decompressed) {
+              remainingBudget -= extractedMod.data.length;
+            } else if (isExpansionLimitError(extractedMod.limitations[0])) {
+              remainingBudget -= modBudget;
+            } else {
+              remainingBudget -= mod.dataLength;
+            }
+            results.push(extractedMod);
           }
-          results.push(extractedMod);
         }
       }
       continue;

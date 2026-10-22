@@ -55,20 +55,6 @@ const readGzipOriginalFilename = (
   return base.length > 0 ? `${base}.unpacked` : "decompressed_payload";
 };
 
-/** Read decompressed size from the last 4 bytes (ISIZE) of the GZIP container. */
-const readGzipUncompressedSize = async (
-  handle: FileHandle,
-  fileSize: number,
-): Promise<number | null> => {
-  if (fileSize < 8) return null;
-  const tail = Buffer.alloc(4);
-  const readResult = await handle.read(tail, 0, 4, fileSize - 4);
-  if (readResult.bytesRead === 4) {
-    return tail.readUInt32LE(0);
-  }
-  return null;
-};
-
 /** Single-stream decompression reader for GZIP archives. */
 export class GzipArtifactReader implements ArtifactReader {
   readonly format = "gzip" as const;
@@ -108,10 +94,15 @@ export class GzipArtifactReader implements ArtifactReader {
       symlinks: "follow",
       signal,
     });
-    const metadata: Stats = await handle.stat();
     this.handle = handle;
-    this.fileSize = metadata.size;
     this.owner = new OwnedFileHandle(handle);
+    try {
+      const metadata: Stats = await handle.stat();
+      this.fileSize = metadata.size;
+    } catch (cause) {
+      await this.close();
+      throw cause;
+    }
     return { handle: this.handle, size: this.fileSize };
   }
 
@@ -138,12 +129,11 @@ export class GzipArtifactReader implements ArtifactReader {
         prefix.subarray(0, readResult.bytesRead),
         this.path,
       );
-      const uncompressedSize = await readGzipUncompressedSize(handle, size);
 
       this.cachedEntry = {
         path: innerName,
         kind: "file",
-        declaredSize: uncompressedSize,
+        declaredSize: null,
         compressedSize: size,
         executable: true,
         encrypted: false,
