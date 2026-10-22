@@ -1,16 +1,16 @@
 # Static JavaScript route inventory verification
 
 Issue [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime
-`484a72ea1b9621c97adf56dbd87a9bcd2e322602`, tree `610da2e518fdcb3f732392ca22d4fdc4bb55a3b1`,
+`6434b207f2c62f09711ebab48816a3274d07a82f`, tree `def2d3a76cf86e2f3149f70590352541a306a962`,
 integrates main `bd5d189a8f8aeea669bcb93e68af6c046b567939`. Recorded at
-`2026-10-22T04:26:48.167Z`. Subsequent verification-only
+`2026-10-22T04:44:18.431Z`. Subsequent verification-only
 commits change these reports. The [JSON record](javascript-route-inventory-2026-10-21.json)
 pins original inputs, exact commands, profiles, failed controls and historical revisions.
 Current-head GitHub CI and automated review must be checked separately.
-The current integration preserves main-selected analysis environments and ASAR
-admission while retaining route delivery options. The staged-code hook now runs
-lint fixes before formatting, correcting the producing order behind the prior
-CI format failure; the complete local CI static gate passed.
+
+The latest main-selected environment and ASAR admission remain shared by CLI and
+MCP. The staged-code hook runs lint fixes before formatting, resolving the
+producing order behind the earlier CI format failure.
 
 ## Current implementation and executed checks
 
@@ -44,34 +44,40 @@ projects the two publication receipt scalars without cloning complete Evidence.
 The canonical web-bundle state and coordinate owners replace duplicate types.
 The coordinator parser-import boundary remains covered.
 
-**811 source checks and 115 compiled public checks passed**,
-including 178 scanner regressions, actual full/compact SDK profiles, both JSON
+**822 source checks and 115 compiled public checks passed**,
+including 189 scanner regressions, actual full/compact SDK profiles, both JSON
 Schema dialects, source selection/deletion, retained reads, cancellation,
 recovery, real workers and CLI/browser adapters. The current public selection additionally covers ASAR admission, selected
-environment, CLI resource closing and Electron file scope. The previous 153
-startup/publication boundary checks remain pinned to their executed runtime.
+environment, CLI resource closing and Electron file scope; earlier startup/
+publication checks remain pinned to their recorded runtime.
 Selected-path identity runs separately with its original 30-second deadline.
 Typecheck/lint passed; documentation checks are recorded in JSON after generation.
 The main-baseline service-worker deadline correction [#6186](https://github.com/morluto/rea/pull/6186)
 is included; it retains the original stalled-handshake assertions and test guard.
 
+A valid review case exposed overwritten query fields hiding independent route
+initializers: seven corrected regressions failed before the fix, while 182 tests
+passed, including four new effective/uncertain-data controls. Ownership now
+consults the existing cached effective-field reader. A known final slot or method
+excludes discarded references; unknown spreads/computed keys remain conservative.
+Full/compact SDK reads after source deletion and both browser adapters retain
+the independent route. The public SDK assertion requires the exact expected count
+and every expected path. The record preserves failed validation and a corrected
+initial test-harness field name; no invalid harness failure is counted as a bug.
+
 ## Real production inputs and oracle
 
-The full 67-script run below is pinned to runtime `896c682cf`, not repeated as a
-current-runtime performance measurement. Shared parser/route/isolated-analysis/
-view owners are byte-identical; acquisition/process changes have fresh public
-workflow checks and fresh SDK/Chromium source analysis. Every saved script in
-that pinned full-corpus run was rehashed and freshly analyzed
+Every one of the 67 saved production scripts was rehashed and freshly analyzed
 through production isolated workers, with one semantic projection node, 512 MiB
 worker old-space and the existing 15-second source deadline. Application sources
-were read as data. No source facts were reused in that pinned run.
+were read as data. No source facts were reused for this qualification.
 
 | Homepage capture | Scripts |     Bytes | Completed | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | --------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |        28 |                28 |               0 |
-| shadcn-ui        |      38 | 2,465,078 |        37 |                37 |              18 |
+| shadcn-ui        |      38 | 2,465,078 |        36 |                37 |              18 |
 
-The full task cost **202.819 s / 304.649 CPU s / 490,508,288 bytes peak family RSS**. Configured deadlines and partial/unavailable
+The full task cost **208.170 s / 315.773 CPU s / 511,008,768 bytes peak family RSS**. Configured deadlines and partial/unavailable
 facts are explicit. Zero supported rooted Next patterns does not establish zero
 application routes. Lazy/server-only code, reachability and the full application
 route denominator remain unknown.
@@ -88,7 +94,7 @@ Runtime.compileScript/persistScript on a blank local page without running it.
 Actual CLI and official SDK analyze_web_bundle calls passively captured it via
 CDP and returned all 18 patterns, original URL and SHA-256. Source parsing was
 complete, enumeration partial and application coverage unknown. Owned process
-and temporary-profile cleanup succeeded. Cost: **9.650 s / 12.531 CPU s / 2,107,740,160 bytes peak family RSS**.
+and temporary-profile cleanup succeeded. Cost: **9.771 s / 12.611 CPU s / 2,117,480,448 bytes peak family RSS**.
 
 ## Equivalent SDK task costs
 
@@ -99,8 +105,8 @@ Measurements include the instrumentation and use full input advertisements.
 
 | Delivery | Used declarations + all calls/replies, tokenx | Entire catalog + all calls/replies, tokenx | Task resources                                                |
 | -------- | --------------------------------------------: | -----------------------------------------: | ------------------------------------------------------------- |
-| Complete |                                     1,934,472 |                                  3,028,779 | 13.722 s / 18.162 CPU s / 1,639,522,304 bytes peak family RSS |
-| Selected |                                        58,840 |                                  1,153,147 | 12.335 s / 16.332 CPU s / 1,332,797,440 bytes peak family RSS |
+| Complete |                                     1,934,472 |                                  3,028,779 | 14.221 s / 18.791 CPU s / 1,403,056,128 bytes peak family RSS |
+| Selected |                                        58,840 |                                  1,153,147 | 12.407 s / 16.334 CPU s / 1,232,441,344 bytes peak family RSS |
 
 Tokenx counts actual advertised schemas, arguments and full SDK replies, including
 exports and follow-ups; it estimates tokens rather than actual model usage.
