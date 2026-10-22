@@ -103,4 +103,19 @@ describe("MinidumpReader", () => {
     expect(mod?.baseAddress).toBe(0x7ffe00000000n);
     expect(mod?.size).toBe(0x1f0000);
   });
+
+  it("ignores duplicate module list stream entries to prevent allocation exhaustion", () => {
+    const valid = createMockMinidump();
+    // Modify header to report 4 streams instead of 3
+    valid.writeUInt32LE(4, 8);
+    // Add 4th stream in directory pointing to the same ModuleListStream
+    const streamDirRva = 32;
+    valid.writeUInt32LE(4, streamDirRva + 36);
+    valid.writeUInt32LE(120, streamDirRva + 40);
+    valid.writeUInt32LE(160, streamDirRva + 44);
+
+    const report = parseMinidump(valid);
+    expect(report?.modules.length).toBe(1);
+    expect(report?.streamTypes).toEqual([7, 6, 4, 4]);
+  });
 });

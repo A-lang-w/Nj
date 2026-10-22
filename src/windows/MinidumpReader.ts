@@ -183,6 +183,7 @@ export const parseMinidump = (buffer: Buffer): MinidumpReport | null => {
   let systemInfo: MinidumpSystemInfo | undefined;
   let exception: MinidumpException | undefined;
   let modules: MinidumpModule[] = [];
+  let hasParsedModules = false;
 
   for (let i = 0; i < numberOfStreams; i += 1) {
     const entryOffset = streamDirectoryRva + i * 12;
@@ -192,14 +193,15 @@ export const parseMinidump = (buffer: Buffer): MinidumpReport | null => {
 
     streamTypes.push(streamType);
 
-    if (streamType === 7) {
+    if (streamType === 7 && systemInfo === undefined) {
       // SystemInfoStream
       systemInfo = parseSystemInfoStream(buffer, rva, dataSize);
-    } else if (streamType === 6) {
+    } else if (streamType === 6 && exception === undefined) {
       // ExceptionStream
       exception = parseExceptionStream(buffer, rva, dataSize);
-    } else if (streamType === 4) {
+    } else if (streamType === 4 && !hasParsedModules) {
       // ModuleListStream
+      hasParsedModules = true;
       modules = parseModuleListStream(buffer, rva, dataSize);
     }
   }
