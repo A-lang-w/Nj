@@ -1045,6 +1045,15 @@ const syntaxAssignmentReferenceAlwaysThrows = (raw: t.Node): boolean => {
     : syntaxEvaluationAlwaysThrows(target);
 };
 
+/** A simple assignment evaluates its target reference without reading it. */
+const syntaxOperandCannotThrow = (owner: t.Node, operand: t.Node): boolean =>
+  t.isAssignmentExpression(owner, { operator: "=" }) &&
+  owner.left === operand &&
+  t.isMemberExpression(operand)
+    ? syntaxEvaluationCannotThrow(operand.object) &&
+      (!operand.computed || syntaxEvaluationCannotThrow(operand.property))
+    : syntaxEvaluationCannotThrow(operand);
+
 export const syntaxOperandAlwaysThrows = (
   owner: t.Node,
   operand: t.Node,
@@ -1260,7 +1269,8 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
       indexes.set(child, index);
       jumps.push((jumps[index] ?? 0) + Number(syntaxMayExitByJump(child)));
       throwing.push(
-        (throwing[index] ?? 0) + Number(!syntaxEvaluationCannotThrow(child)),
+        (throwing[index] ?? 0) +
+          Number(!syntaxOperandCannotThrow(parent, child)),
       );
     }
     const result = { indexes, throwing, jumps, children };
@@ -1288,7 +1298,12 @@ const createCaughtPrefixBypassProof = (parents: WeakMap<t.Node, t.Node>) => {
     const tailMayThrow = (operand: t.Node): boolean => {
       if (operand === after) return false;
       const selected = path.get(operand);
-      if (selected === undefined) return !syntaxEvaluationCannotThrow(operand);
+      if (selected === undefined) {
+        const parent = parents.get(operand);
+        return !(parent === undefined
+          ? syntaxEvaluationCannotThrow(operand)
+          : syntaxOperandCannotThrow(parent, operand));
+      }
       if (t.isVariableDeclarator(operand) && t.isIdentifier(operand.id))
         return operand.init != null && tailMayThrow(operand.init);
       if (

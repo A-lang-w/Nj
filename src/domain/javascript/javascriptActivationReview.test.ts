@@ -5,6 +5,66 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "object",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-object")})();try{({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "computed",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-computed")})();try{({})["x"]=await pending}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "null",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-null")})();try{null.x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "undefined",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-undefined")})();try{(void 0).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "getter",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-getter")})();try{({get x(){throw 0}}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "setter",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-setter")})();try{({set x(v){throw 0}}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "throwing-key",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-throwing-key")})();try{({})[null.x]=await pending}catch{}const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-rhs-throwing-key"],
+  ],
+  [
+    "compound",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-compound")})();try{null.x+=await pending}catch{}const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-rhs-compound"],
+  ],
+  [
+    "prior-failure",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-prior-failure")})();try{null.x;({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-rhs-prior-failure"],
+  ],
+  [
+    "prior-getter",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-prior-getter")})();try{({get x(){throw 0}}).x;({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-rhs-prior-getter"],
+  ],
+  [
+    "ready",
+    'export {};const Socket=globalThis.WebSocket;const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-ready")})();try{({}).x=await pending}catch{}',
+    ["wss://example.test/review-rhs-ready"],
+  ],
+  [
+    "nested",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-nested")})();try{try{({}).x=await pending}finally{}}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
     "class-before",
     'class Value{};(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-before");yield 1})()}catch{}})();const Socket=globalThis.WebSocket;',
     ["wss://example.test/review-class-before"],

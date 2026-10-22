@@ -12,6 +12,71 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "review33-0.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-object")})();try{({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review33-1.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-computed")})();try{({})["x"]=await pending}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review33-2.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-null")})();try{null.x=await pending}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review33-3.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-undefined")})();try{(void 0).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review33-4.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-getter")})();try{({get x(){throw 0}}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review33-5.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-setter")})();try{({set x(v){throw 0}}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review33-6.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-throwing-key")})();try{({})[null.x]=await pending}catch{}const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-rhs-throwing-key",
+  },
+  {
+    file: "review33-7.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-compound")})();try{null.x+=await pending}catch{}const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-rhs-compound",
+  },
+  {
+    file: "review33-8.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-prior-failure")})();try{null.x;({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-rhs-prior-failure",
+  },
+  {
+    file: "review33-9.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-prior-getter")})();try{({get x(){throw 0}}).x;({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-rhs-prior-getter",
+  },
+  {
+    file: "review33-10.mjs",
+    source:
+      'export {};const Socket=globalThis.WebSocket;const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-ready")})();try{({}).x=await pending}catch{}',
+    endpoint: "wss://example.test/review-rhs-ready",
+  },
+  {
+    file: "review33-11.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-nested")})();try{try{({}).x=await pending}finally{}}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
     file: "review32b-0.mjs",
     source:
       'class Value{};(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-before");yield 1})()}catch{}})();const Socket=globalThis.WebSocket;',
