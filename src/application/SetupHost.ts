@@ -22,7 +22,6 @@ import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import {
   installLinuxHopper,
   LinuxHopperTemporaryCleanupOwner,
-  readLinuxDistribution,
   systemLinuxHopperInstallHost,
   type LinuxHopperInstallHost,
 } from "./LinuxHopper.js";
@@ -47,7 +46,7 @@ import {
 } from "./SetupClientConfiguration.js";
 import { failedConfigurationMessage } from "./SetupClients.js";
 import { setupInstallFailure } from "./SetupInstallFailure.js";
-import { RegularFileCleanupFailure } from "./RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   explicitSetupRegistrationEnvironment,
   providerRegistrationEnvironment,
@@ -140,7 +139,11 @@ export const systemSetupHost = (
       ? systemMacHopperInstallHost(homeDirectory, environment)
       : undefined;
   const resources = new ArtifactResourceScope();
-  const linuxHopperHost = systemLinuxHopperInstallHost(environment);
+  const linuxDistribution = () => doctorHost.linuxDistribution();
+  const linuxHopperHost = systemLinuxHopperInstallHost(
+    environment,
+    linuxDistribution,
+  );
   const pendingLinuxHopperCleanup = new LinuxHopperTemporaryCleanupOwner();
   return {
     platform,
@@ -156,7 +159,7 @@ export const systemSetupHost = (
     ...setupRegistration(platform, homeDirectory, environment),
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
-    linuxDistribution: readLinuxDistribution,
+    linuxDistribution,
     close: () =>
       closeSetupResources(resources, macHopperHost, doctorHost, () =>
         closeLinuxHopperInstallHost(linuxHopperHost, pendingLinuxHopperCleanup),

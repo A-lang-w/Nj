@@ -1,8 +1,9 @@
 import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import type { LinuxPackageFamily } from "./HopperReleaseFeed.js";
 import {
   linuxHopperInstallDisclosure,
+  LINUX_HOPPER_SETUP_HOSTS,
   type LinuxDistribution,
-  type LinuxPackageFamily,
 } from "./LinuxHopper.js";
 import type { SkillDestination } from "./SetupSkill.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
@@ -407,13 +408,12 @@ const hopperInstallEligibility = (
       ? { supported: true }
       : {
           supported: false,
-          remediation:
-            "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and Omarchy; configure an existing supported provider instead.",
+          remediation: `Automated Hopper setup requires ${LINUX_HOPPER_SETUP_HOSTS}; configure an existing supported provider instead.`,
         };
   return {
     supported: false,
     remediation:
-      "REA supports Hopper on macOS and selected 64-bit Linux distributions.",
+      "REA supports Hopper on macOS and selected x86_64 Linux distributions.",
   };
 };
 

@@ -6,6 +6,10 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
+import {
+  parseLinuxDistribution,
+  type LinuxDistribution,
+} from "./LinuxHopper.js";
 import type { SetupProgressEvent } from "./SetupTypes.js";
 
 describe("setup workflow", () => {
@@ -316,7 +320,7 @@ describe("setup scoped readiness", () => {
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
     expect(result.remediation).toBe(
-      "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and Omarchy; configure an existing supported provider instead.",
+      "Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.",
     );
   });
 
@@ -361,12 +365,12 @@ const supportedUbuntu = {
   hopperSetupSupported: true,
 } as const;
 const unsupportedLinux =
-  "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and Omarchy; configure an existing supported provider instead.";
+  "Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.";
 const unhealthyManualClientHost = (
   platform: NodeJS.Platform,
   facts: {
     readonly version?: string | undefined;
-    readonly distribution?: typeof unsupportedDebian | typeof supportedUbuntu;
+    readonly distribution?: LinuxDistribution;
   },
 ) => {
   const host = new FakeSetupHost(platform);
@@ -408,7 +412,7 @@ describe("setup Hopper install eligibility", () => {
       label: "Windows",
       platform: "win32",
       refusal:
-        "REA supports Hopper on macOS and selected 64-bit Linux distributions.",
+        "REA supports Hopper on macOS and selected x86_64 Linux distributions.",
     },
     {
       label: "macOS 11",
@@ -426,6 +430,15 @@ describe("setup Hopper install eligibility", () => {
       label: "an unsupported Linux distribution",
       platform: "linux",
       distribution: unsupportedDebian,
+      refusal: unsupportedLinux,
+    },
+    {
+      label: "Ubuntu on arm64",
+      platform: "linux",
+      distribution: parseLinuxDistribution(
+        'ID=ubuntu\nVERSION_ID="24.04"',
+        "arm64",
+      ),
       refusal: unsupportedLinux,
     },
     {
