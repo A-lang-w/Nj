@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
   artifactIntegrityPair,
   artifactIntegrityDetails,
@@ -26,7 +27,7 @@ import {
   createArtifactNode,
   createOccurrence,
   noteUnreadContainerSuffix,
-  indexOccurrencesByPath,
+  indexDestinationOccurrencesByPath,
   resolveOccurrenceParents,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
@@ -56,6 +57,7 @@ interface ScanContext {
   readonly reader: ArtifactReader;
   readonly signal: AbortSignal | undefined;
   readonly integrity: ArtifactIntegrityPolicy;
+  readonly asarHeaderAdmission: AsarHeaderAdmission | undefined;
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
@@ -72,6 +74,7 @@ export const scanReader = async (
   ownedReaders: ArtifactReader[],
   signal?: AbortSignal,
   integrity: ArtifactIntegrityPolicy = STRICT_INTEGRITY_POLICY,
+  asarHeaderAdmission?: AsarHeaderAdmission,
 ): Promise<{
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
@@ -94,6 +97,7 @@ export const scanReader = async (
     reader,
     signal,
     integrity,
+    asarHeaderAdmission,
     nodes,
     occurrences,
     pendingContradictions,
@@ -107,7 +111,7 @@ export const scanReader = async (
   await visitArtifactEntries(context, reader, "");
   // Archive directories may appear after their children. Resolve containment
   // against the complete index before directory identities are materialized.
-  const byPath = indexOccurrencesByPath(occurrences);
+  const byPath = indexDestinationOccurrencesByPath(occurrences);
   const parentResolution = resolveOccurrenceParents(
     occurrences,
     byPath,
@@ -167,11 +171,13 @@ const visitArtifactEntries = async (
   const stack: Array<{
     readonly reader: ArtifactReader;
     readonly prefix: string;
+    readonly containerId: string | null;
     readonly iterator: AsyncIterator<ArtifactEntry>;
   }> = [
     {
       reader: currentReader,
       prefix,
+      containerId: null,
       iterator: inventoryEntries(context, currentReader, prefix),
     },
   ];
@@ -202,7 +208,7 @@ const visitArtifactEntries = async (
       const occurrence = createOccurrence(
         entry,
         logicalPath,
-        null,
+        entry.kind === "metadata" ? frame.containerId : null,
         duplicateOrdinal,
       );
       let digested:
@@ -246,7 +252,12 @@ const visitArtifactEntries = async (
         digested.classification.format === "asar" &&
         !digested.mismatched
       ) {
-        const nested = new AsarArtifactReader(entry.adapterKey);
+        const nested = new AsarArtifactReader(
+          entry.adapterKey,
+          context.asarHeaderAdmission === undefined
+            ? {}
+            : { headerAdmission: context.asarHeaderAdmission },
+        );
         context.ownedReaders.push(nested);
         await nested.prepareContainer(digested.node.sha256, context.signal);
         // Only traversed containers can own members, not opaque ASAR-named files.
@@ -254,6 +265,7 @@ const visitArtifactEntries = async (
         stack.push({
           reader: nested,
           prefix: logicalPath,
+          containerId: occurrence.occurrence_id,
           iterator: inventoryEntries(context, nested, logicalPath),
         });
       }
@@ -301,6 +313,7 @@ const digestArtifactEntry = async (
     await currentReader.open(entry, context.signal),
     context.signal,
     entry.declaredIntegrity?.algorithm,
+    context.asarHeaderAdmission,
   );
   const claim = entry.declaredIntegrity;
   const observed = claim?.algorithm === "md5" ? digest.md5 : digest.sha256;

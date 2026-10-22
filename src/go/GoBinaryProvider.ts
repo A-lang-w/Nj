@@ -30,11 +30,12 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
+import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
 import {
-  readGoBinaryImage,
-  GoBinaryFormatFailure,
-  GoBinaryResourceFailure,
-} from "./GoBinaryImage.js";
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+} from "../native/metadata/BinaryContainer.js";
 import { parseGoModuleBytes, parseGoModuleText } from "./GoModuleText.js";
 
 /** Bundled format reader identity; embedded compiler versions are separate observed facts. */
@@ -57,7 +58,7 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
-  if (cause instanceof GoBinaryResourceFailure)
+  if (cause instanceof BinaryResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,
       cause.boundary === "search" ? "cpu" : "memory",
@@ -75,7 +76,7 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
         ),
       },
     );
-  if (cause instanceof GoBinaryFormatFailure)
+  if (cause instanceof BinaryFormatFailure)
     return cause.kind === "unsupported"
       ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
           cause,
@@ -96,8 +97,7 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
         { maximum_input_bytes: INPUT_BYTES },
         {
           cause,
-          remediationAction:
-            "Select a suitable stable artifact within the reported input byte allowance. Do not truncate required bytes; retrying the unchanged oversized input will fail again.",
+          remediationAction: `Select a suitable stable artifact within the reported ${String(INPUT_BYTES)}-byte input byte allowance. This release has no runtime override. Do not truncate required bytes; retrying the unchanged oversized input will fail again.`,
         },
       );
     if (cause.reason === "path")
@@ -196,6 +196,26 @@ const limitationsFor = (
     : []),
 ];
 
+/** Locate image-relative build-info ranges in the selected file. */
+const inFile = (
+  info: GoBinaryImage["build_info"],
+  fileOffset: number,
+): GoBinaryImage["build_info"] =>
+  info === null || fileOffset === 0
+    ? info
+    : {
+        ...info,
+        header_offset: info.header_offset + fileOffset,
+        version_location: {
+          ...info.version_location,
+          offset: info.version_location.offset + fileOffset,
+        },
+        module_location: {
+          ...info.module_location,
+          offset: info.module_location.offset + fileOffset,
+        },
+      };
+
 /** Stable in-process metadata inspection without subprocesses, temporary files or Go installation. */
 export class GoBinaryProvider implements GoBinaryPort {
   readonly identity = GO_BINARY_PROVIDER_IDENTITY;
@@ -236,8 +256,14 @@ export class GoBinaryProvider implements GoBinaryPort {
           this.#resources,
         );
         assertArtifactReadActive(options?.signal);
-        const image = readGoBinaryImage(snapshot.bytes);
-        const info = image.build_info;
+        const selected = requireSelectedNativeImage(
+          OPERATION,
+          input.path,
+          snapshot.bytes,
+          input.architecture,
+        );
+        const image = readGoBinaryImage(selected.bytes);
+        const info = inFile(image.build_info, selected.fileOffset);
         if (
           info !== null &&
           ((info.module_text !== null &&
@@ -263,6 +289,9 @@ export class GoBinaryProvider implements GoBinaryPort {
             sha256: snapshot.sha256,
             bytes: snapshot.bytes.length,
           },
+          ...(selected.selection === null
+            ? {}
+            : { selected_slice: selected.selection }),
           build_info: info === null ? null : { ...info, module },
           limitations: limitationsFor(info, module),
         };
