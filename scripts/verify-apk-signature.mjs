@@ -249,10 +249,13 @@ try {
       JSON.stringify(cliValue).slice(0, 300),
     );
     const cli = parseEvidence(cliValue);
-    const reply = await client.callTool({
-      name: "inspect_apk_signature",
-      arguments: { path },
-    });
+    const reply = await client.callTool(
+      {
+        name: "inspect_apk_signature",
+        arguments: { path, detail: "complete" },
+      },
+      { timeout: 120000, toolDefinition: advertised },
+    );
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
       ajv.validate(advertised.outputSchema, reply.structuredContent),

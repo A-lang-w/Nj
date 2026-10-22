@@ -192,7 +192,9 @@ const projectedOutputBytes = (
   for (const scheme of schemes)
     for (const { signer, rotation } of scheme.signers) {
       total += 128 + certificateBytes(signer.certificates[0]);
-      total += 64 * signer.digests.length;
+      for (const digest of signer.digests)
+        total += 160 + 2 * digest.digest.length;
+      total += 160 * signer.signatures.length;
       if (rotation.present && "nodes" in rotation)
         for (const node of rotation.nodes)
           total += 192 + certificateBytes(node.certificate);
@@ -205,7 +207,13 @@ const digestsOf = (
   matcher: DigestMatcher,
 ): Signer["digests"] =>
   signer.digests.map((d) => ({
+    signature_algorithm_id: d.algorithmId,
     algorithm: contentDigestAlgorithm(d.algorithmId) ?? "unknown",
+    declared_digest_hex: Buffer.from(
+      d.digest.buffer,
+      d.digest.byteOffset,
+      d.digest.byteLength,
+    ).toString("hex"),
     matches_apk: matcher.match(d.algorithmId, d.digest),
   }));
 
@@ -214,6 +222,12 @@ const baseSigner = (signer: ApkSigner, matcher: DigestMatcher): Signer => ({
     ? certificateFacts(signer.certificates[0])
     : null,
   digests: digestsOf(signer, matcher),
+  signatures: signer.signatures.map(({ algorithmId, signature }) => ({
+    signature_algorithm_id: algorithmId,
+    algorithm: contentDigestAlgorithm(algorithmId) ?? "unknown",
+    signature_bytes: signature.length,
+  })),
+  public_key_bytes: signer.publicKey.length,
   min_sdk: signer.minSdk,
   max_sdk: signer.maxSdk,
 });

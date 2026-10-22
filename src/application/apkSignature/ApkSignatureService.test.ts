@@ -28,7 +28,7 @@ it("retains completed APK Evidence and the abort reason on late cancellation", a
         controller.abort(reason);
         return Promise.resolve(ok(completed.value));
       },
-    }).inspect({ path }, { signal: controller.signal });
+    }).inspect({ path, detail: "complete" }, { signal: controller.signal });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -42,4 +42,20 @@ it("retains completed APK Evidence and the abort reason on late cancellation", a
     await provider.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+it("refuses summary acquisition before reading when complete Evidence cannot be retained", async () => {
+  const service = new ApkSignatureService({
+    close: () => Promise.resolve(),
+    inspect: () => {
+      throw new Error("inspection must not start without retention");
+    },
+  });
+  const result = await service.inspect({
+    path: join(tmpdir(), "not-opened.apk"),
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCapabilityUnavailableError" },
+  });
 });

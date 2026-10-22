@@ -163,7 +163,14 @@ execution or network acquisition is implied, and WAT is decoded representation.
 
 ## Offline APK signatures
 
-Use `inspect_apk_signature` for a selected local APK/ZIP/AAB. It reads the APK
+Use `inspect_apk_signature` for a selected local APK/ZIP/AAB. Default MCP summaries
+retain complete Evidence. Select `view.collection: signers/digests/lineage`,
+with scheme or ID batches, fields and paging; use `inspect_analysis_view` kind
+`apk-signature` for retained reads after deletion. IDs retain artifact/scheme
+scope and signer links; `fields: []` keeps identity links. Empty pages preserve
+partial decoding reasons and unknown authenticity. CLI compact delivery needs
+`--evidence_output` to preserve the complete parent.
+It reads the APK
 Signing Block (v2/v3/v3.1) and v1 `META-INF` signing without executing anything,
 and reports each signer's certificate facts (for v1, the certificate the PKCS#7
 block's SignerInfo names), the declared v3 rotation lineage,

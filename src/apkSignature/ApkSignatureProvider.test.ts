@@ -26,6 +26,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
+import { apkSchemeValue } from "../../tests/fixtures/apkSignature/signingScheme.js";
 
 type V1Signer = {
   signature_file: string;
@@ -129,22 +130,21 @@ const BOGUS_CERT = [0x30, 0x03, 1, 2, 3];
 
 /** A v2 value with one signer: bogus certificate bytes and a bogus SHA-256 digest. */
 const bogusV2Value = (): Uint8Array =>
-  Uint8Array.from(
-    seq([lp([...seq([BOGUS_DIGEST]), ...seq([BOGUS_CERT]), ...seq([])])]),
+  apkSchemeValue(
+    Uint8Array.from([...seq([BOGUS_DIGEST]), ...seq([BOGUS_CERT]), ...seq([])]),
   );
 
 /** A v3-layout value whose one signer carries the given attributes. */
 const v3Value = (attributes: readonly (readonly number[])[]): Uint8Array =>
-  Uint8Array.from(
-    seq([
-      lp([
-        ...seq([BOGUS_DIGEST]),
-        ...seq([BOGUS_CERT]),
-        ...u32(28),
-        ...u32(0x7fffffff),
-        ...seq(attributes),
-      ]),
+  apkSchemeValue(
+    Uint8Array.from([
+      ...seq([BOGUS_DIGEST]),
+      ...seq([BOGUS_CERT]),
+      ...u32(28),
+      ...u32(0x7fffffff),
+      ...seq(attributes),
     ]),
+    { min: 28, max: 0x7fffffff },
   );
 
 /** Length-prefix a large buffer without spreading it into a number array. */
@@ -175,6 +175,18 @@ const reportOf = async (path: string): Promise<Report> => {
 };
 
 describe("ApkSignatureProvider without the Android SDK", () => {
+  it("retains the declared digest's signature algorithm ID and bytes", async () => {
+    const report = await reportOf(
+      await write(
+        "algorithm-id.apk",
+        syntheticSigned([{ id: V2, value: bogusV2Value() }]),
+      ),
+    );
+    expect(report.schemes.v2?.signers?.[0]?.digests[0]).toMatchObject({
+      signature_algorithm_id: 0x0103,
+      declared_digest_hex: "ab".repeat(32),
+    });
+  });
   it("reports an unsigned ZIP as having no scheme", async () => {
     const r = await reportOf(
       await write(
@@ -257,7 +269,12 @@ describe("ApkSignatureProvider without the Android SDK", () => {
       public_key_algorithm: null,
     });
     expect(signer.digests).toEqual([
-      { algorithm: "sha256", matches_apk: false },
+      {
+        signature_algorithm_id: 0x0103,
+        algorithm: "sha256",
+        declared_digest_hex: "ab".repeat(32),
+        matches_apk: false,
+      },
     ]);
     expect(r.posture.self_consistent).toBe(false);
   });
@@ -594,7 +611,7 @@ describe("ApkSignatureProvider failure surfaces", () => {
       lpBuf(lpBuf(hugeCert)),
       Buffer.from(seq([])),
     ]);
-    const value = lpBuf(lpBuf(lpBuf(signedData)));
+    const value = apkSchemeValue(signedData);
     const result = await provider.inspect({
       path: await write("huge.apk", syntheticSigned([{ id: V2, value }])),
     });

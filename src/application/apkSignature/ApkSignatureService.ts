@@ -1,3 +1,9 @@
+import { inspectApkSignatureInputSchema } from "../../domain/apkSignature/apkSignatureQuery.js";
+import {
+  requireAnalysisViewRetention,
+  projectRetainedAnalysis,
+  type AnalysisViewRetention,
+} from "../analysisView/AnalysisViewService.js";
 import { isAbsolute } from "node:path";
 
 import type { ExecutionOptions } from "../AnalysisProvider.js";
@@ -11,7 +17,6 @@ import {
 import {
   apkSignatureMatchesSubject,
   apkSignatureResultSchema,
-  inspectApkSignatureInputSchema,
 } from "../../domain/apkSignature/apkSignatureReport.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -32,6 +37,10 @@ export class ApkSignatureService {
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
+    retention: AnalysisViewRetention = {
+      evidenceById: undefined,
+      recordEvidence: undefined,
+    },
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
@@ -52,7 +61,12 @@ export class ApkSignatureService {
           },
         ]),
       );
-    const inspected = await this.provider.inspect(input.data, options);
+    const { detail, view, ...parameters } = input.data;
+    if (detail === "summary") {
+      const ready = requireAnalysisViewRetention(OPERATION, retention);
+      if (!ready.ok) return ready;
+    }
+    const inspected = await this.provider.inspect(parameters, options);
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const report = apkSignatureResultSchema.safeParse(execution.result);
@@ -67,7 +81,7 @@ export class ApkSignatureService {
           "APK signature reader returned malformed data or changed the selected artifact identity.",
         ),
       );
-    return completeProviderEvidence(
+    const completed = completeProviderEvidence(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
         parameters: { path: input.data.path },
@@ -81,5 +95,15 @@ export class ApkSignatureService {
       }),
       options?.signal,
     );
+    if (!completed.ok) return completed;
+    return detail === "summary"
+      ? projectRetainedAnalysis(
+          completed.value,
+          retention,
+          view === undefined
+            ? { kind: "summary" }
+            : { kind: "apk-signature", ...view },
+        )
+      : completed;
   }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { apkSchemeValue } from "../../../tests/fixtures/apkSignature/signingScheme.js";
 
 import {
   contentDigestAlgorithm,
@@ -30,9 +31,60 @@ const DIGEST = [0xde, 0xad, 0xbe, 0xef];
 const digestElement = [...u32(0x0103), ...lp(DIGEST)]; // RSA-PKCS1 SHA-256
 const attrElement = [...u32(ATTR_ID), 0x01];
 
-/** value = seq[ signer ]; signer = lp(signedData) (decoder reads only signed-data). */
-const schemeValue = (signedData: readonly number[]): Uint8Array =>
-  Uint8Array.from(seq([lp(signedData)]));
+const schemeValue = (
+  signedData: readonly number[],
+  sdkRange?: { min: number; max: number },
+): Uint8Array => apkSchemeValue(Uint8Array.from(signedData), sdkRange);
+
+it.each([
+  "missing signature records",
+  "truncated public key",
+  "trailing signer bytes",
+])("rejects a signer with %s", (kind) => {
+  const signed = [...seq([digestElement]), ...seq([CERT_DER]), ...seq([])];
+  const signatures = seq([[...u32(0x0103), ...lp([1, 2])]]);
+  const signer =
+    kind === "missing signature records"
+      ? lp(signed)
+      : kind === "truncated public key"
+        ? [...lp(signed), ...signatures, ...u32(5), 1]
+        : [...lp(signed), ...signatures, ...lp([1]), 0xff];
+  expect(decodeSigners(Uint8Array.from(seq([signer])), "v2")).toMatchObject({
+    ok: false,
+    error: { kind: "malformed-signer" },
+  });
+});
+
+it("rejects inconsistent v3 SDK ranges", () => {
+  const signed = [
+    ...seq([digestElement]),
+    ...seq([CERT_DER]),
+    ...u32(28),
+    ...u32(34),
+    ...seq([]),
+  ];
+  expect(
+    decodeSigners(schemeValue(signed, { min: 29, max: 34 }), "v3"),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed-signer",
+      detail: expect.stringContaining("SDK range"),
+    },
+  });
+});
+
+it("preserves an unknown unsigned algorithm ID", () => {
+  const signed = [
+    ...seq([[...u32(0xfedcba98), ...lp(DIGEST)]]),
+    ...seq([CERT_DER]),
+    ...seq([]),
+  ];
+  const result = decodeSigners(schemeValue(signed), "v2");
+  if (!result.ok) throw result.error;
+  expect(result.value[0]!.digests[0]!.algorithmId).toBe(0xfedcba98);
+  expect(contentDigestAlgorithm(0xfedcba98)).toBeNull();
+});
 
 describe("APK scheme signer decoder", () => {
   it("decodes a v2 signer's digests, certificate and attributes", () => {
@@ -46,9 +98,18 @@ describe("APK scheme signer decoder", () => {
     if (!result.ok) return;
     expect(result.value).toHaveLength(1);
     const signer = result.value[0]!;
-    expect(signer.digests).toEqual([
-      { algorithmId: 0x0103, digest: Uint8Array.from(DIGEST) },
-    ]);
+    expect(
+      signer.digests.map(({ algorithmId, digest }) => ({
+        algorithmId,
+        digest: [...digest],
+      })),
+    ).toEqual([{ algorithmId: 0x0103, digest: DIGEST }]);
+    expect(
+      signer.signatures.map(({ algorithmId, signature }) => ({
+        algorithmId,
+        bytes: [...signature],
+      })),
+    ).toEqual([{ algorithmId: 0x0103, bytes: [1] }]);
     expect([...signer.certificates[0]!]).toEqual(CERT_DER);
     expect(signer.minSdk).toBeNull();
     expect(signer.attributes[0]!.id).toBe(ATTR_ID);
@@ -62,7 +123,10 @@ describe("APK scheme signer decoder", () => {
       ...u32(34), // max_sdk
       ...seq([attrElement]),
     ];
-    const result = decodeSigners(schemeValue(signedData), "v3");
+    const result = decodeSigners(
+      schemeValue(signedData, { min: 21, max: 34 }),
+      "v3",
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value[0]!.minSdk).toBe(21);

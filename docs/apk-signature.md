@@ -14,6 +14,72 @@ CLI and MCP share one workflow and return artifact-bound Evidence inline.
 rea inspect-apk-signature /path/app.apk
 ```
 
+## Selected facts and retained Evidence
+
+MCP defaults to a summary with scheme presence, signer certificate fingerprints,
+row counts, posture and explicit coverage. `detail: "complete"` returns the full
+report. A selected page can answer a narrower question in the acquisition call:
+
+```json
+{
+  "path": "/path/app.apk",
+  "view": {
+    "collection": "signers",
+    "schemes": ["v3"],
+    "fields": ["certificate_sha256"],
+    "limit": 32
+  }
+}
+```
+
+The returned `parent_evidence_id` identifies the retained complete report.
+Subsequent reads use `inspect_analysis_view`, including after the APK is deleted:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "<returned parent_evidence_id>"
+  },
+  "view": {
+    "kind": "apk-signature",
+    "collection": "digests",
+    "signer_ids": ["<returned signer id>"],
+    "fields": ["signature_algorithm_id", "algorithm", "matches_apk"],
+    "offset": 0,
+    "limit": 32
+  }
+}
+```
+
+Collections are `signers`, `digests` and declared `lineage` nodes. `ids`,
+`signer_ids` and `schemes` filters intersect; omitted filters select all available
+records and `[]` selects none. Omitted `fields` returns every collection column;
+`fields: []` retains identity and relationship links. IDs include the complete
+APK digest, scheme and source ordinal; child records retain `signer_id` and
+`signer_index`, and declared certificates retain their raw-DER SHA-256 identity.
+Lineage pages expose `previous_id` when selected. Certificate fingerprints can
+be composed across versions without treating a declaration as verified identity.
+
+Page coverage describes examined declared records. Exhausting a page does not
+establish certificate authenticity, platform acceptance, v1 entry coverage or a
+verified rotation. Partial decoding and its reason remain visible even when a
+lineage page contains no rows. A weak cache reuses validated immutable report
+facts; each read checks its parent subject, and new file inspections read again.
+
+CLI defaults to complete delivery. A compact one-shot response requires a complete
+Evidence export:
+
+```sh
+rea inspect-apk-signature /path/app.apk --detail summary \
+  --view '{"collection":"signers","fields":["certificate_sha256"]}' \
+  --evidence_output /path/app-signing-evidence.json --json
+```
+
+The export contains the same complete parent used by MCP. Historical CLI pages
+use `inspect-analysis-view` with an `evidence-file` source record. The CLI and MCP
+share the application workflow, projection, retention and publication owners.
+
 ## What it reports
 
 - **Schemes present:** v1 (JAR signing, from the central directory), and the
@@ -75,7 +141,8 @@ rea inspect-apk-signature /path/app.apk
 - **Per signer:** the certificate's **SHA-256 fingerprint over the raw embedded
   DER** (the same value `apksigner --print-certs` prints), plus subject, issuer,
   serial, ISO 8601 validity and public-key algorithm when the X.509 parser can
-  read them (each is `null` otherwise); declared digest algorithms; and for
+  read them (each is `null` otherwise); raw signature algorithm IDs, declared
+  digest hex and digest algorithms, signature lengths and public-key length; and for
   v3/v3.1 the signer's declared min/max SDK.
 - **Key rotation (v3/v3.1):** the declared proof-of-rotation lineage, oldest
   first. Each node carries its certificate and the capability flags **retained
@@ -146,8 +213,8 @@ Not yet read: v4 `.apk.idsig` (a sibling file), verity (`0x0421`/`0x0423`/`0x042
 The archive is read once, bounded at 512 MiB, without following symlinks and
 with change detection. Every size and offset in the ZIP tail and signing block
 is checked against the buffer before use. Signers per scheme, v1 signers and
-lineage nodes are capped at 32 each (real APKs use a handful; apksig accepts
-at most 10 v1 signers). Each v1 block is inflated to at most 1 MiB, and its DER
+lineage nodes are capped at 32 each as resource admission limits, not format
+maxima (apksig separately accepts at most 10 v1 signers). Each v1 block is inflated to at most 1 MiB, and its DER
 is read within 32 levels of nesting and 65,536 elements, with at most 32
 certificates and 32 `SignerInfo`s; BER indefinite lengths are accepted. The report's size is
 bounded from above by those counts before anything is materialised, and the exact
@@ -155,19 +222,20 @@ serialized size of the report together with its limitations (which repeat
 archive names) is then checked against an 8 MiB output budget (the exact check
 is authoritative); an over-budget report is refused, not truncated.
 
-Peak memory is about 2.5 times the file size: the shared stable reader keeps
-its read chunks and then concatenates them. The duplicate-name check adds 15
-bytes per central-directory record, re-encodes only malformed names (one unit
-at a time, without copying well-formed ones) and decodes only the names it
-reports. A 500 MiB APK measured 1.25 GiB
-peak resident memory through the CLI, so an archive at the 512 MiB cap needs
-about 1.3 GB.
+The whole-file reader retains read chunks and a concatenated buffer; total
+process memory exceeds the selected file's size. It also computes the complete
+file SHA-256, so inspection is not header-only. Content digests are recomputed
+at most once per SHA-256/SHA-512 algorithm during one inspection. Input,
+inflation, decoded-record and serialized-output bounds keep work finite;
+resource refusals are distinct from malformed format errors.
 
 A file that is not a ZIP is refused as an unsupported target. A damaged ZIP
 (local headers but no end-of-central-directory), a central directory that
 cannot be walked or whose declared record count does not account for all of
 its bytes, or a malformed signing block or signer is an input error naming the
-scheme and reason. When the central directory is not immediately followed by
+scheme and reason. Signer framing includes signature records, the public-key
+field and matching signed/outer v3 SDK ranges; trailing signer data is refused.
+When the central directory is not immediately followed by
 the end-of-central-directory record (a declared-size mismatch or a Zip64
 record), the content digest is not recomputed and a limitation says so. A
 rotation attribute that cannot be decoded still counts as `rotation_present`
@@ -180,3 +248,9 @@ without v1, rotation carried by v3.1, a source stamp, and a copy
 with one changed byte), and cross-checks REA against
 `apksigner verify --print-certs`, `apksigner lineage --print-certs` and
 `keytool -printcert -jarfile` through the CLI and MCP.
+
+The real-toolchain CI lane uses pinned, checksum-verified Build Tools 36.1.0
+and platform 36 oracle files in its job workspace. It requires the existing
+host JDK and runs `npm run verify:apk-signature -- --require-tools`; absent
+oracles fail rather than silently establishing provider coverage. REA itself
+requires none of these external tools.

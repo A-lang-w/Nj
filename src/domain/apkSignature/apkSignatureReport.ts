@@ -7,19 +7,7 @@
 import { z } from "zod";
 
 import type { EvidenceSubjectTarget } from "../evidence.js";
-import { localPathStringSchema } from "../localPath.js";
-
-const digest = z.string().regex(/^[a-f0-9]{64}$/);
-
-/** All artifacts are explicitly selected local files; references never trigger acquisition. */
-export const inspectApkSignatureInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
-    "Absolute selected local .apk/.zip/.aab (or .apks) to inspect for signing",
-  ),
-});
-export type InspectApkSignatureInput = z.infer<
-  typeof inspectApkSignatureInputSchema
->;
+import { digestSchema as digest } from "../digests.js";
 
 /**
  * A signer certificate. `sha256_fingerprint` is always SHA-256 over the raw
@@ -42,7 +30,9 @@ const certificate = z
   .nullable();
 
 const digestEntry = z.strictObject({
+  signature_algorithm_id: z.int().min(0).max(0xffffffff),
   algorithm: z.enum(["sha256", "sha512", "verity-sha256", "unknown"]),
+  declared_digest_hex: z.string().regex(/^(?:[a-f0-9]{2})*$/),
   /**
    * Whether the DECLARED content digest equals the digest recomputed over the
    * current bytes; null when not recomputed. Not a signature verification:
@@ -51,9 +41,17 @@ const digestEntry = z.strictObject({
   matches_apk: z.boolean().nullable(),
 });
 
-const signer = z.strictObject({
+export const apkSignerSchema = z.strictObject({
   certificate,
   digests: z.array(digestEntry),
+  signatures: z.array(
+    z.strictObject({
+      signature_algorithm_id: z.int().min(0).max(0xffffffff),
+      algorithm: digestEntry.shape.algorithm,
+      signature_bytes: z.int().nonnegative(),
+    }),
+  ),
+  public_key_bytes: z.int().nonnegative(),
   min_sdk: z.number().int().nullable(),
   max_sdk: z.number().int().nullable(),
 });
@@ -74,7 +72,7 @@ const lineageNode = z.strictObject({
   }),
 });
 
-const signerV3 = signer.extend({
+export const apkSignerV3Schema = apkSignerSchema.extend({
   /**
    * The proof-of-rotation lineage the APK DECLARES, oldest signer first. Node
    * signatures are not verified. `decode_error` is set (and `lineage` empty)
@@ -139,11 +137,17 @@ export const apkSignatureResultSchema = z.strictObject({
       /** Signature blocks paired with their `.SF` file, in central-directory order. */
       signers: z.array(v1Signer),
     }),
-    v2: z.strictObject({ present: z.boolean(), signers: z.array(signer) }),
-    v3: z.strictObject({ present: z.boolean(), signers: z.array(signerV3) }),
+    v2: z.strictObject({
+      present: z.boolean(),
+      signers: z.array(apkSignerSchema),
+    }),
+    v3: z.strictObject({
+      present: z.boolean(),
+      signers: z.array(apkSignerV3Schema),
+    }),
     "v3.1": z.strictObject({
       present: z.boolean(),
-      signers: z.array(signerV3),
+      signers: z.array(apkSignerV3Schema),
     }),
   }),
   /**

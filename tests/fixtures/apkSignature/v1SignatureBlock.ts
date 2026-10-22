@@ -7,6 +7,7 @@
  * several SignerInfos, BER indefinite lengths, malformed fields).
  */
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
+import { apkSchemeValue } from "./signingScheme.js";
 
 const fromBase64 = (text: string): Uint8Array =>
   Uint8Array.from(Buffer.from(text, "base64"));
@@ -247,7 +248,7 @@ export const v2SchemeValue = (certificate: Uint8Array): Uint8Array => {
     lp(lp(certificate)),
     lp(new Uint8Array(0)),
   ]);
-  return Uint8Array.from(lp(lp(lp(signedData))));
+  return apkSchemeValue(signedData);
 };
 
 /** Insert an APK Signing Block before the central directory of a comment-free ZIP. */
@@ -325,7 +326,7 @@ export const v3SchemeValue = (
     Buffer.from(u32(0x7fffffff)),
     lp(Buffer.concat(attributes)),
   ]);
-  return Uint8Array.from(lp(lp(lp(signedData))));
+  return apkSchemeValue(signedData, { min: 28, max: 0x7fffffff });
 };
 
 /** The central-directory record and local header offsets of the entry `name`. */

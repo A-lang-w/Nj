@@ -9,7 +9,7 @@
  * certificate DER, SDK bounds, and additional attributes. Certificate facts and
  * digest recomputation are layered on top. Dependency-free and bounded: a short
  * or inconsistent length is a `malformed-signer` error, and a count past a
- * format-justified cap is a distinct `budget-exceeded` error, never conflated.
+ * resource admission cap is a distinct `budget-exceeded` error, never conflated.
  */
 import { type Result, err, ok } from "../result.js";
 
@@ -37,10 +37,17 @@ export interface ApkSignerAttribute {
   readonly value: Uint8Array;
 }
 
+export interface ApkSignerSignature {
+  readonly algorithmId: number;
+  readonly signature: Uint8Array;
+}
+
 export interface ApkSigner {
   /** X.509 certificate DER blobs; the first is the signing certificate. */
   readonly certificates: readonly Uint8Array[];
   readonly digests: readonly ApkSignerDigest[];
+  readonly signatures: readonly ApkSignerSignature[];
+  readonly publicKey: Uint8Array;
   readonly minSdk: number | null;
   readonly maxSdk: number | null;
   readonly attributes: readonly ApkSignerAttribute[];
@@ -52,13 +59,13 @@ export const PROOF_OF_ROTATION_ATTR_ID = 0x3ba06f8c;
 /** Generic cap on digests/certificates/attributes in one signer. */
 const MAX_ELEMENTS = 4096;
 /**
- * Signers per scheme. Android signs with one or a handful; v3 adds at most one
- * per SDK range. A larger count only multiplies output, so it is refused.
+ * Resource admission for signer fan-out, including per-signer X.509 work.
+ * This is not an APK format maximum; excess records return a capacity error.
  */
 export const MAX_SIGNERS = 32;
 /**
- * Lineage nodes. Each key rotation appends one node, so a real lineage is a
- * short chain; a larger declared chain is refused rather than materialised.
+ * Resource admission for lineage fan-out before certificate materialisation.
+ * This is not a format maximum; longer declared chains are refused explicitly.
  */
 export const MAX_LINEAGE_NODES = 32;
 /** The only proof-of-rotation lineage encoding version apksig accepts. */
@@ -112,21 +119,23 @@ const elements = (
   return ok(out);
 };
 
-const decodeDigests = (
+const decodeAlgorithmRecords = <T>(
   seq: Uint8Array | null,
-): Result<ApkSignerDigest[], ApkSchemeError> => {
-  const items = elements(seq, "digests");
+  what: string,
+  record: (algorithmId: number, bytes: Uint8Array) => T,
+): Result<T[], ApkSchemeError> => {
+  const items = elements(seq, what);
   if (!items.ok) return items;
-  const digests: ApkSignerDigest[] = [];
+  const records: T[] = [];
   for (const item of items.value) {
     const reader = new LeReader(item);
     const algorithmId = reader.u32();
-    const digest = reader.lenChunk();
-    if (algorithmId === null || digest === null)
-      return malformed("digest entry truncated");
-    digests.push({ algorithmId, digest });
+    const bytes = reader.lenChunk();
+    if (algorithmId === null || bytes === null || reader.remaining !== 0)
+      return malformed(`${what} entry truncated or contains trailing bytes`);
+    records.push(record(algorithmId, bytes));
   }
-  return ok(digests);
+  return ok(records);
 };
 
 const decodeAttributes = (
@@ -147,9 +156,13 @@ const decodeAttributes = (
 const decodeSignedData = (
   signedData: Uint8Array,
   version: ApkSchemeVersion,
-): Result<ApkSigner, ApkSchemeError> => {
+): Result<Omit<ApkSigner, "signatures" | "publicKey">, ApkSchemeError> => {
   const reader = new LeReader(signedData);
-  const digests = decodeDigests(reader.lenChunk());
+  const digests = decodeAlgorithmRecords(
+    reader.lenChunk(),
+    "digests",
+    (algorithmId, digest) => ({ algorithmId, digest }),
+  );
   if (!digests.ok) return digests;
   const certificates = elements(reader.lenChunk(), "certificates");
   if (!certificates.ok) return certificates;
@@ -163,6 +176,8 @@ const decodeSignedData = (
   }
   const attributes = decodeAttributes(reader.lenChunk());
   if (!attributes.ok) return attributes;
+  if (reader.remaining !== 0)
+    return malformed("signed data contains trailing bytes");
   return ok({
     certificates: certificates.value,
     digests: digests.value,
@@ -172,23 +187,49 @@ const decodeSignedData = (
   });
 };
 
+/** Own all signer framing, including the unsigned copy of v3 SDK bounds. */
+const decodeSigner = (
+  chunk: Uint8Array,
+  version: ApkSchemeVersion,
+): Result<ApkSigner, ApkSchemeError> => {
+  const reader = new LeReader(chunk);
+  const signedData = reader.lenChunk();
+  if (signedData === null) return malformed("signed data missing or truncated");
+  const decoded = decodeSignedData(signedData, version);
+  if (!decoded.ok) return decoded;
+  if (version !== "v2") {
+    const min = reader.u32(),
+      max = reader.u32();
+    if (min === null || max === null)
+      return malformed("outer min/max SDK truncated");
+    if (min !== decoded.value.minSdk || max !== decoded.value.maxSdk)
+      return malformed("outer SDK range disagrees with the signed SDK range");
+  }
+  const signatures = decodeAlgorithmRecords(
+    reader.lenChunk(),
+    "signatures",
+    (algorithmId, signature) => ({ algorithmId, signature }),
+  );
+  if (!signatures.ok) return signatures;
+  const publicKey = reader.lenChunk();
+  if (publicKey === null || reader.remaining !== 0)
+    return malformed("public key truncated or signer contains trailing bytes");
+  return ok({ ...decoded.value, signatures: signatures.value, publicKey });
+};
+
 /** Decode every signer in a v2/v3/v3.1 scheme block value. */
 export const decodeSigners = (
   value: Uint8Array,
   version: ApkSchemeVersion,
 ): Result<ApkSigner[], ApkSchemeError> => {
-  const chunks = elements(
-    new LeReader(value).lenChunk(),
-    "signers",
-    MAX_SIGNERS,
-  );
+  const reader = new LeReader(value);
+  const chunks = elements(reader.lenChunk(), "signers", MAX_SIGNERS);
   if (!chunks.ok) return chunks;
+  if (reader.remaining !== 0)
+    return malformed("scheme contains trailing bytes");
   const signers: ApkSigner[] = [];
   for (const [index, chunk] of chunks.value.entries()) {
-    const signedData = new LeReader(chunk).lenChunk();
-    if (signedData === null)
-      return malformed(`signer ${String(index)} has no signed data`);
-    const signer = decodeSignedData(signedData, version);
+    const signer = decodeSigner(chunk, version);
     if (!signer.ok)
       return signer.error.kind === "malformed-signer"
         ? malformed(`signer ${String(index)}: ${signer.error.detail}`)

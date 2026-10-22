@@ -1,3 +1,4 @@
+import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -26,6 +27,18 @@ import {
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const completeEvidence = (value: unknown) => {
+  const evidence = toolContract("inspect_apk_signature").outputSchema.parse(
+    value,
+  );
+  return {
+    ...evidence,
+    normalized_result: apkSignatureResultSchema.parse(
+      evidence.normalized_result,
+    ),
+  };
+};
 
 cliTest(
   "names the v1 signer certificate and a v1/v2 signer mismatch identically through CLI and MCP",
@@ -78,13 +91,12 @@ cliTest(
       ]),
     );
 
-    const contract = toolContract("inspect_apk_signature");
     const viaCli = async (path: string) => {
       const result = await cli.run({
         arguments: ["inspect-apk-signature", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      return contract.outputSchema.parse(result.json);
+      return completeEvidence(result.json);
     };
     const cliV1 = await viaCli(v1Only);
     const cliMixed = await viaCli(mixed);
@@ -143,7 +155,7 @@ cliTest(
       ] as const) {
         const reply = await client.callTool({
           name: tool.name,
-          arguments: { path },
+          arguments: { path, detail: "complete" },
         });
         expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
         expect(
@@ -185,9 +197,7 @@ cliTest(
       arguments: ["inspect-apk-signature", keyIdentified, "--json"],
     });
     expect(run.exitCode, run.stderr).toBe(0);
-    const cliKeyIdentified = toolContract(
-      "inspect_apk_signature",
-    ).outputSchema.parse(run.json);
+    const cliKeyIdentified = completeEvidence(run.json);
 
     expect(cliKeyIdentified.normalized_result.schemes.v1.signers).toMatchObject(
       [
@@ -305,9 +315,7 @@ cliTest(
       arguments: ["inspect-apk-signature", paddedPath, "--json"],
     });
     expect(paddedResult.exitCode, paddedResult.stderr).toBe(0);
-    const paddedEvidence = toolContract(
-      "inspect_apk_signature",
-    ).outputSchema.parse(paddedResult.json);
+    const paddedEvidence = completeEvidence(paddedResult.json);
     expect(paddedEvidence.normalized_result.schemes.v1.signers).toMatchObject([
       { certificate: { sha256_fingerprint: LEAF_SHA256 }, decode_error: null },
     ]);
@@ -319,11 +327,7 @@ cliTest(
       arguments: ["inspect-apk-signature", flagged, "--json"],
     });
     expect(flaggedResult.exitCode, flaggedResult.stderr).toBe(0);
-    expect(
-      toolContract("inspect_apk_signature").outputSchema.parse(
-        flaggedResult.json,
-      ).limitations,
-    ).toContain(
+    expect(completeEvidence(flaggedResult.json).limitations).toContain(
       `${block}: the entry declares encryption (general-purpose flag bit 0); apksig ignores the flag, so its bytes were read as stored and the PKCS#7 decoding decides.`,
     );
 
@@ -332,9 +336,7 @@ cliTest(
         arguments: ["inspect-apk-signature", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const report = toolContract("inspect_apk_signature").outputSchema.parse(
-        result.json,
-      ).normalized_result;
+      const report = completeEvidence(result.json).normalized_result;
       const [signer, ...rest] = report.schemes.v1.signers;
       expect(rest, path).toEqual([]);
       if (decodeError === null) {
@@ -378,9 +380,7 @@ cliTest(
       arguments: ["inspect-apk-signature", duplicated, "--json"],
     });
     expect(duplicatedResult.exitCode, duplicatedResult.stderr).toBe(0);
-    const duplicatedEvidence = toolContract(
-      "inspect_apk_signature",
-    ).outputSchema.parse(duplicatedResult.json);
+    const duplicatedEvidence = completeEvidence(duplicatedResult.json);
     expect(duplicatedEvidence.normalized_result.schemes.v1).toMatchObject({
       present: true,
       block_files: [block, block],
@@ -422,7 +422,7 @@ cliTest(
         arguments: ["inspect-apk-signature", path, "--json"],
       });
       expect(run.exitCode, run.stderr).toBe(0);
-      return toolContract("inspect_apk_signature").outputSchema.parse(run.json);
+      return completeEvidence(run.json);
     };
     const manifestTwice = await renamed(
       "duplicate-manifest.apk",
@@ -496,9 +496,7 @@ cliTest(
         arguments: ["inspect-apk-signature", path, "--json"],
       });
       expect(run.exitCode, run.stderr).toBe(0);
-      const { limitations } = toolContract(
-        "inspect_apk_signature",
-      ).outputSchema.parse(run.json);
+      const { limitations } = completeEvidence(run.json);
       for (const note of limitations) expect(note.length).toBeLessThan(4096);
       return limitations.filter(
         (note) => note.includes("records") || note.includes("more than once"),
@@ -575,8 +573,7 @@ cliTest(
     });
     expect(run.exitCode, run.stderr).toBe(0);
     expect(
-      toolContract("inspect_apk_signature").outputSchema.parse(run.json)
-        .normalized_result.schemes.v1.signers,
+      completeEvidence(run.json).normalized_result.schemes.v1.signers,
     ).toMatchObject([
       {
         signature_file: "META-INF/CERT�.SF",

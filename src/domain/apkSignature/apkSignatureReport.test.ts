@@ -1,9 +1,9 @@
+import { inspectApkSignatureInputSchema } from "./apkSignatureQuery.js";
 import { describe, expect, it } from "vitest";
 
 import {
   apkSignatureResultSchema,
   deriveApkPosture,
-  inspectApkSignatureInputSchema,
   type ApkPostureInput,
   type ApkPostureLineage,
   type ApkPostureSigner,

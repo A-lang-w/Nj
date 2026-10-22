@@ -1,8 +1,7 @@
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err } from "../domain/result.js";
 import { apkSignatureModule } from "../composition/apkSignature.js";
 import type { Logger } from "pino";
 import { createEvidenceToolHandler } from "./contractToolHandler.js";
@@ -16,23 +15,13 @@ export const registerApkSignatureTools = (
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   withAdmittedAnalysis?: WithAdmittedAnalysis,
+  evidenceById?: EvidenceLookup,
 ): void => {
   const contract = apkSignatureModule.contract;
   const handler = createEvidenceToolHandler(
     server,
-    async (rawInput, options) => {
-      const parsed = contract.inputSchema.safeParse(rawInput);
-      if (!parsed.success)
-        return err(
-          analysisInputErrorFromIssues(
-            contract.name,
-            parsed.error.issues,
-            rawInput,
-            { cause: parsed.error },
-          ),
-        );
-      return service.inspect(parsed.data, options);
-    },
+    (input, options) =>
+      service.inspect(input, options, { recordEvidence, evidenceById }),
     logger,
     recordEvidence,
     withAdmittedAnalysis,

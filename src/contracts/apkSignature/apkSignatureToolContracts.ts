@@ -1,7 +1,10 @@
+import { z } from "zod";
+import { apkSignatureResultSchema } from "../../domain/apkSignature/apkSignatureReport.js";
+import { inspectApkSignatureInputSchema } from "../../domain/apkSignature/apkSignatureQuery.js";
 import {
-  apkSignatureResultSchema,
-  inspectApkSignatureInputSchema,
-} from "../../domain/apkSignature/apkSignatureReport.js";
+  apkSignaturePageViewResultSchema,
+  apkSignatureSummaryViewResultSchema,
+} from "../../domain/analysisView/analysisView.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
@@ -12,9 +15,15 @@ export const INSPECT_APK_SIGNATURE_CONTRACT = {
   ...toolContractMetadata("inspect_apk_signature"),
   kind: "artifact-provider",
   description:
-    "Inspect the signing of a selected local Android APK (or ZIP/AAB) statically, to answer who signed it and how before trusting or triaging it. Reports which schemes are present — v1 (JAR META-INF), and the APK Signing Block v2/v3/v3.1 — with each signer's X.509 certificate facts (subject, issuer, serial, validity, public-key algorithm, and the SHA-256 fingerprint of the raw certificate DER), declared digest algorithms, for v1 the certificate each PKCS#7 signature block's SignerInfo names (with the block's certificates and digest/signature algorithm OIDs, or a decode_error), v3 min/max SDK, the declared v3 key-rotation (proof-of-rotation) lineage, and the declared source-stamp certificate. For SHA-256/SHA-512 digests it reports whether the declared content digest matches the current bytes; this is NOT a signature verification, since anyone who changes the bytes can recompute the digest. Derives a posture: v1-only (cannot tell a v1-only APK from one whose v2/v3 block was removed), whether the schemes present the same signer set (observed), whether the v1 signer set equals the lowest block scheme's (observed; a mismatch is notable), whether every differing signer appears in a declared and unverified rotation lineage, the strongest scheme, and rotation/source-stamp presence. No Android code executes; no device or adb is involved; odex/vdex/oat/cdex are not read. No signature is cryptographically verified and no trust verdict is given; SHA-256 identifies the exact bytes, not authenticity.",
+    "Inspect declared v1/v2/v3/v3.1 APK signers, certificate fingerprints, algorithm IDs, content digests, SDK ranges, rotation lineage and source stamp without executing Android code. SHA-256 identifies the exact local file. Summary retains complete Evidence; an optional view selects signers/digests/lineage using stable IDs, scheme or signer-ID batches, fields and paging. Read retained pages with inspect_analysis_view kind apk-signature after the source is removed. IDs include artifact digest, scheme and source ordinal; certificates retain raw-DER SHA-256. Content-digest equality is not cryptographic signature verification: modified declarations can match modified bytes. Authenticity, signatures, lineage trust and v1 entry coverage remain unverified. Malformed structures and resource refusals are explicit; no device, network or SDK is used by REA.",
   inputSchema: inspectApkSignatureInputSchema,
-  outputSchema: evidenceResultOf(apkSignatureResultSchema),
+  outputSchema: evidenceResultOf(
+    z.union([
+      apkSignatureResultSchema,
+      apkSignatureSummaryViewResultSchema,
+      apkSignaturePageViewResultSchema,
+    ]),
+  ),
   examples: [
     {
       title: "Identify who signed an APK and under which schemes",

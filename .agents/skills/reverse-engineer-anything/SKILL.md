@@ -167,6 +167,8 @@ explicit path or endpoint and do not need it.
   ambiguity. No implicit fetch or target execution; WAT is not original source.
   See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/wasm-artifacts.md).
 - Explicit local Android APK (or ZIP/AAB) signing: `inspect_apk_signature`.
+  Prefer its summary or selected signer/digest/lineage page; retain complete
+  Evidence and use `inspect_analysis_view` kind `apk-signature` for follow-ups.
   Reports which schemes are present (v1 JAR, v2, v3, v3.1), each signer's
   certificate SHA-256 fingerprint (v1 included, from its PKCS#7 block), v3 key-rotation lineage, source stamp, and
   whether each signed digest still matches the bytes (self-consistency). This
