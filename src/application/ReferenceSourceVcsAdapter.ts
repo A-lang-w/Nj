@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { lstat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -64,8 +64,13 @@ export const readReferenceSourceVcs = async (
       }
       let ignoreCase: boolean | null = null;
       try {
-        ignoreCase = await readIgnoreCase(repository, resources, signal);
-        const head = await resolveSourceHead(repository, resources, signal);
+        const metadata = await resolveGitMetadata(
+          repository,
+          resources,
+          signal,
+        );
+        ignoreCase = await readIgnoreCase(metadata, resources, signal);
+        const head = await resolveSourceHead(metadata, resources, signal);
         if (isAborted(signal))
           return ok({ info: unknownVcs(), ignoreCase: null });
         return ok({ info: { kind: "git", head, dirty: null }, ignoreCase });
@@ -86,14 +91,21 @@ const unknownVcs = (): ReferenceSourceVcsInfo => ({
   dirty: null,
 });
 
+interface GitMetadataIdentity {
+  readonly gitdir: string;
+  readonly commonDirectory?: string;
+}
+
 const readIgnoreCase = async (
-  repository: string,
+  metadata: GitMetadataIdentity,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<boolean | null> => {
   try {
-    const configPath = await gitConfigPath(repository, resources, signal);
-    if (configPath === undefined) return null;
+    const configPath = join(
+      metadata.commonDirectory ?? metadata.gitdir,
+      "config",
+    );
     const configText = await readOwnedMetadataText(
       configPath,
       resources,
@@ -106,32 +118,50 @@ const readIgnoreCase = async (
   }
 };
 
-/** Resolve the effective local config file for both ordinary and linked worktrees. */
-const gitConfigPath = async (
+/** Resolve repository identity once for the config and HEAD consumers. */
+const resolveGitMetadata = async (
   root: string,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
-): Promise<string | undefined> => {
+): Promise<GitMetadataIdentity> => {
   const dotgit = join(root, ".git");
-  let gitdir = dotgit;
   const metadata = await lstat(dotgit);
-  if (!metadata.isDirectory()) {
-    const pointer = (
-      await readOwnedMetadataText(dotgit, resources, signal)
-    ).trim();
-    const match = /^gitdir:\s*(.+)$/iu.exec(pointer);
-    if (match?.[1] === undefined) return undefined;
-    gitdir = resolve(root, match[1]);
-  }
+  const directory = metadata.isSymbolicLink() ? await stat(dotgit) : metadata;
+  const gitdir = directory.isDirectory()
+    ? dotgit
+    : resolve(
+        root,
+        await readGitMetadataPath(dotgit, "gitdir: ", resources, signal),
+      );
   try {
-    const common = (
-      await readOwnedMetadataText(join(gitdir, "commondir"), resources, signal)
-    ).trim();
-    gitdir = resolve(gitdir, common);
+    const common = await readGitMetadataPath(
+      join(gitdir, "commondir"),
+      "",
+      resources,
+      signal,
+    );
+    return { gitdir, commonDirectory: resolve(gitdir, common) };
   } catch (cause: unknown) {
     if (errorCode(cause) !== "ENOENT") throw cause;
+    return { gitdir };
   }
-  return join(gitdir, "config");
+};
+
+const readGitMetadataPath = async (
+  path: string,
+  prefix: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string> => {
+  // Git strips trailing CR/LF record terminators, not path whitespace. Decode
+  // strictly so invalid UTF-8 cannot select a different replacement-character path.
+  const record = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+    .decode(await readOwnedMetadataBytes(path, resources, signal))
+    .replace(/[\r\n]+$/u, "");
+  const target = record.slice(prefix.length);
+  if (!record.startsWith(prefix) || target === "" || target.includes("\0"))
+    throw new Error("Invalid Git metadata directory pointer");
+  return target;
 };
 
 // Git config syntax uses ASCII whitespace; Unicode whitespace remains data.
@@ -322,7 +352,7 @@ const readOwnedMetadataBytes = async (
 };
 
 const resolveSourceHead = async (
-  root: string,
+  metadata: GitMetadataIdentity,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<string> => {
@@ -414,12 +444,12 @@ const resolveSourceHead = async (
     },
   };
   const readRef = async (options: {
-    readonly gitdir?: string;
+    readonly gitdir: string;
     readonly ref: string;
   }) => {
     let head: string;
     try {
-      head = await resolveRef({ fs: referenceFs, dir: root, ...options });
+      head = await resolveRef({ fs: referenceFs, ...options });
     } catch (cause: unknown) {
       if (cleanupFailures.length > 0)
         throwCleanupFailures(failedRead?.cause ?? cause);
@@ -432,25 +462,8 @@ const resolveSourceHead = async (
     if (failedRead !== undefined) throw failedRead.cause;
     return head;
   };
-  const dotgit = join(root, ".git");
-  if (!(await lstat(dotgit)).isFile()) return readRef({ ref: "HEAD" });
-  const pointer = (await readMetadataText(dotgit)).replace(/\r?\n$/u, "");
-  if (!pointer.startsWith("gitdir: ") || pointer.length === 8)
-    throw new Error("Invalid Git directory pointer");
-  const gitdir = resolve(root, pointer.slice(8));
-  let commonDirectory: string;
-  try {
-    commonDirectory = resolve(
-      gitdir,
-      (await readMetadataText(join(gitdir, "commondir"))).replace(
-        /\r?\n$/u,
-        "",
-      ),
-    );
-  } catch (cause: unknown) {
-    if (errorCode(cause) !== "ENOENT") throw cause;
-    return readRef({ gitdir, ref: "HEAD" });
-  }
+  const { gitdir, commonDirectory } = metadata;
+  if (commonDirectory === undefined) return readRef({ gitdir, ref: "HEAD" });
   const head = (await readMetadataText(join(gitdir, "HEAD"))).trim();
   if (!head.startsWith("ref: ")) return readRef({ gitdir, ref: "HEAD" });
   const ref = head.slice(5);
