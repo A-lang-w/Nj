@@ -756,6 +756,43 @@ it("refuses when extraction would exceed the projection budget", () => {
   });
 });
 
+it("releases a planning pass a rewrite cut discards before extracting the state again", () => {
+  const recipe = (id: number, views: number) => ({
+    id,
+    name: `Recipe ${String(id)} simmered slowly with a long descriptive title`,
+    views,
+  });
+  const shelf = Array.from({ length: 400 }, (_, index) => recipe(index + 1, 1));
+  // Logging a view bumps the counter only when `views` changes, which cuts the type's reads at the log.
+  const capture = (views: number) =>
+    captureOf([
+      ["GET", "/api/recipes", shelf],
+      ["GET", "/api/recipes/1", recipe(1, 1)],
+      ["POST", "/api/view-log", { ok: true }, 200, { recipe: 1 }],
+      ["GET", "/api/recipes/1", recipe(1, views)],
+    ]);
+  const fits = (parent: AnalysisViewParent, bytes: number): boolean =>
+    projectAnalysisView(
+      parent,
+      { kind: "environment-state", template_rules: [...ALL_RULES] },
+      { state: new EnvironmentStateAccumulator(bytes, [...ALL_RULES]) },
+    ).ok;
+  /** The smallest allowance, to a KiB, the capture's state projects within. */
+  const allowance = (parent: AnalysisViewParent): number => {
+    let [low, high] = [0, 8 * 1024];
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if (fits(parent, middle * 1024)) high = middle;
+      else low = middle;
+    }
+    return high * 1024;
+  };
+  expect(stateOf(capture(2)).types).toMatchObject([
+    { collection_template: "/api/recipes", init_before_ordinal: 2 },
+  ]);
+  expect(allowance(capture(2))).toBeLessThan(allowance(capture(1)) + 16 * 1024);
+});
+
 it("ends every type's state at a write whose URL was redacted, and says so", () => {
   const parent = captureOf([
     ["GET", "/api/items/1", { id: 1, title: "Granite Ledger" }],

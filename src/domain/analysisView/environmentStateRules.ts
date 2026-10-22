@@ -44,6 +44,8 @@ export interface StateBudget {
   /** Whether a record's response had no body. */
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => boolean;
+  /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
+  readonly checkpoint: () => () => void;
   /** Drop the temporary work of the body just read. */
   readonly release: () => void;
 }

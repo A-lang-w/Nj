@@ -94,7 +94,8 @@ later increments.
   semantics and write effects.
 - Charge the manifest's admission and grouping, every record line, every body
   as temporary bytes before decoding and parsing, and every kept value, within
-  the existing 96 MiB budget.
+  the existing 96 MiB budget. A planning pass that a rewrite cut discards
+  releases its charges before the state is extracted again.
 - Read response bodies through one domain owner shared with replay, and parse
   exact JSON through the owner of the exact-number policy.
 

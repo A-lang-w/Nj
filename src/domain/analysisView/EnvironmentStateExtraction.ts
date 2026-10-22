@@ -98,7 +98,7 @@ export class EnvironmentStateExtraction {
   readonly #bases: ReadonlyMap<string, number>;
   #writeCutoffs: StateWriteCutoffs | undefined;
   readonly #initLimits = new Map<string, StateRecordFacts | undefined>();
-  /** Successful POSTs with the ids their responses named, read once on first use. */
+  /** Successful POSTs with the ids their responses named, read once before planning. */
   #created: CreatedIds[] | undefined;
   readonly #identity = new Map<
     string,
@@ -153,7 +153,7 @@ export class EnvironmentStateExtraction {
   run(): ExtractedState | null {
     try {
       this.#findWrites();
-      if (this.#writes.length > 0)
+      if (this.#writes.length > 0) {
         this.#writeCutoffs = new StateWriteCutoffs(
           this.#writes,
           this.#bases,
@@ -162,8 +162,15 @@ export class EnvironmentStateExtraction {
             this.#position.get(right.ordinal)!,
           (bytes) => this.#retain(bytes),
         );
+        this.#creations();
+      }
+      // A rewrite cut discards the first planning pass, so what it retained is released before the second.
+      const release = this.#budget.checkpoint();
       let candidates = this.#plan();
-      if (this.#cutRewrites()) candidates = this.#plan();
+      if (this.#cutRewrites()) {
+        release();
+        candidates = this.#plan();
+      }
       const gate = this.#gateContext();
       for (const plan of this.#plans)
         if (this.#rewritten.has(plan.type))
@@ -672,7 +679,8 @@ export class EnvironmentStateExtraction {
       (observation) => [observation.tool, requestLine(recordOf(observation))],
       (earlier, later) => this.#writeWithin(recordOf(earlier), recordOf(later)),
     );
-    this.#spans.push(...changes.spans);
+    this.#retain(ENTRY_BYTES * 4 * changes.spans.length);
+    for (const span of changes.spans) this.#spans.push(span);
     for (const { type } of this.#spans) this.#rewritten.add(type);
     for (const [type, names] of changes.volatile)
       this.#volatile.set(type, names);
