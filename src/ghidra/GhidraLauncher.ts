@@ -10,8 +10,8 @@ import {
   cp,
   lstat,
   mkdir,
-  readFile,
   readdir,
+  readFile,
   realpath,
 } from "node:fs/promises";
 import {
@@ -25,7 +25,7 @@ import {
   win32,
 } from "node:path";
 
-import writeFileAtomic from "write-file-atomic";
+import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";
 
 import { windowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
 import {
@@ -71,6 +71,102 @@ import {
 } from "./GhidraPspExtension.js";
 
 /** Private paths and identity material for one headless Ghidra import. */
+/**
+ * Copy a caller-owned pre-imported project into the owned runtime's project
+ * root so the headless open reads the copy and never mutates the original.
+ * The invocation selects the fixed project name `rea-project`, so a caller
+ * directory without the expanded `rea-project.gpr` / `rea-project.rep` pair
+ * is rejected here with its reason instead of an opaque Ghidra failure.
+ * A project path that overlaps the runtime (the runtime root itself, a
+ * directory inside it, or an ancestor of it) is rejected before any copy so
+ * the recursive copy can never descend into its own destination.
+ */
+const pathsOverlap = (first: string, second: string): boolean => {
+  const contains = (ancestor: string, descendant: string): boolean => {
+    const rel = relative(ancestor, descendant);
+    return rel === "" || (!isAbsolute(rel) && !rel.startsWith(".."));
+  };
+  return contains(first, second) || contains(second, first);
+};
+
+export const copyExistingGhidraProject = async (
+  sourcePath: string,
+  destinationRoot: string,
+  signal?: AbortSignal,
+): Promise<void> => {
+  signal?.throwIfAborted();
+  // Resolve both sides through realpath before comparing: resolve() does not
+  // follow symbolic links, so a symlinked path component could otherwise hide
+  // an overlap with the runtime from the purely lexical check below. The
+  // destination is the runtime's project root, inside the runtime root, so one
+  // comparison against the runtime root rejects a project placed at the
+  // runtime root, anywhere inside it, or an ancestor of it.
+  const realRuntime = await realpath(dirname(destinationRoot)).catch(() =>
+    resolve(dirname(destinationRoot)),
+  );
+  const realSource = await realpath(sourcePath).catch(() => undefined);
+  if (realSource !== undefined && pathsOverlap(realSource, realRuntime))
+    throw new Error(
+      `Existing Ghidra project directory overlaps the REA runtime directory; select a project outside the runtime: ${sourcePath}`,
+    );
+  const source = await lstat(sourcePath).catch(() => undefined);
+  signal?.throwIfAborted();
+  if (source === undefined || !source.isDirectory())
+    throw new Error(
+      `Existing Ghidra project directory does not exist: ${sourcePath}`,
+    );
+  const marker = await lstat(join(sourcePath, "rea-project.gpr")).catch(
+    () => undefined,
+  );
+  signal?.throwIfAborted();
+  const data = await lstat(join(sourcePath, "rea-project.rep")).catch(
+    () => undefined,
+  );
+  signal?.throwIfAborted();
+  if (!marker?.isFile() || !data?.isDirectory())
+    throw new Error(
+      `Existing Ghidra project requires a regular rea-project.gpr marker and rea-project.rep directory; restore saved .grez archives before selecting the project: ${sourcePath}`,
+    );
+  const entries = await readdir(sourcePath);
+  signal?.throwIfAborted();
+  const copyEntry = async (
+    source: string,
+    destination: string,
+  ): Promise<void> => {
+    signal?.throwIfAborted();
+    const metadata = await lstat(source);
+    signal?.throwIfAborted();
+    if (metadata.isSymbolicLink())
+      throw new GhidraLaunchError(
+        `Existing Ghidra project contains a symbolic link: ${source}`,
+      );
+    if (metadata.isDirectory()) {
+      await mkdir(destination, { mode: 0o700 });
+      signal?.throwIfAborted();
+      const children = await readdir(source);
+      signal?.throwIfAborted();
+      for (const child of children)
+        await copyEntry(join(source, child), join(destination, child));
+    } else if (metadata.isFile()) {
+      // Finish each owned write before checking cancellation or allowing cleanup.
+      // Dereferencing also prevents a raced source replacement from leaving a
+      // live symbolic link in the runtime copy.
+      await cp(source, destination, {
+        dereference: true,
+        errorOnExist: true,
+        force: false,
+      });
+    } else {
+      throw new GhidraLaunchError(
+        `Existing Ghidra project contains a non-regular entry: ${source}`,
+      );
+    }
+    signal?.throwIfAborted();
+  };
+  for (const entry of entries)
+    await copyEntry(join(sourcePath, entry), join(destinationRoot, entry));
+};
+
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
   readonly transport: GhidraTransportKind;
@@ -478,6 +574,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           : { javaVmName: this.options.javaVmName }),
         homeRoot: paths.homeRoot,
         tempRoot: paths.tempRoot,
+        argumentFileRoot: session.runtimeRoot,
+        ...(options.resourceScope === undefined
+          ? {}
+          : { resourceScope: options.resourceScope }),
         arguments: headlessArguments,
         environment,
         onStderr: (mode, stderr) => {
@@ -508,7 +608,18 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           : inspectedJavaLaunch.configuredMaxHeap;
       const command =
         platform === "win32"
-          ? { ...scriptCommand, environment }
+          ? {
+              ...scriptCommand,
+              environment: {
+                ...environment,
+                ...(inspectedJavaLaunch.preparedJdkJavaOptions === undefined
+                  ? {}
+                  : {
+                      JDK_JAVA_OPTIONS:
+                        inspectedJavaLaunch.preparedJdkJavaOptions,
+                    }),
+              },
+            }
           : inspectedJavaLaunch;
       started = await (this.options.spawnProcess ?? spawnOwnedProviderProcess)({
         command: command.command,
@@ -1050,114 +1161,6 @@ const createGhidraRuntimeDirectories = async (
       join(paths.configRoot, "ghidra", configReleaseDirectory),
     ].map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
   );
-};
-
-/**
- * Copy a caller-owned pre-imported project into the owned runtime's project
- * root so the headless open reads the copy and never mutates the original.
- * The invocation selects the fixed project name `rea-project`, so a caller
- * directory without the expanded `rea-project.gpr` / `rea-project.rep` pair
- * is rejected here with its reason instead of an opaque Ghidra failure.
- * A project path that overlaps the runtime (the runtime root itself, a
- * directory inside it, or an ancestor of it) is rejected before any copy so
- * the recursive copy can never descend into its own destination.
- */
-const pathsOverlap = (first: string, second: string): boolean => {
-  const contains = (ancestor: string, descendant: string): boolean => {
-    const rel = relative(ancestor, descendant);
-    return rel === "" || (!isAbsolute(rel) && !rel.startsWith(".."));
-  };
-  return contains(first, second) || contains(second, first);
-};
-
-export const copyExistingGhidraProject = async (
-  sourcePath: string,
-  destinationRoot: string,
-  signal?: AbortSignal,
-): Promise<void> => {
-  signal?.throwIfAborted();
-  // Resolve both sides through realpath before comparing: resolve() does not
-  // follow symbolic links, so a symlinked path component could otherwise hide
-  // an overlap with the runtime from the purely lexical check below. The
-  // destination is the runtime's project root, inside the runtime root, so one
-  // comparison against the runtime root rejects a project placed at the
-  // runtime root, anywhere inside it, or an ancestor of it.
-  const realRuntime = await realpath(dirname(destinationRoot)).catch(() =>
-    resolve(dirname(destinationRoot)),
-  );
-  const realSource = await realpath(sourcePath).catch(() => undefined);
-  if (realSource !== undefined && pathsOverlap(realSource, realRuntime))
-    throw new Error(
-      `Existing Ghidra project directory overlaps the REA runtime directory; select a project outside the runtime: ${sourcePath}`,
-    );
-  const source = await lstat(sourcePath).catch(() => undefined);
-  signal?.throwIfAborted();
-  if (source === undefined || !source.isDirectory())
-    throw new Error(
-      `Existing Ghidra project directory does not exist: ${sourcePath}`,
-    );
-  const marker = await lstat(join(sourcePath, "rea-project.gpr")).catch(
-    () => undefined,
-  );
-  signal?.throwIfAborted();
-  const data = await lstat(join(sourcePath, "rea-project.rep")).catch(
-    () => undefined,
-  );
-  signal?.throwIfAborted();
-  if (!marker?.isFile() || !data?.isDirectory())
-    throw new Error(
-      `Existing Ghidra project requires a regular rea-project.gpr marker and rea-project.rep directory; restore saved .grez archives before selecting the project: ${sourcePath}`,
-    );
-  const entries = await readdir(sourcePath);
-  signal?.throwIfAborted();
-  const copyEntry = async (
-    source: string,
-    destination: string,
-  ): Promise<void> => {
-    signal?.throwIfAborted();
-    const metadata = await lstat(source);
-    signal?.throwIfAborted();
-    if (metadata.isSymbolicLink())
-      throw new GhidraLaunchError(
-        `Existing Ghidra project contains a symbolic link: ${source}`,
-      );
-    if (metadata.isDirectory()) {
-      await mkdir(destination, { mode: 0o700 });
-      signal?.throwIfAborted();
-      const children = await readdir(source);
-      signal?.throwIfAborted();
-      for (const child of children)
-        await copyEntry(join(source, child), join(destination, child));
-    } else if (metadata.isFile()) {
-      // Finish each owned write before checking cancellation or allowing cleanup.
-      // Dereferencing also prevents a raced source replacement from leaving a
-      // live symbolic link in the runtime copy.
-      await cp(source, destination, {
-        dereference: true,
-        errorOnExist: true,
-        force: false,
-      });
-    } else {
-      throw new GhidraLaunchError(
-        `Existing Ghidra project contains a non-regular entry: ${source}`,
-      );
-    }
-    signal?.throwIfAborted();
-  };
-  for (const entry of entries)
-    await copyEntry(join(sourcePath, entry), join(destinationRoot, entry));
-};
-
-const writeGhidraRuntimeFile = async (
-  path: string,
-  content: string,
-  platform: NodeJS.Platform,
-): Promise<void> => {
-  if (platform === "win32") {
-    windowsPrivateRuntime(dirname(path)).writeFile(basename(path), content);
-    return;
-  }
-  await writeFileAtomic(path, content, { encoding: "utf8", mode: 0o600 });
 };
 
 const ghidraLaunchEnvironment = (
