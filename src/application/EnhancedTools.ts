@@ -59,6 +59,7 @@ import {
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
+import { matchExactName } from "./XrefsAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
@@ -730,24 +731,21 @@ export class EnhancedTools {
   async #findXrefs(name: string, signal?: AbortSignal): EnhancedResult {
     const names = await this.#allAddressed("list_names", signal);
     if (!names.ok) return names;
-    const addresses = new Set<string>();
-    for (const entry of names.value)
-      if (entry.name === name) addresses.add(entry.address);
-    if (addresses.size === 0)
+    const match = matchExactName(names.value, name);
+    if (match.status === "missing")
       return ok({ status: "unresolved", name, reason: "name_not_found" });
-    const [address] = addresses;
-    if (addresses.size > 1 || address === undefined)
+    if (match.status === "ambiguous")
       return err(
-        new AnalysisInputError("find_xrefs_to_name", undefined, [
+        new AnalysisInputError("xrefs", undefined, [
           {
-            path: ["name"],
+            path: ["address"],
             reason: "invalid_value",
-            message: `Analyzed symbol name ${JSON.stringify(name)} is ambiguous at ${[...addresses].join(", ")}. Select an exact address.`,
+            message: match.message,
           },
         ]),
       );
 
-    const xrefs = await this.#call("xrefs", { address }, signal);
+    const xrefs = await this.#call("xrefs", { address: match.address }, signal);
     if (!xrefs.ok) return xrefs;
     if (
       !Array.isArray(xrefs.value) ||
@@ -762,7 +760,7 @@ export class EnhancedTools {
     return ok({
       status: "resolved",
       name,
-      address,
+      address: match.address,
       xrefs: xrefs.value,
     });
   }

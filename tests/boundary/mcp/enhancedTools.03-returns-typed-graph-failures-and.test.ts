@@ -67,6 +67,14 @@ describe("enhanced MCP tools", () => {
       expect(text).toContain("ambiguous");
       expect(text).toContain("0x1000");
       expect(text).toContain("0x2000");
+      expect(parsed.error.recovery).toEqual({
+        kind: "inspect_input_contract",
+        operation: "xrefs",
+      });
+      expect(parsed.error.details).toMatchObject({
+        operation: "xrefs",
+        issues: [{ path: ["address"], reason: "invalid_value" }],
+      });
       expect(xrefCalls).toEqual([]);
     }
   });
