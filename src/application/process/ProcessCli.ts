@@ -10,7 +10,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { describeValidationFailure } from "../../domain/evidenceBundle.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   analysisInputErrorFromIssues,
@@ -29,7 +29,7 @@ import {
   parseProcessCaptureEvidence,
 } from "./ProcessEvidence.js";
 import { readJsonFile } from "../JsonFiles.js";
-import { RegularFileCleanupFailure } from "../RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput extends AnalysisErrorProjection {

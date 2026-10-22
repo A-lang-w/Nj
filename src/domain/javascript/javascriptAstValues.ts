@@ -3,6 +3,12 @@ import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
+/** Type-only class fields neither initialize own slots nor shadow inherited members. */
+export const isRuntimeJavaScriptClassProperty = (
+  node: t.Node,
+): node is t.ClassProperty =>
+  t.isClassProperty(node) && node.declare !== true && node.abstract !== true;
+
 /** All class field forms share value timing; keys remain definition-time syntax. */
 export const javaScriptClassField = (
   node: t.Node | null | undefined,
