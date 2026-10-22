@@ -48,6 +48,14 @@ export interface KunaSpanOwnership {
     owner: OwnedFileHandle,
     marker: ProviderCleanupError,
   ) => void;
+  /**
+   * Admit and finalize one span open. The session holds this across the read
+   * and its close so a retained descriptor blocks the next open.
+   */
+  readonly runSpan?: <T>(
+    operation: string,
+    read: () => Promise<Result<T, AnalysisError>>,
+  ) => Promise<Result<T, AnalysisError>>;
 }
 
 const readSpan = async (
@@ -71,33 +79,38 @@ const readSpan = async (
         },
       ),
     );
-  const opened = await open(path, "r");
-  const owner = new OwnedFileHandle(opened);
-  try {
-    const text = await withOwnedFileHandle(
-      path,
-      owner,
-      ownership.retainFailedClose === undefined
-        ? {}
-        : {
-            retainFailedClose: (failed) =>
-              ownership.retainFailedClose?.(path, failed),
-          },
-      async (handle) => {
-        const buffer = Buffer.alloc(length);
-        const { bytesRead } = await handle.read(buffer, 0, length, offset);
-        if (bytesRead !== length)
-          throw new Error(`${path} is shorter than its recorded span`);
-        return buffer.toString("utf8");
-      },
-    );
-    return ok(text);
-  } catch (cause: unknown) {
-    if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-    return err(
-      spanCloseFailure(operation, path, offset, length, cause, ownership),
-    );
-  }
+  const read = async (): Promise<Result<string, AnalysisError>> => {
+    const opened = await open(path, "r");
+    const owner = new OwnedFileHandle(opened);
+    try {
+      const text = await withOwnedFileHandle(
+        path,
+        owner,
+        ownership.retainFailedClose === undefined
+          ? {}
+          : {
+              retainFailedClose: (failed) =>
+                ownership.retainFailedClose?.(path, failed),
+            },
+        async (handle) => {
+          const buffer = Buffer.alloc(length);
+          const { bytesRead } = await handle.read(buffer, 0, length, offset);
+          if (bytesRead !== length)
+            throw new Error(`${path} is shorter than its recorded span`);
+          return buffer.toString("utf8");
+        },
+      );
+      return ok(text);
+    } catch (cause: unknown) {
+      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+      return err(
+        spanCloseFailure(operation, path, offset, length, cause, ownership),
+      );
+    }
+  };
+  return ownership.runSpan === undefined
+    ? read()
+    : ownership.runSpan(operation, read);
 };
 
 /** Keep the span text or the short-read diagnostic with the exact handle. */

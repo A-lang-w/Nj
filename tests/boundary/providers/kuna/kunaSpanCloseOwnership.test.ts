@@ -12,8 +12,11 @@ const fault = vi.hoisted(() => ({
   span: "",
   short: false,
   reads: 0,
+  entered: 0,
   closes: 0,
   opens: 0,
+  hold: undefined as Promise<void> | undefined,
+  releaseHold: () => undefined as () => void,
   handles: [] as FileHandle[],
   cause: Object.assign(new Error("controlled close refusal"), { code: "EIO" }),
 }));
@@ -31,6 +34,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         get(target, key) {
           if (key === "read")
             return async (...readArgs: unknown[]) => {
+              fault.entered += 1;
+              if (fault.hold !== undefined) await fault.hold;
               const read = await Reflect.apply(target.read, target, readArgs);
               fault.reads += 1;
               return fault.short ? { ...read, bytesRead: 0 } : read;
@@ -50,12 +55,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 afterEach(() => {
+  fault.releaseHold();
   fault.fail = false;
   fault.span = "";
   fault.short = false;
   fault.reads = 0;
+  fault.entered = 0;
   fault.closes = 0;
   fault.opens = 0;
+  fault.hold = undefined;
+  fault.releaseHold = () => undefined;
   fault.handles = [];
 });
 
@@ -148,3 +157,69 @@ it.each([false, true])(
     }
   },
 );
+
+it("does not open a second span while a peer still holds a failed close", async () => {
+  const { cacheRoot, open: createClient } = await session(
+    "rea-kuna-span-close-gate-",
+  );
+  const client = createClient();
+  try {
+    await run(client, "procedure_assembly", { procedure: "main" });
+    const [key] = await readdir(join(cacheRoot, "projects"));
+    fault.span = join(
+      cacheRoot,
+      "projects",
+      key ?? "",
+      "project",
+      "program.asm",
+    );
+    fault.fail = true;
+    fault.hold = new Promise((resolve) => {
+      fault.releaseHold = resolve;
+    });
+    const first = client.execute(
+      "procedure_assembly",
+      { procedure: "main" },
+      {},
+    );
+    await vi.waitFor(() => {
+      expect(fault.entered).toBe(1);
+    });
+    const second = client.execute(
+      "procedure_assembly",
+      { procedure: "parse" },
+      {},
+    );
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(fault.opens).toBe(1);
+    expect(fault.entered).toBe(1);
+    fault.releaseHold();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.ok).toBe(false);
+    if (firstResult.ok) return;
+    expect(secondResult.ok).toBe(false);
+    if (secondResult.ok) return;
+    expect(firstResult.error.cleanupIncomplete).toBe(true);
+    expect(secondResult.error.cleanupIncomplete).toBe(true);
+    expect(secondResult.error.cleanupResources).toContain(fault.span);
+    expect(fault.opens).toBe(1);
+    expect(fault.entered).toBe(1);
+    expect(fault.reads).toBe(1);
+    expect(fault.closes).toBeGreaterThanOrEqual(2);
+    const handle = fault.handles[0];
+    if (handle === undefined) throw new Error("missing span descriptor");
+    expect(handle.fd).toBeGreaterThanOrEqual(0);
+    const live = await handle.read(Buffer.alloc(4), 0, 4, 0);
+    expect(live.bytesRead).toBe(4);
+  } finally {
+    fault.releaseHold();
+    fault.fail = false;
+    fault.hold = undefined;
+    fault.span = "";
+    await client.close();
+    for (const handle of fault.handles)
+      if (handle.fd >= 0) await handle.close().catch(() => undefined);
+  }
+});

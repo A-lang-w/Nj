@@ -271,6 +271,8 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #launcher: KunaProcessLauncher | undefined;
   readonly #resourceScope = new ArtifactResourceScope();
   readonly #spanLeases = new Map<OwnedFileHandle, AnalysisCleanupLease>();
+  /** Serializes span admission and finalization. Not the installation scope. */
+  #spanAdmission: Promise<void> = Promise.resolve();
   /** Single-function runs in flight, by entry address. */
   readonly #singleFunctionRuns = new Map<string, SingleFunctionRun>();
   /** Completed single-function texts by address, least recently used first. */
@@ -380,6 +382,8 @@ export class KunaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    // A peer can retain a descriptor after this check. Span opens recheck
+    // under #runSpan, which holds admission through that open's close.
     const pendingDescriptors = await this.#pendingDescriptorCleanup(operation);
     if (pendingDescriptors !== undefined) return err(pendingDescriptors);
     if (cancelled(options.signal))
@@ -1590,7 +1594,29 @@ export class KunaSessionClient implements AnalysisClient {
           bindSpanCleanup: (owner, marker) => {
             this.#spanLeases.get(owner)?.bindCleanupError(marker);
           },
+          runSpan: (operation, read) => this.#runSpan(operation, read),
         });
+  }
+
+  /**
+   * One span open at a time, including its close. The pending-lease check at
+   * request entry can pass for every overlapping caller; this gate is the
+   * admission that runs again immediately before open.
+   */
+  #runSpan<T>(
+    operation: string,
+    read: () => Promise<Result<T, AnalysisError>>,
+  ): Promise<Result<T, AnalysisError>> {
+    const admitted = this.#spanAdmission.then(async () => {
+      const pending = await this.#pendingDescriptorCleanup(operation);
+      if (pending !== undefined) return err(pending);
+      return read();
+    });
+    this.#spanAdmission = admitted.then(
+      () => undefined,
+      () => undefined,
+    );
+    return admitted;
   }
 
   /**
