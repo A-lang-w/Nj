@@ -114,14 +114,22 @@ const expectWorkflowQuestionsRetained = (
   )
     throw new Error("Fixture workflow did not return residual questions");
   expect(result.residual_unknowns.length).toBeGreaterThan(0);
+  const escapeRegex = (value: string): string =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   expect(snapshot.evidence_bundle.unknowns).toEqual(
     expect.arrayContaining(
-      result.residual_unknowns.map((question) =>
-        expect.objectContaining({
-          question,
+      result.residual_unknowns.map((question) => {
+        if (typeof question !== "string")
+          throw new Error("Expected residual unknown questions to be strings");
+        return expect.objectContaining({
+          question: expect.stringMatching(
+            new RegExp(
+              `^${escapeRegex(question)}(?: \\(Evidence ev_[0-9a-f]+\\))?$`,
+            ),
+          ),
           supporting_evidence_ids: [evidence.evidence_id],
-        }),
-      ),
+        });
+      }),
     ),
   );
 };
