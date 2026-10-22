@@ -1,4 +1,9 @@
+import {
+  bridgeCandidateCoverageSchema,
+  projectCartesianCandidates,
+} from "../bridgeCandidateProjection.js";
 import { z } from "zod";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 
 import {
   hasCompleteInventoryCoverage,
@@ -6,17 +11,16 @@ import {
 } from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   applicationInventoryProjectionInputSchema,
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
+  type MobileApplicationProjectionWithSources,
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
   projectionCoverage,
-  projectionDigest,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
 } from "../mobileApplicationGraphProjection.js";
@@ -78,7 +82,7 @@ type Component = z.infer<typeof componentSchema>;
 /** Project exact HarmonyOS package paths and hashes without decoding or executing target code. */
 export const projectHarmonyApplication = (
   input: HarmonyApplicationProjectionInput,
-): HarmonyApplicationProjectionResult => {
+): MobileApplicationProjectionWithSources<HarmonyApplicationProjectionResult> => {
   const parsed = harmonyApplicationProjectionInputSchema.parse(input);
   const { evidence, inventory } = parseArtifactInventoryEvidence(
     parsed.inventory_evidence,
@@ -145,18 +149,31 @@ export const projectHarmonyApplication = (
     ),
     limitations,
   };
-  return harmonyApplicationProjectionResultSchema.parse({
-    ...withoutId,
-    projection_id: `hmp_${projectionDigest(withoutId, "HarmonyOS application projection")}`,
-  });
+  return {
+    projection: harmonyApplicationProjectionResultSchema.parse({
+      ...withoutId,
+      projection_id: `hmp_${digestCanonicalValue(withoutId, "HarmonyOS application projection")}`,
+    }),
+    sources: evidence,
+  };
 };
 
 const harmonyRootFormat = (format: string): RootFormat => {
   const root = HARMONY_ROOT_FORMATS.find((candidate) => candidate === format);
   if (root === undefined)
-    throw new TypeError(
-      `HarmonyOS application projection requires HAP, HSP, or App Pack inventory Evidence (got ${format})`,
-    );
+    throw new AnalysisInputError("project_harmony_application_graph", {}, [
+      {
+        path: [
+          "inventory_evidence",
+          0,
+          "normalized_result",
+          "manifest",
+          "root_format",
+        ],
+        reason: "invalid_value",
+        message: `HarmonyOS application projection requires HAP, HSP, or App Pack inventory Evidence (got ${format})`,
+      },
+    ]);
   return root;
 };
 
