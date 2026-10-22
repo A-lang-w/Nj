@@ -436,7 +436,9 @@ naming the entity, collection or document path, or `{"source": "recording",
 "reason": …}` with the view's reason, `no-view`, `unrecorded-request` or `page-exceeded` (a call naming a page of a whole list that the collection has outgrown). A
 state answer carries the base record's status, content type and `replay`
 provenance with `truncated: false`; one whose JSON would exceed 256 KiB is
-refused as a `resource_constraint` tool error rather than cut. Query `POST`s
+refused as a `resource_constraint` tool error rather than cut. Extraction does
+not state-back a document whose rendered JSON exceeds 256 KiB; that read stays
+recorded (`rendered-oversize`) and replays the captured body. Query `POST`s
 stay served and answer from their recordings with the reason `query-body`.
 
 `POST`, `PUT`, `PATCH` and `DELETE` tools are served only when the state's
@@ -501,6 +503,23 @@ names its category in `error.data.reason`: `not-found`, `permission`,
 `http-status` or `network` (connection, TLS or a refused redirect) for
 downloads, and `cancelled` for a download the server's stop or its caller's
 departure ended.
+
+Served creates also bound additional collection history since the last reset
+or `data/add` to 1 MiB of deterministic accounting: UTF-8 bytes for each new
+collection spelling and its possible sequence keys, plus a 64-byte allowance
+per collection and potential sequence-key record. The score bounds identifier
+payload and a fixed record allowance; it is not a measurement or guarantee of
+process memory. Collections
+already present in the Evidence or loaded state are part of the state itself;
+the store indexes their unique spellings so they remain known after deletion,
+but they do not consume this additional-history budget. A create that would
+exceed the budget is refused before the state changes. `data/reset` or `data/add`
+clears generated history; if the same calls would hit the limit again, use
+fewer distinct collection paths. The 1 MiB score ceiling is 1/32 of the
+separate 32 MiB state-intake ceiling, reserving a small, explicit allowance
+for identifiers retained beyond the loaded state. A loaded-state path that is
+later deleted and then introduced again may consume the additional-history
+budget when the store must retain it beyond the source entity.
 
 Stopping the server cancels every pending call, and a caller that leaves before
 its reply cancels its own: a download in progress ends, and calls not yet run

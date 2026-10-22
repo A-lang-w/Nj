@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { overlapsWrite } from "./environmentStateWriteAttribution.js";
 import {
   collectionPathOf,
   isObject,
@@ -62,6 +63,8 @@ export const newEntityIn = (
 export interface ObservationSearch {
   readonly records: readonly StateRecordFacts[];
   readonly from: number;
+  /** A timed write's completion. A read begun while it still ran may show the prior state. */
+  readonly after?: number;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly withBody: <T>(
     ordinal: number,
@@ -75,6 +78,7 @@ const succeeded = (record: StateRecordFacts): boolean =>
 /**
  * The first later read, before the next write, that shows a written entity: an item read of
  * `id` when given, else an item read of an unheld id or a collection read listing exactly one.
+ * A read begun while the write still ran may show the earlier state, so it is not chosen.
  */
 export const laterObservation = (
   search: ObservationSearch,
@@ -85,10 +89,19 @@ export const laterObservation = (
     readonly id?: string;
     readonly held: (id: string) => boolean;
     readonly isWrite: (record: StateRecordFacts) => boolean;
+    /** An item read matches by this instead of equal collection strings. */
+    readonly sameItem?: (record: StateRecordFacts) => boolean;
+    /** Skip read views that do not cover the facts needed by this observation. */
+    readonly covers?: (
+      view: Extract<StateView, { readonly shape: "item" | "list" }>,
+    ) => boolean;
   },
 ): Observed | undefined => {
   for (const record of search.records.slice(search.from + 1)) {
     if (target.isWrite(record)) return undefined;
+    // The same overlap the check path ignores: the write was still running when this read began.
+    if (search.after !== undefined && overlapsWrite(search.after, record.start))
+      continue;
     const view = search.viewOf(record.ordinal);
     if (
       !succeeded(record) ||
@@ -96,6 +109,7 @@ export const laterObservation = (
       view.type !== target.type
     )
       continue;
+    if (target.covers !== undefined && !target.covers(view)) continue;
     const found =
       view.shape === "item"
         ? itemObservation(search, record, view.pointer, target)
@@ -111,12 +125,13 @@ const itemObservation = (
   pointer: string,
   target: Parameters<typeof laterObservation>[1],
 ): Observed | undefined => {
-  const id = lastSegmentValue(record.path);
-  if (
-    collectionPathOf(record, true) !== target.collection ||
-    (target.id !== undefined ? id !== target.id : target.held(id))
-  )
-    return undefined;
+  const pathId = lastSegmentValue(record.path);
+  const named =
+    target.sameItem?.(record) ??
+    (collectionPathOf(record, true) === target.collection &&
+      (target.id === undefined ? !target.held(pathId) : pathId === target.id));
+  if (!named) return undefined;
+  const id = target.id ?? pathId;
   return search.withBody(record.ordinal, (body) => {
     const object =
       body === undefined
