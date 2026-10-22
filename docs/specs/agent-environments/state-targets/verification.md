@@ -10,8 +10,8 @@ and compares it with the recording.
 - `npm run build:cached`, `npm run check:fast` (typecheck and lint, no new warnings in the changed files),
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
-- `npm run jscpd`: 3.45% duplicated lines over 4028 files.
-- `npx vitest run --project domain --project services`: 8788 passed, 6 pre-existing skips.
+- `npm run jscpd`: 3.49% duplicated lines over 4055 files.
+- `npx vitest run --project domain --project services`: 8962 passed, 6 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 88 passed.
@@ -26,6 +26,7 @@ and compares it with the recording.
 | linked creates  | 189         | 48     | 80              | 1,105                   | 1,911 of 1,964          |
 | rewrite cuts    | 189         | 51     | 77              | 1,110                   | 1,922 of 1,975          |
 | variant lines   | 189         | 61     | 61              | 1,150                   | 2,068 of 2,126          |
+| review fixes    | 189         | 61     | 61              | 1,151                   | 2,075 of 2,133          |
 
 The served smoke applies every served write tool at each step. No read view loses its state backing, and no served
 write tool is lost.
@@ -42,6 +43,9 @@ write tool is lost.
 - **Variant lines:** Baserow's row create, update and delete, Keycloak's user delete, Miniflux's category create and
   update, PocketBase's create, update and delete, and Vikunja's task delete are served. Ghost's post create and update,
   Keycloak's user update, Miniflux's category delete, n8n's tag create and Vikunja's task update gain targets.
+- **Review fixes:** no write verdict changes. A NocoDB records list whose `fields` line had rejected it becomes
+  state-backed, and all 7 of its recorded reads match. Without its guard, a short id would cut 23 Tandoor views'
+  initial windows at a `POST /api/view-log/` returning `{"id":1}`.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
