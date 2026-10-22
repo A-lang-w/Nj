@@ -240,6 +240,8 @@ export class WriteEffects {
       };
       /** Set when the fields are a document's pointers. */
       readonly pointers?: boolean;
+      /** What the write overwrites of earlier effects, when more than the fields it claims. */
+      readonly overwrites?: readonly string[];
     },
   ): void {
     const [entity, collection] = effect.targets as [string, string?];
@@ -251,7 +253,7 @@ export class WriteEffects {
       {
         whole,
         fields: new Set(
-          changed.filter(
+          (effect.overwrites ?? changed).filter(
             (field) => !effect.changed?.accumulated.includes(field),
           ),
         ),
