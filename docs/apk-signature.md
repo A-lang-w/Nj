@@ -234,7 +234,9 @@ A file that is not a ZIP is refused as an unsupported target. A damaged ZIP
 cannot be walked or whose declared record count does not account for all of
 its bytes, or a malformed signing block or signer is an input error naming the
 scheme and reason. Signer framing includes signature records, the public-key
-field and matching signed/outer v3 SDK ranges; trailing signer data is refused.
+field and matching signed/outer v3 SDK ranges. Suffix bytes beyond known
+fields are counted as uninterpreted, as Android readers may ignore extensions;
+their presence does not establish malformed signing.
 When the central directory is not immediately followed by
 the end-of-central-directory record (a declared-size mismatch or a Zip64
 record), the content digest is not recomputed and a limitation says so. A

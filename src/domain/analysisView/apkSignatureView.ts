@@ -2,6 +2,7 @@ import { digestSchema } from "../digests.js";
 import { z } from "zod";
 import {
   apkSignatureResultSchema,
+  apkSignatureUninterpretedBytes,
   type ApkSignatureResult,
 } from "../apkSignature/apkSignatureReport.js";
 import {
@@ -50,6 +51,7 @@ const recordId = (
 
 export const apkSignatureSourceCoverageSchema = z.strictObject({
   scope: z.literal("declared-signing-records"),
+  uninterpreted_bytes: z.int().nonnegative(),
   signer_identity: z.enum(["complete-within-records", "partial"]),
   lineage_decoding: z.enum(["complete-within-records", "partial"]),
   signature_verification: z.literal("not-performed"),
@@ -178,6 +180,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     posture: report.posture,
     source_coverage: {
       scope: "declared-signing-records",
+      uninterpreted_bytes: apkSignatureUninterpretedBytes(report),
       signer_identity: unknownIdentity ? "partial" : "complete-within-records",
       lineage_decoding: unknownLineage ? "partial" : "complete-within-records",
       signature_verification: "not-performed",
@@ -209,6 +212,14 @@ function* records(
           scheme,
           index: signerIndex,
           certificate: signer.certificate,
+          uninterpreted_signed_data_bytes:
+            "uninterpreted_signed_data_bytes" in signer
+              ? signer.uninterpreted_signed_data_bytes
+              : null,
+          uninterpreted_signer_bytes:
+            "uninterpreted_signer_bytes" in signer
+              ? signer.uninterpreted_signer_bytes
+              : null,
           certificate_sha256: signer.certificate?.sha256_fingerprint ?? null,
           signatures: "signatures" in signer ? signer.signatures : [],
           public_key_bytes:

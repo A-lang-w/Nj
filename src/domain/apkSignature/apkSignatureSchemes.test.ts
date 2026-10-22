@@ -36,23 +36,44 @@ const schemeValue = (
   sdkRange?: { min: number; max: number },
 ): Uint8Array => apkSchemeValue(Uint8Array.from(signedData), sdkRange);
 
-it.each([
-  "missing signature records",
-  "truncated public key",
-  "trailing signer bytes",
-])("rejects a signer with %s", (kind) => {
-  const signed = [...seq([digestElement]), ...seq([CERT_DER]), ...seq([])];
-  const signatures = seq([[...u32(0x0103), ...lp([1, 2])]]);
-  const signer =
-    kind === "missing signature records"
-      ? lp(signed)
-      : kind === "truncated public key"
-        ? [...lp(signed), ...signatures, ...u32(5), 1]
-        : [...lp(signed), ...signatures, ...lp([1]), 0xff];
-  expect(decodeSigners(Uint8Array.from(seq([signer])), "v2")).toMatchObject({
-    ok: false,
-    error: { kind: "malformed-signer" },
+it.each(["missing signature records", "truncated public key"])(
+  "rejects a signer with %s",
+  (kind) => {
+    const signed = [...seq([digestElement]), ...seq([CERT_DER]), ...seq([])];
+    const signatures = seq([[...u32(0x0103), ...lp([1, 2])]]);
+    const signer =
+      kind === "missing signature records"
+        ? lp(signed)
+        : [...lp(signed), ...signatures, ...u32(5), 1];
+    expect(decodeSigners(Uint8Array.from(seq([signer])), "v2")).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-signer" },
+    });
+  },
+);
+
+it("preserves unparsed suffixes instead of refusing reader-compatible extensions", () => {
+  const signed = [
+    ...seq([[...digestElement, 0xaa]]),
+    ...seq([CERT_DER]),
+    ...seq([]),
+    ...lp([]),
+  ];
+  const signer = [
+    ...lp(signed),
+    ...seq([[...u32(0x0103), ...lp([1]), 0xbb]]),
+    ...lp([1]),
+    0xcc,
+  ];
+  const result = decodeSigners(Uint8Array.from([...seq([signer]), 0xdd]), "v2");
+  if (!result.ok) throw result.error;
+  expect(result.value.uninterpretedBytes).toBe(1);
+  expect(result.value.signers[0]).toMatchObject({
+    uninterpretedSignedDataBytes: 4,
+    uninterpretedSignerBytes: 1,
   });
+  expect(result.value.signers[0]!.digests[0]!.uninterpretedBytes).toBe(1);
+  expect(result.value.signers[0]!.signatures[0]!.uninterpretedBytes).toBe(1);
 });
 
 it("rejects inconsistent v3 SDK ranges", () => {
@@ -82,7 +103,7 @@ it("preserves an unknown unsigned algorithm ID", () => {
   ];
   const result = decodeSigners(schemeValue(signed), "v2");
   if (!result.ok) throw result.error;
-  expect(result.value[0]!.digests[0]!.algorithmId).toBe(0xfedcba98);
+  expect(result.value.signers[0]!.digests[0]!.algorithmId).toBe(0xfedcba98);
   expect(contentDigestAlgorithm(0xfedcba98)).toBeNull();
 });
 
@@ -96,8 +117,8 @@ describe("APK scheme signer decoder", () => {
     const result = decodeSigners(schemeValue(signedData), "v2");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toHaveLength(1);
-    const signer = result.value[0]!;
+    expect(result.value.signers).toHaveLength(1);
+    const signer = result.value.signers[0]!;
     expect(
       signer.digests.map(({ algorithmId, digest }) => ({
         algorithmId,
@@ -129,8 +150,8 @@ describe("APK scheme signer decoder", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value[0]!.minSdk).toBe(21);
-    expect(result.value[0]!.maxSdk).toBe(34);
+    expect(result.value.signers[0]!.minSdk).toBe(21);
+    expect(result.value.signers[0]!.maxSdk).toBe(34);
   });
 
   it("refuses a truncated signer sequence", () => {

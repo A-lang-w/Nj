@@ -30,6 +30,7 @@ export interface ApkSignerDigest {
   /** APK signature-algorithm id (e.g. 0x0103 = RSA-PKCS1 SHA-256). */
   readonly algorithmId: number;
   readonly digest: Uint8Array;
+  readonly uninterpretedBytes: number;
 }
 
 export interface ApkSignerAttribute {
@@ -40,6 +41,7 @@ export interface ApkSignerAttribute {
 export interface ApkSignerSignature {
   readonly algorithmId: number;
   readonly signature: Uint8Array;
+  readonly uninterpretedBytes: number;
 }
 
 export interface ApkSigner {
@@ -48,6 +50,8 @@ export interface ApkSigner {
   readonly digests: readonly ApkSignerDigest[];
   readonly signatures: readonly ApkSignerSignature[];
   readonly publicKey: Uint8Array;
+  readonly uninterpretedSignedDataBytes: number;
+  readonly uninterpretedSignerBytes: number;
   readonly minSdk: number | null;
   readonly maxSdk: number | null;
   readonly attributes: readonly ApkSignerAttribute[];
@@ -122,7 +126,11 @@ const elements = (
 const decodeAlgorithmRecords = <T>(
   seq: Uint8Array | null,
   what: string,
-  record: (algorithmId: number, bytes: Uint8Array) => T,
+  record: (
+    algorithmId: number,
+    bytes: Uint8Array,
+    uninterpretedBytes: number,
+  ) => T,
 ): Result<T[], ApkSchemeError> => {
   const items = elements(seq, what);
   if (!items.ok) return items;
@@ -131,9 +139,9 @@ const decodeAlgorithmRecords = <T>(
     const reader = new LeReader(item);
     const algorithmId = reader.u32();
     const bytes = reader.lenChunk();
-    if (algorithmId === null || bytes === null || reader.remaining !== 0)
-      return malformed(`${what} entry truncated or contains trailing bytes`);
-    records.push(record(algorithmId, bytes));
+    if (algorithmId === null || bytes === null)
+      return malformed(`${what} entry truncated`);
+    records.push(record(algorithmId, bytes, reader.remaining));
   }
   return ok(records);
 };
@@ -156,12 +164,19 @@ const decodeAttributes = (
 const decodeSignedData = (
   signedData: Uint8Array,
   version: ApkSchemeVersion,
-): Result<Omit<ApkSigner, "signatures" | "publicKey">, ApkSchemeError> => {
+): Result<
+  Omit<ApkSigner, "signatures" | "publicKey" | "uninterpretedSignerBytes">,
+  ApkSchemeError
+> => {
   const reader = new LeReader(signedData);
   const digests = decodeAlgorithmRecords(
     reader.lenChunk(),
     "digests",
-    (algorithmId, digest) => ({ algorithmId, digest }),
+    (algorithmId, digest, uninterpretedBytes) => ({
+      algorithmId,
+      digest,
+      uninterpretedBytes,
+    }),
   );
   if (!digests.ok) return digests;
   const certificates = elements(reader.lenChunk(), "certificates");
@@ -176,14 +191,13 @@ const decodeSignedData = (
   }
   const attributes = decodeAttributes(reader.lenChunk());
   if (!attributes.ok) return attributes;
-  if (reader.remaining !== 0)
-    return malformed("signed data contains trailing bytes");
   return ok({
     certificates: certificates.value,
     digests: digests.value,
     minSdk,
     maxSdk,
     attributes: attributes.value,
+    uninterpretedSignedDataBytes: reader.remaining,
   });
 };
 
@@ -208,25 +222,36 @@ const decodeSigner = (
   const signatures = decodeAlgorithmRecords(
     reader.lenChunk(),
     "signatures",
-    (algorithmId, signature) => ({ algorithmId, signature }),
+    (algorithmId, signature, uninterpretedBytes) => ({
+      algorithmId,
+      signature,
+      uninterpretedBytes,
+    }),
   );
   if (!signatures.ok) return signatures;
   const publicKey = reader.lenChunk();
-  if (publicKey === null || reader.remaining !== 0)
-    return malformed("public key truncated or signer contains trailing bytes");
-  return ok({ ...decoded.value, signatures: signatures.value, publicKey });
+  if (publicKey === null) return malformed("public key truncated");
+  return ok({
+    ...decoded.value,
+    signatures: signatures.value,
+    publicKey,
+    uninterpretedSignerBytes: reader.remaining,
+  });
 };
+
+export interface ApkDecodedScheme {
+  readonly signers: readonly ApkSigner[];
+  readonly uninterpretedBytes: number;
+}
 
 /** Decode every signer in a v2/v3/v3.1 scheme block value. */
 export const decodeSigners = (
   value: Uint8Array,
   version: ApkSchemeVersion,
-): Result<ApkSigner[], ApkSchemeError> => {
+): Result<ApkDecodedScheme, ApkSchemeError> => {
   const reader = new LeReader(value);
   const chunks = elements(reader.lenChunk(), "signers", MAX_SIGNERS);
   if (!chunks.ok) return chunks;
-  if (reader.remaining !== 0)
-    return malformed("scheme contains trailing bytes");
   const signers: ApkSigner[] = [];
   for (const [index, chunk] of chunks.value.entries()) {
     const signer = decodeSigner(chunk, version);
@@ -236,7 +261,7 @@ export const decodeSigners = (
         : signer;
     signers.push(signer.value);
   }
-  return ok(signers);
+  return ok({ signers, uninterpretedBytes: reader.remaining });
 };
 
 /** One node of a v3 proof-of-rotation lineage (oldest first). */

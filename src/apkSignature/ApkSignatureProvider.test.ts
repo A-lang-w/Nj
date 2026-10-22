@@ -271,6 +271,7 @@ describe("ApkSignatureProvider without the Android SDK", () => {
     expect(signer.digests).toEqual([
       {
         signature_algorithm_id: 0x0103,
+        uninterpreted_bytes: 0,
         algorithm: "sha256",
         declared_digest_hex: "ab".repeat(32),
         matches_apk: false,

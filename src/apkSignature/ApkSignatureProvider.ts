@@ -36,6 +36,7 @@ import {
 import {
   APK_SIGNATURE_LIMITATIONS,
   deriveApkPosture,
+  apkSignatureUninterpretedBytes,
   type ApkPostureSigner,
   type ApkSignatureResult,
 } from "../domain/apkSignature/apkSignatureReport.js";
@@ -156,6 +157,7 @@ interface DecodedSigner {
 }
 
 interface DecodedScheme {
+  readonly uninterpretedBytes: number;
   readonly present: boolean;
   readonly signers: readonly DecodedSigner[];
 }
@@ -191,7 +193,7 @@ const projectedOutputBytes = (
   for (const signer of v1Decoded) total += projectedV1SignerBytes(signer);
   for (const scheme of schemes)
     for (const { signer, rotation } of scheme.signers) {
-      total += 128 + certificateBytes(signer.certificates[0]);
+      total += 512 + certificateBytes(signer.certificates[0]);
       for (const digest of signer.digests)
         total += 160 + 2 * digest.digest.length;
       total += 160 * signer.signatures.length;
@@ -208,6 +210,7 @@ const digestsOf = (
 ): Signer["digests"] =>
   signer.digests.map((d) => ({
     signature_algorithm_id: d.algorithmId,
+    uninterpreted_bytes: d.uninterpretedBytes,
     algorithm: contentDigestAlgorithm(d.algorithmId) ?? "unknown",
     declared_digest_hex: Buffer.from(
       d.digest.buffer,
@@ -222,11 +225,16 @@ const baseSigner = (signer: ApkSigner, matcher: DigestMatcher): Signer => ({
     ? certificateFacts(signer.certificates[0])
     : null,
   digests: digestsOf(signer, matcher),
-  signatures: signer.signatures.map(({ algorithmId, signature }) => ({
-    signature_algorithm_id: algorithmId,
-    algorithm: contentDigestAlgorithm(algorithmId) ?? "unknown",
-    signature_bytes: signature.length,
-  })),
+  uninterpreted_signed_data_bytes: signer.uninterpretedSignedDataBytes,
+  uninterpreted_signer_bytes: signer.uninterpretedSignerBytes,
+  signatures: signer.signatures.map(
+    ({ algorithmId, signature, uninterpretedBytes }) => ({
+      signature_algorithm_id: algorithmId,
+      algorithm: contentDigestAlgorithm(algorithmId) ?? "unknown",
+      signature_bytes: signature.length,
+      uninterpreted_bytes: uninterpretedBytes,
+    }),
+  ),
   public_key_bytes: signer.publicKey.length,
   min_sdk: signer.minSdk,
   max_sdk: signer.maxSdk,
@@ -459,16 +467,34 @@ export class ApkSignatureProvider implements ApkSignaturePort {
           block_files: [...v1.blockFiles],
           signers: v1signers,
         },
-        v2: { present: v2.value.present, signers: v2signers },
-        v3: { present: v3.value.present, signers: v3signers },
-        "v3.1": { present: v31.value.present, signers: v31signers },
+        v2: {
+          present: v2.value.present,
+          signers: v2signers,
+          uninterpreted_bytes: v2.value.uninterpretedBytes,
+        },
+        v3: {
+          present: v3.value.present,
+          signers: v3signers,
+          uninterpreted_bytes: v3.value.uninterpretedBytes,
+        },
+        "v3.1": {
+          present: v31.value.present,
+          signers: v31signers,
+          uninterpreted_bytes: v31.value.uninterpretedBytes,
+        },
       },
       source_stamp: sourceStamp,
       posture: derived.posture,
       runtime_execution: "not-performed",
     };
 
+    const uninterpreted = apkSignatureUninterpretedBytes(result);
     const limitations = [
+      ...(uninterpreted === 0
+        ? []
+        : [
+            `${String(uninterpreted)} bytes outside known signing fields were not interpreted; suffixes do not by themselves establish malformed signing.`,
+          ]),
       ...APK_SIGNATURE_LIMITATIONS,
       ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
       ...[duplicateEntriesLimitation(duplicates)].filter(
@@ -571,15 +597,20 @@ const decodeScheme = (
   version: ApkSchemeVersion,
 ): Result<DecodedScheme, AnalysisError> => {
   const pair = block?.pairs.find((p) => p.id === id);
-  if (pair === undefined) return ok({ present: false, signers: [] });
+  if (pair === undefined)
+    return ok({ present: false, signers: [], uninterpretedBytes: 0 });
   const signers = decodeSigners(pair.value, version);
   if (!signers.ok) return err(mapApkSchemeError(signers.error, version));
   const decoded: DecodedSigner[] = [];
-  for (const signer of signers.value) {
+  for (const signer of signers.value.signers) {
     const rotation =
       version === "v2" ? ok({ present: false } as const) : lineageOf(signer);
     if (!rotation.ok) return err(mapApkSchemeError(rotation.error, version));
     decoded.push({ signer, rotation: rotation.value });
   }
-  return ok({ present: true, signers: decoded });
+  return ok({
+    present: true,
+    signers: decoded,
+    uninterpretedBytes: signers.value.uninterpretedBytes,
+  });
 };

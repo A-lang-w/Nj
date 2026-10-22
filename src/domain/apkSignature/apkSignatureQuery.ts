@@ -25,6 +25,8 @@ export const apkSignerRowSchema = z.strictObject({
   certificate_sha256: digestSchema.nullable(),
   signatures: apkSignerSchema.shape.signatures,
   public_key_bytes: position.nullable(),
+  uninterpreted_signed_data_bytes: position.nullable(),
+  uninterpreted_signer_bytes: position.nullable(),
   min_sdk: apkSignerSchema.shape.min_sdk,
   max_sdk: apkSignerSchema.shape.max_sdk,
   signature_file: z.string().nullable(),

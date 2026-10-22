@@ -30,6 +30,7 @@ const certificate = z
   .nullable();
 
 const digestEntry = z.strictObject({
+  uninterpreted_bytes: z.int().nonnegative(),
   signature_algorithm_id: z.int().min(0).max(0xffffffff),
   algorithm: z.enum(["sha256", "sha512", "verity-sha256", "unknown"]),
   declared_digest_hex: z.string().regex(/^(?:[a-f0-9]{2})*$/),
@@ -42,6 +43,8 @@ const digestEntry = z.strictObject({
 });
 
 export const apkSignerSchema = z.strictObject({
+  uninterpreted_signed_data_bytes: z.int().nonnegative(),
+  uninterpreted_signer_bytes: z.int().nonnegative(),
   certificate,
   digests: z.array(digestEntry),
   signatures: z.array(
@@ -49,6 +52,7 @@ export const apkSignerSchema = z.strictObject({
       signature_algorithm_id: z.int().min(0).max(0xffffffff),
       algorithm: digestEntry.shape.algorithm,
       signature_bytes: z.int().nonnegative(),
+      uninterpreted_bytes: z.int().nonnegative(),
     }),
   ),
   public_key_bytes: z.int().nonnegative(),
@@ -140,14 +144,17 @@ export const apkSignatureResultSchema = z.strictObject({
     v2: z.strictObject({
       present: z.boolean(),
       signers: z.array(apkSignerSchema),
+      uninterpreted_bytes: z.int().nonnegative(),
     }),
     v3: z.strictObject({
       present: z.boolean(),
       signers: z.array(apkSignerV3Schema),
+      uninterpreted_bytes: z.int().nonnegative(),
     }),
     "v3.1": z.strictObject({
       present: z.boolean(),
       signers: z.array(apkSignerV3Schema),
+      uninterpreted_bytes: z.int().nonnegative(),
     }),
   }),
   /**
@@ -206,6 +213,33 @@ export const apkSignatureResultSchema = z.strictObject({
   runtime_execution: z.literal("not-performed"),
 });
 export type ApkSignatureResult = z.infer<typeof apkSignatureResultSchema>;
+
+/** Counts disjoint unparsed suffixes; it does not classify their validity or meaning. */
+export const apkSignatureUninterpretedBytes = (
+  report: ApkSignatureResult,
+): number => {
+  let total = 0;
+  for (const scheme of [
+    report.schemes.v2,
+    report.schemes.v3,
+    report.schemes["v3.1"],
+  ]) {
+    total += scheme.uninterpreted_bytes;
+    for (const signer of scheme.signers)
+      total +=
+        signer.uninterpreted_signed_data_bytes +
+        signer.uninterpreted_signer_bytes +
+        signer.digests.reduce(
+          (n, record) => n + record.uninterpreted_bytes,
+          0,
+        ) +
+        signer.signatures.reduce(
+          (n, record) => n + record.uninterpreted_bytes,
+          0,
+        );
+  }
+  return total;
+};
 
 export const APK_SIGNATURE_LIMITATIONS: readonly string[] = [
   "Static structural inspection only. No Android code executes, no device or adb is involved, and odex/vdex/oat/cdex are not read.",
