@@ -19,15 +19,10 @@ export const wasmArtifactModule = {
   create(
     environment: Readonly<NodeJS.ProcessEnv>,
     injected?: WasmArtifactService,
-  ): Pick<
-    WasmArtifactService,
-    "inspect" | "validate" | "inspectValidated" | "close"
-  > {
+  ): Pick<WasmArtifactService, "inspect" | "close"> {
     const service = injected ?? createWasmArtifactService(environment);
     return {
       inspect: service.inspect.bind(service),
-      validate: service.validate.bind(service),
-      inspectValidated: service.inspectValidated.bind(service),
       close: service.close.bind(service),
     };
   },

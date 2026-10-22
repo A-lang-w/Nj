@@ -253,7 +253,7 @@ it("records complete WASM Evidence when an MCP request is cancelled during provi
       return ok(wasmArtifactExecution(value));
     },
   });
-  const inspect = vi.spyOn(service, "inspectValidated");
+  const inspect = vi.spyOn(service, "inspect");
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
@@ -375,7 +375,8 @@ it("attributes rejected WASM paths to their selected fields before provider work
       paths.map((path) => ({
         path,
         reason: "invalid_format",
-        message: "Expected an absolute filesystem path on this host.",
+        expected: "regex",
+        message: "must be an absolute local filesystem path",
       })),
     );
   }
@@ -676,7 +677,8 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
       [["path"], ["glue_paths", 0]].map((path) => ({
         path,
         reason: "invalid_format",
-        message: "Expected an absolute filesystem path on this host.",
+        expected: "regex",
+        message: "must be an absolute local filesystem path",
       })),
     );
     expect(inspect).not.toHaveBeenCalled();
