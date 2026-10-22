@@ -1,8 +1,16 @@
 # Integer validator allocation after MCP materialization
 
-Issue #6236; PR #4360. Linux x64, 2026-10-22. Baseline `main@4a4bbab3c337701febeb6b532ace49041c4876e0`; candidate `461f342c71a72ef2be60912391df2393aa4e2ea3`. Production changes preserve the latest shared metadata owner after synchronization in `461f342c7`; subsequent changes only record evidence. This is a pinned comparison, not a claim about every later main revision.
+Issue #6236; PR #4360. Linux x64, 2026-10-22.
 
-In the separate inspector/forced-GC diagnostics, direct integer construction reduces retained REA V8 heap by about 9.6–9.6 MiB after a completed real Zellij metadata task. The three-pair ranges do not overlap in either profile. Normal completed-task timing and whole-family peaks vary by workload; there is no general latency or peak-memory reduction claim. Directory discovery uses recorded advertisements after #4424; this study separates it from completed tasks that materialize canonical handlers. Context is unchanged.
+<!-- BEGIN:allocation-report:provenance -->
+
+Baseline `main@4a4bbab3c337701febeb6b532ace49041c4876e0`; candidate `461f342c71a72ef2be60912391df2393aa4e2ea3`. This is a pinned comparison.
+
+In separate inspector/forced-GC diagnostics, retained REA V8 heap decreases by about 9.6 MiB. The three-pair ranges do not overlap in either profile. Inspector perturbation is included. Normal task timing, CPU and peak memory are reported separately; these observations do not establish a general latency or peak-memory reduction.
+
+<!-- END:allocation-report:provenance -->
+
+Directory discovery uses recorded advertisements after #4424; this study separates it from completed tasks that materialize canonical handlers. Context is unchanged.
 
 ## Change and compatibility
 
@@ -24,26 +32,32 @@ Node 24.18.0/npm 11.16.0; fresh client/server and HOME per trial, driver compile
 
 Medians, baseline → candidate; all ranges are in the JSON. No inspector or diagnostic GC runs in this cohort.
 
-| Task      | Cache | Input profile |        Wall s |  Family CPU s | Family peak MiB |
-| --------- | ----- | ------------- | ------------: | ------------: | --------------: |
-| directory | cold  | default       | 2.235 → 2.235 | 2.039 → 2.049 |   247.9 → 248.8 |
-| directory | cold  | full          | 2.436 → 2.436 | 2.200 → 2.233 |   348.9 → 346.2 |
-| directory | warm  | default       | 2.235 → 2.236 | 1.998 → 2.044 |   253.7 → 249.6 |
-| directory | warm  | full          | 2.436 → 2.336 | 2.218 → 2.195 |   350.2 → 347.5 |
-| ripgrep   | cold  | default       | 7.170 → 7.068 | 7.013 → 6.899 |   808.4 → 768.2 |
-| zellij    | cold  | default       | 7.474 → 7.273 | 7.282 → 7.031 |   819.2 → 816.3 |
-| ripgrep   | cold  | full          | 7.576 → 7.475 | 7.390 → 7.287 |   799.2 → 785.6 |
-| zellij    | cold  | full          | 7.674 → 7.673 | 7.502 → 7.428 |   826.2 → 817.5 |
-| ripgrep   | warm  | default       | 6.868 → 6.969 | 6.714 → 6.714 |   803.5 → 787.9 |
-| zellij    | warm  | default       | 7.069 → 7.172 | 6.844 → 7.000 |   823.3 → 822.2 |
-| ripgrep   | warm  | full          | 7.473 → 7.273 | 7.250 → 7.106 |   804.9 → 793.9 |
-| zellij    | warm  | full          | 7.473 → 7.471 | 7.282 → 7.262 |   832.6 → 827.4 |
+<!-- BEGIN:allocation-report:normal -->
+
+| Task      | Cache | Input profile |          Wall s |    Family CPU s | Family peak MiB |
+| --------- | ----- | ------------- | --------------: | --------------: | --------------: |
+| directory | cold  | default       |   2.739 → 2.239 |   2.553 → 2.075 |   247.4 → 248.4 |
+| directory | cold  | full          |   2.940 → 2.437 |   2.682 → 2.217 |   348.0 → 346.8 |
+| directory | warm  | default       |   2.639 → 2.135 |   2.461 → 1.980 |   251.8 → 246.2 |
+| directory | warm  | full          |   2.840 → 2.338 |   2.666 → 2.144 |   348.6 → 347.2 |
+| ripgrep   | cold  | default       |   7.571 → 7.169 |   7.372 → 6.918 |   798.8 → 791.1 |
+| zellij    | cold  | default       |   7.876 → 7.373 |   7.623 → 7.134 |   812.2 → 810.5 |
+| ripgrep   | cold  | full          |   7.876 → 7.475 |   7.710 → 7.295 |   803.7 → 801.2 |
+| zellij    | cold  | full          |   8.079 → 7.573 |   7.852 → 7.378 |   815.7 → 819.1 |
+| ripgrep   | warm  | default       |   7.575 → 6.977 |   7.352 → 6.810 |   815.0 → 791.6 |
+| zellij    | warm  | default       |   7.774 → 7.178 |   7.581 → 6.981 |   820.9 → 822.0 |
+| ripgrep   | warm  | full          |   7.976 → 7.875 |   7.746 → 7.679 |   812.7 → 789.3 |
+| zellij    | warm  | full          | 14.995 → 13.978 | 14.742 → 13.718 |   818.5 → 811.5 |
+
+<!-- END:allocation-report:normal -->
 
 ### SDK span and audit separation
 
-The whole-family table includes experimental source/compiled binding. In cold default discovery, median combined audit wall time is 1.273 s baseline / 0.782 s candidate, while the SDK span is 0.944 s / 0.948 s. The audit asymmetry explains most of that whole-task difference; its cause was not established. Startup latency is approximately unchanged. Whole-family CPU includes these audits; per-span CPU is unmeasured.
+<!-- BEGIN:allocation-report:sdk -->
 
-SDK span runs from connect through task checks and close, excluding pre/post binding and preflight artifact/oracle loading. Medians below do not include inspector/GC:
+Cold/default directory audit wall medians are 1.273 s baseline / 0.782 s candidate; SDK spans are 0.944 → 0.948 s. Whole-family costs include those experimental audits. Their cause and per-span CPU are unmeasured.
+
+SDK span from client connect through task checks and client/server close. Excludes pre/post runtime binding and preflight artifact/oracle loading. Diagnostic spans include inspector and forced GC. CPU is measured for the whole family only; per-span CPU is unmeasured.
 
 | Task      | Cache | Inputs  | SDK span s, baseline → candidate |
 | --------- | ----- | ------- | -------------------------------: |
@@ -60,29 +74,41 @@ SDK span runs from connect through task checks and close, excluding pre/post bin
 | ripgrep   | warm  | full    |                    6.100 → 6.492 |
 | zellij    | warm  | full    |                  11.776 → 11.529 |
 
+<!-- END:allocation-report:sdk -->
+
 Full-profile warm Zellij is slower than its cold condition in both roles in this cohort. Cache hit rate and the cause of this observation are unmeasured, and cold/warm groups run sequentially. These timings support neither a general cache speedup nor a causal regression attribution.
 
 ## Separate retained-heap diagnostics
 
 The same completed SDK task launches only its owned REA process with `--inspect=127.0.0.1:0`. Four CDP calls verify the owned transport PID, read heap, force GC and read heap again. The endpoint comes from that child’s stderr; the PID is a cross-check of the owned endpoint, not sole ownership proof. The inspector socket closes before MCP shutdown. These V8 values include inspector perturbation and exclude the client; diagnostic wall/CPU/family peaks include inspector and forced-GC overhead and are not normal-task timing results.
 
-| Inputs  | REA V8 retained MiB |  Baseline range | Candidate range | Diagnostic wall s |         CPU s | Family peak MiB |
-| ------- | ------------------: | --------------: | --------------: | ----------------: | ------------: | --------------: |
-| default |   189.994 → 180.353 | 189.894–190.114 | 180.322–180.501 |     8.179 → 8.180 | 7.994 → 7.960 |   817.7 → 806.6 |
-| full    |   191.392 → 181.721 | 191.368–191.420 | 181.665–181.963 |     8.478 → 8.277 | 8.283 → 8.093 |   825.1 → 822.3 |
+<!-- BEGIN:allocation-report:heap -->
+
+| Inputs  | REA V8 retained MiB |  Baseline range | Candidate range | Diagnostic wall s |           CPU s | Family peak MiB |
+| ------- | ------------------: | --------------: | --------------: | ----------------: | --------------: | --------------: |
+| default |   189.835 → 180.242 | 189.823–189.855 | 180.208–180.366 |   15.490 → 14.291 | 15.246 → 14.123 |   814.1 → 786.3 |
+| full    |   191.260 → 181.693 | 191.165–191.304 | 181.588–181.848 |     8.979 → 8.377 |   8.769 → 8.142 |   810.3 → 824.9 |
+
+<!-- END:allocation-report:heap -->
 
 A mismatched PID is rejected; removing only that guard makes the negative oracle fail. Both connections in that check use the same owned REA endpoint, with no foreign-process attachment. Aggregation rejects diagnostic GC in a normal trial. Historical #4424 receipt reaggregation preserves previous metrics and adds the separately reported SDK-span fields; its aggregator source hash changes.
 
 ## Context accounting
 
-tiktoken 0.14.0 / cl100k_base estimates, **not actual model usage**. Both roles have identical task estimates and advertisements.
+<!-- BEGIN:allocation-report:context -->
+
+tiktoken==0.14.0/cl100k_base; estimates, not model usage. Actual model usage is unmeasured.
 
 | Profile | Input directory once | Directory task | ripgrep task | Zellij task |
 | ------- | -------------------: | -------------: | -----------: | ----------: |
 | default |               49,670 |         50,840 |       54,029 |      53,949 |
 | full    |              205,744 |        206,914 |      210,103 |     210,023 |
 
-Task projection includes question/recipe, server instructions, one unchanged name/description/input-schema directory, every tool argument/text reply and discovery prompt directory. Raw SDK directory costs separately count all observed lists, including output schemas: 756,165/912,436 tokens and 2,935,148/3,587,792 bytes per default/full list; analysis lists twice. SDK initialization/framing, model reasoning and actual usage are unmeasured. Fewer allocated schemas do not imply fewer tokens.
+Raw SDK directory costs per list: 756,165/912,436 tokens and 2,935,148/3,587,792 bytes for default/full.
+
+Question, explicit recipe, server instructions, one complete name/description/input-schema directory, every tool argument and text reply, plus prompt directory for discovery. This projection assumes the client retains a single unchanged directory. Raw catalog result costs include every observed tools/list result separately, with output schemas and without JSON-RPC envelopes. SDK initialization/framing, reasoning and actual model usage are unmeasured. The analysis task includes retained-read, rejection, export/oracle and post-materialization directory checks.
+
+<!-- END:allocation-report:context -->
 
 ## Validation and reproduction
 
@@ -106,3 +132,12 @@ python experiments/analysis-efficiency/mcp-startup-costs.py "$RECEIPT_ROOT" \
 ```
 
 The aggregator requires the recorded tiktoken version, exact catalog/parent/runtime/producer/guard identities, clean source, successful payload cleanup and matching matrix coverage. Default driver behavior continues without an inspector; the heap flag is confined to the experiment.
+
+Regenerate or verify every numerical section directly from the committed JSON:
+
+```bash
+node experiments/analysis-efficiency/mcp-integer-report.mjs
+node experiments/analysis-efficiency/mcp-integer-report.mjs --check
+```
+
+The documentation conformance gate checks current receipts, rejects stale normal/heap tables, and refuses missing producer markers without writing.
