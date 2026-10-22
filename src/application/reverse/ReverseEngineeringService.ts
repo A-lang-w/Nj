@@ -268,7 +268,11 @@ export class ReverseEngineeringService {
     const parsed = objdumpInputSchema.safeParse(rawInput);
     if (!parsed.success)
       return err(new AnalysisInputError("inspect_with_objdump"));
-    const { detail, command_timeout_ms: commandTimeoutMs, ...input } = parsed.data;
+    const {
+      detail,
+      command_timeout_ms: commandTimeoutMs,
+      ...input
+    } = parsed.data;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
         "inspect_with_objdump",
@@ -628,15 +632,11 @@ export class ReverseEngineeringService {
             ...ownedCleanupOptions(cause),
           });
         else if (code === "ETIMEDOUT")
-          earlyFailure = new AnalysisTimeoutError(
-            operation,
-            timeoutMs,
-            {
-              cause,
-              ...reverseCommandTimeoutGuidance(timeoutMs),
-              ...ownedCleanupOptions(cause),
-            },
-          );
+          earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
+            cause,
+            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...ownedCleanupOptions(cause),
+          });
         else if (code === "EACCES" || code === "EPERM")
           earlyFailure = new AnalysisAccessDeniedError(
             operation,
@@ -1204,9 +1204,14 @@ const digestFile = async (
     rejectInterrupted(cause);
   };
   // Armed before the open so the deadline also covers it.
-  const remainingMs = Math.max(0, Math.ceil(timeoutMs - (performance.now() - startedAt)));
+  const remainingMs = Math.max(
+    0,
+    Math.ceil(timeoutMs - (performance.now() - startedAt)),
+  );
   if (remainingMs === 0)
-    throw Object.assign(new Error("Artifact digest timed out"), { code: "ETIMEDOUT" });
+    throw Object.assign(new Error("Artifact digest timed out"), {
+      code: "ETIMEDOUT",
+    });
   const timer = setTimeout(
     () =>
       interrupt(
