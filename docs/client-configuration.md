@@ -299,6 +299,31 @@ For [Qoder](https://docs.qoder.com/cli/mcp-reference), setup writes
 from `~/.qoder/skills` (following `QODER_CONFIG_DIR` when set), so setup
 installs its skill copy there.
 
+## OpenClaw
+
+For [OpenClaw 2026.10.5 and later with the native MCP registry](https://docs.openclaw.ai/cli/mcp),
+setup writes `mcp.servers.rea` with `transport: "stdio"`, `enabled: true`,
+`command`, `args` and explicit `env` settings. The native registry is separate
+from mcporter; setup does not edit mcporter configuration. Older OpenClaw
+versions without this native registry require their own supported bridge.
+
+The default configuration is `~/.openclaw/openclaw.json`. `OPENCLAW_HOME`
+replaces the home directory, so the default state root becomes
+`$OPENCLAW_HOME/.openclaw`. `OPENCLAW_STATE_DIR` selects another state root;
+`OPENCLAW_CONFIG_PATH` independently selects the configuration file. Overrides
+are trimmed, tilde-expanded against the effective home and resolved relative
+to the invocation directory. Personal skills go under `<state>/skills` when
+`OPENCLAW_STATE_DIR` is set; otherwise they are beside the active configuration
+file in `skills/`. Setup, doctor and uninstall share this resolution.
+
+The OpenClaw dialect reads JSON5, including unquoted names and single-quoted
+strings. It edits only REA's registration and retains unrelated source text and
+comments. Duplicate members on the MCP ownership path and include-directed MCP
+configuration require native editing and are left unchanged. Read-only/Nix
+configuration modes also prevent automatic configuration writes. Validate the
+result with `openclaw config validate` and inspect it with `openclaw mcp show rea`;
+`openclaw mcp probe rea` opens a real MCP connection without an agent turn.
+
 ## Factory Droid
 
 For [Factory Droid](https://docs.factory.com/harness/mcp), setup writes

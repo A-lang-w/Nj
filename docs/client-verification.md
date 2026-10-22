@@ -6,6 +6,17 @@ and provider lanes. Each record below states its host, client version, model
 fixture, and remaining coverage; a native-client run with a loopback model does
 not establish live model-service acceptance.
 
+## OpenClaw native registry
+
+`npm run verify:openclaw-client` requires an installed OpenClaw 2026.10.5.
+Set `REA_VERIFY_OPENCLAW_COMMAND` to its `openclaw.mjs` entry point. The lane
+uses disposable homes and profiles to run public REA setup/doctor/uninstall,
+native configuration-path discovery, JSON5 validation and registry readback,
+and a real stdio MCP probe without an agent or model turn. It checks personal
+skill destinations, backups, idempotence, unrelated source preservation and
+verified process cleanup. Native Windows and older OpenClaw versions remain
+outside this lane's scope.
+
 ## Published Pi code-mode renderer limit
 
 A separate probe of the published `@earendil-works/pi-codemode` 1.1.0 and 1.2.0
