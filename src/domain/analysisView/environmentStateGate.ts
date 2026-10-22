@@ -99,10 +99,40 @@ class FieldUnion {
 
 /** The spellings a view always gives clock fields where its recordings spell the stored instant otherwise. */
 class ClockSpellings {
-  /** Per field: the view's spelling, or null once the view also showed the stored spelling or another one. */
-  readonly #formats = new Map<string, ClockFormat | null>();
-  /** Per field, the spellings of shown clocks that name another instant than the stored value. */
-  readonly #others = new Map<string, ClockFormat[]>();
+  /** Each category retains one spelling or a permanent mixed marker, never an expanding format history. */
+  readonly #fields = new Map<
+    string,
+    {
+      matched: ClockFormat | null | undefined;
+      other: ClockFormat | null | undefined;
+    }
+  >();
+
+  constructor(private readonly retain: StateGateContext["retain"]) {
+    retain(ENTRY_BYTES);
+  }
+
+  #note(
+    field: string,
+    category: "matched" | "other",
+    format: ClockFormat | null,
+  ): void {
+    let facts = this.#fields.get(field);
+    if (facts === undefined) {
+      this.retain(ENTRY_BYTES + textBytes(field.length));
+      facts = { matched: undefined, other: undefined };
+      this.#fields.set(field, facts);
+    }
+    const held = facts[category];
+    if (held === undefined) {
+      if (format !== null)
+        this.retain(
+          ENTRY_BYTES +
+            (format.kind === "iso" ? textBytes(format.zone.length) : 0),
+        );
+      facts[category] = format;
+    } else if (held !== null && !same(held, format)) facts[category] = null;
+  }
 
   note(stored: JsonObject, shown: JsonObject): void {
     for (const [field, value] of Object.entries(shown)) {
@@ -111,32 +141,35 @@ class ClockSpellings {
       const was = Object.hasOwn(stored, field)
         ? readClock(stored[field])
         : undefined;
-      if (was === undefined || was.ms !== now.ms) {
-        const others = this.#others.get(field) ?? [];
-        if (!others.some((format) => same(format, now.format)))
-          this.#others.set(field, [...others, now.format]);
+      if (
+        was === undefined ||
+        was.ms !== now.ms ||
+        was.subMillisecond !== now.subMillisecond
+      ) {
+        this.#note(field, "other", now.format);
         continue;
       }
       const spelled = same(stored[field], value) ? null : now.format;
-      const held = this.#formats.get(field);
-      this.#formats.set(
-        field,
-        held === undefined || (held !== null && same(held, spelled))
-          ? spelled
-          : null,
-      );
+      this.#note(field, "matched", spelled);
     }
   }
 
   /** The view member, when the view spells any field otherwise, and in that spelling only. */
   get view(): { readonly clock_formats?: Record<string, ClockFormat> } {
-    const formats = [...this.#formats].filter(
-      (entry): entry is [string, ClockFormat] =>
-        entry[1] !== null &&
-        (this.#others.get(entry[0]) ?? []).every((format) =>
-          same(format, entry[1]),
-        ),
-    );
+    const formats: [string, ClockFormat][] = [];
+    for (const [field, { matched, other }] of this.#fields) {
+      if (
+        matched === undefined ||
+        matched === null ||
+        other === null ||
+        (other !== undefined && !same(other, matched))
+      )
+        continue;
+      if (formats.length === 0) this.retain(ENTRY_BYTES * 2);
+      // Both the temporary entry and its returned object member remain covered.
+      this.retain(ENTRY_BYTES * 2 + textBytes(field.length));
+      formats.push([field, matched]);
+    }
     return formats.length === 0
       ? {}
       : { clock_formats: Object.fromEntries(formats) };
@@ -204,7 +237,7 @@ export const checkItemPlan = (
   context.retain(union.bytes);
   const view = { tool: plan.tool.name, fields: union.fields };
   const envelope: { skeleton?: string } = {};
-  const spellings = new ClockSpellings();
+  const spellings = new ClockSpellings(context.retain);
   for (const record of plan.latest) {
     const reason = itemMismatch(
       context,
@@ -492,7 +525,7 @@ export const checkListPlan = (
   }
   const view = { ...base, query };
   const all = plan.latest.every((record) => whole.has(record.ordinal));
-  const spellings = new ClockSpellings();
+  const spellings = new ClockSpellings(context.retain);
   if (
     !plan.latest.every((record) =>
       listReproduces(context, plan, { view, spellings }, record),

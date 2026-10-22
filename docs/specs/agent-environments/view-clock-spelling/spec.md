@@ -16,6 +16,12 @@ and left the create unserved, and serving would have listed the wrong spelling.
   object's clock fields with the entity's stored values. A field whose recorded value always names the same instant in
   one other spelling gets that spelling in the view's optional `clock_formats`. A field the view also shows as stored, or
   spells two ways, counting values that name another instant, gets none. A spelling has at most nine fraction digits.
+  Instant equality includes all recorded fraction digits, not just milliseconds; offset changes and trailing zeros
+  alone do not change the instant. The clock parser owns this precision and rendering reuses its parsed facts.
+- **Bounds.** Each field retains at most one matching and one other-instant spelling, or a permanent mixed marker
+  for either category. Rejected formats do not accumulate. The existing projection budget covers the learner's maps,
+  keys, formats and returned view members before retention; exhaustion keeps the existing typed resource refusal.
+  Preliminary list-query probes do not learn or retain clock state; only the final admitted view does.
 - **Rendering.** A stored value the view never recorded, such as one a write made, is rendered in the view's spelling:
   its wall clock in the view's zone, under the view's separator, with its own fraction digits padded with zeros to the
   view's width. No digit is dropped, so a width learned from whole seconds does not cut a later value's fraction. An

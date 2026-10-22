@@ -32,17 +32,20 @@ const iso = (
 const seeds = (count: number): string[] =>
   Array.from({ length: count }, (_, index) => `seed-${String(index)}`);
 
-it.each<[string, number, ClockFormat]>([
+it.each<[string, number, ClockFormat, number?]>([
   ["2026-03-04T05:06:07Z", WHOLE_SECOND, iso("T", 0, "Z")],
   ["2026-03-04 05:06:07.123Z", WITH_MS, iso(" ", 3, "Z")],
-  ["2026-03-04T05:06:07.123456Z", WITH_MS, iso("T", 6, "Z")],
+  ["2026-03-04T05:06:07.123456Z", WITH_MS, iso("T", 6, "Z"), 456000],
   ["2026-03-04T07:06:07.123+02:00", WITH_MS, iso("T", 3, "+02:00")],
   ["2026-03-03T23:36:07-0530", WHOLE_SECOND, iso("T", 0, "-0530")],
   ["2026-03-04T05:06:07", WHOLE_SECOND, iso("T", 0, "")],
   ["2024-02-29 00:00:00Z", Date.UTC(2024, 1, 29), iso(" ", 0, "Z")],
-])("reads the ISO clock %s with its spelling", (text, ms, format) => {
-  expect(readClock(text)).toEqual({ ms, format });
-});
+])(
+  "reads the ISO clock %s with its spelling",
+  (text, ms, format, subMillisecond = 0) => {
+    expect(readClock(text)).toEqual({ ms, subMillisecond, format });
+  },
+);
 
 it.each([
   "2026-02-30T00:00:00Z",
@@ -64,9 +67,16 @@ it.each([
 it.each<[JsonValue | undefined, ReturnType<typeof readClock>]>([
   [
     WHOLE_SECOND / 1000,
-    { ms: WHOLE_SECOND, format: { kind: "epoch", unit: "s" } },
+    {
+      ms: WHOLE_SECOND,
+      subMillisecond: 0,
+      format: { kind: "epoch", unit: "s" },
+    },
   ],
-  [WITH_MS, { ms: WITH_MS, format: { kind: "epoch", unit: "ms" } }],
+  [
+    WITH_MS,
+    { ms: WITH_MS, subMillisecond: 0, format: { kind: "epoch", unit: "ms" } },
+  ],
   [999_999_999, undefined],
   [99_999_999_999, undefined],
   [10_000_000_000_000, undefined],

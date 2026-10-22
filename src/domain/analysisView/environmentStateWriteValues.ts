@@ -11,6 +11,13 @@ export type ClockFormat =
     }
   | { readonly kind: "epoch"; readonly unit: "s" | "ms" };
 
+interface ClockReading {
+  readonly ms: number;
+  /** Nanoseconds after the floored millisecond, so distinct recorded instants stay distinct. */
+  readonly subMillisecond: number;
+  readonly format: ClockFormat;
+}
+
 const ISO_INSTANT =
   /^(\d{4})-(\d{2})-(\d{2})([T ])(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})?$/u;
 const MINUTE_MS = 60_000;
@@ -25,9 +32,7 @@ const zoneMinutes = (zone: string): number => {
 };
 
 /** The instant of an ISO-8601 date-time and how it is spelled, or undefined when it is not one. */
-const readIsoClock = (
-  value: string,
-): { readonly ms: number; readonly format: ClockFormat } | undefined => {
+const readIsoClock = (value: string): ClockReading | undefined => {
   const match = ISO_INSTANT.exec(value);
   if (match === null) return undefined;
   const [year, month, day, separator, hour, minute, second] = match
@@ -56,6 +61,7 @@ const readIsoClock = (
     return undefined;
   return {
     ms: local - zoneMinutes(zone) * MINUTE_MS,
+    subMillisecond: Number(fraction.padEnd(9, "0").slice(3)),
     format: {
       kind: "iso",
       separator: separator as "T" | " ",
@@ -68,14 +74,22 @@ const readIsoClock = (
 /** The instant a clock value names and its format: an ISO-8601 date-time, or epoch seconds or milliseconds. */
 export const readClock = (
   value: JsonValue | undefined,
-): { readonly ms: number; readonly format: ClockFormat } | undefined => {
+): ClockReading | undefined => {
   if (typeof value === "string") return readIsoClock(value);
   if (typeof value !== "number" || !Number.isSafeInteger(value))
     return undefined;
   if (value >= 1e9 && value < 1e10)
-    return { ms: value * 1000, format: { kind: "epoch", unit: "s" } };
+    return {
+      ms: value * 1000,
+      subMillisecond: 0,
+      format: { kind: "epoch", unit: "s" },
+    };
   if (value >= 1e12 && value < 1e13)
-    return { ms: value, format: { kind: "epoch", unit: "ms" } };
+    return {
+      ms: value,
+      subMillisecond: 0,
+      format: { kind: "epoch", unit: "ms" },
+    };
   return undefined;
 };
 
@@ -115,11 +129,15 @@ export const respellClock = (
   const clock = readClock(value);
   if (clock === undefined) return value;
   if (format.kind === "epoch") return formatClock(clock.ms, format);
-  const match = typeof value === "string" ? ISO_INSTANT.exec(value) : null;
   const millis = ((clock.ms % 1000) + 1000) % 1000;
   // An epoch value's fraction is its milliseconds, without trailing zeros.
   const digits =
-    match === null ? pad(millis, 3).replace(/0+$/u, "") : (match[8] ?? "");
+    clock.format.kind === "epoch"
+      ? pad(millis, 3).replace(/0+$/u, "")
+      : `${pad(millis, 3)}${pad(clock.subMillisecond, 6)}`.slice(
+          0,
+          clock.format.fraction,
+        );
   const at = new Date(clock.ms - millis + zoneMinutes(format.zone) * MINUTE_MS);
   return isoText(
     at,
