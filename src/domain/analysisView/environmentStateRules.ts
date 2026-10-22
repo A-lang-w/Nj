@@ -56,7 +56,15 @@ export type RecordedViewReason =
   | "query-varies"
   | "fields-differ"
   | "envelope-varies"
-  | "list-differs";
+  | "list-differs"
+  | "rendered-oversize";
+
+/**
+ * Recorded response text, and a document value rendered back to JSON, stay within this many UTF-8
+ * bytes. A larger recorded body is not parsed; a parsed value whose JSON rendering exceeds it stays
+ * a recorded replay (`rendered-oversize`) rather than a document the server would have to refuse.
+ */
+export const STATE_BODY_LIMIT_BYTES = 256 * 1024;
 
 export interface StateType {
   readonly collection_template: string;

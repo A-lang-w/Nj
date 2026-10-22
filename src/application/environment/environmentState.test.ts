@@ -30,7 +30,10 @@ import {
   prepareServedState,
 } from "./environmentState.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
-import { EnvironmentStateStore } from "./environmentStateStore.js";
+import {
+  EnvironmentStateStore,
+  ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+} from "./environmentStateStore.js";
 
 const fixture = environmentStateServeFixture();
 const { source, state } = environmentStateServeInputs(fixture);
@@ -148,6 +151,89 @@ describe("loadEnvironmentState", () => {
     expect(
       loadEnvironmentState(fixture.state, environmentServeSource()).ok,
     ).toBe(false);
+  });
+});
+
+describe("served collection history", () => {
+  it("bounds distinct paths added after reset while retaining baseline paths", () => {
+    const original = state.entities[0];
+    if (original === undefined) throw new Error("Expected a seeded entity");
+    const run = () => {
+      const store = new EnvironmentStateStore(state);
+      for (let index = 0; index < 2000; index += 1) {
+        const collection = `/api/history/${String(index)}-${"x".repeat(900)}`;
+        const id = `history-${String(index)}`;
+        const before = JSON.stringify(store.snapshot());
+        const result = store.insert({ ...original, collection, id }, 0);
+        if (!result.ok) {
+          expect(JSON.stringify(store.snapshot())).toBe(before);
+          expect(result.error).toMatchObject({
+            resource: "capacity",
+            retryable: false,
+            remediationAction: expect.stringContaining("fewer distinct"),
+          });
+          expect(result.error.reason).toContain("accounting budget");
+          return result.error.reportedLimits;
+        }
+        const inserted = store.entity(original.type, collection, id);
+        if (inserted === undefined) throw new Error("Expected inserted entity");
+        store.remove(inserted);
+      }
+      throw new Error("Expected a history budget refusal");
+    };
+    const refused = run();
+    if (refused === null)
+      throw new Error("Expected reported history budget details");
+    expect(refused).toEqual(run());
+    expect(refused).toMatchObject({
+      max_collection_history_bytes: ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+    });
+    expect(refused.collection_history_bytes).toBeGreaterThan(
+      ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+    );
+  });
+
+  it("does not charge a deleted loaded collection again at the history limit", () => {
+    const original = state.entities[0];
+    if (original === undefined) throw new Error("Expected a seeded entity");
+    const loadedState = {
+      ...state,
+      entities: Array.from({ length: 1200 }, (_, index) => ({
+        ...original,
+        collection: `/api/loaded/${String(index)}-${"y".repeat(80)}`,
+        id: `loaded-${String(index)}`,
+      })),
+    };
+    const store = new EnvironmentStateStore(loadedState);
+    for (const entity of store.ofType(original.type)) store.remove(entity);
+    expect(store.knownCollectionsOf(original.type)).toHaveLength(1200);
+
+    const baseline = loadedState.entities[0];
+    if (baseline === undefined) throw new Error("Expected a loaded entity");
+    let refused = false;
+    for (let index = 0; index < 2000; index += 1) {
+      const collection = `/api/generated/${String(index)}-${"z".repeat(900)}`;
+      const entity = {
+        ...original,
+        collection,
+        id: `generated-${String(index)}`,
+      };
+      const inserted = store.insert(entity, 0);
+      if (!inserted.ok) {
+        refused = true;
+        break;
+      }
+      const held = store.entity(entity.type, collection, entity.id);
+      if (held === undefined) throw new Error("Expected generated entity");
+      store.remove(held);
+    }
+    expect(refused).toBe(true);
+
+    const restored = store.insert(baseline, 0);
+    expect(restored.ok).toBe(true);
+    expect(
+      store.entity(baseline.type, baseline.collection, baseline.id),
+    ).toEqual(baseline);
   });
 });
 
@@ -441,6 +527,30 @@ describe("EnvironmentStateStore", () => {
   });
 });
 
+describe("caller-owned state replacement", () => {
+  it("does not retain mutable data from a caller-owned replacement", () => {
+    const store = new EnvironmentStateStore(state);
+    const document = documentWith((value) => {
+      const entity = value.rea_state.entities.find((item) => item.id === "2");
+      if (!entity) throw new Error("Expected the user entity");
+      entity.fields = { ...(entity.fields as object), login: "renamed" };
+    });
+    expect(store.replace(document).ok).toBe(true);
+    const callerEntity = document.rea_state.entities.find(
+      (entity) => entity.id === "2",
+    );
+    if (!callerEntity) throw new Error("Expected the caller's user entity");
+    (callerEntity.fields as Record<string, unknown>).login = "later edit";
+
+    expect(store.snapshot().rea_state.entities).toContainEqual(
+      expect.objectContaining({
+        id: "2",
+        fields: expect.objectContaining({ login: "renamed" }),
+      }),
+    );
+  });
+});
+
 describe("rea-state/v1 validation", () => {
   it.each([
     [
@@ -484,8 +594,8 @@ describe("rea-state/v1 validation", () => {
       "a document for a tool that is not a document view",
       (document: Editable) => {
         document.rea_state.documents.push({
-          tool: "get_users_by_id",
-          path: "/api/users/2",
+          tool: "get_folders",
+          path: "/api/folders",
           value: {},
         });
       },
@@ -591,5 +701,38 @@ describe("rea-state/v1 validation", () => {
     expect(
       firstProblem({ rea_state: { version: 2, entities: [], documents: [] } }),
     ).toMatchObject({ path: "rea_state/version" });
+  });
+});
+
+describe("wide state value validation", () => {
+  it("preserves a wide caller value through the state replacement boundary", () => {
+    const wide = Array.from({ length: 200_000 }, (_, index) => index % 10);
+    const wideObject = Object.fromEntries(
+      Array.from({ length: 20_000 }, (_, index) => [
+        `field_${String(index)}`,
+        index,
+      ]),
+    );
+    const document = documentWith((value) => {
+      const fields = value.rea_state.entities[0]!.fields as Record<
+        string,
+        unknown
+      >;
+      value.rea_state.entities[0]!.fields = {
+        ...fields,
+        caller_wide: wide,
+        caller_wide_object: wideObject,
+      };
+    });
+    const store = new EnvironmentStateStore(state);
+
+    expect(store.replace(document).ok).toBe(true);
+    const retained = store.snapshot().rea_state.entities[0]?.fields.caller_wide;
+    if (!Array.isArray(retained)) throw new Error("Expected the wide value");
+    expect(retained).toHaveLength(wide.length);
+    expect(retained.at(-1)).toBe(wide.at(-1));
+    const retainedObject =
+      store.snapshot().rea_state.entities[0]?.fields.caller_wide_object;
+    expect(retainedObject).toEqual(wideObject);
   });
 });

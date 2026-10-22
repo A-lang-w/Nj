@@ -142,6 +142,17 @@ export const integerOf = (value: JsonValue | undefined): number | undefined =>
       ? Number(value)
       : undefined;
 
+/**
+ * The next value of a sequence. With nothing taken yet, that is the next held integer, or 1 when
+ * the scope holds none. Otherwise it is one past the later of that and the last value taken.
+ * A missing side leaves a negative value negative.
+ */
+export const nextSequence = (
+  held: number | undefined,
+  taken: number | undefined,
+): number =>
+  taken === undefined ? (held ?? 1) : Math.max(held ?? taken + 1, taken + 1);
+
 /** An integer spelled as the recorded value spells integers: a number, or a string of digits. */
 export const spelledLike = (exemplar: JsonValue, value: number): JsonValue =>
   typeof exemplar === "string" ? String(value) : value;

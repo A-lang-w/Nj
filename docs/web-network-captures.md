@@ -120,6 +120,8 @@ HTTP fields and ordered duplicate headers are retained, with stored body bytes
 in binary sidecars. Bodies are not dechunked or decompressed. Metadata is an
 XML node tree; optional `_w.txt` and `_g.txt` files retain opaque WebSocket and
 gRPC message bytes. Missing members remain null, distinct from empty bodies.
+A zero-byte `_c.txt` or `_s.txt` member, which Fiddler writes for a session
+without that message, is also null and adds a record limitation.
 See Telerik's [SAZ format reference](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
 
 ## Protobuf and gRPC bodies
@@ -608,8 +610,9 @@ with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
 reasons are `query-body` (a query `POST`), `no-init-recording`,
 `body-unusable`, `no-identity` (an item read without a proved identity),
 `path-varies` (another read under more than one path, as a template with a
-parameter before its end) and `query-varies` (another read of one path under
-more than one query). A document holds the value of its one `path`, so for such
+parameter before its end), `query-varies` (another read of one path under
+more than one query) and `rendered-oversize` (a document value whose JSON
+renders to more than 256 KiB). A document holds the value of its one `path`, so for such
 a template it says nothing about the template's other paths. A body is usable
 when its content type is
 JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
@@ -669,23 +672,24 @@ recorded calls. The state
 accumulator charges the manifest's admission and grouping, every record line,
 each body as temporary bytes before it is decoded and parsed, and every value
 it keeps, within the same 96 MiB budget. Documents hold whole recorded response
-values of up to 256 KiB each, so a capture with many read-only paths yields a
-correspondingly larger state result. The view performs no network activity and
-serves nothing; `rea environment-serve` derives it from the capture at startup,
-serves read tools and the served write plans from it and loads replacement
-states through the AgentEnv data plane, as
+values whose recorded text and rendered JSON are each at most 256 KiB, so a
+capture with many read-only paths yields a correspondingly larger state result.
+The view performs no network activity and serves nothing; `rea environment-serve`
+derives it from the capture at startup, serves read tools and the served write
+plans from it and loads replacement states through the AgentEnv data plane, as
 [serve from the state](agent-environments.md#serve-from-the-state) describes.
 
 ## Resource and lifecycle boundaries
 
 Complete evidence has a 32 MiB input, 96 MiB decoder reply and 64-level nesting
-budget. Exceeding a budget returns no partial success.
+budget. Those budgets have no runtime override. `capture_timeout_ms` does not
+raise them. Exceeding a budget returns no partial success.
 Oversized selected captures return an input error identifying `capture_path`
 and the byte budget; owned reply/output failures remain output or provider errors.
 HAR, SAZ and qlog run in an owned
 192 MiB Node old-generation heap with one V8 worker. Mitmproxy decoding applies
 Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
-both commands have a 30-second wall deadline and independently supervised
+both commands use `capture_timeout_ms` (default 30000) and independently supervised
 process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
 and stderr; the collector drops overflow as it arrives, reports the limit
 failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.

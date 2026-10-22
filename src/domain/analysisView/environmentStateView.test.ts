@@ -431,6 +431,25 @@ it("holds a read-only non-entity read as a document unless it varies by request 
   expect(state.types).toEqual([]);
 });
 
+it("leaves a document recorded when rendering it exceeds the body limit", () => {
+  const small = stateOf(
+    captureOf([["GET", "/api/config", '{"values":[1e3]}']]),
+  );
+  expect(viewOf(small, "get_config")).toMatchObject({ shape: "document" });
+  expect(small.documents[0]?.value).toEqual({ values: [1000] });
+  // 60,000 `1e3` tokens are 240,012 recorded bytes and 300,012 once rendered as `1000`.
+  const values = Array.from({ length: 60_000 }, () => "1e3").join(",");
+  const body = `{"values":[${values}]}`;
+  expect(Buffer.byteLength(body, "utf8")).toBe(240_012);
+  const state = stateOf(captureOf([["GET", "/api/config", body]]));
+  expect(state.documents).toEqual([]);
+  expect(viewOf(state, "get_config")).toEqual({
+    tool: "get_config",
+    shape: "recorded",
+    reason: "rendered-oversize",
+  });
+});
+
 it("infers a suffix-named identity only when no identity name identifies the listed items", () => {
   const state = stateOf(
     captureOf([
