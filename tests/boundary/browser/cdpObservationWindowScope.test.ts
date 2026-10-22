@@ -330,6 +330,62 @@ it.each([
   },
 );
 
+it("records a load failure only for a main-frame document that has not finished", async () => {
+  const documentRequest = (
+    command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+    origin: string,
+    requestId: string,
+  ) => ({
+    method: "Network.requestWillBeSent",
+    sessionId: command.sessionId,
+    params: {
+      requestId,
+      timestamp: 21,
+      type: "Document",
+      frameId: "frame-main",
+      request: { url: `${origin}/${requestId}` },
+    },
+  });
+  const loadingFailed = (
+    command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+    requestId: string,
+  ) => ({
+    method: "Network.loadingFailed",
+    sessionId: command.sessionId,
+    params: {
+      requestId,
+      timestamp: 22,
+      type: "Document",
+      errorText: "net::ERR_CONNECTION_REFUSED",
+    },
+  });
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        documentRequest(command, origin, "finished-document"),
+        {
+          method: "Network.loadingFinished",
+          sessionId: command.sessionId,
+          params: { requestId: "finished-document", timestamp: 22 },
+        },
+        // A finished request is no longer tracked, so a stray failure for it
+        // is not attributed to the main frame.
+        loadingFailed(command, "finished-document"),
+        documentRequest(command, origin, "failed-document"),
+        loadingFailed(command, "failed-document"),
+      ];
+    },
+  });
+
+  expect(
+    observation.timeline
+      .filter((event) => event.type === "load_failed")
+      .map((event) => event.request_id),
+  ).toEqual(["failed-document"]);
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],

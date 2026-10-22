@@ -176,8 +176,8 @@ class TimelineCapture {
   #pendingReload = false;
   /**
    * Network.loadingFailed carries no frame, so a failure is attributed to the
-   * main frame only through its main-frame Document request. Entries are
-   * bounded by main-frame navigations and removed when their request fails.
+   * main frame only through its main-frame Document request. Entries leave
+   * when their request fails or, once armed, finishes.
    */
   readonly #mainFrameDocumentRequestIds = new Set<string>();
   #scopeExcluded = false;
@@ -200,6 +200,13 @@ class TimelineCapture {
 
   ingest(event: CdpTransportEvent): void {
     if (this.#endReason !== undefined || this.#scopeExcluded) return;
+    if (event.method === "Network.loadingFinished") {
+      // Not a timeline fact, so it is never buffered. Before arming, its
+      // request may still wait in the buffer; that ID stays tracked, bounded by
+      // the buffer's size.
+      if (this.#armTimestamp !== undefined) this.#loadingFinished(event);
+      return;
+    }
     if (!isTimelineEvent(event.method)) return;
     if (this.#armTimestamp === undefined) {
       this.#bufferBeforeArm(event);
@@ -465,6 +472,13 @@ class TimelineCapture {
     const requestId = cdpStringValue(params.requestId);
     if (requestId !== undefined && this.#isMainFrameDocumentRequest(params))
       this.#mainFrameDocumentRequestIds.add(requestId);
+  }
+
+  /** A finished document request can no longer fail. */
+  #loadingFinished(event: CdpTransportEvent): void {
+    const requestId = cdpStringValue(recordValue(event.params)?.requestId);
+    if (requestId !== undefined)
+      this.#mainFrameDocumentRequestIds.delete(requestId);
   }
 
   #redirect(params: UnknownRecord, bufferedBeforeArm: boolean): void {
