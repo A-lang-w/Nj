@@ -10,12 +10,15 @@ export const REGEX_WORKER_HEAP_REQUEST_SETTING =
 export const DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB = 128;
 
 /**
- * Smallest request that still starts the regex worker. On Node 22.23.4 a
- * `resourceLimits.maxOldGenerationSizeMb` of 5 or less aborts during isolate
- * startup, so the limit never becomes a matching bound. 6 MiB starts the
- * worker and can return a match.
+ * Smallest request that completes a trivial regex match on supported Node.
+ * Linux runs of the production worker (`^a` against `["a"]`, no
+ * `NODE_OPTIONS`) return `ERR_WORKER_OUT_OF_MEMORY` at 6 MiB on Node 24.21.0
+ * and 24.22.1, and on most runs of 24.11.0, 24.18.0, and 26.0.0. 7 MiB
+ * returned that match on Node 22.19.0, 22.23.4, 24.11.0, 24.18.0, 24.21.0,
+ * 24.22.1, 26.0.0, and 26.12.1. A lower accepted value passes configuration
+ * and then fails the search.
  */
-export const MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB = 6;
+export const MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB = 7;
 
 /**
  * Largest request one regex worker may make. 16 GiB is the same ceiling REA

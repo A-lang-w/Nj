@@ -498,7 +498,7 @@ it.each([
   ],
   [
     "regex worker heap request below its floor",
-    { REA_REGEX_WORKER_HEAP_REQUEST_MIB: "5" },
+    { REA_REGEX_WORKER_HEAP_REQUEST_MIB: "6" },
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
   ],
   [

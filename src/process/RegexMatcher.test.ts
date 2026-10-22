@@ -457,7 +457,7 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(limitation).toContain("maximum 2147483647 ms");
     expect(limitation).toContain("REA_REGEX_WORKER_HEAP_REQUEST_MIB");
     expect(limitation).toContain(
-      "source default; default 128 MiB, floor 6 MiB, maximum 16384 MiB",
+      "source default; default 128 MiB, floor 7 MiB, maximum 16384 MiB",
     );
     expect(limitation).toContain(
       "Set REA_REGEX_WORKER_HEAP_REQUEST_MIB in the environment that starts REA",
@@ -522,7 +522,7 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
   );
   expect(selected).toContain("effective 256 MiB");
   expect(selected).toContain(
-    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 6 MiB, maximum 16384 MiB).",
+    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 7 MiB, maximum 16384 MiB).",
   );
   const overridden = regexMatchingLimitation(
     effective(64, true),
@@ -531,7 +531,7 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
   );
   expect(overridden).toContain("effective 64 MiB");
   expect(overridden).toContain("source setting");
-  expect(overridden).toContain("floor 6 MiB");
+  expect(overridden).toContain("floor 7 MiB");
   expect(overridden).toContain("maximum 16384 MiB");
   const projected = projectAnalysisError(
     regexWorkerHeapError(

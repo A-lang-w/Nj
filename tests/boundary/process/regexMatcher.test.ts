@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
 
@@ -10,6 +11,7 @@ import {
   MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
   REGEX_MATCHING_DEADLINE_SETTING,
 } from "../../../src/config/regexMatchingDeadline.js";
+import { MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB } from "../../../src/config/regexWorkerHeapRequest.js";
 import { ok } from "../../../src/domain/result.js";
 import { HopperRegexSearch } from "../../../src/hopper/HopperRegexSearch.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
@@ -82,7 +84,7 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
   );
   expect(REGEX_MATCHING_LIMITATION).toContain(
-    "source default; default 128 MiB, floor 6 MiB, maximum 16384 MiB",
+    "source default; default 128 MiB, floor 7 MiB, maximum 16384 MiB",
   );
   expect(REGEX_MATCHING_LIMITATION).toContain("floor 1 ms");
   expect(REGEX_MATCHING_LIMITATION).toContain("maximum 2147483647 ms");
@@ -117,7 +119,7 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
   );
   expect(failure.remediation.action).toContain(
-    "source default; default 128 MiB, floor 6 MiB, maximum 16384 MiB",
+    "source default; default 128 MiB, floor 7 MiB, maximum 16384 MiB",
   );
   if (heap.kind === "effective") {
     expect(failure.message).toContain(`${String(heap.mib)} MiB`);
@@ -149,6 +151,7 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     expect(description).toContain("source (default or setting)");
     expect(description).toContain("REA_REGEX_WORKER_HEAP_REQUEST_MIB");
     expect(description).toContain("default 128");
+    expect(description).toContain("from 7 to 16384");
     expect(description).toContain("floor");
     expect(description).toContain("maximum");
     expect(description).not.toContain("no runtime override");
@@ -500,6 +503,53 @@ it("stops a slow match at the configured deadline and names the setting", async 
       matching_deadline_source: "setting",
     },
   });
+});
+
+it("matches a trivial pattern in a real worker at the heap floor", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rea-regex-heap-floor-"));
+  const probe = join(directory, "probe.mjs");
+  const repository = fileURLToPath(new URL("../../../", import.meta.url));
+  const tsxApi = pathToFileURL(
+    join(repository, "node_modules/tsx/dist/esm/api/index.mjs"),
+  ).href;
+  const matcher = pathToFileURL(
+    join(repository, "src/process/RegexMatcher.ts"),
+  ).href;
+  // Plain Node, with NODE_OPTIONS removed. Do not put `--import tsx` on this
+  // process: workers inherit execArgv, and that flag exhausts a floor-sized heap.
+  writeFileSync(
+    probe,
+    `import { tsImport } from ${JSON.stringify(tsxApi)};
+const { matchRegexValues } = await tsImport(${JSON.stringify(matcher)}, import.meta.url);
+const result = await matchRegexValues({
+  operation: "search_procedures",
+  pattern: "^a",
+  caseSensitive: true,
+  values: ["a"],
+  heapRequest: {
+    heapMiB: ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)},
+    source: "setting",
+  },
+});
+process.stdout.write(JSON.stringify(result.ok
+  ? { ok: true, indices: result.value }
+  : { ok: false, message: String(result.error?.message ?? "") }));
+if (!result.ok) process.exitCode = 1;
+`,
+  );
+  const env = { ...process.env };
+  delete env.NODE_OPTIONS;
+  try {
+    const result = spawnSync(process.execPath, [probe], {
+      env,
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, indices: [0] });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 it("preserves Unicode matching order and refuses a pre-cancelled match", async () => {
