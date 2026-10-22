@@ -10,7 +10,10 @@ import {
 } from "./browserDeadline.js";
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
-import { webTextArtifactSchema } from "./webContentArtifact.js";
+import {
+  webTextArtifactMetadataSchema,
+  webTextArtifactSchema,
+} from "./webContentArtifact.js";
 
 /** Isolated analyzer heap used when max_heap_mb is omitted. */
 export const DEFAULT_WEB_BUNDLE_HEAP_MB = 1024;
@@ -299,11 +302,7 @@ const sourceMapSchema = z.union([
   }),
 ]);
 
-const webTextArtifactSummarySchema = z.object({
-  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  bytes: z.number().int().min(0),
-  media_type: z.string().min(1),
-  charset: z.literal("utf-8"),
+const webTextArtifactSummarySchema = webTextArtifactMetadataSchema.extend({
   text_available: z.literal(true),
 });
 
