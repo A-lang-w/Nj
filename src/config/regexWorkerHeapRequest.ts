@@ -10,11 +10,12 @@ export const REGEX_WORKER_HEAP_REQUEST_SETTING =
 export const DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB = 128;
 
 /**
- * Smallest request that still starts a Node worker. On Node 22 a
- * `resourceLimits.maxOldGenerationSizeMb` of 4 aborts during isolate startup,
- * so the limit never becomes a matching bound. 8 MiB starts the worker.
+ * Smallest request that still starts the regex worker. On Node 22.23.4 a
+ * `resourceLimits.maxOldGenerationSizeMb` of 5 or less aborts during isolate
+ * startup, so the limit never becomes a matching bound. 6 MiB starts the
+ * worker and can return a match.
  */
-export const MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB = 8;
+export const MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB = 6;
 
 /**
  * Largest request one regex worker may make. 16 GiB is the same ceiling REA

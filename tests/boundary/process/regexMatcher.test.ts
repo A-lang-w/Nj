@@ -82,7 +82,7 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
   );
   expect(REGEX_MATCHING_LIMITATION).toContain(
-    "source default; default 128 MiB, floor 8 MiB, maximum 16384 MiB",
+    "source default; default 128 MiB, floor 6 MiB, maximum 16384 MiB",
   );
   expect(REGEX_MATCHING_LIMITATION).toContain("floor 1 ms");
   expect(REGEX_MATCHING_LIMITATION).toContain("maximum 2147483647 ms");
@@ -117,7 +117,7 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
   );
   expect(failure.remediation.action).toContain(
-    "source default; default 128 MiB, floor 8 MiB, maximum 16384 MiB",
+    "source default; default 128 MiB, floor 6 MiB, maximum 16384 MiB",
   );
   if (heap.kind === "effective") {
     expect(failure.message).toContain(`${String(heap.mib)} MiB`);

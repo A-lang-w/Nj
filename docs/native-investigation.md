@@ -213,7 +213,7 @@ failure names the effective milliseconds, whether they came from the default
 or the setting, the default, and the maximum. The worker old-generation heap
 does not raise it. Kuna regex search uses the same deadline. The worker
 heap request is `REA_REGEX_WORKER_HEAP_REQUEST_MIB`, a decimal integer from
-8 to 16384 MiB. Unset uses 128 MiB. A request below 8 MiB aborts the worker
+6 to 16384 MiB. Unset uses 128 MiB. A request below 6 MiB aborts the worker
 during startup, and a larger value is refused. Invalid values are
 configuration errors and do not fall back to 128. The setting is read from
 the environment that starts REA, so a change needs a restart. A heap failure

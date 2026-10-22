@@ -34,7 +34,7 @@ it("keeps the 128 MiB request when the setting is unset", () => {
     DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   );
   expect(recovery).toContain(
-    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 128 MiB (source default; default 128 MiB, floor 8 MiB, maximum 16384 MiB).",
+    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 128 MiB (source default; default 128 MiB, floor 6 MiB, maximum 16384 MiB).",
   );
   expect(recovery).toContain(
     "Set REA_REGEX_WORKER_HEAP_REQUEST_MIB in the environment that starts REA",
@@ -69,7 +69,7 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
     .find((capability) => capability.operation === "search_procedures")
     ?.limitations.join(" ");
   expect(hopperText).toContain(
-    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 8 MiB, maximum 16384 MiB).",
+    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 6 MiB, maximum 16384 MiB).",
   );
   expect(hopperText).toContain(
     "Set REA_REGEX_WORKER_HEAP_REQUEST_MIB in the environment that starts REA",
@@ -86,7 +86,7 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .find((capability) => capability.operation === "search_strings")
       ?.limitations.join(" ");
     expect(kunaText).toContain(
-      "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 8 MiB, maximum 16384 MiB).",
+      "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 6 MiB, maximum 16384 MiB).",
     );
     expect(kunaText).not.toContain(
       "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 8 MiB",
@@ -102,14 +102,14 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .find((capability) => capability.operation === "search_procedures")
       ?.limitations.join(" "),
   ).toContain(
-    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 128 MiB (source default; default 128 MiB, floor 8 MiB, maximum 16384 MiB).",
+    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 128 MiB (source default; default 128 MiB, floor 6 MiB, maximum 16384 MiB).",
   );
 });
 
 it.each([
   "",
   "0",
-  "7",
+  "5",
   "-1",
   "0128",
   "10_000",
@@ -136,7 +136,7 @@ it.each([
   if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
   expect(startup.error.settings).toContainEqual({
     setting: "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
-    constraint: expect.stringContaining("from 8 to 16384 MiB"),
+    constraint: expect.stringContaining("from 6 to 16384 MiB"),
   });
   const config = parseConfig({ REA_REGEX_WORKER_HEAP_REQUEST_MIB: value });
   if (config.ok)
