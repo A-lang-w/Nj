@@ -25,7 +25,6 @@ import {
   servedLine,
   succeeded,
   withBodies,
-  writtenFieldChecks,
   SimulatedState,
   type CheckOutcome,
   type CheckedLines,
@@ -43,6 +42,7 @@ import {
   WriteEffects,
   type PendingTargets,
   type TouchedTargets,
+  writtenFieldChecks,
 } from "./environmentStateWriteAttribution.js";
 import { applyCreate } from "./environmentStateWriteCreate.js";
 import { applyDocument } from "./environmentStateWriteDocument.js";
