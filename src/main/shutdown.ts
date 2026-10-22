@@ -10,6 +10,8 @@ interface ShutdownCleanupOwner {
   readonly close: () => Promise<void>;
   closed: boolean;
   attempted: boolean;
+  /** Left out of shutdown attempts while its operation is in progress. */
+  deferred: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export const createShutdown = (input: {
   readonly attachTransport: (owners: McpTransportOwners) => void;
   readonly shutdown: () => Promise<void>;
   readonly request: () => void;
+  readonly whileOpening: <T>(open: () => Promise<T>) => Promise<T>;
   readonly finish: () => Promise<0 | 1>;
   readonly finishFailedOpen: () => Promise<0 | 1>;
   readonly release: () => Promise<void>;
@@ -48,9 +51,11 @@ export const createShutdown = (input: {
   // Process shutdown keeps provider documents; a failed initial open's
   // retained cleanup keeps its own policy, which closes them.
   let retainProviderDocuments = true;
-  const cleanupOwners = [
-    sessionCleanupOwner(session, () => retainProviderDocuments),
-  ];
+  const sessionOwner = sessionCleanupOwner(
+    session,
+    () => retainProviderDocuments,
+  );
+  const cleanupOwners = [sessionOwner];
   // The attached transport's barrier before shared owners close.
   let prepareShutdown: (() => Promise<void>) | undefined;
   let startupSettled = false;
@@ -65,7 +70,9 @@ export const createShutdown = (input: {
   const shutdown = async (): Promise<void> => {
     if (shutdownAttempt !== undefined) return shutdownAttempt;
     requested.abort();
-    const pending = cleanupOwners.filter(({ closed }) => !closed);
+    const pending = cleanupOwners.filter(
+      ({ closed, deferred }) => !closed && !deferred,
+    );
     const attempt = drainThenClose(prepareShutdown, pending).then((failure) => {
       lastAttemptFailed = failure !== undefined;
       if (failure !== undefined) throw failure.cause;
@@ -113,20 +120,15 @@ export const createShutdown = (input: {
     attachTransport: (owners) => {
       // A transport attached after a request is closed by `finish`.
       if (!requested.signal.aborted) startupSettled = true;
-      const { handle } = owners;
-      prepareShutdown = handle?.prepareShutdown;
-      cleanupOwners.unshift(
-        ...[
-          handle === undefined ? undefined : () => handle.close(),
-          owners.closeAndroid,
-          owners.closeOptionalProviders,
-        ].flatMap((close) =>
-          close === undefined ? [] : [cleanupOwner(close)],
-        ),
-      );
+      prepareShutdown = owners.handle?.prepareShutdown;
+      cleanupOwners.unshift(...transportCleanupOwners(owners));
     },
     shutdown,
     request: requestShutdown,
+    // A session close during the initial open would queue behind it and
+    // replace a failed open's cleanup policy before startup could classify the
+    // outcome, so the open's caller closes the session once it settles.
+    whileOpening: (open) => deferWhile(sessionOwner, open),
     finish,
     // A failed initial open whose cleanup the session still retains: retry it
     // with that open's non-retaining policy, here and on any later request.
@@ -162,7 +164,31 @@ const cleanupOwner = (close: () => Promise<void>): ShutdownCleanupOwner => ({
   close,
   closed: false,
   attempted: false,
+  deferred: false,
 });
+
+const transportCleanupOwners = ({
+  handle,
+  closeAndroid,
+  closeOptionalProviders,
+}: McpTransportOwners): ShutdownCleanupOwner[] =>
+  [
+    handle === undefined ? undefined : () => handle.close(),
+    closeAndroid,
+    closeOptionalProviders,
+  ].flatMap((close) => (close === undefined ? [] : [cleanupOwner(close)]));
+
+const deferWhile = async <T>(
+  owner: ShutdownCleanupOwner,
+  operation: () => Promise<T>,
+): Promise<T> => {
+  owner.deferred = true;
+  try {
+    return await operation();
+  } finally {
+    owner.deferred = false;
+  }
+};
 
 /**
  * Drain the transport, then close owners. HTTP handlers can still own provider

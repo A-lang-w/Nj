@@ -46,11 +46,13 @@ export const runEager = async (
   // EOF is seen only once the transport reads stdin, after startup.
   const lifecycle = createShutdown({ session, dependencies, serverLogger });
   try {
-    const opened = await openInitialTarget(session, config.value, {
-      serverLogger,
-      writeStderr: dependencies.writeStderr,
-      signal: lifecycle.signal,
-    });
+    const opened = await lifecycle.whileOpening(() =>
+      openInitialTarget(session, config.value, {
+        serverLogger,
+        writeStderr: dependencies.writeStderr,
+        signal: lifecycle.signal,
+      }),
+    );
     if (!opened.ok) {
       if ("cancelled" in opened) return lifecycle.finish();
       if (opened.cleanupPending) await lifecycle.finishFailedOpen();

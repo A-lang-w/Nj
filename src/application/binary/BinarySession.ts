@@ -49,6 +49,7 @@ import {
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { isCancelledAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { profilelessNativeDispatchProfile } from "./ProfilelessNativeWorkflowSnapshot.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
@@ -948,9 +949,12 @@ export class BinarySession
     } = {},
   ): Promise<AnalysisError> {
     const { onCleanupFailure } = options;
+    // Retain documents only when the open failed because it was cancelled; a
+    // provider failure that races the signal still closes what it launched.
+    const cancelled =
+      isAborted(options.signal) && isCancelledAnalysisError(primary);
     const closed = await this.#retireClient(run, {
-      ...(isAborted(options.signal) &&
-      options.retainProviderDocumentsOnCancel === true
+      ...(cancelled && options.retainProviderDocumentsOnCancel === true
         ? { retainDocument: true }
         : {}),
       ...(onCleanupFailure === undefined ? {} : { onCleanupFailure }),

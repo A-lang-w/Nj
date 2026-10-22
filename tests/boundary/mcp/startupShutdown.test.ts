@@ -427,12 +427,8 @@ it.each([
     releaseClose.resolve();
 
     await expect(running).resolves.toBe(1);
-    expect(output).toContain(`${projectAnalysisError(openFailure).message}
-`);
-    expect(
-      output.includes(`${MCP_SHUTDOWN_FAILED}
-`),
-    ).toBe(cleanupFails);
+    expect(output).toContain(`${projectAnalysisError(openFailure).message}\n`);
+    expect(output.includes(`${MCP_SHUTDOWN_FAILED}\n`)).toBe(cleanupFails);
     if (!cleanupFails) {
       expect(unregistrations).toEqual(["shutdown"]);
       return;
@@ -452,6 +448,99 @@ it.each([
     );
   },
 );
+
+it("closes provider documents when a provider failure races the shutdown signal", async () => {
+  const [target] = await createBinarySessionTargets();
+  const openFailure = new AnalysisTimeoutError("health", 1_000);
+  const healthStarted = createDeferred<void>();
+  const closeOptions: unknown[] = [];
+  const session = createTestBinarySession((): AnalysisClient => ({
+    execute: (_operation, _parameters, options?: ExecutionOptions) => {
+      healthStarted.resolve();
+      // The signal aborts first, but the provider reports its own failure.
+      return new Promise((resolve) => {
+        options?.signal?.addEventListener("abort", () =>
+          resolve(err(openFailure)),
+        );
+      });
+    },
+    close: async (options) => {
+      closeOptions.push(options);
+      return ok(null);
+    },
+  }));
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  const running = run(
+    runtime({
+      env: { HOPPER_TARGET_PATH: target, HOPPER_TARGET_KIND: "database" },
+      createSession: () => session,
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await healthStarted.promise;
+  requests[0]?.();
+
+  await expect(running).resolves.toBe(1);
+  expect(output).toContain(`${projectAnalysisError(openFailure).message}\n`);
+  expect(closeOptions.length).toBeGreaterThan(0);
+  expect(closeOptions).not.toContainEqual(
+    expect.objectContaining({ retainDocument: true }),
+  );
+  expect(await session.status()).toMatchObject({ cleanup_pending: false });
+  expect(unregistrations).toEqual(["shutdown"]);
+});
+
+it("keeps a failed open's document policy when a raced shutdown retry succeeds", async () => {
+  const [target] = await createBinarySessionTargets();
+  const openFailure = new AnalysisTimeoutError("health", 1_000);
+  const closeStarted = createDeferred<void>();
+  const releaseClose = createDeferred<void>();
+  const closeOptions: unknown[] = [];
+  const session = createTestBinarySession((): AnalysisClient => ({
+    execute: async () => err(openFailure),
+    close: async (options) => {
+      closeOptions.push(options);
+      if (closeOptions.length > 1) return ok(null);
+      // Only the failed open's own first close fails.
+      closeStarted.resolve();
+      await releaseClose.promise;
+      return err(new AnalysisOutputError("close", "fixture close failed"));
+    },
+  }));
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  const running = run(
+    runtime({
+      env: { HOPPER_TARGET_PATH: target, HOPPER_TARGET_KIND: "database" },
+      createSession: () => session,
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await closeStarted.promise;
+  requests[0]?.();
+  releaseClose.resolve();
+
+  await expect(running).resolves.toBe(1);
+  expect(output).toContain(`${projectAnalysisError(openFailure).message}\n`);
+  expect(closeOptions.length).toBeGreaterThan(1);
+  expect(closeOptions).not.toContainEqual(
+    expect.objectContaining({ retainDocument: true }),
+  );
+  expect(await session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: false,
+  });
+  expect(unregistrations).toEqual(["shutdown"]);
+});
 
 it("keeps shutdown registered when a failed initial open retains session cleanup", async () => {
   const [target] = await createBinarySessionTargets();
