@@ -5,6 +5,37 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "class-before",
+    'class Value{};(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-before");yield 1})()}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-class-before"],
+  ],
+  [
+    "class-after",
+    '(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-after");yield 1})()}catch{}})();class Value{};const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "class-extends",
+    'class Base{};class Value extends Base{};(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-extends");yield 1})()}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-class-extends"],
+  ],
+  [
+    "await-receiver",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-await-receiver")})();try{(await pending).x=0}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "await-key",
+    'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-await-key")})();try{({})[await pending]=0}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "await-receiver-ready",
+    'export {};const Socket=globalThis.WebSocket;const pending=(async()=>{await 0;new Socket("wss://example.test/review-await-receiver-ready")})();try{(await pending).x=0}catch{}',
+    ["wss://example.test/review-await-receiver-ready"],
+  ],
+
+  [
     "assignment null",
     '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-null")}})()){null.x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',
     ["wss://example.test/review-assignment-null"],

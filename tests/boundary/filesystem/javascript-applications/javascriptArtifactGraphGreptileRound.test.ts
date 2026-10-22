@@ -12,6 +12,40 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "review32b-0.mjs",
+    source:
+      'class Value{};(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-before");yield 1})()}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-class-before",
+  },
+  {
+    file: "review32b-1.mjs",
+    source:
+      '(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-after");yield 1})()}catch{}})();class Value{};const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32b-2.mjs",
+    source:
+      'class Base{};class Value extends Base{};(async()=>{try{const[{[await 0]:x},next]=(function*(){yield Value;new Socket("wss://example.test/review-class-extends");yield 1})()}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-class-extends",
+  },
+  {
+    file: "review32b-3.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-await-receiver")})();try{(await pending).x=0}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32b-4.mjs",
+    source:
+      'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-await-key")})();try{({})[await pending]=0}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review32b-5.mjs",
+    source:
+      'export {};const Socket=globalThis.WebSocket;const pending=(async()=>{await 0;new Socket("wss://example.test/review-await-receiver-ready")})();try{(await pending).x=0}catch{}',
+    endpoint: "wss://example.test/review-await-receiver-ready",
+  },
+
+  {
     file: "review32-0.mjs",
     source:
       '(async()=>{try{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-assignment-null")}})()){null.x=await 0}}catch{}})();const Socket=globalThis.WebSocket;',

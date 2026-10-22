@@ -91,14 +91,6 @@ export const syntaxUnconditionalOperands = (
       (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
     )
       return [node.right, node.left];
-    // The target reference evaluates its base/key without reading the value.
-    // Its PutValue failure occurs only after the RHS has completed.
-    if (node.operator === "=" && t.isMemberExpression(node.left))
-      return [
-        node.left.object,
-        ...(node.left.computed ? [node.left.property] : []),
-        node.right,
-      ];
     // Only logical assignments can short-circuit the RHS. Non-logical
     // compound operators read the left value, then always evaluate the RHS.
     return ["&&=", "||=", "??="].includes(node.operator)
@@ -263,23 +255,17 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
       : [node.callee, ...node.arguments];
     return syntaxReachablePrefix(node, operands);
   }
-  if (
-    t.isAssignmentExpression(node) &&
-    node.operator === "=" &&
-    t.isMemberExpression(node.left)
-  )
-    return syntaxReachablePrefix(node, [
-      node.left.object,
-      ...(node.left.computed ? [node.left.property] : []),
-      node.right,
-    ]);
   if (t.isAssignmentExpression(node))
     return node.operator === "=" &&
       (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
       ? syntaxEvaluationAlwaysThrows(node.right)
         ? [node.right]
         : [node.right, node.left]
-      : syntaxEvaluationAlwaysThrows(node.left)
+      : (
+            node.operator === "="
+              ? syntaxAssignmentReferenceAlwaysThrows(node.left)
+              : syntaxEvaluationAlwaysThrows(node.left)
+          )
         ? [node.left]
         : [node.left, node.right];
   if (t.isAssignmentPattern(node))
@@ -854,6 +840,32 @@ const syntaxCompletion = (
   if (t.isLabeledStatement(node))
     return syntaxLabeledCompletion(node, complete);
   if (t.isWithStatement(node)) return syntaxWithCompletion(node, complete);
+  if (
+    boundary !== undefined &&
+    t.isAssignmentExpression(node, { operator: "=" }) &&
+    t.isMemberExpression(node.left)
+  ) {
+    // Keep the target node in the AST's mandatory-path relation. Only this
+    // completion query interprets it as a reference instead of a value read.
+    const reference = syntaxSequenceCompletion(
+      syntaxEvaluationOperands(node.left) ?? [],
+      complete,
+    );
+    const value = reference.normal
+      ? complete(node.right)
+      : { normal: false, abrupt: [] };
+    return {
+      normal:
+        reference.normal && value.normal && !syntaxEvaluationAlwaysThrows(node),
+      abrupt: [
+        ...reference.abrupt,
+        ...value.abrupt,
+        ...(reference.normal && value.normal && !evaluationCannotThrow(node)
+          ? [{ kind: "throw" as const }]
+          : []),
+      ],
+    };
+  }
   if (boundary !== undefined) {
     const operands =
       orderedOperands?.(node) ??
@@ -1024,6 +1036,15 @@ const syntaxCallOnPrimitiveAlwaysFails = (node: t.Node): boolean => {
   );
 };
 
+/** Creating a simple member reference evaluates the base/key without GetValue. */
+const syntaxAssignmentReferenceAlwaysThrows = (raw: t.Node): boolean => {
+  const target = unwrapJavaScriptExpression(raw).node;
+  return t.isMemberExpression(target)
+    ? syntaxEvaluationAlwaysThrows(target.object) ||
+        (target.computed && syntaxEvaluationAlwaysThrows(target.property))
+    : syntaxEvaluationAlwaysThrows(target);
+};
+
 export const syntaxOperandAlwaysThrows = (
   owner: t.Node,
   operand: t.Node,
@@ -1032,7 +1053,11 @@ export const syntaxOperandAlwaysThrows = (
   (t.isWithStatement(owner) &&
     owner.object === operand &&
     syntaxWithObjectCoercion(operand) === "failed") ||
-  syntaxEvaluationAlwaysThrows(operand);
+  (t.isAssignmentExpression(owner, { operator: "=" }) &&
+  owner.left === operand &&
+  t.isMemberExpression(operand)
+    ? syntaxAssignmentReferenceAlwaysThrows(operand)
+    : syntaxEvaluationAlwaysThrows(operand));
 
 /** Definite abrupt expression completion, not merely a possibly throwing read. */
 export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {

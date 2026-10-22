@@ -63,6 +63,26 @@ const bindingInitializedBeforeRead = (
     })
   )
     return true;
+  if (
+    binding.definitionNodes.some((definition) => {
+      const declaration = state.parentsByNode.get(definition);
+      return (
+        t.isClassDeclaration(declaration) &&
+        declaration.id === definition &&
+        semanticInitializerPrecedesRead({
+          initializer: declaration,
+          read: node,
+          bindingNode: definition,
+          parents: state.parentsByNode,
+          initializerContexts: executionFrames?.(declaration) ?? [
+            lexicalFrame(declaration, state),
+          ],
+          readContexts: executionFrames?.(node) ?? [lexicalFrame(node, state)],
+        }) === true
+      );
+    })
+  )
+    return true;
   if (binding.declarationKinds.has("var")) return true;
   if (
     binding.definitionNodes.some((definition) => {
