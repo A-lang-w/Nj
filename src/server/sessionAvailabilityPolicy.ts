@@ -1,6 +1,6 @@
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
-import { platform } from "node:process";
+import { arch, platform } from "node:process";
 
 export interface SessionAvailabilityDefaults {
   readonly optionalProviderLoadFailures?:
@@ -34,6 +34,7 @@ export const sessionAvailabilityPolicy = (
   const policy =
     configured ??
     (() => ({
+      host: { platform, arch },
       packetCaptureEnabled:
         defaults.optionalFeatures?.packetCaptureEnabled ?? false,
       signalRecordingEnabled:

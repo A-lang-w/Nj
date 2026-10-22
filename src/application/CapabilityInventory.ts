@@ -51,7 +51,14 @@ const statusSchema = z.object({
 type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 
 type ProviderDescriptor = ProviderCapability;
+/** The host REA runs on, as Node reports it; unknown when a caller omits it. */
+export type AvailabilityHost = {
+  readonly platform: string;
+  readonly arch: string;
+};
 export type AvailabilityPolicy = {
+  /** Lets Linux-only tools distinguish an unsupported host from a missing provider (#5730). */
+  readonly host?: AvailabilityHost;
   readonly packetCaptureEnabled?: boolean;
   readonly signalRecordingEnabled?: boolean;
   readonly wasmArtifactEnabled?: boolean;
@@ -406,6 +413,27 @@ const javascriptApplicationAvailability = ({
     : null;
 };
 
+/**
+ * A Linux-only tool without its provider: on a known non-Linux host (or a
+ * non-x64 Linux host for x64-only providers) the host is unsupported; on Linux
+ * or an unknown host the provider is missing. Injected owners bypass this.
+ */
+const linuxOnlyUnavailable = (
+  policy: AvailabilityPolicy,
+  requires: "linux" | "linux-x64",
+  remediation: string,
+): Availability => {
+  const host = policy.host;
+  const unsupported =
+    host !== undefined &&
+    (host.platform !== "linux" ||
+      (requires === "linux-x64" && host.arch !== "x64"));
+  return {
+    reason: unsupported ? "unsupported_host" : "provider_missing",
+    remediation,
+  };
+};
+
 const workflowAvailabilityFor = ({
   name,
   kind,
@@ -463,35 +491,35 @@ const workflowAvailabilityFor = ({
   if (name === "recover_javascript_sources")
     return policy.javascriptRecoveryEnabled === true
       ? { reason: "available", remediation: null }
-      : {
-          reason: "provider_missing",
-          remediation:
-            "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/javascript-recovery.md#install-wakaru. No binary target is required.",
-        };
+      : linuxOnlyUnavailable(
+          policy,
+          "linux-x64",
+          "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/javascript-recovery.md#install-wakaru. No binary target is required.",
+        );
   if (name === "inspect_binary_layout")
     return policy.binaryLayoutEnabled === true
       ? { reason: "available", remediation: null }
-      : {
-          reason: "provider_missing",
-          remediation:
-            "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
-        };
+      : linuxOnlyUnavailable(
+          policy,
+          "linux-x64",
+          "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
+        );
   if (name === "inspect_packet_capture" || name === "inspect_packet_fields")
     return policy.packetCaptureEnabled === true
       ? { reason: "available", remediation: null }
-      : {
-          reason: "provider_missing",
-          remediation:
-            "On Linux, supply TShark 4.x via absolute REA_TSHARK_COMMAND and util-linux prlimit (REA_TSHARK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
-        };
+      : linuxOnlyUnavailable(
+          policy,
+          "linux",
+          "On Linux, supply TShark 4.x via absolute REA_TSHARK_COMMAND and util-linux prlimit (REA_TSHARK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
+        );
   if (name === "decode_signal_recording" || name === "inspect_signal_decoders")
     return policy.signalRecordingEnabled === true
       ? { reason: "available", remediation: null }
-      : {
-          reason: "provider_missing",
-          remediation:
-            "On Linux, supply sigrok-cli 0.7.2 via absolute REA_SIGROK_COMMAND and util-linux prlimit (REA_SIGROK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
-        };
+      : linuxOnlyUnavailable(
+          policy,
+          "linux",
+          "On Linux, supply sigrok-cli 0.7.2 via absolute REA_SIGROK_COMMAND and util-linux prlimit (REA_SIGROK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
+        );
   if (name === "inspect_wasm_artifact")
     return policy.wasmArtifactEnabled === true
       ? { reason: "available", remediation: null }
@@ -508,11 +536,11 @@ const workflowAvailabilityFor = ({
     return { reason: "available", remediation: null };
   if (name === "inspect_evm_interface") {
     if (policy.evmInterfaceEnabled !== true)
-      return {
-        reason: "provider_missing",
-        remediation:
-          "The bundled offline EVM interface profile is currently real-verified on Linux x64. No active binary target or chain endpoint is required.",
-      };
+      return linuxOnlyUnavailable(
+        policy,
+        "linux-x64",
+        "The bundled offline EVM interface profile is currently real-verified on Linux x64. No active binary target or chain endpoint is required.",
+      );
     const limiter = policy.evmLimiterAvailability;
     if (limiter?.status === "unavailable")
       return { reason: "provider_missing", remediation: limiter.reason };
@@ -521,11 +549,11 @@ const workflowAvailabilityFor = ({
   if (name === "inspect_recorded_crash")
     return policy.recordedCrashEnabled === true
       ? { reason: "available", remediation: null }
-      : {
-          reason: "provider_missing",
-          remediation:
-            "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
-        };
+      : linuxOnlyUnavailable(
+          policy,
+          "linux-x64",
+          "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
+        );
   if (kind === "firmware-provider") {
     const enabled =
       name === "inspect_firmware_regions"
@@ -533,11 +561,11 @@ const workflowAvailabilityFor = ({
         : policy.firmwareExtractionEnabled;
     return enabled === true
       ? { reason: "available", remediation: null }
-      : {
-          reason: "provider_missing",
-          remediation:
-            "On Linux, provide an absolute REA_BINWALK_COMMAND (Binwalk 3.1.x, verified with 3.1.0) or REA_UNBLOB_COMMAND (Unblob 26.6.x, verified with 26.6.4) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.",
-        };
+      : linuxOnlyUnavailable(
+          policy,
+          "linux",
+          "On Linux, provide an absolute REA_BINWALK_COMMAND (Binwalk 3.1.x, verified with 3.1.0) or REA_UNBLOB_COMMAND (Unblob 26.6.x, verified with 26.6.4) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.",
+        );
   }
   if (kind === "android-provider")
     return policy.androidAnalysisAvailability?.status === "available"

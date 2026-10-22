@@ -524,6 +524,17 @@ finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
 
+An unavailable tool's `reason` separates the host from the provider. Tools whose
+only provider runs on Linux (`inspect_binary_layout`, `inspect_recorded_crash`,
+`inspect_evm_interface`, `recover_javascript_sources` on Linux x64;
+`inspect_packet_capture`, `inspect_packet_fields`, `inspect_signal_decoders`,
+`decode_signal_recording` and the firmware tools on any Linux) report
+`unsupported_host` on macOS, Windows, and non-x64 Linux hosts, and
+`provider_missing` on a Linux host where the provider's command is not
+configured. The remediation text is the same in both cases and names the host
+and the configuration needed. An injected provider makes the tool available on
+any host.
+
 The `effects` and `annotations` arrays list the true members of their fixed
 vocabularies. A known member omitted from either array is false. This applies
 only to these closed flag sets; it does not make an omitted tool, provider, mode,

@@ -762,3 +762,78 @@ describe("trace_feature requirements", () => {
     ).toMatchObject({ available: false, reason: "provider_missing" });
   });
 });
+
+describe("Linux-only tools off Linux (#5730)", () => {
+  const linuxOnly = [
+    "inspect_binary_layout",
+    "inspect_recorded_crash",
+    "inspect_signal_decoders",
+    "decode_signal_recording",
+    "inspect_evm_interface",
+    "inspect_packet_capture",
+    "inspect_firmware_regions",
+    "recover_javascript_sources",
+  ] as const;
+
+  it.each(linuxOnly)(
+    "%s reports unsupported_host on a macOS or Windows host",
+    (name) => {
+      for (const host of [
+        { platform: "darwin", arch: "arm64" },
+        { platform: "win32", arch: "x64" },
+      ]) {
+        const found = entry(name, status(), {
+          processCaptureEnabled: false,
+          host,
+        });
+        expect(found).toMatchObject({
+          available: false,
+          reason: "unsupported_host",
+        });
+        if (!found.available) expect(found.remediation).toContain("Linux");
+      }
+    },
+  );
+
+  it("keeps provider_missing on Linux when the provider is not configured", () => {
+    for (const name of linuxOnly)
+      expect(
+        entry(name, status(), {
+          processCaptureEnabled: false,
+          host: { platform: "linux", arch: "x64" },
+        }),
+      ).toMatchObject({ available: false, reason: "provider_missing" });
+  });
+
+  it("reports unsupported_host for x64-only tools on Linux arm64", () => {
+    const host = { platform: "linux", arch: "arm64" };
+    for (const name of [
+      "inspect_binary_layout",
+      "inspect_recorded_crash",
+      "inspect_evm_interface",
+      "recover_javascript_sources",
+    ])
+      expect(
+        entry(name, status(), { processCaptureEnabled: false, host }),
+      ).toMatchObject({ available: false, reason: "unsupported_host" });
+    for (const name of ["inspect_signal_decoders", "inspect_packet_capture"])
+      expect(
+        entry(name, status(), { processCaptureEnabled: false, host }),
+      ).toMatchObject({ available: false, reason: "provider_missing" });
+  });
+
+  it("stays provider_missing when the host is unknown and available when an owner is injected", () => {
+    expect(
+      entry("inspect_binary_layout", status(), {
+        processCaptureEnabled: false,
+      }),
+    ).toMatchObject({ available: false, reason: "provider_missing" });
+    expect(
+      entry("inspect_binary_layout", status(), {
+        processCaptureEnabled: false,
+        binaryLayoutEnabled: true,
+        host: { platform: "darwin", arch: "arm64" },
+      }),
+    ).toMatchObject({ available: true });
+  });
+});
