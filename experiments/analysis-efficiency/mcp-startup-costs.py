@@ -80,11 +80,14 @@ for case in inputs['cases']:
     resource = module.resource(directory)
     for name, digest in resource['guard_sources_sha256'].items():
         assert digest == inputs['harness_sources_sha256'][name]
-    row = {**case, 'runtime_binding': report['runtime_binding'], 'runtime_audit_ms': report['runtime_audit_ms'],
+    del resource['guard_sources_sha256']
+    row = {**case, 'runtime_binding_sha256': sha(compact(report['runtime_binding']).encode()), 'runtime_audit_ms': report['runtime_audit_ms'],
            'catalog_sha256': digest, 'parent_evidence_id': report.get('parent_evidence_id'),
            'parent_semantic_sha256': report.get('parent_semantic_sha256'),
            'answer_sha256': sha(compact(report['answer']).encode()), 'tokens_estimated': tokens,
-           'actual_model_usage': None, 'protocol_requests': requests, 'calls': report['calls'],
+           'raw_catalog_result_tokens_all_lists': catalogs[profile]['raw_catalog_tokens'] * requests['tools/list'],
+           'raw_catalog_result_bytes_all_lists': catalogs[profile]['raw_catalog_bytes'] * requests['tools/list'],
+           'actual_model_usage': None, 'protocol_era': report['protocol_era'], 'protocol_requests': requests, 'calls': report['calls'],
            **resource,
            'receipt_sha256': {name: sha((directory / name).read_bytes()) for name in ['report.json', 'catalog.json', 'server.json', 'transcript.json']}}
     rows.append(row)
@@ -105,7 +108,7 @@ for phase in ['discovery', 'analysis']:
                 summary.append(item)
 result = {'status': 'passed', 'tokenizer': f'tiktoken=={tiktoken.__version__}/cl100k_base; estimates, not model usage',
           'aggregation_sources_sha256': {path.name: sha(path.read_bytes()) for path in [Path(__file__), Path(spec.origin)]},
-          'context_scope': 'Question, explicit recipe, server instructions, one complete name/description/input-schema directory, every tool argument and text reply, plus prompt directory for discovery. Raw output-schema transport tokens are separate. SDK initialization framing, reasoning and actual model usage are unmeasured. The analysis task includes retained-read, rejection, export/oracle and post-materialization directory checks.',
+          'context_scope': 'Question, explicit recipe, server instructions, one complete name/description/input-schema directory, every tool argument and text reply, plus prompt directory for discovery. This projection assumes the client retains a single unchanged directory. Raw catalog result costs include every observed tools/list result separately, with output schemas and without JSON-RPC envelopes. SDK initialization/framing, reasoning and actual model usage are unmeasured. The analysis task includes retained-read, rejection, export/oracle and post-materialization directory checks.',
           'cache_scope': 'Cold disables server Node compile cache. Warm enables a prepopulated role/profile-specific cache after one complete analysis priming run. Fresh server/client processes and HOME each trial. Driver compile cache disabled in both cohorts. Cache hit rate and OS page cache are unmeasured; source/runtime audits warm compiled-file pages before startup.',
           'resource_scope': 'Whole SDK driver, resource observer and owned REA process family. Includes before/after source-and-all-compiled-JS/JSON binding, SDK schema checks, extra validation calls, bundle export and independent oracle checking. Kernel cgroup peak includes file cache. Build/download/oracle preparation and cache priming excluded. Retained V8 heap and forced-GC diagnostics were not separately measured.',
           'measurement_inputs': inputs, 'catalogs': catalogs, 'summary': summary, 'records': rows,
