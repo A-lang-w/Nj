@@ -33,16 +33,25 @@ export async function measureMcpStartup({
     version: "1.0.0",
   });
   const startedAt = performance.now();
+  // One deadline for both phases. Each request also uses the time still left,
+  // so a shorter first-catalog budget stops a pending initialize or tools/list
+  // instead of waiting out that phase's own budget.
+  const firstCatalog = armFirstCatalogDeadline(policy.firstCatalog, startedAt);
   rss.start();
   try {
-    await withPhaseBudget(policy.initialize, () =>
-      client.connect(transport, { timeout: policy.initialize.milliseconds }),
+    await awaitPhaseWithinFirstCatalog(
+      policy.initialize,
+      firstCatalog,
+      (timeout) => client.connect(transport, { timeout }),
     );
     const initializedAt = performance.now();
-    const tools = await withPhaseBudget(policy.toolsList, () =>
-      client.listTools(undefined, {
-        timeout: policy.toolsList.milliseconds,
-      }),
+    const tools = await awaitPhaseWithinFirstCatalog(
+      policy.toolsList,
+      firstCatalog,
+      (timeout) =>
+        client.listTools(undefined, {
+          timeout,
+        }),
     );
     const listedAt = performance.now();
     rss.stop();
@@ -62,6 +71,7 @@ export async function measureMcpStartup({
       { cause },
     );
   } finally {
+    firstCatalog.clear();
     rss.stop();
     await Promise.allSettled([client.close(), transport.close()]);
   }
@@ -237,6 +247,64 @@ const withPhaseBudget = async (budget, operation) => {
   }
 };
 
+const firstCatalogBudgetExceeded = (budget) =>
+  new Error(
+    `packaged MCP exceeded the first-catalog phase budget. ${mcpStartupPhaseBudgetRecovery(budget)}`,
+  );
+
+/**
+ * Wall-clock end of the first-catalog budget, measured from the same instant
+ * as the phase durations. The SDK timeout starts only once its request is
+ * sent, so this timer still stops a child that has not reached that request.
+ */
+const armFirstCatalogDeadline = (budget, startedAt) => {
+  const deadline = startedAt + budget.milliseconds;
+  let timer;
+  const expired = new Promise((resolve) => {
+    timer = setTimeout(
+      resolve,
+      Math.max(1, Math.ceil(deadline - performance.now())),
+    );
+  });
+  return {
+    budget,
+    deadline,
+    expired,
+    clear() {
+      clearTimeout(timer);
+    },
+  };
+};
+
+const phaseRequestTimeout = (phase, deadline) => {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) return 0;
+  return Math.max(1, Math.min(phase.milliseconds, Math.ceil(remaining)));
+};
+
+/**
+ * Bound one pending phase by its own budget and by the time left in the
+ * first-catalog budget. The recovery names whichever bound is shorter.
+ */
+const awaitPhaseWithinFirstCatalog = async (phase, firstCatalog, operation) => {
+  const timeout = phaseRequestTimeout(phase, firstCatalog.deadline);
+  if (timeout === 0) throw firstCatalogBudgetExceeded(firstCatalog.budget);
+  const remaining = firstCatalog.deadline - performance.now();
+  const budget = remaining < phase.milliseconds ? firstCatalog.budget : phase;
+  const pending = withPhaseBudget(budget, () => operation(timeout)).then(
+    (value) => ({ kind: "fulfilled", value }),
+    (cause) => ({ kind: "rejected", cause }),
+  );
+  const outcome = await Promise.race([
+    pending,
+    firstCatalog.expired.then(() => ({ kind: "expired" })),
+  ]);
+  if (outcome.kind === "expired")
+    throw firstCatalogBudgetExceeded(firstCatalog.budget);
+  if (outcome.kind === "rejected") throw outcome.cause;
+  return outcome.value;
+};
+
 const assertStartupBudgets = (measurement, policy) => {
   if (
     measurement.process_started_to_initialized_ms >
@@ -253,9 +321,7 @@ const assertStartupBudgets = (measurement, policy) => {
     measurement.process_started_to_tools_list_ms >
     policy.firstCatalog.milliseconds
   )
-    throw new Error(
-      `packaged MCP exceeded the first-catalog phase budget. ${mcpStartupPhaseBudgetRecovery(policy.firstCatalog)}`,
-    );
+    throw firstCatalogBudgetExceeded(policy.firstCatalog);
 };
 
 const elapsed = (startedAt, completedAt) =>

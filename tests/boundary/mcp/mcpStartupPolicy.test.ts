@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   createEsmModuleProfileCollector,
@@ -252,5 +255,85 @@ describe("packaged MCP startup probe failures", () => {
       expect(message).not.toContain("phase budget");
       expect(message).not.toContain("MCP doctor startup deadline");
     }
+  });
+});
+
+describe("packaged MCP first-catalog budget while a phase is pending", () => {
+  it("stops a pending initialize at the shorter first-catalog budget", async () => {
+    const firstCatalogMs = 250;
+    const initializeMs = 8_000;
+    const started = performance.now();
+    let caught: unknown;
+    try {
+      await measureMcpStartup({
+        command: process.execPath,
+        args: [probeChild],
+        environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
+        policy: probePolicy({
+          initializeBudgetMs: initializeMs,
+          firstCatalogBudgetMs: firstCatalogMs,
+        }),
+      });
+    } catch (cause) {
+      caught = cause;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = errorMessage(caught);
+    expect(message).toContain(
+      `The effective REA_MCP_FIRST_CATALOG_BUDGET_MS value for the MCP first-catalog phase budget is ${String(firstCatalogMs)} ms (source setting; default 20000 ms, floor 1 ms, maximum 2147483647 ms).`,
+    );
+    expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
+    const elapsedMs = performance.now() - started;
+    expect(elapsedMs).toBeLessThan(initializeMs);
+    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+  });
+
+  it("stops a pending tools/list at the remaining first-catalog budget", async () => {
+    const firstCatalogMs = 800;
+    const toolsListMs = 8_000;
+    const root = await createTestTempDirectory("rea-mcp-startup-");
+    const initializedPath = join(root, "initialized");
+    const started = performance.now();
+    let caught: unknown;
+    try {
+      await measureMcpStartup({
+        command: process.execPath,
+        args: [probeChild],
+        environment: {
+          ...process.env,
+          REA_MCP_PROBE_MODE: "initialize-then-hang",
+          REA_MCP_PROBE_INITIALIZED_PATH: initializedPath,
+        },
+        policy: probePolicy({
+          toolsListBudgetMs: toolsListMs,
+          firstCatalogBudgetMs: firstCatalogMs,
+        }),
+      });
+    } catch (cause) {
+      caught = cause;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = errorMessage(caught);
+    expect(message).toContain(
+      `The effective REA_MCP_FIRST_CATALOG_BUDGET_MS value for the MCP first-catalog phase budget is ${String(firstCatalogMs)} ms (source setting; default 20000 ms, floor 1 ms, maximum 2147483647 ms).`,
+    );
+    expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
+    const elapsedMs = performance.now() - started;
+    expect(elapsedMs).toBeLessThan(toolsListMs);
+    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+    expect(await readFile(initializedPath, "utf8")).toBe("ready");
+  });
+
+  it("returns the catalog when every phase finishes inside its budget", async () => {
+    const measurement = await measureMcpStartup({
+      command: process.execPath,
+      args: [probeChild],
+      environment: { ...process.env, REA_MCP_PROBE_MODE: "serve" },
+      policy: probePolicy(),
+    });
+    expect(measurement.listed_tool_count).toBe(0);
+    expect(measurement.process_started_to_initialized_ms).toBeGreaterThan(0);
+    expect(measurement.process_started_to_tools_list_ms).toBeGreaterThan(0);
+    expect(measurement.process_started_to_tools_list_ms).toBeLessThan(30_000);
   });
 });
