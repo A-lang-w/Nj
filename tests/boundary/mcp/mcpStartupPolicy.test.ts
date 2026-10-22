@@ -14,6 +14,8 @@ import {
 } from "../../../scripts/lib/mcp-startup-probe.mjs";
 import {
   DEFAULT_MCP_STARTUP_BUDGETS,
+  MCP_PHASE_BUDGET_FLOOR_MS,
+  MCP_PHASE_BUDGET_MAXIMUM_MS,
   mcpPhaseBudgetRecovery,
   resolveMcpStartupBudgets,
   type McpPhaseBudget,
@@ -26,20 +28,22 @@ import {
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-const expectPhaseText = (
-  text: string,
-  budget: Pick<McpPhaseBudget, "setting" | "milliseconds" | "source">,
-) => {
+const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
+  expect(budget.floorMilliseconds).toBe(MCP_PHASE_BUDGET_FLOOR_MS);
+  expect(budget.maximumMilliseconds).toBe(MCP_PHASE_BUDGET_MAXIMUM_MS);
   expect(text).toContain(budget.setting);
   expect(text).toContain(
     `${String(budget.milliseconds)} ms (source ${budget.source}`,
   );
+  expect(text).toContain(`default ${String(budget.defaultMilliseconds)} ms`);
+  expect(text).toContain(`floor ${String(MCP_PHASE_BUDGET_FLOOR_MS)} ms`);
+  expect(text).toContain(`maximum ${String(MCP_PHASE_BUDGET_MAXIMUM_MS)} ms`);
   expect(text).not.toContain("no runtime override");
 };
 
 const expectThrownBudget = async (
   pending: Promise<unknown>,
-  budget: Pick<McpPhaseBudget, "setting" | "milliseconds" | "source">,
+  budget: McpPhaseBudget,
 ): Promise<string> => {
   let caught: unknown;
   try {
@@ -276,6 +280,10 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
   it("stops a pending initialize at the shorter first-catalog budget", async () => {
     const firstCatalogMs = 250;
     const initializeMs = 8_000;
+    const policy = probePolicy({
+      initializeBudgetMs: initializeMs,
+      firstCatalogBudgetMs: firstCatalogMs,
+    });
     const started = performance.now();
     let caught: unknown;
     try {
@@ -283,21 +291,14 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
         command: process.execPath,
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
-        policy: probePolicy({
-          initializeBudgetMs: initializeMs,
-          firstCatalogBudgetMs: firstCatalogMs,
-        }),
+        policy,
       });
     } catch (cause) {
       caught = cause;
     }
     expect(caught).toBeInstanceOf(Error);
     const message = errorMessage(caught);
-    expectPhaseText(message, {
-      setting: "REA_MCP_FIRST_CATALOG_BUDGET_MS",
-      milliseconds: firstCatalogMs,
-      source: "setting",
-    });
+    expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
     const elapsedMs = performance.now() - started;
     expect(elapsedMs).toBeLessThan(initializeMs);
@@ -309,6 +310,10 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     const toolsListMs = 8_000;
     const root = await createTestTempDirectory("rea-mcp-startup-");
     const initializedPath = join(root, "initialized");
+    const policy = probePolicy({
+      toolsListBudgetMs: toolsListMs,
+      firstCatalogBudgetMs: firstCatalogMs,
+    });
     const started = performance.now();
     let caught: unknown;
     try {
@@ -320,21 +325,14 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
           REA_MCP_PROBE_MODE: "initialize-then-hang",
           REA_MCP_PROBE_INITIALIZED_PATH: initializedPath,
         },
-        policy: probePolicy({
-          toolsListBudgetMs: toolsListMs,
-          firstCatalogBudgetMs: firstCatalogMs,
-        }),
+        policy,
       });
     } catch (cause) {
       caught = cause;
     }
     expect(caught).toBeInstanceOf(Error);
     const message = errorMessage(caught);
-    expectPhaseText(message, {
-      setting: "REA_MCP_FIRST_CATALOG_BUDGET_MS",
-      milliseconds: firstCatalogMs,
-      source: "setting",
-    });
+    expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
     const elapsedMs = performance.now() - started;
     expect(elapsedMs).toBeLessThan(toolsListMs);

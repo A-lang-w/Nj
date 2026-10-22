@@ -255,7 +255,11 @@ it("does not correlate legacy dropped families and roles", () => {
     { family: "preload", count: 1 },
     { family: "renderer-ipc", count: 1 },
   ]);
-  expect(result.limitations.join("\n")).toContain(
-    "Dropped preload-family events",
+  const limitations = result.limitations.join("\n");
+  expect(limitations).toContain("Dropped preload-family events");
+  expect(limitations).toContain("not attributed to preload configuration");
+  expect(limitations).toContain(
+    "independently aggregated event families and roles",
   );
+  expect(limitations).toContain("cannot establish that relationship");
 });

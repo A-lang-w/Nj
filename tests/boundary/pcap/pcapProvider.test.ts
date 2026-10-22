@@ -429,6 +429,10 @@ it("reports relative configuration and missing capinfos as capability gaps", asy
     });
     expect(projected.message).toContain(TSHARK_COMMAND_ENV);
     expect(projected.message).toContain(CAPINFOS_COMMAND_ENV);
+    expect(projected.message).toContain("Wireshark 4.x");
+    expect(projected.message).toContain("PATH");
+    expect(projected.message).toContain("absolute");
+    expect(projected.message).toContain("does not install");
   }
 });
 

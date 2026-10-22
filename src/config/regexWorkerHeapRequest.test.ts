@@ -21,6 +21,17 @@ import {
 const configured = (heapMiB: number) =>
   ({ heapMiB, source: "setting" }) as const;
 
+const expectHeapRecoveryTokens = (text: string | undefined) => {
+  expect(text).toContain(`Set ${REGEX_WORKER_HEAP_REQUEST_SETTING}`);
+  expect(text).toContain("then restart REA");
+  expect(text).toContain(
+    `floor ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB`,
+  );
+  expect(text).toContain(
+    `maximum ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB`,
+  );
+};
+
 it("keeps the 128 MiB request when the setting is unset", () => {
   expect(parseRegexWorkerHeapRequest(undefined)).toEqual({
     ok: true,
@@ -39,6 +50,7 @@ it("keeps the 128 MiB request when the setting is unset", () => {
   expect(recovery).toContain(
     `source ${DEFAULT_REGEX_WORKER_HEAP_REQUEST.source}`,
   );
+  expectHeapRecoveryTokens(recovery);
   const projected = projectAnalysisError(
     regexWorkerHeapError("search_procedures", new Error("heap")),
   );
@@ -55,6 +67,7 @@ it("keeps the 128 MiB request when the setting is unset", () => {
   expect(projected.remediation.action).toContain(
     REGEX_WORKER_HEAP_REQUEST_SETTING,
   );
+  expectHeapRecoveryTokens(projected.remediation.action);
   expect(projected.remediation.action).not.toContain("no runtime override");
 });
 
