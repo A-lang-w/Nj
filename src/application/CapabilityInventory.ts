@@ -350,6 +350,7 @@ export const compactToolAvailability = (
 const availabilityFor = (context: AvailabilityContext): Availability => {
   // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
   if (
+    context.name === "inspect_byte_entropy" ||
     context.name === "observe_web_execution" ||
     context.name === "inspect_web_event_listeners"
   )
@@ -415,6 +416,7 @@ const workflowAvailabilityFor = ({
     name === "inspect_go_binary" ||
     name === "inspect_il2cpp_metadata" ||
     name === "inspect_model_artifact" ||
+    name === "inspect_gpu_code_objects" ||
     name === "inspect_rust_binary" ||
     name === "inspect_electron_fuses"
   )

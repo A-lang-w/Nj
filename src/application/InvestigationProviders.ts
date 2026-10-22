@@ -3,7 +3,6 @@ import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
-
 /** Provider identity for deterministic composed analysis workflows. */
 export const REA_WORKFLOW_PROVIDER = {
   id: "rea-workflow",
@@ -46,6 +45,13 @@ export const MANAGED_STATIC_PROVIDER = Object.freeze({
 export const PE_RESOURCES_PROVIDER = Object.freeze({
   id: "rea-pe-resources",
   name: "REA PE resource parser",
+  version: "1",
+} as const);
+
+/** Provider identity for execution-free Shannon byte-entropy profiling. */
+export const BYTE_ENTROPY_PROVIDER = Object.freeze({
+  id: "byte-entropy",
+  name: "REA byte entropy",
   version: "1",
 } as const);
 
@@ -109,20 +115,6 @@ export const ANALYSIS_VIEW_PROVIDER = {
 export const JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER = {
   id: "rea-javascript-application-workflows",
   name: "REA JavaScript application workflows",
-  version: "1",
-} as const;
-
-/** Provider identity for deterministic cross-artifact comparisons. */
-export const ARTIFACT_COMPARISON_PROVIDER = {
-  id: "rea-artifact-comparison",
-  name: "REA artifact comparison",
-  version: "1",
-} as const;
-
-/** Provider identity for deterministic cross-function comparisons. */
-export const FUNCTION_COMPARISON_PROVIDER = {
-  id: "rea-function-comparison",
-  name: "REA function comparison",
   version: "1",
 } as const;
 

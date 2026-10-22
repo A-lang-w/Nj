@@ -1,5 +1,7 @@
+import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
 import {
+  createByteEntropyService,
   createRecordedCrashService,
   createBinaryLayoutService,
   createPeResourcesService,
@@ -9,6 +11,8 @@ import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { inspectBinaryLayoutInputSchema } from "../domain/native/binaryLayout.js";
+import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.js";
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -20,6 +24,44 @@ export const registerBinaryDiagnosticsCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
+  const entropy = createByteEntropyService();
+  cli.command(CLI_COMMANDS.inspectByteEntropy, {
+    description:
+      "Inspect file-wide and block byte entropy without executing the file",
+    args: z.object({ path: z.string().describe("Local file") }),
+    options: z.object({
+      blockSize: inspectByteEntropyInputSchema.shape.block_size.describe(
+        "Power-of-two block size from 256 to 65536 bytes (default 4096)",
+      ),
+      offset: inspectByteEntropyInputSchema.shape.offset.describe(
+        "Window start as a decimal file byte offset (default 0)",
+      ),
+      length: inspectByteEntropyInputSchema.shape.length.describe(
+        "Window length in bytes; omit to extend through EOF",
+      ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.inspectByteEntropy, async () => {
+          return await finishAnalysisCommand(
+            () =>
+              entropy.inspect(
+                {
+                  path: absoluteCallerPath(args.path),
+                  block_size: options.blockSize,
+                  offset: options.offset,
+                  length: options.length,
+                },
+                { signal },
+              ),
+            entropy,
+            "rea-byte-entropy",
+            "inspect_byte_entropy",
+            signal,
+          );
+        }),
+      ),
+  });
   cli.command(CLI_COMMANDS.inspectPeResources, {
     description:
       "Inspect PE resource identities, payload ranges, hashes and icon-group relationships",
@@ -60,11 +102,20 @@ export const registerBinaryDiagnosticsCommands = (
     args: z.object({
       path: z.string().describe("Local ELF binary or relocatable object"),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      pwntoolsTimeoutMs:
+        inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectBinaryLayout, async () => {
           const result = await service.inspectAndClose(
-            { path: absoluteCallerPath(args.path) },
+            {
+              path: absoluteCallerPath(args.path),
+              ...(options.pwntoolsTimeoutMs === undefined
+                ? {}
+                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
+            },
             { signal },
           );
           return result.ok ? result.value : projectAnalysisError(result.error);
@@ -85,6 +136,8 @@ export const registerBinaryDiagnosticsCommands = (
         .boolean()
         .default(false)
         .describe("Add BYO core-only GDB/pwndbg mapping candidates"),
+      pwntoolsTimeoutMs:
+        inspectRecordedCrashInputSchema.shape.pwntools_timeout_ms,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -93,6 +146,9 @@ export const registerBinaryDiagnosticsCommands = (
             {
               path: absoluteCallerPath(args.path),
               include_debugger_context: options.debuggerContext,
+              ...(options.pwntoolsTimeoutMs === undefined
+                ? {}
+                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
             },
             { signal },
           );
