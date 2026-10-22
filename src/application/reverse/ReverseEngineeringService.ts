@@ -29,6 +29,8 @@ import {
   DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   MAX_REVERSE_COMMAND_TIMEOUT_MS,
   objdumpInputSchema,
+  radare2InputSchema,
+  radiff2InputSchema,
   rizinInputSchema,
 } from "../../domain/reverseEngineering.js";
 import type {
@@ -48,7 +50,18 @@ import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
-  | "execute_rizin_command";
+  | "execute_rizin_command"
+  | "execute_radare2_command"
+  | "compare_with_radiff2";
+
+const COMMAND_PROVIDER_IDS: Readonly<
+  Record<ReverseEngineeringOperation, string>
+> = {
+  inspect_with_objdump: "objdump",
+  execute_rizin_command: "rizin",
+  execute_radare2_command: "radare2",
+  compare_with_radiff2: "radiff2",
+};
 
 const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Eight concurrent captures bound retained provider output to 128 MiB.
@@ -245,6 +258,48 @@ export class ReverseEngineeringService {
       "execute_rizin_command",
       command,
       input.path,
+      commandTimeoutMs === undefined ? input : parsed.data,
+      options.signal,
+      commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+    );
+  }
+
+  executeRadare2Command(
+    rawInput: unknown,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const parsed = radare2InputSchema.safeParse(rawInput);
+    if (!parsed.success)
+      return Promise.resolve(
+        err(new AnalysisInputError("execute_radare2_command")),
+      );
+    const { command_timeout_ms: commandTimeoutMs, ...input } = parsed.data;
+    const command = this.#commands.radare2(input);
+    return this.#observe(
+      "execute_radare2_command",
+      command,
+      input.path,
+      commandTimeoutMs === undefined ? input : parsed.data,
+      options.signal,
+      commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+    );
+  }
+
+  compareWithRadiff2(
+    rawInput: unknown,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const parsed = radiff2InputSchema.safeParse(rawInput);
+    if (!parsed.success)
+      return Promise.resolve(
+        err(new AnalysisInputError("compare_with_radiff2")),
+      );
+    const { command_timeout_ms: commandTimeoutMs, ...input } = parsed.data;
+    const command = this.#commands.radiff2(input);
+    return this.#observe(
+      "compare_with_radiff2",
+      command,
+      input.path_a,
       commandTimeoutMs === undefined ? input : parsed.data,
       options.signal,
       commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
@@ -519,7 +574,7 @@ export class ReverseEngineeringService {
           );
         else
           earlyFailure = new AnalysisCapabilityUnavailableError(
-            operation === "inspect_with_objdump" ? "objdump" : "rizin",
+            COMMAND_PROVIDER_IDS[operation],
             operation,
             `Unable to run configured command (${String(code ?? "unknown error")})`,
             { cause, ...ownedCleanupOptions(cause) },
@@ -695,6 +750,11 @@ export class ReverseEngineeringService {
       ...(operation === "execute_rizin_command"
         ? [
             "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
+          ]
+        : []),
+      ...(operation === "execute_radare2_command"
+        ? [
+            "Radare2 commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
           ]
         : []),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8

@@ -39,6 +39,7 @@ import { CUTTER_TOOL_CONTRACTS } from "./cutterToolContracts.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolContracts.js";
 import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
+import { RADARE2_SESSION_TOOL_CONTRACTS } from "./radare2SessionToolContracts.js";
 import { FRIDA_TOOL_CONTRACTS } from "./fridaToolContracts.js";
 
 /** Complete ordered public inventory used by registration and verification. */
@@ -84,6 +85,7 @@ export const TOOL_CONTRACTS = [
   ...REVERSE_ENGINEERING_TOOL_CONTRACTS,
   ...GDB_TOOL_CONTRACTS,
   ...RIZIN_DEBUG_TOOL_CONTRACTS,
+  ...RADARE2_SESSION_TOOL_CONTRACTS,
   ...FRIDA_TOOL_CONTRACTS,
 ] as const;
 
