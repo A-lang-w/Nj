@@ -637,6 +637,60 @@ it("keeps main-frame ownership across a redirect hop that omits its frame", asyn
   );
 });
 
+it("keeps child-frame ownership across a redirect hop that omits its frame", async () => {
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "redirected-child-document",
+            timestamp: 21,
+            type: "Document",
+            frameId: "frame-child",
+            request: { url: `${origin}/child-first-hop` },
+          },
+        },
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "redirected-child-document",
+            timestamp: 21.5,
+            type: "Document",
+            redirectResponse: { url: `${origin}/child-first-hop`, status: 302 },
+            request: { url: `${origin}/child-second-hop` },
+          },
+        },
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "redirected-child-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_CONNECTION_REFUSED",
+          },
+        },
+      ];
+    },
+  });
+
+  // The first hop proved another frame, so the failure is out of scope.
+  expect(
+    observation.timeline.filter((event) => event.type === "load_failed"),
+  ).toEqual([]);
+  expect(observation.completeness.excluded).not.toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+    }),
+  );
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
