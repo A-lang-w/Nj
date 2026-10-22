@@ -99,7 +99,11 @@ value wins. Cutter reads the environment that starts Cutter and publishes
 `max_request_bytes` on its session descriptor. A Hopper or Cutter process
 started out of band without the setting uses 16777216 bytes. The client
 compares that advertisement with its own ceiling and reports the mismatch
-before sending a command. Cutter response frames use this same ceiling and
+before a discovery status probe and before sending a command. A live Cutter
+whose ceiling differs is that mismatch, not an absent session. A hello that
+never sends its authenticated frame does not hold the bridge accept loop.
+A command reply that does not fit keeps its completion state and document
+generation, and reports an oversized path as unknown. Cutter response frames use this same ceiling and
 also exclude the terminating LF. Hopper response reads are unchanged.
 Each bridge request waits 25000 ms. The Cutter hello frame still must arrive
 within 1 second. The authenticated command frame is read with one second per

@@ -132,7 +132,7 @@ it("prefers the injected bootstrap ceiling over the process environment", async 
   expect(result).toMatchObject({ limit: 8192, source: "setting" });
 });
 
-it.each(["7463", "536870888", "0", "-1", "abc", "016777216"])(
+it.each(["7463", "536870888", "0", "-1", "abc", "016777216", "٨١٩٢"])(
   "refuses invalid bridge ceiling %j without falling back",
   async (value) => {
     const result = z

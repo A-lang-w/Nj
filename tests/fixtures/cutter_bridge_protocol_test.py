@@ -404,6 +404,23 @@ class HostVersionTest(unittest.TestCase):
 
 
 class ProtocolProducerTest(unittest.TestCase):
+    def test_stalled_hello_does_not_block_the_next_client(self):
+        stalled = socket.create_connection(("127.0.0.1", self.server.port), timeout=2)
+        try:
+            _send(stalled, {"kind": "rea-auth-v2", "nonce": "b" * 64})
+            challenge = _frame(stalled)
+            self.assertEqual(challenge["session_id"], self.server.session_id)
+            started = time.monotonic()
+            response, _nonce = self.exchange({
+                "kind": "status",
+                "session_id": self.server.session_id,
+            })
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["session_id"], self.server.session_id)
+        finally:
+            stalled.close()
+
     def test_rejects_legacy_peers_before_ui_dispatch(self):
         with socket.create_connection(("127.0.0.1", self.server.port), timeout=2) as connection:
             connection.sendall((json.dumps({"kind": "rea-auth-v1", "nonce": "a" * 64}) + "\n").encode())
@@ -821,6 +838,47 @@ class BridgeRequestCeilingTest(unittest.TestCase):
         self.assertEqual(preserved["document_generation"], 0)
         self.assertNotIn("cutter_version", preserved)
 
+    def test_tight_command_keeps_completion_and_omits_the_path(self):
+        module = _load_cutter_bridge("command_path", "7464")
+        server = module._BridgeServer.__new__(module._BridgeServer)
+        server.token = "token"
+        server.session_id = "00000000-0000-4000-8000-000000000001"
+        value = {
+            "ok": True,
+            "output": "ok",
+            "execution_state": "complete",
+            "current_file": "\\" * 3000,
+            "document_generation": 7,
+            "identity_status": "partial",
+        }
+        self.assertIsNone(
+            server._encode_authenticated_response(value, "a" * 64, "b" * 64)
+        )
+        captured = bytearray()
+
+        class _Capture:
+            def sendall(self, data):
+                captured.extend(data)
+
+        server._send_authenticated(_Capture(), value, "a" * 64, "b" * 64)
+        response = json.loads(json.loads(bytes(captured).decode("utf-8"))["response"])
+        self.assertEqual(response["execution_state"], "complete")
+        self.assertEqual(response["document_generation"], 7)
+        self.assertIsNone(response["current_file"])
+        self.assertIsNone(response["output"])
+        self.assertTrue(response["output_truncated"])
+        self.assertIn("REA_BRIDGE_MAX_REQUEST_BYTES", response["message"])
+        short = dict(value)
+        short["current_file"] = "/tmp/fresh.bin"
+        short["output"] = "A" * 10000
+        captured.clear()
+        server._send_authenticated(_Capture(), short, "a" * 64, "b" * 64)
+        preserved = json.loads(json.loads(bytes(captured).decode("utf-8"))["response"])
+        self.assertEqual(preserved["current_file"], "/tmp/fresh.bin")
+        self.assertEqual(preserved["document_generation"], 7)
+        self.assertEqual(preserved["execution_state"], "complete")
+        self.assertIsNone(preserved["output"])
+
     def test_dense_primitive_array_uses_its_encoded_size(self):
         module = _load_cutter_bridge("dense", "8192")
         zeros = [0] * 2000
@@ -838,7 +896,7 @@ class BridgeRequestCeilingTest(unittest.TestCase):
         self.assertFalse(module._within_response_limit(overflow))
 
     def test_invalid_ceilings_are_refused(self):
-        for raw in ("7463", "536870888", "0", "-1", "abc", "016777216"):
+        for raw in ("7463", "536870888", "0", "-1", "abc", "016777216", "٨١٩٢"):
             with self.assertRaises(RuntimeError) as caught:
                 _load_cutter_bridge("invalid_%s" % raw, raw)
             self.assertIn("REA_BRIDGE_MAX_REQUEST_BYTES", str(caught.exception))

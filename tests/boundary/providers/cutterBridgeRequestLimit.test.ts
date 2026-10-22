@@ -59,6 +59,28 @@ it("rejects a bridge ceiling below the floor at client construction", () => {
   ).toThrow(ConfigurationError);
 });
 
+it("reports a Cutter ceiling mismatch during discovery before opening a socket", async () => {
+  const directory = await privateDirectory();
+  await writeDescriptor(directory, SESSION, 1, TOKEN);
+  const client = clientFor(directory, "8192");
+  await expect(client.listSessions()).rejects.toSatisfy((error: unknown) => {
+    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(error instanceof AnalysisResourceConstraintError)) return false;
+    expect(error.operation).toBe("list_cutter_sessions");
+    expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+    expect(error.reason).toContain("8192");
+    expect(error.reason).toContain("16777216");
+    expect(error.reason).toContain("source setting");
+    expect(error.reason).toContain("7464");
+    expect(error.reason).toContain("536870887");
+    expect(error.reason).toContain("No status request was sent.");
+    expect(error.remediationAction).toContain(
+      "Set REA_BRIDGE_MAX_REQUEST_BYTES",
+    );
+    return true;
+  });
+});
+
 it("reports a Cutter ceiling mismatch before opening a command socket", async () => {
   const directory = await privateDirectory();
   await writeDescriptor(directory, SESSION, 1, TOKEN);

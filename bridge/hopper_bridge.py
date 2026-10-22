@@ -8,6 +8,7 @@ API access on this thread: moving dispatch to a worker can deadlock Hopper.
 import json
 import hmac
 import os
+import re
 import socket
 from typing import Any, Optional, Protocol, Sequence
 
@@ -52,7 +53,9 @@ def _parse_bridge_max_request_bytes(raw):
     if isinstance(raw, int):
         value = raw
     elif isinstance(raw, str):
-        if raw == "" or not raw.isdigit() or raw[0] == "0":
+        # ASCII digits only. str.isdigit() accepts numerals such as U+0668
+        # that the TypeScript setting rejects.
+        if re.fullmatch(r"[1-9][0-9]*", raw) is None:
             raise RuntimeError(constraint)
         value = int(raw)
     else:

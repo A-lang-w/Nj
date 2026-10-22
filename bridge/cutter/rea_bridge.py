@@ -11,6 +11,7 @@ import json
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import socket
 import stat
@@ -88,7 +89,9 @@ def _parse_bridge_max_request_bytes(raw):
     if isinstance(raw, int):
         value = raw
     elif isinstance(raw, str):
-        if raw == "" or not raw.isdigit() or raw[0] == "0":
+        # ASCII digits only. str.isdigit() accepts numerals such as U+0668
+        # that the TypeScript setting rejects.
+        if re.fullmatch(r"[1-9][0-9]*", raw) is None:
             raise RuntimeError(constraint)
         value = int(raw)
     else:
@@ -610,6 +613,13 @@ class _BridgeServer(threading.Thread):
         self.token = secrets.token_urlsafe(32)
         self.poisoned = False
         self.connection_ordinal = 0
+        # The client proof is inside the authenticated frame, so that read
+        # cannot start after proof. It runs off the accept loop. One
+        # authenticated command still runs at a time.
+        self._command_lock = threading.Lock()
+        self._connections_lock = threading.Lock()
+        self._connections: set[socket.socket] = set()
+        self._workers: list[threading.Thread] = []
         self.directory = _bridge_directory()
         self.descriptor = self.directory / f"cutter-{os.getpid()}-{self.session_id}.json"
 
@@ -674,6 +684,31 @@ class _BridgeServer(threading.Thread):
                 break
             self.connection_ordinal += 1
             connection_ordinal = self.connection_ordinal
+            with self._connections_lock:
+                self._connections.add(connection)
+                self._workers = [
+                    worker for worker in self._workers if worker.is_alive()
+                ]
+            worker = threading.Thread(
+                target=self._serve_connection,
+                args=(connection, connection_ordinal),
+                name="rea-cutter-bridge-connection",
+                daemon=True,
+            )
+            self._workers.append(worker)
+            worker.start()
+        with self._connections_lock:
+            workers = list(self._workers)
+        for worker in workers:
+            worker.join(timeout=1)
+        self.server.close()
+        try:
+            self.descriptor.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _serve_connection(self, connection: socket.socket, connection_ordinal: int) -> None:
+        try:
             with connection:
                 connection.settimeout(AUTH_FRAME_TIMEOUT_SECONDS)
                 authenticated = False
@@ -681,7 +716,7 @@ class _BridgeServer(threading.Thread):
                     hello = self._receive_frame(connection)
                     if not isinstance(hello, dict) or hello.get("kind") != "rea-auth-v2" or not isinstance(hello.get("nonce"), str) or len(hello["nonce"]) != 64:
                         self._send(connection, {"ok": False, "error": "authentication-failed"})
-                        continue
+                        return
                     client_nonce = hello["nonce"]
                     server_nonce = f"{connection_ordinal:016x}{secrets.token_hex(24)}"
                     server_proof = hmac.new(self.token.encode(), f"rea-cutter-server-v2:{self.session_id}:{client_nonce}:{server_nonce}".encode(), hashlib.sha256).hexdigest()
@@ -693,50 +728,51 @@ class _BridgeServer(threading.Thread):
                     expected_proof = hmac.new(self.token.encode(), f"rea-cutter-client-v2:{self.session_id}:{client_nonce}:{server_nonce}:{request_bytes}".encode(), hashlib.sha256).hexdigest()
                     if not isinstance(request_bytes, str) or not isinstance(authenticated_frame.get("proof"), str) or not hmac.compare_digest(authenticated_frame["proof"], expected_proof):
                         self._send(connection, {"ok": False, "error": "authentication-failed"})
-                        continue
+                        return
                     request = json.loads(request_bytes)
                     if not isinstance(request, dict) or request.get("session_id") != self.session_id:
                         self._send(connection, {"ok": False, "error": "authentication-failed"})
-                        continue
+                        return
                     authenticated = True
-                    connection.settimeout(SOCKET_TIMEOUT_SECONDS)
-                    if self.poisoned and request.get("kind") not in ("status", "ack"):
-                        self._send_authenticated(connection, {
-                            "ok": False,
-                            "error": "session-poisoned-after-ui-timeout",
-                            "execution_state": "not_started",
-                        }, client_nonce, server_nonce)
-                        continue
-                    if (
-                        request.get("kind") == "command"
-                        and not self.dispatcher.can_accept_command()
-                    ):
-                        self._send_authenticated(connection, {
-                            "ok": False,
-                            "error": "completion-receipt-capacity-exceeded",
-                            "execution_state": "not_started",
-                        }, client_nonce, server_nonce)
-                        continue
-                    request["session_id"] = self.session_id
-                    event = threading.Event()
-                    cancelled = threading.Event()
-                    reply: dict[str, Any] = {}
-                    request["_event"] = event
-                    request["_cancelled"] = cancelled
-                    self.dispatcher.dispatch.emit(request, reply)
-                    if not event.wait(SOCKET_TIMEOUT_SECONDS):
-                        cancelled.set()
-                        self.poisoned = True
-                        self._send_authenticated(connection, {
-                            "ok": False,
-                            "error": "ui-thread-request-timeout",
-                            "execution_state": "unknown",
-                            "message": "The UI operation may still complete after this timeout; restart Cutter before issuing further commands.",
-                        }, client_nonce, server_nonce)
-                    else:
-                        if request.get("kind") == "status" and reply.get("ok") is True:
-                            reply["completed_connection"] = f"{connection_ordinal - 1:016x}"
-                        self._send_authenticated(connection, reply, client_nonce, server_nonce)
+                    with self._command_lock:
+                        connection.settimeout(SOCKET_TIMEOUT_SECONDS)
+                        if self.poisoned and request.get("kind") not in ("status", "ack"):
+                            self._send_authenticated(connection, {
+                                "ok": False,
+                                "error": "session-poisoned-after-ui-timeout",
+                                "execution_state": "not_started",
+                            }, client_nonce, server_nonce)
+                            return
+                        if (
+                            request.get("kind") == "command"
+                            and not self.dispatcher.can_accept_command()
+                        ):
+                            self._send_authenticated(connection, {
+                                "ok": False,
+                                "error": "completion-receipt-capacity-exceeded",
+                                "execution_state": "not_started",
+                            }, client_nonce, server_nonce)
+                            return
+                        request["session_id"] = self.session_id
+                        event = threading.Event()
+                        cancelled = threading.Event()
+                        reply: dict[str, Any] = {}
+                        request["_event"] = event
+                        request["_cancelled"] = cancelled
+                        self.dispatcher.dispatch.emit(request, reply)
+                        if not event.wait(SOCKET_TIMEOUT_SECONDS):
+                            cancelled.set()
+                            self.poisoned = True
+                            self._send_authenticated(connection, {
+                                "ok": False,
+                                "error": "ui-thread-request-timeout",
+                                "execution_state": "unknown",
+                                "message": "The UI operation may still complete after this timeout; restart Cutter before issuing further commands.",
+                            }, client_nonce, server_nonce)
+                        else:
+                            if request.get("kind") == "status" and reply.get("ok") is True:
+                                reply["completed_connection"] = f"{connection_ordinal - 1:016x}"
+                            self._send_authenticated(connection, reply, client_nonce, server_nonce)
                 except socket.timeout:
                     if authenticated:
                         self._send_authenticated(connection, {
@@ -747,11 +783,9 @@ class _BridgeServer(threading.Thread):
                         }, client_nonce, server_nonce)
                 except Exception as error:
                     self._send(connection, {"ok": False, "error": str(error)})
-        self.server.close()
-        try:
-            self.descriptor.unlink(missing_ok=True)
-        except OSError:
-            pass
+        finally:
+            with self._connections_lock:
+                self._connections.discard(connection)
 
     @staticmethod
     def _receive_frame(
@@ -800,6 +834,21 @@ class _BridgeServer(threading.Thread):
                     return
             if self._deliver_authenticated(
                 connection, bounded, client_nonce, server_nonce
+            ):
+                return
+        command = self._bounded_command_response(value)
+        if command is not None:
+            observed_path = value.get("current_file")
+            if isinstance(observed_path, str) and observed_path:
+                with_path = dict(command)
+                with_path["current_file"] = observed_path
+                with_path.pop("message", None)
+                if self._deliver_authenticated(
+                    connection, with_path, client_nonce, server_nonce
+                ):
+                    return
+            if self._deliver_authenticated(
+                connection, command, client_nonce, server_nonce
             ):
                 return
         value = self._truncated_response(value)
@@ -897,6 +946,32 @@ class _BridgeServer(threading.Thread):
         return bounded
 
     @staticmethod
+    def _bounded_command_response(value: dict[str, Any]) -> dict[str, Any] | None:
+        if "execution_state" not in value and "document_generation" not in value:
+            return None
+        bounded: dict[str, Any] = {
+            "ok": value.get("ok") is True,
+            "output": None,
+            "execution_state": value.get("execution_state", "unknown"),
+            "output_truncated": True,
+            "current_file": None,
+            "message": (
+                "current_file is unknown because the result frame exceeded "
+                "REA_BRIDGE_MAX_REQUEST_BYTES. The command completion state and "
+                "document_generation are preserved. Do not reuse an older "
+                "descriptor path with this document_generation."
+            ),
+        }
+        generation = value.get("document_generation")
+        if isinstance(generation, int) and not isinstance(generation, bool):
+            bounded["document_generation"] = generation
+        if value.get("identity_status") == "partial":
+            bounded["identity_status"] = "partial"
+        if value.get("ok") is not True and isinstance(value.get("error"), str):
+            bounded["error"] = value["error"]
+        return bounded
+
+    @staticmethod
     def _truncated_response(value: dict[str, Any]) -> dict[str, Any]:
         response: dict[str, Any] = {
             "ok": value.get("ok") is True,
@@ -952,6 +1027,17 @@ class _BridgeServer(threading.Thread):
             self.server.close()
         except OSError:
             pass
+        with self._connections_lock:
+            connections = list(self._connections)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                connection.close()
+            except OSError:
+                pass
 
 
 class ReaCutterPlugin(cutter.CutterPlugin):

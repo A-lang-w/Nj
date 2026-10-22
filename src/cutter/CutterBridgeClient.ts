@@ -23,6 +23,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  resourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -274,6 +275,7 @@ class CutterBridgeRequestFailure extends Error {
     message: string,
     readonly requestSent: boolean,
     readonly cancellation?: { readonly reason: unknown },
+    readonly limit?: AnalysisResourceConstraintError,
   ) {
     super(message);
   }
@@ -377,6 +379,7 @@ export class CutterBridgeClient {
     options: CutterDiscoveryOptions = {},
   ): Promise<CutterBridgeDiscovery> {
     const { signal } = options;
+    const mismatches: number[] = [];
     const loaded = await this.#readDescriptors("list_cutter_sessions", signal);
     if (loaded.error !== undefined)
       return {
@@ -389,6 +392,12 @@ export class CutterBridgeClient {
       loaded.descriptors,
       async (descriptor) => {
         assertBridgeActive(signal, "list_cutter_sessions");
+        const advertised =
+          descriptor.max_request_bytes ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES;
+        if (advertised !== this.#maxRequestBytes.maximumBytes) {
+          mismatches.push(advertised);
+          return undefined;
+        }
         try {
           const status = responseSchema.safeParse(
             await this.#request(
@@ -422,13 +431,21 @@ export class CutterBridgeClient {
             identity_status: "partial" as const,
           };
         } catch (cause) {
-          if (
-            cause instanceof CutterBridgeRequestFailure &&
-            cause.cancellation !== undefined
-          )
-            throw new AnalysisCancelledError("list_cutter_sessions", {
-              cause: cause.cancellation.reason,
-            });
+          if (cause instanceof AnalysisResourceConstraintError) throw cause;
+          if (cause instanceof CutterBridgeRequestFailure) {
+            if (cause.cancellation !== undefined)
+              throw new AnalysisCancelledError("list_cutter_sessions", {
+                cause: cause.cancellation.reason,
+              });
+            if (cause.limit !== undefined)
+              throw new AnalysisResourceConstraintError(
+                "list_cutter_sessions",
+                cause.limit.resource,
+                cause.limit.reason,
+                cause.limit.reportedLimits,
+                resourceConstraintRecovery(cause.limit),
+              );
+          }
           return undefined;
         }
       },
@@ -439,6 +456,14 @@ export class CutterBridgeClient {
     const sessions = descriptors.filter(
       (value): value is CutterBridgeSession => value !== undefined,
     );
+    if (sessions.length === 0 && mismatches.length > 0)
+      throw bridgeRequestLimitMismatchError(
+        "list_cutter_sessions",
+        this.#maxRequestBytes,
+        mismatches[0] ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+        "Cutter",
+        "No status request was sent.",
+      );
     return {
       sessions,
       bridge_directory: this.#directory,
@@ -1001,10 +1026,16 @@ export class CutterBridgeClient {
       const rejectRequest = (
         message: string,
         cancellation?: { readonly reason: unknown },
+        limit?: AnalysisResourceConstraintError,
       ): void =>
         finish(() =>
           reject(
-            new CutterBridgeRequestFailure(message, requestSent, cancellation),
+            new CutterBridgeRequestFailure(
+              message,
+              requestSent,
+              cancellation,
+              limit,
+            ),
           ),
         );
       const timer = setTimeout(() => {
@@ -1087,7 +1118,7 @@ export class CutterBridgeClient {
             // The command is already on the UI thread. Keep the unknown
             // execution so cleanup waits for its receipt, and carry the
             // ceiling diagnostic in that result.
-            if (requestSent) rejectRequest(cause.reason);
+            if (requestSent) rejectRequest(cause.reason, undefined, cause);
             else finish(() => reject(cause));
             return;
           }

@@ -151,10 +151,9 @@ export const bridgeRequestLimitMismatchError = (
   limit: BridgeMaxRequestBytes,
   bridgeBytes: number,
   peer: "Hopper" | "Cutter",
+  sent = peer === "Cutter" ? "No command was sent." : "No request was sent.",
 ): AnalysisResourceConstraintError => {
   const recovery = bridgeMaxRequestBytesRecovery(limit);
-  const sent =
-    peer === "Cutter" ? "No command was sent." : "No request was sent.";
   return new AnalysisResourceConstraintError(
     operation,
     "transport",
