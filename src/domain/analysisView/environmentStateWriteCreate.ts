@@ -13,6 +13,7 @@ import {
   type SuppliedSegment,
 } from "./environmentStateRules.js";
 import { createdFields } from "./environmentStateWriteApply.js";
+import { sameLinkedSource } from "./environmentStateWriteLinks.js";
 import {
   collectionTarget,
   entityTarget,
@@ -301,6 +302,20 @@ const servedCollection = (
     : selectedCollection(segments, createCandidates(context, type));
 };
 
+/** Whether a linked create's call sends the source path values its exemplar did, the only ones its link holds for. */
+const fromLinkedSource = (
+  context: EffectContext,
+  draft: WriteDraft,
+  step: WriteStep,
+): boolean =>
+  sameLinkedSource(
+    step.tool.path_template,
+    context.records.find(
+      (record) => record.ordinal === draft.plan.exemplar_ordinal,
+    )?.path,
+    pathValuesOf(step.tool.path_template, step.record.path),
+  );
+
 /** Add a created entity to the state at the plan's insert position, or last before the plan has one. */
 const insertCreated = (
   context: EffectContext,
@@ -332,10 +347,11 @@ export const applyCreate = (
   // Serving writes a create into the collection it chooses for the path, and a tied plan refuses any other, so a create there is not counted.
   const collection =
     draft.linked ?? servedCollection(context, step, type) ?? spelled;
+  // A linked plan's collection holds only for its exemplar's source path, so serving refuses any other.
   if (
     built(draft) &&
-    draft.plan.collection !== null &&
-    draft.plan.collection !== collection
+    ((draft.plan.collection !== null && draft.plan.collection !== collection) ||
+      (draft.linked !== undefined && !fromLinkedSource(context, draft, step)))
   )
     return UNKNOWN;
   const body = requestObject(context, step.record);

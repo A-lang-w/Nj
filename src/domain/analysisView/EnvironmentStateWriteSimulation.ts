@@ -254,8 +254,11 @@ export class EnvironmentStateWriteSimulation {
     if (!observeOnly) draft.calls += 1;
     const step: WriteStep = { record, index, tool, observeOnly };
     const result = APPLY[effect](this.#context(tool.name), draft, step);
-    // A call of a tool whose plan was never built is no more modelled than one of a tool without a plan.
-    if (result.kind === "unknown" && !built(draft))
+    // A call of a tool whose plan was never built, or one a linked plan does not place, is no more modelled than one of a tool without a plan.
+    if (
+      result.kind === "unknown" &&
+      (!built(draft) || draft.linked !== undefined)
+    )
       this.#unseen.unplanned(index);
     this.#settle(result, {
       index,

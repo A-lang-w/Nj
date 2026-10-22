@@ -1488,6 +1488,87 @@ describe("creates read under another path", () => {
     );
   });
 
+  /** A create linked under project 11, then a call for project 12, whose note a later item read and delete show. */
+  const otherProject = (): TimedCaptureRow[] => {
+    const D = note(1004, "Delta");
+    return [
+      ["GET", "/api/projects/11/notes", [A, B]],
+      ["GET", "/api/projects/11/notes/1001", A],
+      ["GET", "/api/projects/11/notes/1002", B],
+      [
+        "POST",
+        "/api/projects/11/publish",
+        { id: 1003 },
+        201,
+        { title: "Gamma" },
+      ],
+      ["GET", "/api/projects/11/notes/1003", C],
+      ["GET", "/api/projects/11/notes", [A, B, C]],
+      ["POST", "/api/projects/12/publish", D, 201, { title: "Delta" }],
+      ["GET", "/api/projects/12/notes/1004", D],
+      ["GET", "/api/projects/11/notes", [A, B, C]],
+      ["DELETE", "/api/projects/12/notes/1004", "", 204],
+      ["GET", "/api/projects/12/notes/1004", { error: "Not found" }, 404],
+    ];
+  };
+
+  it("puts no linked create's call that sends other path arguments into the linked collection", () => {
+    // Project 12's note never reaches project 11, so the later read of project 11 confirms the create.
+    expect(
+      planOf(stateOf(otherProject()), "post_projects_publish_by_id"),
+    ).toMatchObject({
+      served: true,
+      collection: "/api/projects/11/notes",
+      checked_record_ordinals: [5],
+      contradicted_by: null,
+    });
+  });
+
+  it("takes the entity such a call made when a read first shows it", () => {
+    expect(
+      planOf(stateOf(otherProject()), "delete_projects_notes_by_id_id_2"),
+    ).toMatchObject({ served: true, checked_record_ordinals: [10] });
+  });
+
+  it("links a create whose response names a short id under an identity member", () => {
+    const [one, two, three] = [
+      note(1, "Alpha"),
+      note(2, "Beta"),
+      note(3, "Gamma"),
+    ];
+    const rows = (response: JsonValue): TimedCaptureRow[] => [
+      ["GET", "/api/notes", [one, two]],
+      ["GET", "/api/notes/1", one],
+      ["GET", "/api/notes/2", two],
+      ["POST", "/api/drafts/publish", response, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/3", three],
+      ["GET", "/api/notes", [one, two, three]],
+    ];
+    expect(
+      planOf(stateOf(rows({ id: 3 })), "post_drafts_publish"),
+    ).toMatchObject({ effect: "create", target: "/api/notes", served: true });
+    // A bare or unnamed short scalar may count rather than name, so it links nothing.
+    for (const response of [3, { created: 3 }])
+      expect(
+        planOf(stateOf(rows(response)), "post_drafts_publish"),
+      ).toMatchObject({ effect: "none", reason: "no-state-target" });
+  });
+
+  it("links a short id to no type that no read showed before the call", () => {
+    // Another type's id 1 may be the one the call returned, so the notes keep their initial reads.
+    const [one, two] = [note(1, "Alpha"), note(2, "Beta")];
+    const state = stateOf([
+      ["POST", "/api/imports", { id: 1 }, 201, { source: "csv" }],
+      ["GET", "/api/notes/1", one],
+      ["GET", "/api/notes", [one, two]],
+    ]);
+    expect(planOf(state, "post_imports")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(notesOf(state)).toEqual(["1", "2"]);
+  });
+
   it("links no create whose returned id the initial state holds", () => {
     const held = stateOf([
       ["GET", "/api/notes", [A, B, C]],

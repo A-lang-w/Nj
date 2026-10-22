@@ -1648,4 +1648,47 @@ describe("creates read under another path", () => {
     expect(notes.answer("get_notes_by_id", { id: "1003" }).body).toEqual(delta);
     expect(notes.answer("get_notes").body).toEqual([alpha, beta, delta]);
   });
+
+  it("refuses a linked create called with other path arguments than its recording sent", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const notes = servedFrom([
+      ["GET", "/api/projects/11/notes", [alpha, beta]],
+      ["GET", "/api/projects/11/notes/1001", alpha],
+      ["GET", "/api/projects/11/notes/1002", beta],
+      [
+        "POST",
+        "/api/projects/11/publish",
+        { id: 1003 },
+        201,
+        { title: "Gamma" },
+      ],
+      ["GET", "/api/projects/11/notes/1003", gamma],
+      ["GET", "/api/projects/11/notes", [alpha, beta, gamma]],
+    ]);
+    const before = notes.snapshot();
+    // No read showed where project 12's publish creates, so it is not put into project 11.
+    expect(
+      notes.refusal("post_projects_publish_by_id", {
+        id: "12",
+        body: { title: "Delta" },
+      }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining(
+        "creates into /api/projects/11/notes only with the path arguments its recording sent",
+      ),
+    });
+    expect(notes.snapshot()).toBe(before);
+    expect(
+      notes.answer("post_projects_publish_by_id", {
+        id: "11",
+        body: { title: "Delta" },
+      }),
+    ).toMatchObject({ status: 201 });
+  });
 });

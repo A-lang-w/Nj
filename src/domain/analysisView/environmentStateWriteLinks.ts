@@ -13,9 +13,12 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import type { WriteEffect } from "./environmentStateWriteRules.js";
+import {
+  pathValuesOf,
+  type WriteEffect,
+} from "./environmentStateWriteRules.js";
 
-/** The shortest id that names one entity rather than counting one. */
+/** The shortest id that names one entity rather than counting one, or naming one of any type. */
 const MIN_ID_LENGTH = 4;
 
 const succeeded = (record: StateRecordFacts): boolean =>
@@ -31,23 +34,24 @@ const identityValues = (object: JsonValue | undefined): string[] =>
     : [];
 
 /**
- * The ids a write's response names for an entity it made, long enough to name one: a scalar body,
- * an identity-named or sole scalar member, or an identity-named member of an object member (an envelope).
+ * The ids a write's response names for an entity it made: an identity-named member of the body or of
+ * an object member (an envelope) at any length, or a scalar body or sole scalar member long enough to name one.
  */
 export const respondedIds = (body: JsonValue | undefined): string[] => {
   if (body === undefined || body === null) return [];
-  const ids: string[] = [];
-  if (!isObject(body)) {
-    const value = scalarText(body);
-    if (value !== undefined) ids.push(value);
-  } else {
-    ids.push(...identityValues(body));
-    const members = Object.values(body);
-    const sole = members.length === 1 ? scalarText(members[0]) : undefined;
-    if (sole !== undefined) ids.push(sole);
-    for (const member of members) ids.push(...identityValues(member));
-  }
-  return [...new Set(ids)].filter((id) => id.length >= MIN_ID_LENGTH);
+  const named = (value: JsonValue | undefined): string[] => {
+    const text = scalarText(value);
+    return text !== undefined && text.length >= MIN_ID_LENGTH ? [text] : [];
+  };
+  if (!isObject(body)) return named(body);
+  const members = Object.values(body);
+  return [
+    ...new Set([
+      ...identityValues(body),
+      ...(members.length === 1 ? named(members[0]) : []),
+      ...members.flatMap(identityValues),
+    ]),
+  ];
 };
 
 /** The identity-named scalar values a read's body shows at any depth, or its path's id for an item read. */
@@ -69,6 +73,40 @@ const shownIds = (
     }
   }
   return shown;
+};
+
+/** One read of a type: where it ran, whether it reads one item, and the ids it shows. */
+interface ShownRead {
+  readonly at: number;
+  readonly item: boolean;
+  readonly ids: ReadonlySet<string>;
+}
+
+/**
+ * The ids a POST at `at` made that a type's reads show only after it, before `end`. A short id may be
+ * any type's, so it counts only when the type was read before the POST and an item read names it after.
+ */
+const freshIds = (
+  ids: readonly string[],
+  shown: readonly ShownRead[],
+  at: number,
+  end: number,
+): string[] => {
+  const seen = shown.some((read) => read.at < at);
+  return ids.filter((id) => {
+    const short = id.length < MIN_ID_LENGTH;
+    return (
+      (!short || seen) &&
+      !shown.some((read) => read.at < at && read.ids.has(id)) &&
+      shown.some(
+        (read) =>
+          read.at > at &&
+          read.at < end &&
+          (!short || read.item) &&
+          read.ids.has(id),
+      )
+    );
+  });
 };
 
 /** A successful POST and the ids its response named. */
@@ -125,7 +163,7 @@ export const creationLimit = (
       ? [{ tool, item: read.item }]
       : [];
   });
-  const shown = readers.flatMap(({ tool, item }) =>
+  const shown: ShownRead[] = readers.flatMap(({ tool, item }) =>
     tool.record_ordinals.flatMap((ordinal) => {
       const record = reads.records.get(ordinal);
       return record === undefined || !succeeded(record)
@@ -133,6 +171,7 @@ export const creationLimit = (
         : [
             {
               at: reads.position(record),
+              item,
               ids: shownIds(record, item, () => reads.body(ordinal)),
             },
           ];
@@ -143,12 +182,8 @@ export const creationLimit = (
   )) {
     const at = reads.position(creation.record);
     if (at >= end) break;
-    const fresh = creation.ids.filter(
-      (id) =>
-        !shown.some((read) => read.at < at && read.ids.has(id)) &&
-        shown.some((read) => read.at > at && read.at < end && read.ids.has(id)),
-    );
-    if (fresh.length > 0) return creation.record;
+    if (freshIds(creation.ids, shown, at, end).length > 0)
+      return creation.record;
   }
   return undefined;
 };
@@ -156,7 +191,8 @@ export const creationLimit = (
 /**
  * The state type and collection a POST whose path names none creates into: that of the first later
  * successful item read naming an id its first successful call returned, when neither the initial
- * state nor any earlier read held that id.
+ * state nor any earlier read held that id. A short id may be any type's, so it links only to a type
+ * read before the call.
  */
 export const linkedCreate = (input: {
   readonly tool: StateToolFacts;
@@ -193,7 +229,18 @@ export const linkedCreate = (input: {
     const held = input.entities.some(
       (entity) => entity.type === view.type && entity.id === id,
     );
-    return held
+    const unseen =
+      id.length < MIN_ID_LENGTH &&
+      !records.slice(0, first).some((earlier) => {
+        const read = input.viewOf(earlier.ordinal);
+        return (
+          earlier.method === "GET" &&
+          succeeded(earlier) &&
+          (read?.shape === "item" || read?.shape === "list") &&
+          read.type === view.type
+        );
+      });
+    return held || unseen
       ? undefined
       : { type: view.type, collection: collectionPathOf(record, true) };
   }
@@ -215,6 +262,22 @@ export const linkedCollection = (
   plan.target !== normalizedPath(template)
     ? plan.collection
     : undefined;
+
+/** Whether a linked create's call sends the path values its exemplar did: the read that linked its target followed only that call. */
+export const sameLinkedSource = (
+  template: string,
+  exemplar: string | undefined,
+  call: ReadonlyMap<string, string> | undefined,
+): boolean => {
+  const recorded =
+    exemplar === undefined ? undefined : pathValuesOf(template, exemplar);
+  return (
+    recorded !== undefined &&
+    call !== undefined &&
+    recorded.size === call.size &&
+    [...recorded].every(([name, value]) => call.get(name) === value)
+  );
+};
 
 /** A write's effect and target, where a POST its path gives no target becomes a create into the type its returned id is first read under. */
 export const linkedTarget = (

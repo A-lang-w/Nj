@@ -25,6 +25,8 @@ import {
   itemTarget,
   SimulatedState,
 } from "./environmentStateWriteChecks.js";
+import { UnseenEntities } from "./environmentStateWriteAdoption.js";
+import type { StateItemView } from "./environmentStateRules.js";
 import {
   laterObservation,
   type ObservationSearch,
@@ -2248,6 +2250,36 @@ describe("entities an unmodelled write made", () => {
       served: false,
       checked_record_ordinals: [],
     });
+  });
+
+  it("counts an entity it takes against the view's allowance", () => {
+    let retained = 0;
+    const read = { ...THIRD_BOOK, notes: "x".repeat(10_000) };
+    const unseen = new UnseenEntities([], {
+      state: new SimulatedState([], []),
+      io: {
+        withBody: (_ordinal, use) => use(read),
+        retain: (bytes) => (retained += bytes),
+      },
+      lastCheck: new Map(),
+      idField: () => "id",
+    });
+    unseen.unplanned(0);
+    retained = 0;
+    const view = { shape: "item", type: "/api/books", pointer: "" };
+    const record = {
+      ordinal: 1,
+      method: "GET",
+      path: "/api/books/3",
+      query: undefined,
+      status: 200,
+      start: 1,
+      end: 1,
+    };
+    expect(
+      unseen.adopt(view as unknown as StateItemView, { record, index: 1 }),
+    ).toMatchObject({ id: "3", fields: read });
+    expect(retained).toBeGreaterThan(20_000);
   });
 
   it("takes back no book a modelled delete removed, so a list showing it again confirms no delete", () => {

@@ -1,6 +1,8 @@
+import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
   at,
   isObject,
+  jsonBytes,
   scalarText,
   type StateEntity,
   type StateRecordFacts,
@@ -30,7 +32,7 @@ export class UnseenEntities {
     initial: readonly StateEntity[],
     private readonly facts: {
       readonly state: SimulatedState;
-      readonly io: Pick<WriteIo, "withBody">;
+      readonly io: Pick<WriteIo, "withBody" | "retain">;
       readonly lastCheck: ReadonlyMap<string, number>;
       readonly idField: (type: string) => string | undefined;
     },
@@ -44,11 +46,15 @@ export class UnseenEntities {
 
   /** Note an entity a modelled write created, changed or removed, which no read takes back. */
   touched(entity: Pick<StateEntity, "type" | "collection" | "id">): void {
-    this.#held.add(entityTarget(entity.type, entity.collection, entity.id));
+    const key = entityTarget(entity.type, entity.collection, entity.id);
+    if (this.#held.has(key)) return;
+    this.facts.io.retain(ENTRY_BYTES + textBytes(key.length));
+    this.#held.add(key);
   }
 
   /** Note a successful write no built plan models. */
   unplanned(index: number): void {
+    this.facts.io.retain(ENTRY_BYTES);
     this.#unplannedAt.push(index);
   }
 
@@ -91,6 +97,10 @@ export class UnseenEntities {
       view_fields: [],
       record_ordinals: [],
     };
+    // The copy keeps the read's object, which the body's own reservation no longer covers.
+    this.facts.io.retain(
+      ENTRY_BYTES * 4 + textBytes(key.length) + jsonBytes(object),
+    );
     state.put(entity);
     this.#held.add(key);
     return entity;

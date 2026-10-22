@@ -27,8 +27,10 @@ later increments.
   `POST` is not a write, a read overlapping the write is left out, and a write
   whose URL was redacted bounds every type, with a limitation counting it. A
   successful `POST` elsewhere bounds a type's state too when its response named
-  an id (four characters or more) that the type's reads show only after it: the
-  `POST` made that entity, so it is not in the initial state.
+  an id (an identity member, or a bare or sole scalar of four characters or
+  more) that the type's reads show only after it: the `POST` made that entity,
+  so it is not in the initial state. An id shorter than four characters counts
+  only when the type was read before the `POST` and an item read names it after.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that
   every listed item carries distinctly, which needs at least one listed item.

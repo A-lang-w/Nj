@@ -78,13 +78,16 @@ same root regenerates values on every read.
 | `none`     | anything else                                                         | reason `no-state-target`  |
 
 A `POST` whose path gives it no target is a `create` into the type its returned
-id is read under: its exemplar's response names an id (a scalar, an identity
-member, a sole member, or an identity member of an object member, four
-characters or more), and the first later successful item read naming that id
-belongs to a state type. The entity must be new: neither the initial state nor
-any earlier read holds that id. The plan records that read's collection, and
-serving creates there, since the call's own path names no collection of the
-type.
+id is read under: its exemplar's response names an id (an identity member of the
+body or of an object member, or a scalar body or sole member of four characters
+or more), and the first later successful item read naming that id belongs to a
+state type. The entity must be new: neither the initial state nor any earlier
+read holds that id. An id shorter than four characters may be any type's, so it
+links only to a type a successful read showed before the call. The plan records
+that read's collection, and serving creates there, since the call's own path
+names no collection of the type. That collection holds only for the exemplar's
+path arguments: serving refuses a call with others, and the gate counts such a
+recorded call as a write no built plan models.
 
 **Exemplar.** A plan is built from its first successful (2xx) recorded call,
 the exemplar.
@@ -272,12 +275,14 @@ of a write.
 
 A write no built plan models can also make an entity the copy never held, such
 as a row an import or a nested create added: a write of a tool with no create,
-update, delete or document plan, or a call of a tool whose plan was never built.
+update, delete or document plan, a call of a tool whose plan was never built, or
+a linked create's call that serving would refuse.
 A successful item read of an entity the copy has never held (no initial entity,
 and none a modelled write created, changed or removed) that names it by the
 type's identity, when such a write ran since that entity or its collection was
 last checked, shows that entity: the copy takes its recorded values instead of
-failing the read, and later writes to it are modelled and checked as usual. An
+failing the read, and later writes to it are modelled and checked as usual. The
+taken entity counts against the view's budget as a created one does. An
 entity a modelled write touched is never taken back this way, and a built plan's
 call that serving would not apply, such as a create outside its tied
 collection, keeps its evidence.
