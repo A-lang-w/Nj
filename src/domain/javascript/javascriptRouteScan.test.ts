@@ -823,13 +823,15 @@ it.each([
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
 });
 
-it.each([
-  "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {query}=registry;router.push({pathname:'/users',query});",
-  "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query}=registry;router.push({pathname:'/users',query});",
-  "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query:payload}=registry;router.push({pathname:'/users',query:payload});",
-  "const registry={route:{path:'/independent',component:View},settings:{query:{path:'/query-data',component:Preview}}};const {settings:{query}}=registry;router.push({pathname:'/users',query});",
-  "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {route,...query}=registry;router.push({pathname:'/users',query});",
-])(
+it.each(
+  [
+    "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {query}=registry;router.push({pathname:'/users',query});",
+    "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query}=registry;router.push({pathname:'/users',query});",
+    "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query:payload}=registry;router.push({pathname:'/users',query:payload});",
+    "const registry={route:{path:'/independent',component:View},settings:{query:{path:'/query-data',component:Preview}}};const {settings:{query}}=registry;router.push({pathname:'/users',query});",
+    "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {route,...query}=registry;router.push({pathname:'/users',query});",
+  ].flatMap((source) => [source, `function module(){${source}}`]),
+)(
   "preserves independent routes beside selected query projections: %s",
   (source) => {
     const facts = analyze(source);

@@ -821,7 +821,7 @@ export class JavaScriptRouteScan {
 
   #resolve(
     node: t.Node,
-    site: t.Node,
+    site: t.Node | undefined,
     index: JavaScriptBindingIndex,
   ): t.Node | undefined {
     const seen = new Set<t.Node>();
@@ -837,7 +837,7 @@ export class JavaScriptRouteScan {
       if (
         initializer === undefined ||
         initializer.projection.length !== 0 ||
-        index.referenceMayHaveChangedAt(site, node)
+        (site !== undefined && index.referenceMayHaveChangedAt(site, node))
       )
         return;
       node = initializer.node;
@@ -851,7 +851,9 @@ export class JavaScriptRouteScan {
     let node: t.Node | undefined = initializer.node;
     for (const key of initializer.projection) {
       if (key === null || node === undefined) return;
-      const selected = this.#resolve(node, node, this.index);
+      // Ownership follows possible source identities, including escaped data.
+      // Unlike a destination value, it makes no claim about freshness at a call.
+      const selected = this.#resolve(node, undefined, this.index);
       if (selected === undefined || !t.isObjectExpression(selected)) return;
       node = this.#fields(selected).values.get(String(key))?.value;
     }
