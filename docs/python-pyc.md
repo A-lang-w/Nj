@@ -51,7 +51,8 @@ the marshal walk still consumed the original bytes; a string summary's `bytes`
 is that marshal length. Integer consts report `bits`; their decimal `value` is
 `null` above 256 bits. Non-finite float and complex parts use CPython's `inf`,
 `-inf`, and `nan` spellings. Dictionary and set lengths follow CPython:
-unhashable keys and members fail the walk, equal members count once, code
+unhashable keys and members fail the walk, equal set members count once, equal
+dictionary keys keep the first key object and replace only its value, code
 objects are valid keys and members, and a null dictionary value ends the dict
 without that entry.
 
@@ -66,8 +67,11 @@ iteratively and keeps one shared descendant list for a container that merely
 wraps another, instead of copying that list onto every wrapper. Names repeated
 through a marshal reference, including each code-constant name the report copies,
 count against
-the file budget once per copy. Copied constant tables and each reported nested
-code relationship count against the object budget. Integer digits and expanded
+the file budget once per copy. Empty strings add no bytes, so every copied
+name-table entry (`co_names`, varnames, freevars, cellvars, and
+`localsplusnames`) counts against the object budget before its array is built.
+Copied constant tables and each reported nested code relationship count
+against that same object budget. Integer digits and expanded
 set or dictionary keys, including a shared tuple repeated at each level, count
 against the string budget. Magics outside the pinned 3.7–3.13 table,
 truncated headers, trailing marshal bytes, and a non-code top-level object are

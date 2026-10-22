@@ -193,6 +193,51 @@ it("bounds names repeated through TYPE_REF by what the report carries", () => {
   ).toThrow(PythonPycResourceFailure);
 });
 
+it("charges shared empty name tables against the object budget", () => {
+  const width = 200;
+  const owners = 40;
+  const namesObject = Buffer.concat([
+    Buffer.from([0xa8]),
+    u32(width),
+    Buffer.from([0xfa, 0x00]),
+    ...Array.from({ length: width - 1 }, () => marshalRef(2)),
+  ]);
+  const owner = (index: number) =>
+    marshalCode("py311", {
+      name: `o${index}`,
+      qualname: `o${index}`,
+      filename: "n.py",
+      flagged: true,
+      namesObject: index === 0 ? namesObject : marshalRef(1),
+    });
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      consts: Array.from({ length: owners }, (_, index) => owner(index)),
+    }),
+  ]);
+  const report = parseWith(bytes, {
+    max_objects: 65_536,
+    max_file_bytes: bytes.length,
+  });
+  const copiedNames = report.code_objects.reduce(
+    (sum, code) => sum + code.names.length,
+    0,
+  );
+  const shared = report.code_objects[1]?.names;
+  expect(copiedNames).toBe(owners * width);
+  expect(shared).toEqual(Array.from({ length: width }, () => ""));
+  expect(report.code_objects.at(-1)?.names).toEqual(shared);
+  expect(report.coverage.objects).toBeLessThan(copiedNames);
+  expect(report.coverage.status).toBe("complete");
+  expect(() =>
+    parseWith(bytes, {
+      max_objects: copiedNames - 1,
+      max_file_bytes: bytes.length,
+    }),
+  ).toThrow(/Reported names exceed max_objects/);
+});
+
 it("charges long digits to the string budget and keeps large previews bounded", () => {
   expect(() =>
     parse(withConsts([Buffer.concat([Buffer.from([0x6c]), i32(600_000)])])),
@@ -829,6 +874,42 @@ it("accepts code objects as set members and dictionary keys", () => {
     "<module>",
     "<module>",
   ]);
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("keeps the first dictionary key when a later key compares equal", () => {
+  const key = (filename: string): Buffer =>
+    marshalCode("py311", {
+      name: "f",
+      qualname: "f",
+      filename,
+      firstlineno: 3,
+    });
+  const value = (name: string): Buffer =>
+    marshalCode("py311", {
+      name,
+      qualname: name,
+      filename: `${name}.py`,
+    });
+  const dict = Buffer.concat([
+    Buffer.from([0x7b]),
+    key("first.py"),
+    value("old"),
+    key("last.py"),
+    value("new"),
+    Buffer.from([0x30]),
+  ]);
+  const report = parse(withConsts([dict]));
+  expect(root(report).consts[0]).toEqual({ kind: "dict", length: 1 });
+  expect(report.code_objects.map((code) => [code.name, code.filename])).toEqual(
+    [
+      ["<module>", "sample.py"],
+      ["f", "first.py"],
+      ["new", "new.py"],
+    ],
+  );
+  expect(root(report).nested_code).toEqual([1, 2]);
+  expect(report.coverage.status).toBe("complete");
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 

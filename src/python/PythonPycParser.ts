@@ -362,14 +362,16 @@ class MarshalReader {
     const bytecode = asBytes(this.readObject(depth + 1), "co_code");
     const consts = asTuple(this.readObject(depth + 1), "co_consts");
     this.#chargeConsts(consts.length);
-    const names = strings(asTuple(this.readObject(depth + 1), "co_names"));
+    const names = this.#nameTable(
+      asTuple(this.readObject(depth + 1), "co_names"),
+    );
     let varnames: string[] | null = null;
     let freevars: string[] | null = null;
     let cellvars: string[] | null = null;
     let localsplusnames: string[] | null = null;
     let localspluskinds_hex: string | null = null;
     if (this.layout === "py311") {
-      localsplusnames = strings(
+      localsplusnames = this.#nameTable(
         asTuple(this.readObject(depth + 1), "co_localsplusnames"),
       );
       const localspluskinds = asBytes(
@@ -382,9 +384,15 @@ class MarshalReader {
         );
       localspluskinds_hex = localspluskinds.toString("hex");
     } else {
-      varnames = strings(asTuple(this.readObject(depth + 1), "co_varnames"));
-      freevars = strings(asTuple(this.readObject(depth + 1), "co_freevars"));
-      cellvars = strings(asTuple(this.readObject(depth + 1), "co_cellvars"));
+      varnames = this.#nameTable(
+        asTuple(this.readObject(depth + 1), "co_varnames"),
+      );
+      freevars = this.#nameTable(
+        asTuple(this.readObject(depth + 1), "co_freevars"),
+      );
+      cellvars = this.#nameTable(
+        asTuple(this.readObject(depth + 1), "co_cellvars"),
+      );
     }
     const filename = asString(this.readObject(depth + 1), "co_filename");
     const name = asString(this.readObject(depth + 1), "co_name");
@@ -491,13 +499,24 @@ class MarshalReader {
   }
 
   /**
+   * A name table shared through TYPE_REF is one marshal object and a full
+   * copy in every code object. Empty strings add no report bytes, so charge
+   * each copied entry before `strings()` builds the array the report keeps.
+   */
+  #nameTable(items: readonly MarshalValue[]): string[] {
+    this.#chargeReported(items.length, "names");
+    return strings(items);
+  }
+
+  /**
    * Charge copies the report will carry. Nested relationships are separate
    * from the immediate const tuple, which misses a shared container repeated
-   * by many owners.
+   * by many owners. Name-table copies are separate from the byte budget,
+   * which misses an empty string repeated by many owners.
    */
   #chargeReported(
     count: number,
-    what: "constants" | "nested code relationships",
+    what: "constants" | "names" | "nested code relationships",
   ): void {
     this.#reportedConsts += count;
     if (this.#reportedConsts > this.input.max_objects)
@@ -753,7 +772,8 @@ class MarshalReader {
   /**
    * Dictionaries are registered before their pairs. A null key or a null value
    * ends the dict; a null value does not become an entry. Equal keys keep the
-   * last value, and an unhashable key fails the walk.
+   * first key object and replace only its value. An unhashable key fails the
+   * walk.
    */
   dict(depth: number, slot: number | undefined): MarshalValue {
     const items: [MarshalValue, MarshalValue][] = [];
@@ -771,7 +791,9 @@ class MarshalReader {
         indexes.set(hash, items.length);
         items.push([key, mapped]);
       } else {
-        items[existing] = [key, mapped];
+        const kept =
+          items[existing] ?? malformed("Dictionary entry is missing.");
+        kept[1] = mapped;
       }
     }
   }
