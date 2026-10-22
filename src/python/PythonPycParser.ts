@@ -56,7 +56,13 @@ type MarshalValue =
   | { readonly kind: "float"; readonly value: number }
   | { readonly kind: "complex"; readonly real: number; readonly imag: number }
   | { readonly kind: "bytes"; readonly value: Buffer }
-  | { readonly kind: "str"; readonly value: string; readonly bytes: number }
+  | {
+      readonly kind: "str";
+      readonly value: string;
+      readonly bytes: number;
+      /** Marshal bytes. JavaScript strings merge lone surrogates with pairs. */
+      readonly raw: Buffer;
+    }
   | { readonly kind: "tuple"; readonly items: MarshalValue[] }
   | { readonly kind: "list"; readonly items: MarshalValue[] }
   | { readonly kind: "set"; readonly items: MarshalValue[] }
@@ -67,9 +73,39 @@ type MarshalValue =
     }
   | { readonly kind: "code"; readonly value: CodeNode };
 
-/** A decoded code object; TYPE_REF children are the same node, not copies. */
-type CodeNode = Omit<PythonPycCodeObject, "nested_code"> & {
-  readonly nested: readonly CodeNode[];
+/**
+ * A decoded code object. `consts` and `nested` stay empty until the marshal
+ * graph is complete: a container can refer to itself before its items exist.
+ * TYPE_REF children are the same node, not copies.
+ */
+type CodeNode = Omit<PythonPycCodeObject, "nested_code" | "consts"> & {
+  consts: PythonPycConst[];
+  nested: CodeNode[];
+};
+
+const EMPTY_CODES: readonly CodeNode[] = [];
+
+const isContainer = (value: MarshalValue): boolean =>
+  value.kind === "tuple" ||
+  value.kind === "list" ||
+  value.kind === "set" ||
+  value.kind === "frozenset" ||
+  value.kind === "dict";
+
+const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
+  if (value.kind === "dict") {
+    const children: MarshalValue[] = [];
+    for (const [key, mapped] of value.items) children.push(key, mapped);
+    return children;
+  }
+  if (
+    value.kind === "tuple" ||
+    value.kind === "list" ||
+    value.kind === "set" ||
+    value.kind === "frozenset"
+  )
+    return value.items;
+  return [];
 };
 
 /**
@@ -140,6 +176,7 @@ export const parsePythonPyc = (
     malformed("Marshal stream has trailing bytes after the top-level object.");
   if (root.kind !== "code")
     return malformed("Top-level marshal object is not a code object.");
+  reader.finishCodes();
   const codeObjects = flattenCode(root.value);
   const unknownFlags =
     flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE);
@@ -196,8 +233,16 @@ class MarshalReader {
   readonly #codeEquality = new WeakMap<CodeNode, CodeEquality>();
   /** Constant keys are not set-equality keys: -0 stays distinct from 0. */
   readonly #constCache = new WeakMap<MarshalValue, string>();
-  /** Distinct nested code objects reached from a container, including cycles. */
+  /** Code objects whose const summaries wait until the graph is fully decoded. */
+  readonly #codes: CodeNode[] = [];
+  /**
+   * Nested code objects reached from one container. Pure wrappers store the
+   * child's array; fresh arrays are counted so copies cannot grow without a
+   * bound. Absent while a container is still on the explicit walk stack.
+   */
   readonly #nestedCache = new WeakMap<MarshalValue, readonly CodeNode[]>();
+  #nestedSteps = 0;
+  #nestedRetained = 0;
 
   constructor(
     readonly bytes: Buffer,
@@ -304,11 +349,15 @@ class MarshalReader {
   }
 
   code(depth: number): CodeNode {
-    const argcount = this.u32();
-    const posonlyargcount = this.layout === "py37" ? null : this.u32();
-    const kwonlyargcount = this.u32();
-    const nlocals = this.layout === "py311" ? null : this.u32();
-    const stacksize = this.u32();
+    const argcount = this.signedCount("co_argcount");
+    const posonlyargcount =
+      this.layout === "py37" ? null : this.signedCount("co_posonlyargcount");
+    if (posonlyargcount !== null && argcount < posonlyargcount)
+      malformed("co_argcount is smaller than co_posonlyargcount.");
+    const kwonlyargcount = this.signedCount("co_kwonlyargcount");
+    const nlocals =
+      this.layout === "py311" ? null : this.signedCount("co_nlocals");
+    const stacksize = this.signedCount("co_stacksize");
     const flags = this.u32();
     const bytecode = asBytes(this.readObject(depth + 1), "co_code");
     const consts = asTuple(this.readObject(depth + 1), "co_consts");
@@ -378,15 +427,31 @@ class MarshalReader {
       localsplusnames,
       localspluskinds_hex,
       bytecode: { bytes: bytecode.length, sha256: sha256(bytecode) },
-      consts: this.#summarizeConsts(consts),
-      nested: this.#nestedCodeObjects(consts),
+      consts: [],
+      nested: [],
     };
     this.#codeEquality.set(node, {
       consts,
       linetable: `${linetable.length}:${sha256(linetable)}`,
       exceptiontable: `${exceptiontable.length}:${sha256(exceptiontable)}`,
     });
+    this.#codes.push(node);
     return node;
+  }
+
+  /**
+   * Const summaries and nested relationships follow Python's object graph.
+   * Building them while `code()` is still inside an ancestor container caches
+   * that container before its items exist.
+   */
+  finishCodes(): void {
+    for (const node of this.#codes) {
+      const material =
+        this.#codeEquality.get(node) ??
+        malformed("Code object is missing decoded constants.");
+      node.consts = this.#summarizeConsts(material.consts);
+      node.nested = this.#nestedCodeObjects(material.consts);
+    }
   }
 
   /**
@@ -444,49 +509,181 @@ class MarshalReader {
   }
 
   /**
-   * Distinct code objects reachable from this constant tuple. A shared
-   * container is walked once. Charge the owner's reported relationships
+   * Distinct code objects reachable from this constant tuple. Containers are
+   * walked iteratively, and a wrapper keeps the child's array instead of
+   * copying every descendant. Charge the owner's reported relationships
    * before the array the report keeps is built.
    */
   #nestedCodeObjects(items: readonly MarshalValue[]): CodeNode[] {
     const seen = new Set<CodeNode>();
-    for (const item of items)
-      for (const code of this.#nestedCodes(item)) seen.add(code);
-    this.#chargeReported(seen.size, "nested code relationships");
-    return [...seen];
+    const ordered: CodeNode[] = [];
+    const add = (code: CodeNode): void => {
+      if (seen.has(code)) return;
+      seen.add(code);
+      ordered.push(code);
+    };
+    for (const item of items) {
+      if (item.kind === "code") {
+        add(item.value);
+        continue;
+      }
+      for (const code of this.#reachableCodes(item)) add(code);
+    }
+    this.#chargeReported(ordered.length, "nested code relationships");
+    return ordered;
   }
 
-  #nestedCodes(value: MarshalValue): readonly CodeNode[] {
+  #reachableCodes(value: MarshalValue): readonly CodeNode[] {
     if (value.kind === "code") return [value.value];
-    if (
-      value.kind !== "tuple" &&
-      value.kind !== "list" &&
-      value.kind !== "set" &&
-      value.kind !== "frozenset" &&
-      value.kind !== "dict"
-    )
-      return [];
+    if (!isContainer(value)) return EMPTY_CODES;
     const cached = this.#nestedCache.get(value);
     if (cached !== undefined) return cached;
-    const building: CodeNode[] = [];
-    this.#nestedCache.set(value, building);
-    const seen = new Set<CodeNode>();
-    const add = (nodes: readonly CodeNode[]): void => {
-      for (const code of nodes) {
-        if (seen.has(code)) continue;
-        seen.add(code);
-        building.push(code);
+    const added: { value: MarshalValue; retained: number }[] = [];
+    if (this.#memoizeNested(value, added)) {
+      for (const entry of added) {
+        this.#nestedCache.delete(entry.value);
+        this.#nestedRetained -= entry.retained;
       }
-    };
-    if (value.kind === "dict") {
-      for (const [key, mapped] of value.items) {
-        add([...this.#nestedCodes(key)]);
-        add([...this.#nestedCodes(mapped)]);
-      }
-    } else {
-      for (const item of value.items) add([...this.#nestedCodes(item)]);
+      const walked = this.#walkNested(value);
+      this.#nestedCache.set(value, walked);
+      return walked;
     }
-    return building;
+    return this.#nestedCache.get(value) ?? EMPTY_CODES;
+  }
+
+  /**
+   * Post-order walk on an explicit stack. A back edge returns before any
+   * cyclic container is cached; the caller then scans that component once.
+   */
+  #memoizeNested(
+    root: MarshalValue,
+    added: { value: MarshalValue; retained: number }[],
+  ): boolean {
+    const gray = new Set<MarshalValue>();
+    const frames: { value: MarshalValue; index: number }[] = [
+      { value: root, index: 0 },
+    ];
+    gray.add(root);
+    while (frames.length > 0) {
+      this.#takeNestedStep();
+      const frame = frames[frames.length - 1];
+      if (frame === undefined) break;
+      const children = containerChildren(frame.value);
+      if (frame.index < children.length) {
+        const child = children[frame.index];
+        frame.index += 1;
+        if (child === undefined || !isContainer(child)) continue;
+        if (this.#nestedCache.has(child)) continue;
+        if (gray.has(child)) return true;
+        gray.add(child);
+        frames.push({ value: child, index: 0 });
+        continue;
+      }
+      const retainedBefore = this.#nestedRetained;
+      const codes = this.#combineNested(frame.value);
+      this.#nestedCache.set(frame.value, codes);
+      added.push({
+        value: frame.value,
+        retained: this.#nestedRetained - retainedBefore,
+      });
+      gray.delete(frame.value);
+      frames.pop();
+    }
+    return false;
+  }
+
+  /** One scan of a container cycle. Cached containers outside the cycle are reused. */
+  #walkNested(root: MarshalValue): readonly CodeNode[] {
+    const seen = new Set<CodeNode>();
+    const visited = new Set<MarshalValue>();
+    const stack: MarshalValue[] = [root];
+    while (stack.length > 0) {
+      this.#takeNestedStep();
+      const current = stack.pop();
+      if (current === undefined) break;
+      if (current.kind === "code") {
+        seen.add(current.value);
+        continue;
+      }
+      if (!isContainer(current) || visited.has(current)) continue;
+      const known =
+        current === root ? undefined : this.#nestedCache.get(current);
+      if (known !== undefined) {
+        for (const code of known) seen.add(code);
+        continue;
+      }
+      visited.add(current);
+      const children = containerChildren(current);
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        const child = children[index];
+        if (child !== undefined) stack.push(child);
+      }
+    }
+    const codes = [...seen];
+    this.#retainNested(codes);
+    return codes;
+  }
+
+  /**
+   * Share a child's array when this container adds no further code object.
+   * Otherwise retain one new list and count its slots against the walk budget.
+   */
+  #combineNested(value: MarshalValue): readonly CodeNode[] {
+    let shared: readonly CodeNode[] | undefined;
+    let onlyShared = true;
+    const codes: CodeNode[] = [];
+    const seen = new Set<CodeNode>();
+    const add = (code: CodeNode): void => {
+      if (seen.has(code)) return;
+      seen.add(code);
+      codes.push(code);
+    };
+    for (const child of containerChildren(value)) {
+      if (child.kind === "code") {
+        if (shared !== undefined || codes.length > 0) onlyShared = false;
+        add(child.value);
+        continue;
+      }
+      if (!isContainer(child)) continue;
+      const part = this.#nestedCache.get(child);
+      if (part === undefined || part.length === 0) continue;
+      if (shared === undefined && codes.length === 0) shared = part;
+      else onlyShared = false;
+      for (const code of part) add(code);
+    }
+    if (codes.length === 0) return EMPTY_CODES;
+    if (onlyShared && shared !== undefined && shared.length === codes.length)
+      return shared;
+    this.#retainNested(codes);
+    return codes;
+  }
+
+  #takeNestedStep(): void {
+    this.#nestedSteps += 1;
+    const limit = this.input.max_objects * this.input.max_depth;
+    if (this.#nestedSteps > limit)
+      throw new PythonPycResourceFailure(
+        "objects",
+        {
+          max_objects: this.input.max_objects,
+          max_depth: this.input.max_depth,
+        },
+        `Nested code walk exceeds ${limit} steps (max_objects * max_depth).`,
+      );
+  }
+
+  #retainNested(codes: readonly CodeNode[]): void {
+    this.#nestedRetained += codes.length;
+    const limit = this.input.max_objects * this.input.max_depth;
+    if (this.#nestedRetained > limit)
+      throw new PythonPycResourceFailure(
+        "objects",
+        {
+          max_objects: this.input.max_objects,
+          max_depth: this.input.max_depth,
+        },
+        `Nested code walk retains more than ${limit} code references.`,
+      );
   }
 
   readRef(): MarshalValue {
@@ -638,7 +835,7 @@ class MarshalReader {
           ":",
         );
       case "str":
-        return this.#boundedJoin(`s${value.bytes}:`, [value.value], "");
+        return this.#stringKey(value.raw);
       case "bytes":
         this.#reserveKey(value.value.length * 2 + 8);
         return `b${value.value.length}:${value.value.toString("hex")}`;
@@ -720,8 +917,17 @@ class MarshalReader {
   /** Constant key used when two code objects compare their co_consts. */
   #constKeyItems(items: readonly MarshalValue[]): string {
     const parts: string[] = [];
-    for (const item of items) parts.push(this.#constKey(item, new Set()));
+    for (const item of items) {
+      const key = this.#constKey(item, new Set());
+      parts.push(`${key.length}:${key}`);
+    }
     return this.#boundedJoin("k", parts, ",");
+  }
+
+  /** Python string identity is the marshal bytes, not the JavaScript string. */
+  #stringKey(raw: Buffer): string {
+    this.#reserveKey(raw.length * 2 + 8);
+    return `s${raw.length}:${raw.toString("hex")}`;
   }
 
   #constKey(value: MarshalValue, stack: Set<MarshalValue>): string {
@@ -765,7 +971,7 @@ class MarshalReader {
           ":",
         );
       case "str":
-        return this.#boundedJoin(`s${value.bytes}:`, [value.value], "");
+        return this.#stringKey(value.raw);
       case "bytes":
         this.#reserveKey(value.value.length * 2 + 8);
         return `y${value.value.length}:${value.value.toString("hex")}`;
@@ -775,15 +981,18 @@ class MarshalReader {
       case "frozenset": {
         if (stack.has(value)) return this.#identity(value);
         stack.add(value);
-        const parts = value.items.map((item) => this.#constKey(item, stack));
+        const parts: string[] = [];
+        for (const item of value.items) {
+          const key = this.#constKey(item, stack);
+          parts.push(`${key.length}:${key}`);
+        }
         stack.delete(value);
         if (value.kind === "frozenset") parts.sort();
-        const key = this.#boundedJoin(
+        return this.#boundedJoin(
           value.kind === "tuple" ? "t" : "f",
           parts,
           ",",
         );
-        return key;
       }
       default:
         return this.#identity(value);
@@ -916,9 +1125,19 @@ class MarshalReader {
     if (ascii) {
       if (bytes.some((byte) => byte > 0x7f))
         malformed("Marshal ASCII string contains a non-ASCII byte.");
-      return { kind: "str", value: bytes.toString("latin1"), bytes: length };
+      return {
+        kind: "str",
+        value: bytes.toString("latin1"),
+        bytes: length,
+        raw: bytes,
+      };
     }
-    return { kind: "str", value: decodeSurrogatePass(bytes), bytes: length };
+    return {
+      kind: "str",
+      value: decodeSurrogatePass(bytes),
+      bytes: length,
+      raw: bytes,
+    };
   }
 
   blob(length: number): Buffer {
@@ -966,6 +1185,13 @@ class MarshalReader {
       malformed("Marshal stream ended inside a 32-bit field.");
     const value = this.bytes.readInt32LE(this.offset);
     this.offset += 4;
+    return value;
+  }
+
+  /** CPython `r_long` count. Negative values are rejected before Evidence. */
+  signedCount(field: string): number {
+    const value = this.i32();
+    if (value < 0) malformed(`${field} is negative.`);
     return value;
   }
 

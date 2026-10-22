@@ -832,6 +832,243 @@ it("accepts code objects as set members and dictionary keys", () => {
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
+const parseWith = (bytes: Buffer, limits: Partial<typeof defaults> = {}) =>
+  parsePythonPyc(
+    bytes,
+    {
+      path: defaults.path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    },
+    { ...defaults, ...limits },
+  );
+
+it("keeps one descendant list when many wrappers share a container", () => {
+  const children = 1800;
+  const wrappers = 14_000;
+  const child = marshalCode("py311", {
+    name: "c",
+    qualname: "c",
+    filename: "a.py",
+  });
+  const pieces: Buffer[] = [
+    Buffer.from([0x28]),
+    u32(1 + wrappers),
+    Buffer.from([0x28 | 0x80]),
+    u32(children),
+  ];
+  for (let index = 0; index < children; index += 1) pieces.push(child);
+  const shared = marshalRef(0);
+  for (let index = 0; index < wrappers; index += 1)
+    pieces.push(Buffer.from([0x29 | 0x80, 1]), shared);
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
+  ]);
+  const before = process.memoryUsage().heapUsed;
+  const started = Date.now();
+  const report = parseWith(bytes, { max_objects: 65_536 });
+  const retained = process.memoryUsage().heapUsed - before;
+  // 1,800 children and 14,000 wrappers: 49,612 reads, previously ~181 MiB.
+  expect(Date.now() - started).toBeLessThan(5000);
+  expect(retained).toBeLessThan(64 * 1024 * 1024);
+  expect(report.coverage.objects).toBe(49_612);
+  expect(report.code_objects).toHaveLength(children + 1);
+  expect(root(report).nested_code).toHaveLength(children);
+  expect(report.coverage.status).toBe("complete");
+});
+
+it("keeps code objects whose consts differ only by tuple shape", () => {
+  const int = (value: number): Buffer =>
+    Buffer.concat([Buffer.from([0x69]), i32(value)]);
+  const tuple = (items: Buffer[]): Buffer =>
+    Buffer.concat([Buffer.from([0x29, items.length]), ...items]);
+  const code = (consts: Buffer): Buffer =>
+    marshalCode("py311", {
+      name: "f",
+      qualname: "f",
+      filename: "f.py",
+      firstlineno: 1,
+      constsObject: consts,
+    });
+  const frozen = Buffer.concat([
+    Buffer.from([0x3e]),
+    u32(2),
+    code(tuple([tuple([int(1), int(2)])])),
+    code(tuple([tuple([int(1)]), int(2)])),
+  ]);
+  const report = parse(withConsts([frozen]));
+  expect(root(report).consts[0]).toEqual({ kind: "frozenset", length: 2 });
+  expect(report.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "f",
+    "f",
+  ]);
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    code_objects: 3,
+  });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("reports code inside a container that the code also references", () => {
+  const list = Buffer.concat([
+    Buffer.from([0x5b | 0x80]),
+    u32(2),
+    marshalCode("py311", {
+      name: "a",
+      qualname: "a",
+      constsObject: Buffer.concat([Buffer.from([0x29, 1]), marshalRef(0)]),
+    }),
+    marshalCode("py311", { name: "b", qualname: "b" }),
+  ]);
+  const report = parse(withConsts([list]));
+  expect(root(report).consts[0]).toEqual({ kind: "list", length: 2 });
+  expect(report.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "a",
+    "b",
+  ]);
+  expect(root(report).nested_code).toEqual([1, 2]);
+  expect(report.code_objects[1]?.consts[0]).toEqual({
+    kind: "list",
+    length: 2,
+  });
+  expect(report.code_objects[1]?.nested_code).toEqual([1, 2]);
+  expect(report.code_objects[2]?.nested_code).toEqual([]);
+  expect(report.coverage.status).toBe("complete");
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+
+  const cyclic = Buffer.concat([
+    Buffer.from([0x5b | 0x80]),
+    u32(2),
+    marshalRef(0),
+    marshalCode("py311", { name: "inside", qualname: "inside" }),
+  ]);
+  const cycle = parse(withConsts([cyclic]));
+  expect(root(cycle).consts[0]).toEqual({ kind: "list", length: 2 });
+  expect(cycle.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "inside",
+  ]);
+  expect(root(cycle).nested_code).toEqual([1]);
+});
+
+it("keeps distinct strings that JavaScript merges through surrogates", () => {
+  const unicode = (bytes: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([0x75]), u32(bytes.length), bytes]);
+  const first = Buffer.from([
+    0xf0, 0x90, 0x80, 0x80, 0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80,
+  ]);
+  const second = Buffer.from([
+    0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80, 0xf0, 0x90, 0x80, 0x80,
+  ]);
+  const dict = Buffer.concat([
+    Buffer.from([0x7b]),
+    unicode(first),
+    marshalCode("py311", { name: "a", qualname: "a" }),
+    unicode(second),
+    marshalCode("py311", { name: "b", qualname: "b" }),
+    Buffer.from([0x30]),
+  ]);
+  const report = parse(withConsts([dict]));
+  expect(root(report).consts[0]).toEqual({ kind: "dict", length: 2 });
+  expect(report.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "a",
+    "b",
+  ]);
+  expect(root(report).nested_code).toEqual([1, 2]);
+  expect(report.coverage.status).toBe("complete");
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("follows a long TYPE_REF chain without a recursive walk", () => {
+  const links = 6000;
+  const hidden = marshalCode("py311", {
+    name: "hidden",
+    qualname: "hidden",
+  });
+  const later = marshalCode("py311", {
+    name: "later",
+    qualname: "later",
+    constsObject: Buffer.concat([
+      Buffer.from([0x29, 1]),
+      marshalRef(links - 1),
+    ]),
+  });
+  const pieces: Buffer[] = [Buffer.from([0x28]), u32(links + 1)];
+  for (let index = 0; index < links; index += 1) {
+    pieces.push(Buffer.from([0x29 | 0x80, 1]));
+    pieces.push(index === 0 ? hidden : marshalRef(index - 1));
+  }
+  pieces.push(later);
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
+  ]);
+  const started = Date.now();
+  const report = parse(bytes);
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(report.code_objects.map((code) => code.name)).toEqual([
+    "<module>",
+    "hidden",
+    "later",
+  ]);
+  expect(report.code_objects[2]?.nested_code).toEqual([1]);
+  expect(root(report).nested_code).toEqual([1, 2]);
+  expect(report.coverage.status).toBe("complete");
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("rejects negative CPython code counts and keeps them out of the schema", () => {
+  const negative = (
+    layout: "py37" | "py311",
+    fields: {
+      argcount?: number;
+      posonlyargcount?: number;
+      kwonlyargcount?: number;
+      nlocals?: number;
+      stacksize?: number;
+    },
+  ) =>
+    Buffer.concat([
+      pythonPycHeader(layout === "py37" ? 3394 : 3531),
+      marshalCode(layout, fields),
+    ]);
+  for (const field of [
+    "argcount",
+    "posonlyargcount",
+    "kwonlyargcount",
+    "stacksize",
+  ] as const) {
+    expect(() => parse(negative("py311", { [field]: 0xffffffff }))).toThrow(
+      PythonPycFormatFailure,
+    );
+  }
+  expect(() => parse(negative("py37", { nlocals: 0xffffffff }))).toThrow(
+    /co_nlocals is negative/,
+  );
+  expect(() =>
+    parse(negative("py311", { argcount: 1, posonlyargcount: 2 })),
+  ).toThrow(/co_argcount is smaller than co_posonlyargcount/);
+  const high = parse(negative("py311", { argcount: 0x7fffffff }));
+  expect(root(high).argcount).toBe(0x7fffffff);
+  expect(pythonPycSchema.safeParse(high).success).toBe(true);
+  expect(
+    pythonPycSchema.safeParse({
+      ...high,
+      code_objects: [{ ...root(high), argcount: 0xffffffff }],
+    }).success,
+  ).toBe(false);
+  expect(
+    pythonPycSchema.safeParse({
+      ...high,
+      code_objects: [{ ...root(high), stacksize: 0xffffffff }],
+    }).success,
+  ).toBe(false);
+});
+
 it("leaves 3.11 alpha magics with other code layouts unsupported", () => {
   for (const magic of [3452, 3459, 3460, 3493]) {
     const bytes = Buffer.concat([pythonPycHeader(magic), marshalCode("py311")]);

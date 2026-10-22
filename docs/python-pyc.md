@@ -36,9 +36,12 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 `code_objects` lists each distinct marshal code object once, the top-level
 module code first. `nested_code` holds the indexes of the distinct code objects
 reachable from that object's constants, including code nested in tuples and
-other containers. A function shared through a marshal reference is named by
-index once per owner, even when that owner reaches it again through the same
-container. Each object reports name, optional qualname,
+other containers and the owner itself when a constant container reaches it.
+A function shared through a marshal reference is named by index once per owner,
+even when that owner reaches it again through the same container. Relationships
+are collected after the marshal graph is complete, so a container that a nested
+code object also references is not summarized while its items are still missing.
+Each object reports name, optional qualname,
 filename,
 argument counts, flags, names, locals (or `localsplusnames` on 3.11+), const
 summaries, and bytecode length plus SHA-256.
@@ -56,8 +59,13 @@ without that entry.
 
 The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
-budget fails without partial success. Names repeated through a marshal
-reference, including each code-constant name the report copies, count against
+budget fails without partial success. Argument counts, positional-only counts,
+keyword-only counts, local counts, and stack size are signed CPython fields; a
+negative encoding is malformed. Nested code collection walks reference chains
+iteratively and keeps one shared descendant list for a container that merely
+wraps another, instead of copying that list onto every wrapper. Names repeated
+through a marshal reference, including each code-constant name the report copies,
+count against
 the file budget once per copy. Copied constant tables and each reported nested
 code relationship count against the object budget. Integer digits and expanded
 set or dictionary keys, including a shared tuple repeated at each level, count

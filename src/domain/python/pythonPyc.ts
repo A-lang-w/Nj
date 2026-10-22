@@ -8,6 +8,8 @@ export const PYTHON_PYC_CHECK_SOURCE = 0x2;
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const index = z.number().int().nonnegative();
+/** Non-negative CPython `int` counts. `0xffffffff` is -1 and is not evidence. */
+const signedCount = z.number().int().min(0).max(0x7fffffff);
 
 /** Marshal TYPE_CODE field order for CPython 3.7, 3.8–3.10, and 3.11+. */
 export const PYTHON_PYC_CODE_LAYOUTS = ["py37", "py38", "py311"] as const;
@@ -156,11 +158,11 @@ const pythonCodeFields = {
   qualname: z.string().nullable(),
   filename: z.string(),
   firstlineno: uint,
-  argcount: uint,
-  posonlyargcount: uint.nullable(),
-  kwonlyargcount: uint,
-  nlocals: uint.nullable(),
-  stacksize: uint,
+  argcount: signedCount,
+  posonlyargcount: signedCount.nullable(),
+  kwonlyargcount: signedCount,
+  nlocals: signedCount.nullable(),
+  stacksize: signedCount,
   flags: uint,
   names: z.array(z.string()),
   varnames: z.array(z.string()).nullable(),
@@ -180,6 +182,7 @@ export type PythonPycConst = z.infer<typeof pythonConstSchema>;
 /**
  * One distinct marshal code object. `nested_code` holds indexes into the
  * report's `code_objects`, so a child shared through TYPE_REF is listed once.
+ * The owner's own index is included when its constants reach that object.
  */
 const pythonCodeObjectSchema = z.strictObject({
   ...pythonCodeFields,
@@ -278,11 +281,11 @@ export const pythonPycSchema = z
             "co_localspluskinds length does not match co_localsplusnames.",
         });
       code.nested_code.forEach((nested, position) => {
-        if (nested >= report.code_objects.length || nested === owner)
+        if (nested >= report.code_objects.length)
           context.addIssue({
             code: "custom",
             path: ["code_objects", owner, "nested_code", position],
-            message: "Nested code index does not name another listed object.",
+            message: "Nested code index does not name a listed code object.",
           });
       });
     });
