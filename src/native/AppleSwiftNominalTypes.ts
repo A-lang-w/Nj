@@ -18,6 +18,7 @@ export interface SwiftNominalReaders {
   string(address: bigint): string;
   location(address: bigint): NativeMetadataLocation;
   evidence(address: bigint, description: string): NativeMetadataEvidence[];
+  executable(address: bigint): boolean;
   admit(): boolean;
 }
 
@@ -29,17 +30,20 @@ export interface SwiftNominalDescriptor {
   readonly name: string;
 }
 
-/** A `__swift5_types` record whose descriptor kind or name is unknown. */
+/** A `__swift5_types` record that may be a class whose name is unknown. */
 export interface SwiftNominalRecordFailure {
   readonly record: bigint;
   readonly message: string;
 }
 
-export interface SwiftNominalTypes {
-  readonly facts: FacetDecodeFacts;
-  /** Admitted class, struct and enum descriptors, including partial ones. */
-  readonly descriptors: readonly SwiftNominalDescriptor[];
-  readonly failures: readonly SwiftNominalRecordFailure[];
+/**
+ * Receives each descriptor as soon as its kind and name are read, so a
+ * consumer spends the record budget in record order rather than after every
+ * declaration.
+ */
+export interface SwiftNominalVisitor {
+  descriptor(descriptor: SwiftNominalDescriptor): void;
+  failure(failure: SwiftNominalRecordFailure): void;
 }
 
 const FACET = "swift_declarations";
@@ -53,23 +57,39 @@ const GENERIC = 0x80;
 const CLASS_IS_ACTOR = 0x80;
 /** Swift nesting is shallow; a longer chain is malformed or cyclic. */
 const MAXIMUM_CONTEXT_DEPTH = 32;
+/** Same bound as one metadata name, so nesting cannot multiply name storage. */
+const MAXIMUM_QUALIFIED_NAME_LENGTH = 4096;
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 
-/** Named path of one context below its module; null when unresolved. */
+/**
+ * Facts of one context. `depth` counts contexts up to and including its
+ * module, so a cached result is valid wherever a walk reaches it.
+ */
 interface ContextFacts {
   readonly module: string | null;
-  readonly path: readonly string[] | null;
+  /** Dotted named path below the module; null when unresolved. */
+  readonly path: string | null;
+  readonly depth: number;
   readonly anonymous: boolean;
   readonly reason: string | null;
+  /** The walk stopped at its own bound; the result depends on its start. */
+  readonly walkLimited: boolean;
 }
 
-const unresolved = (reason: string): ContextFacts => ({
+const unresolved = (reason: string, walkLimited = false): ContextFacts => ({
   module: null,
   path: null,
+  depth: 0,
   anonymous: false,
   reason,
+  walkLimited,
 });
+
+const tooDeep = (): ContextFacts =>
+  unresolved(
+    `Swift context parent chain exceeds ${MAXIMUM_CONTEXT_DEPTH} contexts or is cyclic`,
+  );
 
 /**
  * Decode `__swift5_types` nominal type descriptors into `swift_decls`.
@@ -80,11 +100,10 @@ export const decodeSwiftNominalTypes = (input: {
   readers: SwiftNominalReaders;
   entries: readonly bigint[];
   result: ObjcSwiftMetadata;
-}): SwiftNominalTypes => {
-  const { readers: read, result } = input;
+  visitor: SwiftNominalVisitor;
+}): FacetDecodeFacts => {
+  const { readers: read, result, visitor } = input;
   const issues = [] as ReturnType<typeof issue>[];
-  const descriptors: SwiftNominalDescriptor[] = [];
-  const failures: SwiftNominalRecordFailure[] = [];
   const contexts = new Map<bigint, ContextFacts>();
   const names = new Map<bigint, string>();
   let examined = 0;
@@ -103,9 +122,9 @@ export const decodeSwiftNominalTypes = (input: {
     return name;
   };
 
-  const parentOf = (descriptor: bigint, depth: number): ContextFacts => {
-    const value = read.relative(descriptor + 4n, "contextParent");
-    if (value.kind === "target") return contextOf(value.target, depth + 1);
+  const parentOf = (context: bigint, walk: number): ContextFacts => {
+    const value = read.relative(context + 4n, "contextParent");
+    if (value.kind === "target") return contextOf(value.target, walk + 1);
     return unresolved(
       value.kind === "null"
         ? "Swift context descriptor has no parent module"
@@ -113,11 +132,31 @@ export const decodeSwiftNominalTypes = (input: {
     );
   };
 
-  const readContext = (context: bigint, depth: number): ContextFacts => {
-    if (depth > MAXIMUM_CONTEXT_DEPTH)
-      return unresolved(
-        `Swift context parent chain exceeds ${MAXIMUM_CONTEXT_DEPTH} contexts or is cyclic`,
-      );
+  /** One level below `parent`, bounded in depth and qualified-name length. */
+  const child = (
+    parent: ContextFacts,
+    facts: Partial<ContextFacts>,
+  ): ContextFacts => {
+    if (parent.depth + 1 > MAXIMUM_CONTEXT_DEPTH)
+      return { ...tooDeep(), walkLimited: parent.walkLimited };
+    const next = {
+      ...parent,
+      depth: parent.reason === null ? parent.depth + 1 : 0,
+      ...facts,
+    };
+    return next.path !== null &&
+      next.path.length > MAXIMUM_QUALIFIED_NAME_LENGTH
+      ? {
+          ...next,
+          path: null,
+          reason:
+            next.reason ??
+            `Swift qualified type name exceeds ${MAXIMUM_QUALIFIED_NAME_LENGTH} characters`,
+        }
+      : next;
+  };
+
+  const readContext = (context: bigint, walk: number): ContextFacts => {
     const kind = read.u32(context) & 31;
     switch (kind) {
       case MODULE: {
@@ -127,50 +166,88 @@ export const decodeSwiftNominalTypes = (input: {
         const module = read.string(value.target);
         return module.length === 0
           ? unresolved("Swift module context name is empty")
-          : { module, path: [], anonymous: false, reason: null };
+          : {
+              module,
+              path: "",
+              depth: 1,
+              anonymous: false,
+              reason: null,
+              walkLimited: false,
+            };
       }
       case CLASS:
       case STRUCT:
       case ENUM: {
         const name = typeName(context);
-        const parent = parentOf(context, depth);
-        return {
-          ...parent,
-          path: parent.path === null ? null : [...parent.path, name],
-        };
+        const parent = parentOf(context, walk);
+        return child(parent, {
+          path:
+            parent.path === null
+              ? null
+              : parent.path === ""
+                ? name
+                : `${parent.path}.${name}`,
+        });
       }
       case ANONYMOUS:
-        return { ...parentOf(context, depth), anonymous: true };
+        return child(parentOf(context, walk), { anonymous: true });
       case EXTENSION: {
         // The extended type is a mangled name, often in another module, so
         // the declaring module is known but the qualified path is not.
-        const parent = parentOf(context, depth);
-        return {
-          ...parent,
+        const parent = parentOf(context, walk);
+        return child(parent, {
           path: null,
           reason:
             parent.reason ??
             "Swift type is declared in an extension whose extended type is not demangled",
-        };
+        });
       }
       default:
         return unresolved(`Unsupported Swift context descriptor kind ${kind}`);
     }
   };
 
-  const contextOf = (context: bigint, depth: number): ContextFacts => {
+  const contextOf = (context: bigint, walk: number): ContextFacts => {
     const known = contexts.get(context);
     if (known !== undefined) return known;
+    // Bound recursion on cyclic or over-deep chains; this stop depends on
+    // where the walk began, so neither it nor its descendants are cached.
+    if (walk > MAXIMUM_CONTEXT_DEPTH)
+      return { ...tooDeep(), walkLimited: true };
     let facts: ContextFacts;
     try {
-      facts = readContext(context, depth);
+      facts = readContext(context, walk);
     } catch (cause) {
       const reason = expectedSwiftMetadataReadFailure(cause);
       if (reason === null) throw cause;
       facts = unresolved(reason);
     }
-    contexts.set(context, facts);
+    if (!facts.walkLimited) contexts.set(context, facts);
     return facts;
+  };
+
+  const accessorOf = (
+    descriptor: bigint,
+  ): { address: string | null; reason: string | null } => {
+    try {
+      const value = read.relative(descriptor + 12n, "typeAccessFunction");
+      if (value.kind === "null") return { address: null, reason: null };
+      if (value.kind !== "target")
+        return {
+          address: null,
+          reason: unresolvedSwiftRelativeReason(value, "typeAccessFunction"),
+        };
+      return read.executable(value.target)
+        ? { address: hex(value.target), reason: null }
+        : {
+            address: null,
+            reason: `Swift metadata accessor ${hex(value.target)} is not in executable mapped code`,
+          };
+    } catch (cause) {
+      const reason = expectedSwiftMetadataReadFailure(cause);
+      if (reason === null) throw cause;
+      return { address: null, reason };
+    }
   };
 
   for (const record of input.entries) {
@@ -187,6 +264,8 @@ export const decodeSwiftNominalTypes = (input: {
     }
     examined++;
     let descriptor: bigint;
+    // Unknown until read; an unread kind may be a class.
+    let kind: number | null = null;
     let flags: number;
     let name: string;
     try {
@@ -197,7 +276,7 @@ export const decodeSwiftNominalTypes = (input: {
         );
       descriptor = value.target;
       flags = read.u32(descriptor);
-      const kind = flags & 31;
+      kind = flags & 31;
       if (kind !== CLASS && kind !== STRUCT && kind !== ENUM) {
         issues.push(
           issue(
@@ -213,28 +292,14 @@ export const decodeSwiftNominalTypes = (input: {
     } catch (cause) {
       const message = expectedSwiftMetadataReadFailure(cause);
       if (message === null) throw cause;
-      failures.push({ record, message });
+      if (kind === null || kind === CLASS) visitor.failure({ record, message });
       issues.push(issue(FACET, "type_decode_failed", message, hex(record)));
       continue;
     }
-    descriptors.push({ record, descriptor, flags, name });
+    visitor.descriptor({ record, descriptor, flags, name });
     const context = contextOf(descriptor, 0);
-    let accessor: string | null = null;
-    let accessorReason: string | null = null;
-    try {
-      const value = read.relative(descriptor + 12n, "typeAccessFunction");
-      if (value.kind === "target") accessor = hex(value.target);
-      else if (value.kind !== "null")
-        accessorReason = unresolvedSwiftRelativeReason(
-          value,
-          "typeAccessFunction",
-        );
-    } catch (cause) {
-      accessorReason = expectedSwiftMetadataReadFailure(cause);
-      if (accessorReason === null) throw cause;
-    }
-    const reason = context.reason ?? accessorReason;
-    const kind = flags & 31;
+    const accessor = accessorOf(descriptor);
+    const reason = context.reason ?? accessor.reason;
     result.swift_decls.push({
       kind:
         kind === STRUCT
@@ -245,11 +310,12 @@ export const decodeSwiftNominalTypes = (input: {
               ? "actor"
               : "class",
       name,
-      qualified_name: context.path?.join(".") ?? null,
+      qualified_name:
+        context.path === null || context.path === "" ? null : context.path,
       module: context.module,
       generic: (flags & GENERIC) !== 0,
       anonymous_context: context.anonymous,
-      accessor_address: accessor,
+      accessor_address: accessor.address,
       location: read.location(descriptor),
       decode:
         reason === null
@@ -267,14 +333,10 @@ export const decodeSwiftNominalTypes = (input: {
       );
   }
   return {
-    facts: {
-      facet: FACET,
-      examined,
-      decoded,
-      exhaustive: issues.length === 0,
-      issues,
-    },
-    descriptors,
-    failures,
+    facet: FACET,
+    examined,
+    decoded,
+    exhaustive: issues.length === 0,
+    issues,
   };
 };

@@ -12,6 +12,7 @@ import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
 import type {
   SwiftNominalDescriptor,
   SwiftNominalRecordFailure,
+  SwiftNominalVisitor,
 } from "./AppleSwiftNominalTypes.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
@@ -26,22 +27,20 @@ export interface SwiftMetadataReaders {
 
 /**
  * Decode non-generic, non-resilient Swift class vtables from the shared
- * nominal descriptors. A record whose kind or name is unknown may be a class,
- * so it keeps vtable coverage partial.
+ * nominal descriptors as each is read. A record whose kind or name is unknown
+ * may be a class, so it keeps vtable coverage partial.
  */
-export const decodeSwiftClassVtables = (input: {
+export const createSwiftClassVtableDecoder = (input: {
   readers: SwiftMetadataReaders;
-  descriptors: readonly SwiftNominalDescriptor[];
-  failures: readonly SwiftNominalRecordFailure[];
   result: ObjcSwiftMetadata;
-}): FacetDecodeFacts => {
+}): { visitor: SwiftNominalVisitor; facts(): FacetDecodeFacts } => {
   const { readers: read, result } = input;
   const issues = [] as ReturnType<typeof issue>[];
   // Coverage counts vtable slots, matching `decoded`; descriptor entries are
   // a discovery input and are not slot records.
   let examined = 0;
   let decoded = 0;
-  for (const { record, message } of input.failures) {
+  const failure = ({ record, message }: SwiftNominalRecordFailure): void => {
     issues.push(
       issue(
         "swift_class_vtable_descriptors",
@@ -50,16 +49,21 @@ export const decodeSwiftClassVtables = (input: {
         `0x${record.toString(16)}`,
       ),
     );
-  }
-  for (const { record, descriptor, flags, name: owner } of input.descriptors) {
-    if ((flags & 31) !== 16) continue;
+  };
+  const descriptor = ({
+    record,
+    descriptor,
+    flags,
+    name: owner,
+  }: SwiftNominalDescriptor): void => {
+    if ((flags & 31) !== 16) return;
     try {
       const specific = flags >>> 16;
       if ((flags & 0x80) !== 0 || (specific & 0x2000) !== 0)
         throw new TypeError(
           "Generic class or resilient superclass metadata is unsupported",
         );
-      if ((specific & 0x8000) === 0) continue;
+      if ((specific & 0x8000) === 0) return;
       const initialization = specific & 3;
       if (initialization === 3)
         throw new TypeError("Unknown metadata initialization kind");
@@ -170,12 +174,15 @@ export const decodeSwiftClassVtables = (input: {
         ),
       );
     }
-  }
+  };
   return {
-    facet: "swift_class_vtable_descriptors",
-    examined,
-    decoded,
-    exhaustive: issues.length === 0,
-    issues,
+    visitor: { descriptor, failure },
+    facts: () => ({
+      facet: "swift_class_vtable_descriptors",
+      examined,
+      decoded,
+      exhaustive: issues.length === 0,
+      issues,
+    }),
   };
 };

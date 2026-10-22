@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
-import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
+import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
 import { decodeSwiftNominalTypes } from "./AppleSwiftNominalTypes.js";
 import { decodeSwiftDispatchFacets } from "./AppleSwiftDispatchFacets.js";
 import type { DispatchRecordBudget } from "./AppleSwiftDispatchFacets.js";
@@ -10,27 +10,7 @@ import { issue } from "./AppleDispatchDecodeFacts.js";
 
 it("preserves unsupported type-metadata tag reasons instead of reporting null", () => {
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
-  const nominal = decodeSwiftNominalTypes({
-    entries: [0x100n],
-    result,
-    readers: {
-      u32: () => 0,
-      relative: () => ({
-        kind: "unknown",
-        reason: "Unsupported Swift type metadata record tag 2",
-      }),
-      string: () => "unused",
-      location: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      evidence: () => [],
-      admit: () => true,
-    },
-  });
-  const facts = decodeSwiftClassVtables({
-    descriptors: nominal.descriptors,
-    failures: nominal.failures,
+  const vtables = createSwiftClassVtableDecoder({
     result,
     readers: {
       u32: () => 0,
@@ -44,8 +24,29 @@ it("preserves unsupported type-metadata tag reasons instead of reporting null", 
       admit: () => true,
     },
   });
+  const nominal = decodeSwiftNominalTypes({
+    entries: [0x100n],
+    result,
+    visitor: vtables.visitor,
+    readers: {
+      u32: () => 0,
+      relative: () => ({
+        kind: "unknown",
+        reason: "Unsupported Swift type metadata record tag 2",
+      }),
+      string: () => "unused",
+      location: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      evidence: () => [],
+      executable: () => false,
+      admit: () => true,
+    },
+  });
+  const facts = vtables.facts();
 
-  expect(nominal.facts.issues).toMatchObject([
+  expect(nominal.issues).toMatchObject([
     {
       code: "type_decode_failed",
       message: "Unsupported Swift type metadata record tag 2",
@@ -112,11 +113,7 @@ it("counts examined slots and reports an unresolved async slot", () => {
     [0x21cn, 2], // descriptor positive words
     [0x234n, 0x40], // async method flag
   ]);
-  const facts = decodeSwiftClassVtables({
-    descriptors: [
-      { record: 0x100n, descriptor: 0x200n, flags: 0x80000010, name: "Widget" },
-    ],
-    failures: [],
+  const vtables = createSwiftClassVtableDecoder({
     result,
     readers: {
       u32: (address) => values.get(address) ?? 0,
@@ -141,6 +138,13 @@ it("counts examined slots and reports an unresolved async slot", () => {
       admit: () => true,
     },
   });
+  vtables.visitor.descriptor({
+    record: 0x100n,
+    descriptor: 0x200n,
+    flags: 0x80000010,
+    name: "Widget",
+  });
+  const facts = vtables.facts();
 
   expect(result.swift_dispatch_slots[0]?.decode.status).toBe("partial");
   expect(result.swift_dispatch_slots[1]?.decode.status).toBe("decoded");

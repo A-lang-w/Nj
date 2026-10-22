@@ -12,8 +12,9 @@ const nominalImage = (
     rel(at: number, target: number): void;
     text(at: number, value: string): void;
   }) => readonly number[],
+  size = 4096,
 ) => {
-  const bytes = Buffer.alloc(4096);
+  const bytes = Buffer.alloc(size);
   const u32 = (at: number, value: number) => bytes.writeUInt32LE(value, at);
   const rel = (at: number, target: number) =>
     bytes.writeInt32LE(target - at, at);
@@ -28,8 +29,8 @@ const nominalImage = (
   u32(36, 152);
   bytes.write("__TEXT", 40);
   bytes.writeBigUInt64LE(BASE, 56);
-  bytes.writeBigUInt64LE(4096n, 64);
-  bytes.writeBigUInt64LE(4096n, 80);
+  bytes.writeBigUInt64LE(BigInt(size), 64);
+  bytes.writeBigUInt64LE(BigInt(size), 80);
   u32(88, 5);
   u32(92, 5);
   u32(96, 1);
@@ -314,5 +315,168 @@ describe("Swift nominal type declarations", () => {
         status: "partial",
         reason: expect.stringContaining(hex(TYPES)),
       });
+  });
+});
+
+/** `count` structs, each nested in the previous one, in the given record order. */
+const nestedChainImage = (
+  count: number,
+  order: "parent-first" | "child-first",
+) =>
+  nominalImage((image) => {
+    context(image, MODULE, 0, null, { at: 0x700, value: "ReaMod" });
+    const descriptors = Array.from({ length: count }, (_, index) => {
+      const at = 0xa00 + index * 16;
+      context(
+        image,
+        at,
+        0x51,
+        index === 0 ? MODULE : at - 16,
+        { at: 0xd00 + index * 4, value: `N${index}` },
+        0x900,
+      );
+      return at;
+    });
+    return order === "parent-first" ? descriptors : descriptors.reverse();
+  });
+
+describe("Swift nominal type declaration bounds", () => {
+  it("bounds nesting depth independently of record order", () => {
+    const project = (order: "parent-first" | "child-first") =>
+      decodeAppleDispatchMetadata(
+        nestedChainImage(40, order),
+        10_000,
+        provenance,
+      )
+        .swift_decls.map(({ name, qualified_name, decode }) => ({
+          name,
+          qualified_name,
+          status: decode.status,
+        }))
+        .sort(
+          (left, right) =>
+            Number(left.name.slice(1)) - Number(right.name.slice(1)),
+        );
+    const parentFirst = project("parent-first");
+
+    expect(project("child-first")).toEqual(parentFirst);
+    // The module and 31 nested types fill the 32-context bound.
+    expect(parentFirst[30]).toMatchObject({
+      status: "decoded",
+      qualified_name: Array.from(
+        { length: 31 },
+        (_, index) => `N${index}`,
+      ).join("."),
+    });
+    expect(parentFirst.slice(31).map(({ status }) => status)).toEqual(
+      Array.from({ length: 9 }, () => "partial"),
+    );
+  });
+
+  it("bounds the qualified name length", () => {
+    const result = decodeAppleDispatchMetadata(
+      nominalImage((image) => {
+        context(image, MODULE, 0, null, { at: 0x700, value: "ReaMod" });
+        context(image, 0x320, 0x51, MODULE, {
+          at: 0x1000,
+          value: "O".repeat(3000),
+        });
+        context(image, 0x340, 0x51, 0x320, {
+          at: 0x2000,
+          value: "I".repeat(2000),
+        });
+        return [0x320, 0x340];
+      }, 0x3000),
+      1000,
+      provenance,
+    );
+
+    expect(result.swift_decls[0]?.qualified_name).toBe("O".repeat(3000));
+    expect(result.swift_decls[1]).toMatchObject({
+      qualified_name: null,
+      decode: {
+        status: "partial",
+        reason: expect.stringContaining("exceeds 4096 characters"),
+      },
+    });
+  });
+
+  it("decodes a class vtable before later declarations spend the budget", () => {
+    const result = decodeAppleDispatchMetadata(
+      nominalImage((image) => {
+        context(image, MODULE, 0, null, { at: 0x700, value: "ReaMod" });
+        // Class with a one-slot vtable at descriptor + 44.
+        context(image, 0x320, 0x80000050, MODULE, { at: 0x710, value: "C" });
+        image.u32(0x320 + 28, 1);
+        image.u32(0x320 + 48, 1);
+        image.rel(0x320 + 56, 0x900);
+        const structs = Array.from({ length: 50 }, (_, index) => {
+          const at = 0xa00 + index * 16;
+          context(image, at, 0x51, MODULE, {
+            at: 0xd00 + index * 4,
+            value: `S${index}`,
+          });
+          return at;
+        });
+        return [0x320, ...structs];
+      }),
+      30,
+      provenance,
+    );
+
+    expect(result.swift_dispatch_slots).toMatchObject([
+      { owner: "C", decode: { status: "decoded" } },
+    ]);
+    expect(result.swift_decls.length).toBeLessThan(51);
+    expect(
+      result.coverage.find(({ facet }) => facet === "swift_declarations"),
+    ).toMatchObject({ status: "partial" });
+  });
+
+  it("keeps a non-executable accessor out of decoded declarations", () => {
+    const result = decodeAppleDispatchMetadata(
+      nominalImage((image) => {
+        context(image, MODULE, 0, null, { at: 0x700, value: "ReaMod" });
+        context(image, 0x320, 0x51, MODULE, { at: 0x710, value: "S" }, 0x5000);
+        return [0x320];
+      }),
+      1000,
+      provenance,
+    );
+
+    expect(result.swift_decls).toMatchObject([
+      {
+        qualified_name: "S",
+        accessor_address: null,
+        decode: {
+          status: "partial",
+          reason: expect.stringContaining("not in executable mapped code"),
+        },
+      },
+    ]);
+  });
+
+  it("does not let a non-class name failure mark vtable coverage partial", () => {
+    const result = decodeAppleDispatchMetadata(
+      nominalImage((image) => {
+        context(image, MODULE, 0, null, { at: 0x700, value: "ReaMod" });
+        context(image, 0x320, 0x51, MODULE, { at: 0x710, value: "" });
+        return [0x320];
+      }),
+      1000,
+      provenance,
+    );
+
+    expect(
+      result.coverage.find(({ facet }) => facet === "swift_declarations"),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining("name is empty"),
+    });
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "swift_class_vtable_descriptors",
+      ),
+    ).toMatchObject({ status: "complete" });
   });
 });

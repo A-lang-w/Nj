@@ -48,7 +48,7 @@ import {
   type DispatchRecordBudget,
   type SwiftRelativeTargetLocation,
 } from "./AppleSwiftDispatchFacets.js";
-import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
+import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
 import { decodeSwiftNominalTypes } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
@@ -223,35 +223,36 @@ export const decodeAppleDispatchMetadata = (
     if (section.size / 4 > maxRecords) budget.truncated = true;
   }
   const admit = () => budget.admit();
-  const nominal = decodeSwiftNominalTypes({
+  const executable = (address: bigint) =>
+    segments.some(
+      (segment) =>
+        segment.executable &&
+        address >= segment.address &&
+        address < segment.address + segment.size,
+    );
+  const vtables = createSwiftClassVtableDecoder({
+    result,
+    readers: {
+      u32,
+      relative: swiftRelative,
+      location,
+      evidence,
+      admit,
+      executable,
+    },
+  });
+  const declarations = decodeSwiftNominalTypes({
     entries: typeEntries,
     result,
+    visitor: vtables.visitor,
     readers: {
       u32,
       relative: swiftRelative,
       string,
       location,
       evidence,
+      executable,
       admit,
-    },
-  });
-  const vtables = decodeSwiftClassVtables({
-    descriptors: nominal.descriptors,
-    failures: nominal.failures,
-    result,
-    readers: {
-      u32,
-      relative: swiftRelative,
-      location,
-      evidence,
-      admit,
-      executable: (address) =>
-        segments.some(
-          (segment) =>
-            segment.executable &&
-            address >= segment.address &&
-            address < segment.address + segment.size,
-        ),
     },
   });
   pushDispatchCoverage({
@@ -264,8 +265,8 @@ export const decodeAppleDispatchMetadata = (
     objcClassListScanTruncated,
     truncated: budget.truncated,
     fixups,
-    declarations: nominal.facts,
-    vtables,
+    declarations,
+    vtables: vtables.facts(),
     swift,
   });
   return objcSwiftMetadataSchema.parse(result);
