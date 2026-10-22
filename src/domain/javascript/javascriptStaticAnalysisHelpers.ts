@@ -173,7 +173,7 @@ export const staticArrayValues = (
 /** Classify whether inert path syntax is a module specifier or file expression. */
 export type JavaScriptStaticPathIntrinsicQuery = (
   node: t.Node,
-  fact?: "source-directory",
+  fact?: "source-directory" | "join",
 ) => boolean;
 
 export const staticPathResolutionContext = (
@@ -226,10 +226,8 @@ const staticConcatenation = (
   return text.startsWith("/") ? posix.join(".", text) : undefined;
 };
 
-// Only proven node:path join helpers; array .join / bare join stay unknown.
-// path.resolve is recognized earlier via nodePathResolve, not by name.
-const POSIX_PATH_JOIN_NAMES = new Set(["path.join", "path.posix.join"]);
-
+// path.resolve / path.join are proven via nodePathResolve (binding-aware).
+// Unrelated .resolve / .join (arrays, Promise, custom objects) stay unknown.
 const staticCallPath = (
   node: t.CallExpression | t.NewExpression,
   nodePathResolve?: JavaScriptStaticPathIntrinsicQuery,
@@ -241,7 +239,7 @@ const staticCallPath = (
     return staticFileUrlPath(node, nodePathResolve);
   }
   if (name.endsWith(".resolve")) return undefined;
-  if (!POSIX_PATH_JOIN_NAMES.has(name)) return undefined;
+  if (!nodePathResolve?.(node.callee, "join")) return undefined;
   const parts: string[] = [];
   for (const argument of node.arguments) {
     if (isDirectoryPath(argumentNode(argument), nodePathResolve)) {
