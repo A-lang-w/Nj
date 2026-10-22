@@ -122,6 +122,9 @@ export const createShutdown = (input: {
       if (!requested.signal.aborted) startupSettled = true;
       prepareShutdown = owners.handle?.prepareShutdown;
       cleanupOwners.unshift(...transportCleanupOwners(owners));
+      // A server that started before this attachment can reopen the session
+      // after an earlier attempt closed it, so the next attempt closes it again.
+      sessionOwner.closed = false;
     },
     shutdown,
     request: requestShutdown,

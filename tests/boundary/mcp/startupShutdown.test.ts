@@ -261,6 +261,56 @@ it("closes a transport whose start raced a shutdown request", async () => {
   expect(output).toEqual([]);
 });
 
+it("closes a session reopened by a server whose start raced a shutdown request", async () => {
+  const [target] = await createBinarySessionTargets();
+  let clientCloses = 0;
+  const session = createTestBinarySession((): AnalysisClient => ({
+    execute: async () => observed(null),
+    close: async () => {
+      clientCloses += 1;
+      return ok(null);
+    },
+  }));
+  const serveStarted = createDeferred<void>();
+  const releaseServe = createDeferred<void>();
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  let handleCloses = 0;
+  const running = run(
+    runtime({
+      createSession: () => session,
+      serve: async () => {
+        serveStarted.resolve();
+        await releaseServe.promise;
+        // A request the live server admitted before `serve` resolved.
+        expect((await session.open(target)).ok).toBe(true);
+        return {
+          close: async () => {
+            handleCloses += 1;
+          },
+        };
+      },
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await serveStarted.promise;
+  requests[0]?.();
+  // The request's session close settles before the server reopens it.
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseServe.resolve();
+
+  await expect(running).resolves.toBe(0);
+  expect(handleCloses).toBe(1);
+  expect(clientCloses).toBe(1);
+  expect(await session.status()).toMatchObject({ open: false });
+  expect(unregistrations).toEqual(["shutdown"]);
+  expect(output).toEqual([]);
+});
+
 it("treats a cancelled open that reports its own incomplete cleanup as the shutdown's", async () => {
   const [target] = await createBinarySessionTargets();
   const healthStarted = createDeferred<void>();
