@@ -1391,3 +1391,52 @@ it.each([
     );
   },
 );
+
+it.each([
+  { stage: 2, lateEvent: false },
+  { stage: 2, lateEvent: true },
+  { stage: 3, lateEvent: false },
+])(
+  "rejects a tree-first same-file main reload (read $stage, late event $lateEvent)",
+  async ({ stage, lateEvent }) => {
+    const root = await electronFixture();
+    const main = pathToFileURL(join(root, "index.html")).href;
+    let reads = 0;
+    const frame = () => ({
+      id: "frame-main",
+      url: main,
+      loaderId: reads >= stage ? "replacement" : "initial",
+    });
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: main,
+      commandResult: ({ method }) => {
+        if (method !== "Page.getFrameTree") return undefined;
+        reads++;
+        return { frameTree: { frame: frame() } };
+      },
+      commandEvents: ({ method, sessionId }) =>
+        lateEvent && method === "DOMSnapshot.captureSnapshot"
+          ? [
+              {
+                method: "Page.frameNavigated",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: { frame: frame() },
+              },
+            ]
+          : undefined,
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "electron-page",
+        observation_ms: 0,
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "target_changed" },
+    });
+    expect(reads).toBeGreaterThanOrEqual(stage);
+  },
+);

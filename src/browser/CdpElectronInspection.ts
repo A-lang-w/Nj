@@ -108,7 +108,7 @@ export const inspectCdpElectronPage = async (
   };
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
-    const changedFrame = advanceFrameGeneration(event, state);
+    advanceFrameGeneration(event, state);
     const priorScripts = state.scripts.length;
     ingestElectronScriptEvent({
       event,
@@ -122,14 +122,6 @@ export const inspectCdpElectronPage = async (
         script,
         state.frameGenerations.get(script.frameId) ?? 0,
       );
-    if (
-      state.mainFrameId !== undefined &&
-      (changedFrame === state.mainFrameId ||
-        (event.method === "Page.navigatedWithinDocument" &&
-          cdpStringValue(recordValue(event.params)?.frameId) ===
-            state.mainFrameId))
-    )
-      state.navigationDuringCapture = true;
   });
   try {
     return await runElectronInspection(
@@ -278,13 +270,14 @@ const unprovenFrameIds = (
 const advanceFrameGeneration = (
   event: CdpEvent,
   state: ElectronInspectionState,
-): string | undefined => {
+): void => {
   // A same-document event changes the cached identity, never its generation
   // or authority. Later full-frame replay must compare with that current URL.
   if (event.method === "Page.navigatedWithinDocument") {
     const params = recordValue(event.params);
     const id = cdpStringValue(params?.frameId);
     if (id === undefined) return;
+    if (id === state.mainFrameId) state.navigationDuringCapture = true;
     const previous = state.frameDocuments.get(id);
     if (previous === undefined) return;
     const url = cdpFrameUrl(params);
@@ -313,17 +306,38 @@ const advanceFrameGeneration = (
   if (
     document !== undefined &&
     previous !== undefined &&
-    document.url === previous.url &&
-    document.loaderId === previous.loaderId &&
-    document.parentId === previous.parentId
+    sameFrameDocument(document, previous)
   )
     return;
+  invalidateFrameGenerations(id, state);
+  // Event ancestry only invalidates future facts; it never authorizes a frame.
+  const parent =
+    cdpStringValue(frame?.parentId) ?? cdpStringValue(frame?.parentFrameId);
+  if (parent !== undefined && parent !== "") state.frameParents.set(id, parent);
+  else state.frameParents.delete(id);
+  if (document !== undefined) state.frameDocuments.set(id, document);
+};
+
+const sameFrameDocument = (
+  left: ElectronFrameDocument,
+  right: ElectronFrameDocument,
+): boolean =>
+  left.url === right.url &&
+  left.loaderId === right.loaderId &&
+  left.parentId === right.parentId;
+
+/** Tree and event observations invalidate the same document generation. */
+const invalidateFrameGenerations = (
+  id: string,
+  state: ElectronInspectionState,
+): void => {
   const pending = [id];
   const changed = new Set<string>();
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined || changed.has(current)) continue;
     changed.add(current);
+    if (current === state.mainFrameId) state.navigationDuringCapture = true;
     state.frameGenerations.set(
       current,
       (state.frameGenerations.get(current) ?? 0) + 1,
@@ -332,13 +346,6 @@ const advanceFrameGeneration = (
     for (const [child, parent] of state.frameParents)
       if (parent === current) pending.push(child);
   }
-  // Event ancestry only invalidates future facts; it never authorizes a frame.
-  const parent =
-    cdpStringValue(frame?.parentId) ?? cdpStringValue(frame?.parentFrameId);
-  if (parent !== undefined && parent !== "") state.frameParents.set(id, parent);
-  else state.frameParents.delete(id);
-  if (document !== undefined) state.frameDocuments.set(id, document);
-  return id;
 };
 
 /** Only a known URL and loader together can prove a duplicate document event. */
@@ -382,8 +389,12 @@ const seedFrameDocuments = (
       // Do not overwrite that newer observation with this in-flight tree.
       state.frameDocuments.get(id) === documents.get(id) &&
       (generations.get(id) ?? 0) === (state.frameGenerations.get(id) ?? 0)
-    )
+    ) {
+      const previous = documents.get(id);
+      if (previous !== undefined && !sameFrameDocument(previous, document))
+        invalidateFrameGenerations(id, state);
       state.frameDocuments.set(id, document);
+    }
   }
 };
 

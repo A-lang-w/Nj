@@ -624,3 +624,140 @@ it("admits a prefix and fitting suffix around an oversized Electron source", asy
     count: 1,
   });
 });
+
+it.each([
+  ...[2, 3].flatMap((stage) =>
+    [false, true].map((lateEvent) => ({
+      scope: "main",
+      stage,
+      lateEvent,
+      changed: true,
+    })),
+  ),
+  ...[false, true].map((lateEvent) => ({
+    scope: "child",
+    stage: 2,
+    lateEvent,
+    changed: true,
+  })),
+  ...["main", "child"].map((scope) => ({
+    scope,
+    stage: 2,
+    lateEvent: true,
+    changed: false,
+  })),
+])(
+  "detects tree-first document replacement $scope/read$stage/late=$lateEvent/changed=$changed",
+  async ({ scope, stage, lateEvent, changed }) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-tree-first-document-"));
+    temporary.push(root);
+    const main = join(root, "main.html"),
+      child = join(root, "child.html"),
+      script = join(root, "app.js");
+    await Promise.all([
+      writeFile(main, "main"),
+      writeFile(child, "child"),
+      writeFile(script, "void 0;"),
+    ]);
+    const mainUrl = pathToFileURL(main).href,
+      childUrl = pathToFileURL(child).href;
+    let listener: (event: CdpEvent) => void = () => {};
+    let reads = 0;
+    let replayed = false;
+    const emitScript = (hash: string, frameId: string, contextId: number) => {
+      listener({
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: contextId, auxData: { frameId } } },
+      });
+      listener({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: hash,
+          url: pathToFileURL(script).href,
+          executionContextId: contextId,
+          hash,
+        },
+      });
+    };
+    const document = (id: string) => ({
+      id,
+      ...(id === "main" ? {} : { parentId: id === "child" ? "main" : "child" }),
+      url: id === "main" ? mainUrl : childUrl,
+      loaderId:
+        changed && reads >= stage && id === scope
+          ? "replacement"
+          : `loader-${id}`,
+    });
+    const replay = () => {
+      if (replayed || reads < stage) return;
+      replayed = true;
+      if (lateEvent)
+        listener({
+          method: "Page.frameNavigated",
+          params: { frame: document(scope) },
+        });
+      emitScript("after-child", "child", 10);
+      emitScript("after-grandchild", "grandchild", 11);
+    };
+    const connection = {
+      onEvent: (value: typeof listener) => {
+        listener = value;
+        return () => {};
+      },
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          reads++;
+          return {
+            frameTree: {
+              frame: document("main"),
+              childFrames: [
+                {
+                  frame: document("child"),
+                  childFrames: [{ frame: document("grandchild") }],
+                },
+              ],
+            },
+          };
+        }
+        if (method === "Debugger.enable") {
+          emitScript("before-child", "child", 7);
+          emitScript("before-grandchild", "grandchild", 8);
+        }
+        if (method === "Page.getResourceTree") {
+          replay();
+          return {
+            frameTree: { frame: { id: "main", url: mainUrl }, resources: [] },
+          };
+        }
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    const result = inspectRaceConnection(connection, mainUrl, {
+      report: async (update) => {
+        if (update.completed === 3) replay();
+      },
+    });
+    if (scope === "main" && changed)
+      await expect(result).rejects.toMatchObject({ reason: "target_changed" });
+    else {
+      const captured = await result;
+      for (const id of ["child", "grandchild"]) {
+        expect(captured.scripts.items).toContainEqual(
+          expect.objectContaining({ cdp_hash: `before-${id}`, frame_id: id }),
+        );
+        expect(captured.scripts.items).toContainEqual(
+          expect.objectContaining({
+            cdp_hash: `after-${id}`,
+            frame_id: changed ? null : id,
+          }),
+        );
+      }
+      expect(
+        captured.completeness.attach_limited_sections.includes("frames"),
+      ).toBe(changed);
+    }
+  },
+);
