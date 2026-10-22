@@ -8,7 +8,10 @@ import {
   writtenResponse,
   type GenerateValue,
 } from "../../domain/analysisView/environmentStateWriteApply.js";
-import { insertIndex } from "../../domain/analysisView/environmentStateWriteExplain.js";
+import {
+  insertIndex,
+  nextInteger,
+} from "../../domain/analysisView/environmentStateWriteExplain.js";
 import {
   pathValuesOf,
   type GeneratedRule,
@@ -17,7 +20,6 @@ import {
 } from "../../domain/analysisView/environmentStateWriteRules.js";
 import {
   formatClock,
-  integerOf,
   isUuid,
   seededToken,
   seededUuid,
@@ -125,13 +127,12 @@ const observedEntity = (
   return isObject(object) ? object : undefined;
 };
 
-/** The largest integer the entities hold in a field, plus one. */
-const nextInteger = (entities: readonly StateEntity[], field: string): number =>
-  entities.reduce(
-    (largest, entity) =>
-      Math.max(largest, integerOf(entity.fields[field]) ?? 0),
-    0,
-  ) + 1;
+/** One past the largest integer these entities hold in the field, or undefined when none holds one. */
+const nextHeld = (entities: readonly StateEntity[], field: string) =>
+  nextInteger(
+    entities.map((entity) => entity.fields),
+    field,
+  );
 
 /**
  * Values one served write generates: its clock instant, sequences one past the largest held
@@ -153,7 +154,7 @@ const generator = (
   const { store } = serving;
   const write = store.pendingWrite();
   const taken = new Map<string, number>();
-  const sequence = (key: string, held: number): number => {
+  const sequence = (key: string, held: number | undefined): number => {
     const value = store.sequenceAfter(key, held);
     taken.set(key, value);
     return value;
@@ -162,33 +163,40 @@ const generator = (
   // A sequence never reuses a value the state started with, even after its entity was deleted.
   const started = store.startedWith(request.plan.target ?? "");
   const startedIn = started.filter((held) => held.collection === target.name);
-  const unused = (field: string, make: (attempt: number) => string): string => {
+  const unused = (
+    field: string,
+    make: (attempt: number) => string,
+  ): Result<string, string> => {
     const held = new Set(
       ofType.map((entity) => scalarText(entity.fields[field])),
     );
     for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
       const value = make(attempt);
-      if (!held.has(value)) return value;
+      if (!held.has(value)) return ok(value);
     }
-    return make(GENERATION_ATTEMPTS);
+    return err(
+      `Could not generate a unique value for ${field} after ${String(GENERATION_ATTEMPTS)} attempts without colliding with the held state.`,
+    );
   };
-  const generate = (rule: GeneratedRule): JsonValue => {
+  const generate = (rule: GeneratedRule): Result<JsonValue, string> => {
     const exemplar = target.observed[rule.field] ?? "";
     const seed = (attempt: number) =>
       `${store.state.evidenceId}:${request.tool.name}:${rule.field}:${String(write.count)}:${String(attempt)}`;
     switch (rule.rule) {
       case "clock":
-        return formatClock(write.clockMs, rule.format);
+        return ok(formatClock(write.clockMs, rule.format));
       case "sequence":
-        return spelledLike(
-          exemplar,
-          sequence(
-            `${request.tool.name} ${rule.field} ${rule.scope === "collection" ? target.name : ""}`,
-            nextInteger(
-              rule.scope === "collection"
-                ? [...target.collection, ...startedIn]
-                : [...ofType, ...started],
-              rule.field,
+        return ok(
+          spelledLike(
+            exemplar,
+            sequence(
+              `${request.tool.name} ${rule.field} ${rule.scope === "collection" ? target.name : ""}`,
+              nextHeld(
+                rule.scope === "collection"
+                  ? [...target.collection, ...startedIn]
+                  : [...ofType, ...started],
+                rule.field,
+              ),
             ),
           ),
         );
@@ -198,11 +206,13 @@ const generator = (
         );
       case "identity":
         if (rule.generator === "sequence")
-          return spelledLike(
-            exemplar,
-            sequence(
-              `${request.plan.target ?? ""} ${rule.field} ${target.name}`,
-              nextInteger([...target.collection, ...startedIn], rule.field),
+          return ok(
+            spelledLike(
+              exemplar,
+              sequence(
+                `${request.plan.target ?? ""} ${rule.field} ${target.name}`,
+                nextHeld([...target.collection, ...startedIn], rule.field),
+              ),
             ),
           );
         return unused(rule.field, (attempt) =>
@@ -255,7 +265,12 @@ const answerCreate = (
   );
   const observed = observedEntity(serving, plan);
   if (collection === undefined || observed === undefined)
-    return err(refused(tool, `Tool ${tool.name} needs every path argument.`));
+    return err(
+      refused(
+        tool,
+        `Tool ${tool.name} needs every path argument to be non-empty.`,
+      ),
+    );
   if (plan.collection !== null && plan.collection !== collection)
     return err(
       refused(

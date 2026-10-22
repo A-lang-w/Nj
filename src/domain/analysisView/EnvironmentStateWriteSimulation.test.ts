@@ -18,6 +18,11 @@ import {
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
+import { itemTarget, SimulatedState } from "./environmentStateWriteChecks.js";
+import {
+  laterObservation,
+  type ObservationSearch,
+} from "./environmentStateWriteObserve.js";
 import { updatedFields } from "./environmentStateWriteApply.js";
 import {
   retainFixed,
@@ -166,7 +171,7 @@ describe("update constants", () => {
         body: { format: "hardcover" },
         id: "2",
       },
-      () => bookClock(9),
+      () => ok(bookClock(9)),
     );
     expect(served).toEqual(
       ok(paper({ ...SECOND_BOOK, updated_at: bookClock(9) }, "HARDCOVER")),
@@ -269,6 +274,97 @@ describe("slug rules learned from a later call", () => {
         "patch_books_by_id",
       ),
     ).toMatchObject({ served: false, reason: "unexplained-change" });
+  });
+});
+
+describe("clock rules learned across calls", () => {
+  it("serves a clock only when every recorded call changed that field", () => {
+    const oldFirst = "2026-10-01T09:00:00Z";
+    const oldSecond = "2026-10-01T10:00:00Z";
+    const described = (
+      entry: Book,
+      description: string,
+      publishedAt: string,
+    ): Book => ({ ...entry, description, published_at: publishedAt });
+    const first = described(FIRST_BOOK, "original", oldFirst);
+    const second = described(SECOND_BOOK, "other", oldSecond);
+    const published = described(
+      renamedBook(FIRST_BOOK, "Renamed Book", 3),
+      "original",
+      bookClock(3),
+    );
+    /** The first call stamps `published_at`; `later` is the second call's answer. */
+    const rows = (later: Book, sent: Book): TimedCaptureRow[] => [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/1", published, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", published],
+      ["PATCH", "/api/books/2", later, 200, sent],
+      ["GET", "/api/books/2", later],
+    ];
+    // The description edit stamps `updated_at` and leaves `published_at` as it was.
+    const edited = described(
+      { ...SECOND_BOOK, updated_at: bookClock(5) },
+      "revised",
+      oldSecond,
+    );
+    expect(
+      gated(rows(edited, { description: "revised" }), "patch_books_by_id"),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+    const stamped = described(
+      renamedBook(SECOND_BOOK, "Second Edition", 5),
+      "other",
+      bookClock(5),
+    );
+    const plan = gated(
+      rows(stamped, { name: "Second Edition" }),
+      "patch_books_by_id",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+    });
+    expect(plan.rules).toContainEqual({
+      field: "published_at",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    });
+  });
+
+  it("leaves a clock unserved when an earlier call kept the field a later call stamped", () => {
+    const oldFirst = "2026-10-01T09:00:00Z";
+    const oldSecond = "2026-10-01T10:00:00Z";
+    const described = (
+      entry: Book,
+      description: string,
+      publishedAt: string,
+    ): Book => ({ ...entry, description, published_at: publishedAt });
+    const first = described(FIRST_BOOK, "original", oldFirst);
+    const second = described(SECOND_BOOK, "other", oldSecond);
+    const edited = described(
+      { ...SECOND_BOOK, updated_at: bookClock(3) },
+      "revised",
+      oldSecond,
+    );
+    const published = described(
+      renamedBook(FIRST_BOOK, "Renamed Book", 5),
+      "original",
+      bookClock(5),
+    );
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/2", edited, 200, { description: "revised" }],
+      ["GET", "/api/books/2", edited],
+      ["PATCH", "/api/books/1", published, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", published],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
   });
 });
 
@@ -740,6 +836,60 @@ describe("reads named as serving names them", () => {
     });
   });
 
+  it("confirms a delete by a plain absence of an entity held under the encoded collection", () => {
+    const alpha = orgBook(1, "acme1", "Alpha");
+    const beta = orgBook(2, "beta2", "Beta");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [alpha]],
+      ["GET", "/api/orgs/beta2/books", [beta]],
+      ["GET", "/api/orgs/%61cme1/books/1", alpha],
+      ["GET", "/api/orgs/beta2/books/2", beta],
+      ["DELETE", "/api/orgs/acme1/books/1", "", 204],
+      ["GET", "/api/orgs/acme1/books/1", BOOK_NOT_FOUND, 404],
+      ["DELETE", "/api/orgs/beta2/books/2", "", 204],
+      ["GET", "/api/orgs/beta2/books/2", BOOK_NOT_FOUND, 404],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "delete")).toMatchObject({
+      served: true,
+      checked_record_ordinals: expect.arrayContaining([5]),
+    });
+  });
+
+  it("learns a plain-path update from a later read under the encoded collection", () => {
+    const alpha = orgBook(1, "acme1", "Alpha");
+    const renamed = orgBook(1, "acme1", "Renamed");
+    const beta = orgBook(2, "beta2", "Beta");
+    const renamedBeta = orgBook(2, "beta2", "Renamed Beta");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [alpha]],
+      ["GET", "/api/orgs/beta2/books", [beta]],
+      ["GET", "/api/orgs/%61cme1/books/1", alpha],
+      ["GET", "/api/orgs/beta2/books/2", beta],
+      ["PATCH", "/api/orgs/acme1/books/1", "", 204, { name: "Renamed" }],
+      ["GET", "/api/orgs/%61cme1/books/1", renamed],
+      ["GET", "/api/orgs/%61cme1/books/1", renamed],
+      [
+        "PATCH",
+        "/api/orgs/beta2/books/2",
+        renamedBeta,
+        200,
+        { name: "Renamed Beta" },
+      ],
+      ["GET", "/api/orgs/beta2/books/2", renamedBeta],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "update")).toMatchObject({
+      served: true,
+      observation: { ordinal: 5 },
+      checked_record_ordinals: expect.arrayContaining([6]),
+    });
+  });
+
   it("checks a line whose query repeats a name with one value, which a call still names", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/books?tag=a&tag=a", [FIRST_BOOK]],
@@ -753,6 +903,85 @@ describe("reads named as serving names them", () => {
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: false,
       contradicted_by: 4,
+    });
+  });
+});
+
+describe("resolved encoded item observations", () => {
+  it("matches the resolved raw ID when the collection alias and response ID are encoded", () => {
+    const collection = "/api/orgs/%61cme1/books";
+    const state = new SimulatedState(
+      [
+        {
+          type: "/api/orgs/{org_id}/books",
+          collection,
+          id: "%61",
+          fields: { id: "%61", name: "Before" },
+          view_fields: [],
+          record_ordinals: [],
+        },
+      ],
+      [],
+    );
+    const write = {
+      ordinal: 0,
+      method: "PATCH",
+      path: "/api/orgs/acme1/books/%61",
+      query: undefined,
+      status: 204,
+      start: 0,
+      end: 0,
+    };
+    const target = itemTarget(state, "/api/orgs/{org_id}/books", write);
+    const itemView = {
+      tool: "get_books_by_id",
+      type: "/api/orgs/{org_id}/books",
+      shape: "item" as const,
+      pointer: "",
+      fields: ["id", "name"],
+      required_fields: ["id"],
+      checked_record_ordinals: [1],
+      envelope_ordinal: 1,
+    };
+    const search: ObservationSearch = {
+      records: [
+        write,
+        {
+          ordinal: 1,
+          method: "GET",
+          path: "/api/orgs/acme1/books/%61",
+          query: undefined,
+          status: 200,
+          start: 1,
+          end: 1,
+        },
+      ],
+      from: 0,
+      viewOf: () => itemView,
+      withBody: (_ordinal, use) => use({ id: "%61", name: "After" }),
+    };
+
+    expect(target).toEqual({ collection, id: "%61" });
+    expect(
+      laterObservation(search, {
+        type: itemView.type,
+        ...target,
+        idField: "id",
+        held: () => true,
+        isWrite: (record) => record.method !== "GET",
+        sameItem: (record) => {
+          const resolved = itemTarget(state, itemView.type, record);
+          return (
+            resolved.collection === target.collection &&
+            resolved.id === target.id
+          );
+        },
+      }),
+    ).toEqual({
+      ordinal: 1,
+      pointer: "",
+      object: { id: "%61", name: "After" },
+      id: "%61",
     });
   });
 });
@@ -844,6 +1073,63 @@ describe("what a check leaves pending", () => {
     });
   });
 
+  it("checks only a partial update's fields that remain after a later overwrite", () => {
+    const patched = described(1, "Patched", "survives");
+    const replaced = described(1, "Replaced", "survives");
+    const changedByOtherAction = described(1, "Archived", "survives");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
+      ["GET", "/api/books/1", described(1, "First Book", "original")],
+      ["GET", "/api/books/2", described(2, "Second Book", "other")],
+      [
+        "PATCH",
+        "/api/books/1",
+        patched,
+        200,
+        { name: "Patched", description: "survives" },
+      ],
+      ["PUT", "/api/books/1", replaced, 200, { name: "Replaced" }],
+      ["POST", "/api/books/1/archive", changedByOtherAction, 204, {}],
+      ["GET", "/api/books/1", changedByOtherAction],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
+  it("checks a surviving sent member after a derived field was bumped by an unmodelled write", () => {
+    const entry = (
+      name: string,
+      description: string,
+      version: number,
+    ): Book => ({ id: 1, name, description, version });
+    const other = { id: 2, name: "B", description: "y", version: 1 };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [entry("A", "x", 1), other]],
+      ["GET", "/api/books/1", entry("A", "x", 1)],
+      ["GET", "/api/books/2", other],
+      [
+        "PATCH",
+        "/api/books/1",
+        entry("A2", "new", 2),
+        200,
+        { name: "A2", description: "new" },
+      ],
+      ["PUT", "/api/books/1", entry("A3", "new", 2), 200, { name: "A3" }],
+      ["POST", "/api/books/1/archive", { archived: true }, 204, {}],
+      // The read still shows the description the patch sent. The version bump is not that patch.
+      ["GET", "/api/books/1", entry("A3", "new", 9)],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([{ field: "version", rule: "increment" }]),
+      checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
   it("neither resynchronises nor checks an entity by a read begun while a write to it still ran", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
@@ -858,6 +1144,30 @@ describe("what a check leaves pending", () => {
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: true,
       checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
+  it("learns an update from a read begun after the write, not from one that overlapped it", () => {
+    const named = (name: string) => ({ id: 1, name });
+    const other = { id: 2, name: "B" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [named("A"), other]],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/2", other],
+      // The patch runs from second 3 to 5.5 and returns no entity. A read begun while it still runs shows the old name.
+      ["PATCH", "/api/books/1", "", 204, { name: "Z" }, 2500],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/1", named("Z")],
+      ["GET", "/api/books", [named("Z"), other]],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      observation: { ordinal: 6, pointer: "" },
+      body: { accepted: ["name"], fixed: [] },
+      rules: [{ field: "name", rule: "echo" }],
+      checked_record_ordinals: [7],
       contradicted_by: null,
     });
   });
@@ -880,6 +1190,38 @@ describe("what a check leaves pending", () => {
 });
 
 describe("what a later call must follow", () => {
+  it("rejects a later create whose unique field repeats a value already held", () => {
+    const existing = {
+      id: "123e4567-e89b-42d3-a456-426614174000",
+      ref: "223e4567-e89b-42d3-a456-426614174000",
+      name: "Existing",
+    };
+    const first = {
+      id: "323e4567-e89b-42d3-a456-426614174000",
+      ref: "423e4567-e89b-42d3-a456-426614174000",
+      name: "First",
+    };
+    const duplicate = {
+      id: "523e4567-e89b-42d3-a456-426614174000",
+      ref: first.ref,
+      name: "Second",
+    };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/items", [existing]],
+      ["GET", `/api/items/${existing.id}`, existing],
+      ["POST", "/api/items", first, 201, { name: "First" }],
+      ["GET", `/api/items/${first.id}`, first],
+      ["GET", "/api/items", [existing, first]],
+      ["POST", "/api/items", duplicate, 201, { name: "Second" }],
+      ["GET", `/api/items/${duplicate.id}`, duplicate],
+      ["GET", "/api/items", [existing, first, duplicate]],
+    ];
+    expect(gated(rows, "post_items")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
   it("refuses a create whose later call does not follow the sequence it learned", () => {
     const ranked = (at: Book, rank: number) => ({ ...at, rank });
     const third = ranked(book(3, "Third Book", bookClock(3)), 3);
@@ -1188,6 +1530,192 @@ describe("what an unmodelled write explains", () => {
     expect(gated(rows, "put_books_by_id")).toMatchObject({
       served: false,
       contradicted_by: 8,
+    });
+  });
+});
+
+describe("timed write observations and generated clocks", () => {
+  it("does not learn an update from a read that began before the write completed", () => {
+    const changed = { ...FIRST_BOOK, name: "Changed", slug: "changed" };
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        { name: "Changed" },
+        200,
+        { name: "Changed" },
+        2_000,
+      ],
+      // This read starts before the PATCH ends and still shows the old value.
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/1", changed],
+      ["GET", "/api/books/1", changed],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      observation: { ordinal: 5 },
+      checked_record_ordinals: [6],
+    });
+  });
+
+  it("refuses a later update that leaves a learned clock unchanged", () => {
+    const afterFirst = {
+      ...FIRST_BOOK,
+      name: "First update",
+      updated_at: bookClock(4),
+    };
+    const afterSecond = { ...afterFirst, name: "Second update" };
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["PATCH", "/api/books/1", afterFirst, 200, { name: "First update" }],
+      ["GET", "/api/books/1", afterFirst],
+      [
+        "PATCH",
+        "/api/books/1",
+        { id: 1, name: "Second update" },
+        200,
+        { name: "Second update" },
+      ],
+      ["GET", "/api/books/1", afterSecond],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it("keeps a later update whose regenerated clock advances", () => {
+    const afterFirst = {
+      ...FIRST_BOOK,
+      name: "First update",
+      updated_at: bookClock(4),
+    };
+    const afterSecond = {
+      ...afterFirst,
+      name: "Second update",
+      updated_at: bookClock(6),
+    };
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        { name: "First update" },
+        200,
+        { name: "First update" },
+      ],
+      ["GET", "/api/books/1", afterFirst],
+      [
+        "PATCH",
+        "/api/books/1",
+        { id: 1, name: "Second update" },
+        200,
+        { name: "Second update" },
+      ],
+      ["GET", "/api/books/1", afterSecond],
+      ["GET", "/api/books/1", afterSecond],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [7],
+    });
+  });
+});
+
+describe("partial update observations", () => {
+  it("keeps write-response fields when the item view omits them", () => {
+    const first: Book = { ...FIRST_BOOK, description: "First description" };
+    const second: Book = { ...SECOND_BOOK, description: "Second description" };
+    const itemSummary = (entry: Book): Book => ({
+      id: entry.id!,
+      name: entry.name!,
+    });
+    const renamed = {
+      ...first,
+      name: "Renamed first",
+      slug: "renamed-first",
+      updated_at: bookClock(3),
+    };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", itemSummary(first)],
+      ["GET", "/api/books/2", itemSummary(second)],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed first" }],
+      ["GET", "/api/books/1", itemSummary(renamed)],
+      [
+        "PATCH",
+        "/api/books/2",
+        { id: 2, name: second.name!, description: "Revised description" },
+        200,
+        { description: "Revised description" },
+      ],
+      // This item view covers only id/name, not description or the learned clock.
+      ["GET", "/api/books/2", itemSummary(second)],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      reason: null,
+      checked_record_ordinals: [4],
+      rules: [
+        { field: "name", rule: "echo" },
+        { field: "slug", rule: "slug", from: "name" },
+        { field: "updated_at", rule: "clock" },
+        { field: "description", rule: "echo" },
+      ],
+    });
+  });
+
+  it("uses read coverage without dropping fields shown by the write response", () => {
+    const first: Book = { ...FIRST_BOOK, description: "First description" };
+    const second: Book = { ...SECOND_BOOK, description: "Second description" };
+    const itemSummary = (entry: Book): Book => ({
+      id: entry.id!,
+      name: entry.name!,
+      updated_at: entry.updated_at!,
+    });
+    const renamed = {
+      ...first,
+      name: "Renamed first",
+      slug: "renamed-first",
+      updated_at: bookClock(3),
+    };
+    const revised = {
+      id: 2,
+      name: second.name!,
+      description: "Revised description",
+    };
+    const revisedSummary = {
+      id: 2,
+      name: second.name!,
+      updated_at: bookClock(6),
+    };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", itemSummary(first)],
+      ["GET", "/api/books/2", itemSummary(second)],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed first" }],
+      ["GET", "/api/books/1", itemSummary(renamed)],
+      [
+        "PATCH",
+        "/api/books/2",
+        revised,
+        200,
+        { description: "Revised description" },
+      ],
+      // The item view covers the clock, but not the description returned by PATCH.
+      ["GET", "/api/books/2", revisedSummary],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      reason: null,
+      checked_record_ordinals: [4],
+      rules: [
+        { field: "name", rule: "echo" },
+        { field: "slug", rule: "slug", from: "name" },
+        { field: "updated_at", rule: "clock" },
+        { field: "description", rule: "echo" },
+      ],
     });
   });
 });

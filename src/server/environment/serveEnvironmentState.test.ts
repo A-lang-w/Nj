@@ -5,7 +5,33 @@ import {
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+
+const closeFailureControl = vi.hoisted(() => ({
+  failure: null as Error | null,
+}));
+
+vi.mock("../http/serveStreamableHttp.js", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../http/serveStreamableHttp.js")>();
+  return {
+    ...original,
+    serveStreamableHttp: async (
+      ...args: Parameters<typeof original.serveStreamableHttp>
+    ) => {
+      const served = await original.serveStreamableHttp(...args);
+      return {
+        ...served,
+        close: async () => {
+          await served.close();
+          const failure = closeFailureControl.failure;
+          closeFailureControl.failure = null;
+          if (failure !== null) throw failure;
+        },
+      };
+    },
+  };
+});
 
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
 import {
@@ -14,6 +40,8 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
+import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   environmentCard,
   STATE_INTAKE_EXTENSION,
@@ -91,6 +119,33 @@ const dataPlane = (
 
 const loginOf = (store: EnvironmentStateStore) =>
   store.entity("/api/users", "/api/users", "2")?.fields.login;
+
+/** The `file://` uri of a fresh file holding the renamed document. */
+const renamedStateUri = async (): Promise<string> => {
+  const root = await createTestTempDirectory("rea-environment-state-close-");
+  const path = join(root, "state.json");
+  await writeFile(path, JSON.stringify(renamedDocument()));
+  return pathToFileURL(path).href;
+};
+
+/** Fail every close of the first state file opened while `failing()` holds, recording its owner; restored when the test ends. */
+const failFirstFileClose = (failing: () => boolean = () => true) => {
+  const owners: OwnedFileHandle[] = [];
+  const close = OwnedFileHandle.prototype.close;
+  const spy = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (owners.length === 0) owners.push(this);
+      if (this === owners[0] && failing())
+        throw new Error("injected state file close failure");
+      await close.call(this);
+    });
+  onTestFinished(async () => {
+    spy.mockRestore();
+    for (const owner of owners) if (owner.handle.fd >= 0) await owner.close();
+  });
+  return owners;
+};
 
 /** A `data/add` message loading the document an https uri names. */
 const addByUri = (
@@ -356,6 +411,31 @@ describe("state data plane intake", () => {
   });
 });
 
+describe("state data plane file closes", () => {
+  it("keeps a state file whose close failed and closes it before the next file read", async () => {
+    const plane = dataPlane();
+    const uri = await renamedStateUri();
+    let failing = true;
+    const owners = failFirstFileClose(() => failing);
+    const failed = await plane.add({ kind: "file", file: { uri } });
+    expect(failed).toMatchObject({
+      error: {
+        code: -32000,
+        message: expect.stringContaining("could not be closed"),
+      },
+    });
+    expect(JSON.stringify(failed)).not.toContain(uri);
+    expect(loginOf(plane.store)).toBe("probe");
+    expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+    failing = false;
+    await expect(
+      plane.add({ kind: "file", file: { uri } }),
+    ).resolves.toMatchObject({ result: {} });
+    expect(owners[0]?.handle.fd).toBe(-1);
+    expect(loginOf(plane.store)).toBe("renamed");
+  });
+});
+
 describe("state data plane timing and order", () => {
   it("ends a download that outlives its time limit, whether or not the fetcher honours the signal", async () => {
     const uri = "https://state.example.test/slow.json?token=secret-token";
@@ -618,11 +698,62 @@ describe("state data plane response budget", () => {
             typeof value === "object" &&
             value !== null &&
             "result" in value &&
+            typeof (value as { result?: unknown }).result === "object" &&
             (value as { id?: unknown }).id === 3,
         ),
       ).toBe(false);
     } finally {
       stringify.mockRestore();
+    }
+  });
+});
+
+describe("repeated state reads", () => {
+  it("reuses the encoded size of a state for refused repeated data/get calls", async () => {
+    const plane = dataPlane();
+    const document = renamedDocument();
+    const large = {
+      rea_state: {
+        ...document.rea_state,
+        entities: document.rea_state.entities.map((entity) =>
+          entity.type === "/api/users" && entity.id === "2"
+            ? {
+                ...entity,
+                fields: { ...entity.fields, large: "x".repeat(1024 * 1024) },
+              }
+            : entity,
+        ),
+      },
+    };
+    await plane.add({ kind: "data", data: large });
+    const fields = plane.store
+      .snapshot()
+      .rea_state.entities.find((entity) => entity.id === "2")?.fields;
+    if (fields === undefined) throw new Error("Expected the loaded entity");
+
+    const originalKeys = Object.keys;
+    let fieldEnumerations = 0;
+    const keys = vi.spyOn(Object, "keys").mockImplementation((value) => {
+      if (value === fields) fieldEnumerations += 1;
+      return originalKeys(value);
+    });
+    try {
+      const batch = await plane.post(
+        Array.from({ length: 100 }, (_, index) => ({
+          jsonrpc: "2.0",
+          id: index + 1,
+          method: "data/get",
+        })),
+      );
+      expect(
+        (batch.json as { error?: unknown }[]).filter((reply) => reply.error),
+      ).not.toHaveLength(0);
+      expect(fieldEnumerations).toBeLessThan(65);
+      expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
+        MAX_RPC_RESPONSE_BYTES,
+      );
+    } finally {
+      keys.mockRestore();
     }
   });
 });
@@ -798,6 +929,86 @@ describe("serveEnvironment with a state", () => {
     await answered;
   });
 
+  it("refuses file reads while an earlier state file stays open, and reports it on close until it closes", async () => {
+    const environment = await serveState({ source, state });
+    const uri = await renamedStateUri();
+    let failing = true;
+    const owners = failFirstFileClose(() => failing);
+    const add = async (part: unknown) =>
+      (
+        await fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "data/add",
+            params: { parts: [part] },
+          }),
+        })
+      ).json();
+    await expect(add({ kind: "file", file: { uri } })).resolves.toMatchObject({
+      error: {
+        code: -32000,
+        message: expect.stringContaining("could not be closed"),
+      },
+    });
+    await expect(add({ kind: "file", file: { uri } })).resolves.toMatchObject({
+      error: { code: -32000, message: expect.stringContaining("still open") },
+    });
+    // Documents that need no file still load.
+    await expect(
+      add({ kind: "data", data: renamedDocument() }),
+    ).resolves.toMatchObject({ result: {} });
+    await expect(environment.close()).rejects.toBeInstanceOf(
+      ArtifactResourceRetryFailure,
+    );
+    expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+    failing = false;
+    await expect(environment.close()).resolves.toBeUndefined();
+    expect(owners[0]?.handle.fd).toBe(-1);
+  });
+});
+
+describe("serveEnvironment cleanup retries", () => {
+  it("attempts state-file cleanup after listener failure and keeps both failures retryable", async () => {
+    const environment = await serveState({ source, state });
+    const uri = await renamedStateUri();
+    let failing = true;
+    const owners = failFirstFileClose(() => failing);
+    const response = await fetch(
+      new URL(ENVIRONMENT_RPC_PATH, environment.url),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(addByUri(1, uri)),
+      },
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: -32000,
+        message: expect.stringContaining("could not be closed"),
+      },
+    });
+
+    const listenerFailure = new Error("injected listener cleanup failure");
+    closeFailureControl.failure = listenerFailure;
+    await expect(environment.close()).rejects.toSatisfy((cause: unknown) => {
+      if (!(cause instanceof AggregateError)) return false;
+      return (
+        cause.errors[0] === listenerFailure &&
+        cause.errors[1] instanceof ArtifactResourceRetryFailure
+      );
+    });
+    expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+
+    failing = false;
+    await expect(environment.close()).resolves.toBeUndefined();
+    expect(owners[0]?.handle.fd).toBe(-1);
+  });
+});
+
+describe("serveEnvironment with a state", () => {
   it("serves query POSTs from their recordings and leaves state-changing writes out", async () => {
     const environment = await serveState(
       environmentStateServeInputs(

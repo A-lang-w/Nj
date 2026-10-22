@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { ok } from "../result.js";
 import {
   isObject,
   isStateWrite,
@@ -40,7 +41,12 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
-import { integerOf, isUuid, readClock } from "./environmentStateWriteValues.js";
+import {
+  integerOf,
+  isUuid,
+  nextSequence,
+  readClock,
+} from "./environmentStateWriteValues.js";
 
 /** The id a response names alone: a scalar body, or an object's id field or single scalar member. */
 const respondedId = (
@@ -179,9 +185,9 @@ const followsSequences = (
       (entity) =>
         rule.scope === "type" || entity.collection === created.collection,
     );
-    const next = Math.max(
-      nextInteger(fieldsOf(scope), rule.field) ?? 1,
-      (draft.sequences.get(key) ?? 0) + 1,
+    const next = nextSequence(
+      nextInteger(fieldsOf(scope), rule.field),
+      draft.sequences.get(key),
     );
     return integerOf(created.fields[rule.field]) === next;
   });
@@ -198,10 +204,15 @@ const followsGenerated = (
       return (
         JSON.stringify(readClock(value)?.format) === JSON.stringify(rule.format)
       );
+    if (rule.rule === "unique")
+      return (
+        isUuid(value) &&
+        !context.state
+          .ofType(created.type)
+          .some((held) => held.fields[rule.field] === value)
+      );
     return (
-      (rule.rule !== "unique" &&
-        (rule.rule !== "identity" || rule.generator !== "uuid")) ||
-      isUuid(value)
+      rule.rule !== "identity" || rule.generator !== "uuid" || isUuid(value)
     );
   }) && followsSequences(context, draft, created);
 
@@ -282,11 +293,8 @@ export const applyCreate = (
   // The exemplar defines the plan's sequences; each later call must follow them.
   const later = built(draft);
   if (!later) buildCreate(context, draft, step, { observed, call, collection });
-  const fields = createdFields(
-    draft.plan,
-    draft.observed!,
-    call,
-    (rule) => observed.object[rule.field] ?? null,
+  const fields = createdFields(draft.plan, draft.observed!, call, (rule) =>
+    ok(observed.object[rule.field] ?? null),
   );
   const id = fields.ok ? scalarText(fields.value[idField]) : undefined;
   if (

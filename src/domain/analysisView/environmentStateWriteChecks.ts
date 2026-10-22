@@ -37,11 +37,19 @@ export const collectionTarget = (type: string, collection: string) =>
   `c${compositeKey([type, collection])}`;
 export const documentTarget = (tool: string) => `d${compositeKey([tool])}`;
 
+/** A target `remove` dropped, so a later absence can still name the collection and id serving resolved. */
+interface RemovedTarget {
+  readonly type: string;
+  readonly collection: string;
+  readonly id: string;
+}
+
 /** The gate's copy of the state: entities in collection order and documents, changed by modelled writes. */
 export class SimulatedState {
   readonly #entities = new Map<string, StateEntity>();
   readonly #collections = new Map<string, string[]>();
   readonly #documents = new Map<string, JsonValue>();
+  readonly #removed: RemovedTarget[] = [];
 
   constructor(
     entities: readonly StateEntity[],
@@ -92,6 +100,27 @@ export class SimulatedState {
     this.#collections.set(
       collection,
       order.filter((member) => member !== key),
+    );
+    const index = this.#removed.findIndex(
+      (target) =>
+        target.type === entity.type &&
+        target.collection === entity.collection &&
+        target.id === entity.id,
+    );
+    if (index >= 0) this.#removed.splice(index, 1);
+    this.#removed.push({
+      type: entity.type,
+      collection: entity.collection,
+      id: entity.id,
+    });
+  }
+
+  /** Removed targets of this type the state does not hold again. */
+  removedTargets(type: string): readonly RemovedTarget[] {
+    return this.#removed.filter(
+      (target) =>
+        target.type === type &&
+        !this.#entities.has(entityTarget(type, target.collection, target.id)),
     );
   }
 
@@ -185,9 +214,34 @@ const segmentMatch = (
   return verbatim;
 };
 
+/** A held target an item path names, preferring the path's own collection, then a verbatim spelling. */
+const matchingTarget = (
+  path: {
+    readonly read: readonly string[];
+    readonly ids: readonly string[];
+    readonly written: string;
+  },
+  collections: readonly string[],
+  held: (collection: string, id: string) => boolean,
+): { readonly collection: string; readonly id: string } | undefined => {
+  for (const id of path.ids)
+    if (held(path.written, id)) return { collection: path.written, id };
+  const ranked = [...new Set(collections)]
+    .flatMap((collection) => {
+      const verbatim = segmentMatch(segmentsOf(collection), path.read);
+      return verbatim === undefined ? [] : [{ collection, verbatim }];
+    })
+    .sort((left, right) => right.verbatim - left.verbatim);
+  for (const { collection } of ranked)
+    for (const id of path.ids)
+      if (held(collection, id)) return { collection, id };
+  return undefined;
+};
+
 /**
  * The entity an item read or write names, as serving names it: in a held collection its path matches, verbatim
- * spellings first, the id percent-decoded once, then as written; else the collection and decoded id as written.
+ * spellings first, the id percent-decoded once, then as written; else a removed target still named that way, so
+ * an absence keeps the collection and id a delete resolved; else the collection and decoded id as written.
  */
 export const itemTarget = (
   state: SimulatedState,
@@ -196,24 +250,27 @@ export const itemTarget = (
 ): { readonly collection: string; readonly id: string } => {
   const read = segmentsOf(record.path);
   const raw = read.pop() ?? "";
-  const ids = [...new Set([decodedSegment(raw), raw])];
-  const written = `/${read.join("/")}`;
-  for (const id of ids)
-    if (state.entity(type, written, id) !== undefined)
-      return { collection: written, id };
-  const collections = [
-    ...new Set(state.ofType(type).map((entity) => entity.collection)),
-  ]
-    .flatMap((collection) => {
-      const verbatim = segmentMatch(segmentsOf(collection), read);
-      return verbatim === undefined ? [] : [{ collection, verbatim }];
-    })
-    .sort((left, right) => right.verbatim - left.verbatim);
-  for (const { collection } of collections)
-    for (const id of ids)
-      if (state.entity(type, collection, id) !== undefined)
-        return { collection, id };
-  return { collection: written, id: ids[0]! };
+  const path = {
+    read,
+    ids: [...new Set([decodedSegment(raw), raw])],
+    written: `/${read.join("/")}`,
+  };
+  const removed = state.removedTargets(type);
+  return (
+    matchingTarget(
+      path,
+      state.ofType(type).map((entity) => entity.collection),
+      (collection, id) => state.entity(type, collection, id) !== undefined,
+    ) ??
+    matchingTarget(
+      path,
+      removed.map((target) => target.collection),
+      (collection, id) =>
+        removed.some(
+          (target) => target.collection === collection && target.id === id,
+        ),
+    ) ?? { collection: path.written, id: path.ids[0]! }
+  );
 };
 
 export const checkItemRead = (

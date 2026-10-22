@@ -28,7 +28,8 @@ export const createdCollection = (
   type: string,
 ): string | undefined => {
   const segments = callSegments(tool, args);
-  if (segments === undefined) return undefined;
+  if (segments === undefined || segments.some(({ text }) => text.length === 0))
+    return undefined;
   // The spelling the call supplies verbatim wins, as item calls choose their entity, then the first known: held ones lead.
   let held: string | undefined;
   let verbatim = -1;

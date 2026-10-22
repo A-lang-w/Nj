@@ -17,6 +17,7 @@ import {
   isStateWrite,
   jsonBytes,
   lastSegmentValue,
+  STATE_BODY_LIMIT_BYTES,
   listItems,
   locateItem,
   locateList,
@@ -579,6 +580,16 @@ export class EnvironmentStateExtraction {
       const value = this.#withBody(record.ordinal, (body) => body);
       if (value === undefined) {
         this.#recorded(tool, "body-unusable");
+        continue;
+      }
+      // Parsing can lengthen a body that was admitted under the recorded-text limit:
+      // `1e3` is four bytes once rendered as `1000`. Serving refuses that rendering,
+      // so an oversized document stays the recorded replay instead of a failing read.
+      if (
+        Buffer.byteLength(JSON.stringify(value), "utf8") >
+        STATE_BODY_LIMIT_BYTES
+      ) {
+        this.#recorded(tool, "rendered-oversize");
         continue;
       }
       this.#retain(
