@@ -201,9 +201,12 @@ const addMarkedPatterns = (
       : "";
   for (const pattern of patterns) {
     // Only the start of a policy file can contain an encoding signature.
-    const text =
-      reason === "project-ignored" ? pattern.replace(/^\uFEFF/u, "") : pattern;
-    for (const line of text.split(/\r?\n/u)) {
+    const projectPolicy = reason === "project-ignored";
+    const text = projectPolicy ? pattern.replace(/^\uFEFF/u, "") : pattern;
+    for (const rawLine of text.split(projectPolicy ? /\n/u : /\r?\n/u)) {
+      // Git removes one terminal CR even from a final line without LF.
+      // Do this only for policy files, before protecting literal whitespace.
+      const line = projectPolicy ? rawLine.replace(/\r$/u, "") : rawLine;
       const scoped = scopedPattern(line, prefix);
       if (scoped !== undefined)
         matcher.add({
