@@ -138,10 +138,25 @@ const maskedCount = (value: JsonValue | undefined): number | undefined => {
   return digits.length <= 15 ? Number(digits) : undefined;
 };
 
-/** A sequence's number: an integer, or digit groups that count. */
+/** A count that outgrew the exemplar's mask, read only when it is spelled as serving spells it, so dates never match. */
+const outgrownMask = (
+  value: JsonValue | undefined,
+  exemplar: JsonValue | undefined,
+): number | undefined => {
+  if (typeof value !== "string" || maskedCount(exemplar) === undefined)
+    return undefined;
+  const digits = value.replaceAll("-", "");
+  if (!/^\d{1,15}$/u.test(digits)) return undefined;
+  const count = Number(digits);
+  return fillMask(exemplar as string, count) === value ? count : undefined;
+};
+
+/** A sequence's number: an integer, digit groups that count, or with the sequence's exemplar a count that outgrew its mask. */
 export const sequenceNumber = (
   value: JsonValue | undefined,
-): number | undefined => integerOf(value) ?? maskedCount(value);
+  exemplar?: JsonValue,
+): number | undefined =>
+  integerOf(value) ?? maskedCount(value) ?? outgrownMask(value, exemplar);
 
 /** A number written into a mask's digit positions, zero-padded; digits that outgrow the mask lead it. */
 const fillMask = (mask: string, value: number): string => {

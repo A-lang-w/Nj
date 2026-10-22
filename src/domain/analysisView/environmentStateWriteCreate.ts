@@ -187,7 +187,7 @@ const followsSequences = (
         rule.scope === "type" || entity.collection === created.collection,
     );
     const next = nextSequence(
-      nextInteger(fieldsOf(scope), rule.field),
+      nextInteger(fieldsOf(scope), rule.field, draft.observed?.[rule.field]),
       draft.sequences.get(key),
     );
     return (
@@ -226,7 +226,10 @@ const takeSequences = (
   created: Pick<StateEntity, "collection" | "fields">,
 ): void => {
   for (const { rule, key } of sequencesOf(draft, created.collection)) {
-    const value = sequenceNumber(created.fields[rule.field]);
+    const value = sequenceNumber(
+      created.fields[rule.field],
+      draft.observed?.[rule.field],
+    );
     if (value !== undefined) draft.sequences.set(key, value);
   }
 };

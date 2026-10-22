@@ -293,6 +293,34 @@ describe("wider write coverage", () => {
 });
 
 describe("write coverage limits", () => {
+  it("numbers past a mask's width again after the state is saved and loaded", () => {
+    const books = servedFrom([
+      [
+        "GET",
+        "/api/books",
+        [assetBook(FIRST_BOOK, "99-97"), assetBook(SECOND_BOOK, "99-98")],
+      ],
+      ["GET", "/api/books/1", assetBook(FIRST_BOOK, "99-97")],
+      ["GET", "/api/books/2", assetBook(SECOND_BOOK, "99-98")],
+      [
+        "POST",
+        "/api/books",
+        assetBook(THIRD_BOOK, "99-99"),
+        201,
+        { name: "Third Book" },
+      ],
+      ["GET", "/api/books/3", assetBook(THIRD_BOOK, "99-99")],
+    ]);
+    const create = (name: string) =>
+      books.answer("post_books", { body: { name } }).body;
+    expect(create("Fifth Book")).toMatchObject({ asset: "99-99" });
+    expect(create("Sixth Book")).toMatchObject({ asset: "100-00" });
+    // Loading what data/get wrote clears the sequence counter, so the held numbers alone carry it on.
+    const { rea_state } = books.store.snapshot();
+    expect(books.store.replace({ rea_state }).ok).toBe(true);
+    expect(create("Seventh Book")).toMatchObject({ asset: "100-01" });
+  });
+
   it("replays a call naming a projection parameter, even an empty one", () => {
     expect(
       servedFrom(PROJECTED_ROWS).answer("get_books_by_id", {

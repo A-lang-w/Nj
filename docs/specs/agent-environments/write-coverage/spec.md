@@ -28,10 +28,12 @@ what the writes did:
   is left out of the identity proof and the view's checks. The view lists it in `projected_record_ordinals`, and serving
   replays a call to that tool naming such a parameter, for an entity the state holds, with the reason `projection`;
   the replay shows the recording, not served writes. The write gate neither checks nor learns a write's effect from a
-  read that names such a parameter and leaves out a field its view requires.
+  successful read that names such a parameter and leaves out a field its view requires; a 400, 404 or 410 such a read
+  answers is still the absence it checks.
 - **Sequences.** A sequence value may be `-`-separated digit groups of one width of at least two digits, not a date,
   version or address. The next value keeps the exemplar's groups and zero padding; digits that outgrow them lead. A
-  later create must record its value spelled that way.
+  later create must record its value spelled that way. A held value whose digits outgrew the mask (`100-00` after
+  `99-99`) counts only when it is the exemplar's spelling of its number, so a reloaded state numbers on from it.
 
 ## Acceptance
 

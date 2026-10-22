@@ -266,6 +266,15 @@ it("reads a sequence written as digit groups of one width, but not a date, versi
   expect(sequenceNumber("000-")).toBeUndefined();
 });
 
+it("reads a count that outgrew its mask only as the exemplar's spelling of it", () => {
+  expect(sequenceNumber("100-00", "99-99")).toBe(10_000);
+  expect(sequenceNumber("1000-000", "000-005")).toBe(1_000_000);
+  expect(sequenceNumber("100-00")).toBeUndefined();
+  for (const other of ["2026-10-21", "20261-02", "100-0"])
+    expect(sequenceNumber(other, "000-005")).toBeUndefined();
+  expect(sequenceNumber("100-00", "2026-10")).toBeUndefined();
+});
+
 it("spells a sequence value in the recorded value's digit groups, the overflow leading", () => {
   expect(spelledLike("000-005", 6)).toBe("000-006");
   expect(spelledLike("000-999", 1000)).toBe("001-000");

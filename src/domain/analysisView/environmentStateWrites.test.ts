@@ -18,6 +18,7 @@ import {
   RENAMED_BOOK,
   SECOND_BOOK,
   THIRD_BOOK,
+  assetBook,
   book,
   bookClock,
   environmentStateViewOf,
@@ -271,6 +272,49 @@ describe("write coverage limits", () => {
     expect(planOf(stateOf(rows), "patch_books_by_id")).toMatchObject({
       served: true,
       observation: { ordinal: 5 },
+    });
+  });
+
+  it("confirms a delete from a read that asked for some fields and found no book", () => {
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["DELETE", "/api/books/2", "", 204],
+      ["GET", "/api/books/2?fields=id,name", BOOK_NOT_FOUND, 404],
+    ];
+    expect(planOf(stateOf(rows), "delete_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+
+  it("follows a sequence past its mask's width, as serving spells it", () => {
+    const numbered = (id: number, asset: string): Book =>
+      assetBook(book(id, `Book ${String(id)}`, bookClock(id + 2)), asset);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [numbered(1, "99-97"), numbered(2, "99-98")]],
+      ["GET", "/api/books/1", numbered(1, "99-97")],
+      ["GET", "/api/books/2", numbered(2, "99-98")],
+    ];
+    for (const [id, asset] of [
+      [3, "99-99"],
+      [4, "100-00"],
+      [5, "100-01"],
+    ] as const)
+      rows.push(
+        [
+          "POST",
+          "/api/books",
+          numbered(id, asset),
+          201,
+          { name: `Book ${String(id)}` },
+        ],
+        ["GET", `/api/books/${String(id)}`, numbered(id, asset)],
+      );
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        { field: "asset", rule: "sequence", scope: "collection" },
+      ]),
     });
   });
 

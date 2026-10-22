@@ -87,6 +87,8 @@ export const projectedRead = (
     return false;
   if (view.shape === "item" && view.projected_record_ordinals !== undefined)
     return true;
+  // An absence or error holds no entity, so it is never a partial one.
+  if (!succeeded(record)) return false;
   return io.withBody(record.ordinal, (body) => {
     const objects =
       body === undefined || body === null

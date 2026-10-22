@@ -81,10 +81,11 @@ const isClockNear = (
 export const nextInteger = (
   members: readonly JsonObject[],
   field: string,
+  exemplar?: JsonValue,
 ): number | undefined => {
   let largest: number | undefined;
   for (const member of members) {
-    const value = sequenceNumber(member[field]);
+    const value = sequenceNumber(member[field], exemplar);
     if (value !== undefined && (largest === undefined || value > largest))
       largest = value;
   }
