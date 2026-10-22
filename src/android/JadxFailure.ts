@@ -20,6 +20,7 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
 
@@ -115,6 +116,39 @@ const observeJadxFailure = (
             cause: cancellation.reason,
           });
   if (cause instanceof RegularFileCleanupFailure) {
+    const reason =
+      cause.cleanupCause instanceof Error
+        ? cause.cleanupCause.message
+        : String(cause.cleanupCause);
+    const completed =
+      cause.outcome.kind === "completed"
+        ? androidSnapshotCopy(cause.outcome.value)
+        : undefined;
+    // A finished copy has no separate admission failure. Keep its bytes with
+    // the descriptor owner instead of replacing them with a generic execution
+    // failure.
+    if (completed !== undefined && cancellationError === undefined)
+      return new ProviderCleanupError(
+        "jadx",
+        [completed.snapshotPath],
+        {
+          reason,
+          snapshot_copy: "completed",
+          source_path: completed.sourcePath,
+          snapshot_sha256: completed.sha256,
+          snapshot_bytes: completed.bytes,
+        },
+        {
+          operation: request.operation,
+          cause,
+          partialObservation: {
+            kind: "file-snapshot-hash",
+            path: completed.snapshotPath,
+            sha256: completed.sha256,
+            bytes: completed.bytes,
+          },
+        },
+      );
     const primaryCause =
       cause.outcome.kind === "failed"
         ? stableFileHashCause(cause.outcome.cause)
@@ -133,12 +167,7 @@ const observeJadxFailure = (
     const cleanup = new ProviderCleanupError(
       "jadx",
       [cause.path],
-      {
-        reason:
-          cause.cleanupCause instanceof Error
-            ? cause.cleanupCause.message
-            : String(cause.cleanupCause),
-      },
+      { reason },
       { operation: request.operation, cause },
     );
     return analysisErrorWithCleanupFailure(primary, cleanup, request.operation);
