@@ -6,10 +6,12 @@ import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
 } from "./webBundleAnalysis.js";
-import type {
-  AnalysisAccumulator,
-  IncludedScript,
-} from "./webBundleAnalyzerInspection.js";
+import {
+  createWebBundleAnalysisAccumulator,
+  isIncludedScript,
+  type AnalysisAccumulator,
+  type IncludedScript,
+} from "./webBundleAnalyzerState.js";
 import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
@@ -31,9 +33,7 @@ export const buildCapturedWebBundleAnalysis = (
       );
     byKey.set(result.script_key, result);
   }
-  const sourceScripts = inspection.scripts.items.filter(
-    (script): script is IncludedScript => script.source.included,
-  );
+  const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
   const expectedKeys = new Set(
     sourceScripts.map(({ script_key }) => script_key),
   );
@@ -206,19 +206,7 @@ const mergeScriptResults = (
     { readonly status: "analyzed" }
   >[],
 ): AnalysisAccumulator => {
-  const accumulator: AnalysisAccumulator = {
-    edges: [],
-    routes: [],
-    endpoints: [],
-    webMcp: [],
-    inferences: [],
-    seen: new Set(),
-    visitedNodes: 0,
-    parsedScripts: 0,
-    failedScripts: [],
-    recoveredScripts: [],
-    widenedScripts: [],
-  };
+  const accumulator = createWebBundleAnalysisAccumulator();
   for (const result of results) {
     accumulator.visitedNodes += result.visited_ast_nodes;
     if (result.parse_status === "failed") {
