@@ -262,7 +262,7 @@ describe("refusals", () => {
         { body: { name: "Extra", color: "red" } },
         "Member color is not one the capture showed stored",
       ],
-      ["post_books", { body: {} }, "lacks required members name"],
+      ["post_books", { body: {} }, 'lacks required members "name"'],
       [
         "post_books",
         { body: { name: 42 } },
@@ -431,10 +431,10 @@ describe("served catalog", () => {
       "post_books",
     ]);
     expect(described.get("post_books")?.description).toContain(
-      "creates an entity of /api/books in the served environment state (body members name; required: name), modelled on the recorded calls",
+      'creates an entity of /api/books in the served environment state (body members "name"; required: "name"), modelled on the recorded calls',
     );
     expect(described.get("patch_books_by_id")?.description).toContain(
-      "changes the entity the path names in the served environment state (body members name; send at least one)",
+      'changes the entity the path names in the served environment state (body members "name"; send at least one)',
     );
     expect(described.get("delete_books_by_id")?.description).toContain(
       "removes the entity the path names from the served environment state",
@@ -442,6 +442,37 @@ describe("served catalog", () => {
     expect(described.get("post_books")?.annotations.readOnlyHint).toBe(false);
     expect(described.get("get_books")?.description).toContain(
       "answers from the served environment state where the state backs this tool",
+    );
+  });
+
+  it("quotes the member names a write's description lists and samples a long one", () => {
+    const long = "n".repeat(90_000);
+    const item = (id: number, name: string) => ({
+      id,
+      name,
+      "x, y": name,
+      [long]: name,
+    });
+    const { source, state } = servedFrom([
+      ["GET", "/api/books", [item(1, "A")]],
+      ["GET", "/api/books/1", item(1, "A")],
+      [
+        "POST",
+        "/api/books",
+        item(2, "B"),
+        201,
+        { name: "B", "x, y": "B", [long]: "B" },
+      ],
+      ["GET", "/api/books/2", item(2, "B")],
+      ["GET", "/api/books", [item(1, "A"), item(2, "B")]],
+    ]);
+    const catalog = servedCatalog(source, state, "books");
+    if (!catalog.ok) throw catalog.error;
+    const created = catalog.value.tools.find(
+      (tool) => tool.name === "post_books",
+    );
+    expect(created?.description).toContain(
+      'body members "name", "x, y", … (2/3 shown; full list in state Evidence)',
     );
   });
 

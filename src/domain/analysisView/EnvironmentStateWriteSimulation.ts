@@ -23,7 +23,6 @@ import {
   itemTarget,
   succeeded,
   withBodies,
-  writtenFieldChecks,
   showsPlacement,
   SimulatedState,
   type CheckOutcome,
@@ -36,6 +35,8 @@ import {
 } from "./environmentStateCheckedLines.js";
 import {
   exercisedBy,
+  interference,
+  type WriteHistory,
   forgetChecked,
   runningAt,
   shownFields,
@@ -44,6 +45,7 @@ import {
   WriteEffects,
   type PendingTargets,
   type TouchedTargets,
+  writtenFieldChecks,
 } from "./environmentStateWriteAttribution.js";
 import { applyCreate } from "./environmentStateWriteCreate.js";
 import { applyDocument } from "./environmentStateWriteDocument.js";
@@ -95,6 +97,12 @@ export class EnvironmentStateWriteSimulation {
   readonly #touchedSince: PendingTargets = new Map();
   /** Timeline indexes of writes the gate does not model. */
   readonly #unmodelledAt: number[] = [];
+  readonly #history: WriteHistory = {
+    touched: this.#touched,
+    pending: this.#touchedSince,
+    checked: this.#lastCheck,
+    unmodelledAt: this.#unmodelledAt,
+  };
   readonly #log: {
     readonly index: number;
     readonly tool: string;
@@ -356,8 +364,9 @@ export class EnvironmentStateWriteSimulation {
     )
       return;
     const exercised = exercisedBy(this.#touched, keys, borrowers);
+    const interferes = interference(this.#history, outcome);
     if (borrowers !== undefined) {
-      if (!outcome.pass) this.#contradictOthers(keys, exercised, record);
+      if (!outcome.pass) this.#contradictOthers(exercised, record, interferes);
       return;
     }
     const pass =
@@ -367,14 +376,12 @@ export class EnvironmentStateWriteSimulation {
       ? this.#confirm(view, record, outcome, exercised)
       : undefined;
     if (!pass) {
-      const interfered = new Set(
-        [...exercised].filter((name) => this.#interferedWith(name, keys)),
-      );
+      const interfered = new Set([...exercised].filter(interferes));
       if (interfered.size === 0)
         this.#mismatch({ record, index, keys, exercised, view });
       else {
         // An unmodelled write after some of these writes may explain the difference: those are checked on their own members only.
-        this.#contradictOthers(keys, exercised, record);
+        this.#contradictOthers(exercised, record, interferes);
         if (view.shape === "item") this.#checkMembers(view, record, interfered);
         else for (const key of keys) this.#taint.fail(key);
       }
@@ -393,12 +400,12 @@ export class EnvironmentStateWriteSimulation {
 
   /** A failed read contradicts the writes it exercised that no unmodelled write came after, as a read a write's effect was learned from still does the others. */
   #contradictOthers(
-    keys: readonly string[],
     exercised: ReadonlySet<string>,
     record: StateRecordFacts,
+    interferes: (name: string) => boolean,
   ): void {
     for (const name of exercised)
-      if (!this.#interferedWith(name, keys))
+      if (!interferes(name))
         this.#drafts.get(name)!.contradictedBy ??= record.ordinal;
   }
 
@@ -425,15 +432,6 @@ export class EnvironmentStateWriteSimulation {
   #unmodelled(path: string, index: number): void {
     this.#taint.write(path);
     this.#unmodelledAt.push(index);
-  }
-
-  /** Whether a write the gate does not model came after a tool's latest call on one of these targets where its effect survives, so it may explain what a read shows there. */
-  #interferedWith(tool: string, keys: readonly string[]): boolean {
-    return keys.some((key) => {
-      if (this.#touched.get(key)?.has(tool) !== true) return false;
-      const at = this.#touchedSince.get(key)?.at.get(tool);
-      return at !== undefined && this.#unmodelledAt.some((index) => index > at);
-    });
   }
 
   /** Check the writes to an item read's entity on the members they sent, as a resynchronising read does. */

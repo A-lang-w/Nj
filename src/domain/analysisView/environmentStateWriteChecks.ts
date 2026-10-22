@@ -177,6 +177,8 @@ export interface CheckOutcome {
   readonly targets: readonly string[];
   /** Entities the recording, or the served base of a recorded-membership list, lists that the state does not hold, by target. */
   readonly unheld: readonly string[];
+  /** For a failed list read that differs only in some members' fields, those members' targets. */
+  readonly differing?: readonly string[];
 }
 
 /** Whether a passing check shows where a create placed its entity: a list's does unless a sort orders that entity, leaving it tied with none. */
@@ -273,6 +275,27 @@ export const itemTarget = (
   );
 };
 
+/** The held collection of a type a path names, as serving picks a create's: the most verbatim spelling, else the path as written. */
+export const heldCollection = (
+  state: SimulatedState,
+  type: string,
+  path: string,
+): string => {
+  const read = segmentsOf(path);
+  let held: string | undefined;
+  let verbatim = -1;
+  for (const collection of new Set(
+    state.ofType(type).map((entity) => entity.collection),
+  )) {
+    const matched = segmentMatch(segmentsOf(collection), read);
+    if (matched !== undefined && matched > verbatim) {
+      held = collection;
+      verbatim = matched;
+    }
+  }
+  return held ?? `/${read.join("/")}`;
+};
+
 export const checkItemRead = (
   state: SimulatedState,
   view: StateItemView,
@@ -323,30 +346,46 @@ const listCheck = (
   members: readonly StateEntity[],
   /** The matches a whole or query answer counts; undefined for recorded members, whose totals stay as recorded. */
   total: number | undefined,
-): boolean => {
+): Pick<CheckOutcome, "pass" | "differing"> => {
   if (
     members.some(
       (entity) =>
         missingRequiredFields(entity, view, check.volatile).length > 0,
     )
   )
-    return false;
+    return { pass: false };
   const observed = new Map(
     check.items.map((item) => [scalarText(item[check.idField]) ?? "", item]),
   );
   const rendered = members.map((entity) =>
     renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
   );
-  const answer =
+  const render = (items: readonly JsonObject[]): JsonValue =>
     view.query === undefined || total === undefined
-      ? renderStateList(view, check.base, rendered)
+      ? renderStateList(view, check.base, items)
       : renderQueryList(
           { ...view, query: view.query },
           check.base,
-          rendered,
+          items,
           total,
         );
-  return same(answer, check.body);
+  if (same(render(rendered), check.body)) return { pass: true };
+  // When the recorded members alone account for the difference, only they differ.
+  const differs = members.filter((entity, index) => {
+    const item = observed.get(entity.id);
+    return item !== undefined && !same(rendered[index], item);
+  });
+  const patched = rendered.map(
+    (item, index) => observed.get(members[index]!.id) ?? item,
+  );
+  return differs.length > 0 && same(render(patched), check.body)
+    ? {
+        pass: false,
+        differing: differs.map((entity) =>
+          entityTarget(view.type, check.collection, entity.id),
+        ),
+      }
+    : { pass: false };
 };
 
 /** The base line's and the read's listed entities by target: those the state holds, and those it no longer does. */
@@ -386,7 +425,7 @@ const checkQueryList = (
   );
   if (result === undefined) return undefined;
   return {
-    pass: listCheck(view, check, result.page, result.total),
+    ...listCheck(view, check, result.page, result.total),
     ...(result.positional === "all"
       ? {}
       : {
@@ -417,7 +456,7 @@ const checkAllList = (
   const members = state.members(view.type, collection);
   const held = new Set(members.map((entity) => entity.id));
   return {
-    pass: listCheck(view, check, members, members.length),
+    ...listCheck(view, check, members, members.length),
     targets: [
       collectionTarget(view.type, collection),
       ...members.map((entity) =>
@@ -444,7 +483,7 @@ const checkRecordedList = (
     return entity === undefined ? [] : [entity];
   });
   return {
-    pass: listCheck(view, check, members, undefined),
+    ...listCheck(view, check, members, undefined),
     ...listedTargets(state, view, check),
   };
 };
@@ -529,33 +568,4 @@ export const checkDocumentRead = (
     targets: [documentTarget(tool)],
     unheld: [],
   };
-};
-
-/**
- * Check, field by field, the writes that changed an entity an unmodelled write also changed:
- * each write's own fields must show as the state holds them. A create wrote every field, so it
- * cannot be told apart from the unmodelled change and is not checked.
- */
-export const writtenFieldChecks = (
-  entity: StateEntity,
-  view: StateItemView,
-  observed: JsonObject,
-  check: {
-    readonly volatile: ReadonlySet<string>;
-    readonly writes: ReadonlyMap<string, readonly string[] | null>;
-  },
-): Map<string, boolean> => {
-  const shown = renderStateEntity(entity, view, check.volatile, observed);
-  const outcomes = new Map<string, boolean>();
-  for (const [tool, fields] of check.writes) {
-    const compared = (fields ?? []).filter(
-      (field) => Object.hasOwn(observed, field) || Object.hasOwn(shown, field),
-    );
-    if (fields === null || compared.length === 0) continue;
-    outcomes.set(
-      tool,
-      compared.every((field) => same(shown[field], observed[field])),
-    );
-  }
-  return outcomes;
 };

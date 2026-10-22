@@ -28,6 +28,8 @@ import {
 } from "./environmentStateWriteExplain.js";
 import {
   laterObservation,
+  shownBefore,
+  viewFields,
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import { integerOf, readClock, slugOf } from "./environmentStateWriteValues.js";
@@ -259,11 +261,7 @@ const updatedObservation = (
         }),
   });
   if (later !== undefined) {
-    const view = context.viewOf(later.ordinal);
-    const readFields =
-      view?.shape === "item" || view?.shape === "list"
-        ? view.fields
-        : undefined;
+    const readFields = viewFields(context.viewOf(later.ordinal));
     const coversRequired = required.every((field) =>
       readFields?.includes(field),
     );
@@ -453,6 +451,7 @@ export const applyUpdate = (
     id,
     startMs: startOf(context, step),
     ...(after.readFields === undefined ? {} : { readFields: after.readFields }),
+    shown: shownBefore(context.viewOf, entity, after.ordinal),
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");
