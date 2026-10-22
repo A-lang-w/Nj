@@ -36,9 +36,9 @@ import {
   preserveCurrentRecoveryBackup,
   type RecoveryBackupPreservationOptions,
 } from "./SetupRecoveryBackup.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   InvalidUtf8FileError,
-  RegularFileCleanupFailure,
   readRegularFileText,
 } from "./RegularFileRead.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -53,7 +53,6 @@ import {
   redirectedWriteBlocker,
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
-export { isUninstallFailure } from "./UninstallFailure.js";
 
 interface ManagedPathStats {
   readonly uid?: number;
