@@ -84,15 +84,18 @@ Controlled filesystem faults cover read denial, mutation after the final read,
 and close failure after success or a parse failure. These are simulated failures,
 not claims of naturally occurring OS permission or close-denial coverage.
 
-The suite also checks short summary-record boundaries, final-response overflow,
+The suite also checks short summary-record boundaries, strings and schema bytes
+that overrun a record after a complete length prefix, final-response overflow,
 large reader diagnostics, and preservation of simultaneous failures.
 
-Executed with Node 24.18.0 on Windows x64: 19 passed and the real symlink test
+Executed with Node 24.18.0 on Windows x64: 21 passed and the real symlink test
 was skipped because symlink creation required unavailable OS privileges. Ubuntu
-under WSL2 passed all 20 tests, including real symlink rejection. The Linux run
+under WSL2 passed all 22 tests, including real symlink rejection. The Linux run
 used the same emitted JavaScript and portable reader dependencies; it did not
-repeat npm installation or TypeScript compilation. Root CI currently does not
-install or run this standalone package's tests.
+repeat npm installation or TypeScript compilation. For this update, the Windows
+compiler needed an explicit list of the same 11 source files: native discovery
+skipped the local OneDrive-backed files. Compiler options and dependencies were
+unchanged. Root CI currently does not install or run this standalone package's tests.
 
 The [990-byte upstream demo](https://github.com/foxglove/mcap/blob/9b4d3e36c7f7742541df33e0cff35c95de6af2a1/testdata/mcap/demo.mcap)
 returned profile `ros1`, `/chatter` (2 messages), `/diagnostics` (1), schema
