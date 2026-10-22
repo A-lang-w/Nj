@@ -20,6 +20,7 @@ const fault = vi.hoisted(() => ({
   opens: 0,
   hold: undefined as Promise<void> | undefined,
   releaseHold: (): void => undefined,
+  afterRead: (): void => undefined,
   handles: [] as FileHandle[],
   cause: Object.assign(new Error("controlled close refusal"), { code: "EIO" }),
 }));
@@ -40,6 +41,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
               fault.entered += 1;
               const read = await Reflect.apply(target.read, target, readArgs);
               fault.reads += 1;
+              fault.afterRead();
               return fault.short ? { ...read, bytesRead: 0 } : read;
             };
           if (key === "close")
@@ -70,6 +72,7 @@ afterEach(() => {
   fault.opens = 0;
   fault.hold = undefined;
   fault.releaseHold = () => undefined;
+  fault.afterRead = () => undefined;
   fault.handles = [];
 });
 
@@ -277,6 +280,63 @@ it("does not open a queued span after its caller aborts", async () => {
     fault.fail = false;
     fault.hold = undefined;
     fault.span = "";
+    await client.close();
+    for (const handle of fault.handles)
+      if (handle.fd >= 0) await handle.close().catch(() => undefined);
+  }
+});
+
+it("keeps cancellation when a completed span close fails after abort", async () => {
+  const reason = { requested: "span-close" };
+  const { cacheRoot, open: createClient } = await session(
+    "rea-kuna-span-close-cancel-read-",
+  );
+  const client = createClient();
+  try {
+    const warm = await run(client, "procedure_assembly", {
+      procedure: "main",
+    });
+    const text = String(warm.result);
+    const [key] = await readdir(join(cacheRoot, "projects"));
+    fault.span = join(
+      cacheRoot,
+      "projects",
+      key ?? "",
+      "project",
+      "program.asm",
+    );
+    fault.fail = true;
+    const abort = new AbortController();
+    fault.afterRead = () => abort.abort(reason);
+    const result = await client.execute(
+      "procedure_assembly",
+      { procedure: "main" },
+      { signal: abort.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(fault.span);
+    expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    expect(result.error.diagnostics).toMatchObject({
+      cleanup_error: {
+        details: {
+          diagnostics: {
+            span_read: "completed",
+            span_text: expect.stringContaining(text),
+          },
+        },
+      },
+    });
+    const handle = fault.handles[0];
+    if (handle === undefined) throw new Error("missing span descriptor");
+    expect(handle.fd).toBeGreaterThanOrEqual(0);
+    expect(fault.opens).toBe(1);
+  } finally {
+    fault.fail = false;
+    fault.span = "";
+    fault.afterRead = () => undefined;
     await client.close();
     for (const handle of fault.handles)
       if (handle.fd >= 0) await handle.close().catch(() => undefined);

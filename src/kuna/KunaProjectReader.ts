@@ -16,6 +16,7 @@ import {
   RegularFileCleanupFailure,
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
+import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import type { KunaProject } from "./KunaProjectCache.js";
 import {
@@ -108,12 +109,19 @@ const readSpan = async (
     withOwnedFileHandle(
       path,
       owner,
-      ownership.retainFailedClose === undefined
-        ? {}
-        : {
-            retainFailedClose: (failed) =>
-              ownership.retainFailedClose?.(path, failed),
-          },
+      {
+        // A failed read keeps its own diagnostic. A completed read records
+        // cancellation when the caller aborts before the queued close settles.
+        ...(readFailure === undefined && signal !== undefined
+          ? { signal }
+          : {}),
+        ...(ownership.retainFailedClose === undefined
+          ? {}
+          : {
+              retainFailedClose: (failed) =>
+                ownership.retainFailedClose?.(path, failed),
+            }),
+      },
       async () => {
         if (readFailure !== undefined) throw readFailure;
         return text ?? "";
@@ -128,9 +136,46 @@ const readSpan = async (
   } catch (cause: unknown) {
     if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
     return err(
-      spanCloseFailure(operation, path, offset, length, cause, ownership),
+      spanCloseFailure(
+        operation,
+        path,
+        offset,
+        length,
+        spanCloseAfterRead(cause, text, readFailure, signal),
+        ownership,
+      ),
     );
   }
+};
+
+/**
+ * Finalization checks the signal before replaying a read that already
+ * finished. Put that text back on the close failure so cancellation stays
+ * the primary error and the descriptor stays retained.
+ */
+const spanCloseAfterRead = (
+  failure: RegularFileCleanupFailure<string>,
+  text: string | undefined,
+  readFailure: unknown,
+  signal: AbortSignal | undefined,
+): RegularFileCleanupFailure<string> => {
+  if (
+    failure.completionCancellation !== undefined ||
+    text === undefined ||
+    readFailure !== undefined ||
+    signal?.aborted !== true ||
+    failure.outcome.kind !== "failed" ||
+    !(failure.outcome.cause instanceof RegularFileOperationCancelled)
+  )
+    return failure;
+  return new RegularFileCleanupFailure(
+    failure.path,
+    failure.owner,
+    { kind: "completed", value: text },
+    failure.cleanupCause,
+    failure.retention,
+    { reason: signal.reason },
+  );
 };
 
 /** Keep the span text or the short-read diagnostic with the exact handle. */
@@ -161,6 +206,14 @@ const spanCloseFailure = (
     { operation, cause: failure },
   );
   ownership.bindSpanCleanup?.(failure.owner, marker);
+  if (failure.completionCancellation !== undefined)
+    return analysisErrorWithCleanupFailure(
+      new AnalysisCancelledError(operation, {
+        cause: failure.completionCancellation.reason,
+      }),
+      marker,
+      operation,
+    ).bindCleanupDependencies([marker]);
   if (failure.outcome.kind !== "failed") return marker;
   const primaryCause = failure.outcome.cause;
   const primary =
