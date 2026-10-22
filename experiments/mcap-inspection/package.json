@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc",
     "inspect": "node build/experiments/mcap-inspection/cli.js",
-    "test": "npm run build && node --test build/experiments/mcap-inspection/*.test.js",
+    "test": "npm run build && node --test build/experiments/mcap-inspection/*.node-test.js",
     "check": "tsc --noEmit"
   },
   "engines": {

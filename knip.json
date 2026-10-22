@@ -22,7 +22,7 @@
       }
     },
     "experiments/mcap-inspection": {
-      "entry": ["cli.ts", "*.test.ts"],
+      "entry": ["cli.ts", "*.node-test.ts"],
       "project": ["*.ts"]
     }
   },

@@ -74,7 +74,9 @@ files, retrieve URLs, or inspect attachments or arbitrary metadata records.
 
 ## Verification
 
-Tests generate recordings with `McapWriter`; no binary fixture is committed.
+Tests use Node's test runner and are named `*.node-test.ts` to keep them separate
+from REA's Vitest projects. Run them with the package command above. They generate
+recordings with `McapWriter`; no binary fixture is committed.
 They cover duplicate topic names, 64-bit precision, omitted schemas/statistics,
 unknown compression, malformed magic/footer/CRC, missing summaries, read/output
 limits, selected-schema expansion, file/argument errors, and read-only CLI output.
