@@ -77,6 +77,65 @@ describe("Trae configuration paths", () => {
   });
 });
 
+const traeCnPath = (
+  home: string,
+  platform: NodeJS.Platform = "linux",
+  env: Parameters<typeof supportedClients>[2] = {},
+) =>
+  supportedClients(home, platform, env).find(({ name }) => name === "trae_cn");
+
+describe("Trae CN configuration paths", () => {
+  it("resolves the renamed VS Code-style user directory per platform", () => {
+    expect(traeCnPath("/home/a", "linux", {})?.configPath).toBe(
+      join("/home/a", ".config", "Trae CN", "User", "mcp.json"),
+    );
+    expect(
+      traeCnPath("/home/a", "linux", { XDG_CONFIG_HOME: "/xdg" })?.configPath,
+    ).toBe(join("/xdg", "Trae CN", "User", "mcp.json"));
+    expect(traeCnPath("/Users/a", "darwin")?.configPath).toBe(
+      join(
+        "/Users/a",
+        "Library",
+        "Application Support",
+        "Trae CN",
+        "User",
+        "mcp.json",
+      ),
+    );
+    expect(
+      traeCnPath("C:\\Users\\a", "win32", {
+        APPDATA: "C:\\Users\\a\\AppData\\Roaming",
+      })?.configPath,
+    ).toBe(
+      join("C:\\Users\\a\\AppData\\Roaming", "Trae CN", "User", "mcp.json"),
+    );
+    expect(
+      traeCnPath("C:\\Users\\a", "win32", {
+        APPDATA: "C:\\Users\\a\\AppData\\Roaming",
+      })?.markerPath,
+    ).toBe(join("C:\\Users\\a\\AppData\\Roaming", "Trae CN", "User"));
+  });
+
+  it("resolves the registration format as the plain mcpServers JSON dialect", () => {
+    expect(traeCnPath("/home/a")?.format).toBe("json");
+  });
+
+  it("resolves the personal skills directory under the renamed home root", () => {
+    expect(
+      skillDestinations("/home/a", ["trae_cn"]).map(({ path }) => path),
+    ).toEqual([
+      join("/home/a", ".trae-cn", "skills", "reverse-engineer-anything"),
+    ]);
+    expect(
+      skillDestinations("C:\\Users\\a", ["trae_cn"], {}, "win32").map(
+        ({ path }) => path,
+      ),
+    ).toEqual([
+      join("C:\\Users\\a", ".trae-cn", "skills", "reverse-engineer-anything"),
+    ]);
+  });
+});
+
 describe("Trae JSON registration", () => {
   const traeClient = async () => {
     const home = await createTestTempDirectory("rea-trae-");

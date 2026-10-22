@@ -142,6 +142,26 @@ const traeUserDirectory = ({
   return join(xdgConfigHome({ home, platform, env }), "Trae", "User");
 };
 
+/**
+ * The Trae China build renames its data directory ("Trae CN" / ".trae-cn"),
+ * so its VS Code-style user directory differs from the international build.
+ */
+const traeCnUserDirectory = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): string => {
+  if (platform === "win32")
+    return join(
+      env.APPDATA ?? join(home, "AppData", "Roaming"),
+      "Trae CN",
+      "User",
+    );
+  if (platform === "darwin")
+    return join(home, "Library", "Application Support", "Trae CN", "User");
+  return join(xdgConfigHome({ home, platform, env }), "Trae CN", "User");
+};
+
 /** Windows packaging decides which file Claude Desktop reads; see its resolver. */
 const claudeDesktopLocation = (
   context: ClientPathContext,
@@ -605,6 +625,15 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: (context: ClientPathContext) =>
       join(traeUserDirectory(context), "mcp.json"),
     markerPath: traeUserDirectory,
+    format: "json",
+  },
+  {
+    name: "trae_cn",
+    displayName: "Trae CN",
+    skillPath: [".trae-cn", "skills"],
+    configPath: (context: ClientPathContext) =>
+      join(traeCnUserDirectory(context), "mcp.json"),
+    markerPath: traeCnUserDirectory,
     format: "json",
   },
   {

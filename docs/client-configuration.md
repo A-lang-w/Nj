@@ -271,6 +271,21 @@ The user-level MCP paths follow the editor's VS Code layout. Trae's official
 documentation describes the raw JSON editor without specifying those paths;
 loading this registration in Trae remains unverified.
 
+## Trae CN
+
+The Trae China build ships as a separate application that renames its data
+directory. Setup writes `mcpServers.rea` into the user-scope `mcp.json` under
+that renamed VS Code-style user directory (`%APPDATA%\Trae CN\User` on Windows,
+`~/Library/Application Support/Trae CN/User` on macOS, and
+`~/.config/Trae CN/User` elsewhere). Entries carry `command`, `args`, and
+`env`; stdio is the default transport. Trae CN discovers personal skills from
+`~/.trae-cn/skills` (`%userprofile%\.trae-cn\skills` on Windows), so setup
+installs its skill copy there.
+
+The same caveat as the international build applies: the user-level MCP paths
+follow the editor's VS Code layout, and Trae's official documentation describes
+the raw JSON editor without specifying those paths.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the

@@ -466,6 +466,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Qoder              | `qoder`          |
 | Factory Droid      | `droid`          |
 | Trae               | `trae`           |
+| Trae CN            | `trae_cn`        |
 | WorkBuddy          | `workbuddy`      |
 | ZCode              | `zcode`          |
 | DeepSeek Harness   | `dsh`            |
