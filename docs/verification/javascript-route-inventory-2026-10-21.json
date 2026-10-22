@@ -36328,5 +36328,31 @@
     "source_tests": 811,
     "public_tests": 153,
     "scope": "Canonical Evidence publication and deferred MCP startup from main. Input/output contracts and caller receipt values remain preserved. Actual fresh SDK schemas and delivery costs are measured below; no baseline performance causality claimed."
+  },
+  "post_qualification_format_correction": {
+    "before_commit": "0211508920326098157ac68004cc48e2341bfbb9",
+    "path": "src/main/deferredRuntime.ts",
+    "verification": "Production Babel TypeScript ASTs are identical after removing location and parser extra metadata. Formatting and redundant parenthesization only; no runtime semantics changed.",
+    "qualified_runtime": "896c682cfc4e0b75a865fcc85af5a47c73e1147c",
+    "source_before_sha256": "12f17278b91d8df638caa84bca7d84d73a51b9cfd44d075c16d25dc0b63e64ea",
+    "source_after_sha256": "218584b2c29bb0382ee88146400eb851508320d86706825a5489196fcf6900f8",
+    "failed_ci": {
+      "run_id": 39721009251,
+      "head": "0211508920326098157ac68004cc48e2341bfbb9",
+      "static_job": 119634702945,
+      "observed_failure": "oxfmt found src/main/deferredRuntime.ts formatting after lint-staged oxlint --fix simplified the upstream redundant spread after its formatter step. This is our integration commit, not a main baseline failure.",
+      "followup": "Cancelled the superseded running CI and push the canonical formatted expression for a fresh full CI run."
+    },
+    "format_check": {
+      "command": ["taskset", "-c", "0,1", "npm", "run", "format:check"],
+      "exit_code": 0,
+      "wall_s": 3.381336282007396,
+      "cpu_s": 6.173326,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 502394880,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    "scope": "Formatting/parenthesization only, production TypeScript ASTs equivalent. Prior fresh source/public/production/SDK/browser measurements remain pinned to their executed runtime. No new runtime-performance measurement claimed."
   }
 }

@@ -8,6 +8,12 @@ commits change these reports. The [JSON record](javascript-route-inventory-2026-
 pins original inputs, exact commands, profiles, failed controls and historical revisions.
 Current-head GitHub CI and automated review must be checked separately.
 
+A later formatting correction to `src/main/deferredRuntime.ts` has an equivalent
+production TypeScript AST; no runtime behavior changed. The integration hook had
+run a lint fix after formatting, causing CI format failure. That failed run and
+the passing repository format check are retained in JSON. Measurements remain
+pinned to the runtime actually executed; the corrected head requires fresh CI.
+
 ## Current implementation and executed checks
 
 Shared source analysis produces stable route, occurrence, source and gap facts.
