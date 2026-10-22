@@ -1,6 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { chmod, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1206,11 +1213,7 @@ it.skipIf(process.platform !== "linux")(
     const tty = await rizinTestInferiorTty();
     directory = await mkdtemp(join(tmpdir(), "rea-rizin-stale-proof-retry-"));
     const sinksClosedMarker = join(directory, "selected-sinks-closed");
-    const selected = await spawnTestInferiorOnTty(
-      tty,
-      true,
-      sinksClosedMarker,
-    );
+    const selected = await spawnTestInferiorOnTty(tty, true, sinksClosedMarker);
     const additional = await spawnTestInferiorOnTty(tty);
     const selectedPid = selected.pid;
     const additionalPid = additional.pid;
