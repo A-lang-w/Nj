@@ -53,9 +53,19 @@ if (values.phase === "analysis") {
 let expectedBinding;
 let bindingBefore;
 let auditBeforeMs;
+let measurementInputsSha256;
+const producerSources = {};
 if (values.bindings !== undefined) {
   assert.ok(["baseline", "candidate"].includes(values.role));
-  const inputs = JSON.parse(await readFile(values.bindings, "utf8"));
+  const inputBytes = await readFile(values.bindings);
+  measurementInputsSha256 = hash(inputBytes);
+  const inputs = JSON.parse(inputBytes.toString("utf8"));
+  for (const name of ["mcp-input-catalog.mjs", "managed-cli-runtime.mjs"]) {
+    producerSources[name] = hash(
+      await readFile(new URL(name, import.meta.url)),
+    );
+    assert.equal(producerSources[name], inputs.harness_sources_sha256[name]);
+  }
   expectedBinding = inputs.runtime_bindings[values.role];
   const start = performance.now();
   bindingBefore = await captureRuntimeBinding(values.runtime, "mcp");
@@ -95,7 +105,10 @@ const report = {
   profile: values.profile,
   phase: values.phase,
   cache: values.cache,
+  cache_root: values["cache-root"] ?? null,
   role: values.role,
+  measurement_inputs_sha256: measurementInputsSha256,
+  producer_sources_sha256: producerSources,
   artifact_sha256: artifactSha,
   calls: [],
   checks: [],
@@ -257,6 +270,15 @@ try {
     };
     assertRuntimeBinding(after, expectedBinding, values.role);
     assert.deepEqual(after, bindingBefore);
+    assert.equal(
+      hash(await readFile(values.bindings)),
+      measurementInputsSha256,
+    );
+    for (const [name, digest] of Object.entries(producerSources))
+      assert.equal(
+        hash(await readFile(new URL(name, import.meta.url))),
+        digest,
+      );
     report.runtime_binding = after;
     report.runtime_binding_verified = true;
   }

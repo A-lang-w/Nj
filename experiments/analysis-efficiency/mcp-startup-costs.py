@@ -13,7 +13,8 @@ parser.add_argument('root', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
 root = args.root
-inputs = json.loads((root / 'measurement-inputs.json').read_text())
+input_bytes = (root / 'measurement-inputs.json').read_bytes()
+inputs = json.loads(input_bytes)
 expected = inputs['runtime_bindings']
 sha = lambda value: hashlib.sha256(value).hexdigest()
 compact = lambda value: json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
@@ -36,6 +37,9 @@ for case in inputs['cases']:
     report = json.loads((directory / 'report.json').read_text())
     assert report['status'] == 'passed' and report['cleanup_verified']
     assert report['runtime_binding_verified']
+    assert report['measurement_inputs_sha256'] == sha(input_bytes)
+    for name, digest in report['producer_sources_sha256'].items():
+        assert digest == inputs['harness_sources_sha256'][name]
     assert report['runtime_binding'] == expected[case['role']]
     for key in ['role', 'cache', 'profile', 'phase']:
         assert report[key] == case[key]
@@ -97,6 +101,7 @@ for phase in ['discovery', 'analysis']:
                     item[role]['tokens_estimated'] = [row['tokens_estimated']['whole_task'] for row in selected]
                 summary.append(item)
 result = {'status': 'passed', 'tokenizer': f'tiktoken=={tiktoken.__version__}/cl100k_base; estimates, not model usage',
+          'aggregation_source_sha256': sha(Path(__file__).read_bytes()),
           'context_scope': 'Question, explicit recipe, server instructions, one complete name/description/input-schema directory, every tool argument and text reply, plus prompt directory for discovery. Raw output-schema transport tokens are separate. SDK initialization framing, reasoning and actual model usage are unmeasured. The analysis task includes retained-read, rejection, export/oracle and post-materialization directory checks.',
           'cache_scope': 'Cold disables server Node compile cache. Warm enables a prepopulated role/profile-specific cache after one complete analysis priming run. Fresh server/client processes and HOME each trial. Driver compile cache disabled in both cohorts. Cache hit rate and OS page cache are unmeasured; source/runtime audits warm compiled-file pages before startup.',
           'resource_scope': 'Whole SDK driver, resource observer and owned REA process family. Includes before/after source-and-all-compiled-JS/JSON binding, SDK schema checks, extra validation calls, bundle export and independent oracle checking. Kernel cgroup peak includes file cache. Build/download/oracle preparation and cache priming excluded. Retained V8 heap and forced-GC diagnostics were not separately measured.',
