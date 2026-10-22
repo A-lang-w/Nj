@@ -691,6 +691,103 @@ it("keeps child-frame ownership across a redirect hop that omits its frame", asy
   );
 });
 
+it("attributes a failure to a root replacement that commits after its request", async () => {
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "replacement-document",
+            timestamp: 21,
+            type: "Document",
+            frameId: "replacement-main",
+            request: { url: `${origin}/replacement` },
+          },
+        },
+        frameNavigated(command, {
+          id: "replacement-main",
+          loaderId: "replacement-loader",
+          url: `${origin}/replacement`,
+        }),
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "replacement-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_CONNECTION_REFUSED",
+          },
+        },
+      ];
+    },
+  });
+
+  expect(observation.timeline).toContainEqual(
+    expect.objectContaining({
+      type: "load_failed",
+      request_id: "replacement-document",
+    }),
+  );
+});
+
+it("keeps contradictory redirect ownership unknown after a later hop agrees again", async () => {
+  const hop = (
+    command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+    origin: string,
+    frameId: string,
+    hopIndex: number,
+  ) => ({
+    method: "Network.requestWillBeSent",
+    sessionId: command.sessionId,
+    params: {
+      requestId: "contradictory-document",
+      timestamp: 21 + hopIndex / 10,
+      type: "Document",
+      frameId,
+      ...(hopIndex === 0
+        ? {}
+        : { redirectResponse: { url: `${origin}/hop-${String(hopIndex)}` } }),
+      request: { url: `${origin}/hop-${String(hopIndex + 1)}` },
+    },
+  });
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        hop(command, origin, "frame-main", 0),
+        hop(command, origin, "frame-child", 1),
+        hop(command, origin, "frame-main", 2),
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "contradictory-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_CONNECTION_REFUSED",
+          },
+        },
+      ];
+    },
+  });
+
+  expect(
+    observation.timeline.filter((event) => event.type === "load_failed"),
+  ).toEqual([]);
+  expect(observation.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+    }),
+  );
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],

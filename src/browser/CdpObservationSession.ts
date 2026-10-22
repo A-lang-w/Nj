@@ -465,34 +465,31 @@ class TimelineCapture {
     if (requestId === undefined) return;
     const resourceType = cdpStringValue(params.type);
     const otherType = resourceType !== undefined && resourceType !== "Document";
+    // The frame is kept as observed and classified when the failure arrives,
+    // after any root replacement has committed.
     const frameId = cdpStringValue(params.frameId);
-    const frame: FrameOwnership =
-      frameId === undefined
-        ? "unknown"
-        : frameId === this.mainFrameId
-          ? "main"
-          : "other";
     const previous = this.#documentCandidates.get(requestId);
     if (previous === undefined) {
       if (otherType) return;
       this.#documentCandidates.set(requestId, {
         declaredDocument: resourceType === "Document",
-        frame,
+        frameId,
+        frameConflict: false,
       });
       return;
     }
     // A redirect continues under the same ID: an omitted fact keeps what an
-    // earlier hop established, and a contradiction leaves it unknown.
+    // earlier hop established, and a contradiction stays unresolved.
     this.#documentCandidates.set(requestId, {
       declaredDocument:
         !otherType &&
         (previous.declaredDocument || resourceType === "Document"),
-      frame:
-        frameId === undefined || previous.frame === frame
-          ? previous.frame
-          : previous.frame === "unknown"
-            ? frame
-            : "unknown",
+      frameId: previous.frameId ?? frameId,
+      frameConflict:
+        previous.frameConflict ||
+        (frameId !== undefined &&
+          previous.frameId !== undefined &&
+          frameId !== previous.frameId),
     });
   }
 
@@ -500,6 +497,12 @@ class TimelineCapture {
   #loadingFinished(event: CdpTransportEvent): void {
     const requestId = cdpStringValue(recordValue(event.params)?.requestId);
     if (requestId !== undefined) this.#documentCandidates.delete(requestId);
+  }
+
+  #ownership(candidate: DocumentCandidate): "main" | "other" | "unknown" {
+    if (candidate.frameConflict || candidate.frameId === undefined)
+      return "unknown";
+    return candidate.frameId === this.mainFrameId ? "main" : "other";
   }
 
   #redirect(params: UnknownRecord, bufferedBeforeArm: boolean): void {
@@ -552,8 +555,10 @@ class TimelineCapture {
     // An untracked request was not a possible main-frame document. Without a
     // request ID the failure cannot be joined to its frame at all.
     if (requestId !== undefined && candidate === undefined) return;
+    const frame =
+      candidate === undefined ? undefined : this.#ownership(candidate);
     // A document owned by another frame is out of scope, not unknown.
-    if (candidate?.frame === "other") return;
+    if (frame === "other") return;
     const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
     if (!eventTime.keep) return;
     // Only a failure inside the window can leave the timeline incomplete.
@@ -561,7 +566,7 @@ class TimelineCapture {
       requestId === undefined ||
       candidate === undefined ||
       !(failureType !== undefined || candidate.declaredDocument) ||
-      candidate.frame !== "main"
+      frame !== "main"
     ) {
       this.completeness.exclude("timeline", "invalid_protocol_value");
       return;
@@ -754,11 +759,11 @@ const frameId = (result: unknown): string | undefined =>
 interface DocumentCandidate {
   /** The request declared `Document`; otherwise its type was omitted. */
   readonly declaredDocument: boolean;
-  /** Unknown when every hop omitted the frame or hops contradicted. */
-  readonly frame: FrameOwnership;
+  /** The first frame a hop named; omitted when no hop named one. */
+  readonly frameId: string | undefined;
+  /** Hops named different frames, so ownership stays unknown. */
+  readonly frameConflict: boolean;
 }
-
-type FrameOwnership = "main" | "other" | "unknown";
 
 const hasNoComparableProducerTimestamp = (method: string): boolean =>
   method === "Page.frameRequestedNavigation" ||
