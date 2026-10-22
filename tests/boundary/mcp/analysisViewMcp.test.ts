@@ -530,6 +530,100 @@ it("reports a tampered inline Evidence ID at its full MCP source path", async ()
   });
 });
 
+it("locates malformed pcap parent fields at the view source for inline and retained Evidence", async () => {
+  const { client, session } = await connect();
+  const target = {
+    path: "/captures/example.pcap",
+    sha256: "a".repeat(64),
+    bytes: 24,
+  };
+  const report = {
+    client: {
+      tshark_command: "tshark",
+      tshark_source: "path",
+      tshark_version: "4.6.6",
+      capinfos_command: "capinfos",
+      capinfos_source: "path",
+      capinfos_version: "4.6.6",
+    },
+    target,
+    file_type: "pcap",
+    encapsulation: "Ethernet",
+    packet_count: 0,
+    capture_start: null,
+    capture_end: null,
+    capture_duration_seconds: null,
+    snapshot_length: null,
+    endpoints: [],
+    endpoint_count: 0,
+    dns_queries: [],
+    dns_query_count: 0,
+    tls_sni_values: [],
+    tls_sni_count: 0,
+    protocol_distribution: [],
+    protocol_count: 0,
+    http_request_uris: [],
+    http_request_uri_count: 0,
+    http_uri_redaction_count: 0,
+    unattributed_dns_addresses: [],
+    unattributed_dns_address_count: 0,
+    unattributed_dns_packet_count: 0,
+    coverage: "complete",
+    diagnostics: { tshark_stderr: "", capinfos_stderr: "" },
+  };
+  const parent = (targetPath: string | number) =>
+    createEvidence(
+      { ...target, format: "file" },
+      {
+        id: "historical-pcap",
+        name: "Historical packet capture",
+        version: "1",
+      },
+      {
+        operation: "inspect_pcap_capture",
+        parameters: {},
+        result: { ...report, target: { ...target, path: targetPath } },
+        confidence: "derived",
+        authority: "historical-reference",
+      },
+    );
+  const valid = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "inline", evidence: parent(target.path) },
+      view: { kind: "summary" },
+    },
+  });
+  expect(valid.isError).not.toBe(true);
+
+  const malformed = parent(123);
+  const recorded = session.recordEvidence(malformed);
+  if (!recorded.ok) throw recorded.error;
+  for (const source of [
+    { kind: "inline", evidence: malformed },
+    { kind: "retained-evidence", evidence_id: malformed.evidence_id },
+  ] as const) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "summary" } },
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      details: {
+        issues: [
+          {
+            path: ["source", "normalized_result", "target", "path"],
+            reason: "invalid_type",
+            expected: "string",
+          },
+        ],
+      },
+    });
+  }
+});
+
 it("rejects self-contained WASM and EVM Evidence views when the subject format differs", async () => {
   const { client } = await connect();
   const wasm = wasmArtifactFixture();
