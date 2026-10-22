@@ -1,6 +1,12 @@
 import type { JsonValue } from "../jsonValue.js";
 import { same, type JsonObject } from "./environmentStateRules.js";
-import type { FieldRule } from "./environmentStateWriteRules.js";
+import { storedKinds } from "./environmentStateWriteApply.js";
+import type { explainUpdate } from "./environmentStateWriteExplain.js";
+import type {
+  FieldRule,
+  StateWritePlan,
+  WriteBody,
+} from "./environmentStateWriteRules.js";
 import { integerOf, slugOf } from "./environmentStateWriteValues.js";
 
 /** Whether a rule changes its field on calls that do not send it: serving applies it to every call that could. */
@@ -74,5 +80,58 @@ export const contradictsEarlierCalls = (
         const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
         return typeof from === "string" && slugOf(from) !== value;
       }),
+  );
+};
+
+/** A plan's body with the members and fixed values a later call's body adds, and the JSON types it stored those members as when the observation shows none. */
+export const refinedBody = (
+  body: WriteBody,
+  later: WriteBody,
+  values: { readonly observed: JsonObject; readonly stored: JsonObject },
+): WriteBody => {
+  const fixed = new Set(body.fixed.map((entry) => entry.member));
+  const accepted = later.accepted.filter(
+    (member) => !body.accepted.includes(member),
+  );
+  return {
+    ...body,
+    // A later call may be the first to show the body repeating the path's id.
+    identity: body.identity ?? later.identity,
+    accepted: [...body.accepted, ...accepted],
+    fixed: [
+      ...body.fixed,
+      ...later.fixed.filter((entry) => !fixed.has(entry.member)),
+    ],
+    // Serving reads member types from the observation, which may not show a member a later call stored.
+    kinds: [
+      ...body.kinds,
+      ...storedKinds(accepted, values.observed, values.stored),
+    ],
+  };
+};
+
+/** Whether a later call explains a member or field otherwise than the plan: echoed by one and stored as something else by the other, or ruled differently. */
+export const conflictsWithPlan = (
+  plan: Pick<StateWritePlan, "body" | "rules">,
+  explained: ReturnType<typeof explainUpdate>,
+): boolean => {
+  const body = plan.body!;
+  const fixed = new Map(body.fixed.map((entry) => [entry.member, entry.sent]));
+  const rules = new Map(plan.rules.map((rule) => [rule.field, rule]));
+  const { identity } = explained.body;
+  // Serving checks a call's identity member before its fixed values, so a member both cannot take every recorded call.
+  return (
+    explained.body.accepted.some((member) => fixed.has(member)) ||
+    explained.body.fixed.some(
+      (entry) =>
+        body.accepted.includes(entry.member) ||
+        entry.member === body.identity ||
+        (fixed.has(entry.member) && !same(fixed.get(entry.member), entry.sent)),
+    ) ||
+    (identity !== null && fixed.has(identity)) ||
+    explained.rules.some((rule) => {
+      const held = rules.get(rule.field);
+      return held !== undefined && !same(held, rule);
+    })
   );
 };

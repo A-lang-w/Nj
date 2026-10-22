@@ -22,7 +22,6 @@ import {
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import {
-  conflictsWithPlan,
   explainUpdate,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
@@ -33,6 +32,8 @@ import {
   keptFields,
   scalars,
   type UpdateCall,
+  conflictsWithPlan,
+  refinedBody,
 } from "./environmentStateWriteCalls.js";
 import {
   laterObservation,
@@ -257,66 +258,44 @@ const updatedObservation = (
       const found = itemTarget(context.state, entity.type, record);
       return found.collection === entity.collection && found.id === entity.id;
     },
-    ...(own === undefined
-      ? {}
-      : {
-          covers: (
-            view: Extract<StateView, { readonly shape: "item" | "list" }>,
-          ) => required.every((field) => view.fields.includes(field)),
-        }),
+    // With an answer or without one, only a read whose view shows every learned clock shows what this call stamped.
+    covers: (view) => required.every((field) => view.fields.includes(field)),
   });
-  if (later !== undefined) {
-    const readFields = viewFields(context.viewOf(later.ordinal));
-    const coversRequired = required.every((field) =>
-      readFields?.includes(field),
-    );
-    // A partial summary cannot replace members the write response did show. Only use it
-    // to fill an omitted generated field when that read view actually covers the field.
-    if (own === undefined || coversRequired) {
-      context.observed(later.ordinal);
-      const object = { ...own?.object, ...later.object };
-      // For covered fields, the later read's omission is evidence too; do not fill it back
-      // from an earlier write response. Fields outside that view retain response evidence.
-      for (const field of readFields ?? [])
-        if (!Object.hasOwn(later.object, field)) delete object[field];
-      return {
-        ...later,
-        object,
-        ...(readFields === undefined ? {} : { readFields }),
-      };
-    }
-  }
-  return own;
+  if (later === undefined) return own;
+  const readFields = viewFields(context.viewOf(later.ordinal));
+  context.observed(later.ordinal);
+  const object = { ...own?.object, ...later.object };
+  // For covered fields, the later read's omission is evidence too; do not fill it back
+  // from an earlier write response. Fields outside that view retain response evidence.
+  for (const field of readFields ?? [])
+    if (!Object.hasOwn(later.object, field)) delete object[field];
+  return {
+    ...later,
+    object,
+    ...(readFields === undefined ? {} : { readFields }),
+  };
 };
 
-/** Add what a later call of an update showed to its plan: members, fixed values and rules not seen before. */
+/** Add what a later call of an update showed to its plan: members, their stored types, fixed values and rules not seen before. */
 const refineUpdate = (
   context: EffectContext,
-  plan: WriteDraft["plan"],
-  explained: ReturnType<typeof explainUpdate>,
+  draft: WriteDraft,
+  evidence: {
+    readonly after: Observed;
+    readonly explained: ReturnType<typeof explainUpdate>;
+  },
 ): void => {
-  const body = plan.body!;
-  const fixed = new Set(body.fixed.map((entry) => entry.member));
-  const added = explained.body.fixed.filter(
-    (entry) => !fixed.has(entry.member),
-  );
-  retainFixed(context, added);
-  plan.body = {
-    ...body,
-    // A later call may be the first to show the body repeating the path's id.
-    identity: body.identity ?? explained.body.identity,
-    accepted: [
-      ...body.accepted,
-      ...explained.body.accepted.filter(
-        (member) => !body.accepted.includes(member),
-      ),
-    ],
-    fixed: [...body.fixed, ...added],
-  };
+  const { plan } = draft;
+  const body = refinedBody(plan.body!, evidence.explained.body, {
+    observed: draft.observed!,
+    stored: evidence.after.object,
+  });
+  retainFixed(context, body.fixed.slice(plan.body!.fixed.length));
+  plan.body = body;
   const ruled = new Set(plan.rules.map((rule) => rule.field));
   plan.rules = [
     ...plan.rules,
-    ...explained.rules.filter((rule) => !ruled.has(rule.field)),
+    ...evidence.explained.rules.filter((rule) => !ruled.has(rule.field)),
   ];
 };
 
@@ -341,7 +320,7 @@ const buildUpdate = (
   },
 ): void => {
   if (built(draft)) {
-    refineUpdate(context, draft.plan, evidence.explained);
+    refineUpdate(context, draft, evidence);
     return;
   }
   retainFixed(context, evidence.explained.body.fixed);
@@ -428,20 +407,12 @@ export const applyUpdate = (
     refuse(draft, step, "unexplained-change");
     return recorded();
   }
-  // Rules for unsent changes hold for every call, so each call must agree with those of the others.
+  // Each call must agree with the plan; one on an unknown entity cannot be checked, so it adds nothing to the plan.
   if (
     built(draft) &&
-    !unknown &&
-    (contradictsEarlierCalls(draft, explained.rules) ||
-      contradictsGeneratedClock(
-        entity.fields,
-        after.object,
-        draft.plan.rules,
-        explained.rules,
-      ) ||
-      conflictsWithPlan(draft.plan, explained))
+    (unknown || contradictsPlan(draft, entity.fields, after.object, explained))
   ) {
-    refuse(draft, step, "unexplained-change");
+    if (!unknown) refuse(draft, step, "unexplained-change");
     return recorded();
   }
   buildUpdate(context, draft, step, { after, explained, idField });
@@ -508,6 +479,17 @@ const contradictsGeneratedClock = (
       next.ms <= previous.ms
     );
   });
+
+/** Whether a later call explains its changes otherwise than the plan: rules for unsent changes hold for every call, so each call must agree with the others. */
+const contradictsPlan = (
+  draft: WriteDraft,
+  before: JsonObject,
+  after: JsonObject,
+  explained: ReturnType<typeof explainUpdate>,
+): boolean =>
+  contradictsEarlierCalls(draft, explained.rules) ||
+  contradictsGeneratedClock(before, after, draft.plan.rules, explained.rules) ||
+  conflictsWithPlan(draft.plan, explained);
 
 /** Apply a recorded delete: the held entity leaves its collection. */
 export const applyDelete = (

@@ -12,7 +12,6 @@ import {
 import type {
   FieldRule,
   InsertRule,
-  StateWritePlan,
   WriteBody,
   WriteCall,
   WriteResponse,
@@ -228,6 +227,7 @@ const bodyOf = (
     .map(([member, sent]) => ({ member, sent })),
   required: [...required],
   identity: null,
+  kinds: [],
 });
 
 /** Explain every field of a created entity: echoed, copied, path, slug, generated, template or constant (unlisted). */
@@ -537,30 +537,4 @@ export const documentPointerOf = (
       best = { pointer, shared };
   }
   return best?.pointer;
-};
-
-/** Whether a later call explains a member or field otherwise than the plan: echoed by one and stored as something else by the other, or ruled differently. */
-export const conflictsWithPlan = (
-  plan: Pick<StateWritePlan, "body" | "rules">,
-  explained: ReturnType<typeof explainUpdate>,
-): boolean => {
-  const body = plan.body!;
-  const fixed = new Map(body.fixed.map((entry) => [entry.member, entry.sent]));
-  const rules = new Map(plan.rules.map((rule) => [rule.field, rule]));
-  const { identity } = explained.body;
-  // Serving checks a call's identity member before its fixed values, so a member both cannot take every recorded call.
-  return (
-    explained.body.accepted.some((member) => fixed.has(member)) ||
-    explained.body.fixed.some(
-      (entry) =>
-        body.accepted.includes(entry.member) ||
-        entry.member === body.identity ||
-        (fixed.has(entry.member) && !same(fixed.get(entry.member), entry.sent)),
-    ) ||
-    (identity !== null && fixed.has(identity)) ||
-    explained.rules.some((rule) => {
-      const held = rules.get(rule.field);
-      return held !== undefined && !same(held, rule);
-    })
-  );
 };

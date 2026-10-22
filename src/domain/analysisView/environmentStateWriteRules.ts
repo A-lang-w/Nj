@@ -72,6 +72,9 @@ export type InsertRule =
       readonly direction: "ascending" | "descending";
     };
 
+/** The JSON type of a stored value that is not null. */
+export type JsonKind = "array" | "boolean" | "number" | "object" | "string";
+
 /** The body members a write accepts: echoed ones with any value, fixed ones only with the value they were sent. */
 export interface WriteBody {
   readonly accepted: string[];
@@ -79,6 +82,8 @@ export interface WriteBody {
   readonly required: string[];
   /** The member that may repeat the target's identity, which must then equal the path's. */
   readonly identity: string | null;
+  /** The JSON type a later call stored an accepted member as, for members the observation does not show. */
+  readonly kinds: { readonly member: string; readonly kind: JsonKind }[];
 }
 
 /** What a write answers: the written entity or its identity rendered into a recorded body, no body, or the recorded body. */

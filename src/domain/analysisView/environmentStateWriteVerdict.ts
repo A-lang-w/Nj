@@ -2,7 +2,7 @@ import { at, isObject, type StateEntity } from "./environmentStateRules.js";
 import type { WriteDraft, WriteIo } from "./environmentStateWriteEffects.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 
-/** Whether an update or delete that answers with the entity can answer for an initial entity: one holds every field its recorded response shows. */
+/** Whether an update or delete that answers with the entity can answer for an initial entity: one holds, or an update's rules write, every field its recorded response shows. */
 const renders = (
   plan: StateWritePlan,
   input: { readonly io: WriteIo; readonly entities: readonly StateEntity[] },
@@ -18,12 +18,22 @@ const renders = (
       body === undefined ? undefined : at(body, response.pointer ?? "");
     return isObject(object) ? Object.keys(object) : undefined;
   });
+  // Serving renders an update's answer from the entity it wrote; an increment only adds to a field held.
+  const written = new Set(
+    plan.effect === "update"
+      ? plan.rules.flatMap((rule) =>
+          rule.rule === "increment" ? [] : [rule.field],
+        )
+      : [],
+  );
   return (
     shown === undefined ||
     input.entities.some(
       (entity) =>
         entity.type === plan.target &&
-        shown.every((field) => Object.hasOwn(entity.fields, field)),
+        shown.every(
+          (field) => Object.hasOwn(entity.fields, field) || written.has(field),
+        ),
     )
   );
 };

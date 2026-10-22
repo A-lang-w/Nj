@@ -40,7 +40,11 @@ import {
   newEntityIn,
   type Observed,
 } from "./environmentStateWriteObserve.js";
-import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
+import {
+  pathValuesOf,
+  type FieldRule,
+  type WriteCall,
+} from "./environmentStateWriteRules.js";
 import {
   integerOf,
   isUuid,
@@ -294,7 +298,13 @@ export const applyCreate = (
   // The exemplar defines the plan's sequences; each later call must follow them.
   const later = built(draft);
   if (!later) buildCreate(context, draft, step, { observed, call, collection });
-  const fields = createdFields(draft.plan, draft.observed!, call, (rule) =>
+  // Rules learn from the recorded path; serving fills path fields from the collection it selects.
+  const created = {
+    ...call,
+    pathValues:
+      pathValuesOf(step.tool.path_template, collection) ?? call.pathValues,
+  };
+  const fields = createdFields(draft.plan, draft.observed!, created, (rule) =>
     ok(observed.object[rule.field] ?? null),
   );
   const id = fields.ok ? scalarText(fields.value[idField]) : undefined;

@@ -64,6 +64,7 @@ const CONTRACT: WriteBody = {
   ],
   required: ["title"],
   identity: "id",
+  kinds: [],
 };
 const RECORDED = { title: "A", tags: ["x"], meta: null, priority: "high" };
 const LISTED =
@@ -170,6 +171,7 @@ const CREATE_PLAN: Plan = {
     fixed: [],
     required: ["title", "meta"],
     identity: null,
+    kinds: [],
   },
 };
 const CREATE_OBSERVED: JsonObject = {
@@ -264,6 +266,7 @@ const UPDATE_PLAN: Plan = {
     fixed: [{ member: "status", sent: "CLOSED" }],
     required: [],
     identity: "id",
+    kinds: [],
   },
 };
 const BEFORE: JsonObject = {
@@ -616,6 +619,7 @@ it("checks a member stored only under another name against the type of the field
       fixed: [],
       required: [],
       identity: null,
+      kinds: [],
     },
   };
   const observed = { id: "id-1", title: "Old", code: "old-handle" };
