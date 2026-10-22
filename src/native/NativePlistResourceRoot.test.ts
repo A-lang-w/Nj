@@ -85,3 +85,32 @@ it("reads only absolute plist selections without a target or app root", async ()
       "capability_unavailable",
     );
 });
+
+it("refuses an already cancelled standalone read before running plist commands", async () => {
+  const runner = new NativeFixtureRunner();
+  const tools: string[] = [];
+  const run = runner.run.bind(runner);
+  runner.run = (tool, arguments_) => {
+    tools.push(tool);
+    return run(tool, arguments_);
+  };
+  const client = new NativeMacOSProvider(
+    {},
+    runner,
+    "darwin",
+  ).createStandalonePlistClient();
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const controller = new AbortController();
+  controller.abort(new Error("caller stopped"));
+  const cancelled = await client.execute(
+    "inspect_plist",
+    { path: "/fixture/Settings" },
+    { signal: controller.signal },
+  );
+  expect(cancelled.ok).toBe(false);
+  if (!cancelled.ok)
+    expect(projectAnalysisError(cancelled.error).code).toBe("cancelled");
+  expect(tools).toEqual([]);
+});

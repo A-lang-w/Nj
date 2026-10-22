@@ -1,10 +1,14 @@
+import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const runFile = promisify(execFile);
 
 it.skipIf(process.platform !== "darwin")(
   "reads an explicit plist path through MCP without an open target",
@@ -24,6 +28,23 @@ it.skipIf(process.platform !== "darwin")(
     expect(JSON.stringify(result.structuredContent)).toContain(
       "dev.rea.fixture",
     );
+    const binary = join(root, "BinarySettings");
+    await runFile("/usr/bin/plutil", [
+      "-convert",
+      "binary1",
+      "-o",
+      binary,
+      path,
+    ]);
+    const binaryRead = await call("inspect_plist", { path: binary });
+    expect(binaryRead.isError).not.toBe(true);
+    expect(binaryRead.structuredContent).toMatchObject({
+      normalized_result: {
+        format: "binary",
+        value: { CFBundleIdentifier: "dev.rea.fixture" },
+        source_path: binary,
+      },
+    });
     // Target-format detection does not recognize suffixless OpenStep text.
     for (const name of ["Settings", "Localizable.strings"]) {
       const openStep = join(root, name);
