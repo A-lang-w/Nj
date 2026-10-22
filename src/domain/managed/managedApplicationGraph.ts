@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { evidenceSchema, type Evidence } from "../evidence.js";
@@ -20,7 +17,7 @@ import {
   type ManagedMemberInspection,
   type ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
-import type { JsonValue } from "../jsonValue.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   assessManagedGraphOmissions,
   managedGraphEvidenceCoverage,
@@ -69,15 +66,15 @@ export const managedApplicationGraphResultSchema = z.strictObject({
     managed_native_boundaries_evidence_id: evidenceIdSchema.nullable(),
   }),
   summary: z.strictObject({
-    graph_nodes: z.number().int().min(0),
-    graph_edges: z.number().int().min(0),
-    assemblies: z.number().int().min(0),
-    modules: z.number().int().min(0),
-    types: z.number().int().min(0),
-    methods: z.number().int().min(0),
-    fields: z.number().int().min(0),
-    pinvoke_imports: z.number().int().min(0),
-    native_implementations: z.number().int().min(0),
+    graph_nodes: z.int().min(0),
+    graph_edges: z.int().min(0),
+    assemblies: z.int().min(0),
+    modules: z.int().min(0),
+    types: z.int().min(0),
+    methods: z.int().min(0),
+    fields: z.int().min(0),
+    pinvoke_imports: z.int().min(0),
+    native_implementations: z.int().min(0),
   }),
   graph: javascriptApplicationGraphSchema,
   coverage: z.strictObject({
@@ -119,13 +116,6 @@ export interface GraphBuildState {
   readonly methodNodes: Map<string, ApplicationNode>;
   readonly fieldNodes: Map<string, ApplicationNode>;
 }
-
-const sha256 = (value: JsonValue): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError("Managed application graph canonicalization failed");
-  return createHash("sha256").update(serialized).digest("hex");
-};
 
 /** Project authenticated managed Evidence records into the application graph. */
 export const projectManagedApplicationGraph = (
@@ -194,7 +184,10 @@ export const projectManagedApplicationGraph = (
   };
   return managedApplicationGraphResultSchema.parse({
     ...withoutId,
-    projection_id: `magp_${sha256(withoutId)}`,
+    projection_id: `magp_${digestCanonicalValue(
+      withoutId,
+      "Managed application graph",
+    )}`,
   });
 };
 

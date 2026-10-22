@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type {
   ArtifactReader,
@@ -25,6 +26,7 @@ export const createReader = (
   format: ArtifactOccurrence["artifact_format"],
   environment: Readonly<NodeJS.ProcessEnv>,
   rootSource?: StableRegularFileDescriptor,
+  asarHeaderAdmission?: AsarHeaderAdmission,
 ): ArtifactReader | undefined => {
   if (isZipPackageFormat(format))
     return new ZipArtifactReader(path, format, undefined, rootSource);
@@ -32,7 +34,12 @@ export const createReader = (
     case "directory":
       return new DirectoryArtifactReader(path);
     case "asar":
-      return new AsarArtifactReader(path);
+      return new AsarArtifactReader(
+        path,
+        asarHeaderAdmission === undefined
+          ? {}
+          : { headerAdmission: asarHeaderAdmission },
+      );
     case "pyinstaller":
       return new PyInstallerArtifactReader(path, rootSource);
     case "godot-pck":

@@ -18,6 +18,7 @@ import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js"
 import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
 import {
   nativeCallEventSchema,
+  nativeCallProcessOutcomeSchema,
   nativeCodeLocationSchema,
   type NativeCallObservationInput,
 } from "../domain/native/nativeCallObservation.js";
@@ -84,15 +85,9 @@ const BRIDGE = fileURLToPath(
 const tracedSchema = z.strictObject({
   status: z.literal("traced"),
   version: z.string(),
-  pid: z.number().int().positive(),
-  outcome: z.enum([
-    "exited",
-    "duration-elapsed",
-    "event-limit",
-    "stop-limit",
-    "resource-limit",
-  ]),
-  exit_status: z.number().int().nullable(),
+  pid: z.int().positive(),
+  outcome: nativeCallProcessOutcomeSchema,
+  exit_status: z.int().nullable(),
   exit_description: z.string().nullable(),
   killed: z.boolean(),
   terminated: z.boolean(),
@@ -111,8 +106,8 @@ const tracedSchema = z.strictObject({
   resource_limit_reached: z.boolean(),
   breakpoint_locations_truncated: z.boolean().optional(),
   target_output: z.strictObject({
-    stdout_bytes: z.number().int().nonnegative(),
-    stderr_bytes: z.number().int().nonnegative(),
+    stdout_bytes: z.int().nonnegative(),
+    stderr_bytes: z.int().nonnegative(),
     stdout_truncated: z.boolean(),
     stderr_truncated: z.boolean(),
     stdout_complete: z.boolean(),
@@ -121,8 +116,8 @@ const tracedSchema = z.strictObject({
   elapsed_ms: z.number().nonnegative(),
   breakpoints: z.array(
     z.strictObject({
-      index: z.number().int().nonnegative(),
-      location_count: z.number().int().nonnegative(),
+      index: z.int().nonnegative(),
+      location_count: z.int().nonnegative(),
       locations: z.array(nativeCodeLocationSchema),
     }),
   ),

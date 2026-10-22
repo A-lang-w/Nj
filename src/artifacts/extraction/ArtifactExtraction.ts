@@ -1,3 +1,4 @@
+import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import { locateGodotPck } from "../GodotPckLocation.js";
 import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
 import type { ArtifactCleanupAttempt } from "../ArtifactResourceScope.js";
@@ -76,6 +77,7 @@ const extractArtifactInScope = async (
     resourceScope: input.resourceScope,
     signal,
     environment: input.environment,
+    asarHeaderAdmission: resolveAsarHeaderAdmission(input.environment),
     integrity: { mode: input.integrityPolicy },
   });
   return materializeArtifactInventoryInScope(
@@ -442,6 +444,7 @@ const requireExtractableFormat = async (
     !directory &&
     format !== "asar" &&
     format !== "godot-pck" &&
+    format !== "gzip" &&
     !isMachOFormat(format) &&
     !isZipPackageFormat(format)
   ) {
@@ -482,10 +485,14 @@ const createReader = async (
   if (containerFormat === "godot-pck") return new GodotPckArtifactReader(path);
   if (containerFormat === "pyinstaller")
     return new PyInstallerArtifactReader(path);
-  if ((containerFormat as string) === "gzip" || (format as string) === "gzip")
+  if (containerFormat === "gzip" || format === "gzip")
     return new GzipArtifactReader(path);
   if (await requireExtractableFormat(path, input, signal))
     return new DirectoryArtifactReader(path);
+  if (format === "asar")
+    return new AsarArtifactReader(path, {
+      headerAdmission: resolveAsarHeaderAdmission(input.environment),
+    });
   if (isZipPackageFormat(format)) return new ZipArtifactReader(path, format);
   return new MachOSliceArtifactReader(path, input.environment);
 };
