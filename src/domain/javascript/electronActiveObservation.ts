@@ -1,12 +1,6 @@
 import { z } from "zod";
-import { isAbsolute } from "node:path";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
-import { localPathStringSchema } from "../localPath.js";
-
-const pathInputSchema = localPathStringSchema.refine(isAbsolute, {
-  message:
-    "Electron executable, application, and root paths must be absolute local filesystem paths (for example /Applications/Electron.app/Contents/MacOS/Electron)",
-});
 const absolutePathSchema = z
   .string()
   .min(1)
@@ -66,13 +60,13 @@ const actionSchema = z.discriminatedUnion("kind", [
 
 /** Input for one explicit, provider-owned Electron runtime experiment. */
 export const electronActiveObservationInputSchema = z.strictObject({
-  executable_path: pathInputSchema.describe(
+  executable_path: absoluteLocalPathStringSchema.describe(
     "Absolute local filesystem path for the Electron executable; relative paths are rejected.",
   ),
-  application_path: pathInputSchema.describe(
+  application_path: absoluteLocalPathStringSchema.describe(
     "Absolute local filesystem path for the Electron application; relative paths are rejected.",
   ),
-  application_root: pathInputSchema
+  application_root: absoluteLocalPathStringSchema
     .optional()
     .describe(
       "Absolute local filesystem root for application-relative paths; omit to derive it from the application path. Relative paths are rejected.",
@@ -162,14 +156,16 @@ const ipcEventSchema = electronActiveTimelineEventSchema.extend({
   ]),
 });
 
-const processMetricSchema = z.strictObject({
+/** Process facts shared by the runtime boundary and retained active observation. */
+export const electronActiveProcessMetricSchema = z.strictObject({
   pid: z.number().int().min(1),
   type: z.string().min(1),
   name: z.string().nullable(),
   service_name: z.string().nullable(),
 });
 
-const windowResultSchema = z.strictObject({
+/** Window facts shared by the runtime boundary and retained active observation. */
+export const electronActiveWindowSchema = z.strictObject({
   window_id: z.string(),
   web_contents_id: z.string(),
   url: z.string(),
@@ -229,9 +225,9 @@ export const electronActiveObservationResultSchema = z.strictObject({
     cleanup: z.literal("terminated-owned-process"),
   }),
   actions: z.array(actionResultSchema),
-  windows: z.array(windowResultSchema),
+  windows: z.array(electronActiveWindowSchema),
   processes: z.strictObject({
-    items: z.array(processMetricSchema),
+    items: z.array(electronActiveProcessMetricSchema),
   }),
   ipc: z.strictObject({
     events: z.array(ipcEventSchema),

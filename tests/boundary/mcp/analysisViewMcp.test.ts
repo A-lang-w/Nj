@@ -44,6 +44,7 @@ import {
   analysisViewObjectDenseCapture,
   analysisViewNativeEvidence,
   environmentManifestCaptureFixture,
+  environmentStateCaptureFixture,
 } from "../../fixtures/analysisView.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
@@ -54,6 +55,7 @@ import type { RelationshipCoverage } from "../../../src/domain/relationshipCover
 const connect = async (
   binaryLayout?: BinaryLayoutService,
   webNetworkCapture?: WebNetworkCaptureService,
+  schemaProfile: "full" | "compact" = "full",
 ) => {
   const session = createTestBinarySession(() => {
     throw new Error("selected views must not start a deep provider");
@@ -61,6 +63,11 @@ const connect = async (
   const server = createServer(
     { kind: "session", session },
     {
+      // Full schemas retain nested negative controls; selection cases also exercise compact delivery.
+      environment: {
+        ...process.env,
+        REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
+      },
       ...(binaryLayout === undefined ? {} : { binaryLayout }),
       ...(webNetworkCapture === undefined ? {} : { webNetworkCapture }),
     },
@@ -78,66 +85,73 @@ const connect = async (
   return { client, session };
 };
 
-it("advertises response coverage and preserves unknown ordinals through portable and retained MCP", async () => {
-  const { client, session } = await connect();
-  const parent = analysisViewCaptureEvidence(
-    analysisViewResponseCoverageFixture(),
-  );
-  const retained = session.recordEvidence(parent);
-  if (!retained.ok) throw retained.error;
-  const schemas = await advertisedMcpToolSchemas(
-    client,
-    "inspect_analysis_view",
-  );
-  const validateInput = schemas.ajv.compile(schemas.inputSchema);
-  const validateOutput = schemas.ajv.compile(schemas.outputSchema);
-  const outputs = [];
-  for (const source of [
-    { kind: "inline", evidence: parent },
-    { kind: "retained-evidence", evidence_id: parent.evidence_id },
-  ]) {
-    const args = {
-      source,
-      view: {
-        kind: "api-surface",
-        include_response_coverage: true,
-        include_query_parameter_names: true,
-      },
-    };
-    expect(validateInput(args)).toBe(true);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: args,
-    });
-    expect(response.isError).not.toBe(true);
-    expect(validateOutput(response.structuredContent)).toBe(true);
-    const value = parseEvidence(response.structuredContent).normalized_result;
-    expect(value).toMatchObject({
-      parent_evidence_id: parent.evidence_id,
-      records: { examined: 5, total: 50, excluded: 1 },
-      groups: [
-        {
-          record_ordinals: [42, 3, 19],
-          response_coverage: {
-            unavailable_status_ordinals: [3],
-            unavailable_content_type_ordinals: [19],
-          },
+it.each(["full", "compact"] as const)(
+  "advertises response coverage and preserves unknown ordinals through portable and retained MCP (%s)",
+  async (schemaProfile) => {
+    const { client, session } = await connect(
+      undefined,
+      undefined,
+      schemaProfile,
+    );
+    const parent = analysisViewCaptureEvidence(
+      analysisViewResponseCoverageFixture(),
+    );
+    const retained = session.recordEvidence(parent);
+    if (!retained.ok) throw retained.error;
+    const schemas = await advertisedMcpToolSchemas(
+      client,
+      "inspect_analysis_view",
+    );
+    const validateInput = schemas.ajv.compile(schemas.inputSchema);
+    const validateOutput = schemas.ajv.compile(schemas.outputSchema);
+    const outputs = [];
+    for (const source of [
+      { kind: "inline", evidence: parent },
+      { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    ]) {
+      const args = {
+        source,
+        view: {
+          kind: "api-surface",
+          include_response_coverage: true,
+          include_query_parameter_names: true,
         },
-        {
-          record_ordinals: [8],
-          response_coverage: {
-            unavailable_status_ordinals: [8],
-            unavailable_content_type_ordinals: [8],
+      };
+      expect(validateInput(args)).toBe(true);
+      const response = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: args,
+      });
+      expect(response.isError).not.toBe(true);
+      expect(validateOutput(response.structuredContent)).toBe(true);
+      const value = parseEvidence(response.structuredContent).normalized_result;
+      expect(value).toMatchObject({
+        parent_evidence_id: parent.evidence_id,
+        records: { examined: 5, total: 50, excluded: 1 },
+        groups: [
+          {
+            record_ordinals: [42, 3, 19],
+            response_coverage: {
+              unavailable_status_ordinals: [3],
+              unavailable_content_type_ordinals: [19],
+            },
           },
-        },
-      ],
-    });
-    outputs.push(value);
-    expect(JSON.stringify(value)).not.toContain("private-value");
-  }
-  expect(outputs[0]).toEqual(outputs[1]);
-  expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
-});
+          {
+            record_ordinals: [8],
+            response_coverage: {
+              unavailable_status_ordinals: [8],
+              unavailable_content_type_ordinals: [8],
+            },
+          },
+        ],
+      });
+      outputs.push(value);
+      expect(JSON.stringify(value)).not.toContain("private-value");
+    }
+    expect(outputs[0]).toEqual(outputs[1]);
+    expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
+  },
+);
 
 it("preserves native relationship coverage through inline and retained MCP views", async () => {
   const { client, session } = await connect();
@@ -379,6 +393,9 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
   expect(broadError.code).toBe("resource_constraint");
   expect(broadError.remediation?.action).toContain(
     "get_evidence_bundle and detail: summary",
+  );
+  expect(broadError.remediation?.action).toContain(
+    "REA_MCP_MAX_RESPONSE_BYTES",
   );
   const response = await client.callTool({
     name: "get_evidence_bundle",
@@ -1229,7 +1246,80 @@ it.each(PUBLISHED_EXAMPLES)(
   },
 );
 
-it("projects an environment manifest identically from retained and portable MCP Evidence", async () => {
+it("extracts an environment state identically from retained, portable and file MCP Evidence", async () => {
+  const { client, session } = await connect();
+  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+    client,
+    "inspect_analysis_view",
+  );
+  const capture = environmentStateCaptureFixture();
+  const parent = analysisViewCaptureEvidence(capture);
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  const evidencePath = join(
+    await createTestTempDirectory("rea-state-file-mcp-"),
+    "capture.json",
+  );
+  await writeFile(evidencePath, JSON.stringify(parent));
+  const view = {
+    kind: "environment-state",
+    template_rules: ["after-uid-literal", "opaque-token", "sibling-variance"],
+  };
+  const outputs = [];
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    { kind: "evidence-file", path: evidencePath },
+  ]) {
+    expect(ajv.validate(inputSchema, { source, view })).toBe(true);
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(
+      ajv.validate(outputSchema, response.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence.confidence).toBe("inferred");
+    expect(evidence.normalized_result).toMatchObject({
+      kind: "environment-state",
+      views: expect.arrayContaining([
+        expect.objectContaining({
+          tool: "get_folders_by_uid",
+          shape: "item",
+        }),
+      ]),
+    });
+    expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+    outputs.push(evidence.normalized_result);
+  }
+  expect(outputs[0]).toEqual(outputs[1]);
+  expect(outputs[2]).toEqual(outputs[0]);
+  const hidden = createEvidence(
+    {
+      path: capture.artifact.path,
+      sha256: capture.artifact.sha256!,
+      format: "file",
+    },
+    { id: "fixture", name: "fixture", version: "1" },
+    {
+      operation: "inspect_web_network_capture",
+      parameters: { sensitive_value_count: 1 },
+      result: capture,
+      confidence: "observed",
+    },
+  );
+  const refused = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: { source: { kind: "inline", evidence: hidden }, view },
+  });
+  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  expect(JSON.stringify(refused)).not.toContain("probe folder");
+  await client.ping();
+});
+
+it("projects an environment manifest identically from retained, portable and file MCP Evidence", async () => {
   const { client, session } = await connect();
   const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
     client,
@@ -1238,6 +1328,11 @@ it("projects an environment manifest identically from retained and portable MCP 
   const capture = environmentManifestCaptureFixture();
   const parent = analysisViewCaptureEvidence(capture);
   expect(session.recordEvidence(parent).ok).toBe(true);
+  const evidencePath = join(
+    await createTestTempDirectory("rea-evidence-file-mcp-"),
+    "capture.json",
+  );
+  await writeFile(evidencePath, JSON.stringify(parent));
   const view = {
     kind: "environment-manifest",
     template_rules: ["after-uid-literal", "opaque-token", "sibling-variance"],
@@ -1246,6 +1341,7 @@ it("projects an environment manifest identically from retained and portable MCP 
   for (const source of [
     { kind: "inline", evidence: parent },
     { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    { kind: "evidence-file", path: evidencePath },
   ]) {
     expect(ajv.validate(inputSchema, { source, view })).toBe(true);
     expect(
@@ -1286,6 +1382,34 @@ it("projects an environment manifest identically from retained and portable MCP 
     outputs.push(evidence.normalized_result);
   }
   expect(outputs[0]).toEqual(outputs[1]);
+  expect(outputs[2]).toEqual(outputs[0]);
+  // JSON Schema cannot express "absolute"; the tool refuses a relative path when called.
+  const relative = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "evidence-file", path: "capture.json" },
+      view,
+    },
+  });
+  expect(parseMcpToolError(relative).error.code).toBe("invalid_request");
+  await writeFile(evidencePath, JSON.stringify({ hello: 1 }));
+  const invalidFile = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: { source: { kind: "evidence-file", path: evidencePath }, view },
+  });
+  expect(parseMcpToolError(invalidFile).error).toMatchObject({
+    details: {
+      path: evidencePath,
+      reason: "wrong-kind",
+      content_issues: expect.arrayContaining([
+        {
+          path: ["evidence_id"],
+          reason: "missing_argument",
+          expected: "string",
+        },
+      ]),
+    },
+  });
   const hidden = createEvidence(
     {
       path: capture.artifact.path,
