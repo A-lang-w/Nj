@@ -120,17 +120,21 @@ const observeJadxFailure = (
       cause.cleanupCause instanceof Error
         ? cause.cleanupCause.message
         : String(cause.cleanupCause);
-    const completed =
-      cause.outcome.kind === "completed"
-        ? androidSnapshotCopy(cause.outcome.value)
-        : undefined;
-    // A finished copy has no separate admission failure. Keep its bytes with
-    // the descriptor owner instead of replacing them with a generic execution
-    // failure.
+    // A finished copy can be this close's outcome or the failed outcome of an
+    // outer descriptor that also rejected close. Keep those bytes, and name
+    // every descriptor that failed rather than the copied output path.
+    const closeFailures = snapshotCloseFailures(cause);
+    const completed = closeFailures
+      .map((failure) =>
+        failure.outcome.kind === "completed"
+          ? androidSnapshotCopy(failure.outcome.value)
+          : undefined,
+      )
+      .find((copy) => copy !== undefined);
     if (completed !== undefined && cancellationError === undefined)
       return new ProviderCleanupError(
         "jadx",
-        [completed.snapshotPath],
+        [...new Set(closeFailures.map((failure) => failure.path))],
         {
           reason,
           snapshot_copy: "completed",
@@ -203,6 +207,19 @@ const observeJadxFailure = (
   return physicalFailure(
     cause instanceof JadxInterruption ? cause.reason : cause,
   );
+};
+
+/** This close and any nested close whose failure is its operation outcome. */
+const snapshotCloseFailures = (
+  cause: RegularFileCleanupFailure,
+): readonly RegularFileCleanupFailure[] => {
+  const failures = [cause];
+  if (
+    cause.outcome.kind === "failed" &&
+    cause.outcome.cause instanceof RegularFileCleanupFailure
+  )
+    failures.push(...snapshotCloseFailures(cause.outcome.cause));
+  return failures;
 };
 
 const presentDiagnosticFailure = (
