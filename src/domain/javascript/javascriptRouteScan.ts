@@ -80,11 +80,19 @@ interface DynamicRouteValueOwner {
   readonly structured: boolean;
   reported: boolean;
 }
+interface SelectedRouteTarget {
+  readonly values: t.Node[] | null;
+  readonly visited: WeakMap<
+    t.Node,
+    Map<SemanticAliasSelectionPath, Set<number>>
+  >;
+}
 interface SelectedRouteValue {
   readonly kind: "value";
   readonly node: t.Node;
   readonly projection: SemanticAliasSelectionPath;
   readonly depth: number;
+  readonly target: SelectedRouteTarget;
 }
 interface SelectedRouteLookup {
   readonly kind: "lookup";
@@ -93,14 +101,16 @@ interface SelectedRouteLookup {
   readonly key: ReturnType<typeof semanticAliasSelectionChoices>[number];
   readonly projection: SemanticAliasSelectionPath;
   readonly depth: number;
+  readonly target: SelectedRouteTarget;
 }
 type RouteSelectionWork =
   | SelectedRouteValue
   | SelectedRouteLookup
   | {
-      readonly kind: "leave";
-      readonly receiver: t.Node;
+      readonly kind: "finish";
+      readonly lookup: SelectedRouteLookup;
       readonly key: string;
+      readonly values: t.Node[];
     };
 interface Fields {
   readonly values: ReadonlyMap<string, t.ObjectProperty>;
@@ -997,40 +1007,57 @@ export class JavaScriptRouteScan {
   ): Generator<t.Node> {
     if (!this.#queue(source)) return;
     const pending: RouteSelectionWork[] = [
-      { kind: "value", node: source, projection, depth: 0 },
+      {
+        kind: "value",
+        node: source,
+        projection,
+        depth: 0,
+        target: { values: null, visited: new WeakMap() },
+      },
     ];
-    const visited = new WeakMap<
-      t.Node,
-      Map<SemanticAliasSelectionPath, Set<number>>
-    >();
-    // Depth-first enter/leave frames keep receiver/key ancestry in constant-time
-    // stacks. Equal or growing suffixes recurse; shorter suffixes still finish.
-    const active = new WeakMap<t.Node, Map<string, number[]>>();
+    // A lookup stays active only while evaluating its returned references.
+    // The caller's remaining members run after that value has been obtained.
+    const active = new WeakMap<t.Node, Set<string>>();
     while (pending.length > 0 && this.#result.capacity === null) {
       const work = pending.pop()!;
-      if (work.kind === "leave") {
-        active.get(work.receiver)?.get(work.key)?.pop();
+      if (work.kind === "finish") {
+        const { lookup } = work;
+        active.get(lookup.receiver)?.delete(work.key);
+        for (const value of work.values)
+          if (
+            !this.#retainSelection(
+              pending,
+              value,
+              lookup.projection,
+              lookup.depth + 1,
+              lookup.target,
+            )
+          )
+            return;
         continue;
       }
-      const { node, projection, depth } = work;
+      const { node, projection, depth, target } = work;
       if (work.kind === "value") {
         const paths =
-          visited.get(node) ??
+          target.visited.get(node) ??
           new Map<SemanticAliasSelectionPath, Set<number>>();
         const depths = paths.get(projection) ?? new Set<number>();
         if (depths.has(depth)) continue;
         depths.add(depth);
         paths.set(projection, depths);
-        visited.set(node, paths);
+        target.visited.set(node, paths);
         if (depth === projection.length) {
-          yield node;
+          if (target.values === null) yield node;
+          else target.values.push(node);
           continue;
         }
         const selected = this.#resolve(node, undefined, this.index);
         if (selected === undefined) continue;
         if (!t.isObjectExpression(selected) && !t.isArrayExpression(selected)) {
           for (const branch of this.#selectionBranches(selected))
-            if (!this.#retainSelection(pending, branch, projection, depth))
+            if (
+              !this.#retainSelection(pending, branch, projection, depth, target)
+            )
               return;
           continue;
         }
@@ -1043,16 +1070,14 @@ export class JavaScriptRouteScan {
             key,
             projection,
             depth,
+            target,
           });
         }
         continue;
       }
       const key = JSON.stringify(work.key);
-      const keys = active.get(work.receiver) ?? new Map<string, number[]>();
-      const lengths = keys.get(key) ?? [];
-      const previous = lengths.at(-1);
-      const remaining = projection.length - depth;
-      if (previous !== undefined && remaining >= previous) {
+      const keys = active.get(work.receiver) ?? new Set<string>();
+      if (keys.has(key)) {
         this.#unknown(
           mechanism,
           node,
@@ -1060,12 +1085,25 @@ export class JavaScriptRouteScan {
         );
         continue;
       }
-      lengths.push(remaining);
-      keys.set(key, lengths);
+      keys.add(key);
       active.set(work.receiver, keys);
-      pending.push({ kind: "leave", receiver: work.receiver, key });
+      const values: t.Node[] = [];
+      const returned: SelectedRouteTarget = {
+        values,
+        visited: new WeakMap(),
+      };
+      pending.push({ kind: "finish", lookup: work, key, values });
       for (const reference of this.#selectedReferences(work.receiver, work.key))
-        if (!this.#retainSelectedReference(pending, reference, work)) return;
+        if (
+          !this.#retainSelection(
+            pending,
+            reference.node,
+            reference.path,
+            0,
+            returned,
+          )
+        )
+          return;
     }
   }
 
@@ -1103,42 +1141,11 @@ export class JavaScriptRouteScan {
     node: t.Node,
     projection: SemanticAliasSelectionPath,
     depth: number,
+    target: SelectedRouteTarget,
   ): boolean {
     if (!this.#queue(node)) return false;
-    pending.push({ kind: "value", node, projection, depth });
+    pending.push({ kind: "value", node, projection, depth, target });
     return true;
-  }
-
-  #retainSelectedReference(
-    pending: RouteSelectionWork[],
-    reference: JavaScriptSemanticObjectReference,
-    { projection, depth }: SelectedRouteLookup,
-  ): boolean {
-    if (reference.path.length === 0)
-      return this.#retainSelection(
-        pending,
-        reference.node,
-        projection,
-        depth + 1,
-      );
-    if (
-      reference.path.length === 1 &&
-      JSON.stringify(reference.path[0]) === JSON.stringify(projection[depth])
-    )
-      return this.#retainSelection(pending, reference.node, projection, depth);
-    // Ordinary members keep offsets. Charge exceptional copy/getter expansion
-    // before allocating a new suffix.
-    for (const part of reference.path)
-      if (!this.#queue(reference.node, JSON.stringify(part))) return false;
-    for (let at = depth + 1; at < projection.length; at++)
-      if (!this.#queue(reference.node, JSON.stringify(projection[at])))
-        return false;
-    return this.#retainSelection(
-      pending,
-      reference.node,
-      [...reference.path, ...projection.slice(depth + 1)],
-      0,
-    );
   }
 
   /** Ownership is per interpretation; return whether inferred roots were found. */

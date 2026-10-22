@@ -1206,3 +1206,22 @@ it("keeps configuration cycles in their source interpretation", () => {
     facts.unresolved.some(({ mechanism }) => mechanism === "navigation-target"),
   ).toBe(false);
 });
+
+it.each([
+  "const registry={get a(){return this},get b(){return this.a.a},path:'/query-data',component:Preview};",
+  "const registry={get a(){return this},get b(){return this.a.a.a},path:'/query-data',component:Preview};",
+  "const registry={get a(){return this},get b(){return this.a},get c(){return this.b.b},path:'/query-data',component:Preview};",
+])(
+  "finishes getters before following the caller's remaining members: %s",
+  (registry) => {
+    const facts = analyze(
+      `${registry}router.push({pathname:'/p',query:registry.a.${registry.includes("get c()") ? "c" : "b"}});route('/independent');`,
+    );
+    expect(facts.capacity).toBeNull();
+    expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+      "/independent",
+      "/p",
+    ]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
