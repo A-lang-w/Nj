@@ -245,6 +245,7 @@
     "verify:qwen-client": "npm run build:cached && node scripts/verify-qwen-client.mjs",
     "verify:gemini-client": "npm run build:cached && node scripts/verify-gemini-client.mjs",
     "verify:gemini-live": "npm run build:cached && node scripts/verify-gemini-live.mjs",
+    "verify:gemini-live:suite": "npm run build:cached && node scripts/verify-gemini-live-suite.mjs",
     "verify:opencode-client": "npm run build:cached && node scripts/verify-opencode-client.mjs",
     "verify:grok-client": "npm run build:cached && node scripts/verify-grok-client.mjs",
     "verify:commandcode-client": "npm run build:cached && node scripts/verify-commandcode-client.mjs",

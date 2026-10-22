@@ -98,7 +98,17 @@ usage.
 export REA_GEMINI_API_KEY=...   # caller-supplied; never committed
 npm run verify:gemini-live          # call mode
 npm run verify:gemini-live -- chat  # plain chat with REA enabled
+npm run verify:gemini-live:suite    # both modes, aggregated receipts
 ```
+
+`verify:gemini-live:suite` runs `call` then `chat` and stops after the first
+transport, credential or preflight failure, because a second run would restate
+the same blocker while spending model budget. It writes `call.receipt.json`,
+`chat.receipt.json` and `suite.json` into `REA_VERIFY_GEMINI_RECEIPT_DIR` (a
+temporary directory by default) and exits 1 when any completed mode failed.
+Chat mode only requires a healthy registration, a successful session and the
+completion marker; the REA tool call, skill activation and Evidence checks
+apply to call mode.
 
 `REA_VERIFY_GEMINI_MODEL` (default `gemini-2.5-flash`),
 `REA_VERIFY_GEMINI_BASE_URL`, `REA_VERIFY_GEMINI_TIMEOUT_MS` (default 900000)

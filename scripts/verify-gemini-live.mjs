@@ -249,10 +249,16 @@ const checkClientRun = async ({ summary, target, elapsedMs }) => {
     "success",
     "The live client did not report a successful result event",
   );
-  assert(
-    summary.toolCalls.some((call) => call.name.startsWith("mcp_rea_")),
-    `The live model called no REA tool: ${summary.toolCalls.map((call) => call.name).join(", ") || "none"}`,
-  );
+  const reaToolCalls = summary.toolCalls
+    .filter((call) => call.name.startsWith("mcp_rea_"))
+    .map((call) => call.name);
+  // Chat mode only proves that a REA-enabled session completes; only call mode
+  // asks the model for analysis, so only call mode requires a REA tool call.
+  if (mode === "call")
+    assert(
+      reaToolCalls.length > 0,
+      `The live model called no REA tool: ${summary.toolCalls.map((call) => call.name).join(", ") || "none"}`,
+    );
   const skillActivated = summary.toolCalls.some((call) => {
     if (call.name !== "activate_skill") return false;
     const result = summary.results.get(call.id);
@@ -281,9 +287,7 @@ const checkClientRun = async ({ summary, target, elapsedMs }) => {
     run: {
       elapsedMs,
       skillActivated,
-      reaToolCalls: summary.toolCalls
-        .filter((call) => call.name.startsWith("mcp_rea_"))
-        .map((call) => call.name),
+      reaToolCalls,
       allToolCalls: summary.toolCalls.map((call) => call.name),
       stats: summary.result.stats,
       sessionId: summary.sessionId,
