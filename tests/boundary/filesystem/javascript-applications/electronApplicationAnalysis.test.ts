@@ -162,6 +162,42 @@ describe("static Electron application analysis", () => {
   });
 });
 
+describe("native addon association", () => {
+  it("associates a requested binding only with a resolved native addon", async () => {
+    const root = await createTestTempDirectory(
+      "rea-electron-addon-js-fallback-",
+    );
+    await Promise.all([
+      writeFile(
+        join(root, "main.js"),
+        'const addon = require("./addon.node");\nvoid addon;\n',
+      ),
+      writeFile(
+        join(root, "addon.node.js"),
+        "module.exports = { requested: true };\n",
+      ),
+    ]);
+
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+
+    expect(result.electron_summary).toMatchObject({
+      native_addon_bindings: 1,
+      resolved_native_addon_bindings: 0,
+    });
+    expect(
+      graph.nodes.filter(({ kind }) => kind === "native-export"),
+    ).toHaveLength(1);
+    expect(
+      graph.edges.filter(
+        (edge) =>
+          edge.evidence.extractor.operation ===
+          "associate-native-addon-requested-exports",
+      ),
+    ).toEqual([]);
+  });
+});
+
 const exactRuntimeEntrypointFixture = async (): Promise<void> => {
   const root = await createTestTempDirectory("rea-electron-exact-entrypoints-");
   await mkdir(join(root, "renderer/page"), { recursive: true });
