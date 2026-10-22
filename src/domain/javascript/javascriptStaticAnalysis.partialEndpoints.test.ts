@@ -268,7 +268,6 @@ it("resolves inline Request constructor targets with literal URLs", () => {
   expect(
     endpoints(`
         fetch(new Request("/api/chat", { method: "POST" }));
-        fetch(Request("/api/stream"));
         window.fetch(new Request("/api/window"));
       `),
   ).toEqual([
@@ -280,15 +279,20 @@ it("resolves inline Request constructor targets with literal URLs", () => {
     },
     {
       kind: "network",
-      value: "/api/stream",
-      mechanism: "call:fetch",
-      resolution: undefined,
-    },
-    {
-      kind: "network",
       value: "/api/window",
       mechanism: "call:window.fetch",
       resolution: undefined,
+    },
+  ]);
+});
+
+it("keeps Request calls without new partial", () => {
+  expect(endpoints('fetch(Request("/api/stream"));')).toEqual([
+    {
+      kind: "network",
+      value: 'Request("/api/stream")',
+      mechanism: "call:fetch",
+      resolution: "partial",
     },
   ]);
 });
@@ -306,6 +310,52 @@ it("resolves unchanged Request objects and aliases", () => {
       value: "/api/chat",
       mechanism: "call:fetch",
       resolution: undefined,
+    },
+  ]);
+});
+
+it("keeps Request objects partial when called with toString", () => {
+  expect(
+    endpoints(`
+        const req = new Request("/api/chat");
+        fetch(req.toString());
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "req.toString()",
+      mechanism: "call:fetch",
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("keeps Request targets partial on non-fetch network APIs", () => {
+  expect(
+    endpoints(`
+        const socketReq = new Request("wss://host/socket");
+        new WebSocket(new Request("wss://host/direct"));
+        new WebSocket(socketReq);
+        navigator.sendBeacon(new Request("https://api.example.test/beacon"));
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: 'new Request("wss://host/direct")',
+      mechanism: "call:WebSocket",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: "socketReq",
+      mechanism: "call:WebSocket",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: 'new Request("https://api.example.test/beacon")',
+      mechanism: "call:navigator.sendBeacon",
+      resolution: "partial",
     },
   ]);
 });
