@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { access, chmod, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { WabtArtifactProvider } from "./WabtArtifactProvider.js";
 import { wasmArtifactSchema } from "../domain/wasm/wasmArtifact.js";
@@ -17,6 +17,7 @@ const fileCloseFailure = vi.hoisted(() => ({
   selectedPath: "",
   attempts: 0,
   failFirst: false,
+  failRead: undefined as (() => Error) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -27,6 +28,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const handle = await fs.open(...args);
       if (String(args[0]) !== fileCloseFailure.selectedPath) return handle;
       const close = handle.close.bind(handle);
+      const failure = fileCloseFailure.failRead;
+      if (failure !== undefined) {
+        fileCloseFailure.failRead = undefined;
+        vi.spyOn(handle, "stat").mockImplementationOnce(() => {
+          throw failure();
+        });
+      }
       handle.close = async () => {
         fileCloseFailure.attempts += 1;
         if (fileCloseFailure.failFirst) {
@@ -44,6 +52,9 @@ const outcomeModes = [
   "success",
   "invalid",
   "invalid-close",
+  "invalid-close-failure",
+  "snapshot-close-failure",
+  "snapshot-read-failure-late-abort",
   "malformed",
   "timeout",
   "cancelled",
@@ -59,6 +70,9 @@ type OutcomeMode = (typeof outcomeModes)[number];
 const failureTags: Readonly<Record<Exclude<OutcomeMode, "success">, string>> = {
   invalid: "AnalysisInputError",
   "invalid-close": "AnalysisInputError",
+  "invalid-close-failure": "ProviderAdapterError",
+  "snapshot-close-failure": "AnalysisOutputError",
+  "snapshot-read-failure-late-abort": "AnalysisOutputError",
   timeout: "AnalysisTimeoutError",
   cancelled: "AnalysisCancelledError",
   "cancelled-close": "AnalysisCancelledError",
@@ -105,6 +119,12 @@ const assertCleanupRecovery = async (options: {
   await expect(access(options.runtimePath)).rejects.toMatchObject({
     code: "ENOENT",
   });
+  expect(options.result).toMatchObject({
+    error: { cleanupIncomplete: false, cleanupResources: [] },
+  });
+  expect(blocked).toMatchObject({
+    error: { cleanupIncomplete: false, cleanupResources: [] },
+  });
 };
 
 const assertCancellationDuringRootRelease = async (options: {
@@ -113,6 +133,7 @@ const assertCancellationDuringRootRelease = async (options: {
   readonly provider: WabtArtifactProvider;
   readonly runtimePath: string;
   readonly cleanupAttempts: () => number;
+  readonly cancellationReason: unknown;
 }): Promise<void> => {
   if (options.mode === "cancelled-close") {
     expect(options.result).toMatchObject({
@@ -123,6 +144,8 @@ const assertCancellationDuringRootRelease = async (options: {
         cleanupIncomplete: false,
       },
     });
+    if (!options.result.ok)
+      expect(options.result.error.cause).toBe(options.cancellationReason);
     return;
   }
   expect(options.result).toMatchObject({
@@ -132,13 +155,20 @@ const assertCancellationDuringRootRelease = async (options: {
       cleanupIncomplete: true,
       cleanupResources: [options.runtimePath],
       partialObservation: { normalized_result: { validation: "valid" } },
-      diagnostics: { previous_error: { code: "cancelled" } },
+      diagnostics: { primary_error: { code: "cancelled" } },
     },
   });
   expect(options.cleanupAttempts()).toBe(1);
+  if (!options.result.ok)
+    expect(options.result.error.cleanupPrimary?.cause).toBe(
+      options.cancellationReason,
+    );
   await expect(access(options.runtimePath)).resolves.toBeUndefined();
   await options.provider.close();
   expect(options.cleanupAttempts()).toBe(2);
+  expect(options.result).toMatchObject({
+    error: { cleanupIncomplete: false, cleanupResources: [] },
+  });
 };
 
 const createWabtArtifactFixture = async () => {
@@ -164,6 +194,20 @@ const assertModeOutcome = (
   result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
   path: string,
 ): void => {
+  if (mode.startsWith("invalid"))
+    expect(result).toMatchObject({
+      error: {
+        partialObservation: {
+          parameters: { command_timeout_ms: 42_000 },
+          normalized_result: {
+            tool_profile: {
+              timeout_ms: 42_000,
+              output_budget_bytes: WABT_LIMITS.outputBytes,
+            },
+          },
+        },
+      },
+    });
   if (mode === "success")
     expect(result).toMatchObject({
       ok: true,
@@ -198,6 +242,25 @@ const assertModeOutcome = (
     });
 };
 
+const assertValidationCleanupRecovery = async (
+  provider: WabtArtifactProvider,
+  result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
+  cleanupAttempts: () => number,
+): Promise<void> => {
+  expect(result).toMatchObject({ error: { cleanupIncomplete: true } });
+  await provider.close();
+  expect(cleanupAttempts()).toBe(2);
+  if (result.ok) throw new Error("Expected validation failure");
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      captured_output: { stderr: "module.wasm: invalid bytes\n" },
+      cleanup_history: expect.any(Object),
+    },
+  });
+};
+
 it("returns actionable unavailable without creating a workspace when tools are absent", async () => {
   const provider = new WabtArtifactProvider({}, undefined, () => {
     throw new Error("Must not allocate");
@@ -216,6 +279,75 @@ it("returns actionable unavailable without creating a workspace when tools are a
     },
   });
 });
+
+it.each([
+  { tool: "wasm-validate", stdout: "1.0.41\n", stderr: "" },
+  { tool: "wasm-objdump", stdout: "", stderr: "" },
+  { tool: "wasm2wat", stdout: "1.0.42\n", stderr: "launcher warning\n" },
+  {
+    tool: "wasm-objdump",
+    stdout: "",
+    stderr: "version launcher failed\n",
+    exitCode: 2,
+  },
+])(
+  "retains the exact rejected $tool version probe and configuration recovery",
+  async ({ tool, stdout, stderr, exitCode = 0 }) => {
+    const root = await realpath(
+      await createTestTempDirectory("rea-wabt-version-recovery-"),
+    );
+    const suffix = process.platform === "win32" ? ".exe" : "";
+    for (const name of ["wasm-validate", "wasm-objdump", "wasm2wat"])
+      await writeFile(join(root, name + suffix), "owned executable seam", {
+        mode: 0o700,
+      });
+    const commands: string[] = [];
+    const provider = new WabtArtifactProvider(
+      { REA_WABT_BIN_DIRECTORY: root },
+      (input) => {
+        expect(input.arguments).toEqual(["--version"]);
+        commands.push(input.command);
+        const selected = input.command === join(root, tool + suffix);
+        return spawnOwnedProviderProcess({
+          ...input,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            `process.stdout.write(${JSON.stringify(selected ? stdout : "1.0.42\n")}); process.stderr.write(${JSON.stringify(selected ? stderr : "")}); process.exit(${String(selected ? exitCode : 0)});`,
+          ],
+          expectedCommand: null,
+        });
+      },
+    );
+    try {
+      const result = await provider.inspect({
+        path: "/must-not-read-before-configuration.wasm",
+        glue_paths: [],
+        candidate_paths: [],
+      });
+      if (result.ok) throw new Error("Expected WABT configuration rejection");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        retryable: false,
+        details: {
+          diagnostics: {
+            configuration_key: "REA_WABT_BIN_DIRECTORY",
+            executable_path: join(root, tool + suffix),
+            tool,
+            expected_version: "1.0.42",
+          },
+          captured_output: { stdout, stderr, truncated: false },
+        },
+      });
+      expect(projected.remediation.action).toContain("--version");
+      expect(projected.remediation.action).toContain("restart");
+      expect(commands.at(-1)).toBe(join(root, tool + suffix));
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("retries a retained input descriptor before admitting the next WABT operation", async () => {
   const root = await createTestTempDirectory("rea-wabt-read-cleanup-");
@@ -278,6 +410,9 @@ it("retries a retained input descriptor before admitting the next WABT operation
     });
     expect(retried.ok).toBe(true);
     expect(fileCloseFailure.attempts).toBeGreaterThan(1);
+    expect(first).toMatchObject({
+      error: { cleanupIncomplete: false, cleanupResources: [] },
+    });
 
     fileCloseFailure.failFirst = true;
     const closeRetry = await provider.inspect({
@@ -292,6 +427,9 @@ it("retries a retained input descriptor before admitting the next WABT operation
     const beforeClose = fileCloseFailure.attempts;
     await provider.close();
     expect(fileCloseFailure.attempts).toBeGreaterThan(beforeClose);
+    expect(closeRetry).toMatchObject({
+      error: { cleanupIncomplete: false, cleanupResources: [] },
+    });
   } finally {
     fileCloseFailure.selectedPath = "";
     fileCloseFailure.failFirst = false;
@@ -378,7 +516,140 @@ const assertGlueObservations = (
   }
 };
 
-const runOwnedArtifactOutcome = async (mode: OutcomeMode): Promise<void> => {
+const launchWabtOutcome = async (
+  input: Parameters<typeof spawnOwnedProviderProcess>[0],
+  mode: OutcomeMode,
+  fixture: { bytes: Buffer; dump: string; controller: AbortController },
+) => {
+  const { bytes, dump, controller } = fixture;
+  const version = input.arguments[0] === "--version";
+  if (!version) {
+    expect(await readFile(join(input.cwd ?? "", "module.wasm"))).toEqual(bytes);
+    if (mode === "changed-snapshot") {
+      const snapshot = join(input.cwd ?? "", "module.wasm");
+      await chmod(snapshot, 0o600);
+      await writeFile(snapshot, Buffer.alloc(76, 2));
+    }
+    if (mode === "timeout")
+      throw new OwnedCommandFailure("timeout", "Source-owned deadline seam");
+  }
+  const stdout = version
+    ? "1.0.42\n"
+    : input.command.includes("objdump")
+      ? mode === "malformed"
+        ? "unexpected producer output"
+        : dump
+      : input.command.includes("wasm2wat")
+        ? mode === "malformed-wat"
+          ? "unexpected decoder output\n"
+          : '(module (@custom "test" "payload"))\n'
+        : "";
+  const invalid =
+    !version &&
+    (mode === "invalid" ||
+      mode === "invalid-close" ||
+      mode === "invalid-close-failure");
+  const stderr = invalid
+    ? "module.wasm: invalid bytes\n"
+    : !version && input.command.includes("wasm2wat") && mode === "wat-warning"
+      ? "decoder warning\n"
+      : "";
+  const script =
+    !version && mode === "cancelled"
+      ? "setInterval(() => undefined, 1000)"
+      : `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)}); process.exit(${invalid ? 1 : 0});`;
+  const launched = await spawnOwnedProviderProcess({
+    ...input,
+    command: process.execPath,
+    arguments: ["-e", script],
+    expectedCommand: null,
+  });
+  if (!version && mode === "cancelled") {
+    setImmediate(() => controller.abort());
+  }
+  return launched;
+};
+
+it("enforces a selected command deadline and completes a corrected retry after cleanup", async () => {
+  const fixture = await createWabtArtifactFixture();
+  let first = true;
+  let runtimePath = "";
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+    async (input) => {
+      if (first) {
+        first = false;
+        return spawnOwnedProviderProcess({
+          ...input,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            'setTimeout(() => process.stdout.write("1.0.42\\n"), 250)',
+          ],
+          expectedCommand: null,
+        });
+      }
+      return launchWabtOutcome(input, "success", {
+        ...fixture,
+        controller: new AbortController(),
+      });
+    },
+    async () => {
+      const root = await PrivateRuntimeRoot.create({
+        prefix: "rea-wabt-budget-",
+      });
+      runtimePath = root.path;
+      return root;
+    },
+  );
+  onTestFinished(() => provider.close());
+  const input = { path: fixture.path, glue_paths: [], candidate_paths: [] };
+  const timed = await provider.inspect({ ...input, command_timeout_ms: 20 });
+  if (timed.ok) throw new Error("Selected 20 ms deadline was not enforced");
+  expect(projectAnalysisError(timed.error)).toMatchObject({
+    code: "provider_timeout",
+    details: { timeout_ms: 20 },
+    remediation: { action: expect.stringContaining("command_timeout_ms") },
+  });
+  expect(timed.error.cleanupIncomplete).toBe(false);
+  await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
+  const corrected = await provider.inspect({
+    ...input,
+    command_timeout_ms: 2_000,
+  });
+  if (!corrected.ok) throw corrected.error;
+  const report = wasmArtifactSchema.parse(corrected.value.result);
+  expect(report.tool_profile.timeout_ms).toBe(2_000);
+  expect(report.limitations.join(" ")).not.toContain("30-second");
+  await expect(readFile(fixture.path)).resolves.toEqual(fixture.bytes);
+});
+
+const glueSourcesForOutcome = (mode: OutcomeMode) => {
+  const literal = 'fetch("./selected.wasm");';
+  return mode === "success"
+    ? [
+        { source: literal, line: 1, column: 6 },
+        { source: `\uFEFF${literal}`, line: 1, column: 7 },
+        { source: `\uFEFF\n${literal}`, line: 2, column: 6 },
+        { source: `#!/usr/bin/env node\n${literal}`, line: 2, column: 6 },
+        {
+          source: `\uFEFF#!/usr/bin/env node\n${literal}`,
+          line: 2,
+          column: 6,
+        },
+        {
+          source: String.raw`"./selected\u002ewasm";`,
+          line: 1,
+          column: 0,
+        },
+      ]
+    : [];
+};
+
+const runOwnedArtifactOutcome = async (
+  mode: OutcomeMode,
+  cancellationReason: unknown = "authored finalization cancellation",
+): Promise<void> => {
   const { selectedRoot, path, bytes, dump } = await createWabtArtifactFixture();
   let runtimePath = "";
   let runtimeCreations = 0;
@@ -388,56 +659,13 @@ const runOwnedArtifactOutcome = async (mode: OutcomeMode): Promise<void> => {
   const provider = new WabtArtifactProvider(
     { REA_WABT_BIN_DIRECTORY: selectedRoot },
     async (input) => {
-      const version = input.arguments[0] === "--version";
-      if (!version) {
-        expect(await readFile(join(input.cwd ?? "", "module.wasm"))).toEqual(
-          bytes,
-        );
-        if (mode === "changed-snapshot") {
-          const snapshot = join(input.cwd ?? "", "module.wasm");
-          await chmod(snapshot, 0o600);
-          await writeFile(snapshot, Buffer.alloc(76, 2));
-        }
-        if (mode === "timeout")
-          throw new OwnedCommandFailure(
-            "timeout",
-            "Source-owned deadline seam",
-          );
-      }
-      const stdout = version
-        ? "1.0.42\n"
-        : input.command.includes("objdump")
-          ? mode === "malformed"
-            ? "unexpected producer output"
-            : dump
-          : input.command.includes("wasm2wat")
-            ? mode === "malformed-wat"
-              ? "unexpected decoder output\n"
-              : '(module (@custom "test" "payload"))\n'
-            : "";
-      const invalid =
-        !version && (mode === "invalid" || mode === "invalid-close");
-      const stderr = invalid
-        ? "module.wasm: invalid bytes\n"
-        : !version &&
-            input.command.includes("wasm2wat") &&
-            mode === "wat-warning"
-          ? "decoder warning\n"
-          : "";
-      const script =
-        !version && mode === "cancelled"
-          ? "setInterval(() => undefined, 1000)"
-          : `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)}); process.exit(${invalid ? 1 : 0});`;
-      const launched = await spawnOwnedProviderProcess({
-        ...input,
-        command: process.execPath,
-        arguments: ["-e", script],
-        expectedCommand: null,
+      const launched = await launchWabtOutcome(input, mode, {
+        bytes,
+        dump,
+        controller,
       });
-      if (!version && mode === "cancelled") {
+      if (mode === "cancelled" && input.arguments[0] !== "--version")
         acquiredPid = launched.process.pid;
-        setImmediate(() => controller.abort());
-      }
       return launched;
     },
     async () => {
@@ -446,43 +674,41 @@ const runOwnedArtifactOutcome = async (mode: OutcomeMode): Promise<void> => {
         prefix: "rea-wabt-owned-test-",
       });
       runtimePath = root.path;
+      if (
+        mode === "snapshot-close-failure" ||
+        mode === "snapshot-read-failure-late-abort"
+      ) {
+        fileCloseFailure.selectedPath = join(root.path, "module.wasm");
+        fileCloseFailure.failFirst = true;
+        fileCloseFailure.attempts = 0;
+        if (mode === "snapshot-read-failure-late-abort")
+          fileCloseFailure.failRead = () => {
+            controller.abort("late abort after physical read failure");
+            return Object.assign(new Error("Authored snapshot read failure"), {
+              code: "EACCES",
+            });
+          };
+      }
       return {
         path: root.path,
         close: async () => {
           if (mode === "cancelled-close-failure") {
-            controller.abort();
+            controller.abort(cancellationReason);
             if (++cleanupAttempts === 1)
               throw new Error("Source-owned cleanup uncertainty");
           }
+          if (mode === "invalid-close-failure" && ++cleanupAttempts === 1)
+            throw new Error("Source-owned cleanup uncertainty");
           if (mode === "cleanup" && ++cleanupAttempts <= 2)
             throw new Error("Source-owned cleanup uncertainty");
           await root.close();
           if (mode === "cancelled-close" || mode === "invalid-close")
-            controller.abort();
+            controller.abort(cancellationReason);
         },
       };
     },
   );
-  const literal = 'fetch("./selected.wasm");';
-  const glueSources =
-    mode === "success"
-      ? [
-          { source: literal, line: 1, column: 6 },
-          { source: `\uFEFF${literal}`, line: 1, column: 7 },
-          { source: `\uFEFF\n${literal}`, line: 2, column: 6 },
-          { source: `#!/usr/bin/env node\n${literal}`, line: 2, column: 6 },
-          {
-            source: `\uFEFF#!/usr/bin/env node\n${literal}`,
-            line: 2,
-            column: 6,
-          },
-          {
-            source: String.raw`"./selected\u002ewasm";`,
-            line: 1,
-            column: 0,
-          },
-        ]
-      : [];
+  const glueSources = glueSourcesForOutcome(mode);
   const glueInputs = glueSources.map(({ source, line, column }, index) => ({
     path: join(selectedRoot, `glue-${index}.js`),
     source,
@@ -497,6 +723,7 @@ const runOwnedArtifactOutcome = async (mode: OutcomeMode): Promise<void> => {
       path,
       glue_paths: glueInputs.map(({ path }) => path),
       candidate_paths: [],
+      ...(mode.startsWith("invalid") ? { command_timeout_ms: 42_000 } : {}),
     },
     { signal: controller.signal },
   );
@@ -520,7 +747,40 @@ const runOwnedArtifactOutcome = async (mode: OutcomeMode): Promise<void> => {
       provider,
       runtimePath,
       cleanupAttempts: () => cleanupAttempts,
+      cancellationReason: controller.signal.reason,
     });
+  if (mode === "invalid-close-failure")
+    await assertValidationCleanupRecovery(
+      provider,
+      result,
+      () => cleanupAttempts,
+    );
+  if (
+    mode === "snapshot-close-failure" ||
+    mode === "snapshot-read-failure-late-abort"
+  ) {
+    try {
+      expect(result).toMatchObject({
+        error: {
+          cleanupIncomplete: true,
+          cleanupResources: [join(runtimePath, "module.wasm")],
+        },
+      });
+    } finally {
+      fileCloseFailure.failFirst = false;
+      fileCloseFailure.failRead = undefined;
+      await provider.close();
+      fileCloseFailure.selectedPath = "";
+    }
+    expect(result).toMatchObject({
+      error: { cleanupIncomplete: false, cleanupResources: [] },
+    });
+    if (!result.ok && mode === "snapshot-read-failure-late-abort")
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisOutputError",
+        reason: expect.stringContaining("Authored snapshot read failure"),
+      });
+  }
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await readFile(path)).toEqual(bytes);
   if (acquiredPid !== undefined) {
@@ -531,7 +791,11 @@ const runOwnedArtifactOutcome = async (mode: OutcomeMode): Promise<void> => {
 
 it.each(outcomeModes)(
   "owns private artifact bytes and retains %s outcome",
-  runOwnedArtifactOutcome,
+  (mode) => runOwnedArtifactOutcome(mode),
+);
+it.each([null, { reason: "caller-owned object" }, undefined])(
+  "preserves finalization abort reason %j through cleanup recovery",
+  (reason) => runOwnedArtifactOutcome("cancelled-close-failure", reason),
 );
 const outputLimitFailure = ({
   stdout = "(module",

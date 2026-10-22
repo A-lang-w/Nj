@@ -343,6 +343,7 @@ const appendFile = (
     limitations: [...(parsed?.limitations ?? [])],
   });
   if (parsed === undefined) return;
+  output.limitations.push(...parsed.limitations);
   for (const relationship of parsed.relationships) {
     const { resolutionStrategy, ...graphRelationship } = relationship;
     if (graphRelationship.resolution !== "internal") {
@@ -419,6 +420,10 @@ export const parseReferenceSourceEntries = (
     parseFailures: [],
     limitations: [...read.limitations],
   };
+  if (read.rootFailure !== undefined)
+    output.limitations.push(
+      `Reference root enumeration is incomplete: ${read.rootFailure.message}`,
+    );
   const packageMainInventory = readPackageMains(read);
   const context: SpecifierContext = {
     lookupPath: createReferenceSourcePathLookup(filePaths),

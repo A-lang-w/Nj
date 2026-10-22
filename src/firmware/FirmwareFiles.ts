@@ -13,6 +13,7 @@ import type { FirmwareRequest } from "../domain/firmware/firmwareAnalysis.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
+import { firmwareLimitRecovery } from "./FirmwareFailures.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -22,6 +23,7 @@ import {
   mapArtifactFileFailure,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 
 /** One regular file or unpublished filesystem entry in a private extraction. */
@@ -67,16 +69,9 @@ export class FirmwareFileAccess {
       signal,
       async (handle) => {
         const hash = createHash("sha256");
-        try {
-          for await (const chunk of handle.createReadStream({
-            autoClose: false,
-            signal,
-          })) {
-            assertArtifactReadActive(signal);
-            hash.update(chunk);
-          }
-        } catch (cause: unknown) {
-          throwFirmwareStreamFailure(cause, signal);
+        for await (const chunk of readArtifactFileChunks(handle, { signal })) {
+          assertArtifactReadActive(signal);
+          hash.update(chunk);
         }
         assertArtifactReadActive(signal);
         return hash.digest("hex");
@@ -107,7 +102,7 @@ export class FirmwareFileAccess {
           transform(chunk: Buffer, _encoding, callback) {
             size += chunk.length;
             if (size > FIRMWARE_LIMITS.inputBytes) {
-              callback(new Error("Firmware grew beyond the input byte budget"));
+              callback(firmwareInputFailure(request.operation));
               return;
             }
             hash.update(chunk);
@@ -115,11 +110,10 @@ export class FirmwareFileAccess {
           },
         });
         await pipeline(
-          handle.createReadStream({ autoClose: false }),
+          readArtifactFileChunks(handle, { signal }),
           meter,
           createWriteStream(fullPath, { flags: "wx", mode: 0o600 }),
-          { signal },
-        ).catch((cause: unknown) => throwFirmwareStreamFailure(cause, signal));
+        );
         return { size, sha256: hash.digest("hex") };
       },
     ).catch((cause: unknown) => {
@@ -152,15 +146,12 @@ export class FirmwareFileAccess {
         signal,
         async (handle) => {
           await pipeline(
-            handle.createReadStream({
+            readArtifactFileChunks(handle, {
               start: offset,
               end: offset + length - 1,
-              autoClose: false,
+              signal,
             }),
             createWriteStream(inputPath, { flags: "wx", mode: 0o600 }),
-            { signal },
-          ).catch((cause: unknown) =>
-            throwFirmwareStreamFailure(cause, signal),
           );
         },
       );
@@ -187,27 +178,22 @@ export class FirmwareFileAccess {
     signal: AbortSignal,
   ) {
     return this.#resources.run(() =>
-      withArtifactRegularFile(
-        entry.path,
-        this.#resources,
-        signal,
-        async (handle) => {
-          try {
-            return await tree.write(
-              entry.relativePath,
-              handle.createReadStream({ autoClose: false, signal }),
-              { sha256, bytes: entry.size },
-              signal,
-            );
-          } catch (cause: unknown) {
-            return throwFirmwareStreamFailure(cause, signal);
-          }
-        },
+      withArtifactRegularFile(entry.path, this.#resources, signal, (handle) =>
+        tree.write(
+          entry.relativePath,
+          readArtifactFileChunks(handle, { signal }),
+          { sha256, bytes: entry.size },
+          signal,
+        ),
       ),
     );
   }
 
-  /** Read a complete bounded report; oversized data is never reported as complete. */
+  /**
+   * Read a complete bounded report; oversized data is never reported as complete.
+   * Each refusal records its observed report state, so an absent or empty report
+   * is never conflated with an empty scan or a malformed one.
+   */
   async report(
     path: string,
     operation: string,
@@ -220,11 +206,14 @@ export class FirmwareFileAccess {
           FIRMWARE_LIMITS.reportBytes,
         );
         if (bytes === undefined)
-          throw new AnalysisOutputError(
+          throw firmwareReportFailure(
             operation,
+            "oversized",
             `Report exceeded ${FIRMWARE_LIMITS.reportBytes} bytes`,
           );
         assertArtifactReadActive(signal);
+        if (bytes.length === 0)
+          throw firmwareReportFailure(operation, "empty", "Report is empty");
         try {
           const value: unknown = JSON.parse(
             new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
@@ -233,24 +222,56 @@ export class FirmwareFileAccess {
           );
           return value;
         } catch (cause: unknown) {
-          throw new AnalysisOutputError(
+          throw firmwareReportFailure(
             operation,
+            "invalid_json",
             "Tool report is not valid complete JSON",
-            { cause },
+            cause,
           );
         }
       }).catch((cause: unknown) => {
-        throw firmwareAdmissionFailure(
-          cause,
-          (primary) =>
-            new AnalysisOutputError(operation, "Report is not a regular file", {
-              cause: primary,
-            }),
+        throw mapArtifactFileFailure(cause, (primary) =>
+          primary instanceof NonRegularFileReadError
+            ? firmwareReportFailure(
+                operation,
+                "not_regular_file",
+                "Report is not a regular file",
+                primary,
+              )
+            : primary instanceof Error &&
+                "code" in primary &&
+                primary.code === "ENOENT"
+              ? firmwareReportFailure(
+                  operation,
+                  "missing",
+                  "Report was not created",
+                  primary,
+                )
+              : primary,
         );
       }),
     );
   }
 }
+
+/** Observed state of a producer report that cannot supply analysis Evidence. */
+type FirmwareReportState =
+  | "missing"
+  | "empty"
+  | "oversized"
+  | "invalid_json"
+  | "not_regular_file";
+
+const firmwareReportFailure = (
+  operation: string,
+  state: FirmwareReportState,
+  reason: string,
+  cause?: unknown,
+) =>
+  new AnalysisOutputError(operation, reason, {
+    cause,
+    diagnostics: { report_state: state },
+  });
 
 /** Preserve admission semantics inside the same exact owner's physical outcome. */
 const firmwareAdmissionFailure = (
@@ -262,31 +283,16 @@ const firmwareAdmissionFailure = (
   );
 };
 
-const throwFirmwareStreamFailure = (
-  cause: unknown,
-  signal?: AbortSignal,
-): never => {
-  if (
-    cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    signal?.aborted
-  )
-    throw new ArtifactReaderFailure("cancelled", "Firmware stream cancelled", {
-      cause: signal.reason,
-    });
-  throw cause;
-};
-
-const firmwareInputFailure = (operation: string, cause?: unknown) =>
-  new AnalysisInputError(operation, { cause }, [
+const firmwareInputFailure = (operation: string, cause?: unknown) => {
+  const message = `Firmware must be a nonempty regular file no larger than ${String(FIRMWARE_LIMITS.inputBytes)} bytes. Select a stable copy within this allowance. ${firmwareLimitRecovery(`The firmware input allowance is ${String(FIRMWARE_LIMITS.inputBytes)} bytes`)}`;
+  return new AnalysisInputError(operation, { cause, userMessage: message }, [
     {
       path: ["path"],
       reason: "out_of_range",
-      message: `Firmware must be a nonempty regular file no larger than ${FIRMWARE_LIMITS.inputBytes} bytes`,
+      message,
     },
   ]);
+};
 
 /** Inventory private output without following links, enforcing aggregate staging budgets. */
 export const inventoryFirmwareOutput = async (

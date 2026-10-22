@@ -66,6 +66,16 @@ const fixturePort = (): AnalysisOperationPort => ({
   // oxlint-disable-next-line complexity -- this fixture exhaustively serves the registered MCP surface.
   execute: (name, arguments_) => {
     switch (name) {
+      case "read_binary_inventory_summary":
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              name,
+              "This fixture exercises composed overview",
+            ),
+          ),
+        );
       case "inspect_native_dispatch_metadata":
         return Promise.resolve(
           err(
@@ -268,8 +278,12 @@ describe("enhanced MCP tools", () => {
       ),
     );
     expect(results[0]).toMatchObject({
-      count: 1,
-      classes: [{ address: "0x10", name: "_OBJC_CLASS_$_Fixture" }],
+      count: 2,
+      classes: [
+        { address: "0x10", name: "_OBJC_CLASS_$_Fixture" },
+        { address: "0x11", name: "_OBJC_CLASS_$_Fixture" },
+      ],
+      identity_coverage: { status: "unknown" },
     });
     expect(results[1]).toMatchObject({
       count: 1,
