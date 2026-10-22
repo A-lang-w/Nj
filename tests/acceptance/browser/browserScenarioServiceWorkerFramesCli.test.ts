@@ -52,8 +52,9 @@ const listen = async (
 // Chromium gives about:blank and blob: documents no service-worker container,
 // and sandboxed documents without allow-same-origin an opaque origin. None of
 // them can be controlled; same-origin descendants share their parent's
-// registrations, while an about:blank whose initiator origin differs from its
-// parent's has no frame that can report its registrations.
+// registrations, even through a container-less parent, while an about:blank
+// whose initiator origin differs from its parent's has no frame that can
+// report its registrations.
 const startSites = async () => {
   const nested = await listen((path) =>
     path === "/nest"
@@ -73,7 +74,7 @@ const startSites = async () => {
         <script>
           const written = document.createElement("iframe");
           document.body.append(written);
-          written.contentDocument.write("<p>written</p>");
+          written.contentDocument.write("<p>written</p><iframe></iframe>");
           written.contentDocument.close();
           const blob = document.createElement("iframe");
           blob.src = URL.createObjectURL(
