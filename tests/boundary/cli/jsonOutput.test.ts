@@ -690,6 +690,73 @@ describe("JSON Lines record boundaries and errors", () => {
   });
 });
 
+describe("JSON Lines classified failures and composite rejections", () => {
+  it("rejects JSON Lines format when the result contains unrepresented non-row facets", async () => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(["--format", "jsonl"], destination);
+    if (output === undefined) throw new Error("Missing CLI output owner");
+
+    const compositeCatalog = {
+      target_sha256: "a".repeat(64),
+      catalogs: [{ path: "Assets.car" }],
+      records: [{ name: "AppIcon", idiom: "universal" }],
+      resource_key_matches: [],
+    };
+
+    const written = await output.write(compositeCatalog, {
+      command: "inspect-asset-catalog",
+      duration: "1ms",
+      format: "jsonl",
+    });
+
+    expect(written).toBe(true);
+    expect(output.error?.code).toBe("unreadable_output");
+    expect(output.error?.details?.reason).toContain(
+      "row-oriented results with a clear record boundary",
+    );
+  });
+
+  it("frames classified report failures as JSONL error records", async () => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(["--format", "jsonl"], destination);
+    if (output === undefined) throw new Error("Missing CLI output owner");
+
+    const unhealthyDoctor = {
+      healthy: false,
+      checks: [{ name: "ghidra", status: "unsupported" }],
+    };
+
+    const written = await output.write(unhealthyDoctor, {
+      command: "doctor",
+      duration: "1ms",
+      format: "jsonl",
+    });
+
+    expect(written).toBe(true);
+    const lines = Buffer.concat(chunks).toString("utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]!);
+    expect(parsed).toMatchObject({
+      $schema: JSONL_ERROR_SCHEMA,
+      type: "error",
+      ok: false,
+      error: unhealthyDoctor,
+    });
+  });
+});
+
 describe("JSON Lines token counting", () => {
   it("emits boundary error and skips token counting when non-row result is passed with --token-count", async () => {
     const chunks: Buffer[] = [];

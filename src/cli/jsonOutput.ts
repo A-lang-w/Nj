@@ -20,6 +20,49 @@ export interface ExtractedRowCollection {
   readonly evidenceLinks?: readonly string[];
 }
 
+const ALLOWED_METADATA_KEYS = new Set([
+  "rows",
+  "items",
+  "occurrences",
+  "records",
+  "coverage",
+  "pagination",
+  "limitations",
+  "unknowns",
+  "total",
+  "offset",
+  "limit",
+  "next_offset",
+  "total_records",
+  "truncated",
+  "page",
+  "kind",
+  "view",
+  "parent_evidence_id",
+  "parent_operation",
+  "evidence_id",
+  "evidence_links",
+  "identity_scope",
+  "selection",
+  "source_metadata_status",
+  "source_coverage",
+  "signature_resolution",
+  "nesting_read",
+  "facet",
+  "collection",
+]);
+
+const hasUnrepresentedDataFields = (
+  obj: Record<string, unknown>,
+  recordKey: string,
+): boolean => {
+  for (const key of Object.keys(obj)) {
+    if (key === recordKey) continue;
+    if (!ALLOWED_METADATA_KEYS.has(key)) return true;
+  }
+  return false;
+};
+
 /** Extract deterministic records and coverage from row-oriented results. */
 export const extractRowCollection = (
   value: unknown,
@@ -45,20 +88,37 @@ export const extractRowCollection = (
         : undefined;
 
   let records: readonly unknown[] | undefined;
-  if (Array.isArray(inner.rows)) records = inner.rows;
-  else if (Array.isArray(inner.items)) records = inner.items;
-  else if (Array.isArray(inner.occurrences)) records = inner.occurrences;
-  else if (Array.isArray(inner.records)) records = inner.records;
-  else if (pageCandidate !== undefined) {
-    if (Array.isArray(pageCandidate.rows)) records = pageCandidate.rows;
-    else if (Array.isArray(pageCandidate.items)) records = pageCandidate.items;
-    else if (Array.isArray(pageCandidate.occurrences))
+  let recordKey: string | undefined;
+  if (Array.isArray(inner.rows)) {
+    records = inner.rows;
+    recordKey = "rows";
+  } else if (Array.isArray(inner.items)) {
+    records = inner.items;
+    recordKey = "items";
+  } else if (Array.isArray(inner.occurrences)) {
+    records = inner.occurrences;
+    recordKey = "occurrences";
+  } else if (Array.isArray(inner.records)) {
+    records = inner.records;
+    recordKey = "records";
+  } else if (pageCandidate !== undefined) {
+    if (Array.isArray(pageCandidate.rows)) {
+      records = pageCandidate.rows;
+      recordKey = "page";
+    } else if (Array.isArray(pageCandidate.items)) {
+      records = pageCandidate.items;
+      recordKey = "page";
+    } else if (Array.isArray(pageCandidate.occurrences)) {
       records = pageCandidate.occurrences;
-    else if (Array.isArray(pageCandidate.records))
+      recordKey = "page";
+    } else if (Array.isArray(pageCandidate.records)) {
       records = pageCandidate.records;
+      recordKey = "page";
+    }
   }
 
-  if (records === undefined) return undefined;
+  if (records === undefined || recordKey === undefined) return undefined;
+  if (hasUnrepresentedDataFields(inner, recordKey)) return undefined;
 
   const coverage =
     typeof inner.coverage === "object" && inner.coverage !== null
@@ -170,6 +230,7 @@ export const isJsonLinesError = (value: unknown): boolean => {
     typeof candidate.message === "string"
   )
     return true;
+  if (candidate.healthy === false) return true;
   return false;
 };
 
@@ -196,6 +257,14 @@ export const formatJsonLinesError = (
         ok: false,
         error: candidate.error,
         ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
+      };
+    }
+    if (candidate.healthy === false) {
+      return {
+        $schema: JSONL_ERROR_SCHEMA,
+        type: "error",
+        ok: false,
+        error: candidate,
       };
     }
   }

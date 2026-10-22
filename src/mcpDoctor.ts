@@ -17,7 +17,7 @@ import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { MCP_STARTUP_POLICY } from "./mcpStartupPolicy.js";
 
-const OUTPUT_FORMATS = ["toon", "json", "yaml", "md", "jsonl"] as const;
+const OUTPUT_FORMATS = ["toon", "json", "yaml", "md"] as const;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 
 /**

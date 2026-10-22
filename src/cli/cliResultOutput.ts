@@ -21,6 +21,7 @@ import {
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import {
+  formatJsonLinesError,
   hasClearRecordBoundary,
   isJsonLinesError,
   jsonOutputParts,
@@ -231,12 +232,12 @@ export const createCliResultOutput = (
     const filterPaths = options.filterOutput
       ? Filter.parse(options.filterOutput)
       : undefined;
+    const classifiedFailure = cliOperationFailurePayload(value);
     const isFailure =
-      isJsonLinesError(value) ||
-      cliOperationFailurePayload(value) !== undefined;
+      isJsonLinesError(value) || classifiedFailure !== undefined;
     const operationFailure =
       options.fullOutput || filterPaths !== undefined
-        ? cliOperationFailurePayload(value)
+        ? classifiedFailure
         : undefined;
     if (
       format === "jsonl" &&
@@ -354,13 +355,13 @@ export const createCliResultOutput = (
         : filtered === undefined
           ? { ok: true, meta }
           : { ok: true, data: filtered, meta }
-      : // A selected null is a value; only a selection with no JSON value
-        // falls back to the empty document.
-        filtered === undefined ||
-          typeof filtered === "function" ||
-          typeof filtered === "symbol"
-        ? {}
-        : filtered;
+      : classifiedFailure !== undefined && format === "jsonl"
+        ? formatJsonLinesError(classifiedFailure)
+        : filtered === undefined ||
+            typeof filtered === "function" ||
+            typeof filtered === "symbol"
+          ? {}
+          : filtered;
     // Once writing starts, a failed destination must not receive a second
     // document from Incur's error formatter.
     const failureText =
