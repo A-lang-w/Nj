@@ -5,6 +5,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisProviderCandidate,
+  type AnalysisProviderInspectionOptions,
   type CapabilityDescriptor,
   type ProviderAvailability,
   type ProviderIdentity,
@@ -826,7 +827,9 @@ it("joins cancelled readiness finalization and shutdown before admitting another
   const registry = new AnalysisProviderRegistry([
     {
       ...base,
-      inspectAvailability: async ({ signal } = {}) => {
+      inspectAvailability: async ({
+        signal,
+      }: AnalysisProviderInspectionOptions = {}) => {
         calls++;
         if (calls === 1) {
           observed = signal;
@@ -983,7 +986,9 @@ it("registers selection before async readiness can race shutdown", async () => {
   const registry = new AnalysisProviderRegistry([
     {
       ...base,
-      inspectAvailability: async ({ signal } = {}) => {
+      inspectAvailability: async ({
+        signal,
+      }: AnalysisProviderInspectionOptions = {}) => {
         calls++;
         observed = signal;
         return base.inspectAvailability();
