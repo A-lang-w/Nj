@@ -1,8 +1,35 @@
 # APK signing verification
 
-## Current review follow-up qualification
+## Current integration qualification
 
-The current runtime is `35a9b13adaaccff109125664898d99886d76d959`, tree `db41f5fbee2d1dca69544c221324daa8238b8e8b`.
+Runtime `8f8541c39586d78911e4743d6ec07f75c449a0d5`, tree `50b93dccf15c40f9067030614d743d59e0aa334c`,
+integrates main `2c3dd946d59c870388b03c3417eeb5218af96eeb`. The previous published head passed all
+technical CI and5/5 review before new upstream Python pyc registrations caused
+three additive conflicts. Documentation links, test adapter coverage and named
+tool effects now preserve both capabilities. The APK provider/domain/view and
+stable-file reader are byte-identical to35a9b13.
+
+- **222 source tests /14 suites**, **416 compiled public tests /15 suites**
+  (including actual advertised schemas and combined CLI/MCP registrations),
+  **23 real SDK cases**, uncached typecheck/lint and exact CI static passed.
+- Complete versus selected F-Droid task, same answer and complete parent:
+  **5,243 → 4,227 tokenx estimates**,
+  **3.616 → 3.799s** elapsed,
+  **4.389 → 4.825 CPU s**,
+  **709,554,176 → 717,103,104 bytes** peak family RSS.
+  These fresh-process observations use warm OS caches; used input declarations
+  and every call/reply/export are counted, with full-catalog estimates in JSON.
+- The earlier three-provider memory comparison remains pinned to35a9b13;
+  it is not a new measurement of this integration. No selection bypasses hashing,
+  and no cryptographic authenticity or statistical speedup is claimed.
+
+JSON `latest_main_integration` records exact commands and input receipts.
+The earlier sections retain their original commit-specific evidence.
+Current-head CI and review follow publication.
+
+## Review follow-up qualification at35a9b13
+
+That review runtime is `35a9b13adaaccff109125664898d99886d76d959`, tree `db41f5fbee2d1dca69544c221324daa8238b8e8b`.
 The original qualification below remains historical at `f85a887`; JSON
 `review_followup` records the new commands, outcomes and costs.
 
