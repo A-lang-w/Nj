@@ -266,11 +266,11 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
 });
 
 /**
- * `retryable` stays false so clients do not loop. The text allows one retry,
- * then tells the user to check the inputs and run doctor.
+ * This catch includes target execution, and the projection stays non-retryable.
+ * Tell the user what happened; do not ask them to run the command again.
  */
 export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
-  "Retry the command once. If it fails again, tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
+  "Do not repeat this command. Tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
 
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
 export const projectProcessCliError = (

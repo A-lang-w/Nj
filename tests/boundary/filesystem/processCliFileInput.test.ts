@@ -63,6 +63,9 @@ describe("process CLI error projection", () => {
         });
         expect(JSON.stringify(projected)).not.toContain("stack");
         expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toContain("SECRET");
+        expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toMatch(
+          /\bretry\b/iu,
+        );
       } finally {
         read.mockRestore();
       }

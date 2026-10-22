@@ -45,8 +45,9 @@ it("uses one retry then a user handoff for transient MCP failures", () => {
     expect(message).toContain("`rea doctor`");
   }
   expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).toBe(
-    "Retry the command once. If it fails again, tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.",
+    "Do not repeat this command. Tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.",
   );
+  expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toMatch(/\bretry\b/iu);
 });
 
 it("keeps non-retryable transport failures on their named fix", () => {
