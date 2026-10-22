@@ -19,7 +19,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 import {
   admitAsarHeader,
-  MAX_ASAR_HEADER_BYTES,
+  resolveAsarHeaderAdmission,
 } from "../artifacts/AsarHeader.js";
 
 type ElectronFileOperation =
@@ -220,6 +220,8 @@ const asarFiles = async (
   resources?: ArtifactResourceScope,
 ): Promise<unknown> => {
   throwIfAborted(signal);
+  // One admission bounds both this header and the retained header cache.
+  const admission = resolveAsarHeaderAdmission();
   const identity = archiveIdentity(metadata);
   const cached = headerCache.get(archive);
   if (cached?.identity === identity) return cached.files;
@@ -236,7 +238,7 @@ const asarFiles = async (
       throwIfAborted(signal);
       if (!opened.isFile() || archiveIdentity(opened) !== identity)
         throw new Error("ASAR identity changed before header read");
-      const header = await admitAsarHeader(file, signal);
+      const header = await admitAsarHeader(file, signal, admission);
       throwIfAborted(signal);
       jsonBytes = header.jsonBytes;
       const json = Buffer.alloc(jsonBytes);
@@ -276,7 +278,7 @@ const asarFiles = async (
     [...headerCache.values()].reduce((sum, entry) => sum + entry.bytes, 0);
   while (
     headerCache.size > MAX_CACHED_HEADERS ||
-    retainedBytes() > MAX_ASAR_HEADER_BYTES
+    retainedBytes() > admission.maximumBytes
   )
     headerCache.delete(headerCache.keys().next().value ?? archive);
   return admitted.files;

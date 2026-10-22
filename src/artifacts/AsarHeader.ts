@@ -4,40 +4,58 @@ import type { FileHandle } from "node:fs/promises";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  ASAR_HEADER_ADMISSION_SETTING,
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  parseAsarHeaderAdmission,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
 
-/**
- * Fixed header/index admission for this release. The header is decoded before
- * any member path can be selected. There is no caller or configuration override.
- */
-export const MAX_ASAR_HEADER_BYTES = 16 * 1024 * 1024;
+/** Resolve the effective header/index admission; an invalid setting is refused, not ignored. */
+export const resolveAsarHeaderAdmission = (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): AsarHeaderAdmission => {
+  const parsed = parseAsarHeaderAdmission(
+    environment[ASAR_HEADER_ADMISSION_SETTING],
+  );
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
+};
 
 const MEBIBYTE = 1024 * 1024;
 
-/** User-visible recovery for the fixed ASAR header/index admission budget. */
-export const asarHeaderAdmissionRecovery = (): string => {
-  const bytes = MAX_ASAR_HEADER_BYTES;
+const byteAllowance = (bytes: number): string => {
   const mebibytes = bytes / MEBIBYTE;
-  const allowance = Number.isInteger(mebibytes)
+  return Number.isInteger(mebibytes)
     ? `${String(mebibytes)} MiB / ${String(bytes)} bytes`
     : `${String(bytes)} bytes`;
-  return [
-    `ASAR header/index admission is limited to ${allowance}.`,
-    "This release has no runtime override.",
-    "Selecting fewer sources or narrowing an internal path does not bypass header admission, because the archive index is read before any member can be selected.",
-    "Raising max_heap_mb or available host memory does not raise it.",
-    "Analyze an extracted application directory, which does not admit an ASAR header, or supply an archive whose header fits this allowance.",
-    "Repeating the unchanged request fails the same way.",
-  ].join(" ");
 };
 
-/** Refuse an ASAR whose header/index exceeds the fixed admission budget. */
-export const asarHeaderAdmissionFailure = (): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("limit", asarHeaderAdmissionRecovery(), {
-    admission: { kind: "asar-header", maximumBytes: MAX_ASAR_HEADER_BYTES },
+/** User-visible recovery for the effective ASAR header/index admission budget. */
+export const asarHeaderAdmissionRecovery = (
+  admission: AsarHeaderAdmission,
+): string =>
+  [
+    `ASAR header/index admission is limited to ${byteAllowance(admission.maximumBytes)}${admission.source === "setting" ? ` by ${ASAR_HEADER_ADMISSION_SETTING}` : ""}.`,
+    `Set ${ASAR_HEADER_ADMISSION_SETTING} in the environment that starts REA to a byte count up to ${byteAllowance(MAXIMUM_ASAR_MAX_HEADER_BYTES)} (default ${byteAllowance(DEFAULT_ASAR_MAX_HEADER_BYTES)}), then restart REA.`,
+    "Selecting fewer sources or narrowing an internal path does not bypass header admission, because the archive index is read before any member can be selected.",
+    "Raising max_heap_mb or available host memory does not raise it.",
+    "Alternatively, analyze an extracted application directory, which does not admit an ASAR header.",
+    "Repeating the unchanged request fails the same way.",
+  ].join(" ");
+
+/** Refuse an ASAR whose header/index exceeds the effective admission budget. */
+export const asarHeaderAdmissionFailure = (
+  admission: AsarHeaderAdmission,
+): ArtifactReaderFailure =>
+  new ArtifactReaderFailure("limit", asarHeaderAdmissionRecovery(admission), {
+    admission: { kind: "asar-header", ...admission },
   });
 
-/** Absolute archive prefix required to inspect an admitted header. */
-export const MAX_ASAR_HEADER_PROBE_BYTES = MAX_ASAR_HEADER_BYTES + 8;
+/** Absolute archive prefix required to inspect a header under this admission. */
+export const asarHeaderProbeBytes = (admission: AsarHeaderAdmission): number =>
+  admission.maximumBytes + 8;
 
 export interface AsarHeaderExtents {
   readonly archiveBytes: number;
@@ -77,6 +95,7 @@ export type AsarHeaderProbeObservation =
       readonly extents?: AsarHeaderProbeExtents;
       readonly scannedJsonBytes: number;
       readonly limitBytes: number;
+      readonly admission: AsarHeaderAdmission;
     };
 
 export type FinalAsarHeaderProbeObservation = Exclude<
@@ -136,6 +155,7 @@ export const parseAsarHeaderExtents = (
  * scans the declared JSON bytes until the first non-JSON-whitespace byte.
  */
 export interface AsarHeaderSignatureProbe {
+  readonly admission: AsarHeaderAdmission;
   readonly limit: number;
   readonly observation: AsarHeaderProbeObservation;
   write(input: Uint8Array): AsarHeaderProbeObservation;
@@ -143,12 +163,16 @@ export interface AsarHeaderSignatureProbe {
 }
 
 class AsarHeaderSignatureProbeImpl implements AsarHeaderSignatureProbe {
-  readonly limit = MAX_ASAR_HEADER_PROBE_BYTES;
+  readonly limit: number;
   readonly #fixed = Buffer.alloc(16);
   #fixedBytes = 0;
   #scannedJsonBytes = 0;
   #extents: Omit<AsarHeaderExtents, "archiveBytes"> | undefined;
   #stop: ProbeStop = { state: "pending" };
+
+  constructor(readonly admission: AsarHeaderAdmission) {
+    this.limit = asarHeaderProbeBytes(admission);
+  }
 
   get observation(): AsarHeaderProbeObservation {
     return this.#observation();
@@ -227,7 +251,7 @@ class AsarHeaderSignatureProbeImpl implements AsarHeaderSignatureProbe {
       ) {
         this.#stop = { state: "rejected", reason: "archive-too-short" };
       } else if (
-        this.#extents.headerBytes > MAX_ASAR_HEADER_BYTES &&
+        this.#extents.headerBytes > this.admission.maximumBytes &&
         this.#stop.state === "matched"
       ) {
         this.#stop = { state: "limit" };
@@ -279,6 +303,7 @@ class AsarHeaderSignatureProbeImpl implements AsarHeaderSignatureProbe {
           ...(extents === undefined ? {} : { extents }),
           scannedJsonBytes: this.#scannedJsonBytes,
           limitBytes: this.limit,
+          admission: this.admission,
         };
       case "matched":
         return {
@@ -308,6 +333,7 @@ class AsarHeaderSignatureProbeImpl implements AsarHeaderSignatureProbe {
             extents: finalizedExtents,
             scannedJsonBytes: this.#scannedJsonBytes,
             limitBytes: this.limit,
+            admission: this.admission,
           };
         }
         return {
@@ -346,6 +372,7 @@ const isJsonWhitespace = (value: number): boolean =>
 export const admitAsarHeader = async (
   handle: Pick<FileHandle, "read"> & { stat(): Promise<Stats> },
   signal?: AbortSignal,
+  admission: AsarHeaderAdmission = resolveAsarHeaderAdmission(),
 ): Promise<AsarHeaderExtents> => {
   assertArtifactReadActive(signal);
   const observed = await handle.stat();
@@ -372,13 +399,14 @@ export const admitAsarHeader = async (
   }
   const parsed = parseAsarHeaderExtents(prefix, observed.size);
   if (!parsed.ok) throw parsed.error;
-  if (parsed.value.headerBytes > MAX_ASAR_HEADER_BYTES)
-    throw asarHeaderAdmissionFailure();
+  if (parsed.value.headerBytes > admission.maximumBytes)
+    throw asarHeaderAdmissionFailure(admission);
   return {
     archiveBytes: observed.size,
     ...parsed.value,
   };
 };
 
-export const createAsarHeaderSignatureProbe = (): AsarHeaderSignatureProbe =>
-  new AsarHeaderSignatureProbeImpl();
+export const createAsarHeaderSignatureProbe = (
+  admission: AsarHeaderAdmission = resolveAsarHeaderAdmission(),
+): AsarHeaderSignatureProbe => new AsarHeaderSignatureProbeImpl(admission);
