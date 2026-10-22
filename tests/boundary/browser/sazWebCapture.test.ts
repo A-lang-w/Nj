@@ -235,7 +235,8 @@ it("derives portable and retained SAZ API surfaces after removing the archive", 
       excluded_records: [{ ordinal: 2, reason: "url-unparseable" }],
     },
   });
-  for (const secret of ["password", "omit", "missing"])
+  // Match the planted query name as a JSON token: limitation prose may say "omitted".
+  for (const secret of ["password", '"omit"', "omit=value", "missing"])
     expect(JSON.stringify(portable)).not.toContain(secret);
   const source = { kind: "retained-evidence", evidence_id: parent_evidence_id };
   const retained = parseEvidence(
