@@ -17,6 +17,12 @@ import {
 
 export const scenarioIdentifierSchema = z.string().regex(IDENTIFIER_PATTERN);
 
+/**
+ * Step identity the provider owns for the initial-state step. Callers cannot
+ * claim it, because two capture steps with one identity cannot be aligned.
+ */
+export const BROWSER_SCENARIO_START_STEP_ID = "scenario_start";
+
 const browserScenarioBaseUrlSchema = z
   .string()
   .min(1)
@@ -157,12 +163,16 @@ const locatorSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+// Playwright forwards these intervals to Node timers.
+const MAX_BROWSER_SCENARIO_TIMEOUT_MS = 2_147_483_647;
+
 const stepBase = {
   step_id: scenarioIdentifierSchema,
   timeout_ms: z
     .number()
     .int()
     .min(1)
+    .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)
     .optional()
     .describe(
       "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation.",
@@ -219,6 +229,7 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
       .number()
       .int()
       .min(1)
+      .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)
       .describe(
         "Wait this many milliseconds; the wait ends early on cancellation.",
       ),

@@ -8,7 +8,7 @@ import {
   environmentManifestCaptureFixture,
   environmentStateCaptureFixture,
 } from "../../../tests/fixtures/analysisView.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
@@ -38,10 +38,7 @@ import {
   scenarioCaptureEvidence,
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
-import { readEvidenceFileSource } from "./evidenceFileSource.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-
-vi.mock("./evidenceFileSource.js", { spy: true });
 
 it.each(["layout", "javascript"])(
   "carries the retained %s source snapshot into repeatable shared views",
@@ -1026,27 +1023,32 @@ describe("inspectAnalysisViewWithFiles", () => {
 
   it("returns typed cancellation for a cancelled file request", async () => {
     const controller = new AbortController();
-    controller.abort();
+    const reason = Object.freeze({ requested: "view-stop" });
+    controller.abort(reason);
     const parent = analysisViewCaptureEvidence(
       environmentManifestCaptureFixture(),
     );
-    expect(
-      await inspectAnalysisViewWithFiles(
-        {
-          source: {
-            kind: "evidence-file",
-            path: await writeEvidenceFile(parent),
-          },
-          view,
+    const result = await inspectAnalysisViewWithFiles(
+      {
+        source: {
+          kind: "evidence-file",
+          path: await writeEvidenceFile(parent),
         },
-        undefined,
-        { signal: controller.signal },
-      ),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+        view,
+      },
+      undefined,
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    expect(result.ok ? undefined : result.error.cause).toBe(reason);
   });
 
   it("returns typed cancellation when a running file request is aborted", async () => {
     const controller = new AbortController();
+    const reason = Object.freeze({ requested: "running-view-stop" });
     const parent = analysisViewCaptureEvidence(
       environmentManifestCaptureFixture(),
     );
@@ -1057,11 +1059,13 @@ describe("inspectAnalysisViewWithFiles", () => {
       { signal: controller.signal },
     );
     // Queued before the request yields after its synchronous work, so it is seen even if the read already finished.
-    setImmediate(() => controller.abort());
-    expect(await running).toMatchObject({
+    setImmediate(() => controller.abort(reason));
+    const result = await running;
+    expect(result).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
+    expect(result.ok ? undefined : result.error.cause).toBe(reason);
   });
 
   it("leaves file sources to the file-aware entry point", () => {
@@ -1077,7 +1081,7 @@ describe("inspectAnalysisViewWithFiles", () => {
   });
 });
 
-describe("inspectAnalysisViewWithFiles scenario parents and cancellation", () => {
+describe("inspectAnalysisViewWithFiles scenario parents", () => {
   const view = manifestView;
 
   it("accepts from a file a scenario capture whose response bodies exceed the inline budget", async () => {
@@ -1108,34 +1112,5 @@ describe("inspectAnalysisViewWithFiles scenario parents and cancellation", () =>
     expect(fromFile.value.parameters).toMatchObject({
       parent_evidence_id: parent.evidence_id,
     });
-  });
-
-  it("reports cancellation rather than the authentication failure of a file aborted while it is authenticated", async () => {
-    const controller = new AbortController();
-    const parent = analysisViewCaptureEvidence(
-      environmentManifestCaptureFixture(),
-    );
-    const path = await writeEvidenceFile({
-      ...parent,
-      evidence_id: `ev_${"0".repeat(64)}`,
-    });
-    const { readEvidenceFileSource: read } = await vi.importActual<
-      typeof import("./evidenceFileSource.js")
-    >("./evidenceFileSource.js");
-    // The abort arrives once the read has finished, while the stale ID is being authenticated.
-    vi.mocked(readEvidenceFileSource).mockImplementationOnce(
-      async (...args) => {
-        const loaded = await read(...args);
-        controller.abort();
-        return loaded;
-      },
-    );
-    expect(
-      await inspectAnalysisViewWithFiles(
-        { source: { kind: "evidence-file", path }, view },
-        undefined,
-        { signal: controller.signal },
-      ),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
   });
 });

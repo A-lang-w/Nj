@@ -14,6 +14,13 @@ import {
   resolvedAnalysisError,
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { javaScriptRuntime } from "../domain/runtimeVersion.js";
+import {
+  webBundleHeapExhaustedReason,
+  webBundleHeapExhaustedRemediation,
+  webBundleMemoryExhaustion,
+} from "../domain/webBundleAnalysis.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   spawnOwnedProviderProcess,
@@ -88,7 +95,8 @@ type TestMode =
         | "wrong-job-failure"
         | "resource-failure"
         | "final-frame-held-pipe"
-        | "zero-exit-held-pipe";
+        | "zero-exit-held-pipe"
+        | "heap-exit";
     };
 
 const protocolWorkerProgram = (
@@ -105,53 +113,55 @@ const protocolWorkerProgram = (
     | "wrong-job-failure"
     | "resource-failure"
     | "final-frame-held-pipe"
-    | "zero-exit-held-pipe",
+    | "zero-exit-held-pipe"
+    | "heap-exit",
 ): string => `
   import { createInterface } from "node:readline";
   import { spawn } from "node:child_process";
   import { getHeapStatistics } from "node:v8";
   const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
   send({ kind: "ready", heap_limit_bytes: getHeapStatistics().heap_size_limit });
-  ${failure === "abort-first-exit" ? `process.on("SIGTERM", () => {}); setTimeout(() => process.stderr.write("late natural exit 7\\n", () => process.exit(7)), 50);` : ""}
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
   input.once("line", (line) => {
     const request = JSON.parse(line);
     ${
-      failure === "zero-exit-held-pipe"
-        ? `const program = "setTimeout(() => process.exit(0), 300);";
+      failure === "heap-exit"
+        ? `process.stderr.write("allocation failed\\n", () => process.exit(7));`
+        : failure === "zero-exit-held-pipe"
+          ? `const program = "setTimeout(() => process.exit(0), 300);";
            spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
            process.exit(0);`
-        : failure === "exit-7"
-          ? `process.stderr.write("controlled exit 7\\n", () => process.exit(7));`
-          : failure === "tail-exit"
-            ? `const lateProgram = "setTimeout(() => { process.stderr.write('late tail marker'); setTimeout(() => process.exit(0), 500); }, 50);";
+          : failure === "exit-7"
+            ? `process.stderr.write("controlled exit 7\\n", () => process.exit(7));`
+            : failure === "tail-exit"
+              ? `const lateProgram = "setTimeout(() => { process.stderr.write('late tail marker'); setTimeout(() => process.exit(0), 500); }, 50);";
              spawn(process.execPath, ["-e", lateProgram], { stdio: ["ignore", "ignore", "inherit"] });
              process.stderr.write("early exit marker\\n", () => process.exit(7));`
-            : failure === "truncated-exit"
-              ? `process.stderr.write("x".repeat(300 * 1024), () => process.exit(7));`
-              : failure === "abort-first-exit"
-                ? `setInterval(() => {}, 1_000);`
-                : failure === "malformed"
-                  ? `process.stdout.write("{not-json}\\n"); setInterval(() => {}, 1_000);`
-                  : failure === "wrong-job-failure"
-                    ? `send({ kind: "failure", id: ${JSON.stringify(randomUUID())}, reason: "output", message: "failure for another request" });
+              : failure === "truncated-exit"
+                ? `process.stderr.write("x".repeat(300 * 1024), () => process.exit(7));`
+                : failure === "abort-first-exit"
+                  ? `process.stderr.write("late natural exit 7\\n", () => process.exit(7));`
+                  : failure === "malformed"
+                    ? `process.stdout.write("{not-json}\\n"); setInterval(() => {}, 1_000);`
+                    : failure === "wrong-job-failure"
+                      ? `send({ kind: "failure", id: ${JSON.stringify(randomUUID())}, reason: "output", message: "failure for another request" });
                setInterval(() => {}, 1_000);`
-                    : failure === "resource-failure"
-                      ? `send({ kind: "failure", id: request.id, reason: "resource", message: "bounded result capacity" });
+                      : failure === "resource-failure"
+                        ? `send({ kind: "failure", id: request.id, reason: "resource", message: "bounded result capacity" });
                  setInterval(() => {}, 1_000);`
-                      : failure === "final-frame-held-pipe"
-                        ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
+                        : failure === "final-frame-held-pipe"
+                          ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
                const program = "setTimeout(() => { process.stdout.write(" + JSON.stringify(frame + "\\n") + "); setInterval(() => {}, 1000); }, 100);";
                spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
                process.exit(7);`
-                        : failure === "late-failure"
-                          ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
+                          : failure === "late-failure"
+                            ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
            setInterval(() => {}, 1_000);`
-                          : failure === "wrong-id"
-                            ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
-                            : failure === "oversized-control"
-                              ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
-                              : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
+                            : failure === "wrong-id"
+                              ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
+                              : failure === "oversized-control"
+                                ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
+                                : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
     }
   });
 `;
@@ -360,22 +370,34 @@ it("retains exit-7 output when abort follows the observed exit", async () => {
 it("keeps cancellation when abort is observed before a later child exit", async () => {
   const controller = new AbortController();
   let childExit: Promise<number | null> | undefined;
-  const worker = new WebBundleAnalysisWorker(
-    128,
-    launcherFor(
-      { kind: "protocol", failure: "abort-first-exit" },
-      {
-        onSpawn: ({ process: child }) => {
-          childExit = new Promise((resolve) =>
-            child.once("exit", (code) => resolve(code)),
-          );
-          child.stdout?.once("data", () =>
-            queueMicrotask(() => controller.abort(null)),
-          );
-        },
+  const launch = launcherFor(
+    { kind: "protocol", failure: "abort-first-exit" },
+    {
+      onSpawn: ({ process: child }) => {
+        childExit = new Promise((resolve) =>
+          child.once("exit", (code) => resolve(code)),
+        );
+        child.stdout?.once("data", () =>
+          queueMicrotask(() => controller.abort(null)),
+        );
       },
-    ),
+    },
   );
+  const worker = new WebBundleAnalysisWorker(128, async (request) => {
+    const spawned = await launch(request);
+    return {
+      ...spawned,
+      cleanup: async () => {
+        // Cancellation is already observed. Explicitly release the fixture's
+        // later exit before invoking the real process-group cleanup owner.
+        spawned.process.stdin?.write("{}\n");
+        await waitForExit(spawned.process);
+        return spawned.cleanup === undefined
+          ? cleanupOwnedProcessGroup(spawned.ownership)
+          : spawned.cleanup();
+      },
+    };
+  });
   try {
     const result = await worker.analyze(
       makeScript("fetch('/abort-first');"),
@@ -660,6 +682,37 @@ it("consumes a final frame before an inherited descendant pipe closes", async ()
     const error = failureOf(result);
     expect(error).toBeInstanceOf(AnalysisOutputError);
     expect(error.message).toContain("final frame from descendant");
+  } finally {
+    await worker.close();
+  }
+});
+
+it("projects a heap-marker exit with the runtime's exhausted resource", async () => {
+  const heapMb = 256;
+  const worker = new WebBundleAnalysisWorker(
+    heapMb,
+    launcherFor({ kind: "protocol", failure: "heap-exit" }),
+  );
+  try {
+    const error = failureOf(
+      await worker.analyze(makeScript("report heap exit"), 15_000),
+    );
+    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+    const exhaustion = webBundleMemoryExhaustion({
+      runtime: javaScriptRuntime(process.versions).id,
+      heapMb,
+      memoryLimitReached: false,
+      processMemoryLimitBytes: javaScriptWorkerMemoryLimitBytes(heapMb),
+    });
+    expect(error.message).toContain(webBundleHeapExhaustedReason(exhaustion));
+    expect(error).toMatchObject({
+      remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
+      reportedLimits: {
+        max_heap_mb: heapMb,
+        worker_process_memory_limit_bytes:
+          javaScriptWorkerMemoryLimitBytes(heapMb),
+      },
+    });
   } finally {
     await worker.close();
   }

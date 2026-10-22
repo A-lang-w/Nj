@@ -16,7 +16,10 @@ import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
 import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
 import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
-import { MCP_STARTUP_POLICY } from "./mcpStartupPolicy.js";
+import {
+  MCP_STARTUP_POLICY,
+  mcpDoctorDeadlineRecovery,
+} from "./mcpStartupPolicy.js";
 
 const OUTPUT_FORMATS = ["toon", "json", "yaml", "md", "jsonl"] as const;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -82,9 +85,8 @@ interface McpDoctorCheck {
 /** Diagnose the actual production stdio adapter with one startup-bounded SDK session. */
 export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
   const catalog = catalogIdentityForEnvironment(options.environment);
-  const deadline =
-    performance.now() +
-    (options.deadlineMs ?? MCP_STARTUP_POLICY.doctorDeadlineMs);
+  const budgetMs = options.deadlineMs ?? MCP_STARTUP_POLICY.doctorDeadlineMs;
+  const deadline = performance.now() + budgetMs;
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error("Production MCP doctor deadline expired")),
@@ -112,6 +114,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       deadline,
       controller.signal,
       catalog,
+      budgetMs,
     );
   } catch (cause: unknown) {
     result = {
@@ -125,7 +128,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         {
           name: "transport",
           ok: false,
-          detail: errorMessage(cause),
+          detail: doctorTransportDetail(cause, budgetMs),
         },
       ],
     };
@@ -198,6 +201,7 @@ const inspectProductionMcpSession = async (
   deadline: number,
   signal: AbortSignal,
   catalog: ReturnType<typeof createCatalogIdentity>,
+  budgetMs: number,
 ) => {
   const request = requestOptions(deadline, signal);
   const [tools, prompts] = await Promise.all([
@@ -214,7 +218,10 @@ const inspectProductionMcpSession = async (
       },
     )
     .then(ok, (cause: unknown) =>
-      err({ kind: "request-flow" as const, detail: errorMessage(cause) }),
+      err({
+        kind: "request-flow" as const,
+        detail: doctorTransportDetail(cause, budgetMs),
+      }),
     );
   const inventory = {
     tools: compareInventory(
@@ -556,3 +563,22 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+const doctorDeadlineFired = (cause: unknown): boolean => {
+  const message = errorMessage(cause);
+  return (
+    message.includes("Production MCP doctor deadline expired") ||
+    message.includes("Request timed out") ||
+    message.includes("Maximum total timeout exceeded") ||
+    (cause instanceof Error &&
+      (cause.name === "TimeoutError" || cause.name === "AbortError"))
+  );
+};
+
+/** Name the fixed doctor deadline when it fires, without turning Codex's 30s into a REA knob. */
+const doctorTransportDetail = (cause: unknown, budgetMs: number): string => {
+  const message = errorMessage(cause);
+  return doctorDeadlineFired(cause)
+    ? `${message} ${mcpDoctorDeadlineRecovery(budgetMs)}`
+    : message;
+};

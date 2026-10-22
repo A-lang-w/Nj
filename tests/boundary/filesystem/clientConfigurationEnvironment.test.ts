@@ -16,9 +16,97 @@ import {
 } from "../../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { clientRegistrationEnvironmentDetails } from "../../../src/application/ClientRegistrationEnvironment.js";
+import {
+  clientRegistrationEnvironmentDetails,
+  clientRegistrationEnvironmentDetailsWithBudget,
+} from "../../../src/application/ClientRegistrationEnvironment.js";
 import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
 import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import { ok } from "../../../src/domain/result.js";
+import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
+
+it("awaits the owner-parsed provider request budget without changing caller strings", async () => {
+  const parsed = parseClientConfiguration(
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: {
+            REA_ANALYSIS_PROVIDER: "ida",
+            REA_IDA_MCP_CONFIG: "/tmp/rea-registration.json/",
+          },
+        },
+      },
+    }),
+    "json",
+  );
+  const details = await clientRegistrationEnvironmentDetailsWithBudget(
+    parsed,
+    {},
+    "effective",
+    async (provider) => {
+      expect(provider).toBe("ida");
+      return ok(17);
+    },
+  );
+  expect(details).toMatchObject({
+    ok: true,
+    value: {
+      values: { REA_IDA_MCP_CONFIG: "/tmp/rea-registration.json/" },
+      timeoutInputs: { providerRequestTimeoutMs: 17 },
+    },
+  });
+});
+
+it("reuses desired registration facts within a snapshot and revalidates later inspections", async () => {
+  const home = await createTestTempDirectory("rea-registration-snapshot-");
+  const configPath = join(home, "mcp.json");
+  const environment = {
+    REA_ANALYSIS_PROVIDER: "ida",
+    REA_IDA_MCP_CONFIG: "/tmp/rea-registration.json/",
+    REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+  };
+  const original = JSON.stringify({
+    mcpServers: {
+      rea: {
+        command: "rea",
+        args: ["mcp"],
+        env: environment,
+        startupTimeoutMs: MCP_STARTUP_POLICY.kimiStartupTimeoutMs,
+        toolTimeoutMs: 450_000,
+      },
+    },
+  });
+  await writeFile(configPath, original);
+  const client = { name: "kimi", format: "kimi", configPath } as const;
+  const observations: string[] = [];
+  const resolveBudget = async (
+    provider: string,
+    observedEnvironment: Readonly<Record<string, string>>,
+  ) => {
+    expect(observedEnvironment.REA_IDA_MCP_CONFIG).toBe(
+      environment.REA_IDA_MCP_CONFIG,
+    );
+    observations.push(provider);
+    return ok(17);
+  };
+
+  expect(
+    await clientConfigurationAligned(client, {}, ["rea", "mcp"], resolveBudget),
+  ).toBe(true);
+  expect(observations).toEqual(["ida"]);
+
+  expect(
+    await inspectClientConfiguration(client, {}, ["rea", "mcp"], resolveBudget),
+  ).toEqual({ status: "already_current" });
+  // Inspection checks both the layered preflight and the freshly read document.
+  expect(observations).toEqual(["ida", "ida", "ida"]);
+  expect(await readFile(configPath, "utf8")).toBe(original);
+  await expect(access(`${configPath}.rea.backup`)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
 
 it.each(["win32", "linux"] as const)(
   "uses the selected %s identity when inspecting lowercase registration settings",
