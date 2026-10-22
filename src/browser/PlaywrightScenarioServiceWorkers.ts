@@ -330,7 +330,8 @@ export class PlaywrightScenarioServiceWorkers {
         // Opaque origins can neither hold nor match a registration, and
         // Chromium throws when a sandboxed document reads its container.
         // Chromium gives about:blank and blob: documents no container, so they
-        // cannot be controlled; a same-origin parent shares their storage key.
+        // cannot be controlled. A parent shares their storage key only with the
+        // same origin and credentialless state, which selects a nonced partition.
         failure = await frame.evaluate(`(async () => {
           if (!("serviceWorker" in navigator)) return null;
           if (globalThis.origin === "null") return null;
@@ -349,7 +350,8 @@ export class PlaywrightScenarioServiceWorkers {
                 throw error;
             }
             try {
-              if (owner.parent === owner || owner.parent.origin !== globalThis.origin)
+              if (owner.parent === owner || owner.parent.origin !== globalThis.origin ||
+                  owner.parent.credentialless !== globalThis.credentialless)
                 return "service_worker_state_unknown";
             } catch {
               return "service_worker_state_unknown";
@@ -368,7 +370,7 @@ export class PlaywrightScenarioServiceWorkers {
         throw new BrowserObservationError(OPERATION, "service_worker_blocked");
       if (failure === "service_worker_state_unknown")
         unresolved ??= {
-          diagnostics: { frame_state: "no_same_origin_container" },
+          diagnostics: { frame_state: "no_same_partition_container" },
         };
       else if (failure !== null)
         throw new BrowserObservationError(OPERATION, "protocol_error");

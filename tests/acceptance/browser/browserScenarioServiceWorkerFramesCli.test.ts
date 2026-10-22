@@ -37,8 +37,12 @@ const listen = async (
   route: (path: string) => string,
 ): Promise<{ readonly server: Server; readonly origin: string }> => {
   const server = createServer((request, response) => {
-    response.setHeader("content-type", "text/html; charset=utf-8");
-    response.end(route(new URL(request.url ?? "/", "http://fixture").pathname));
+    const path = new URL(request.url ?? "/", "http://fixture").pathname;
+    response.setHeader(
+      "content-type",
+      `${path.endsWith(".js") ? "text/javascript" : "text/html"}; charset=utf-8`,
+    );
+    response.end(route(path));
   });
   await new Promise<void>((resolveListen) => {
     server.listen(0, "127.0.0.1", resolveListen);
@@ -52,9 +56,10 @@ const listen = async (
 // Chromium gives about:blank and blob: documents no service-worker container,
 // and sandboxed documents without allow-same-origin an opaque origin. None of
 // them can be controlled; same-origin descendants share their parent's
-// registrations, even through a container-less parent, while an about:blank
-// whose initiator origin differs from its parent's has no frame that can
-// report its registrations.
+// registrations, even through a container-less parent. An about:blank whose
+// initiator origin differs from its parent's, or a credentialless frame whose
+// nonced partition differs from its same-origin parent's, has no frame that
+// can report its registrations.
 const startSites = async () => {
   const nested = await listen((path) =>
     path === "/nest"
@@ -101,6 +106,36 @@ const startSites = async () => {
             ready();
           };
         </script>`;
+    // Registered before REA attaches, so the scenario policy cannot block it.
+    if (path === "/credentialless-registered")
+      return `<!doctype html><title>loading</title>
+        <iframe credentialless src="/register-then-blank"></iframe>
+        <script>
+          const registered = () => {
+            try {
+              if (document.title === "registering" &&
+                  frames[0].location.href === "about:blank") {
+                document.title = "registered";
+                return;
+              }
+            } catch {}
+            setTimeout(registered, 10);
+          };
+          registered();
+        </script>`;
+    if (path === "/register-then-blank")
+      return `<!doctype html><script>
+          navigator.serviceWorker.register("/sw.js")
+            .then(() => navigator.serviceWorker.ready)
+            .then(() => {
+              parent.document.title = "registering";
+              location.href = "about:blank";
+            });
+        </script>`;
+    if (path === "/sw.js")
+      return 'self.addEventListener("install", () => self.skipWaiting());';
+    if (path === "/ready")
+      return '<!doctype html><p id="state" data-ready="true">ready</p>';
     return "<!doctype html><p>child</p>";
   });
   return {
@@ -119,6 +154,7 @@ const startSites = async () => {
 const pageTarget = async (
   endpoint: string,
   origin: string,
+  attached: { readonly path: string; readonly title?: string },
 ): Promise<string> => {
   const provider = new CdpBrowserProvider();
   const deadline = Date.now() + 10_000;
@@ -130,8 +166,10 @@ const pageTarget = async (
       }),
     );
     if (!listed.ok) throw listed.error;
-    const match = listed.value.targets.find((target) =>
-      target.url.startsWith(`${origin}/start`),
+    const match = listed.value.targets.find(
+      (target) =>
+        target.url.startsWith(`${origin}${attached.path}`) &&
+        (attached.title === undefined || target.title === attached.title),
     );
     if (match !== undefined) return match.target_id;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
@@ -146,6 +184,9 @@ const withAttachedChrome = async (
     readonly origin: string;
     readonly capture: (path: string) => Promise<unknown>;
   }) => Promise<void>,
+  attached: { readonly path: string; readonly title?: string } = {
+    path: "/start",
+  },
 ): Promise<void> => {
   const profile = await createTestTempDirectory("rea-sw-frames-");
   const sites = await startSites();
@@ -163,7 +204,7 @@ const withAttachedChrome = async (
     "--disable-dev-shm-usage",
     "--disable-sync",
     "--metrics-recording-only",
-    `${sites.origin}/start`,
+    `${sites.origin}${attached.path}`,
   ]);
   child.stdout.on("data", () => undefined);
   child.stderr.on("data", (chunk: Buffer) => {
@@ -178,7 +219,7 @@ const withAttachedChrome = async (
       timeoutMs: CHROME_STARTUP_TIMEOUT_MS,
     });
     const endpoint = `http://127.0.0.1:${String(port)}`;
-    const targetId = await pageTarget(endpoint, sites.origin);
+    const targetId = await pageTarget(endpoint, sites.origin, attached);
     await verify({
       origin: sites.origin,
       capture: async (path) => {
@@ -265,13 +306,41 @@ it.skipIf(chromeExecutable === undefined)(
         details: {
           operation: "capture_browser_scenario",
           reason: "service_worker_state_unknown",
-          diagnostics: { frame_state: "no_same_origin_container" },
+          diagnostics: { frame_state: "no_same_partition_container" },
           partial_observation: {
             kind: "browser-scenario-observation",
           },
         },
       });
     });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+it.skipIf(chromeExecutable === undefined)(
+  "keeps a credentialless frame's partition unknown despite a same-origin parent",
+  async ({ processes }) => {
+    const executable = chromeExecutable;
+    if (executable === undefined) return;
+    await withAttachedChrome(
+      processes,
+      executable,
+      async ({ capture }) => {
+        // The attached page's credentialless frame registered a worker in its
+        // nonced partition, then became about:blank; its parent sees none.
+        const document = await capture("/ready");
+        expect(document).toMatchObject({
+          error: "Browser scenario capture failed",
+          code: "target_unavailable",
+          details: {
+            operation: "capture_browser_scenario",
+            reason: "service_worker_state_unknown",
+            diagnostics: { frame_state: "no_same_partition_container" },
+          },
+        });
+      },
+      { path: "/credentialless-registered", title: "registered" },
+    );
   },
   TEST_TIMEOUT_MS,
 );
