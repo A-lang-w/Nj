@@ -1,26 +1,25 @@
 import { cp, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
 
-import { exec, pathExists } from "./lib/verify-package-core.mjs";
+import { exec, execNpm, pathExists } from "./lib/verify-package-core.mjs";
 
-/** Locate the lockfile-installed Skills CLI so verification needs no registry fetch. */
-const lockedSkillsCli = async (root) => {
-  const manifestPath = fileURLToPath(
-    import.meta.resolve("skills/package.json"),
+/** Install the separately locked Skills CLI so verification resolves no registry metadata. */
+const lockedSkillsCli = async (root, workspace) => {
+  const tool = join(workspace, "skills-cli");
+  await mkdir(tool, { recursive: true });
+  for (const file of ["package.json", "package-lock.json"])
+    await cp(join(root, "scripts/verify-tools/skills", file), join(tool, file));
+  await execNpm(
+    ["ci", "--prefer-offline", "--ignore-scripts", "--no-audit", "--no-fund"],
+    { cwd: tool, timeout: 120_000 },
   );
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  const rootManifest = JSON.parse(
-    await readFile(join(root, "package.json"), "utf8"),
+  const installed = join(tool, "node_modules/skills");
+  const manifest = JSON.parse(
+    await readFile(join(installed, "package.json"), "utf8"),
   );
-  const pinned = rootManifest.devDependencies?.skills;
-  if (manifest.version !== pinned)
-    throw new Error(
-      `installed skills ${manifest.version} does not match the pinned ${pinned}; run npm ci`,
-    );
   return {
     version: manifest.version,
-    entry: join(dirname(manifestPath), manifest.bin.skills),
+    entry: join(installed, manifest.bin.skills),
   };
 };
 
@@ -54,7 +53,10 @@ export async function verifyRepositorySkill({ root, workspace }) {
     throw new Error("repository skill check must run without generated skills");
   await mkdir(consumer, { recursive: true });
   await mkdir(home, { recursive: true });
-  const { version: skillsVersion, entry } = await lockedSkillsCli(root);
+  const { version: skillsVersion, entry } = await lockedSkillsCli(
+    root,
+    workspace,
+  );
   await exec(
     process.execPath,
     [
