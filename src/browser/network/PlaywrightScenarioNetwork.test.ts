@@ -185,9 +185,12 @@ it.each(["finished", "failed", "unfinished"])(
     const response = new ResponseFixture(request, "response");
     collector.request(request);
     collector.response(response);
+    expect(omittedEventCounts.get("network-content")).toBe(1);
     collector.response(response);
+    expect(omittedEventCounts.get("network-content")).toBe(1);
     if (terminal === "finished") collector.finished(request);
     if (terminal === "failed") collector.failed(request);
+    expect(omittedEventCounts.get("network-content")).toBe(1);
     await collector.finish();
     expect(omittedEventCounts.get("network-content")).toBe(1);
     expect(response.bodyReads).toBe(0);
