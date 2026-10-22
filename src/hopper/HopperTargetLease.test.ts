@@ -17,7 +17,7 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { permissionDenialEnforced } from "../../tests/fixtures/permissionDenial.js";
+import { readDenialEnforced } from "../../tests/fixtures/permissionDenial.js";
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
@@ -74,7 +74,7 @@ describe.skipIf(process.platform === "win32")(
       expect((await lstat(alias)).isSymbolicLink()).toBe(true);
     });
 
-    it.skipIf(!permissionDenialEnforced)(
+    it.skipIf(!readDenialEnforced)(
       "explains unreadable directory recovery without changing unverified permissions",
       async () => {
         const directory = await temporaryDirectory();

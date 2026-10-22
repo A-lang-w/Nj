@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
-import { permissionDenialEnforced } from "../../tests/fixtures/permissionDenial.js";
+import { readDenialEnforced } from "../../tests/fixtures/permissionDenial.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -130,7 +130,7 @@ const resolveHopperMachOImage = (
     resourceScope: inspectionResources.owner,
   });
 
-it.skipIf(process.platform === "win32" || !permissionDenialEnforced)(
+it.skipIf(process.platform === "win32" || !readDenialEnforced)(
   "reports a FAT64 source that became unreadable as a host read denial",
   async () => {
     const directory = await createTestTempDirectory("rea-hopper-fat64-");
