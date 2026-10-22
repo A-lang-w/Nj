@@ -138,6 +138,8 @@ export type EffectResult =
       readonly fields?: readonly string[];
       /** Set when the fields are a document's pointers, each covering the members under it. */
       readonly pointers?: boolean;
+      /** A document replacement's object, as a pointer: it overwrites every earlier effect under it, though it claims only its members. */
+      readonly overwrites?: readonly string[];
       /** The fields an update sent or changed, derived ones included, and those of them its increments add to. */
       readonly changed?: {
         readonly fields: readonly string[];
