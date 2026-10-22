@@ -21,9 +21,13 @@ These writes are now explained, and served where every recorded call agrees with
   any value of that field's JSON type. A string that contains a copied value as a delimited token is a template of
   the copying field and is rebuilt around the new value; the copied value has the copy rule's 8 characters at least.
   Echoed values, and copies of them, make no templates, since an echoed name may recur in unrelated text.
+  Each text containing a copied value must rebuild that copy; rebuilding it in one text does not make occurrences
+  in other templates safe. Otherwise the member remains fixed to its recorded value.
 - **Updates.**
   - `unique`: a field that held a UUID and now holds another, which the call did not send (in any letter case) and
     no other entity of the type holds. A sent member replaced this way is accepted with any value.
+    A value shared with another output field is not independent generation: scalar and nested generators cannot
+    reproduce that relation, so the update remains unexplained rather than serving disconnected UUIDs.
   - `renewed`: an array or object whose only changes are UUIDs replaced by ones neither it nor another entity of the
     type held, at the pointers the rule names (`*` for any array index): every UUID there is new, each old UUID by a
     single new one, and UUIDs elsewhere are kept. A lone UUID is never renewed: it is either `unique` or unexplained.

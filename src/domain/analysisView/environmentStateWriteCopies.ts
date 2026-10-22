@@ -54,8 +54,10 @@ export const strandedCopies = (
   entity: JsonObject,
   texts: readonly string[],
 ): Set<string> => {
-  const rebuilt = new Set(
-    rules.flatMap((rule) => (rule.rule === "template" ? [rule.from] : [])),
+  const rebuilt = new Map(
+    rules.flatMap((rule) =>
+      rule.rule === "template" ? [[rule.field, rule.from] as const] : [],
+    ),
   );
   return new Set(
     rules.flatMap((rule) => {
@@ -67,13 +69,14 @@ export const strandedCopies = (
           : value;
       };
       return rule.rule === "copy" &&
-        !rebuilt.has(rule.field) &&
         token !== undefined &&
         token.length >= COPY_MIN_LENGTH &&
         texts.some((field) => {
           const value = text(field);
           return (
-            value !== undefined && delimitedOffsets(value, token).length > 0
+            rebuilt.get(field) !== rule.field &&
+            value !== undefined &&
+            delimitedOffsets(value, token).length > 0
           );
         })
         ? [rule.field]

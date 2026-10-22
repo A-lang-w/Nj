@@ -15,7 +15,7 @@ export const GENERATED: ReadonlySet<FieldRule["rule"]> = new Set([
   "unique",
 ]);
 
-/** A UUID the update put where another UUID was, that the call sent nowhere in its body and no other entity holds, in any letter case. */
+/** An independently generated UUID: not sent, held by another entity, or linked to another output field. */
 export const freshUuid = (
   evidence: {
     readonly before: JsonObject;
@@ -29,6 +29,10 @@ export const freshUuid = (
   const after = evidence.after[field];
   if (!isUuid(before) || !isUuid(after)) return false;
   const fresh = after.toLowerCase();
+  // Scalar generation and nested renewal have separate owners. A shared output UUID
+  // is a relation they cannot reproduce, not evidence for independent generation.
+  for (const [name, value] of Object.entries(evidence.after))
+    if (name !== field && uuidsIn(value).has(fresh)) return false;
   return (
     before.toLowerCase() !== fresh &&
     !uuidsIn(evidence.call.body).has(fresh) &&
