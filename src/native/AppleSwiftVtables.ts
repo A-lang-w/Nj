@@ -9,53 +9,51 @@ import type {
 } from "./AppleSwiftDispatchFacets.js";
 import { unresolvedSwiftRelativeReason } from "./AppleSwiftDispatchFacets.js";
 import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import type {
+  SwiftNominalDescriptor,
+  SwiftNominalRecordFailure,
+} from "./AppleSwiftNominalTypes.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
 export interface SwiftMetadataReaders {
   u32(address: bigint): number;
   relative(address: bigint, kind: SwiftRelativeField): SwiftRelativeValue;
-  string(address: bigint): string;
   location(address: bigint): NativeMetadataLocation;
   evidence(address: bigint, description: string): NativeMetadataEvidence[];
   executable(address: bigint): boolean;
   admit(): boolean;
 }
 
-/** Decode non-generic, non-resilient Swift class vtable descriptors without instantiating metadata. */
+/**
+ * Decode non-generic, non-resilient Swift class vtables from the shared
+ * nominal descriptors. A record whose kind or name is unknown may be a class,
+ * so it keeps vtable coverage partial.
+ */
 export const decodeSwiftClassVtables = (input: {
   readers: SwiftMetadataReaders;
-  entries: readonly bigint[];
+  descriptors: readonly SwiftNominalDescriptor[];
+  failures: readonly SwiftNominalRecordFailure[];
   result: ObjcSwiftMetadata;
 }): FacetDecodeFacts => {
   const { readers: read, result } = input;
-  const failures: string[] = [];
   const issues = [] as ReturnType<typeof issue>[];
   // Coverage counts vtable slots, matching `decoded`; descriptor entries are
   // a discovery input and are not slot records.
   let examined = 0;
   let decoded = 0;
-  for (const field of input.entries) {
-    if (!read.admit()) {
-      failures.push("max_records_reached");
-      issues.push(
-        issue(
-          "swift_class_vtable_descriptors",
-          "record_budget_exhausted",
-          "max_records_reached",
-          `0x${field.toString(16)}`,
-        ),
-      );
-      break;
-    }
+  for (const { record, message } of input.failures) {
+    issues.push(
+      issue(
+        "swift_class_vtable_descriptors",
+        "vtable_decode_failed",
+        message,
+        `0x${record.toString(16)}`,
+      ),
+    );
+  }
+  for (const { record, descriptor, flags, name: owner } of input.descriptors) {
+    if ((flags & 31) !== 16) continue;
     try {
-      const descriptorValue = read.relative(field, "typeMetadataRecord");
-      if (descriptorValue.kind !== "target")
-        throw new RangeError(
-          unresolvedSwiftRelativeReason(descriptorValue, "typeMetadataRecord"),
-        );
-      const descriptor = descriptorValue.target;
-      const flags = read.u32(descriptor);
-      if ((flags & 31) !== 16) continue;
       const specific = flags >>> 16;
       if ((flags & 0x80) !== 0 || (specific & 0x2000) !== 0)
         throw new TypeError(
@@ -76,21 +74,9 @@ export const decodeSwiftClassVtables = (input: {
         throw new RangeError(
           "Swift vtable count or offset exceeds declared metadata bounds",
         );
-      const ownerValue = read.relative(descriptor + 8n, "classDescriptorName");
-      if (ownerValue.kind !== "target")
-        throw new RangeError(
-          unresolvedSwiftRelativeReason(ownerValue, "classDescriptorName"),
-        );
-      const ownerAddress = ownerValue.target;
-      const owner = read.string(ownerAddress);
-      if (owner.length === 0)
-        throw new RangeError(
-          "Swift class vtable descriptor class name is empty",
-        );
       for (let index = 0; index < count; index++) {
         const entry = header + 8n + BigInt(index * 8);
         if (!read.admit()) {
-          failures.push("max_records_reached");
           issues.push(
             issue(
               "swift_class_vtable_descriptors",
@@ -164,9 +150,6 @@ export const decodeSwiftClassVtables = (input: {
           );
       }
       if ((specific & 0x4000) !== 0) {
-        failures.push(
-          `${owner}: inherited override descriptors are unsupported`,
-        );
         issues.push(
           issue(
             "swift_class_vtable_descriptors",
@@ -178,13 +161,12 @@ export const decodeSwiftClassVtables = (input: {
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      failures.push(`0x${field.toString(16)}: ${message}`);
       issues.push(
         issue(
           "swift_class_vtable_descriptors",
           "vtable_decode_failed",
           message,
-          `0x${field.toString(16)}`,
+          `0x${record.toString(16)}`,
         ),
       );
     }

@@ -49,6 +49,7 @@ import {
   type SwiftRelativeTargetLocation,
 } from "./AppleSwiftDispatchFacets.js";
 import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
+import { decodeSwiftNominalTypes } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
@@ -221,7 +222,8 @@ export const decodeAppleDispatchMetadata = (
       typeEntries.push(section.address + BigInt(index * 4));
     if (section.size / 4 > maxRecords) budget.truncated = true;
   }
-  const vtables = decodeSwiftClassVtables({
+  const admit = () => budget.admit();
+  const nominal = decodeSwiftNominalTypes({
     entries: typeEntries,
     result,
     readers: {
@@ -230,7 +232,19 @@ export const decodeAppleDispatchMetadata = (
       string,
       location,
       evidence,
-      admit: () => budget.admit(),
+      admit,
+    },
+  });
+  const vtables = decodeSwiftClassVtables({
+    descriptors: nominal.descriptors,
+    failures: nominal.failures,
+    result,
+    readers: {
+      u32,
+      relative: swiftRelative,
+      location,
+      evidence,
+      admit,
       executable: (address) =>
         segments.some(
           (segment) =>
@@ -250,6 +264,7 @@ export const decodeAppleDispatchMetadata = (
     objcClassListScanTruncated,
     truncated: budget.truncated,
     fixups,
+    declarations: nominal.facts,
     vtables,
     swift,
   });
