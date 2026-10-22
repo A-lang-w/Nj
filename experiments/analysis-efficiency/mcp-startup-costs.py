@@ -32,7 +32,8 @@ spec.loader.exec_module(module)
 catalogs = {}
 identities = {}
 rows = []
-for case in inputs['cases']:
+heap_rows = []
+for case in inputs['cases'] + inputs.get('diagnostic_cases', []):
     directory = root / case['case']
     report = json.loads((directory / 'report.json').read_text())
     assert report['status'] == 'passed' and report['cleanup_verified']
@@ -91,7 +92,19 @@ for case in inputs['cases']:
            **resource,
            'receipt_sha256': {name: sha((directory / name).read_bytes()) for name in ['report.json', 'catalog.json', 'server.json', 'transcript.json']}}
     assert row['catalog_sha256'] == row['receipt_sha256']['catalog.json'] == catalogs[profile]['sha256']
-    rows.append(row)
+    heap = report.get('diagnostic_heap')
+    if case.get('diagnostic_heap'):
+        assert case['phase'] == 'analysis' and case['cache'] == 'cold' and case['artifact'] == 'zellij'
+        assert heap is not None and heap['pid_verified'] is True
+        for sample in [heap['before_gc'], heap['after_gc']]:
+            assert type(sample['usedSize']) is int and sample['usedSize'] >= 0
+            assert type(sample['totalSize']) is int and sample['totalSize'] >= sample['usedSize']
+        row['heap_observation'] = heap
+        row['retained_v8_heap_bytes_after_gc'] = heap['after_gc']['usedSize']
+        heap_rows.append(row)
+    else:
+        assert heap is None, 'Diagnostic GC contaminated a normal task trial'
+        rows.append(row)
 assert len(rows) == 72
 summary = []
 for phase in ['discovery', 'analysis']:
@@ -114,5 +127,21 @@ result = {'status': 'passed', 'tokenizer': f'tiktoken=={tiktoken.__version__}/cl
           'resource_scope': 'Whole SDK driver, resource observer and owned REA process family. Includes before/after source-and-all-compiled-JS/JSON binding, SDK schema checks, extra validation calls, bundle export and independent oracle checking. Kernel cgroup peak includes file cache. Build/download/oracle preparation and cache priming excluded. Retained V8 heap and forced-GC diagnostics were not separately measured.',
           'measurement_inputs': inputs, 'catalogs': catalogs, 'summary': summary, 'records': rows,
           'warmup_receipts': {name: sha((root / name / 'report.json').read_bytes()) for name in [f'warmup-{profile}-{role}' for profile in ['default', 'full'] for role in ['baseline', 'candidate']]}}
+if heap_rows:
+    assert len(heap_rows) == 12
+    heap_summary = []
+    for profile in ['default', 'full']:
+        item = {'profile': profile}
+        for role in ['baseline', 'candidate']:
+            selected = [row for row in heap_rows if row['profile'] == profile and row['role'] == role]
+            assert len(selected) == 3
+            item[role] = {metric: {'median': statistics.median(row[metric] for row in selected),
+                                   'min': min(row[metric] for row in selected), 'max': max(row[metric] for row in selected)}
+                          for metric in ['retained_v8_heap_bytes_after_gc', 'wall_seconds', 'cpu_seconds',
+                                         'kernel_family_peak_bytes_including_page_cache']}
+        heap_summary.append(item)
+    result['heap_diagnostics'] = {
+        'scope': 'Separate three-pair Zellij tasks per profile, with an explicitly launched loopback inspector. Four CDP calls verify the owned REA PID, read heap, force GC and read heap again after the completed SDK task. These whole-family costs include inspector and diagnostic GC overhead; they are excluded from the normal timing cohort. Heap values describe REA V8 only, not the client or the whole process family.',
+        'summary': heap_summary, 'records': heap_rows}
 args.output.write_text(json.dumps(result, indent=2) + '\n')
 print(json.dumps(summary, indent=2))
