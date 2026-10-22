@@ -153,7 +153,10 @@ test("keeps the stable-file diagnosis when snapshot close succeeds", async () =>
   }
 });
 
-for (const mode of ["changed-close-failure", "completed-close-failure"] as const)
+for (const mode of [
+  "changed-close-failure",
+  "completed-close-failure",
+] as const)
   test(`retains the destination descriptor when snapshot close fails (${mode})`, async () => {
     const fixture = await createJadxProtocolFixture();
     const sourceBytes = await readFile(fixture.apk);
@@ -184,14 +187,16 @@ for (const mode of ["changed-close-failure", "completed-close-failure"] as const
         "controlled snapshot close EIO",
       );
       const owned = state.handles[0];
-      if (owned === undefined) throw new Error("missing destination descriptor");
+      if (owned === undefined)
+        throw new Error("missing destination descriptor");
       expect(owned.handle.fd).toBeGreaterThanOrEqual(0);
       expect(state.opens).toBe(1);
       expect(fixture.launches).toHaveLength(0);
       const snapshot = snapshotResource(result.error.cleanupResources);
       expect(snapshot).toBeDefined();
       const workspace = snapshot?.slice(0, -`${sep}target.apk`.length);
-      if (workspace === undefined) throw new Error("missing snapshot workspace");
+      if (workspace === undefined)
+        throw new Error("missing snapshot workspace");
       await expect(stat(workspace)).resolves.toMatchObject({
         isDirectory: expect.any(Function),
       });
@@ -208,7 +213,9 @@ for (const mode of ["changed-close-failure", "completed-close-failure"] as const
           ).code,
         ).toBe("invalid_request");
       } else {
-        expect(result.error.cleanupPrimary).toBeInstanceOf(ProviderCleanupError);
+        expect(result.error.cleanupPrimary).toBeInstanceOf(
+          ProviderCleanupError,
+        );
         expect(result.error.cleanupPrimary?.diagnostics).toMatchObject({
           snapshot_copy: "completed",
           snapshot_sha256: sha256,
@@ -224,10 +231,9 @@ for (const mode of ["changed-close-failure", "completed-close-failure"] as const
 
       const opens = state.opens;
       const closeCalls = state.closeCalls;
-      const blocked = await fixture.service.execute(
-        "inspect_android_package",
-        { path: fixture.apk },
-      );
+      const blocked = await fixture.service.execute("inspect_android_package", {
+        path: fixture.apk,
+      });
       expect(blocked.ok).toBe(false);
       if (blocked.ok) return;
       expect(blocked.error.cleanupIncomplete).toBe(true);
@@ -338,7 +344,8 @@ for (const mode of ["source-close-failure", "both-close-failure"] as const)
         expect(destination.handle.fd).toBeGreaterThanOrEqual(0);
       else expect(destination.handle.fd).toBe(-1);
       const workspace = snapshotPath?.slice(0, -`${sep}target.apk`.length);
-      if (workspace === undefined) throw new Error("missing snapshot workspace");
+      if (workspace === undefined)
+        throw new Error("missing snapshot workspace");
       await expect(stat(workspace)).resolves.toBeTruthy();
 
       const opens = state.opens;

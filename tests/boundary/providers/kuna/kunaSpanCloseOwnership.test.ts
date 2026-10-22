@@ -89,7 +89,13 @@ it.each([false, true])(
       });
       const text = String(warm.result);
       const [key] = await readdir(join(cacheRoot, "projects"));
-      fault.span = join(cacheRoot, "projects", key ?? "", "project", "program.asm");
+      fault.span = join(
+        cacheRoot,
+        "projects",
+        key ?? "",
+        "project",
+        "program.asm",
+      );
       fault.short = short;
       fault.fail = true;
       const result = await client.execute(
@@ -375,8 +381,7 @@ it("removes a span lease from the resource scope after close succeeds", async ()
     expect(recovered.ok).toBe(true);
     expect(
       release.mock.calls.some(
-        ([owner]) =>
-          owner.kind === "lease" && owner.resource === fault.span,
+        ([owner]) => owner.kind === "lease" && owner.resource === fault.span,
       ),
     ).toBe(true);
     expect(fault.handles[0]?.fd).toBe(-1);

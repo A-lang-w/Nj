@@ -319,7 +319,8 @@ const projectSnapshotFailure = (
   cause: unknown,
   projectChanged: (changed: AndroidSnapshotChangedError) => AnalysisError,
 ): unknown => {
-  if (cause instanceof AndroidSnapshotChangedError) return projectChanged(cause);
+  if (cause instanceof AndroidSnapshotChangedError)
+    return projectChanged(cause);
   if (
     !(cause instanceof RegularFileCleanupFailure) ||
     cause.outcome.kind !== "failed"

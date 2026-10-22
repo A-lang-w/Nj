@@ -85,9 +85,7 @@ const readSpan = async (
       ),
     );
   if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError(operation, { cause: signal.reason }),
-    );
+    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
   const opened =
     ownership.admitSpan === undefined
       ? ok(await open(path, "r"))
