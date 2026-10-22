@@ -160,9 +160,9 @@ const generatedRule = (
     return { field, rule: "clock", format: clock.format };
   const integer = sequenceNumber(value);
   if (integer !== undefined) {
-    if (nextInteger(evidence.collection, field) === integer)
+    if (nextInteger(evidence.collection, field, value) === integer)
       return { field, rule: "sequence", scope: "collection" };
-    if (nextInteger(evidence.type, field) === integer)
+    if (nextInteger(evidence.type, field, value) === integer)
       return { field, rule: "sequence", scope: "type" };
   }
   if (

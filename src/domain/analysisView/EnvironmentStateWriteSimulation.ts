@@ -315,9 +315,11 @@ export class EnvironmentStateWriteSimulation {
         checkDocumentRead(this.#state, view.tool, record, body),
       );
     const item = view.shape === "item";
-    const collection = item
-      ? itemTarget(this.#state, view.type, record).collection
-      : line!.collection;
+    const target = item
+      ? itemTarget(this.#state, view.type, record)
+      : undefined;
+    const collection =
+      target === undefined ? line!.collection : target.collection;
     if (this.#taint.under(collection)) return undefined;
     if (!item) {
       const ids = this.#state
@@ -340,6 +342,7 @@ export class EnvironmentStateWriteSimulation {
         idField: this.#types.get(view.type)?.id_field ?? "",
         volatile: this.#input.volatileOf(view.type),
         collection,
+        ...(target === undefined ? {} : { itemId: target.id }),
       };
       return this.omitted.check(this.#state, view, record, check, (loosened) =>
         loosened.shape === "item"

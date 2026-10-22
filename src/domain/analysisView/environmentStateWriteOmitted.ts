@@ -1,7 +1,6 @@
 import {
   at,
   isObject,
-  lastSegmentValue,
   listItems,
   projectsFields,
   scalarText,
@@ -36,6 +35,7 @@ export class OmittedFields {
     read: ReadBodies & {
       readonly idField: string;
       readonly collection: string;
+      readonly itemId?: string;
     },
     compare: (view: View) => CheckOutcome | undefined,
   ): CheckOutcome | undefined {
@@ -85,6 +85,7 @@ const lackedFields = (
   read: Pick<ReadBodies, "body"> & {
     readonly idField: string;
     readonly collection: string;
+    readonly itemId?: string;
   },
 ): string[] => {
   if (
@@ -94,7 +95,7 @@ const lackedFields = (
   )
     return [];
   const lacked = new Set<string>();
-  for (const entity of heldEntities(state, view, record, read))
+  for (const entity of heldEntities(state, view, read))
     for (const field of view.required_fields)
       if (!Object.hasOwn(entity, field)) lacked.add(field);
   return [...lacked];
@@ -104,10 +105,10 @@ const lackedFields = (
 const heldEntities = (
   state: SimulatedState,
   view: StateItemView | StateListView,
-  record: StateRecordFacts,
   read: Pick<ReadBodies, "body"> & {
     readonly idField: string;
     readonly collection: string;
+    readonly itemId?: string;
   },
 ): JsonObject[] => {
   const object = view.shape === "item" ? at(read.body!, view.pointer) : null;
@@ -115,7 +116,8 @@ const heldEntities = (
     view.shape === "list"
       ? (listItems(read.body!, view.pointer) ?? [])
       : isObject(object) &&
-          scalarText(object[read.idField]) === lastSegmentValue(record.path)
+          read.itemId !== undefined &&
+          scalarText(object[read.idField]) === read.itemId
         ? [object]
         : [];
   return shown.filter((entity) => {

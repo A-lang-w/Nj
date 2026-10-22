@@ -1392,3 +1392,56 @@ describe("omissions on query-backed read-backs", () => {
     expect(books.answer("get_books", { name: "Alpha" }).body).toEqual([alpha]);
   });
 });
+
+describe("own JSON members in update bodies", () => {
+  it("accepts constructor added by a later recorded update without inheriting a function kind", () => {
+    const alpha = { id: 1, name: "Alpha" };
+    const beta = { id: 2, name: "Beta", constructor: "known" };
+    const renamed = { ...alpha, name: "Renamed" };
+    const extended = { ...renamed, constructor: "stored" };
+    const books = servedFrom([
+      ["GET", "/api/books", [alpha, beta]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/2", beta],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed" }],
+      ["GET", "/api/books/1", renamed],
+      ["PATCH", "/api/books/1", extended, 200, { constructor: "stored" }],
+      ["GET", "/api/books/1", extended],
+    ]);
+    expect(
+      books.answer("patch_books_by_id", {
+        id: "1",
+        body: { constructor: "value" },
+      }).body,
+    ).toMatchObject({
+      id: 1,
+      name: "Alpha",
+    });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toMatchObject({
+      constructor: "value",
+    });
+  });
+});
+
+describe("asset sequence inference", () => {
+  it("answers the recorded first create consistently when a held asset has outgrown its mask", () => {
+    const alpha = { id: 1, name: "Alpha", asset: "99-98" };
+    const beta = { id: 2, name: "Beta", asset: "100-00" };
+    const gamma = { id: 3, name: "Gamma", asset: "99-99" };
+    const books = servedFrom([
+      ["GET", "/api/books", [alpha, beta]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/2", beta],
+      ["POST", "/api/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/books/3", gamma],
+    ]);
+    expect(books.state.writes.get("post_books")?.rules).not.toContainEqual({
+      field: "asset",
+      rule: "sequence",
+      scope: "collection",
+    });
+    expect(
+      books.answer("post_books", { body: { name: "Gamma" } }).body,
+    ).toEqual(gamma);
+  });
+});
