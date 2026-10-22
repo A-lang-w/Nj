@@ -1,3 +1,4 @@
+import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
 import { expect, it } from "vitest";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
@@ -150,7 +151,16 @@ it.each(
       expect(result.value.target.initial_url).toBe(
         `${browser.allowedOrigin}/app?caller=retained#details`,
       );
-    } else expect(result).toMatchObject({ ok: false, error: { reason } });
+    } else {
+      expect(result).toMatchObject({ ok: false, error: { reason } });
+      if (kind === "foreign" && loader && !result.ok) {
+        if (!(result.error instanceof BrowserObservationError))
+          throw result.error;
+        expect(result.error.detail).toBe(
+          `Selected target allowed-page moved to an unselected origin during ${result.error.operation}.`,
+        );
+      }
+    }
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).toContain("Debugger.disable");
     expect(methods).toContain("Target.detachFromTarget");

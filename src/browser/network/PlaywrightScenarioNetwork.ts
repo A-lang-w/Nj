@@ -208,13 +208,7 @@ export class PlaywrightScenarioNetwork {
     const transaction = this.transaction(request);
     if (transaction === undefined) {
       this.omitOmittedTransactionPhase(request, "response");
-      // Selection follows the observed response, independently of its eventual
-      // terminal state. No omitted response body is acquired.
-      if (
-        this.options.selection.response_body ||
-        this.options.selection.header_values
-      )
-        this.omitOmittedTransactionContent(request, "response");
+      this.observeOmittedTransactionPhase(request, "response");
       return;
     }
     if (
@@ -250,6 +244,13 @@ export class PlaywrightScenarioNetwork {
     const transaction = this.transaction(request);
     if (transaction === undefined) {
       this.omitOmittedTransactionPhase(request, "request-finished");
+      const observed = this.omittedPhases.get(request);
+      if (
+        observed?.has("response") &&
+        (this.options.selection.response_body ||
+          this.options.selection.header_values)
+      )
+        this.omitOmittedTransactionContent(request, "response");
       return;
     }
     if (!this.admitMetadata(transaction, "request-finished", request)) return;

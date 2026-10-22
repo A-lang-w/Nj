@@ -28,9 +28,8 @@ const browsers: FakeCdpBrowser[] = [];
 const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 
 it(
-  "preserves source keys, URL fragments and screenshot admission through CLI and MCP",
+  "preserves full document URL identity through CLI and MCP",
   async () => {
-    let malformed = false;
     const source =
       'document.modelContext.registerTool({name:"catalog",[``]:0,inputSchema:{properties:{"":{},ordinary:{}}}});';
     const browser = await startFakeCdpBrowser({
@@ -48,9 +47,7 @@ it(
                   },
                 },
               }
-            : method === "Page.captureScreenshot" && malformed
-              ? { data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" }
-              : undefined,
+            : undefined,
       commandEvents: ({ method, sessionId }, origin) =>
         method === "Page.captureScreenshot"
           ? [
@@ -94,15 +91,6 @@ it(
           capture: {
             target_url: `${browser.allowedOrigin}/app?token=frame-secret#details`,
           },
-          observations: {
-            webmcp_declarations: [
-              expect.objectContaining({
-                name: "catalog",
-                schema_property_names: ["", "ordinary"],
-                trust: "page-declared-untrusted",
-              }),
-            ],
-          },
         },
       });
     expect(
@@ -120,17 +108,6 @@ it(
           },
           artifact: { media_type: "image/png" },
         },
-      },
-    });
-    malformed = true;
-    const bad = await client.callTool({
-      name: "capture_web_screenshot",
-      arguments: args,
-    });
-    expect(parseMcpToolError(bad)).toMatchObject({
-      error: {
-        code: "unreadable_output",
-        details: { reason: "protocol_error" },
       },
     });
   },

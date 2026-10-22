@@ -756,6 +756,13 @@ const mainFilePath = async (
   );
 };
 
+const throwIfElectronInspectionCancelled = (signal?: AbortSignal): void => {
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError("inspect_electron_page", {
+      cause: signal.reason,
+    });
+};
+
 const report = async (
   progress: ProgressReporter | undefined,
   completed: number,
@@ -768,10 +775,3 @@ const report = async (
     message,
     ...(completed === 3 ? { terminal: true } : {}),
   });
-
-const throwIfElectronInspectionCancelled = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError("inspect_electron_page", {
-      cause: signal.reason,
-    });
-};
