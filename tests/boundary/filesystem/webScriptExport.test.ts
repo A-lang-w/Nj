@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -25,8 +26,11 @@ import {
 
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
+import { DestinationCaseCollisionFailure } from "../../../src/artifacts/ArtifactPaths.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
 import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
@@ -468,6 +472,212 @@ describe("captured script publication failures and cleanup", () => {
     expect(await readdir(root)).toEqual(["capture.json"]);
   });
 
+  it("keeps the exact caller reason when cancellation interrupts the first output write", async () => {
+    const { input, resources } = await setup(
+      scriptScenarioFixture([
+        {
+          url: "https://fixture.test/first.js",
+          bytes: Buffer.from("export const a = 1;"),
+        },
+        {
+          url: "https://fixture.test/second.js",
+          bytes: Buffer.from("export const b = 2;"),
+        },
+      ]),
+    );
+    const controller = new AbortController();
+    const reason = { request: "stop export" };
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        const write = tree.write.bind(tree);
+        vi.spyOn(tree, "write").mockImplementationOnce(async (...writeArgs) => {
+          controller.abort(reason);
+          return write(...writeArgs);
+        });
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(resources.hasPending).toBe(false);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+});
+
+describe("captured script cancellation finalization", () => {
+  it("keeps the caller reason when rollback also fails after an interrupted write", async () => {
+    const { input, resources } = await setup(
+      scriptScenarioFixture([
+        {
+          url: "https://fixture.test/first.js",
+          bytes: Buffer.from("export const a = 1;"),
+        },
+      ]),
+    );
+    const controller = new AbortController();
+    const reason = { request: "stop export" };
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        vi.spyOn(tree, "write").mockImplementationOnce(async () => {
+          controller.abort(reason);
+          throw new Error("injected write failure");
+        });
+        vi.spyOn(tree, "rollback").mockRejectedValueOnce(
+          new Error("injected rollback failure"),
+        );
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+      await resources.close();
+    }
+  });
+
+  it("wraps a caller-owned cancellation reason under the export operation", async () => {
+    const { input, resources } = await setup(
+      scriptScenarioFixture([
+        {
+          url: "https://fixture.test/first.js",
+          bytes: Buffer.from("export const a = 1;"),
+        },
+      ]),
+    );
+    const controller = new AbortController();
+    const reason = new AnalysisCancelledError("upstream_workflow", {
+      cause: { request: "stop upstream" },
+    });
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        const write = tree.write.bind(tree);
+        vi.spyOn(tree, "write").mockImplementationOnce(async (...writeArgs) => {
+          controller.abort(reason);
+          return write(...writeArgs);
+        });
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).not.toBe(reason);
+      if (!(result.error instanceof AnalysisCancelledError))
+        throw new Error("Expected AnalysisCancelledError");
+      expect(result.error.operation).toBe("export_web_scripts");
+      expect(result.error.cause).toBe(reason);
+    } finally {
+      createSpy.mockRestore();
+      await resources.close();
+    }
+  });
+});
+
+describe("captured script final commit cancellation", () => {
+  it("reports cancellation with the completed output when abort lands during final commit", async () => {
+    const { input, resources } = await setup();
+    const controller = new AbortController();
+    const reason = { request: "stop export" };
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        const commit = tree.commit.bind(tree);
+        vi.spyOn(tree, "commit").mockImplementation(async (...commitArgs) => {
+          await commit(...commitArgs);
+          controller.abort(reason);
+        });
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "web-script-export",
+        result: {
+          output_directory: input.output_directory,
+          manifest: { path: join(input.output_directory, "manifest.json") },
+        },
+      });
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  it.each([1, 2])(
+    "returns cancellation after %i failed capture close attempts recover",
+    async (failedCloses) => {
+      const { input, resources } = await setup();
+      const controller = new AbortController();
+      const reason = { request: "stop export" };
+      let closeCalls = 0;
+      openMock.mockImplementation(async (...args) => {
+        const handle = await actualFs.open(...args);
+        if (String(args[0]) !== input.capture_path) return handle;
+        const close = handle.close.bind(handle);
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          closeCalls += 1;
+          if (closeCalls <= failedCloses) {
+            controller.abort(reason);
+            throw new Error("injected capture close failure");
+          }
+          await close();
+        });
+        return handle;
+      });
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(closeCalls).toBe(2);
+      expect(result.error.cleanupIncomplete).toBe(failedCloses === 2);
+      expect(resources.hasPending).toBe(failedCloses === 2);
+      if (failedCloses === 2) {
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "cleanup_incomplete",
+          details: { resources: [input.capture_path] },
+        });
+        expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      } else {
+        expect(result.error.cause).toBe(reason);
+      }
+      await resources.close();
+      expect(closeCalls).toBe(failedCloses + 1);
+      expect(resources.hasPending).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "cancelled",
+      });
+    },
+  );
+
   it("identifies a missing capture file and rejected host path syntax", async () => {
     const { input, resources } = await setup();
     const missing = await exportWebScripts(
@@ -736,6 +946,11 @@ describe("capture read and close failure", () => {
       await resources.close();
       expect(closeCalls).toBe(4);
       expect(openedHandle.fd).toBe(-1);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_operation_failed",
+        details: { reason: "io" },
+      });
     } finally {
       allowClose = true;
       await resources.close().catch(() => undefined);
@@ -795,6 +1010,10 @@ describe("capture handle ownership", () => {
       allowClose = true;
       await resources.close();
       expect([...closeCalls.values()]).toEqual([4]);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+      });
     } finally {
       allowClose = true;
       await resources.close().catch(() => undefined);
@@ -880,4 +1099,139 @@ describe("capture handle ownership", () => {
       await resources.close().catch(() => undefined);
     }
   });
+});
+
+it("does not isolate a permission refusal just because a differently cased peer exists", async () => {
+  const { input, resources } = await setup(
+    scriptScenarioFixture([
+      {
+        url: "https://fixture.test/App.js",
+        bytes: Buffer.from("export const upper = 1;"),
+      },
+      {
+        url: "https://fixture.test/app.js",
+        bytes: Buffer.from("export const lower = 2;"),
+      },
+    ]),
+  );
+  const denied = Object.assign(new Error("controlled selected-path denial"), {
+    code: "EACCES",
+  });
+  let refusals = 0;
+  openMock.mockImplementation(async (...args) => {
+    if (
+      String(args[0]).endsWith("/app.js") &&
+      typeof args[1] === "number" &&
+      (args[1] & constants.O_EXCL) !== 0
+    ) {
+      refusals++;
+      throw denied;
+    }
+    return actualFs.open(...args);
+  });
+  const result = await exportWebScripts(input, resources);
+  expect(refusals).toBe(1);
+  if (result.ok) throw new Error("Permission failure was hidden by recovery");
+  expect(result.error.cause).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(result.error.cause instanceof ArtifactReaderFailure))
+    throw new Error("Missing file creation failure");
+  expect(result.error.cause.cause).toBe(denied);
+  await expect(access(input.output_directory)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("does not choose collision recovery from an untyped diagnostic prefix", async () => {
+  const { input, resources } = await setup();
+  const refusal = new ArtifactReaderFailure(
+    "path",
+    "Destination filesystem cannot store both diagnostic words and authority.",
+  );
+  const write = vi
+    .spyOn(SafeOutputTree.prototype, "write")
+    .mockRejectedValueOnce(refusal);
+  try {
+    const result = await exportWebScripts(input, resources);
+    expect(result.ok).toBe(false);
+    await expect(access(input.output_directory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    write.mockRestore();
+  }
+});
+
+it("isolates an observed exclusive-create alias using typed facts when diagnostic wording changes", async () => {
+  const scripts = [
+    {
+      url: "https://fixture.test/App.js",
+      bytes: Buffer.from("export const upper = 1;"),
+    },
+    {
+      url: "https://fixture.test/app.js",
+      bytes: Buffer.from("export const lower = 2;"),
+    },
+  ];
+  const { input, resources } = await setup(scriptScenarioFixture(scripts));
+  const native = Object.assign(
+    new Error("controlled case-insensitive exclusive create"),
+    { code: "EEXIST" },
+  );
+  openMock.mockImplementation(async (...args) => {
+    if (
+      String(args[0]).endsWith("/app.js") &&
+      typeof args[1] === "number" &&
+      (args[1] & constants.O_EXCL) !== 0
+    )
+      throw native;
+    return actualFs.open(...args);
+  });
+  const collisions: DestinationCaseCollisionFailure[] = [];
+  const original = SafeOutputTree.prototype.write;
+  const write = vi
+    .spyOn(SafeOutputTree.prototype, "write")
+    .mockImplementation(async function (this: SafeOutputTree, ...args) {
+      try {
+        return await original.apply(this, args);
+      } catch (cause) {
+        if (cause instanceof DestinationCaseCollisionFailure) {
+          collisions.push(cause);
+          cause.message = "Observed destination spelling conflict.";
+        }
+        throw cause;
+      }
+    });
+  try {
+    const exported = await exportWebScripts(input, resources);
+    if (!exported.ok) throw exported.error;
+    const result = webScriptExportResultSchema.parse(
+      exported.value.normalized_result,
+    );
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]?.requestedPath).toMatch(/\/app\.js$/u);
+    expect(collisions[0]?.existingPath).toMatch(/\/App\.js$/u);
+    expect(collisions[0]?.cause).toBe(native);
+    expect(
+      result.scripts.map(({ content }) =>
+        content.state === "exported" ? content.layout : null,
+      ),
+    ).toEqual(["url-path", "isolated"]);
+    expect(result.scripts[1]?.content).toMatchObject({
+      layout_reason: "Observed destination spelling conflict.",
+    });
+    if (result.analysis_input === null)
+      throw new Error("Missing exported bytes");
+    for (const [index, script] of result.scripts.entries()) {
+      if (script.content.state !== "exported")
+        throw new Error("Missing script bytes");
+      expect(script.url).toBe(scripts[index]?.url);
+      expect(
+        await readFile(
+          join(result.analysis_input.input_path, script.content.relative_path),
+        ),
+      ).toEqual(scripts[index]?.bytes);
+    }
+  } finally {
+    write.mockRestore();
+  }
 });

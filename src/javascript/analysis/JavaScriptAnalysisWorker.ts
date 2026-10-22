@@ -1,3 +1,4 @@
+import { WorkerFrameSignal } from "../../process/WorkerFrameSignal.js";
 import type { JavaScriptSemanticProjectionCapacity } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -30,7 +31,11 @@ import { ok, err, type Result } from "../../domain/result.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import { PrivateRuntimeRootUnavailableError } from "../../process/PrivateRuntimeRootUnavailableError.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
-import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
+import {
+  spawnOwnedProviderProcess,
+  type ProviderProcessDiagnostic,
+  type ProviderProcessSupervisor,
+} from "../../process/ProviderProcess.js";
 import {
   OwnedWorkerRuntime,
   OwnedWorkerRuntimeCleanupError,
@@ -43,11 +48,21 @@ import {
 import {
   readJavaScriptAnalysisTransfer,
   JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
+  javaScriptForwardedTransferRemediation,
   javaScriptTransferRetentionBytes,
 } from "./JavaScriptAnalysisTransfer.js";
+import {
+  JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
+  JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
+  JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
+  JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
+  javaScriptWorkerHeapExhaustionRecovery,
+  javaScriptWorkerHeapRemediation,
+} from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "./JavaScriptAnalysisWorkerSchemas.js";
 import {
   JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS as DEFAULTS,
+  javaScriptCheckpointCeilingRemediation,
   javaScriptWorkerMessageSchema,
   javaScriptWorkerRequestSchema,
   javaScriptWorkerAdmissionSchema,
@@ -62,6 +77,23 @@ const STATIC_CHECKPOINT_RETENTION_EXPANSION = 6;
 const WORKER_HEAP_FLAGS_ENFORCED =
   javaScriptRuntime(process.versions).id === "node";
 
+type WorkerPrimaryFailure =
+  | { readonly kind: "memory" }
+  | { readonly kind: "output"; readonly reason: string }
+  | { readonly kind: "input"; readonly cause: Error }
+  | {
+      readonly kind: "protocol";
+      readonly id: string;
+      readonly phase: string;
+      readonly response: Extract<JavaScriptWorkerMessage, { kind: "failure" }>;
+    }
+  | {
+      readonly kind: "exit";
+      readonly code: number | null;
+      readonly signal: NodeJS.Signals | null;
+      readonly heapExhaustion: boolean;
+    };
+
 /** One sequential owned worker, retained between source files and closed after analysis. */
 export class JavaScriptAnalysisWorker {
   readonly #runId = `rea-javascript-analysis-${randomUUID()}`;
@@ -69,19 +101,27 @@ export class JavaScriptAnalysisWorker {
   #ready = false;
   #heapLimitBytes = 0;
   #frames: JavaScriptWorkerMessage[] = [];
+  readonly #frameSignal = new WorkerFrameSignal();
   #pending = "";
   #decoder = new StringDecoder("utf8");
-  #protocolFailure: string | undefined;
+  #primaryFailure: WorkerPrimaryFailure | undefined;
+  #activeJobId: string | undefined;
+  #activeJobPhase = "startup";
+  #staticResponseId: string | undefined;
+  #terminalResponseId: string | undefined;
   #phase = "startup";
   #lastFailure: AnalysisError | undefined;
   #estimatedRetainedBytes = 0;
   #applicationProjectionFailure: AnalysisResourceConstraintError | undefined;
   #parentCapacityExhausted = false;
   #sourcesRemaining: number | undefined;
-  readonly #resultBudgetBytes: number;
+  #deadline: ProviderStartupDeadline | undefined;
+  #resultBudgetBytes = 0;
   /** Null when the runtime enforces the V8 heap flags instead. */
   readonly #processMemoryLimitBytes: number | null;
   readonly #onStdout = (chunk: Buffer | string): void => {
+    if (this.#deadline?.interruption !== undefined) return;
+    this.#observeMemoryLimit();
     try {
       this.#pending +=
         typeof chunk === "string" ? chunk : this.#decoder.write(chunk);
@@ -92,19 +132,24 @@ export class JavaScriptAnalysisWorker {
         if (
           Buffer.byteLength(line) > DEFAULTS.protocolBytes ||
           this.#frames.length >= 16
-        )
-          throw new RangeError(
+        ) {
+          this.#latchOutputFailure(
             "JavaScript worker exceeded its control-frame budget",
           );
+          return;
+        }
         const raw: unknown = JSON.parse(line);
-        this.#frames.push(javaScriptWorkerMessageSchema.parse(raw));
+        const frame = javaScriptWorkerMessageSchema.parse(raw);
+        this.#frames.push(frame);
+        this.#observeJobFrame(frame);
+        this.#frameSignal.wake("frame");
       }
       if (Buffer.byteLength(this.#pending) > DEFAULTS.protocolBytes)
-        throw new RangeError(
+        this.#latchOutputFailure(
           "JavaScript worker control frame is unterminated or oversized",
         );
     } catch (cause: unknown) {
-      this.#protocolFailure = message(cause);
+      this.#latchOutputFailure(message(cause));
     }
   };
 
@@ -119,12 +164,14 @@ export class JavaScriptAnalysisWorker {
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
+        onDiagnostic: (event) => this.#observeProcessDiagnostic(event),
       },
+      onInputFailure: (cause) => this.#latchInputFailure(cause),
     });
     if (
       !Number.isSafeInteger(limits.heapMb) ||
-      limits.heapMb < 128 ||
-      limits.heapMb > 16_384 ||
+      limits.heapMb < JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM ||
+      limits.heapMb > JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM ||
       !Number.isSafeInteger(limits.timeoutMs) ||
       limits.timeoutMs <= 0 ||
       limits.timeoutMs > 2_147_483_647
@@ -143,13 +190,60 @@ export class JavaScriptAnalysisWorker {
     this.#processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
       limits.heapMb,
     );
-    // Reserve host-side control, schema/Evidence work and a maximum record's
-    // transient copies. Admission also accounts for retained earlier files.
+    this.#refreshResultBudget();
+  }
+
+  /**
+   * Whether this idle process can analyze another application. A failed,
+   * cancelled, or still-open job must not be reused.
+   */
+  canReuse(): boolean {
+    return (
+      this.#ready &&
+      this.#activeJobId === undefined &&
+      this.#primaryFailure === undefined &&
+      this.#lastFailure === undefined &&
+      this.#frames.length === 0 &&
+      this.#pending === "" &&
+      this.#runtime.inputFailure === undefined &&
+      !this.#runtime.hasPendingCleanup &&
+      this.#runtime.supervisor !== undefined
+    );
+  }
+
+  /**
+   * Reset per-analysis admission for one idle process. The worker heap limit
+   * stays the one selected at launch; callers must not reuse across limits.
+   */
+  prepareForAnotherAnalysis(sourceCount: number): boolean {
+    if (!this.canReuse()) return false;
+    if (!Number.isSafeInteger(sourceCount) || sourceCount < 0)
+      throw new RangeError(
+        "JavaScript worker source count must be a nonnegative safe integer",
+      );
+    this.#sourcesRemaining = sourceCount;
+    this.#estimatedRetainedBytes = 0;
+    this.#parentCapacityExhausted = false;
+    this.#applicationProjectionFailure = undefined;
+    this.#refreshResultBudget();
+    return true;
+  }
+
+  /** Keep the limit and usage in one V8 observation for every admission path. */
+  #remainingParentHeapBytes(): number {
+    const { heap_size_limit, used_heap_size } = getHeapStatistics();
+    return heap_size_limit - used_heap_size;
+  }
+
+  /**
+   * Reserve host-side control, schema/Evidence work, and a maximum record's
+   * transient copies. Admission also accounts for retained earlier files.
+   */
+  #refreshResultBudget(): void {
     this.#resultBudgetBytes = Math.max(
       0,
       Math.floor(
-        (getHeapStatistics().heap_size_limit -
-          process.memoryUsage().heapUsed -
+        (this.#remainingParentHeapBytes() -
           24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES) /
           2,
       ),
@@ -178,7 +272,8 @@ export class JavaScriptAnalysisWorker {
       JavaScriptSourceAnalysisFailure
     >;
     try {
-      if (signal?.aborted === true) throw new AnalysisCancelledError(OPERATION);
+      if (signal?.aborted === true)
+        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
       if (!file.text.included || file.kind !== "javascript")
         throw new TypeError(
           "JavaScript analysis worker requires included JavaScript text",
@@ -187,6 +282,7 @@ export class JavaScriptAnalysisWorker {
       await prepareProcessOwnershipInspection(signal);
       await OwnedWorkerRuntime.retryPending();
       deadline = new ProviderStartupDeadline(this.limits.timeoutMs, signal);
+      this.#deadline = deadline;
       await this.#start(deadline);
       const rootPath = this.#runtime.rootPath;
       const supervisor = this.#runtime.supervisor;
@@ -218,12 +314,19 @@ export class JavaScriptAnalysisWorker {
         throw new AnalysisResourceConstraintError(
           OPERATION,
           "transport",
-          `Source identity for ${file.path} exceeds the worker request byte budget`,
+          `Source identity for ${file.path} exceeds the ${String(DEFAULTS.protocolBytes)}-byte worker request ceiling. This release has no runtime override.`,
           { worker_request_bytes: DEFAULTS.protocolBytes },
+          {
+            remediationAction: `This release has no runtime override for the ${String(DEFAULTS.protocolBytes)}-byte JavaScript worker request ceiling. Raising max_heap_mb does not raise it. Repeating the unchanged request fails the same way.`,
+          },
         );
       const stdin = supervisor.launch.process.stdin;
       if (stdin === undefined || stdin === null)
         throw new TypeError("JavaScript worker has no writable request stream");
+      this.#activeJobId = id;
+      this.#activeJobPhase = this.#phase;
+      this.#staticResponseId = undefined;
+      this.#terminalResponseId = undefined;
       await new Promise<void>((resolve, reject) =>
         stdin.write(frame, (error) =>
           error === null || error === undefined ? resolve() : reject(error),
@@ -276,24 +379,21 @@ export class JavaScriptAnalysisWorker {
           continue;
         }
         if (response.kind === "failure") {
+          if (
+            this.#primaryFailure?.kind === "protocol" &&
+            this.#primaryFailure.id === response.id
+          )
+            this.#primaryFailure = undefined;
           if (response.reason === "resource") {
             result = err({
               javascript,
               module,
               projection,
-              error: new AnalysisResourceConstraintError(
-                OPERATION,
-                response.resource ?? "memory",
-                response.message,
-                { ...this.#limits(), ...response.limits },
-              ),
+              error: this.#protocolFailure(file.path, response, this.#phase),
             });
             break;
           }
-          throw new AnalysisOutputError(
-            OPERATION,
-            `${file.path} during ${this.#phase}: ${response.message}`,
-          );
+          throw this.#protocolFailure(file.path, response, this.#phase);
         }
         if (javascript === null)
           throw new AnalysisOutputError(
@@ -336,8 +436,7 @@ export class JavaScriptAnalysisWorker {
                 module_retention_estimate_bytes: moduleEstimate,
               },
               {
-                remediationAction:
-                  "Use the retained static facts or analyze fewer source files. This limit belongs to the parent result budget; increasing the worker heap alone does not increase it.",
+                remediationAction: `Use the retained static facts or analyze fewer source files. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`,
               },
             ),
           });
@@ -376,8 +475,7 @@ export class JavaScriptAnalysisWorker {
                   graph_records: descriptor.graph_records,
                 },
                 {
-                  remediationAction:
-                    "Use the retained static and module facts or analyze fewer source files. This limit belongs to the parent result budget; increasing the worker heap alone does not increase it.",
+                  remediationAction: `Use the retained static and module facts or analyze fewer source files. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`,
                 },
               ),
             });
@@ -385,9 +483,21 @@ export class JavaScriptAnalysisWorker {
       }
       // An allocation failure may surface as a protocol failure or be caught
       // inside the worker; any reached limit makes this file's result partial.
-      if (this.#memoryLimitReached()) throw this.#memoryFailure(file.path);
+      this.#observeMemoryLimit();
+      if (this.#primaryFailure?.kind === "memory")
+        throw this.#projectPrimaryFailure(file.path);
     } catch (cause: unknown) {
       const error = this.#failure(cause, file.path, deadline, signal);
+      if (
+        this.#primaryFailure !== undefined &&
+        deadline?.interruption === "cancelled"
+      )
+        error.retainSecondaryFailure(
+          new AnalysisCancelledError(OPERATION, {
+            cause: deadline.signal.reason,
+            capturedOutput: this.#captured(),
+          }),
+        );
       this.#lastFailure = error;
       // Complete checkpoints remain readable after a child crash or cancellation.
       const cleanup = await this.#stop(error);
@@ -405,6 +515,8 @@ export class JavaScriptAnalysisWorker {
       result = err({ error: cleanup ?? error, javascript, module, projection });
     } finally {
       deadline?.dispose();
+      if (this.#deadline === deadline) this.#deadline = undefined;
+      if (this.#activeJobId === id) this.#activeJobId = undefined;
     }
     if (result.ok) this.#lastFailure = undefined;
     else if (!(result.error.error instanceof ProviderCleanupError))
@@ -514,52 +626,48 @@ export class JavaScriptAnalysisWorker {
     path: string,
   ): Promise<JavaScriptWorkerMessage> {
     for (;;) {
-      if (deadline.interruption === "cancelled")
-        throw new AnalysisCancelledError(OPERATION);
-      if (deadline.interruption === "timeout")
-        throw new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs);
+      if (deadline.interruption !== undefined) {
+        const failure = this.#interruptionFailure(path, deadline);
+        throw failure;
+      }
+      this.#observeMemoryLimit();
       const inputFailure = this.#runtime.inputFailure;
-      if (inputFailure !== undefined)
-        throw new AnalysisOutputError(
-          OPERATION,
-          `Owned JavaScript worker request stream failed during ${path}`,
-          { cause: inputFailure, capturedOutput: this.#captured() },
-        );
-      if (this.#protocolFailure !== undefined)
-        throw new AnalysisOutputError(OPERATION, this.#protocolFailure);
+      if (inputFailure !== undefined) this.#latchInputFailure(inputFailure);
+      if (
+        this.#primaryFailure !== undefined &&
+        this.#primaryFailure.kind !== "exit" &&
+        this.#primaryFailure.kind !== "protocol"
+      )
+        throw this.#projectPrimaryFailure(path);
       const frame = this.#frames.shift();
       if (frame !== undefined) return frame;
       const supervisor = this.#runtime.supervisor;
       const snapshot = supervisor?.snapshot();
       if (
+        supervisor !== undefined &&
         snapshot !== undefined &&
         (snapshot.exitCode !== undefined || snapshot.signal !== undefined)
       ) {
-        // Exit is not complete output: let any final control frame drain first.
-        if (!(await supervisor?.waitForOutputClose(10))) continue;
-        if (this.#frames.length !== 0) continue;
-        const drained = supervisor?.snapshot() ?? snapshot;
-        throw this.#memoryLimitReached()
-          ? this.#memoryFailure(path)
-          : /heap out of memory|heap limit|allocation failed/iu.test(
-                drained.stderr.text,
-              )
-            ? new AnalysisResourceConstraintError(
-                OPERATION,
-                "memory",
-                `Owned JavaScript worker exhausted its heap while analyzing ${path} during ${this.#phase}`,
-                this.#limits(),
-                { capturedOutput: this.#captured() },
-              )
-            : new ProviderAdapterError(PROVIDER, OPERATION, {
-                capturedOutput: this.#captured(),
-                diagnostics: {
-                  source_path: path,
-                  phase: this.#phase,
-                  exit_code: drained.exitCode ?? null,
-                  signal: drained.signal ?? null,
-                },
-              });
+        // Exit does not complete the protocol: descendants may still hold its pipes
+        // or write a final response. The operation deadline bounds this wait.
+        const outcome = await this.#waitForFrameOrOutputClose(
+          supervisor,
+          deadline,
+        );
+        if (outcome === "interrupted") {
+          const completedFrame = this.#frames.shift();
+          if (completedFrame !== undefined) return completedFrame;
+          throw this.#interruptionFailure(path, deadline);
+        }
+        if (outcome === "failure") {
+          const bufferedFrame = this.#frames.shift();
+          if (bufferedFrame !== undefined) return bufferedFrame;
+          throw this.#selectedWorkerFailure(path);
+        }
+        const finalFrame = this.#frames.shift();
+        if (finalFrame !== undefined) return finalFrame;
+        if (outcome === "frame") continue;
+        throw this.#selectedWorkerFailure(path);
       }
       await waitForAbortableDelay(10, deadline.signal);
     }
@@ -583,17 +691,15 @@ export class JavaScriptAnalysisWorker {
         OPERATION,
         "JavaScript static checkpoint byte count exceeds or differs from its declared budget",
       );
-    if (
-      bytes * 16 + 4 * MIB >
-      getHeapStatistics().heap_size_limit -
-        process.memoryUsage().heapUsed -
-        64 * MIB
-    )
+    if (bytes * 16 + 4 * MIB > this.#remainingParentHeapBytes() - 64 * MIB)
       throw new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
         "The parent's remaining heap cannot safely decode the completed JavaScript static checkpoint",
         { ...this.#limits(), checkpoint_bytes: bytes },
+        {
+          remediationAction: JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
+        },
       );
     const text = await readFile(path, "utf8");
     if (
@@ -629,8 +735,7 @@ export class JavaScriptAnalysisWorker {
           application_projection_required_bytes: expandedBytes,
         },
         {
-          remediationAction:
-            "Read the complete static facts on the file node or analyze fewer source files. Expanded application relationships exceed the parent result budget; increasing the worker heap alone does not increase it.",
+          remediationAction: `Read the complete static facts on the file node or analyze fewer source files. Expanded application relationships exceed the parent result budget. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`,
         },
       );
     return facts;
@@ -662,9 +767,12 @@ export class JavaScriptAnalysisWorker {
     return new AnalysisResourceConstraintError(
       OPERATION,
       "memory",
-      `Owned JavaScript worker reached its ${this.#processMemoryLimitBytes === null ? "" : `${String(this.#processMemoryLimitBytes)}-byte `}process memory limit while analyzing ${path} during ${this.#phase}`,
+      `Owned JavaScript worker reached its ${this.#processMemoryLimitBytes === null ? "" : `${String(this.#processMemoryLimitBytes)}-byte `}process memory limit while analyzing ${path} during ${this.#phase}. That limit is max_heap_mb ${String(this.limits.heapMb)} MiB plus a 512 MiB Bun runtime reserve`,
       this.#limits(),
-      { capturedOutput: this.#captured() },
+      {
+        capturedOutput: this.#captured(),
+        remediationAction: javaScriptWorkerHeapRemediation(this.limits.heapMb),
+      },
     );
   }
   #remainingResultBudget(): number {
@@ -687,22 +795,273 @@ export class JavaScriptAnalysisWorker {
       0,
       Math.min(
         this.#resultBudgetBytes - this.#estimatedRetainedBytes,
-        getHeapStatistics().heap_size_limit -
-          process.memoryUsage().heapUsed -
+        this.#remainingParentHeapBytes() -
           24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
       ),
     );
   }
   #captured() {
     const snapshot = this.#runtime.supervisor?.snapshot();
+    const supervisor = this.#runtime.supervisor;
     return {
       stdout: "",
       stderr: snapshot?.stderr.text ?? "",
-      truncated: snapshot?.diagnosticTruncated ?? false,
+      truncated:
+        snapshot?.diagnosticTruncated === true ||
+        snapshot?.outputIncomplete === true ||
+        (supervisor !== undefined && !supervisor.observedOutputClose()),
       stderr_bytes: snapshot?.stderr.observedBytes ?? 0,
       exit_code: snapshot?.exitCode ?? null,
       signal: snapshot?.signal ?? null,
     };
+  }
+  #observeProcessDiagnostic(event: ProviderProcessDiagnostic): void {
+    if (this.#deadline?.interruption !== undefined) return;
+    this.#observeMemoryLimit();
+    if (event.type === "output-close") {
+      if (
+        this.#deadline !== undefined &&
+        (this.#activeJobId === undefined ||
+          this.#terminalResponseId !== this.#activeJobId)
+      )
+        this.#latchOutputFailure(
+          "JavaScript worker closed output before the operation received its terminal response",
+        );
+      return;
+    }
+    if (
+      event.type === "output" &&
+      event.stream === "stderr" &&
+      this.#primaryFailure?.kind === "exit" &&
+      /heap out of memory|heap limit|allocation failed/iu.test(
+        this.#runtime.supervisor?.snapshot().stderr.text ?? "",
+      )
+    ) {
+      this.#primaryFailure = { ...this.#primaryFailure, heapExhaustion: true };
+      this.#frameSignal.wake("failure");
+    }
+    if (event.type === "exit" && (event.code !== 0 || event.signal !== null)) {
+      if (this.#primaryFailure === undefined)
+        this.#primaryFailure = {
+          kind: "exit",
+          code: event.code,
+          signal: event.signal,
+          heapExhaustion:
+            /heap out of memory|heap limit|allocation failed/iu.test(
+              event.snapshot.stderr.text,
+            ),
+        };
+      else if (
+        this.#primaryFailure.kind === "exit" &&
+        /heap out of memory|heap limit|allocation failed/iu.test(
+          event.snapshot.stderr.text,
+        )
+      ) {
+        this.#primaryFailure = {
+          ...this.#primaryFailure,
+          heapExhaustion: true,
+        };
+        this.#frameSignal.wake("failure");
+      }
+    }
+  }
+  #observeMemoryLimit(): void {
+    if (
+      this.#deadline?.interruption === undefined &&
+      this.#memoryLimitReached()
+    ) {
+      if (this.#primaryFailure === undefined)
+        this.#primaryFailure = { kind: "memory" };
+      else if (this.#primaryFailure.kind === "exit")
+        this.#primaryFailure = {
+          ...this.#primaryFailure,
+          heapExhaustion: true,
+        };
+      if (
+        this.#primaryFailure?.kind === "memory" ||
+        this.#primaryFailure?.kind === "exit"
+      )
+        this.#frameSignal.wake("failure");
+    }
+  }
+  #observeJobFrame(frame: JavaScriptWorkerMessage): void {
+    if (
+      this.#deadline?.interruption !== undefined ||
+      this.#activeJobId === undefined ||
+      frame.kind === "ready"
+    )
+      return;
+    if (frame.id !== this.#activeJobId) return;
+    if (frame.kind === "phase") {
+      this.#activeJobPhase = frame.phase;
+      return;
+    }
+    if (frame.kind === "static") {
+      this.#staticResponseId = frame.id;
+      return;
+    }
+    if (frame.kind === "complete") {
+      if (this.#staticResponseId !== frame.id) {
+        if (this.#primaryFailure === undefined)
+          this.#primaryFailure = {
+            kind: "output",
+            reason: "JavaScript worker completed before a static checkpoint",
+          };
+        this.#frameSignal.wake("failure");
+        return;
+      }
+      this.#terminalResponseId = frame.id;
+      return;
+    }
+    if (frame.kind === "failure") this.#terminalResponseId = frame.id;
+    if (frame.kind === "failure" && this.#primaryFailure === undefined)
+      this.#primaryFailure = {
+        kind: "protocol",
+        id: frame.id,
+        phase: this.#activeJobPhase,
+        response: frame,
+      };
+  }
+  #latchOutputFailure(reason: string): void {
+    if (this.#deadline?.interruption !== undefined) return;
+    if (this.#primaryFailure === undefined)
+      this.#primaryFailure = { kind: "output", reason };
+    this.#frameSignal.wake("failure");
+  }
+  #latchInputFailure(cause: Error): void {
+    if (this.#deadline?.interruption !== undefined) return;
+    if (this.#primaryFailure === undefined)
+      this.#primaryFailure = { kind: "input", cause };
+    this.#frameSignal.wake("failure");
+  }
+  async #waitForFrameOrOutputClose(
+    supervisor: ProviderProcessSupervisor,
+    deadline: ProviderStartupDeadline,
+  ): Promise<"frame" | "failure" | "closed" | "interrupted"> {
+    if (this.#frames.length !== 0) return "frame";
+    return this.#frameSignal.waitForOutputClose(supervisor, deadline.signal);
+  }
+  #selectedWorkerFailure(path: string): AnalysisError {
+    if (this.#primaryFailure !== undefined)
+      return this.#projectPrimaryFailure(path);
+    const snapshot = this.#runtime.supervisor?.snapshot();
+    if (snapshot?.exitCode !== undefined || snapshot?.signal !== undefined)
+      return this.#workerExitFailure(path, {
+        kind: "exit",
+        code: snapshot.exitCode ?? null,
+        signal: snapshot.signal ?? null,
+        heapExhaustion: false,
+      });
+    return new ProviderAdapterError(PROVIDER, OPERATION, {
+      capturedOutput: this.#captured(),
+      diagnostics: { source_path: path, phase: this.#phase },
+    });
+  }
+  #interruptionFailure(
+    path: string,
+    deadline: ProviderStartupDeadline,
+  ): AnalysisError {
+    if (this.#primaryFailure !== undefined)
+      return this.#projectPrimaryFailure(path);
+    return deadline.interruption === "timeout"
+      ? new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
+          capturedOutput: this.#captured(),
+          userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
+          remediationAction:
+            "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
+        })
+      : new AnalysisCancelledError(OPERATION, {
+          cause: deadline.signal.reason,
+          capturedOutput: this.#captured(),
+        });
+  }
+  #workerExitFailure(
+    path: string,
+    failure: Extract<WorkerPrimaryFailure, { kind: "exit" }>,
+  ): AnalysisError {
+    if (failure.heapExhaustion) {
+      const recovery = javaScriptWorkerHeapExhaustionRecovery({
+        heapFlagsEnforced: WORKER_HEAP_FLAGS_ENFORCED,
+        heapMb: this.limits.heapMb,
+        path,
+        phase: this.#phase,
+      });
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "memory",
+        recovery.reason,
+        this.#limits(),
+        {
+          capturedOutput: this.#captured(),
+          remediationAction: recovery.remediationAction,
+        },
+      );
+    }
+    return new ProviderAdapterError(PROVIDER, OPERATION, {
+      capturedOutput: this.#captured(),
+      diagnostics: {
+        source_path: path,
+        phase: this.#phase,
+        exit_code: failure.code,
+        signal: failure.signal,
+      },
+    });
+  }
+  #projectPrimaryFailure(path: string): AnalysisError {
+    const failure = this.#primaryFailure;
+    if (failure === undefined) return this.#selectedWorkerFailure(path);
+    if (failure.kind === "memory") return this.#memoryFailure(path);
+    if (failure.kind === "exit") return this.#workerExitFailure(path, failure);
+    if (failure.kind === "input")
+      return new AnalysisOutputError(
+        OPERATION,
+        `Owned JavaScript worker request stream failed during ${path}`,
+        { cause: failure.cause, capturedOutput: this.#captured() },
+      );
+    if (failure.kind === "protocol") {
+      return this.#protocolFailure(path, failure.response, failure.phase);
+    }
+    return new AnalysisOutputError(OPERATION, failure.reason, {
+      capturedOutput: this.#captured(),
+    });
+  }
+  #protocolFailure(
+    path: string,
+    response: Extract<JavaScriptWorkerMessage, { kind: "failure" }>,
+    phase: string,
+  ): AnalysisError {
+    if (response.reason === "resource") {
+      const reported = response.limits;
+      const limits = { ...this.#limits(), ...reported };
+      const transferRemediation =
+        javaScriptForwardedTransferRemediation(reported);
+      const checkpointBytes = reported?.checkpoint_limit_bytes;
+      const checkpointRemediation =
+        typeof checkpointBytes === "number"
+          ? javaScriptCheckpointCeilingRemediation(checkpointBytes)
+          : undefined;
+      const parentBudget =
+        reported?.semantic_result_budget_bytes !== undefined ||
+        reported?.parent_result_budget_bytes !== undefined;
+      const remediationAction =
+        transferRemediation ??
+        checkpointRemediation ??
+        (parentBudget
+          ? JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION
+          : undefined);
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        response.resource ?? "memory",
+        response.message,
+        limits,
+        remediationAction === undefined ? undefined : { remediationAction },
+      );
+    }
+    return new AnalysisOutputError(
+      OPERATION,
+      `${path} during ${phase}: ${response.message}`,
+      { capturedOutput: this.#captured() },
+    );
   }
   #failure(
     cause: unknown,
@@ -710,6 +1069,20 @@ export class JavaScriptAnalysisWorker {
     deadline: ProviderStartupDeadline | undefined,
     signal: AbortSignal | undefined,
   ): AnalysisError {
+    if (
+      deadline?.interruption === "cancelled" &&
+      cause === deadline.signal.reason
+    )
+      return this.#interruptionFailure(path, deadline);
+    if (
+      deadline === undefined &&
+      signal?.aborted === true &&
+      cause === signal.reason
+    )
+      return new AnalysisCancelledError(OPERATION, {
+        cause: signal.reason,
+        capturedOutput: this.#captured(),
+      });
     if (cause instanceof OwnedWorkerRuntimeCleanupError) {
       const error = this.#cleanupError(
         cause.message,
@@ -721,18 +1094,15 @@ export class JavaScriptAnalysisWorker {
       return error;
     }
     // Ownership preparation is abortable before the worker deadline exists.
+    if (deadline?.interruption !== undefined)
+      return this.#interruptionFailure(path, deadline);
     if (
-      deadline?.interruption === "cancelled" ||
-      (deadline === undefined &&
-        signal?.aborted === true &&
-        !(cause instanceof ProviderCleanupError) &&
-        !(cause instanceof OwnedWorkerRuntimeCleanupError))
+      deadline === undefined &&
+      signal?.aborted === true &&
+      !(cause instanceof ProviderCleanupError)
     )
       return new AnalysisCancelledError(OPERATION, {
-        capturedOutput: this.#captured(),
-      });
-    if (deadline?.interruption === "timeout")
-      return new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
+        cause: signal.reason,
         capturedOutput: this.#captured(),
       });
     const inputFailure = this.#runtime.inputFailure;
@@ -834,9 +1204,13 @@ export class JavaScriptAnalysisWorker {
   #resetState(): void {
     this.#ready = false;
     this.#frames = [];
+    this.#frameSignal.clear();
     this.#pending = "";
     this.#decoder = new StringDecoder("utf8");
-    this.#protocolFailure = undefined;
+    this.#primaryFailure = undefined;
+    this.#activeJobId = undefined;
+    this.#staticResponseId = undefined;
+    this.#terminalResponseId = undefined;
   }
 }
 
