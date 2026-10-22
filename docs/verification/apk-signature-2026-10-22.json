@@ -1,0 +1,650 @@
+{
+  "issue": 4537,
+  "pull_request": 4158,
+  "recorded_at_utc": "2026-10-22T10:21:30.933320+00:00",
+  "runtime": {
+    "commit": "f85a887a05fa62d0675139746dbce6eba7548aee",
+    "tree": "ff1f42613847e198988bf84dfb2d50d578084bdb",
+    "original_pr_head": "76445a83c8e6542131f7b38290ec749b3a199ba4",
+    "main": "a4a548718d696d7329ffc7b9caa64ee72a215461",
+    "integration_commit": "b6e0147b44787a6af9f32d8a24d1ac27f42d03d2"
+  },
+  "source_qualification": {
+    "executed_head": "b6e0147b44787a6af9f32d8a24d1ac27f42d03d2",
+    "qualified_index_tree": "ff1f42613847e198988bf84dfb2d50d578084bdb",
+    "runtime_commit": "f85a887a05fa62d0675139746dbce6eba7548aee",
+    "runtime_tree": "ff1f42613847e198988bf84dfb2d50d578084bdb",
+    "commit_tree_matches": true,
+    "method": "201 source checks and uncached fast gate after the real SDK suffix regression and current main integration. Hooks left the qualified tree identical."
+  },
+  "baseline": {
+    "runtime": "e1f192e8696eb445f11fd0442046931f52457f2f",
+    "origin_pr": "76445a83c8e6542131f7b38290ec749b3a199ba4",
+    "real_toolchain": {
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "verify:apk-signature",
+        "--",
+        "--require-tools"
+      ],
+      "exit_code": 0,
+      "wall_s": 79.41713352499937,
+      "cpu_s": 104.67699400000001,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1576824832,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    "schema_qualification": "Fresh SDK-advertised schemas and all public/oracle/resource workflows qualify the current runtime after integration and suffix handling."
+  },
+  "counts": {
+    "source": 201,
+    "compiled_public": 408,
+    "schema": 15,
+    "boundary": 393,
+    "source_suites": 12,
+    "compiled_suites": 14
+  },
+  "checks": [
+    {
+      "name": "apk-extension-source",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:local",
+        "--",
+        "src/apkSignature/ApkSignatureProvider.test.ts",
+        "src/apkSignature/apkV1Signers.test.ts",
+        "src/application/apkSignature/ApkSignatureService.test.ts",
+        "src/domain/apkSignature/apkContentDigest.test.ts",
+        "src/domain/apkSignature/apkSignatureReport.test.ts",
+        "src/domain/apkSignature/apkSignatureSchemes.test.ts",
+        "src/domain/apkSignature/apkSigningBlock.test.ts",
+        "src/domain/apkSignature/apkV1Signature.test.ts",
+        "src/domain/apkSignature/apkV1SignatureBlock.test.ts",
+        "src/domain/apkSignature/zipEntryName.test.ts",
+        "src/domain/analysisView/analysisView.test.ts",
+        "src/application/analysisView/AnalysisViewService.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 9.3979273649893,
+      "cpu_s": 13.944163,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1118638080,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-extension-fast",
+      "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
+      "exit_code": 0,
+      "wall_s": 12.29217481998785,
+      "cpu_s": 20.611625,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1592041472,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-current-public-schemas",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:focused",
+        "--",
+        "tests/boundary/mcp/toolSchemaValidity.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 46.34033803200873,
+      "cpu_s": 52.04988,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1937432576,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-current-public-boundaries",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "test:focused",
+        "--",
+        "tests/acceptance/apkSignatureV1Cli.test.ts",
+        "tests/acceptance/apkSignatureViewsCliMcp.test.ts",
+        "tests/boundary/filesystem/apkSignatureViewIdentity.test.ts",
+        "tests/process-global/apkSignatureLifecycle.test.ts",
+        "tests/boundary/providers/artifactReadCleanupRetry.test.ts",
+        "tests/process-global/stableArtifactConsumers.test.ts",
+        "tests/process-global/artifactReadFailurePrecedence.test.ts",
+        "tests/boundary/filesystem/stableArtifact.test.ts",
+        "tests/boundary/mcp/advertisedPatternsVMode.test.ts",
+        "tests/conformance/contracts/mcpInputSchemaProfile.test.ts",
+        "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+        "tests/boundary/filesystem/ciChangeScope.test.ts",
+        "tests/boundary/filesystem/ciRequiredLanes.test.ts"
+      ],
+      "exit_code": 0,
+      "wall_s": 79.56373987600091,
+      "cpu_s": 145.49878999999999,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 3186917376,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-current-real-toolchain",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "npm",
+        "run",
+        "verify:apk-signature",
+        "--",
+        "--require-tools"
+      ],
+      "exit_code": 0,
+      "wall_s": 57.384587647989974,
+      "cpu_s": 76.09016,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1189261312,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-current-task-full",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "node",
+        "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+        "complete",
+        "task-current-full"
+      ],
+      "exit_code": 0,
+      "wall_s": 3.6120893549959874,
+      "cpu_s": 4.339207,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 698650624,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-current-task-selected",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "node",
+        "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+        "selected",
+        "task-current-selected"
+      ],
+      "exit_code": 0,
+      "wall_s": 3.5080085529916687,
+      "cpu_s": 4.384262,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 700706816,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-current-resources",
+      "command": [
+        "taskset",
+        "-c",
+        "0,1",
+        "node",
+        "/home/yann/yann/rea-4537-lab/probe-apk-resources.mjs"
+      ],
+      "exit_code": 0,
+      "wall_s": 2.0474989989888854,
+      "cpu_s": 2.392515,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 449503232,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-current-ci-static",
+      "command": ["taskset", "-c", "0,1", "npm", "run", "check:ci:fast"],
+      "exit_code": 0,
+      "wall_s": 10.59372954099672,
+      "cpu_s": 16.226353,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 1556914176,
+      "sample_ms": 20,
+      "guard_stop": null
+    },
+    {
+      "name": "apk-docs-check",
+      "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
+      "exit_code": 0,
+      "wall_s": 13.23774031701032,
+      "cpu_s": 17.251783,
+      "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+      "peak_family_rss_bytes": 808235008,
+      "sample_ms": 20,
+      "guard_stop": null
+    }
+  ],
+  "public_input": {
+    "original_url": "https://f-droid.org/F-Droid.apk",
+    "final_url": "https://f-droid.org/F-Droid.apk",
+    "path": "/home/yann/yann/rea-4537-lab/F-Droid.apk",
+    "bytes": 12569951,
+    "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+    "headers": {
+      "Content-Length": "12569951",
+      "Last-Modified": "Mon, 12 Oct 2026 13:59:40 GMT",
+      "ETag": "\"bfcd5f-65da51bf0f488\""
+    },
+    "execution": "downloaded as static data; never executed"
+  },
+  "public_oracle": {
+    "v3_signers": [
+      "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+    ],
+    "method": "apksigner verify --verbose --print-certs reports v3 successfully verified; fingerprints refer to that effective signer set, not platform-wide signing compatibility"
+  },
+  "generated_large_input": {
+    "path": "/home/yann/yann/rea-4537-lab/large-signed.apk",
+    "bytes": 180350384,
+    "sha256": "cf3a3936f90bb79dabe2598dc4290f8c47d10680993c054fe8cac9d391fadaaf",
+    "method": "Official real F-Droid input with a160MiB stored opaque asset, re-signed by apksigner with a generated fixture key. This generated stress artifact is distinct from the unmodified public APK. No Android code executes.",
+    "original_source_receipt": "fdroid-input-receipt.json",
+    "apksigner_verify_exit_code": 0
+  },
+  "oracle_toolchain": {
+    "sdk": "/home/yann/.cache/rea-4537-android-sdk",
+    "packages": [
+      {
+        "path": "build-tools;36.1.0",
+        "size": 64195204,
+        "checksum": "936a0d6bd5ae3e2118a7567dddbc95ff67ed46e9",
+        "checksum_type": null,
+        "url": "https://dl.google.com/android/repository/build-tools_r36.1_linux.zip",
+        "sha1_verified": true,
+        "sha256": "a7b5889e4a79fcf3b0976bef40d401f4240fb1eed891d9d91169da1111e11d78",
+        "download_bytes": 64195204,
+        "destination": "/home/yann/.cache/rea-4537-android-sdk/build-tools/36.1.0",
+        "extracted": [
+          "NOTICE.txt",
+          "aapt2",
+          "apksigner",
+          "lib/apksigner.jar",
+          "lib64/libLLVM_android.so",
+          "lib64/libbcc.so",
+          "lib64/libbcinfo.so",
+          "lib64/libc++.so",
+          "lib64/libc++.so.1",
+          "lib64/libclang_android.so",
+          "source.properties"
+        ]
+      },
+      {
+        "path": "platforms;android-36",
+        "size": 65878410,
+        "checksum": "2c1a80dd4d9f7d0e6dd336ec603d9b5c55a6f576",
+        "checksum_type": null,
+        "url": "https://dl.google.com/android/repository/platform-36_r02.zip",
+        "sha1_verified": true,
+        "sha256": "37607369a28c5b640b3a7998868d45898ebcb777565a0e85f9acf36f29631d2e",
+        "download_bytes": 65878410,
+        "destination": "/home/yann/.cache/rea-4537-android-sdk/platforms/android-36",
+        "extracted": ["android.jar", "source.properties"]
+      }
+    ],
+    "java": "existing host keytool/JDK; no Java installation"
+  },
+  "workflows": {
+    "original_complete": {
+      "mode": "before",
+      "label": "task-before",
+      "task": "Identify every declared v3 signer certificate fingerprint in the real F-Droid APK and export complete source Evidence",
+      "source": {
+        "original_url": "https://f-droid.org/F-Droid.apk",
+        "final_url": "https://f-droid.org/F-Droid.apk",
+        "path": "/home/yann/yann/rea-4537-lab/F-Droid.apk",
+        "bytes": 12569951,
+        "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+        "headers": {
+          "Content-Length": "12569951",
+          "Last-Modified": "Mon, 12 Oct 2026 13:59:40 GMT",
+          "ETag": "\"bfcd5f-65da51bf0f488\""
+        },
+        "execution": "downloaded as static data; never executed"
+      },
+      "parent_evidence_id": "ev_bf39bbdae838b1af082a6e8dc4be0b39f29159037d4f445d90b5a919728fe34f",
+      "answer": [
+        "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+      ],
+      "used_input_declarations_plus_all_calls_estimated_tokens": 4156,
+      "whole_catalog_plus_all_calls_estimated_tokens": 1140214,
+      "elapsed_s": 2.949627783,
+      "token_accounting": "tokenx estimates; actual tools/list definitions and every argument/reply/export included; not actual model usage. Initialization and JSON-RPC envelopes unmeasured. Fresh process, OS cache warm. No repeated timing study.",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+          "before",
+          "task-before"
+        ],
+        "exit_code": 0,
+        "wall_s": 3.2823771700059297,
+        "cpu_s": 4.0827800000000005,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 751788032,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    },
+    "current_complete": {
+      "mode": "complete",
+      "label": "task-current-full",
+      "task": "Identify every declared v3 signer certificate fingerprint in the real F-Droid APK and export complete source Evidence",
+      "source": {
+        "original_url": "https://f-droid.org/F-Droid.apk",
+        "final_url": "https://f-droid.org/F-Droid.apk",
+        "path": "/home/yann/yann/rea-4537-lab/F-Droid.apk",
+        "bytes": 12569951,
+        "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+        "headers": {
+          "Content-Length": "12569951",
+          "Last-Modified": "Mon, 12 Oct 2026 13:59:40 GMT",
+          "ETag": "\"bfcd5f-65da51bf0f488\""
+        },
+        "execution": "downloaded as static data; never executed"
+      },
+      "parent_evidence_id": "ev_1a0c7752a0cec24756d2e82a7bb253b6708b52f408f0e6dcd819c5b871ffb49f",
+      "answer": [
+        "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+      ],
+      "used_input_declarations_plus_all_calls_estimated_tokens": 5246,
+      "whole_catalog_plus_all_calls_estimated_tokens": 1157394,
+      "elapsed_s": 3.275274836,
+      "token_accounting": "tokenx estimates; actual tools/list definitions and every argument/reply/export included; not actual model usage. Initialization and JSON-RPC envelopes unmeasured. Fresh process, OS cache warm. No repeated timing study.",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+          "complete",
+          "task-current-full"
+        ],
+        "exit_code": 0,
+        "wall_s": 3.6120893549959874,
+        "cpu_s": 4.339207,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 698650624,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    },
+    "current_selected": {
+      "mode": "selected",
+      "label": "task-current-selected",
+      "task": "Identify every declared v3 signer certificate fingerprint in the real F-Droid APK and export complete source Evidence",
+      "source": {
+        "original_url": "https://f-droid.org/F-Droid.apk",
+        "final_url": "https://f-droid.org/F-Droid.apk",
+        "path": "/home/yann/yann/rea-4537-lab/F-Droid.apk",
+        "bytes": 12569951,
+        "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+        "headers": {
+          "Content-Length": "12569951",
+          "Last-Modified": "Mon, 12 Oct 2026 13:59:40 GMT",
+          "ETag": "\"bfcd5f-65da51bf0f488\""
+        },
+        "execution": "downloaded as static data; never executed"
+      },
+      "parent_evidence_id": "ev_1a0c7752a0cec24756d2e82a7bb253b6708b52f408f0e6dcd819c5b871ffb49f",
+      "answer": [
+        "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+      ],
+      "used_input_declarations_plus_all_calls_estimated_tokens": 4230,
+      "whole_catalog_plus_all_calls_estimated_tokens": 1156378,
+      "elapsed_s": 3.203434176,
+      "token_accounting": "tokenx estimates; actual tools/list definitions and every argument/reply/export included; not actual model usage. Initialization and JSON-RPC envelopes unmeasured. Fresh process, OS cache warm. No repeated timing study.",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+          "selected",
+          "task-current-selected"
+        ],
+        "exit_code": 0,
+        "wall_s": 3.5080085529916687,
+        "cpu_s": 4.384262,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 700706816,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    }
+  },
+  "resources": {
+    "observations": [
+      {
+        "source": "fdroid-input-receipt.json",
+        "bytes": 12569951,
+        "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+        "run": "first-provider-inspection",
+        "elapsed_ms": 98.72469700000002,
+        "cpu_ms": 123.829,
+        "signers": 1,
+        "declared_content_digests_match": true
+      },
+      {
+        "source": "fdroid-input-receipt.json",
+        "bytes": 12569951,
+        "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+        "run": "repeated-provider-inspection-1",
+        "elapsed_ms": 70.34426400000001,
+        "cpu_ms": 87.361,
+        "signers": 1,
+        "declared_content_digests_match": true
+      },
+      {
+        "source": "fdroid-input-receipt.json",
+        "bytes": 12569951,
+        "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+        "run": "repeated-provider-inspection-2",
+        "elapsed_ms": 50.83975299999997,
+        "cpu_ms": 55.557,
+        "signers": 1,
+        "declared_content_digests_match": true
+      },
+      {
+        "source": "large-input-receipt.json",
+        "bytes": 180350384,
+        "sha256": "cf3a3936f90bb79dabe2598dc4290f8c47d10680993c054fe8cac9d391fadaaf",
+        "run": "first-provider-inspection",
+        "elapsed_ms": 592.576424,
+        "cpu_ms": 674.015,
+        "signers": 1,
+        "declared_content_digests_match": true
+      },
+      {
+        "source": "large-input-receipt.json",
+        "bytes": 180350384,
+        "sha256": "cf3a3936f90bb79dabe2598dc4290f8c47d10680993c054fe8cac9d391fadaaf",
+        "run": "repeated-provider-inspection-1",
+        "elapsed_ms": 535.900784,
+        "cpu_ms": 645.28,
+        "signers": 1,
+        "declared_content_digests_match": true
+      },
+      {
+        "source": "large-input-receipt.json",
+        "bytes": 180350384,
+        "sha256": "cf3a3936f90bb79dabe2598dc4290f8c47d10680993c054fe8cac9d391fadaaf",
+        "run": "repeated-provider-inspection-2",
+        "elapsed_ms": 480.12222499999984,
+        "cpu_ms": 553.147,
+        "signers": 1,
+        "declared_content_digests_match": true
+      },
+      {
+        "case": "512MiB+1 sparse input",
+        "result": "capacity refusal before whole-file allocation"
+      }
+    ],
+    "conditions": "First versus repeated provider calls in one fresh process; OS caches warm, not disk-cold measurements. Artifact identity and digest matches checked each call. Whole-task external CPU/RSS profiling recorded separately. Generated180MB input has a fixture signing key and is distinct from the unchanged public F-Droid APK."
+  },
+  "material_failed_validation": [
+    {
+      "stage": "Real SDK detected our overly strict signed-data validation",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "verify:apk-signature",
+          "--",
+          "--require-tools"
+        ],
+        "exit_code": 1,
+        "wall_s": 8.999729584000306,
+        "cpu_s": 10.715287,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 944664576,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "reason": "The SDK producer appends an empty fourth signed-data field and readers ignore suffixes. Our exact-end assertion rejected valid signed APKs. The canonical decoder now retains uninterpreted byte counts at scheme, signer, signed-data and algorithm-record boundaries; outer required fields remain bounds-checked. Initial universal suffix-refusal claims are withdrawn."
+    },
+    {
+      "stage": "Initial producer regression",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:local",
+          "--",
+          "src/domain/apkSignature/apkSignatureSchemes.test.ts",
+          "src/apkSignature/ApkSignatureProvider.test.ts"
+        ],
+        "exit_code": 1,
+        "wall_s": 2.222008133001509,
+        "cpu_s": 3.0101139999999997,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 625840128,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "failed": 4,
+      "passed_controls": 28,
+      "withdrawn_assertions": 1,
+      "reason": "Two incomplete framing cases and missing raw algorithm facts were genuine. The fourth initial assertion incorrectly rejected suffix bytes; real SDK/AOSP evidence superseded it."
+    },
+    {
+      "stage": "First expanded public matrix",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "tests/acceptance/apkSignatureViewsCliMcp.test.ts",
+          "tests/acceptance/apkSignatureV1Cli.test.ts"
+        ],
+        "exit_code": 1,
+        "wall_s": 77.1766701380111,
+        "cpu_s": 117.809484,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 2625191936,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "failed": 2,
+      "passed": 7,
+      "reason": "New test oracles omitted mandatory identity columns from a strict picked schema and mistook an identified subjectKeyIdentifier certificate for unknown identity. Corrected assertions; a genuinely undecodable v1 block now proves partial identity."
+    },
+    {
+      "stage": "Frozen expanded public matrix",
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "tests/acceptance/apkSignatureV1Cli.test.ts",
+          "tests/acceptance/apkSignatureViewsCliMcp.test.ts",
+          "tests/boundary/filesystem/apkSignatureViewIdentity.test.ts",
+          "tests/process-global/apkSignatureLifecycle.test.ts",
+          "tests/boundary/providers/artifactReadCleanupRetry.test.ts",
+          "tests/process-global/stableArtifactConsumers.test.ts",
+          "tests/process-global/artifactReadFailurePrecedence.test.ts",
+          "tests/boundary/filesystem/stableArtifact.test.ts",
+          "tests/boundary/mcp/advertisedPatternsVMode.test.ts",
+          "tests/conformance/contracts/mcpInputSchemaProfile.test.ts",
+          "tests/boundary/mcp/absoluteLocalPathSchema.test.ts"
+        ],
+        "exit_code": 1,
+        "wall_s": 146.19622675600112,
+        "cpu_s": 209.421463,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 2977558528,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "failed": 2,
+      "passed": 77,
+      "reason": "Two existing CLI-heavy v1 tests exceeded their unchanged30s guard under the larger matrix. Known SDK tool definitions now avoid unrelated catalog compilation; the stateless malformed-input matrix shares a production stdio MCP connection while retaining representative CLI observations and all original assertions."
+    }
+  ],
+  "additional_test_preparation_failures": [
+    "A source golden compared Buffer and Uint8Array object classes rather than equivalent byte values; compare bytes now.",
+    "The cache test initially borrowed a member before sealing the owner snapshot, then used an incorrect helper argument during correction. The final test seals canonical normalized facts and proves subject checks on cached reads.",
+    "A benchmark launcher first lacked its local dependency link; its failed setup receipt remains separate from the completed baseline task."
+  ],
+  "limits": [
+    "Static declared signing metadata and content-digest equality do not establish authenticity or cryptographic signature/lineage verification. v1 entry coverage remains unknown.",
+    "Full source Evidence is retained/exported; it does not contain the complete APK payload. Source URLs, local paths and complete-file SHA-256 remain recorded.",
+    "Selection changes delivery, not whole-file analysis: file SHA-256 and supported declared content digests are still computed. Each algorithm is recomputed at most once per inspection.",
+    "SDK task token counts are tokenx estimates of actual used full input declarations plus all arguments/replies and Evidence export. Whole-catalog costs are separate; actual model tokens, initialization and JSON-RPC envelopes are unmeasured.",
+    "Fresh server/process task observations use warm OS caches; provider probes label first versus repeated in-process calls. No disk-cold, statistically stable latency or causal speedup claim.",
+    "CPU is payload-family wait-rusage delta and sampled RSS sums all descendant processes every20ms. Heavy commands are serial on two CPUs, with8GiB/420s family guards.",
+    "All executed real APK/toolchain qualification is Linux. Windows/macOS APK behavior and the newly added GitHub workflow are not established by local tests; current-head CI/review must be checked separately."
+  ],
+  "author_scope": "Builds on the existing contributor PR and commits. Follow-up account gensokyo-dev; no coauthor trailers added.",
+  "spec_sources": [
+    "https://source.android.com/docs/security/features/apksigning/v2",
+    "https://source.android.com/docs/security/features/apksigning/v3",
+    "https://developer.android.com/tools/apksigner"
+  ]
+}
