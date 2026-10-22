@@ -33,6 +33,9 @@ function prose(text: string): string {
 
 it("uses one retry then a user handoff for transient MCP failures", () => {
   expect(MCP_CONNECTION_LOST).toMatch(/^Retry /u);
+  // "once only" is the single-attempt cap. "Retry whenever it is safe to
+  // repeat" does not contain it.
+  expect(MCP_CONNECTION_LOST).toContain("once only");
   expect(MCP_CONNECTION_LOST).toContain("safe to repeat");
   expect(MCP_CONNECTION_LOST).toContain("tell the user");
   expect(MCP_CONNECTION_LOST).toContain("restart the MCP client");
@@ -110,6 +113,7 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
     "utf8",
   );
   const skillProse = prose(skill);
+  expect(skillProse).toContain("once only");
   expect(skillProse).toContain("safe to repeat");
   expect(skillProse).toContain("connection failed");
   expect(skillProse).toContain("Do not invent a setting");
@@ -119,6 +123,7 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
   const instructions = prose(
     await readFile(join(root, "src/server/createServer.ts"), "utf8"),
   );
+  expect(instructions).toContain("once only");
   expect(instructions).toContain("safe to repeat");
   expect(instructions).toContain("explicitly recommends that change");
   expect(instructions).toContain("not a recommendation to change it");

@@ -20,6 +20,15 @@ import {
 const configured = (deadlineMs: number) =>
   ({ deadlineMs, source: "setting" }) as const;
 
+const expectDeadlineRecoveryTokens = (text: string | undefined) => {
+  expect(text).toContain(`Set ${REGEX_MATCHING_DEADLINE_SETTING}`);
+  expect(text).toContain("then restart REA");
+  expect(text).toContain("floor 1 ms");
+  expect(text).toContain(
+    `maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms`,
+  );
+};
+
 it("keeps the 5000 ms deadline when the setting is unset", () => {
   expect(parseRegexMatchingDeadline(undefined)).toEqual({
     ok: true,
@@ -40,6 +49,7 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
   expect(recovery).toContain(
     `source ${DEFAULT_REGEX_MATCHING_DEADLINE.source}`,
   );
+  expectDeadlineRecoveryTokens(recovery);
   const projected = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
@@ -57,6 +67,8 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
   expect(projected.remediation.action).toContain(
     REGEX_MATCHING_DEADLINE_SETTING,
   );
+  expectDeadlineRecoveryTokens(projected.message);
+  expectDeadlineRecoveryTokens(projected.remediation.action);
   expect(projected.message).not.toContain("no runtime override");
 });
 
