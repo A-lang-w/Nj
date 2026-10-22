@@ -1071,3 +1071,27 @@ it.each([
     "/users",
   ]);
 });
+
+it.each([
+  "const alias=flag?registry:other;alias.query={ok:1};",
+  "const alias=flag?other:registry;alias.query={ok:1};",
+  "const aliases=[registry,other];aliases[key].query={ok:1};",
+  "const holder=flag?{inner:registry}:{inner:other};holder.inner.query={ok:1};",
+])("keeps query sources through possible receiver writes: %s", (write) => {
+  const facts = analyze(
+    `const payload={path:'/query-data',component:Preview};const registry={query:payload};const other={query:{ok:1}};${write}router.push({pathname:'/users',query:registry.query});`,
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/users",
+  ]);
+});
+
+it("proves a write through the same uncertain receiver at its own read", () => {
+  const facts = analyze(
+    "const payload={path:'/independent',component:View};const registry={query:payload};const other={query:{ok:1}};const alias=flag?registry:other;alias.query={ok:1};router.push({pathname:'/users',query:alias.query});",
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/users",
+  ]);
+});

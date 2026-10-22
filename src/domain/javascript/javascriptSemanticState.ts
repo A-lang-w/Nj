@@ -61,6 +61,8 @@ export interface JavaScriptSemanticMemberEffect {
   readonly assignedSources?: readonly SemanticIterationSource[];
   /** Binding values whose receiver identities were selected for this effect. */
   readonly receiverInitializers?: readonly JavaScriptSemanticInitializer[];
+  /** Proof that the write selects this captured receiver, not just a possible alias. */
+  readonly receiverIdentity?: "definite" | "possible";
   /** Capture of this binding used while following an aliased effect receiver. */
   readonly receiverAt?: t.Node;
 }
