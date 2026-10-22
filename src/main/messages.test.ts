@@ -27,6 +27,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const STALE_LIMIT_COPY =
   /without assuming adjustable limits|do not assume adjustable|Generic errors do not assume adjustable/u;
 
+function prose(text: string): string {
+  return text.replace(/\s+/gu, " ");
+}
+
 it("uses one retry then a user handoff for transient MCP failures", () => {
   expect(MCP_CONNECTION_LOST).toBe(
     "Retry the tool call once only when it is safe to repeat or known not to have started. If it may already have changed the target, or it fails again, tell the user REA lost its MCP client connection and ask them to restart the MCP client.",
@@ -41,7 +45,7 @@ it("uses one retry then a user handoff for transient MCP failures", () => {
   );
   expect(SERVER_START_FAILED).not.toMatch(/\bretry\b/iu);
   for (const message of [MCP_CONNECTION_START_FAILED, SERVER_START_FAILED]) {
-    expect(message).toContain("tell the user");
+    expect(message).toMatch(/tell the user/iu);
     expect(message).toContain("restart the MCP client");
     expect(message).toContain("`rea doctor`");
   }
@@ -108,17 +112,17 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
     ),
     "utf8",
   );
-  expect(skill).toContain(
+  const skillProse = prose(skill);
+  expect(skillProse).toContain(
     "retry that call once only when it is safe to repeat or known not to have started",
   );
-  expect(skill).toContain("tell the user REA's connection failed");
-  expect(skill).toContain("Do not invent a setting");
-  expect(skill).toContain("explicitly recommends that change");
-  expect(skill).toContain("not a recommendation to change it");
-  expect(skill).not.toContain("names a request field");
-  const instructions = await readFile(
-    join(root, "src/server/createServer.ts"),
-    "utf8",
+  expect(skillProse).toContain("tell the user REA's connection failed");
+  expect(skillProse).toContain("Do not invent a setting");
+  expect(skillProse).toContain("explicitly recommends that change");
+  expect(skillProse).toContain("not a recommendation to change it");
+  expect(skillProse).not.toContain("names a request field");
+  const instructions = prose(
+    await readFile(join(root, "src/server/createServer.ts"), "utf8"),
   );
   expect(instructions).toContain(
     "retry that call once only when it is safe to repeat or known not to have started",
@@ -138,7 +142,7 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
     "docs/mcp-contracts.md",
     "docs/user-visible-errors.csv",
   ]) {
-    const text = await readFile(join(root, path), "utf8");
+    const text = prose(await readFile(join(root, path), "utf8"));
     expect(text, path).toContain("explicitly recommends that change");
     expect(text, path).toContain("not a recommendation to change it");
     expect(text, path).not.toContain("names a request field");
