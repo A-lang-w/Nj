@@ -9,8 +9,10 @@ import {
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { REPLAY_BODY_LIMIT_BYTES } from "./environmentReplay.js";
-import type { EnvironmentSource } from "./environmentSource.js";
+import {
+  REPLAY_BODY_LIMIT_BYTES,
+  type EnvironmentSource,
+} from "./environmentSource.js";
 import {
   answerFromState,
   type StateServing,
@@ -265,6 +267,27 @@ describe("list answers", () => {
     });
   });
 
+  it("answers an unfiltered call from a paging-only line of the parent its path arguments name", () => {
+    const books = servingFrom([
+      ["GET", "/api/orgs/1/books?limit=50", [{ id: 1 }, { id: 2 }]],
+      ["GET", "/api/orgs/2/books?limit=50", [{ id: 3 }]],
+      ["GET", "/api/orgs/3/books?limit=50", [{ id: 4 }]],
+    ]);
+    expect(answer(books, "get_orgs_books_by_id", { id: "2" })).toMatchObject({
+      body: [{ id: 3 }],
+      replay: { record_ordinal: 1, exact_match: false },
+      state: {
+        source: "state",
+        collection: "/api/orgs/2/books",
+        membership: "all",
+        listed: 1,
+      },
+    });
+    expect(answer(books, "get_orgs_books_by_id", { id: "9" })).toMatchObject({
+      state: { source: "recording", reason: "unrecorded-request" },
+    });
+  });
+
   it("refuses a list whose member lacks a field every recording carried, never answering a partial body", () => {
     const serving = servingOf();
     load(serving, (entities) =>
@@ -308,6 +331,17 @@ describe("recorded and document answers", () => {
     });
     expect(answer(serving, "post_folders", {})).toMatchObject({
       state: { source: "recording", reason: "no-view" },
+    });
+  });
+
+  it("replays a read whose rendered document exceeds the body limit", () => {
+    const values = Array.from({ length: 60_000 }, () => "1e3").join(",");
+    const body = `{"values":[${values}]}`;
+    const serving = servingFrom([["GET", "/api/config", body]]);
+    expect(serving.store.state.documents).toEqual([]);
+    expect(answer(serving, "get_config", {})).toMatchObject({
+      replay: { record_ordinal: 0 },
+      state: { source: "recording", reason: "rendered-oversize" },
     });
   });
 
