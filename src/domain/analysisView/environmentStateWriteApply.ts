@@ -36,8 +36,27 @@ export type GenerateValue = (
 const kindOf = (value: JsonValue | undefined): string =>
   value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
 
-const listed = (members: readonly string[]): string =>
-  members.length === 0 ? "none" : members.join(", ");
+/** Members a refusal names, each cut to `LISTED_NAME_CHARS`; the plan in the state Evidence holds every one whole. */
+const LISTED_MEMBERS = 12;
+const LISTED_NAME_CHARS = 120;
+
+/** Captured member names quoted, so a separator in one cannot read as another, and bounded in count and length. */
+const listed = (members: readonly string[]): string => {
+  if (members.length === 0) return "none";
+  const shown = members
+    .slice(0, LISTED_MEMBERS)
+    .map((member) =>
+      JSON.stringify(
+        member.length > LISTED_NAME_CHARS
+          ? `${member.slice(0, LISTED_NAME_CHARS)}…`
+          : member,
+      ),
+    )
+    .join(", ");
+  return members.length > LISTED_MEMBERS
+    ? `${shown}, … (${String(members.length)} members; all in the state Evidence)`
+    : shown;
+};
 
 /** What a body may hold, for refusal messages. */
 const bodyContract = (body: WriteBody): string =>
@@ -76,7 +95,7 @@ export const bodyProblem = (
     (member) => !Object.hasOwn(sent, member),
   );
   if (missing.length > 0)
-    return `The call lacks required members ${missing.join(", ")} (${bodyContract(body)}).`;
+    return `The call lacks required members ${listed(missing)} (${bodyContract(body)}).`;
   return undefined;
 };
 

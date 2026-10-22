@@ -2,14 +2,11 @@ import type {
   StateWritePlan,
   WriteBody,
 } from "../../domain/analysisView/environmentStateWriteRules.js";
+import { describeList, quotedName } from "./environmentTools.js";
 
-/** Members named in a description; the plan in the state Evidence holds every one. */
-const DESCRIBED_MEMBERS = 12;
-
+/** Captured member names, quoted and sampled as response fields are; the plan in the state Evidence holds every one. */
 const members = (names: readonly string[]): string =>
-  names.length <= DESCRIBED_MEMBERS
-    ? names.join(", ")
-    : `${names.slice(0, DESCRIBED_MEMBERS).join(", ")}, … (${String(names.length)} members; all in the state Evidence)`;
+  describeList(names, names.length, quotedName, "state Evidence");
 
 /** The body members a served write accepts, as a description clause. */
 const bodyClause = (

@@ -269,6 +269,8 @@ export interface CheckOutcome {
   readonly targets: readonly string[];
   /** Entities the recording, or the served base of a recorded-membership list, lists that the state does not hold, by target. */
   readonly unheld: readonly string[];
+  /** For a failed list read that differs only in some members' fields, those members' targets. */
+  readonly differing?: readonly string[];
 }
 
 /** What a check compares: the read's recorded body and the served base recording it would answer on. */
@@ -352,6 +354,27 @@ export const itemTarget = (
   );
 };
 
+/** The held collection of a type a path names, as serving picks a create's: the most verbatim spelling, else the path as written. */
+export const heldCollection = (
+  state: SimulatedState,
+  type: string,
+  path: string,
+): string => {
+  const read = segmentsOf(path);
+  let held: string | undefined;
+  let verbatim = -1;
+  for (const collection of new Set(
+    state.ofType(type).map((entity) => entity.collection),
+  )) {
+    const matched = segmentMatch(segmentsOf(collection), read);
+    if (matched !== undefined && matched > verbatim) {
+      held = collection;
+      verbatim = matched;
+    }
+  }
+  return held ?? `/${read.join("/")}`;
+};
+
 export const checkItemRead = (
   state: SimulatedState,
   view: StateItemView,
@@ -400,21 +423,39 @@ const listCheck = (
   view: StateListView,
   check: ListBodies,
   members: readonly StateEntity[],
-): boolean => {
+): Pick<CheckOutcome, "pass" | "differing"> => {
   if (
     members.some(
       (entity) =>
         missingRequiredFields(entity, view, check.volatile).length > 0,
     )
   )
-    return false;
+    return { pass: false };
   const observed = new Map(
     check.items.map((item) => [scalarText(item[check.idField]) ?? "", item]),
   );
   const rendered = members.map((entity) =>
     renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
   );
-  return same(renderStateList(view, check.base, rendered), check.body);
+  if (same(renderStateList(view, check.base, rendered), check.body))
+    return { pass: true };
+  // When the recorded members alone account for the difference, only they differ.
+  const differs = members.filter((entity, index) => {
+    const item = observed.get(entity.id);
+    return item !== undefined && !same(rendered[index], item);
+  });
+  const patched = rendered.map(
+    (item, index) => observed.get(members[index]!.id) ?? item,
+  );
+  return differs.length > 0 &&
+    same(renderStateList(view, check.base, patched), check.body)
+    ? {
+        pass: false,
+        differing: differs.map((entity) =>
+          entityTarget(view.type, check.collection, entity.id),
+        ),
+      }
+    : { pass: false };
 };
 
 /** A list read of every entity of a collection: membership, order, fields and counters must render from the state. */
@@ -427,7 +468,7 @@ const checkAllList = (
   const members = state.members(view.type, collection);
   const held = new Set(members.map((entity) => entity.id));
   return {
-    pass: listCheck(view, check, members),
+    ...listCheck(view, check, members),
     targets: [
       collectionTarget(view.type, collection),
       ...members.map((entity) =>
@@ -460,7 +501,7 @@ const checkRecordedList = (
       ? unheld
       : targets
     ).push(entityTarget(view.type, collection, id));
-  return { pass: listCheck(view, check, members), targets, unheld };
+  return { ...listCheck(view, check, members), targets, unheld };
 };
 
 /** A list read on a checked line, compared with the answer the served environment renders on that line's base recording from the collection it names. */

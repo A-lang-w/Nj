@@ -119,7 +119,9 @@ explained as one of:
 - an increment by one;
 - a slug of an echoed member.
 
-Any other change is `unexplained-change`. An increment or a slug applies to
+A field the entity lacked before is a change too when the view that observed
+the update had shown the entity, so a field the application fills in on update
+follows its rule. Any other change is `unexplained-change`. An increment or a slug applies to
 every call that could take it, so the plan is also `unexplained-change` when
 such a rule would give a call of the tool another value than the one it
 recorded, or when a later call treats a member otherwise than the plan: one
@@ -242,7 +244,9 @@ refuses to answer with.
   of that entity or collection.
 - A mismatch contradicts each exercised write that no unmodelled write came
   after its latest call on any of the read's entities or collections where its
-  effect survives, whatever earlier write is still pending. An item read checks the writes an unmodelled
+  effect survives, whatever earlier write is still pending. For a failed list read the unmodelled write must
+  also follow the last check and pending writes of each member that differs, so an older change elsewhere
+  does not excuse a newer write the list shows undone. An item read checks the writes an unmodelled
   write did follow only on the members they sent, and a list with such a write
   is not checked again: the unmodelled write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,
@@ -280,7 +284,8 @@ served. Their descriptions say the tool:
 
 - applies its effect to the served state;
 - names its target type;
-- lists its required and accepted body members.
+- lists its required and accepted body members, quoted and sampled within the
+  description budget as response fields are.
 
 The discovery budget charges them. `--replay-only` and the replay fallback are
 unchanged.

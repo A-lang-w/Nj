@@ -396,6 +396,21 @@ const buildUpdate = (
   draft.observed = evidence.after.object;
 };
 
+/** The fields of the view a read observed an entity with, when that view had shown the entity before. */
+const shownBefore = (
+  context: EffectContext,
+  entity: StateEntity,
+  ordinal: number,
+): readonly string[] => {
+  const view = context.viewOf(ordinal);
+  return (view?.shape === "item" || view?.shape === "list") &&
+    entity.record_ordinals.some(
+      (shown) => context.viewOf(shown)?.tool === view.tool,
+    )
+    ? view.fields
+    : [];
+};
+
 /**
  * Apply a recorded update to the held entity, explaining every change it made. An update the
  * model does not explain, or of an entity an unmodelled write may have changed, brings the
@@ -453,6 +468,7 @@ export const applyUpdate = (
     id,
     startMs: startOf(context, step),
     ...(after.readFields === undefined ? {} : { readFields: after.readFields }),
+    shown: shownBefore(context, entity, after.ordinal),
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");
