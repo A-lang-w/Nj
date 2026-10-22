@@ -149,7 +149,6 @@ const parseEffectiveIgnoreCase = (text: string): boolean | null => {
   for (const rawLine of text.replace(/^\uFEFF/u, "").split(/\r?\n/u)) {
     const line = trimGitConfigWhitespace(rawLine);
     if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
-    if (hasUnescapedTrailingBackslash(line)) return null;
     const header =
       /^\[([A-Za-z][A-Za-z0-9-]*)(?:[ \t]+"((?:[^"\\]|\\.)*)")?\](?:[ \t]*[#;].*)?$/u.exec(
         line,
@@ -209,24 +208,20 @@ const parseGitBoolean = (value: string | undefined): boolean | null => {
   }
 };
 
-const hasUnescapedTrailingBackslash = (line: string): boolean => {
-  let count = 0;
-  for (let index = line.length - 1; index >= 0 && line[index] === "\\"; index--)
-    count++;
-  return count % 2 === 1;
-};
-
 const parseGitConfigValue = (source: string): string | undefined => {
   const value = trimGitConfigWhitespace(source);
-  if (!value.startsWith('"')) {
-    if (value.includes('"')) return undefined;
-    return trimGitConfigWhitespace(value.replace(/[#;].*$/u, ""));
-  }
+  const quoted = value.startsWith('"');
+  // Strip unquoted comments and boundary whitespace before decoding escapes.
+  // Decoded whitespace is value data, including in Boolean assignments.
+  const content = quoted
+    ? value
+    : trimGitConfigWhitespace(value.replace(/[#;].*$/u, ""));
   let parsed = "";
-  for (let index = 1; index < value.length; index++) {
-    const character = value[index];
+  for (let index = quoted ? 1 : 0; index < content.length; index++) {
+    const character = content[index];
     if (character === '"') {
-      const remainder = trimGitConfigWhitespace(value.slice(index + 1));
+      if (!quoted) return undefined;
+      const remainder = trimGitConfigWhitespace(content.slice(index + 1));
       return remainder === "" ||
         remainder.startsWith("#") ||
         remainder.startsWith(";")
@@ -237,7 +232,7 @@ const parseGitConfigValue = (source: string): string | undefined => {
       parsed += character;
       continue;
     }
-    const escaped = value[++index];
+    const escaped = content[++index];
     switch (escaped) {
       case "\\":
       case '"':
@@ -256,7 +251,7 @@ const parseGitConfigValue = (source: string): string | undefined => {
         return undefined;
     }
   }
-  return undefined;
+  return quoted ? undefined : parsed;
 };
 
 const readOwnedMetadataText = async (

@@ -101,6 +101,38 @@ describe.skipIf(process.platform === "win32")(
         config: '[core]\r\n\tignoreCase \t=\t "" \t\r\n',
         expected: false,
       },
+      {
+        name: "unquoted escaped backslash",
+        config: "[core]\nignoreCase=false\n[user]\nname=valid\\\\q\n",
+        expected: false,
+      },
+      {
+        name: "unquoted newline, tab and backspace escapes",
+        config:
+          "[core]\nignoreCase=false\n[user]\nname=line\\nnext\\ttab\\bback\n",
+        expected: false,
+      },
+      {
+        name: "unquoted escaped quote",
+        config: '[core]\nignoreCase=false\n[user]\nname=valid\\"quote\n',
+        expected: false,
+      },
+      {
+        name: "invalid escapes and quotes after value comments",
+        config:
+          '[core]\nignoreCase=false\n[user]\nname=valid # bad\\q "ignored\nemail="valid"; bad\\q\n',
+        expected: false,
+      },
+      {
+        name: "trailing backslash inside a value comment",
+        config: "[core]\nignoreCase=false # ignored\\\n",
+        expected: false,
+      },
+      {
+        name: "trailing backslash inside a section comment",
+        config: "[core] # ignored\\\nignoreCase=false\n",
+        expected: false,
+      },
     ])("matches Git for $name", async ({ config, expected }) => {
       const root = await fixture(config);
       const configured = git(root, [
@@ -131,30 +163,54 @@ describe.skipIf(process.platform === "win32")(
           .sort(),
       ).toEqual(files);
     });
+  },
+);
 
+describe.skipIf(process.platform === "win32")(
+  "reference source malformed Git config parsing",
+  () => {
     it.each([
-      { name: "later variable", config: "[core]\n\uFEFFignoreCase = false\n" },
       {
-        name: "later section",
+        name: "BOM at the later variable",
+        config: "[core]\n\uFEFFignoreCase = false\n",
+      },
+      {
+        name: "BOM at the later section",
         config: '[core]\nignoreCase = false\n\uFEFF[user]\nname = "author"\n',
       },
       {
-        name: "assignment separator",
+        name: "BOM at the assignment separator",
         config: "[core]\nignoreCase\uFEFF = false\n",
       },
       {
-        name: "section terminator",
+        name: "BOM at the section terminator",
         config: "[core\uFEFF]\nignoreCase = false\n",
       },
       {
-        name: "unquoted boolean suffix",
+        name: "BOM at the unquoted boolean suffix",
         config: "[core]\nignoreCase = false\uFEFF\n",
       },
       {
-        name: "quoted boolean suffix",
+        name: "BOM at the quoted boolean suffix",
         config: '[core]\nignoreCase = "false"\uFEFF # comment\n',
       },
-    ])("retains uncertainty for a BOM at the $name", async ({ config }) => {
+      {
+        name: "unquoted unsupported escape",
+        config: "[core]\nignoreCase=false\n[user]\nname=bad\\q\n",
+      },
+      {
+        name: "unquoted escaped hash",
+        config: "[core]\nignoreCase=false\n[user]\nname=bad\\#suffix\n",
+      },
+      {
+        name: "unquoted escaped semicolon",
+        config: "[core]\nignoreCase=false\n[user]\nname=bad\\;suffix\n",
+      },
+      {
+        name: "decoded tab at the end of a boolean",
+        config: "[core]\nignoreCase=false\\t\n",
+      },
+    ])("retains uncertainty for $name", async ({ config }) => {
       const root = await fixture(config);
       const configured = git(root, [
         "config",
