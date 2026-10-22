@@ -60,6 +60,11 @@ import {
   type CreatedIds,
 } from "./environmentStateWriteLinks.js";
 import { extractWrites } from "./environmentStateWrites.js";
+import {
+  dropObservations,
+  lineShapes,
+  withoutVariants,
+} from "./environmentStateVariants.js";
 import { stateWritesOf } from "./environmentStateQueryCalls.js";
 
 class StateBudgetExhausted extends Error {}
@@ -183,9 +188,27 @@ export class EnvironmentStateExtraction {
     for (const candidate of candidates.filter((entry) => !entry.item))
       this.#planList(candidate);
     for (const plan of this.#plans) this.#observePlan(plan);
+    this.#dropVariants();
     this.#classifyChanges();
     this.#merge();
     return candidates;
+  }
+
+  /** Leave each plan's representation variants to replay: out of its lines and the observed entities. */
+  #dropVariants(): void {
+    const shapes = lineShapes(this.#entities.values());
+    this.#retain(ENTRY_BYTES * (shapes.size + 1));
+    for (const [index, plan] of this.#plans.entries()) {
+      const split = withoutVariants(plan, {
+        shapeOf: (record) => shapes.get(record.ordinal),
+        queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
+        position: (ordinal) => this.#position.get(ordinal)!,
+      });
+      if (split === undefined) continue;
+      this.#retain(ENTRY_BYTES * (split.dropped.size + 2));
+      this.#plans[index] = split.plan;
+      dropObservations(this.#entities, split.dropped);
+    }
   }
 
   /** End each rewritten type's initial reads at the earliest write its reads disagree across, and clear the plans to make them again. */

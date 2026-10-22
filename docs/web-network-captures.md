@@ -615,7 +615,13 @@ Every entity cites its `record_ordinals`.
 An item or list plan is kept only when it reproduces the latest initial
 recording of each request line from the state, comparing JSON values without
 regard to member order; a volatile field compares its recorded value. Each
-plan lists the `checked_record_ordinals`. Otherwise the tool is a recorded view
+plan lists the `checked_record_ordinals`. A request line that shows the
+entities in another representation (an expanding or reducing query, or one
+asking for some fields only) is left out of those checks when a query key tells
+it from the others: the plan lists its latest recordings in
+`projected_record_ordinals` and the keys in `projected_query_keys` (`name`,
+with a `value` or `absent: true`), and serving replays calls matching them.
+Otherwise the tool is a recorded view
 with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
 reasons are `query-body` (a query `POST`, or one the capture shows only reading), `no-init-recording`,
 `body-unusable`, `no-identity` (an item read without a proved identity),

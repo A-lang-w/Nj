@@ -12,6 +12,7 @@ import {
   BOOK_ROWS,
   BOOK_WRITE_CLOCK,
   DETAILED_LIST_ROWS,
+  EXPANDED_LIST_ROWS,
   FIRST_BOOK,
   OMITTED_FIELD_ROWS,
   PROJECTED_ROWS,
@@ -31,6 +32,7 @@ import {
   bookClock,
   detailedBook,
   environmentStateViewOf,
+  expandedBook,
   rawCaptureEvidence,
   renamedBook,
   type Book,
@@ -212,6 +214,83 @@ describe("wider write coverage", () => {
       shape: "item",
       checked_record_ordinals: [1, 2],
       projected_record_ordinals: [3],
+    });
+  });
+
+  it("leaves a list line that expands its books to replay, serving the create the plain list confirms", () => {
+    const state = stateOf(EXPANDED_LIST_ROWS);
+    expect(state.views.find((view) => view.tool === "get_books")).toMatchObject(
+      {
+        shape: "list",
+        checked_record_ordinals: [0],
+        projected_record_ordinals: [1],
+        projected_query_keys: [{ name: "expand" }],
+      },
+    );
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("leaves a list line that asks for some fields only to replay", () => {
+    const view = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      [
+        "GET",
+        "/api/books?fields=id,name",
+        [
+          { id: 1, name: "First Book" },
+          { id: 2, name: "Second Book" },
+        ],
+      ],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [0],
+      projected_record_ordinals: [1],
+      projected_query_keys: [{ name: "fields" }],
+    });
+  });
+
+  it("tells a line that adds a parameter apart by the members its books show, not by the parameters it shares", () => {
+    const view = stateOf([
+      ["GET", "/api/books?sort=name&limit=1", [FIRST_BOOK]],
+      ["GET", "/api/books?sort=name&q=first", [FIRST_BOOK]],
+      [
+        "GET",
+        "/api/books?sort=name&with=stats&offset=1",
+        [{ ...SECOND_BOOK, stats: { reads: 4 } }],
+      ],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [0, 1],
+      projected_record_ordinals: [2],
+      projected_query_keys: [{ name: "with" }],
+    });
+  });
+
+  it("confirms a delete by a missing book's read on a line that expands its shelf", () => {
+    const state = stateOf([
+      ...BOOK_INIT_ROWS,
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+      ["DELETE", "/api/books/2", "", 204],
+      ["GET", "/api/books/2?expand=shelf", BOOK_NOT_FOUND, 404],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({
+      projected_record_ordinals: [3],
+      projected_query_keys: [{ name: "expand" }],
+    });
+    expect(planOf(state, "delete_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
     });
   });
 

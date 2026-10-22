@@ -38,6 +38,22 @@ later increments.
   and serving replays any call to that tool that names a projection parameter
   for an entity the state holds. The write gate also leaves out any read that
   names one and leaves out a field its view requires.
+- A request line of an item or list view is a representation variant when it
+  shows an entity another line shows with other members, or names a parameter
+  the base lines do not (paging aside) while its objects carry a member no base
+  object carries or lack one every base object carries; a list line asking for
+  some fields only is one whenever a base line does not. Base lines are taken
+  first: lines naming no such parameter, then lines asking for every field,
+  then the line most others agree with. A variant leaves the view's checks and
+  the entity observations when a query key tells it apart: a parameter only
+  variants name, a value no base line gives a parameter, or a parameter every
+  base line names that a variant leaves out. The view lists its latest
+  recordings in `projected_record_ordinals` and the keys in
+  `projected_query_keys`; serving replays a call matching a key with the reason
+  `variant` (`projection` when the key asks for some fields only), so the
+  answer is a recording and shows no served write. The write gate neither
+  checks nor learns from a successful read matching a key; a 400, 404 or 410
+  such a read answers is still the absence it checks.
 - A field every recording of a view carried is required: serving refuses an
   entity lacking it. Once a successful read the write gate checks, naming no
   projection parameter, shows the application leaves the field out of an entity

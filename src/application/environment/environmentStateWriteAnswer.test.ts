@@ -11,6 +11,7 @@ import {
   BOOK_ROWS,
   DELETE_NOT_FOUND,
   DETAILED_LIST_ROWS,
+  EXPANDED_LIST_ROWS,
   FIRST_BOOK,
   OMITTED_FIELD_ROWS,
   PROJECTED_ROWS,
@@ -27,6 +28,7 @@ import {
   book,
   bookClock,
   detailedBook,
+  expandedBook,
   UNCHAPTERED_ROWS,
   VERSIONED_ROWS,
   numberedUuid,
@@ -291,6 +293,19 @@ describe("wider write coverage", () => {
     expect(books.answer("get_books_by_id", { id: "2" })).toMatchObject({
       body: SECOND_BOOK,
       state: { source: "state", view: "item" },
+    });
+  });
+
+  it("replays a call naming a parameter only the expanded line names, and lists a served create on the plain one", () => {
+    const books = servedFrom(EXPANDED_LIST_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books")).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK, created],
+      state: { source: "state", view: "list" },
+    });
+    expect(books.answer("get_books", { expand: "shelf" })).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK].map(expandedBook),
+      state: { source: "recording", reason: "variant" },
     });
   });
 
