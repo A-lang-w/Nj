@@ -1,5 +1,40 @@
 # APK signing verification
 
+## Current review follow-up qualification
+
+The current runtime is `35a9b13adaaccff109125664898d99886d76d959`, tree `db41f5fbee2d1dca69544c221324daa8238b8e8b`.
+The original qualification below remains historical at `f85a887`; JSON
+`review_followup` records the new commands, outcomes and costs.
+
+- **216 source tests /13 suites**, **394 compiled boundary tests /13 suites**,
+  **23 real SDK cases**, uncached typecheck/lint and exact CI static passed.
+  The unchanged schema contracts retain the earlier15-check qualification.
+- Corrected regressions reproduce **13 assertion failures and67 passing controls**
+  against the published producer source. Required lineage and CMS signature
+  framing, present empty signer sets, full ZIP/Zip64 directory extents and
+  pre-aborted cancellation reasons are now handled at their owning boundaries.
+- A shared FIFO admits one active APK scan and eight pending requests across
+  provider instances. Pending scans hold no APK bytes. Capacity, cancellation,
+  release recovery and close/drain have deterministic tests; production-boundary
+  tests use real files with a controlled descriptor pause.
+- Three simultaneous scans of the same generated/re-signed180MB input:
+  **981,049,344 → 448,929,792 bytes**
+  peak process-family RSS, **2.355 → 2.257s** elapsed,
+  **3.116 → 2.491 CPU s**. Every result matches the
+  same source SHA, SDK signer fingerprints and declared content digests.
+- Current complete versus selected F-Droid SDK task, same answer and complete
+  parent: **5,243 → 4,227 tokenx estimates**,
+  **3.564 → 3.824s** elapsed,
+  **4.289 → 4.271 CPU s**,
+  **754,368,512 → 762,630,144 bytes** peak RSS.
+
+These are single fresh-process observations with warm OS caches. Queueing bounds
+live materialization; it does not make selection skip hashing or establish a
+statistical speedup. Earlier failed fixture probes, lint and library preparation
+checks are retained in the JSON record. Current-head CI/review follows publication.
+
+## Original qualification
+
 Issue [#4537](https://github.com/morluto/rea/issues/4537), existing PR
 [#4158](https://github.com/morluto/rea/pull/4158). Runtime `f85a887a05fa62d0675139746dbce6eba7548aee`,
 tree `ff1f42613847e198988bf84dfb2d50d578084bdb`, integrates main `a4a548718d696d7329ffc7b9caa64ee72a215461` while retaining
