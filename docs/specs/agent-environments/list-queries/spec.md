@@ -34,6 +34,8 @@ Search values resembling operators, field syntax, tags, quotes or wildcards repl
 Paging values must be safe integers; malformed positions are not learned as inert flags. Identical decoded repeats
 of a query value impose one constraint; conflicting repeated values remain unknown. Counter presence belongs to
 each response envelope: page counters update where observed, and serving never adds a query-only total to another envelope.
+Query totals retain their numeric or canonical decimal-string type. Unknown or differently formatted strings
+(such as padded `"03"`) are not assigned an unverified formatting rule and stay as recorded.
 `state.source` distinguishes a computed response from recording replay; `replay.exact_match` describes only the
 retained source envelope and can be false for a correctly computed new query.
 

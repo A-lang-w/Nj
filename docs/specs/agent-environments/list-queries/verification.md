@@ -2,6 +2,19 @@
 
 ## Maintainer integration, 2026-10-22
 
+Representation cross-check found and reproduced one further stale counter on
+`1c9bb2e7`: canonical string total `"3"` remained `"3"` after removing an entity
+(one failure, 42 passes). Query-total interpretation now has one shared owner for
+inference and rendering, preserving number versus canonical decimal-string type.
+Unknown, padded, nonintegral or unsafe representations stay unmodeled/recorded;
+no display convention is guessed. The updated 621-test source batch and pinned
+typecheck/lint pass. The 102 query/write tests pass three consecutive runs, as do
+build, docs/9 README, format and native held-out pagination. Independent targeted
+Codex source review found no definite remaining format defect. This later public
+run took 20.13s wall/28.72s CPU/492.53MiB sampled family RSS, all observed children
+exited; it must not be hidden by the earlier faster runs or called a speedup.
+Historical counts below are pinned to their stated heads.
+
 Latest-main integration: main advanced to `e93e3b1e7` (APK signing declarations).
 Merged it without dropping that feature; the sole conflict was the shared tool
 description, resolved from main with only the existing list-query clause added.

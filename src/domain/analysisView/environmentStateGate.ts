@@ -23,6 +23,7 @@ import {
   evaluateQuery,
   learnQuery,
   lineChoices,
+  queryTotalCount,
   renderQueryList,
   type ListQuery,
   type QueryLine,
@@ -296,7 +297,9 @@ const listQuery = (
       counts.set(
         record.ordinal,
         Object.keys(parent).flatMap((name): [string, number][] => {
-          const count = isItemTotal(name) ? countOf(parent[name]) : undefined;
+          const count = isItemTotal(name)
+            ? queryTotalCount(parent[name])
+            : undefined;
           return count === undefined ? [] : [[name, count]];
         }),
       );

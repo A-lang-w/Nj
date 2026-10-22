@@ -568,6 +568,21 @@ export const learnQuery = (
     : { parameters, record_ordinals };
 };
 
+/** A count whose numeric or canonical decimal-string representation can be reproduced without guessing formatting. */
+export const queryTotalCount = (
+  value: JsonValue | undefined,
+): number | undefined => {
+  const count =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value)
+        ? Number(value)
+        : undefined;
+  return count !== undefined && Number.isSafeInteger(count) && count >= 0
+    ? count
+    : undefined;
+};
+
 /** A query answer: the base line's envelope with the selected entities, counters at the number listed and totals at the number matched. */
 export const renderQueryList = (
   view: Pick<StateListView, "pointer" | "counters"> & {
@@ -581,10 +596,12 @@ export const renderQueryList = (
     (body, name) =>
       isObject(base) &&
       Object.hasOwn(base, name) &&
-      typeof base[name] === "number" &&
-      Number.isSafeInteger(base[name]) &&
-      base[name] >= 0
-        ? replaceAt(body, pointerTo(name), total)
+      queryTotalCount(base[name]) !== undefined
+        ? replaceAt(
+            body,
+            pointerTo(name),
+            typeof base[name] === "string" ? String(total) : total,
+          )
         : body,
     renderStateList(view, base, items),
   );

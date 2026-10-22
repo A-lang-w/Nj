@@ -5,6 +5,7 @@ import {
   explainLine,
   learnQuery,
   lineChoices,
+  queryTotalCount,
   renderQueryList,
   type QueryLine,
 } from "./environmentStateListQuery.js";
@@ -232,6 +233,43 @@ describe("learning a list's query", () => {
 });
 
 describe("queries the state can always answer", () => {
+  it("models only reproducible total representations, without losing their source type", () => {
+    for (const value of [
+      0,
+      3,
+      "0",
+      "3",
+      Number.MAX_SAFE_INTEGER,
+      String(Number.MAX_SAFE_INTEGER),
+    ])
+      expect(queryTotalCount(value)).toBe(Number(value));
+    for (const value of [
+      null,
+      "unknown",
+      "03",
+      "3.0",
+      " 3",
+      "-1",
+      -1,
+      1.5,
+      "9007199254740992",
+    ])
+      expect(queryTotalCount(value)).toBeUndefined();
+    const view = {
+      pointer: "/items",
+      counters: [],
+      query: { totals: ["total"] },
+    };
+    expect(renderQueryList(view, { items: [], total: "3" }, [], 2)).toEqual({
+      items: [],
+      total: "2",
+    });
+    expect(renderQueryList(view, { items: [], total: "03" }, [], 2)).toEqual({
+      items: [],
+      total: "03",
+    });
+  });
+
   it("projects query totals only into envelopes that actually contain a known count", () => {
     const view = {
       pointer: "/items",

@@ -81,7 +81,9 @@ const listQuerySchema = z.strictObject({
     .describe("Checked lines the query reproduces, answered by evaluating it."),
   totals: z
     .array(z.string())
-    .describe("Envelope members that count every match before paging."),
+    .describe(
+      "Observed envelope members with reproducible counts of every match before paging; absent or unknown representations stay recorded.",
+    ),
 });
 const checkedSchema = z
   .array(z.number().int().nonnegative())
