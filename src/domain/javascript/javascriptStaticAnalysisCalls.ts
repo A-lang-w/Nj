@@ -9,7 +9,6 @@ import {
   addLocatedFinding,
 } from "./javascriptStaticAnalysisFindings.js";
 import {
-  STATIC_ROUTE_CALL_NAMES,
   argumentNode,
   argumentValue,
   calleeName,
@@ -398,7 +397,14 @@ export const indexVitePreloadDependencyTable = (
   if (tables.length !== 1) return [];
   const table = tables[0];
   if (table === undefined) return [];
-  const dependencies = table.elements.map((element) =>
+  // A spread contributes an unknown number of entries, so every later slot
+  // has an unknown index; leave those out instead of shifting them.
+  const spread = table.elements.findIndex((element) =>
+    t.isSpreadElement(element),
+  );
+  const dependencies = (
+    spread === -1 ? table.elements : table.elements.slice(0, spread)
+  ).map((element) =>
     element === null || t.isSpreadElement(element)
       ? undefined
       : stringValue(element),
@@ -435,16 +441,6 @@ const inspectEndpointCall = (
   context: FindingContext,
   bindings: JavaScriptSemanticAnalysisState,
 ): void => {
-  const route = STATIC_ROUTE_CALL_NAMES.some(
-    (candidate) => name === candidate || name.endsWith(`.${candidate}`),
-  );
-  if (route && first !== undefined)
-    addEndpoint(context, {
-      node,
-      kind: "route",
-      value: first,
-      mechanism: `call:${name}`,
-    });
   if (isKnownNetworkRequest(node, bindings)) {
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) return;
@@ -740,21 +736,6 @@ export function* finishRpcScanSteps(
   }
 }
 
-export const inspectRouteProperty = (
-  node: t.ObjectProperty,
-  context: FindingContext,
-): void => {
-  const key = semanticStaticPropertyName(node.key, node.computed);
-  const value = stringValue(node.value);
-  if ((key === "path" || key === "route") && value !== undefined)
-    addEndpoint(context, {
-      node,
-      kind: "route",
-      value,
-      mechanism: `property:${key}`,
-    });
-};
-
 export const inspectRoleProperty = (
   node: t.ObjectProperty,
   context: FindingContext,
@@ -889,7 +870,10 @@ export const addReference = (
   });
 };
 
-const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
+export const addEndpoint = (
+  context: FindingContext,
+  input: EndpointInput,
+): void =>
   addLocatedFinding(context, {
     collection: context.accumulator.endpoints,
     key: `endpoint\0${input.kind}\0${input.interpretation ?? "literal"}\0${input.resolution ?? "exact"}\0${input.value}`,
