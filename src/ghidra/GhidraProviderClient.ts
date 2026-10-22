@@ -119,7 +119,6 @@ export type GhidraProviderClientFactory = (
     >
   >;
 
-type GhidraProviderClientInstance = ReturnType<GhidraProviderClientFactory>;
 
 interface GhidraExecutionMetadata {
   readonly cachePolicy?: "live";
