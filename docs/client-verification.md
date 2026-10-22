@@ -77,6 +77,39 @@ The local fixture exercises the real Gemini API adapter, including its
 Google API compatibility remains unverified. The lane disables
 the client's memory-based relaunch to preserve the caller's Node heap budget.
 
+`verify:gemini-live` is the same client journey against the real model service
+instead of the loopback fixture. It takes the caller's credential from
+`REA_GEMINI_API_KEY` (preferred) or `GEMINI_API_KEY`, and never writes it: the
+receipt records only the selected variable name, and both the client transcript
+and the failure detail are redacted before they reach an artifact. The lane
+probes the endpoint first and fails fast as `network_unreachable` or
+`credential_rejected` rather than reporting a blocked host as a compatibility
+result; any other probe status is recorded and left to the client run. It then
+checks `rea setup` plan, apply and doctor in an isolated `GEMINI_CLI_HOME`
+account, runs the installed client with `--output-format stream-json`, and
+requires a successful result event, at least one `mcp_rea_*` tool call, native
+activation of the installed personal skill, JavaScript Evidence that still
+carries the fixture literals for a Unicode path, and the completion marker in
+the model's final reply. The receipt reports the model's own token usage and
+wall-clock duration, so it is a real-model measurement rather than synthetic
+usage.
+
+```bash
+export REA_GEMINI_API_KEY=...   # caller-supplied; never committed
+npm run verify:gemini-live          # call mode
+npm run verify:gemini-live -- chat  # plain chat with REA enabled
+```
+
+`REA_VERIFY_GEMINI_MODEL` (default `gemini-2.5-flash`),
+`REA_VERIFY_GEMINI_BASE_URL`, `REA_VERIFY_GEMINI_TIMEOUT_MS` (default 900000)
+and `REA_MCP_INPUT_SCHEMA_PROFILE` select the run; set
+`REA_VERIFY_GEMINI_REQUIRE_SKILL=0` to record a missing skill activation
+without failing the lane. Exit status 2 means a classified lane failure —
+transport, credential, client preflight, unparsable stream or a failed client
+run — while an assertion failure exits 1. The lane needs egress to
+`generativelanguage.googleapis.com`; a host without it cannot produce a live
+receipt. No live-model receipt is recorded in this repository.
+
 `verify:opencode-client` requires an installed OpenCode (verified with
 `opencode-ai@1.18.35`); select it with `REA_VERIFY_OPENCODE_COMMAND`.
 The optional POSIX lane configures isolated XDG roots and `OPENCODE_CONFIG_DIR`,
