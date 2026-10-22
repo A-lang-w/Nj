@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά**
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · **Ελληνικά** · [മലയാളം](README_ml.md)
 
 # REA: Reverse Engineer Anything
 
@@ -153,10 +153,12 @@ npx rea-agents@latest setup
 | Bytecode EVM                           | Selectors επιλογής συνάρτησης, μετατοπίσεις σε bytes, εκτιμώμενα ορίσματα και δυνατότητα μεταβολής της κατάστασης           | Τοπική είσοδος σε ακατέργαστα bytes ή δεκαεξαδική μορφή σε Linux x64· [οδηγός EVM χωρίς εκτέλεση](../evm-bytecode.md)               |
 | Βάσεις δεδομένων SQLite                | Πίνακες, στήλες, ευρετήρια, όψεις, triggers και επιλεγμένες γραμμές κανονικών πινάκων                                       | Τοπικό στιγμιότυπο βάσης δεδομένων/WAL· Node.js 24.x >=24.15 ή 26+ με εγγενή όρια SQLite                                            |
 | Καταγεγραμμένες καταρρεύσεις στο Linux | Ακατέργαστες εγγραφές notes, καταχωρητές/σήματα κάθε καταγεγραμμένου νήματος και προαιρετικές πιθανές αντιστοιχίσεις μνήμης | pwntools που παρέχει ο χρήστης σε Linux x64· προαιρετικά GDB/pwndbg· [καταγεγραμμένες καταρρεύσεις](../recorded-crashes.md)         |
+| Εγκαταστάσεις επιφάνειας εργασίας      | Υποψήφια περιβάλλοντα εκτέλεσης, αρχεία τεκμηρίωσης, στοιχεία και επόμενα βήματα                                            | Περιορισμένη επιθεώρηση καταλόγων και κεφαλίδων；[Εφαρμογές επιφάνειας εργασίας](../desktop-applications.md)                        |
 | JavaScript / Electron                  | Modules, εισαγωγές, source maps, διαδρομές, IPC και σχέσεις με πρόσθετα κώδικα μηχανής                                      | Node.js και npm· [ανάλυση εφαρμογών](../javascript-application-workflows.md)                                                        |
 | Ιστότοποι                              | Δομή σελίδων, scripts, παρατηρήσεις δικτύου και ζητούμενα στιγμιότυπα οθόνης                                                | Πρόγραμμα περιήγησης της οικογένειας Chrome· [ανάλυση μέσω προγράμματος περιήγησης](../browser-observation.md)                      |
 | Αποθηκευμένες καταγραφές δικτύου       | Αιτήματα, αποκρίσεις, διαθέσιμα δεδομένα φορτίου και θέσεις στην πηγή                                                       | HAR ή SAZ του Fiddler Everywhere· mitmdump σε Linux για την εγγενή μορφή mitmproxy· [οδηγός καταγραφών](../web-network-captures.md) |
 | Assemblies .NET                        | Μεταδεδομένα, εντολές CIL, δηλωμένες εξαρτήσεις από κώδικα μηχανής και συγκρίσεις builds                                    | Καμία πρόσθετη απαίτηση (μόνο στατική ανάλυση)· [οδηγός διαχειριζόμενου κώδικα](../managed-code-analysis.md)                        |
+| PyInstaller                            | CArchive, PYZ, Python bytecode                                                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                               |
 | APK Android                            | Δηλώσεις manifest, κλάσεις, απομεταγλωττισμένες μέθοδοι και αναφορές                                                        | JADX χωρίς γραφικό περιβάλλον και πλήρες JDK σε Linux/macOS/Windows x64· [οδηγός Android](../android-analysis.md)                   |
 | Συσκευές Android                       | Συσκευές, πακέτα, διεργασίες, logs, dumps, στιγμιότυπα οθόνης και μεταφορές APK/αρχείων                                     | adb που παρέχει ο χρήστης (εξομοιωτής ή φυσική συσκευή)· [οδηγός ADB](../adb-device-analysis.md)                                    |
 | Έργα JEB                               | Μονάδες έργου από τη μηχανή ανάλυσης, ψηφιακά αποτυπώματα αρχείων και ψευδοκώδικα τύπων/μεθόδων                             | Client JEB που έχει ξεκινήσει ο χρήστης και παρέχει MCP, επιλεγμένος μέσω REA_JEB_MCP_URL· [οδηγός JEB](../jeb-analysis.md)         |
@@ -276,6 +278,8 @@ npx rea-agents@latest setup
 
 - [Εγκατάσταση και ρύθμιση](../installation.md): καταχώριση agents, ρύθμιση παρόχων ανάλυσης, ενημερώσεις και απεγκατάσταση.
 - [Έλεγχος ετοιμότητας και αντιμετώπιση προβλημάτων](../installation.md#check-readiness-for-your-task): διάγνωση ενός agent ή μιας μηχανής ανάλυσης.
+- [CUDA / HIP](../gpu-code-objects.md)
+- [GGUF / safetensors](../model-artifacts.md)
 - [CLI και Evidence](../cli.md): εντολές, επιλογή παρόχου, στιγμιότυπα, εισαγωγή/εξαγωγή και κωδικοί εξόδου.
 - [Προδιαγραφές MCP](../mcp-contracts.md) και [prompts για agents](../mcp-prompts.md): αποτελέσματα εργαλείων, συνεδρίες και καθοδηγούμενες διερευνήσεις.
 - [Κατάλογος εργαλείων](../mcp-contracts.md#generated-catalog): αυτόματα παραγόμενος κατάλογος εργαλείων, παρόχων και εντολών CLI.
@@ -285,7 +289,7 @@ npx rea-agents@latest setup
 
 ## Ιστορικό αστεριών
 
-🎉 **250.000 αστέρια στο GitHub — σας ευχαριστούμε!**
+🎉 **300.000 αστέρια στο GitHub — σας ευχαριστούμε!**
 
 Ευχαριστούμε όλους όσοι χρησιμοποιούν το REA, αναφέρουν σφάλματα, ζητούν νέες λειτουργίες, δοκιμάζουν builds και συνεισφέρουν διορθώσεις.
 
