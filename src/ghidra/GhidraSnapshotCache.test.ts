@@ -265,8 +265,8 @@ describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
       parameter: "function_boundary_observations",
-      current: "ghidra-function-boundary-limitations-v4",
-      legacy: "ghidra-function-boundary-limitations-v3",
+      current: "ghidra-function-and-address-boundary-limitations-v6",
+      legacy: "ghidra-function-and-address-boundary-limitations-v5",
     },
     {
       parameter: "instruction_references",

@@ -211,7 +211,13 @@ const handleRequest = (socket, server, request, state) => {
         ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
         : inventoryResultFor(request.method, request.params);
   if (inventory !== undefined) {
-    const response = `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`;
+    const response = `${JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: ["procedure_address", "search_bytes"].includes(request.method)
+        ? { value: inventory, limitations: [] }
+        : inventory,
+    })}\n`;
     if (state.mode === "fragmented") {
       const bytes = Buffer.from(response, "utf8");
       const unicodeOffset = bytes.indexOf(Buffer.from("雪", "utf8"));
@@ -421,7 +427,7 @@ const inventoryResultFor = (method, params) => {
     case "procedure_address":
       return "0x1000";
     case "resolve_containing_procedure":
-      return containingProcedureResult();
+      return { value: containingProcedureResult(), limitations: [] };
     case "search_procedures":
       return [procedureSearchItem()];
     case "search_strings":

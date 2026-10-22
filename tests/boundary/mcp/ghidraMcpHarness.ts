@@ -296,6 +296,12 @@ const functionObservationOperations: ReadonlySet<GhidraOperation> = new Set([
   "procedure_pseudo_code",
   "procedure_references",
   "read_function_instructions",
+  "inspect_native_instruction",
+  "resolve_native_call_targets",
+  "xrefs",
+  "procedure_address",
+  "search_bytes",
+  "resolve_containing_procedure",
 ]);
 
 const stringItem = (address: string, value: string): JsonValue => ({

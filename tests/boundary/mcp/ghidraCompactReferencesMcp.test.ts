@@ -39,7 +39,14 @@ describe("compact Ghidra reference MCP evidence", () => {
           operation !== "resolve_native_call_targets"
         )
           throw new TypeError(`Unexpected operation: ${operation}`);
-        return Promise.resolve(ok(outputs[operation]));
+        return Promise.resolve(
+          ok({
+            value: outputs[operation],
+            limitations: [
+              "SEH registration supplies recovered instruction ownership",
+            ],
+          }),
+        );
       },
     );
     try {
@@ -57,6 +64,9 @@ describe("compact Ghidra reference MCP evidence", () => {
           result.structuredContent,
         );
         expect(evidence.normalized_result).toEqual(outputs[name]);
+        expect(evidence.limitations).toContain(
+          "SEH registration supplies recovered instruction ownership",
+        );
       }
     } finally {
       await harness.close();
@@ -80,7 +90,9 @@ describe("compact Ghidra reference MCP evidence", () => {
           operation !== "resolve_native_call_targets"
         )
           throw new TypeError(`Unexpected operation: ${operation}`);
-        return Promise.resolve(ok(outputs[operation]));
+        return Promise.resolve(
+          ok({ value: outputs[operation], limitations: [] }),
+        );
       },
     );
     try {

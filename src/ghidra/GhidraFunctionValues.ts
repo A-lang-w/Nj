@@ -404,6 +404,9 @@ const functionBoundaryObservationOperations: ReadonlySet<GhidraFunctionOperation
     "procedure_pseudo_code",
     "procedure_references",
     "read_function_instructions",
+    "inspect_native_instruction",
+    "resolve_native_call_targets",
+    "xrefs",
   ]);
 
 const functionObservationEnvelope = z.strictObject({
