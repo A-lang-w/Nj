@@ -239,3 +239,45 @@ source hashes. `npm run docs:check` passed again. `npm run check:ci` again
 passed its static/deep stages and stopped at the unavailable Windows
 `python3` command; the WSL Python results above were obtained before this
 second merge, which changed no Python source.
+
+## Nested executable container routing (2026-10-22)
+
+The P1 review found that root classification scanned a PyInstaller executable's
+uncompressed members for a .NET apphost marker before checking its CArchive.
+The helper's header offset is relative to the helper, so treating it as an
+outer-file offset selected the wrong reader. Existing tests covered each
+format separately, without combining the two container layouts.
+
+On `76ebe446dc8773f5eebbbc85d71df1c12e769a2e`, a new boundary regression using
+`cArchiveExecutable` with a stored `dotnetBundleFixture` member failed with
+`Unsupported .NET bundle header 0.0`. The inverse case (a .NET bundle with a
+stored PyInstaller helper) passed. Simply giving PyInstaller unconditional
+precedence would misroute that inverse case.
+
+Root classification now uses the existing parsed CArchive cookie's archive
+start to bound the .NET marker search. Markers inside its payload cannot claim
+the outer host. A marker in the preceding carrier still uses whole-file header
+coordinates and can identify an outer .NET bundle containing a PyInstaller
+helper. Reader selection and extraction consume this shared root classification.
+This adds the existing bounded CArchive-tail probe before ordinary .NET marker
+detection; no performance improvement or resource measurement is claimed.
+
+Windows x64, Node 24.18.0/npm 11.16.0, E:-scoped temporary/cache directories:
+
+- `npm run test:focused -- tests/boundary/filesystem/dotnetBundleArtifacts.test.ts`:
+  31 passed, including inventory and byte-exact extraction in both nesting
+  directions, source preservation, marker splits and cancellation.
+- `npm run test:focused -- tests/acceptance/dotnetBundleJourney.test.ts tests/acceptance/pyinstallerArchive.test.ts tests/boundary/mcp/pyinstallerArtifactMcp.test.ts`:
+  8 passed. The mixed PyInstaller/.NET input completed inspection and extraction
+  through the compiled CLI and actual stdio MCP server, with byte-equal helper
+  output and unchanged source bytes.
+- `npm run test:focused -- src/artifacts/pyinstaller/PyInstallerFormatBoundaries.test.ts tests/boundary/filesystem/artifactInventoryRegularRoot.test.ts tests/boundary/filesystem/ownedArtifactReaderCleanup.test.ts`:
+  66 passed, one POSIX FIFO test skipped on Windows.
+- The four existing Microsoft HostModel-generated hosts again passed compiled
+  CLI/stdio MCP inspection and extraction; DLL/resource bytes matched and host
+  hashes were unchanged. No generated host was executed. Nested-format
+  regressions use source-owned layout fixtures, not a real PyInstaller build.
+- `npm run check:ci` passed typecheck, lint/module boundaries, formatting,
+  metadata, knip, duplication, TODO, architecture and test-discovery checks.
+  The command then stopped at the unavailable Windows `python3` executable;
+  it is not a complete local CI pass.

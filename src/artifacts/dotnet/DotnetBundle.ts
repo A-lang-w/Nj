@@ -39,18 +39,19 @@ export interface DotnetBundle {
   readonly files: readonly DotnetBundleFile[];
 }
 
-/** Scan bounded chunks, preserving markers split across reads; an unbundled apphost has offset zero. */
+/** Scan [0, markerSearchEnd) for the first marker; header offsets use whole-file coordinates. */
 export const findDotnetBundleHeader = async (
   handle: FileHandle,
   size: number,
   signal?: AbortSignal,
+  markerSearchEnd = size,
 ): Promise<number | undefined> => {
   abortIfNeeded(signal);
   let tail = Buffer.alloc(0);
-  if (size === 0) return undefined;
+  if (markerSearchEnd === 0) return undefined;
   try {
     for await (const value of readFileHandleChunks(handle, {
-      end: size - 1,
+      end: markerSearchEnd - 1,
       signal,
     })) {
       abortIfNeeded(signal);

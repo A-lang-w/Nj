@@ -11,6 +11,10 @@ REA detects the apphost marker and its preceding header offset from PE, ELF,
 and thin Mach-O bytes, regardless of filename. An unbundled apphost's zero
 offset remains an ordinary native artifact. Universal Mach-O slice inventory
 keeps its existing behavior; bundled contents inside slices are not expanded.
+When a native file has a recognized PyInstaller CArchive, apphost-marker
+scanning stops before its payload. A .NET helper stored inside that archive
+does not replace the outer container's format; an outer .NET host can still
+contain a PyInstaller helper as a member.
 
 ## Supported layout
 

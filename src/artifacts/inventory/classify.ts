@@ -5,7 +5,7 @@ import type { Stats } from "node:fs";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
-import { containsPyInstallerArchive } from "../pyinstaller/CArchiveLayout.js";
+import { findPyInstallerCookie } from "../pyinstaller/CArchiveLayout.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { claimsExecutableHeader } from "../../domain/binaryTarget.js";
@@ -191,11 +191,6 @@ const classifyRootFormat = async (
     },
     archiveBytes,
   ).format;
-  if (
-    ["pe", "elf", "mach-o"].includes(format) &&
-    (await findDotnetBundleHeader(handle, archiveBytes, signal)) !== undefined
-  )
-    return "dotnet-bundle";
   // Only bytes no other format claims may lead a located ZIP, so an
   // executable with an appended archive keeps its executable classification.
   if (
@@ -211,13 +206,24 @@ const classifyRootFormat = async (
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
-    const packaged = await containsPyInstallerArchive(
-      handle,
-      archiveBytes,
-      signal,
-    );
+    const packaged = await findPyInstallerCookie(handle, archiveBytes, signal);
     abortIfNeeded(signal);
-    if (packaged) return "pyinstaller";
+    // A CArchive payload may contain another apphost whose offsets belong to
+    // that member. Only a marker before the payload can claim the outer host.
+    const markerSearchEnd = packaged?.ok
+      ? packaged.value.archiveStart
+      : archiveBytes;
+    if (
+      format !== "mach-o-universal" &&
+      (await findDotnetBundleHeader(
+        handle,
+        archiveBytes,
+        signal,
+        markerSearchEnd,
+      )) !== undefined
+    )
+      return "dotnet-bundle";
+    if (packaged?.ok) return "pyinstaller";
   }
   return format;
 };

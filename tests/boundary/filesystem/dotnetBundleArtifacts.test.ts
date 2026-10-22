@@ -16,12 +16,61 @@ import {
   scanArtifactInventory,
 } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { dotnetBundleFixture } from "../../../src/artifacts/dotnet/DotnetBundle.fixture.js";
+import { cArchiveExecutable } from "../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import {
   findDotnetBundleHeader,
   readDotnetBundle,
   DOTNET_BUNDLE_SIGNATURE,
 } from "../../../src/artifacts/dotnet/DotnetBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it.each(["pyinstaller", "dotnet-bundle"] as const)(
+  "keeps the %s outer container when a stored member is another executable container",
+  async (format) => {
+    const root = await createTestTempDirectory("rea-dotnet-nested-container-");
+    const path = join(root, "renamed.bin");
+    const pack = (payload: Buffer) =>
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 313,
+        members: [
+          { name: "helper.exe", typeCode: "b", payload, compress: false },
+        ],
+      });
+    const helper =
+      format === "pyinstaller"
+        ? dotnetBundleFixture().bytes
+        : pack(Buffer.from("owned helper bytes"));
+    const bytes =
+      format === "pyinstaller"
+        ? pack(helper)
+        : dotnetBundleFixture([
+            { path: "helper.exe", bytes: helper, fileType: 2 },
+          ]).bytes;
+    await writeFile(path, bytes);
+    const inventory = await inventoryArtifact(path, {
+      resourceScope: new ArtifactResourceScope(),
+    });
+    expect(inventory.manifest.root_format).toBe(format);
+    expect(inventory.manifest.root_sha256).toBe(sha(bytes));
+    expect(
+      inventory.occurrences.find((item) => item.logical_path === "helper.exe")
+        ?.hash_status,
+    ).toBe("verified");
+    const outputRoot = join(root, "output");
+    const extracted = await extractArtifact({
+      inputPath: path,
+      inputFormat: format === "pyinstaller" ? "elf" : "pe",
+      outputRoot,
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope: new ArtifactResourceScope(),
+    });
+    expect(extracted.containment_verified).toBe(true);
+    expect(await readFile(join(outputRoot, "helper.exe"))).toEqual(helper);
+    expect(await readFile(path)).toEqual(bytes);
+  },
+);
 
 it.each([1, 2, 6])(
   "inventories and extracts version %s with source and member identity",
