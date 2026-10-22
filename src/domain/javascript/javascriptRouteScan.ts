@@ -31,7 +31,8 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
-import { semanticProjectedSourceEligibilityAtRead } from "./javascriptSemanticProjectedSources.js";
+import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
@@ -288,7 +289,6 @@ export class JavaScriptRouteScan {
     // initializer can serve many use sites; freshness remains per request above.
     const pending: t.Node[] = [];
     const seen = new WeakSet<t.Node>();
-    const bindings = new Set<object>();
     const nonValueReferences = new WeakSet<t.Node>();
     const admit = (node: t.Node): void => {
       if (
@@ -356,9 +356,20 @@ export class JavaScriptRouteScan {
             (parent !== null && !t.isReferenced(node, parent))
           )
             return;
-          const binding = this.index.bindingForReferenceAt(node);
-          if (binding === undefined || bindings.has(binding)) return;
-          bindings.add(binding);
+          const declared = this.index.bindingForReferenceAt(node);
+          if (declared === undefined) return;
+          for (const sources of [
+            declared.initializers,
+            declared.referenceInitializers,
+          ])
+            for (const source of sources) if (!this.#queue(source.node)) return;
+          // Different reads may select different values; unresolved order
+          // retains its possible sources instead of becoming absence.
+          const binding = semanticBindingAtRead(
+            declared,
+            node,
+            this.index.bindings.parentsByNode,
+          ).binding;
           for (const initializers of [
             binding.initializers,
             binding.referenceInitializers,
@@ -927,11 +938,14 @@ export class JavaScriptRouteScan {
       for (const source of write.assignedSources ?? [])
         if (!this.#queue(source.node)) return;
     }
-    const sources = semanticProjectedSourceEligibilityAtRead(
+    // Value flow excludes proven replacements; lifetime identity eligibility
+    // would keep them and incorrectly hide otherwise independent routes.
+    const sources = semanticProjectedSourcesAtRead(
       binding,
       chain.root,
       chain.members,
       this.index.bindings,
+      false,
       node,
     );
     for (const source of sources ?? [])

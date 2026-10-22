@@ -1039,3 +1039,35 @@ it("keeps an overwritten shorthand proto property independent", () => {
     "/users",
   ]);
 });
+
+it.each([
+  "const registry={query:independent};registry.query={ok:1};router.push({pathname:'/users',query:registry.query});",
+  "const registry={query:independent};registry['query']={ok:1};router.push({pathname:'/users',query:registry.query});",
+  "const registry={options:{query:independent}};registry.options={query:{ok:1}};router.push({pathname:'/users',query:registry.options.query});",
+  "const registry={query:independent};const alias=registry;alias.query={ok:1};router.push({pathname:'/users',query:registry.query});",
+  "const registry={query:independent};escape(registry);registry.query={ok:1};router.push({pathname:'/users',query:registry.query});",
+  "let query=independent;query={ok:1};router.push({pathname:'/users',query});",
+  "let query=independent;query={ok:1};const selected=query;router.push({pathname:'/users',query:selected});",
+  "const registry={query:independent};const current={path:'/query-new-data',component:Preview};registry.query=current;router.push({pathname:'/users',query:registry.query});",
+])("keeps definitely replaced query sources independent: %s", (navigation) => {
+  const facts = analyze(
+    `const independent={path:'/independent',component:View};${navigation}`,
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/users",
+  ]);
+});
+
+it.each([
+  "const registry={query:payload};if(flag)registry.query={ok:1};router.push({pathname:'/users',query:registry.query});",
+  "const registry={query:payload};router.push({pathname:'/users',query:registry.query});registry.query={ok:1};",
+  "let query=payload;router.push({pathname:'/users',query});query={ok:1};router.push({pathname:'/users',query});",
+])("retains sources from possible or earlier query reads: %s", (navigation) => {
+  const facts = analyze(
+    `const payload={path:'/query-data',component:Preview};${navigation}`,
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/users",
+  ]);
+});
