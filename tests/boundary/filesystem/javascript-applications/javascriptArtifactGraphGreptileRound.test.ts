@@ -12,6 +12,66 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "resume-alias-0.js",
+    source:
+      'const u=undefined;(async()=>{const[a,b=await 0,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-default");yield 2})()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/resume-default",
+  },
+  {
+    file: "resume-alias-1.js",
+    source:
+      'const u=undefined;(async()=>{try{const[a,b=await 0,c]=(function*(){yield 1;new Socket("wss://example.test/resume-earlier");yield u;yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "resume-alias-2.js",
+    source:
+      'const u=undefined;(async()=>{try{const[a,b,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-eager");yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "resume-alias-3.js",
+    source:
+      'const u=undefined;(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-blocked");yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "resume-alias-4.js",
+    source:
+      'const u=null;(async()=>{try{const[a,{[await 0]:b},c]=(function*(){try{yield 1;yield u}finally{new Socket("wss://example.test/resume-cleanup")}})()}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "resume-alias-5.js",
+    source:
+      'const u=undefined;(async()=>{const[a=await 0,b=await 0,c]=(function*(){yield undefined;yield u;new Socket("wss://example.test/resume-prior");yield 2})()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/resume-prior",
+  },
+  {
+    file: "resume-alias-6.js",
+    source:
+      '(async()=>{const[a,b=await 0,c]=(function*(){yield 1;const u=undefined;yield u;new Socket("wss://example.test/resume-local");yield 2})()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/resume-local",
+  },
+  {
+    file: "resume-alias-7.js",
+    source:
+      '(async()=>{try{const[a,b=await 0,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-late");yield 2})()}catch{}const u=undefined})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "resume-alias-8.js",
+    source:
+      'const u=undefined;const v=u;(async()=>{const[a,b=await 0,c=await 0,d]=(function*(){yield 1;yield u;yield v;new Socket("wss://example.test/resume-chain");yield 2})()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/resume-chain",
+  },
+  {
+    file: "resume-alias-9.js",
+    source:
+      'const Socket=globalThis.WebSocket;const u=null;(async()=>{try{const[a,{[await 0]:b},c]=(function*(){try{yield 1;yield u}finally{new Socket("wss://example.test/resume-initialized")}})()}catch{}})();',
+    endpoint: "wss://example.test/resume-initialized",
+  },
+  {
+    file: "resume-alias-10.js",
+    source:
+      'const u={};(async()=>{try{const[a,b=await 0,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-object");yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
     file: "alias-order-0.js",
     source:
       '(async()=>{try{const[value=await 0,next]=(function*(){try{yield u}finally{new Socket("wss://example.test/alias-late")}})()}catch{}const u=undefined;})();const Socket=globalThis.WebSocket;',

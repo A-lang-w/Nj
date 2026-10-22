@@ -43,6 +43,8 @@ interface PatternWaitCache {
   readonly iterationUnknown: boolean | undefined;
   readonly ownedResultEscape: t.Node | undefined;
   readonly normalContinuation: boolean;
+  readonly completedCount: number;
+  readonly inProgress: boolean;
   readonly index: number | null;
   readonly blockedIndex: number | null;
 }
@@ -836,57 +838,82 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
     index !== null &&
     index < count &&
     (cleanup || blockedIndex === null || blockedIndex >= count);
-  const cached = facts.firstPatternWait.get(pattern);
+  const candidate = facts.firstPatternWait.get(pattern);
+  const cached =
+    candidate !== undefined &&
+    candidate.effects === state.literalMemberEffects &&
+    candidate.ambientEffectCount === state.ambientReferenceEffects.length &&
+    candidate.iterationUnknown === state.arrayIterationUnknown &&
+    candidate.ownedResultEscape === ownedResultEscape &&
+    candidate.normalContinuation === !cleanup
+      ? candidate
+      : undefined;
   if (
     cached !== undefined &&
-    cached.effects === state.literalMemberEffects &&
-    cached.ambientEffectCount === state.ambientReferenceEffects.length &&
-    cached.iterationUnknown === state.arrayIterationUnknown &&
-    cached.ownedResultEscape === ownedResultEscape &&
-    cached.normalContinuation === !cleanup
+    (cached.completedCount >= count || cached.blockedIndex !== null)
   )
     return waited(cached.index, cached.blockedIndex);
-  const cache = (index: number | null, blockedIndex: number | null): void => {
+  // A cyclic context query cannot borrow work from a slot still being proved.
+  if (cached?.inProgress) return false;
+  let firstWait: number | null = cached?.index ?? null;
+  let blockedAt: number | null = cached?.blockedIndex ?? null;
+  let completedCount = cached?.completedCount ?? 0;
+  const cache = (inProgress: boolean): void => {
     facts.firstPatternWait.set(pattern, {
       effects: state.literalMemberEffects,
       ambientEffectCount: state.ambientReferenceEffects.length,
       iterationUnknown: state.arrayIterationUnknown,
       ownedResultEscape,
       normalContinuation: !cleanup,
-      index,
-      blockedIndex,
+      completedCount,
+      inProgress,
+      index: firstWait,
+      blockedIndex: blockedAt,
     });
   };
-  let firstWait: number | null = null;
-  let blockedAt: number | null = null;
-  for (let index = 0; index < pattern.elements.length; index += 1) {
-    const element = pattern.elements[index];
-    if (t.isRestElement(element)) break;
-    if (element == null) continue;
-    const yielded = facts.yielded[index];
-    if (yielded === undefined) break;
-    const completion = patternCompletedSuspension(
-      element,
-      {
-        known: true,
-        ...(yielded.argument == null ? {} : { node: yielded.argument }),
-        ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
-      },
-      state,
-      completedSuspension,
-      0,
-      undefined,
-      undefined,
-      executionFrames,
-      !cleanup,
-    );
-    if (patternSuspended(completion)) firstWait ??= index;
-    if (patternStopped(completion)) {
-      blockedAt = index;
-      break;
+  // A yielded value is evaluated before its slot is bound. Inspect only slots
+  // completed before this read's resume: asking a later slot about an alias
+  // must not ask that alias to establish its own consumer timing. Recursive
+  // read-context queries therefore examine a strictly earlier yield prefix.
+  cache(true);
+  try {
+    for (
+      let index = completedCount;
+      index < Math.min(count, pattern.elements.length);
+      index += 1
+    ) {
+      const element = pattern.elements[index];
+      if (t.isRestElement(element)) break;
+      if (element == null) continue;
+      const yielded = facts.yielded[index];
+      if (yielded === undefined) break;
+      const completion = patternCompletedSuspension(
+        element,
+        {
+          known: true,
+          ...(yielded.argument == null ? {} : { node: yielded.argument }),
+          ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
+        },
+        state,
+        completedSuspension,
+        0,
+        undefined,
+        undefined,
+        executionFrames,
+        !cleanup,
+      );
+      if (patternSuspended(completion)) firstWait ??= index;
+      completedCount = index + 1;
+      if (patternStopped(completion)) {
+        blockedAt = index;
+        break;
+      }
+      // Later alias reads can reuse this settled prefix without rescanning it.
+      cache(true);
     }
+  } finally {
+    cache(false);
   }
-  cache(firstWait, blockedAt);
   return waited(firstWait, blockedAt);
 };
 

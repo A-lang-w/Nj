@@ -5,6 +5,66 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "dense alias defaults reuse settled prefixes",
+    'const u=undefined;(async()=>{const[x0=await 0,x1=await 0,x2=await 0,x3=await 0,x4=await 0,x5=await 0,x6=await 0,x7=await 0,x8=await 0,x9=await 0,x10=await 0,x11=await 0,x12=await 0,x13=await 0,x14=await 0,x15=await 0,x16=await 0,x17=await 0,x18=await 0,x19=await 0,x20=await 0,x21=await 0,x22=await 0,x23=await 0,x24=await 0,x25=await 0,x26=await 0,x27=await 0,x28=await 0,x29=await 0,x30=await 0,x31=await 0,x32=await 0,x33=await 0,x34=await 0,x35=await 0,x36=await 0,x37=await 0,x38=await 0,x39=await 0,x40=await 0,x41=await 0,x42=await 0,x43=await 0,x44=await 0,x45=await 0,x46=await 0,x47=await 0,x48=await 0,x49=await 0,x50=await 0,x51=await 0,x52=await 0,x53=await 0,x54=await 0,x55=await 0,x56=await 0,x57=await 0,x58=await 0,x59=await 0,x60=await 0,x61=await 0,x62=await 0,x63=await 0,x64=await 0,x65=await 0,x66=await 0,x67=await 0,x68=await 0,x69=await 0,x70=await 0,x71=await 0,x72=await 0,x73=await 0,x74=await 0,x75=await 0,x76=await 0,x77=await 0,x78=await 0,x79=await 0,x80=await 0,x81=await 0,x82=await 0,x83=await 0,x84=await 0,x85=await 0,x86=await 0,x87=await 0,x88=await 0,x89=await 0,x90=await 0,x91=await 0,x92=await 0,x93=await 0,x94=await 0,x95=await 0,x96=await 0,x97=await 0,x98=await 0,x99=await 0,x100=await 0,x101=await 0,x102=await 0,x103=await 0,x104=await 0,x105=await 0,x106=await 0,x107=await 0,x108=await 0,x109=await 0,x110=await 0,x111=await 0,x112=await 0,x113=await 0,x114=await 0,x115=await 0,x116=await 0,x117=await 0,x118=await 0,x119=await 0,x120=await 0,x121=await 0,x122=await 0,x123=await 0,x124=await 0,x125=await 0,x126=await 0,x127=await 0,last]=(function*(){yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;yield u;new Socket("wss://example.test/resume-dense");yield 1})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/resume-dense"],
+  ],
+  [
+    "second yield alias selects default",
+    'const u=undefined;(async()=>{const[a,b=await 0,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-default");yield 2})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/resume-default"],
+  ],
+  [
+    "later default cannot delay an earlier yield read",
+    'const u=undefined;(async()=>{try{const[a,b=await 0,c]=(function*(){yield 1;new Socket("wss://example.test/resume-earlier");yield u;yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "second alias without default stays eager",
+    'const u=undefined;(async()=>{try{const[a,b,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-eager");yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "second yield nullish binding blocks key wait",
+    'const u=undefined;(async()=>{try{const[a,{[await 0]:b},c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-blocked");yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "second yield failed binding enters eager cleanup",
+    'const u=null;(async()=>{try{const[a,{[await 0]:b},c]=(function*(){try{yield 1;yield u}finally{new Socket("wss://example.test/resume-cleanup")}})()}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "earlier required default survives later alias",
+    'const u=undefined;(async()=>{const[a=await 0,b=await 0,c]=(function*(){yield undefined;yield u;new Socket("wss://example.test/resume-prior");yield 2})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/resume-prior"],
+  ],
+  [
+    "producer local second yield alias",
+    '(async()=>{const[a,b=await 0,c]=(function*(){yield 1;const u=undefined;yield u;new Socket("wss://example.test/resume-local");yield 2})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/resume-local"],
+  ],
+  [
+    "second yield cannot read late alias",
+    '(async()=>{try{const[a,b=await 0,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-late");yield 2})()}catch{}const u=undefined})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "repeated aliases after multiple resumes",
+    'const u=undefined;const v=u;(async()=>{const[a,b=await 0,c=await 0,d]=(function*(){yield 1;yield u;yield v;new Socket("wss://example.test/resume-chain");yield 2})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/resume-chain"],
+  ],
+  [
+    "initialized second yield cleanup preserves endpoint",
+    'const Socket=globalThis.WebSocket;const u=null;(async()=>{try{const[a,{[await 0]:b},c]=(function*(){try{yield 1;yield u}finally{new Socket("wss://example.test/resume-initialized")}})()}catch{}})();',
+    ["wss://example.test/resume-initialized"],
+  ],
+  [
+    "second yield nonnull alias skips default",
+    'const u={};(async()=>{try{const[a,b=await 0,c]=(function*(){yield 1;yield u;new Socket("wss://example.test/resume-object");yield 2})()}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
     "later alias initialization cannot lend default wait",
     '(async()=>{try{const[value=await 0,next]=(function*(){try{yield u}finally{new Socket("wss://example.test/alias-late")}})()}catch{}const u=undefined;})();const Socket=globalThis.WebSocket;',
     [],
