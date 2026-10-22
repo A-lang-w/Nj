@@ -1,7 +1,7 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
-import { Cli, Filter, Formatter } from "incur";
+import { Filter, Formatter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
 import {
@@ -24,6 +24,10 @@ import {
   writeOutputText,
 } from "./jsonOutput.js";
 import type { CliInstance } from "./types.js";
+import {
+  visitRegisteredCommands,
+  type RegisteredCommand,
+} from "./visitRegisteredCommands.js";
 
 /** Result metadata supplied by the command that actually ran. */
 export interface CliResultOutputMetadata {
@@ -43,45 +47,21 @@ export interface CliResultOutput {
   recoverFormattingFailure(cause: unknown): Promise<boolean>;
 }
 
-type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
-type CommandDefinition = Extract<
-  CommandMap extends Map<string, infer Entry> ? Entry : never,
-  { run: unknown }
->;
-const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
-
 /** Install formatting once, after registration, for every ordinary CLI result. */
 export const streamCliCommandResults = (
   cli: CliInstance,
   output: CliResultOutput,
 ): void => {
-  const commands = registeredCommands.get(cli);
-  if (commands !== undefined) wrapCommands(commands, [], output);
-};
-
-const wrapCommands = (
-  commands: CommandMap,
-  parents: readonly string[],
-  output: CliResultOutput,
-  inheritedPolicy?: CommandDefinition["outputPolicy"],
-): void => {
-  for (const [name, entry] of commands) {
-    const path = [...parents, name];
-    if ("_group" in entry) {
-      const policy = entry.outputPolicy ?? inheritedPolicy;
-      wrapCommands(entry.commands, path, output, policy);
-      if (entry.root !== undefined)
-        wrapCommand(entry.root, path.join(" "), output, policy);
-    } else if (!("_alias" in entry) && !("_fetch" in entry))
-      wrapCommand(entry, path.join(" "), output, inheritedPolicy);
-  }
+  visitRegisteredCommands(cli, (command, path, inheritedPolicy) =>
+    wrapCommand(command, path, output, inheritedPolicy),
+  );
 };
 
 const wrapCommand = (
-  command: Pick<CommandDefinition, "run" | "outputPolicy">,
+  command: Pick<RegisteredCommand, "run">,
   name: string,
   output: CliResultOutput,
-  inheritedPolicy?: CommandDefinition["outputPolicy"],
+  inheritedPolicy?: "all" | "agent-only",
 ): void => {
   const run = command.run;
   command.run = (context) => {
@@ -105,9 +85,7 @@ const wrapCommand = (
         !(await output.write(value, {
           command: name,
           format: context.format,
-          renderOutput:
-            context.agent ||
-            (command.outputPolicy ?? inheritedPolicy) !== "agent-only",
+          renderOutput: context.agent || inheritedPolicy !== "agent-only",
           duration: `${Math.round(performance.now() - started)}ms`,
         }))
       )

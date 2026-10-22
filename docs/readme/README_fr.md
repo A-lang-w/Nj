@@ -146,9 +146,12 @@ REA nécessite Node.js 22.x (>=22.19), 24.x (>=24.11) ou 26+, ainsi que npm. Les
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Binaires natifs              | Pseudo-code, assembleur, chaînes, symboles, appels et références                                            | Hopper, Ghidra ou IDA ; [analyse native](../native-investigation.md)                                                              |
 | Structure ELF hors ligne     | Sections, segments, symboles et relocations d'origine, et protections statiques candidates                  | pwntools fourni par l'utilisateur sous Linux x64 ; [diagnostics binaires](../binary-diagnostics.md)                               |
+| PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
 | Artefact WASM                | Validation, sections, formes WAT exactes d'import/export et WAT décodé                                      | WABT 1.0.42 fourni par l'utilisateur ; `inspect_wasm_artifact`                                                                    |
 | Bytecode EVM                 | Sélecteurs de dispatch, offsets en octets, arguments inférés et mutabilité                                  | Fichier local brut ou hexadécimal sous Linux x64 ; [guide EVM hors ligne](../evm-bytecode.md)                                     |
 | Rust binaries                | Embedded cargo-auditable dependency list                                                                    | [Rust binaries](../rust-binaries.md)                                                                                              |
+| ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
+| Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
 | Crashs Linux enregistrés     | Notes brutes, registres et signaux de chaque thread enregistré, et correspondances de mappings facultatives | pwntools fourni par l'utilisateur sous Linux x64 ; GDB/pwndbg en option ; [crashs enregistrés](../recorded-crashes.md)            |
 | Installations de bureau      | Environnements candidats, fichiers justificatifs, composants et étapes suivantes                            | Inspection bornée des répertoires et en-têtes；[Applications de bureau](../desktop-applications.md)                               |
 | JavaScript / Electron        | Modules, imports, source maps, routes, IPC et relations avec les modules natifs                             | Node.js et npm ; [analyse d'applications](../javascript-application-workflows.md)                                                 |
@@ -269,6 +272,7 @@ Commencez par les [guides pas à pas](https://rea.tools/fr/guides/) du site web.
 
 - [Installation et configuration](../installation.md) : enregistrement des agents, configuration des fournisseurs, mises à jour et désinstallation.
 - [Vérification et dépannage](../installation.md#check-readiness-for-your-task) : diagnostiquer un agent ou un moteur d'analyse donné.
+- [CUDA / HIP](../gpu-code-objects.md)
 - [GGUF / safetensors](../model-artifacts.md)
 - [CLI et Evidence](../cli.md) : commandes, choix du fournisseur, snapshots, import/export et codes de sortie.
 - [Contrats MCP](../mcp-contracts.md) et [prompts pour agents](../mcp-prompts.md) : résultats des outils, sessions et investigations guidées.
