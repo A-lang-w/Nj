@@ -2207,6 +2207,70 @@ describe("volatile fields", () => {
   });
 });
 
+describe("entities an unmodelled write made", () => {
+  const IMPORT: TimedCaptureRow = [
+    "POST",
+    "/api/imports",
+    { queued: true },
+    202,
+    { source: "csv" },
+  ];
+  const RENAME: TimedCaptureRow = [
+    "PATCH",
+    "/api/books/1",
+    renamedBook(FIRST_BOOK, "Renamed Book", 3),
+    200,
+    { name: "Renamed Book" },
+  ];
+  const deletedAfterRead = (before: readonly TimedCaptureRow[]) => [
+    ...BOOK_INIT_ROWS,
+    ...before,
+    ["GET", "/api/books/3", THIRD_BOOK] as TimedCaptureRow,
+    ["DELETE", "/api/books/3", "", 204] as TimedCaptureRow,
+    ["GET", "/api/books/3", BOOK_NOT_FOUND, 404] as TimedCaptureRow,
+  ];
+
+  it("serves a delete of a book an unmodelled import made, which a later item read showed", () => {
+    // The rename ends the initial reads, so the third book is no initial one.
+    expect(
+      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
+    ).toMatchObject({ served: true, checked_record_ordinals: [7] });
+  });
+
+  it("takes a book the state never held only when a write the gate does not model came first", () => {
+    expect(
+      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
+    ).toMatchObject({ served: true, checked_record_ordinals: [7] });
+    // Only a modelled rename came first, so nothing explains the third book and the delete finds none.
+    expect(
+      gated(deletedAfterRead([RENAME]), "delete_books_by_id"),
+    ).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("takes back no book a modelled delete removed, so a list showing it again confirms no delete", () => {
+    expect(
+      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
+    ).toMatchObject({ served: true });
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["DELETE", "/api/books/3", "", 204],
+      IMPORT,
+      // The import put the deleted book back; the copy must not take it as one the import made.
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK]],
+    ];
+    expect(gated(rows, "delete_books_by_id")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+});
+
 describe("an unmodelled write under another collection spelling", () => {
   it("keeps a confirmed update when the write spells the held collection plainly", () => {
     const acme = (name: string, status: string) => ({

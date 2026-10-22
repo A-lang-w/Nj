@@ -256,6 +256,18 @@ unknown. Writes that changed it since its last check are checked only on the
 members they sent, less those the view treats as volatile, which show nothing
 of a write.
 
+A write no built plan models can also make an entity the copy never held, such
+as a row an import or a nested create added: a write of a tool with no create,
+update, delete or document plan, or a call of a tool whose plan was never built.
+A successful item read of an entity the copy has never held (no initial entity,
+and none a modelled write created, changed or removed) that names it by the
+type's identity, when such a write ran since that entity or its collection was
+last checked, shows that entity: the copy takes its recorded values instead of
+failing the read, and later writes to it are modelled and checked as usual. An
+entity a modelled write touched is never taken back this way, and a built plan's
+call that serving would not apply, such as a create outside its tied
+collection, keeps its evidence.
+
 **Reads.** A read is checked when the served environment would answer it
 from the state:
 
