@@ -257,6 +257,35 @@ export type HistoricalSourceManifest = z.infer<
   typeof historicalSourceManifestBaseSchema
 >;
 
+/** Whether source facts prevent an inventory from being claimed complete. */
+export const historicalSourceInventoryHasPartialFacts = (
+  input: Pick<
+    HistoricalSourceGraphInput,
+    | "entries"
+    | "relationships"
+    | "parse_failures"
+    | "exclusions"
+    | "limitations"
+  >,
+): boolean =>
+  input.limitations.length > 0 ||
+  input.exclusions.length > 0 ||
+  input.parse_failures.length > 0 ||
+  input.entries.some(
+    (entry) =>
+      entry.limitations.length > 0 ||
+      (entry.kind === "file" && entry.content_state !== "hashed") ||
+      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
+      (entry.kind === "symlink" && entry.target_state !== "internal") ||
+      entry.kind === "unknown",
+  ) ||
+  input.relationships.some(
+    ({ parse_state, resolution }) =>
+      parse_state !== "parsed" ||
+      resolution === "unresolved" ||
+      resolution === "unknown",
+  );
+
 /** Stable identity used to sort and deduplicate source parse failures. */
 export const historicalSourceParseFailureKey = (
   failure: HistoricalSourceGraphInput["parse_failures"][number],
@@ -268,8 +297,9 @@ export const historicalSourceExclusionKey = (
 ): string =>
   `${exclusion.path}\u0000${exclusion.reason}\u0000${"pattern" in exclusion ? exclusion.pattern : ""}\u0000${exclusion.reason === "project-ignored" ? (exclusion.policy_path ?? "") : ""}`;
 
-const relationshipKey = (
-  relationship: z.infer<typeof sourceRelationshipSchema>,
+/** Stable identity used to sort and deduplicate source relationships. */
+export const historicalSourceRelationshipKey = (
+  relationship: HistoricalSourceGraphInput["relationships"][number],
 ): string =>
   `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}`;
 
@@ -423,26 +453,9 @@ const checkCompleteInventory = (
   graph: GraphStructure,
   context: z.RefinementCtx,
 ): void => {
-  if (graph.inventory_state !== "complete") return;
-  const partialEntry = graph.entries.some(
-    (entry) =>
-      entry.limitations.length > 0 ||
-      (entry.kind === "file" && entry.content_state !== "hashed") ||
-      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
-      (entry.kind === "symlink" && entry.target_state !== "internal") ||
-      entry.kind === "unknown",
-  );
-  const partialRelationship = graph.relationships.some(
-    ({ parse_state, resolution }) =>
-      parse_state !== "parsed" ||
-      ["unresolved", "unknown"].includes(resolution),
-  );
   if (
-    !partialEntry &&
-    !partialRelationship &&
-    graph.parse_failures.length === 0 &&
-    graph.exclusions.length === 0 &&
-    graph.limitations.length === 0
+    graph.inventory_state !== "complete" ||
+    !historicalSourceInventoryHasPartialFacts(graph)
   )
     return;
   context.addIssue({
@@ -471,7 +484,7 @@ function checkGraphInvariants(
   checkSortedUnique(graph.languages, "languages", context);
   checkSortedUnique(graph.manifests, "manifests", context);
   checkSortedUnique(
-    graph.relationships.map(relationshipKey),
+    graph.relationships.map(historicalSourceRelationshipKey),
     "relationships",
     context,
   );

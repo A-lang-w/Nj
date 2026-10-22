@@ -338,6 +338,10 @@ describe("partial historical source graphs", () => {
     expect(createHistoricalSourceGraph(partial).inventory_state).toBe(
       "partial",
     );
+    expect(
+      createHistoricalSourceGraph({ ...partial, inventory_state: "unknown" })
+        .inventory_state,
+    ).toBe("unknown");
 
     for (const change of [
       { entries: partial.entries },

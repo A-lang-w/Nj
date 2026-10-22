@@ -234,11 +234,14 @@ The destination changes only when a complete export is atomically published.
 
 Clients that explicitly configure a larger receive buffer can set the REA
 server's `REA_MCP_MAX_RESPONSE_BYTES` environment variable to the same byte
-count. This setting must be a safe decimal integer at least 10485760; REA
-reserves 1024 bytes for the envelope. Raising it restores complete inline
-delivery for responses that fit that buffer and Node's single-string limit.
-It does not change the client's buffer, analysis coverage, or retained content.
-Ordinary responses keep their existing complete result contract.
+count. This setting must be a safe decimal integer at least 10485760 (10 MiB);
+REA reserves 1024 bytes for the envelope. The value is read when the REA
+process starts, so a change requires a restart and a matching client receive
+buffer. Raising it restores complete inline delivery for responses that fit
+that buffer. It does not raise REA's reserved single-string limit, which is
+1024 UTF-16 code units below Node's single-string ceiling, and it does not
+raise that Node ceiling. It does not change analysis coverage or retained
+content. Ordinary responses keep their existing complete result contract.
 
 ### Error recovery and deadline ownership
 
@@ -329,7 +332,7 @@ See [environment manifests](web-network-captures.md#environment-manifest).
 
 `inspect_analysis_view` also accepts `environment-state` for the same parents,
 extracting the initial state the recorded reads observed: entity types with an
-identity field, entities, documents for written non-entity paths, and a render
+identity field, entities, documents for non-entity reads, and a render
 plan per read tool that reproduces its recordings from the state or names why it
 cannot. Types and identity are inferences, so the Evidence is always inferred.
 See [environment state](web-network-captures.md#environment-state).
@@ -351,6 +354,35 @@ recorded property values and source locations; summaries include parent
 application and semantic coverage. The result carries a digest of the selected
 facts. Actual serialized size determines MCP transport admission: reduce the
 page size or export retained Evidence if the view is too large.
+
+`compare_source_to_bundle` accepts the committed historical graph inline or as
+`reference: {"kind":"file","path":"/absolute/reference.json"}`. The shared
+reader checks resource bounds and the graph's root commitment on every read. File-backed
+comparison Evidence records `parameters.reference_source`: the exact
+`requested_path` and the reader's absolute selected `path`, preserving POSIX
+`..`/symlink semantics. Normalized comparison facts and mapping identities agree
+with inline input; Evidence IDs distinguish caller-selected file origins.
+Omitting `view` preserves the complete comparison. For a compact initial reply,
+select `view: {"kind":"summary"}` or a `source-to-bundle` page; the session retains
+the complete comparison before delivery. Later calls use `inspect_analysis_view`
+with the returned `parent_evidence_id`.
+
+A `source-to-bundle` view selects `collection: "mappings"` or `"candidates"` with
+exact `source_paths`, `mapping_ids`, `statuses`, `fields`, `offset` and `limit`.
+Omitted filters select all; empty arrays select none. The default mapping fields
+include status, confidence, source digest/language and candidate/mapped counts.
+Candidate defaults include kind, score and confidence; request `signals` for exact
+supporting values. Mapping identity and `source_index` always remain; candidates
+also retain `current_node_id`, `candidate_index` and whether they were actually
+mapped. Indices refer to the complete comparison's item array and that item's
+candidate array. All classifications are computed before selection. The original
+`source_coverage` remains separate from page `coverage`; exhausting a page never
+turns unknown correspondence into absence or proves behavioral equivalence.
+
+The CLI accepts the same reference-file alternative (relative paths resolve from
+the working directory). Save its complete `--json` Evidence, then use
+`inspect-analysis-view` with an `evidence-file` source and the same view. Neither
+adapter executes the target or repeats analysis for retained queries.
 
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
@@ -821,7 +853,8 @@ operation headroom: 450 seconds with the default Ghidra allowance, or 2820
 seconds with `REA_GHIDRA_STARTUP_TIMEOUT_MS=2700000`. Positive caller-selected
 deadlines remain unchanged. Doctor reports an informational recommendation
 when a configured deadline is shorter than the known provider allowance. An
-explicit JEB upstream request budget also contributes to that allowance.
+explicit JEB upstream deadline (`REA_JEB_MCP_TIMEOUT_MS`, shared by catalog
+discovery and each tools/call) also contributes to that allowance.
 
 For an already connected client using the pinned SDK, request options are the
 **second** argument of `callTool`:
