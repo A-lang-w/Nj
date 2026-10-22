@@ -44,6 +44,7 @@ import {
   type ObservedEntity,
   type StateObservation,
 } from "./environmentStateMerge.js";
+import { rewriteCuts, type RewriteSpan } from "./environmentStateRewrites.js";
 import {
   checkItemPlan,
   checkListPlan,
@@ -104,6 +105,9 @@ export class EnvironmentStateExtraction {
   readonly #volatile = new Map<string, Set<string>>();
   /** Types with a value that changed across a recorded write, which may be that write's effect. */
   readonly #rewritten = new Set<string>();
+  /** The recordings either side of each such change, and per type the write its initial reads end at. */
+  #spans: RewriteSpan[] = [];
+  #cuts: ReadonlyMap<string, StateRecordFacts> = new Map();
   readonly #merged = new Map<string, StateEntity>();
   /** Merged entities by type and collection, built once on first use after merging. */
   #collections: Map<string, StateEntity[]> | undefined;
@@ -153,14 +157,8 @@ export class EnvironmentStateExtraction {
             this.#position.get(right.ordinal)!,
           (bytes) => this.#retain(bytes),
         );
-      const candidates = this.#candidates();
-      for (const candidate of candidates.filter((entry) => entry.item))
-        this.#planItem(candidate);
-      for (const candidate of candidates.filter((entry) => !entry.item))
-        this.#planList(candidate);
-      for (const plan of this.#plans) this.#observePlan(plan);
-      this.#classifyChanges();
-      this.#merge();
+      let candidates = this.#plan();
+      if (this.#cutRewrites()) candidates = this.#plan();
       const gate = this.#gateContext();
       for (const plan of this.#plans)
         if (this.#rewritten.has(plan.type))
@@ -175,6 +173,38 @@ export class EnvironmentStateExtraction {
       if (cause instanceof StateBudgetExhausted) return null;
       throw cause;
     }
+  }
+
+  /** Plan and observe every candidate, then merge the observed entities. */
+  #plan(): Candidate[] {
+    const candidates = this.#candidates();
+    for (const candidate of candidates.filter((entry) => entry.item))
+      this.#planItem(candidate);
+    for (const candidate of candidates.filter((entry) => !entry.item))
+      this.#planList(candidate);
+    for (const plan of this.#plans) this.#observePlan(plan);
+    this.#classifyChanges();
+    this.#merge();
+    return candidates;
+  }
+
+  /** End each rewritten type's initial reads at the earliest write its reads disagree across, and clear the plans to make them again. */
+  #cutRewrites(): boolean {
+    this.#cuts = rewriteCuts(
+      this.#spans.filter((span) => this.#rewritten.has(span.type)),
+      this.#writes,
+      this.#byOrdinal,
+    );
+    if (this.#cuts.size === 0) return false;
+    for (const map of [this.#initLimits, this.#identity, this.#views])
+      map.clear();
+    for (const map of [this.#entities, this.#volatile, this.#merged])
+      map.clear();
+    this.#rewritten.clear();
+    this.#plans.length = 0;
+    this.#spans = [];
+    this.#collections = undefined;
+    return true;
   }
 
   /** The write plans the capture's own timeline confirms against the extracted state. */
@@ -244,7 +274,7 @@ export class EnvironmentStateExtraction {
     if (this.#writeCutoffs === undefined) return undefined;
     if (this.#initLimits.has(template)) return this.#initLimits.get(template);
     const first = this.#writeCutoffs.first(rootOf(template, this.#bases));
-    const limit =
+    const bound =
       creationLimit(
         this.#creations(),
         {
@@ -256,6 +286,13 @@ export class EnvironmentStateExtraction {
         },
         first,
       ) ?? first;
+    const cut = this.#cuts.get(template);
+    const limit =
+      cut !== undefined &&
+      (bound === undefined ||
+        this.#position.get(cut.ordinal)! < this.#position.get(bound.ordinal)!)
+        ? cut
+        : bound;
     this.#retain(ENTRY_BYTES + textBytes(template.length));
     this.#initLimits.set(template, limit);
     return limit;
@@ -538,8 +575,18 @@ export class EnvironmentStateExtraction {
     for (const object of objects)
       if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
     if (previous.ids.size > 0) changed = true;
-    if (earlier !== undefined && changed && this.#writeWithin(earlier, record))
+    if (
+      earlier !== undefined &&
+      changed &&
+      this.#writeWithin(earlier, record)
+    ) {
       this.#rewritten.add(plan.type);
+      this.#spans.push({
+        type: plan.type,
+        earlier: earlier.ordinal,
+        later: record.ordinal,
+      });
+    }
     previous.ids.clear();
     for (const object of objects) previous.ids.add(scalarText(object[field])!);
     previous.record = record;
@@ -595,6 +642,7 @@ export class EnvironmentStateExtraction {
       (earlier, later) => this.#writeWithin(recordOf(earlier), recordOf(later)),
     );
     for (const type of changes.rewritten) this.#rewritten.add(type);
+    this.#spans.push(...changes.spans);
     for (const [type, names] of changes.volatile)
       this.#volatile.set(type, names);
   }

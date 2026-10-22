@@ -1295,6 +1295,59 @@ describe("calls the capture shows reading only", () => {
   });
 });
 
+describe("types whose reads disagree across a write", () => {
+  const recipe = (id: number, name: string, views: number) => ({
+    id,
+    name,
+    views,
+  });
+
+  it("plans a type its reads disagree on across an unrelated write from the reads before it, and serves its create", () => {
+    const state = stateOf([
+      ["GET", "/api/recipes", [recipe(1, "Soup", 1), recipe(2, "Stew", 4)]],
+      ["GET", "/api/recipes/1", recipe(1, "Soup", 1)],
+      // Logging a view bumps the counter, so the reads after it disagree with those before.
+      ["POST", "/api/view-log", { ok: true }, 200, { recipe: 1 }],
+      ["GET", "/api/recipes/1", recipe(1, "Soup", 2)],
+      ["POST", "/api/recipes", recipe(3, "Broth", 0), 201, { name: "Broth" }],
+      ["GET", "/api/recipes/3", recipe(3, "Broth", 0)],
+    ]);
+    expect(state.types).toMatchObject([
+      { collection_template: "/api/recipes", init_before_ordinal: 2 },
+    ]);
+    expect(planOf(state, "post_recipes")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("ends a type's state at the earlier of a write its reads disagree across and a create that made one of its entities", () => {
+    const rows = (disagreeFirst: boolean): TimedCaptureRow[] => {
+      const disagreement: TimedCaptureRow[] = [
+        ["POST", "/api/view-log", { ok: true }, 200, { recipe: 1 }],
+        ["GET", "/api/recipes/1", recipe(1, "Soup", 2)],
+      ];
+      const creation: TimedCaptureRow[] = [
+        ["POST", "/api/imports", { id: "rcp-0042" }, 201, { name: "Broth" }],
+        ["GET", "/api/recipes", [recipe(1, "Soup", 1), { id: "rcp-0042" }]],
+      ];
+      return [
+        ["GET", "/api/recipes", [recipe(1, "Soup", 1)]],
+        ["GET", "/api/recipes/1", recipe(1, "Soup", 1)],
+        ...(disagreeFirst
+          ? [...disagreement, ...creation]
+          : [...creation, ...disagreement]),
+      ];
+    };
+    expect(stateOf(rows(true)).types).toMatchObject([
+      { init_before_ordinal: 2 },
+    ]);
+    expect(stateOf(rows(false)).types).toMatchObject([
+      { init_before_ordinal: 2 },
+    ]);
+  });
+});
+
 describe("creates read under another path", () => {
   const note = (id: number, title: string) => ({ id, title });
   const A = note(1001, "Alpha");

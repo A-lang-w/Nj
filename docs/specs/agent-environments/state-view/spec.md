@@ -48,8 +48,9 @@ later increments.
   latest values win over list views', differing views keep their own values,
   and a value that changed between repeats of one request line with no recorded
   write is volatile and keeps the latest; a change across a write under another
-  root, including between two tools of the type, leaves every tool of the type
-  recorded. Compare list membership, including empty lists, and field presence before selecting each request line's latest recording; a change across a write also leaves the type recorded. Different query strings remain distinct; omitted fields do not erase their earlier observations on other request lines.
+  root, including between two tools of the type, ends the type's initial reads
+  at the earliest write within the change, and the state is extracted again
+  once; a type whose reads still disagree keeps every tool recorded. Compare list membership, including empty lists, and field presence before selecting each request line's latest recording; a change across a write ends the type's initial reads the same way. Different query strings remain distinct; omitted fields do not erase their earlier observations on other request lines.
 - An item or list view whose recordings always spell a clock field's instant
   otherwise than the entity's stored value (`Z` against `+00:00`, another
   separator or fraction width) names that spelling in `clock_formats`; a field
