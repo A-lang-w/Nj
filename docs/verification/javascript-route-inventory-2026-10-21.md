@@ -1,7 +1,7 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`f6ed21684c3c6c082ffb7909427cce10f31e5061`, tree `3cb6e8e519d451dc3d2c4c366e109a9c715b4b65`,
+`e189ae4de805e34f55d976ac4ee602fd053445f4`, tree `ac800a85558d797171f0291ba2b8ef07589187f0`,
 on main `18669641e98d49d06c9d1c3227167756db9a6c3b`. Current public interface, worker fixtures,
 SDK, Chromium and the complete fresh 67-worker corpus measurements use this
 runtime. Verification-only
@@ -9,7 +9,7 @@ commits change this report, not the runtime. Exact inputs, commands, profiles, h
 controls and meaningful failed attempts are retained in the
 [verification record](javascript-route-inventory-2026-10-21.json).
 
-Current qualification was recorded at `2026-10-22T00:37:50.149Z`.
+Current qualification was recorded at `2026-10-22T01:21:23.334Z`.
 The source capture and initial report date remain pinned to the original inputs.
 The main integration includes the independently verified [CI fixture fix #6186](https://github.com/morluto/rea/pull/6186).
 Route facts, inventory and views now use the same JavaScript coordinate owner as
@@ -31,10 +31,10 @@ conditional classifier replay are used for this qualification.
 | Supplied capture | Scripts |     Bytes | Completed jobs | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | -------------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
-| shadcn-ui        |      38 | 2,465,078 |             35 |                37 |              18 |
+| shadcn-ui        |      38 | 2,465,078 |             36 |                37 |              18 |
 
-At the current runtime, the complete 67-worker task took **259.122 s elapsed**,
-**377.308 CPU s** and **559,210,496 bytes** sampled
+At the current runtime, the complete 67-worker task took **210.724 s elapsed**,
+**313.019 CPU s** and **531,550,208 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -55,8 +55,8 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **13.518 s elapsed**,
-**16.440 CPU s** and **2,155,495,424 bytes** sampled
+cleanup succeeded. This task took **10.600 s elapsed**,
+**13.364 CPU s** and **2,186,285,056 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
 The earlier c86 worker corpus, 55 filename-classifier replay and 658 narrow
@@ -79,9 +79,9 @@ performed three historical view reads and exported complete Evidence.
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
 | Estimated tokens: used input declarations and all calls/replies |                          1,934,870 |                      58,840 |
 | Estimated tokens: entire catalog and all calls/replies          |                          3,027,876 |                   1,151,846 |
-| Elapsed seconds, including startup and cleanup                  |                             17.939 |                      15.445 |
-| CPU seconds, process family                                     |                             22.798 |                      19.485 |
-| Peak sampled process-family RSS bytes                           |                      1,659,056,128 |               1,349,070,848 |
+| Elapsed seconds, including startup and cleanup                  |                             14.597 |                      12.933 |
+| CPU seconds, process family                                     |                             18.843 |                      16.861 |
+| Peak sampled process-family RSS bytes                           |                      1,744,887,808 |               1,351,847,936 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -151,12 +151,36 @@ subject identity is rechecked before reuse, with no live-target-state cache.
 Cancellation preserves completed facts and earlier Evidence, including during
 inventory finalization, and owned worker cleanup/retry remains covered.
 
+## Projected data and registration patterns
+
+The shared navigation owner now follows a destructured initializer's lexical
+own literal fields. It no longer claims an entire registry when only its query
+property supplies navigation data. Renamed/nested fields use the same resolver
+and cached effective-field owner; unsupported rest, array or dynamic projections
+remain conservative. Independent sibling routes stay visible.
+
+Registration/path owners normalize wrappers and resolve stable field aliases
+before generic constants are admitted. This preserves optional pattern syntax
+such as `/users/:id?` without inventing `/users/:id`; a separate explicit URL
+navigation still keeps URL query semantics. Resolved literals retain initializer
+segment ranges. Ten regressions failed on the prior runtime (111 controls passed). Three
+additional callable-scope cases failed against the first fix. All 126 scanner
+tests now pass. Source ownership follows possible lexical identities while
+destination inference retains its per-use freshness checks. The explicit
+URL-navigation control already passed before the correction and remains covered.
+Full/compact historical SDK reads after source deletion and both browser adapters
+exercise independent-route retention, query exclusion and optional patterns.
+
 ## Executed checks and limits
 
-**572/572 source/owner regressions** and **97/97 compiled
+**588/588 source/owner regressions** and **97/97 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
+The 97 distinct public tests run as 14 suites together and the selected-path
+identity suite separately, retaining its original 30-second deadline. The first
+fix exposed query data in two retained-SDK checks and hit that deadline in the
+concurrent identity check; the failed attempt is preserved in JSON.
 The public suite exercises exported-Evidence reads after source deletion,
 large bounded facts, source selection, retention, cancellation, SDK recovery,
 source-to-bundle integration and every advertised tool schema.
