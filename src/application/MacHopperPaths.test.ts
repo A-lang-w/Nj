@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   localMacHopperRenamedLauncherCandidates,
   macHopperCanonicalLauncherCandidates,
   macHopperRenamedLauncherCandidates,
+  readMacHopperRenamedLauncherCandidates,
 } from "./MacHopperPaths.js";
 
 describe("macOS Hopper launcher paths", () => {
@@ -35,13 +36,21 @@ describe("macOS Hopper launcher paths", () => {
     ]);
   });
 
-  it("finds renamed user bundles through the runtime filesystem scan", async () => {
+  it("finds the same renamed user bundles through runtime and doctor scans", async () => {
     const temporary = await mkdtemp(join(tmpdir(), "rea-hopper-paths-"));
-    const appDirectory = join(temporary, "Applications", "Hopper Preview.app");
+    const applications = join(temporary, "Applications");
+    const appDirectory = join(applications, "Hopper Preview.app");
     try {
       await mkdir(appDirectory, { recursive: true });
-      expect([...localMacHopperRenamedLauncherCandidates(temporary)]).toContain(
+      await mkdir(join(applications, "Hopper Disassembler.app"));
+      await writeFile(join(applications, "Hopper File.app"), "");
+      const runtime = [...localMacHopperRenamedLauncherCandidates(temporary)];
+      expect(runtime).toContain(join(appDirectory, "Contents/MacOS/hopper"));
+      expect(runtime.filter((path) => path.startsWith(temporary))).toEqual([
         join(appDirectory, "Contents/MacOS/hopper"),
+      ]);
+      expect(await readMacHopperRenamedLauncherCandidates(temporary)).toEqual(
+        runtime,
       );
     } finally {
       await rm(temporary, { recursive: true, force: true });
