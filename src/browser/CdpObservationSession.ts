@@ -25,7 +25,7 @@ import {
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { mainFrameUrl } from "./CdpCaptureDocuments.js";
-import { cdpFrameIdentity } from "./CdpCaptureEventHelpers.js";
+import { cdpFrameId, cdpFrameIdentity } from "./CdpCaptureEventHelpers.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 interface ObservationContext {
@@ -467,7 +467,7 @@ class TimelineCapture {
     const otherType = resourceType !== undefined && resourceType !== "Document";
     // The frame is kept as observed and classified when the failure arrives,
     // after any root replacement has committed.
-    const frameId = cdpStringValue(params.frameId);
+    const frameId = cdpFrameId(params.frameId);
     const previous = this.#documentCandidates.get(requestId);
     if (previous === undefined) {
       if (otherType) return;

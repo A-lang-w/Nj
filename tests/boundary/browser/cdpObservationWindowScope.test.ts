@@ -788,6 +788,48 @@ it("keeps contradictory redirect ownership unknown after a later hop agrees agai
   );
 });
 
+it("treats an empty request frame ID as unknown ownership", async () => {
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "empty-frame-document",
+            timestamp: 21,
+            type: "Document",
+            frameId: "",
+            request: { url: `${origin}/empty-frame-document` },
+          },
+        },
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "empty-frame-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_CONNECTION_REFUSED",
+          },
+        },
+      ];
+    },
+  });
+
+  expect(
+    observation.timeline.filter((event) => event.type === "load_failed"),
+  ).toEqual([]);
+  expect(observation.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+    }),
+  );
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
