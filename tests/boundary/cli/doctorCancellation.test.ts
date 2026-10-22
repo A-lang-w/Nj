@@ -40,13 +40,11 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
     const executable =
       provider === "kuna" ? join(root, "kuna") : join(jdk, "bin", "java");
     const probeArgument = provider === "kuna" ? "--version" : "--list-modules";
-    const runIdField =
-      provider === "jadx" ? ",runId:process.env.REA_PROCESS_RUN_ID" : "";
     await writeFile(
       executable,
       `#!${process.execPath}
 if (!process.argv.slice(2).includes(${JSON.stringify(probeArgument)})) process.exit(7);
-require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid${runIdField}}));
+require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID}));
 process.on("SIGTERM", () => {});
 setInterval(() => { if (require("node:fs").existsSync(${JSON.stringify(release)})) process.exit(0); }, 25).unref();
 setTimeout(() => process.exit(99), 20000);
@@ -97,10 +95,10 @@ setTimeout(() => process.exit(99), 20000);
         )
         .toBe(true);
       const readyRecord: unknown = JSON.parse(await readFile(ready, "utf8"));
-      const observed: {
-        readonly pid: number;
-        readonly runId?: string | undefined;
-      } =
+      // JADX publishes a UUID. Kuna publishes an opaque
+      // `rea-kuna-version-<uuid>` token. Both are required: JSON.stringify
+      // drops an undefined REA_PROCESS_RUN_ID, and that omission must fail.
+      const observed =
         provider === "jadx"
           ? z
               .strictObject({
@@ -111,19 +109,14 @@ setTimeout(() => process.exit(99), 20000);
           : z
               .strictObject({
                 pid: z.number().int().positive(),
-                // The Kuna direct-exec probe can inherit a run ID, but it is
-                // not part of an owned process group.
-                runId: z.string().optional(),
+                runId: z.string().min(1),
               })
               .parse(readyRecord);
       if (provider === "jadx") {
-        if (observed.runId === undefined)
-          throw new Error("Missing JADX run token");
-        const runId = z.string().uuid().parse(observed.runId);
         ownership = {
           leaderPid: observed.pid,
           processGroupId: observed.pid,
-          runId,
+          runId: observed.runId,
         };
       }
       child.kill(signal);
@@ -140,8 +133,7 @@ setTimeout(() => process.exit(99), 20000);
           state: "empty",
         });
       } else {
-        // Kuna's version probe uses a joined direct execFile child, without a
-        // detached run-token group. Do not invent a group owner from its PID.
+        // Do not invent a group owner from the probe PID.
         expect(() => process.kill(observed.pid, 0)).toThrowError(
           expect.objectContaining({ code: "ESRCH" }),
         );

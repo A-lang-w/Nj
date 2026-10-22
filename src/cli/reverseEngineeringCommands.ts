@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
+  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -12,7 +13,10 @@ import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { err } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { OBJDUMP_ARTIFACT_OPERATIONS } from "../domain/reverseEngineering.js";
+import {
+  OBJDUMP_ARTIFACT_OPERATIONS,
+  reverseCommandTimeoutSchema,
+} from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -32,6 +36,7 @@ import {
 const executeWithCleanup = async (
   execute: () => Promise<Result<Evidence, AnalysisError>>,
   close: () => Promise<void>,
+  signal: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
   let result: Result<Evidence, AnalysisError>;
   try {
@@ -64,10 +69,25 @@ const executeWithCleanup = async (
   }
   if (!result.ok && hadIncompleteCleanup && !result.error.cleanupIncomplete) {
     const evidence = cleanupOnlyCompleteEvidence(result.error);
-    if (evidence !== undefined) return { ok: true, value: evidence };
+    if (evidence !== undefined)
+      return cancelledAfterCleanup({ ok: true, value: evidence }, signal);
   }
-  return result;
+  return cancelledAfterCleanup(result, signal);
 };
+
+/** Late cancellation observed during finalization keeps the completed Evidence as partial data. */
+const cancelledAfterCleanup = (
+  result: Result<Evidence, AnalysisError>,
+  signal: AbortSignal,
+): Result<Evidence, AnalysisError> =>
+  result.ok && signal.aborted
+    ? err(
+        new AnalysisCancelledError(result.value.operation, {
+          cause: signal.reason,
+          partialObservation: result.value,
+        }),
+      )
+    : result;
 
 const cleanupOnlyCompleteEvidence = (
   error: AnalysisError,
@@ -120,6 +140,7 @@ export const registerReverseEngineeringCommands = (
     retainedService = undefined;
   };
   const runWithService = async (
+    signal: AbortSignal,
     execute: (
       service: ReverseEngineeringService,
     ) => Promise<Result<Evidence, AnalysisError>>,
@@ -147,6 +168,7 @@ export const registerReverseEngineeringCommands = (
       return await executeWithCleanup(
         () => execute(service),
         () => closeRetained(service),
+        signal,
       );
     } finally {
       running = false;
@@ -178,6 +200,7 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
+      commandTimeoutMs: reverseCommandTimeoutSchema,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -191,7 +214,7 @@ export const registerReverseEngineeringCommands = (
           };
           const inputError = cliEvidenceDeliveryInputError(delivery);
           if (inputError !== undefined) return projectAnalysisError(inputError);
-          const result = await runWithService((service) =>
+          const result = await runWithService(signal, (service) =>
             service.inspectWithObjdump(
               {
                 ...args,
@@ -199,6 +222,9 @@ export const registerReverseEngineeringCommands = (
                 ...(options.symbol === undefined
                   ? {}
                   : { symbol: options.symbol }),
+                ...(options.commandTimeoutMs === undefined
+                  ? {}
+                  : { command_timeout_ms: options.commandTimeoutMs }),
               },
               { signal },
             ),
@@ -212,7 +238,10 @@ export const registerReverseEngineeringCommands = (
   cli.command(CLI_COMMANDS.listObjdumpArchitectures, {
     description: "List BFD targets advertised by the installed GNU objdump",
     args: z.object({}),
-    options: z.object(analysisEvidenceDeliveryOptions),
+    options: z.object({
+      ...analysisEvidenceDeliveryOptions,
+      commandTimeoutMs: reverseCommandTimeoutSchema,
+    }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(
@@ -229,9 +258,14 @@ export const registerReverseEngineeringCommands = (
             const inputError = cliEvidenceDeliveryInputError(delivery);
             if (inputError !== undefined)
               return projectAnalysisError(inputError);
-            const result = await runWithService((service) =>
+            const result = await runWithService(signal, (service) =>
               service.inspectWithObjdump(
-                { operation: "architectures" },
+                {
+                  operation: "architectures",
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
+                },
                 { signal },
               ),
             );
@@ -251,11 +285,22 @@ export const registerReverseEngineeringCommands = (
         .describe("Path to the local artifact to analyze."),
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      commandTimeoutMs: reverseCommandTimeoutSchema,
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await runWithService((service) =>
-            service.executeRizinCommand(args, { signal }),
+          const result = await runWithService(signal, (service) =>
+            service.executeRizinCommand(
+              {
+                ...args,
+                ...(options.commandTimeoutMs === undefined
+                  ? {}
+                  : { command_timeout_ms: options.commandTimeoutMs }),
+              },
+              { signal },
+            ),
           );
           return result.ok ? result.value : projectAnalysisError(result.error);
         }),
