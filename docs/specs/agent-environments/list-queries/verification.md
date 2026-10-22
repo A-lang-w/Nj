@@ -2,6 +2,22 @@
 
 ## Maintainer integration, 2026-10-22
 
+Review of `62a9adf6c` found one attributable retry-coverage defect: a successful
+insertion-order retry returned only a boolean, so confirmation and pending-write
+cleanup still used the failed query page's covered entities. Two deterministic
+guards failed (2 failures/82 passes): an unseen update was falsely confirmed,
+and a later actual item read could no longer confirm it. The retry now returns
+its successful `CheckOutcome`; guards, targets, exercised writes, interference,
+placement and cleanup use that result. No duplicate post-retry analysis is added.
+All 623 adjacent source tests, three 161-test stability runs, 8 compiled served
+workflow boundaries, pinned static/build/docs/9 README checks and native public
+pagination pass. Independent targeted Codex source review reports no definite
+remaining defect. Public sample: 20.19s wall/28.63s CPU/490.31MiB sampled family
+RSS, no observed descendants left. Earlier CI `39776472358` passed on `62a9adf6c`,
+but cannot replace CI for the subsequent correction. Live application-write
+fidelity remains unverified; the failed-candidate policy already in main is
+unchanged, not a newly qualified rollback guarantee.
+
 Representation cross-check found and reproduced one further stale counter on
 `1c9bb2e7`: canonical string total `"3"` remained `"3"` after removing an entity
 (one failure, 42 passes). Query-total interpretation now has one shared owner for

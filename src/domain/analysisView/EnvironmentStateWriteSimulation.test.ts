@@ -507,6 +507,38 @@ describe("checked lines", () => {
 });
 
 describe("insert rules", () => {
+  it.each([false, true])(
+    "uses the successful retry's page coverage, keeping an unseen update pending (later read: %s)",
+    (laterRead) => {
+      const beta = { id: 1, name: "Beta", note: "first" };
+      const zulu = { id: 2, name: "Zulu", note: "original" };
+      const patched = { ...zulu, note: "updated" };
+      const alpha = { id: 3, name: "Alpha", note: "created" };
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books?limit=5", [beta, zulu]],
+        ["GET", "/api/books?limit=1", [beta]],
+        ["GET", "/api/books/1", beta],
+        ["GET", "/api/books/2", zulu],
+        ["PATCH", "/api/books/2", patched, 200, { note: "updated" }],
+        ["POST", "/api/books", alpha, 201, { name: "Alpha", note: "created" }],
+        // The initial page includes Zulu. Retrying the create in name order
+        // replaces it with Alpha, so the passing page proves nothing of Zulu.
+        ["GET", "/api/books?limit=2", [alpha, beta]],
+      ];
+      if (laterRead) rows.push(["GET", "/api/books/2", patched]);
+      expect(gated(rows, "post_books")).toMatchObject({
+        served: true,
+        insert: { rule: "sorted", field: "name", direction: "ascending" },
+        checked_record_ordinals: [6],
+      });
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served: laterRead,
+        ...(laterRead ? {} : { reason: "unconfirmed" }),
+        checked_record_ordinals: laterRead ? [7] : [],
+      });
+    },
+  );
+
   it("still learns where a list places a create after an item read confirmed it", () => {
     const alpha = book(3, "Alpha", bookClock(3));
     const rows: TimedCaptureRow[] = [
