@@ -461,6 +461,135 @@ describe("attached IDA function observations", () => {
     ).toBe(false);
     await client.close();
   });
+});
+
+describe("attached IDA regex supervision", () => {
+  it.each(["search_procedures", "search_strings"] as const)(
+    "preserves Unicode case semantics and inventory order in %s",
+    async (operation) => {
+      const { producer, client } = await fixture();
+      const values = ["skip", "ÄPFEL", "äpfel"];
+      producer.overrideCall = (name) =>
+        name === "list_functions"
+          ? {
+              data: values.map((name, index) => ({
+                address: `0x${String(1000 + index)}`,
+                name,
+                size: "0x10",
+              })),
+              next_offset: null,
+            }
+          : name === "list_strings"
+            ? {
+                data: values.map((string, index) => ({
+                  address: `0x${String(3000 + index)}`,
+                  length: string.length,
+                  string,
+                })),
+                next_offset: null,
+              }
+            : undefined;
+      try {
+        for (const case_sensitive of [false, true]) {
+          const found = await client.execute(operation, {
+            pattern: "^ä",
+            mode: "regex",
+            case_sensitive,
+          });
+          expect(found.ok && found.value.result).toEqual(
+            values.flatMap((value, index) =>
+              index === 0 || (case_sensitive && index === 1)
+                ? []
+                : [
+                    {
+                      address: `0x${String((operation === "search_strings" ? 3000 : 1000) + index)}`,
+                      value,
+                    },
+                  ],
+            ),
+          );
+        }
+      } finally {
+        await client.close();
+      }
+    },
+  );
+  it.each(["search_procedures", "search_strings"] as const)(
+    "cancels CPU-bound %s matching and keeps the session usable",
+    async (operation) => {
+      const { producer, client } = await fixture();
+      const value = "a".repeat(26) + "!";
+      producer.overrideCall = (name) =>
+        name === "list_functions"
+          ? {
+              data: [{ address: "0x1000", name: value, size: "0x10" }],
+              next_offset: null,
+            }
+          : name === "list_strings"
+            ? {
+                data: [
+                  { address: "0x3000", length: value.length, string: value },
+                ],
+                next_offset: null,
+              }
+            : undefined;
+      await client.execute("health", {});
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 50);
+      try {
+        const result = await client.execute(
+          operation,
+          { pattern: "^(a+)+$", mode: "regex" },
+          { signal: controller.signal },
+        );
+        expect(result.ok).toBe(false);
+        if (!result.ok)
+          expect(result.error._tag).toBe("AnalysisCancelledError");
+        const recovered = await client.execute(operation, {
+          pattern: "!",
+          mode: "literal",
+        });
+        expect(recovered.ok && recovered.value.result).toHaveLength(1);
+      } finally {
+        clearTimeout(timer);
+        await client.close();
+      }
+    },
+    15_000,
+  );
+  it("bounds regex matching without caller cancellation and preserves subsequent searches", async () => {
+    const { producer, client } = await fixture();
+    const value = "a".repeat(40) + "!";
+    producer.overrideCall = (name) =>
+      name === "list_strings"
+        ? {
+            data: [{ address: "0x3000", length: value.length, string: value }],
+            next_offset: null,
+          }
+        : undefined;
+    try {
+      const result = await client.execute("search_strings", {
+        pattern: "^(a+)+$",
+        mode: "regex",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+      const recovered = await client.execute("search_strings", {
+        pattern: "!$",
+        mode: "regex",
+      });
+      expect(recovered.ok && recovered.value.result).toHaveLength(1);
+      expect(recovered.ok && recovered.value.limitations).toContain(
+        "Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a 5-second matching deadline; matching failure leaves the service available.",
+      );
+    } finally {
+      await client.close();
+    }
+  }, 15_000);
+});
+
+describe("attached IDA function failure handling", () => {
   it("rejects mismatched identities and target switches rather than returning a successful observation", async () => {
     const { producer, client, target } = await fixture();
     producer.inputSha256 = "a".repeat(64);
@@ -1005,6 +1134,100 @@ describe("headless IDA session ownership and cleanup", () => {
         input_path: producer.inputPath,
       }),
     );
+    expect(
+      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+    ).toBe(true);
+  });
+});
+
+describe("headless IDA blanked-identity inventory rows", () => {
+  it("releases cleanly when the closed worker lingers in inventory without an identity", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    let released = false;
+    producer.beforeCall = async (name) => {
+      if (name === "idb_close") released = true;
+    };
+    // A worker observed mid-teardown: identity cleared, private input retained.
+    producer.overrideCall = (name) =>
+      name === "idb_list" && released
+        ? {
+            sessions: [
+              {
+                session_id: "",
+                input_path: producer.inputPath,
+                owned: false,
+                backend: "worker",
+                is_active: false,
+              },
+            ],
+            count: 1,
+          }
+        : undefined;
+
+    expect((await client.close()).ok).toBe(true);
+    expect(await readdir(root)).toEqual(["target.elf"]);
+  });
+
+  it("still reports a same-input gui row whose identity is blank", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    let released = false;
+    producer.beforeCall = async (name) => {
+      if (name === "idb_close") released = true;
+    };
+    // A gui binding belongs to an IDA instance REA does not control, so the
+    // blanked-identity exception must not reach it.
+    producer.overrideCall = (name) =>
+      name === "idb_list" && released
+        ? {
+            sessions: [
+              {
+                session_id: "",
+                input_path: producer.inputPath,
+                owned: false,
+                backend: "gui",
+                is_active: false,
+              },
+            ],
+            count: 1,
+          }
+        : undefined;
+
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+    expect(
+      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+    ).toBe(true);
+  });
+
+  it("still reports a same-input peer that keeps a session identity", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    let released = false;
+    producer.beforeCall = async (name) => {
+      if (name === "idb_close") released = true;
+    };
+    producer.overrideCall = (name) =>
+      name === "idb_list" && released
+        ? {
+            sessions: [
+              {
+                session_id: "unrelated-live-peer",
+                input_path: producer.inputPath,
+                owned: false,
+                backend: "worker",
+                is_active: false,
+              },
+            ],
+            count: 1,
+          }
+        : undefined;
+
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
     expect(
       (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
     ).toBe(true);

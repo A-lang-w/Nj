@@ -1,3 +1,4 @@
+import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectPacketFieldsInput,
   packetFieldsCatalogSchema,
@@ -44,6 +45,10 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence } from "../domain/evidence.js";
+import {
+  fixedAllowanceOptions,
+  fixedProducerInputAllowance,
+} from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   type InspectPacketCaptureInput,
@@ -55,6 +60,15 @@ import {
   OwnedCommandFailure,
 } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import {
+  TSHARK_COMMAND_ENV,
+  assertWiresharkExecutableIdentity,
+  wiresharkExecutableIdentity,
+  locateWiresharkTool,
+  parseWiresharkVersion,
+  selectWiresharkTool,
+} from "../pcap/PcapConfiguration.js";
+import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_packet_capture";
 export const TSHARK_PROVIDER_IDENTITY = {
@@ -130,22 +144,29 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     let root: ArtifactAnalysisRuntime | undefined;
     let result: Result<AnalysisExecution, AnalysisError>;
     try {
-      if (options?.signal?.aborted) throw new AnalysisCancelledError(operation);
+      if (options?.signal?.aborted)
+        throw new AnalysisCancelledError(operation, {
+          cause: options.signal.reason,
+        });
       await this.#resources.release();
       if (this.platform !== "linux")
         throw new Error(
-          "Packet inspection requires Linux with util-linux prlimit and REA_TSHARK_COMMAND so expanded captures are processed under an enforced address-space limit.",
+          "Packet inspection requires Linux with util-linux prlimit and TShark 4.x (on PATH or through absolute REA_TSHARK_COMMAND) so expanded captures are processed under an enforced address-space limit.",
         );
-      const configured = this.environment.REA_TSHARK_COMMAND ?? "";
-      if (!isAbsolute(configured))
-        throw new Error("Supply absolute REA_TSHARK_COMMAND for TShark 4.x.");
+      const selection = selectWiresharkTool(this.environment, "tshark");
+      const configured = locateWiresharkTool(selection, this.environment);
+      if (configured === undefined)
+        throw new Error(
+          `TShark 4.x was not found on PATH; add it to PATH or set absolute ${TSHARK_COMMAND_ENV}.`,
+        );
       const command = await realpath(configured);
       await access(command, constants.X_OK);
-      const tool = await this.#resources.read(
+      const toolSnapshot = await this.#resources.read(
         command,
         64 * 1024 * 1024,
         options?.signal,
       );
+      const tool = wiresharkExecutableIdentity(toolSnapshot);
       const configuredLimiter =
         this.environment.REA_TSHARK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
@@ -215,13 +236,13 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             "Configured resource limiter changed during analysis.",
             { capturedOutput },
           );
-        if (current.sha256 !== tool.sha256)
-          throw new AnalysisArtifactChangedError(
-            operation,
-            command,
-            "Configured TShark executable changed during analysis.",
-            { capturedOutput },
-          );
+        assertWiresharkExecutableIdentity(
+          operation,
+          command,
+          tool,
+          wiresharkExecutableIdentity(current),
+          { capturedOutput },
+        );
         phase = previousPhase;
         resourcePath = "path" in input ? input.path : command;
         if (output.exitCode !== 0)
@@ -240,11 +261,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       };
       phase = "configuration";
       const version = await execute(["--version"]);
-      if (
-        !/^TShark \(Wireshark\) 4\.[0-9]+\.[0-9]+(?:[ .(\r\n]|$)/u.test(
-          version.stdout.text,
-        )
-      )
+      if (parseWiresharkVersion(version.stdout.text, "tshark") === null)
         throw new Error(
           "Expected TShark 4.x; inspect the selected installation.",
         );
@@ -252,6 +269,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         diagnostics,
         tool: {
           configured_path: configured,
+          selection_source: selection.source,
           path: command,
           sha256: tool.sha256,
           version_banner: version.stdout.text,
@@ -382,7 +400,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               "Packet limits count input packets before display filtering. Filtered results do not establish whole-capture or device traffic absence. Two-pass reassembly cannot recover bytes missing from the recording or beyond the read limit.",
               "Repeated field values remain ordered string arrays; raw packet bytes are included only when explicitly selected as a supported field. Export index/score metadata are omitted. All stderr, including warnings on exit zero, is retained.",
               "A private empty personal configuration is used. Installed libraries, global configuration and dissector plugins are trusted and not fully fingerprinted. File-only analysis and disabled name resolution do not constitute an OS sandbox.",
-              "Linux prlimit enforces soft and hard ceilings before execution, preserving stricter inherited limits: at most 1 GiB address space per process, 64 MiB per file, 30 CPU seconds and no core dumps. Effective limits are reported. Resident input is capped at 32 MiB, each command at 30 wall-clock seconds and combined output at 4 MiB. Output overflow fails. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted.",
+              "Linux prlimit enforces soft and hard ceilings before execution, preserving stricter inherited limits: at most 1 GiB address space per process, 64 MiB per file, 30 CPU seconds and no core dumps. Effective limits are reported. Resident input is capped at 32 MiB, each command at 30 wall-clock seconds and combined output at 4 MiB. Output overflow fails. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted. REA retains the tighter inherited limit. This release has no runtime override.",
             ],
           }),
         );
@@ -419,6 +437,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           limitations: execution.limitations,
         }),
       operation,
+      options?.signal,
     );
   }
   #failure(
@@ -442,16 +461,28 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
       return this.#resources.cleanupFailure(
-        cause.cleanup,
         cause,
+        (primary) =>
+          this.#failure(
+            primary,
+            phase,
+            path,
+            workspacePath,
+            effectiveLimits,
+            observedOutput,
+            operation,
+            limits,
+          ),
         observedOutput,
         operation,
       );
-    if (
-      (cause instanceof Error && cause.name === "AbortError") ||
-      (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    )
-      return new AnalysisCancelledError(operation, { cause });
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError(operation, {
+        cause: artifactFileCancellationCause(cause),
+        ...(observedOutput === undefined
+          ? {}
+          : { capturedOutput: observedOutput }),
+      });
     if (cause instanceof FieldDiscoveryBudgetError)
       return new AnalysisResourceConstraintError(
         operation,
@@ -463,6 +494,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
+          ...fixedAllowanceOptions(
+            "The packet-field discovery record allowance",
+            "capture",
+          ),
         },
       );
     const reason = cause instanceof Error ? cause.message : String(cause);
@@ -473,32 +508,13 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         effectiveLimits,
         operation,
       );
-    if (phase === "workspace") {
-      const code =
-        cause instanceof Error &&
-        "code" in cause &&
-        typeof cause.code === "string"
-          ? cause.code
-          : null;
-      if (code === "ENOSPC" || code === "EDQUOT" || code === "EFBIG")
-        return new AnalysisResourceConstraintError(
-          operation,
-          "file-size",
-          `Private analysis workspace failed (${code}): ${reason}`,
-          { workspace_path: workspacePath, system_code: code },
-          { cause },
-        );
-      return new ProviderAdapterError(TSHARK_PROVIDER_IDENTITY.id, operation, {
+    if (phase === "workspace")
+      return privateWorkspaceFailure(
+        TSHARK_PROVIDER_IDENTITY.id,
+        operation,
         cause,
-        userMessage: `Cannot prepare the private analysis workspace: ${reason}`,
-        diagnostics: {
-          stage: "workspace",
-          workspace_path: workspacePath,
-          system_code: code,
-          reason,
-        },
-      });
-    }
+        workspacePath,
+      );
     if (phase === "integrity") {
       const detail = {
         cause,
@@ -531,7 +547,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
-          userMessage: `${reason} On Linux, configure TShark 4.x through REA_TSHARK_COMMAND and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
+          userMessage: `${reason} On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
         },
       );
     if (
@@ -544,7 +560,13 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         "file-size",
         reason,
         { input_bytes: LIMITS.input_bytes },
-        { cause },
+        {
+          cause,
+          ...fixedProducerInputAllowance(
+            LIMITS.input_bytes,
+            "the fixed packet-capture input allowance",
+          ),
+        },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
       return new AnalysisArtifactChangedError(operation, path, reason, {

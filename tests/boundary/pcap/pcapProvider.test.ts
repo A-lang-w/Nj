@@ -26,6 +26,8 @@ const CAPINFOS_OUTPUT = [
   "Packet size limit:   file hdr: 262144 bytes",
   "Number of packets:   3",
   "Capture duration:    0.123 seconds",
+  "Earliest packet time: 1791728020.608505",
+  "Latest packet time:   1791728020.981978",
 ].join("\n");
 
 const TSHARK_JSON = JSON.stringify([
@@ -86,7 +88,7 @@ exit 0
     capinfos,
     `#!/bin/sh
 if [ "$1" = "--version" ]; then printf 'Capinfos (Wireshark) 4.6.6-stub\\n'; exit 0; fi
-[ "$1" = "-M" ] && [ "$2" = "--" ] && [ "$#" = "3" ] || exit 2
+[ "$1" = "-M" ] && [ "$2" = "-S" ] && [ "$3" = "--" ] && [ "$#" = "4" ] || exit 2
 if [ "${String(options.failCapinfos === true)}" = "true" ]; then
   printf 'capinfos: The file is not a capture file' >&2; exit 1
 fi
@@ -139,7 +141,7 @@ const captureFixture = async (root: string): Promise<string> => {
 };
 
 it("inspects both tools without reading a capture", async () => {
-  const { provider } = await providerWith();
+  const { provider, root } = await providerWith();
   const result = await evidenceResult(provider, {
     operation: "inspect_pcap_client",
     input: {},
@@ -147,9 +149,48 @@ it("inspects both tools without reading a capture", async () => {
   expect(result.client).toMatchObject({
     tshark_source: "environment",
     tshark_version: "TShark (Wireshark) 4.6.6-stub",
+    tshark_sha256: createHash("sha256")
+      .update(await readFile(join(root, "tshark")))
+      .digest("hex"),
+    tshark_identity_status: "verified",
     capinfos_source: "environment",
     capinfos_version: "Capinfos (Wireshark) 4.6.6-stub",
+    capinfos_sha256: createHash("sha256")
+      .update(await readFile(join(root, "capinfos")))
+      .digest("hex"),
+    capinfos_identity_status: "verified",
   });
+});
+
+it("rejects a selected TShark whose bytes change during its version probe", async () => {
+  const root = await createTestTempDirectory("rea-pcap-tool-identity-");
+  const { tshark, capinfos } = await writeStubTools(root);
+  await writeFile(
+    tshark,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'TShark (Wireshark) 4.6.6-stub\\n'
+  printf '\\n# changed during version probe\\n' >> "$0"
+  exit 0
+fi
+exit 2
+`,
+    { mode: 0o755 },
+  );
+  const provider = new PcapProvider({
+    environment: { REA_TSHARK_COMMAND: tshark, REA_CAPINFOS_COMMAND: capinfos },
+  });
+  onTestFinished(() => provider.close());
+  const result = await provider.execute({
+    operation: "inspect_pcap_client",
+    input: {},
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "artifact_changed",
+      details: { path: tshark },
+    });
 });
 
 it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
@@ -165,6 +206,8 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
     sha256: createHash("sha256").update("pcap-fixture-bytes").digest("hex"),
   });
   expect(result.file_type).toBe("Wireshark/tcpdump/... - pcap");
+  expect(result.capture_start).toBe("2026-10-11T14:13:40.608505Z");
+  expect(result.capture_end).toBe("2026-10-11T14:13:40.981978Z");
   expect(result.packet_count).toBe(3);
   expect(result.endpoints).toEqual(
     expect.arrayContaining([

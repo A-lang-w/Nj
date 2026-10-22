@@ -36,10 +36,12 @@ it.each([
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      message: expect.stringContaining("fixed V8 heap"),
+      message: expect.stringContaining(
+        "exhausted its 192 MiB V8 old-generation heap (source default)",
+      ),
       remediation: {
         action: expect.stringContaining(
-          "smaller capture exported by its producer",
+          "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 192 MiB (source default; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
         ),
       },
       details: {
@@ -52,8 +54,13 @@ it.each([
       },
     });
     expect(JSON.stringify(projected)).not.toContain("rea doctor");
+    expect(JSON.stringify(projected)).not.toContain("no runtime override");
     // Bun ignores the decoder's V8 heap flags, so no fixed heap is reported.
-    const heapLimits = { old_generation_heap_mib: 192, semi_space_heap_mib: 8 };
+    const heapLimits = {
+      old_generation_heap_mib: 192,
+      old_generation_heap_source: "default",
+      semi_space_heap_mib: 8,
+    };
     if (process.versions.bun === undefined)
       expect(projected).toMatchObject({
         details: { reported_limits: heapLimits },
@@ -286,3 +293,43 @@ it.each(["io", "unavailable"] as const)(
     });
   },
 );
+
+it("preserves the exact cancellation reason and an earlier reader failure", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const reason = { request: "caller cancellation" };
+  const controller = new AbortController();
+  controller.abort(reason);
+  const cancelledCommand = new OwnedCommandFailure(
+    "cancelled",
+    "Command cancelled",
+    null,
+    null,
+    { cancellation: { reason } },
+  );
+  expect(
+    historicalCaptureFailure(input, cancelledCommand, "decoder", {
+      signal: controller.signal,
+    }).cause,
+  ).toBe(reason);
+  const cancelledRead = new ArtifactReaderFailure(
+    "cancelled",
+    "Read cancelled",
+    { cancellation: { reason } },
+  );
+  expect(
+    historicalCaptureFailure(input, cancelledRead, "capture-read", {
+      signal: controller.signal,
+    }).cause,
+  ).toBe(reason);
+
+  const changed = historicalCaptureFailure(
+    input,
+    new ArtifactReaderFailure("integrity", "Observed changed capture"),
+    "capture-read",
+    { signal: controller.signal },
+  );
+  expect(changed._tag).toBe("AnalysisArtifactChangedError");
+});

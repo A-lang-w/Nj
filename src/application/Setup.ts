@@ -128,11 +128,15 @@ const runSetupWorkflow = async (
     options.installSkill === undefined;
   const interactiveSelection =
     confirm !== undefined && !options.structured && clientSelectionAllowed;
-  let selectedClientIds = options.allDetectedClients
-    ? discovery.detectedClientIds
-    : (options.clientIds ??
-      options.readinessScope?.clients ??
-      discovery.defaultClientIds);
+  const requestedClientIds =
+    options.clientIds ?? options.readinessScope?.clients;
+  let selectedClientIds = [
+    ...new Set(
+      options.allDetectedClients
+        ? [...(requestedClientIds ?? []), ...discovery.detectedClientIds]
+        : (requestedClientIds ?? discovery.defaultClientIds),
+    ),
+  ];
   let selectedSkillClientIds =
     options.skillClientIds ??
     options.readinessScope?.skillClients ??
@@ -580,7 +584,9 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
       ? ["hopper"]
       : []),
     ...(report.providerInspections ?? [])
-      .filter(({ available }) => available)
+      .filter(
+        ({ available, checks }) => available && checks.every(({ ok }) => ok),
+      )
       .map(({ id }) => id),
   ],
   ...(report.hopperPath === undefined ? {} : { hopperPath: report.hopperPath }),

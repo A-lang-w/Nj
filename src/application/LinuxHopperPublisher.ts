@@ -7,12 +7,23 @@ import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
 } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactReaderFailure,
+  artifactPrimaryCleanupLeases,
+} from "../artifacts/ArtifactReader.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { hashStableFile } from "../filesystem/StableFileHash.js";
+import {
+  hashStableFile,
+  StableFileHashFailure,
+} from "../filesystem/StableFileHash.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import {
+  RegularFileCleanupFailure,
+  RegularFileCancelled,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { verifyDetachedPgpSignature } from "../process/DetachedPgpSignature.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
@@ -36,10 +47,7 @@ import {
   type LinuxHopperRelease,
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
-import {
-  RegularFileCleanupFailure as RegularFileReadCleanupFailure,
-  withRegularFile,
-} from "./RegularFileRead.js";
+import { withRegularFile } from "./RegularFileRead.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
@@ -705,8 +713,17 @@ export class LinuxHopperPublisher {
           },
         );
       }
-      if (hashFailure.outcome.kind === "failed")
-        throw hashFailure.outcome.cause;
+      if (hashFailure.outcome.kind === "failed") {
+        if (regularFileCancellation(hashFailure) !== undefined)
+          throw hashFailure.outcome.cause;
+        throw new StableFileHashFailure(path, hashFailure.outcome.cause);
+      }
+      const cancellation = regularFileCancellation(hashFailure);
+      if (cancellation !== undefined)
+        throw new RegularFileCancelled(path, hashFailure.owner, {
+          outcome: hashFailure.outcome,
+          reason: cancellation.reason,
+        });
       return hashFailure.outcome.value;
     }
   }
@@ -906,7 +923,9 @@ export class LinuxHopperPublisher {
             "integrity",
             "Retained Hopper evidence exceeds its resource byte budget.",
           );
-        const bytes = await readBoundedFileBytes(handle, stats.size, signal);
+        const bytes = await readBoundedFileBytes(handle, stats.size, {
+          signal,
+        });
         if (bytes === undefined)
           throw new HopperReleaseError(
             "integrity",
@@ -918,7 +937,7 @@ export class LinuxHopperPublisher {
     ).catch((cause: unknown) => {
       if (
         resources === this.#resources &&
-        cause instanceof RegularFileReadCleanupFailure
+        cause instanceof RegularFileCleanupFailure
       )
         pendingCleanup.add(resources);
       throw cause;
@@ -1045,12 +1064,17 @@ export class LinuxHopperPublisher {
 export const retryLinuxHopperPublisherCleanup = async (): Promise<void> => {
   const causes: unknown[] = [];
   const observations = [];
+  const cleanupLeases = new Set<AnalysisCleanupLease>();
+  let cleanupLeaseAuthorityKnown = true;
   for (const scope of pendingCleanup) {
     try {
       await scope.close();
       pendingCleanup.delete(scope);
     } catch (cause: unknown) {
       causes.push(cause);
+      const leases = artifactPrimaryCleanupLeases(cause);
+      if (leases === undefined) cleanupLeaseAuthorityKnown = false;
+      else for (const lease of leases) cleanupLeases.add(lease);
       observations.push(
         ArtifactReaderFailure.cleanupObservation(
           cause,
@@ -1072,6 +1096,9 @@ export const retryLinuxHopperPublisherCleanup = async (): Promise<void> => {
       {
         cause: new AggregateError(causes, "Hopper publisher cleanup failures"),
         cleanup,
+        cleanupLeases: cleanupLeaseAuthorityKnown
+          ? [...cleanupLeases]
+          : undefined,
       },
     );
   }
@@ -1084,21 +1111,26 @@ const releaseFailure = (
   signal: AbortSignal | undefined,
   fallback: HopperReleaseError["reason"],
 ): HopperReleaseError => {
-  if (cause instanceof HopperReleaseError && cause.reason === "cleanup_failed")
-    return cause;
+  if (cause instanceof HopperReleaseError) return cause;
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
     return new HopperReleaseError(
       "cleanup_failed",
       "Hopper publisher cleanup remains incomplete.",
       { cause },
     );
-  if (signal?.aborted === true)
+  const cancellation = regularFileCancellation(cause);
+  if (cancellation !== undefined)
+    return new HopperReleaseError(
+      "cancelled",
+      "Hopper publisher verification was cancelled.",
+      { cause: cancellation.reason },
+    );
+  if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
     return new HopperReleaseError(
       "cancelled",
       "Hopper publisher verification was cancelled.",
       { cause },
     );
-  if (cause instanceof HopperReleaseError) return cause;
   return new HopperReleaseError(
     fallback,
     "Hopper publisher verification could not complete.",

@@ -23,8 +23,14 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { hashStableFile } from "../filesystem/StableFileHash.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import {
+  hashStableFile,
+  stableFileHashCause,
+} from "../filesystem/StableFileHash.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import {
@@ -81,7 +87,7 @@ export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
 
 const fileSchema = z.strictObject({
   path: z.string().min(1),
-  bytes: z.number().int().nonnegative(),
+  bytes: z.int().nonnegative(),
   sha256: z.string().regex(SHA256_PATTERN),
 });
 
@@ -92,7 +98,7 @@ const manifestSchema = z.strictObject({
     target_sha256: z.string().regex(SHA256_PATTERN),
     kuna_sha256: z.string().regex(SHA256_PATTERN),
     kuna_version: z.string().min(1),
-    jobs: z.number().int().positive(),
+    jobs: z.int().positive(),
   }),
   files: z.strictObject({
     c: fileSchema,
@@ -102,8 +108,8 @@ const manifestSchema = z.strictObject({
     inventory: fileSchema,
   }),
   summary: z.strictObject({
-    decompiled: z.number().int().nonnegative(),
-    failed: z.number().int().nonnegative(),
+    decompiled: z.int().nonnegative(),
+    failed: z.int().nonnegative(),
   }),
   created_at: z.string().datetime(),
 });
@@ -350,8 +356,8 @@ export class KunaProjectCache {
             kunaExportFailure(cause, signal),
             cause,
           );
-        signal?.throwIfAborted();
-        if (!isDamaged(cause)) throw cause;
+        if (regularFileCancellation(cause) !== undefined) throw cause;
+        if (!isDamaged(stableFileHashCause(cause))) throw cause;
         await this.#discard(key);
         return undefined;
       }
@@ -1048,7 +1054,7 @@ export class KunaProjectCache {
       key,
       staging,
       resource,
-      lease: new AnalysisCleanupLease(async () => owner.close()),
+      lease: new AnalysisCleanupLease(async () => owner.close(), [resource]),
     };
     this.#hashRecords.set(owner, retained);
     this.#retainedHashFiles.set(owner, retained);

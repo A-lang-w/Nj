@@ -1,8 +1,13 @@
+import { freezeJsonSnapshot } from "./immutableJson.js";
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { createArtifactInspection } from "./artifactInspection.js";
-import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
+import {
+  parseArtifactInventoryEvidence,
+  parseArtifactInspectionInventoryResult,
+} from "./artifactInventoryEvidence.js";
 import { createEvidence } from "./evidence.js";
 import { jsonValueSchema } from "./jsonValue.js";
 
@@ -73,3 +78,37 @@ it("rejects a substep evidence ID that disagrees with its authenticated nested E
     "Artifact inspection substep evidence ID does not match nested Evidence",
   );
 });
+
+it("retains the authenticated parent's nested facts without a second inventory copy", () => {
+  const owned = freezeJsonSnapshot(createArtifactInspection(inventoryEvidence));
+  const parsed = parseArtifactInspectionInventoryResult(owned, target);
+  expect(parsed.inspection).toBe(owned);
+  expect(parsed.inventory.nodes[0]).toBe(
+    owned.substeps[0]!.evidence.normalized_result.nodes[0],
+  );
+});
+
+it.each([0, 1])(
+  "locates a stale nested Evidence ID at substep %i and retains its cause",
+  (index) => {
+    const input = structuredClone(inspection);
+    input.substeps.push(structuredClone(input.substeps[0]!));
+    input.coverage.substeps_completed = input.substeps.length;
+    expect(
+      parseArtifactInspectionInventoryResult(input, target).inventory.complete,
+    ).toBe(true);
+    input.substeps[index]!.evidence.evidence_id = `ev_${"f".repeat(64)}`;
+    expect(() =>
+      parseArtifactInspectionInventoryResult(input, target),
+    ).toThrowError(
+      expect.objectContaining({
+        issues: [
+          expect.objectContaining({
+            path: ["substeps", index, "evidence", "evidence_id"],
+          }),
+        ],
+        cause: expect.any(z.ZodError),
+      }),
+    );
+  },
+);
