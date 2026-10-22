@@ -1,6 +1,10 @@
+import {
+  projectAnalysisView,
+  analysisViewRequestSchema,
+} from "./analysisView/analysisView.js";
 import { describe, expect, it } from "vitest";
+import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
-import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { analyzeJavaScriptStaticSource } from "./javascript/javascriptStaticAnalysis.js";
 import {
   analyzeCapturedWebBundle,
@@ -8,7 +12,7 @@ import {
 } from "./webBundleAnalyzer.js";
 import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
-import { isIncludedScript } from "./webBundleAnalyzerInspection.js";
+import { isIncludedScript } from "./webBundleAnalyzerState.js";
 import { webBundleScriptAnalysisSchema } from "./webBundleScriptAnalysis.js";
 import { createWebTextArtifact } from "./webContentArtifact.js";
 
@@ -1096,6 +1100,17 @@ describe("web bundle configuration and navigation parity", () => {
 });
 
 describe("web bundle artifact metadata", () => {
+  it("retains only a validated HTTP target origin", () => {
+    expect(
+      analyzeCapturedWebBundle(inspection("export {};")).capture.target_origin,
+    ).toBe(origin);
+
+    const nonHttp = inspection("export {};");
+    nonHttp.target.url = "ftp://host/app";
+    nonHttp.target.origin = "ftp://host";
+    expect(analyzeCapturedWebBundle(nonHttp).capture.target_origin).toBeNull();
+  });
+
   it("preserves long provider media types in artifact summaries", () => {
     const result = analyzeCapturedWebBundle(inspection("export {};"));
     const mediaType = `application/${"x".repeat(300)}`;
@@ -1146,112 +1161,15 @@ describe("deep captured web bundle syntax", () => {
 });
 
 const inspection = (source: string) =>
-  webPageInspectionSchema.parse({
-    browser: {
-      product: "Fake Chrome",
-      protocol_version: "1.3",
-      revision: "1",
-      user_agent: "fake",
-      js_version: "1",
-    },
-    target: {
-      target_id: "page-1",
-      type: "page",
-      title: "App",
-      url: `${origin}/app`,
+  createWebPageInspection([
+    {
+      source,
+      scriptKey: `scr_${"1".repeat(64)}`,
+      url: `${origin}/assets/app.js`,
       origin,
-      attached: false,
+      cdpHash: "hash",
     },
-    capture_window: {
-      started_at: "2026-07-14T00:00:00.000Z",
-      ended_at: "2026-07-14T00:00:01.000Z",
-      observation_ms: 1_000,
-    },
-    completeness: {
-      status: "attach_limited",
-      conditions: ["attach_limited"],
-      policy_filtered_sections: [],
-      attach_limited_sections: ["network_requests"],
-      truncated_sections: [],
-      unavailable_sections: [],
-      excluded: [],
-      dropped_events: {
-        scripts: 0,
-        network_requests: 0,
-        console_events: 0,
-        websocket_connections: 0,
-        websocket_frames: 0,
-        webmcp_tools: 0,
-        timeline_events: 0,
-        total: 0,
-      },
-    },
-    frames: [],
-    dom: { total_nodes: 0, nodes: [] },
-    accessibility: {
-      total_nodes: 0,
-      text_capture: {
-        status: "not_approved",
-        retained_bytes: 0,
-        excluded_fields: 0,
-      },
-      nodes: [],
-    },
-    scripts: {
-      total: 1,
-      items: [
-        {
-          script_key: `scr_${"1".repeat(64)}`,
-          url: `${origin}/assets/app.js`,
-          origin,
-          cdp_hash: "hash",
-          length: Buffer.byteLength(source),
-          is_module: true,
-          language: "JavaScript",
-          source_map_url: null,
-          resource_reconciliation: {
-            status: "unmatched",
-            reason: "no_exact_sanitized_url",
-          },
-          source: {
-            included: true,
-            artifact: createWebTextArtifact(source, "text/javascript"),
-          },
-        },
-      ],
-    },
-    resources: [],
-    network: {
-      requests: [],
-      websocket_connections: [],
-      coverage_started_at: "2026-07-14T00:00:00.000Z",
-      prior_activity_available: false,
-    },
-    console: {
-      events: [],
-      coverage_started_at: "2026-07-14T00:00:00.000Z",
-      prior_activity_available: false,
-    },
-    workers: [],
-    metadata: {
-      responses: [],
-      dom_urls: [],
-      agent_hints: [],
-      excluded_dom_urls: 0,
-      headers_allowlisted: true,
-    },
-    storage: {
-      origin,
-      usage_bytes: null,
-      quota_bytes: null,
-      local_storage_keys: [],
-      session_storage_keys: [],
-      indexed_db_names: [],
-      cache_names: [],
-      values_redacted: true,
-    },
-    limitations: [],
-  });
+  ]);
 
 describe("per-script web bundle analysis", () => {
   it("keeps parser failures as analyzed outcomes with their own coverage", () => {
@@ -2078,4 +1996,54 @@ it("retains distinct WebMCP descriptions and names while deduplicating equivalen
       ({ trust }) => trust === "page-declared-untrusted",
     ),
   ).toBe(true);
+});
+
+it("keeps known capture omissions in compact route summaries and queryable gap facts", () => {
+  const captured = inspection("createBrowserRouter([{path:'/reports'}]);");
+  captured.completeness.excluded.push(
+    { section: "scripts", reason: "resource_budget_exhausted", count: 3 },
+    {
+      section: "script_sources",
+      reason: "resource_budget_exhausted",
+      count: null,
+    },
+  );
+  const report = analyzeCapturedWebBundle(captured),
+    parent = {
+      evidenceId: `ev_${"a".repeat(64)}`,
+      operation: "analyze_web_bundle",
+      normalizedResult: report,
+      limitations: report.limitations,
+      subject: null,
+    };
+  const summary = projectAnalysisView(
+    parent,
+    analysisViewRequestSchema.parse({
+      kind: "javascript-routes",
+      collection: "summary",
+    }),
+  );
+  if (!summary.ok) throw summary.error;
+  if (summary.value.kind !== "javascript-routes") throw new Error("Wrong view");
+  expect(summary.value.source_coverage.candidate_enumeration).toBe("partial");
+  expect(summary.value.summary!.reported_capture_omissions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ unit: "script-records", count: 3 }),
+      expect.objectContaining({ unit: "script-sources", count: null }),
+    ]),
+  );
+  const gaps = projectAnalysisView(
+    parent,
+    analysisViewRequestSchema.parse({
+      kind: "javascript-routes",
+      collection: "unknowns",
+      where: { kinds: ["capture-omission"] },
+      fields: ["capture_omission", "reason"],
+    }),
+  );
+  if (!gaps.ok) throw gaps.error;
+  if (gaps.value.kind !== "javascript-routes") throw new Error("Wrong view");
+  expect(gaps.value.items).toHaveLength(2);
+  for (const row of gaps.value.items)
+    expect(row).toMatchObject({ source_id: null, provenance: null });
 });

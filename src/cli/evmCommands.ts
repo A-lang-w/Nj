@@ -8,6 +8,7 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { inspectEvmInterfaceInputSchema } from "../domain/evm/evmInterface.js";
 
 /** Resolve operator paths and preserve explicit encoding through the shared workflow. */
 export const registerEvmCommands = (
@@ -37,6 +38,7 @@ export const registerEvmCommands = (
         .enum(["creation", "deployed"])
         .optional()
         .describe("Selected compiler bytecode object"),
+      timeoutMs: inspectEvmInterfaceInputSchema.shape.timeout_ms,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -71,6 +73,9 @@ export const registerEvmCommands = (
                           bytecode_kind: options["bytecode-kind"],
                         }
                       : args.encoding,
+                  ...(options.timeoutMs === undefined
+                    ? {}
+                    : { timeout_ms: options.timeoutMs }),
                 },
                 { signal },
               );

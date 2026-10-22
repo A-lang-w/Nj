@@ -188,7 +188,9 @@ it.each(
           },
         ],
       });
-      if (related) expect(evidenceOwner.candidates).toHaveLength(1);
+      if (lifetime === "replaced-live")
+        expect(evidenceOwner.candidates).toHaveLength(0);
+      else if (related) expect(evidenceOwner.candidates).toHaveLength(1);
     }
     expect(signalGroup).not.toHaveBeenCalled();
   },

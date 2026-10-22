@@ -23,6 +23,7 @@ import {
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
+import { z } from "zod";
 import {
   artifactInspectionResultSchema,
   type ArtifactInspectionResult,
@@ -124,7 +125,21 @@ const parseInspectionInventoryPayload = (
     );
     const sourceEvidence =
       immutableJsonSnapshotMember(sealedStep, "evidence") ?? step.evidence;
-    const parsedEvidence = parseEvidence(sourceEvidence);
+    let parsedEvidence: Evidence;
+    try {
+      parsedEvidence = parseEvidence(sourceEvidence);
+    } catch (cause: unknown) {
+      if (!(cause instanceof z.ZodError)) throw cause;
+      throw Object.assign(
+        new z.ZodError(
+          cause.issues.map((issue) => ({
+            ...issue,
+            path: ["substeps", index, "evidence", ...issue.path],
+          })),
+        ),
+        { cause },
+      );
+    }
     const evidence = canBorrowParsedJsonSnapshot(sourceEvidence, parsedEvidence)
       ? sourceEvidence
       : parsedEvidence;
@@ -348,19 +363,20 @@ const orderOccurrences = (
     .flatMap(([path, group]) => {
       if (group.length < 2) return group;
       const ordinalById = new Map<string, number>();
-      const first = group[0];
-      if (first === undefined)
-        throw new TypeError("Duplicate occurrence group is empty");
+      const kinds = new Set(group.map(({ entry_kind }) => entry_kind));
       for (let ordinal = 0; ordinal < group.length; ordinal++) {
-        ordinalById.set(
-          occurrenceIdForLocation({
-            rootArtifactId,
-            logicalPath: path,
-            entryKind: first.entry_kind,
-            ...(ordinal === 0 ? {} : { duplicateOrdinal: ordinal }),
-          }),
-          ordinal,
-        );
+        // Entry kinds come from a fixed schema enum, so work stays linear in
+        // the group size without changing or guessing producer identities.
+        for (const entryKind of kinds)
+          ordinalById.set(
+            occurrenceIdForLocation({
+              rootArtifactId,
+              logicalPath: path,
+              entryKind,
+              ...(ordinal === 0 ? {} : { duplicateOrdinal: ordinal }),
+            }),
+            ordinal,
+          );
       }
       return group.sort(
         (left, right) =>

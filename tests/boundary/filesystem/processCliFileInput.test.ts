@@ -4,13 +4,14 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
+  PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
 } from "../../../src/application/process/ProcessCli.js";
 import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { err } from "../../../src/domain/result.js";
@@ -18,6 +19,8 @@ import * as jsonFiles from "../../../src/application/JsonFiles.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
+import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
+import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
 
 describe("process CLI error projection", () => {
   it.each([
@@ -51,6 +54,7 @@ describe("process CLI error projection", () => {
           retryable: false,
           message:
             "Process command could not complete: SECRET internal failure /private/path",
+          remediation: { action: PROCESS_UNEXPECTED_FAILURE_REMEDIATION },
           details: {
             operation,
             provider_id: PROCESS_PROVIDER.id,
@@ -58,6 +62,10 @@ describe("process CLI error projection", () => {
           },
         });
         expect(JSON.stringify(projected)).not.toContain("stack");
+        expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toContain("SECRET");
+        expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toMatch(
+          /\bretry\b/iu,
+        );
       } finally {
         read.mockRestore();
       }
@@ -170,6 +178,79 @@ describe("process CLI file cancellation", () => {
       }
     },
   );
+});
+
+it.each(
+  [
+    {
+      label: "EIO",
+      physical: Object.assign(new Error("physical descriptor failure"), {
+        code: "EIO",
+      }),
+    },
+    { label: "null", physical: null },
+    { label: "undefined", physical: undefined },
+  ].flatMap((failure) => [
+    { ...failure, reader: "native" as const },
+    { ...failure, reader: "streamed" as const },
+  ]),
+)(
+  "preserves a $reader descriptor $label when cancellation arrives after the read fails",
+  async ({ physical, reader }) => {
+    const root = await createTestTempDirectory("rea-process-cli-late-io-");
+    const path = join(root, "scenario.json");
+    const input = JSON.stringify({
+      executable: process.execPath,
+      arguments: [],
+    });
+    await writeFile(path, reader === "streamed" ? stream(input) : input);
+    const controller = new AbortController();
+    await failFileReadAfterAbort(
+      path,
+      controller,
+      new Error("later caller cancellation"),
+      physical,
+    );
+    try {
+      expect(
+        await captureProcessScenarioFile(path, process.env, controller.signal),
+      ).toMatchObject({
+        code: "execution_failure",
+        category: "execution_failure",
+        retryable: false,
+        details: { operation: "read", reason: "io", path },
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it("keeps a physical read primary when its cause is also the abort reason", async () => {
+  const root = await createTestTempDirectory(
+    "rea-process-cli-identical-abort-",
+  );
+  const path = join(root, "scenario.json");
+  await writeFile(
+    path,
+    JSON.stringify({ executable: process.execPath, arguments: [] }),
+  );
+  const controller = new AbortController();
+  const physical = new JsonInputPhysicalReadFailure(
+    Object.assign(new Error("descriptor EIO"), { code: "EIO" }),
+  );
+  await failFileReadAfterAbort(path, controller, physical, physical);
+  try {
+    expect(
+      await captureProcessScenarioFile(path, process.env, controller.signal),
+    ).toMatchObject({
+      code: "execution_failure",
+      category: "execution_failure",
+      details: { operation: "read", reason: "io", path },
+    });
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
 
 describe("process CLI input diagnostics", () => {

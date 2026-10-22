@@ -78,6 +78,7 @@ try {
       expectedCategory = "invalid_input",
       detail,
       fileSizeLimit,
+      timeoutMs,
     } = options;
     const input = {
       path,
@@ -86,6 +87,7 @@ try {
           ? { kind: "solc-json", ...selection }
           : encoding,
       ...(detail === undefined ? {} : { detail }),
+      ...(timeoutMs === undefined ? {} : { timeout_ms: timeoutMs }),
     };
     if (!expectedError)
       assert.ok(
@@ -129,6 +131,7 @@ try {
           selection.bytecode_kind,
         );
       if (detail !== undefined) args.push("--detail", detail);
+      if (timeoutMs !== undefined) args.push("--timeout-ms", String(timeoutMs));
       let failed = false,
         stdout;
       try {
@@ -351,6 +354,13 @@ try {
     contract_name: "LinkedFixture",
     bytecode_kind: "deployed",
   };
+  for (const mode of ["cli", "mcp"]) {
+    const selectedTimeout = await inspect(mode, linkedPath, "solc-json", {
+      selection,
+      timeoutMs: 45_000,
+    });
+    assert.equal(selectedTimeout.parameters.timeout_ms, 45_000);
+  }
   const absent = structuredClone(linked);
   delete absent.contracts[sourceUnit].LinkedFixture.evm.deployedBytecode;
   const absentPath = join(root.path, "absent-object.json");
