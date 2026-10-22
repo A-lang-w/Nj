@@ -360,10 +360,14 @@ describe("JavaScript semantic analysis: class member keys", () => {
 });
 
 describe("JavaScript semantic analysis: non-reference names", () => {
-  const namedReferences = (source: string, name: string) =>
-    analyzeJavaScriptSemantics(source).references.filter(
-      (reference) => reference.name === name,
-    );
+  // A parse failure also yields no references, so an absence claim first
+  // requires complete coverage and the declared outer binding.
+  const namedReferences = (source: string, name: string) => {
+    const ir = analyzeJavaScriptSemantics(source);
+    expect(ir.coverage.status).toBe("complete");
+    onlyBinding(ir, name);
+    return ir.references.filter((reference) => reference.name === name);
+  };
 
   it("does not read an outer binding through TypeScript member and enum names", () => {
     expect(
