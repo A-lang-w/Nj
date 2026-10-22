@@ -199,6 +199,15 @@ const decodeUtf32Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
   return decoded.subarray(0, at).toString("utf16le");
 };
 
+const decodeUtf8 = (bytes: Buffer, budget: DecodedNameBudget): string => {
+  chargeDecodedName(budget, bytes.length);
+  const decoded = bytes.toString("utf8");
+  // U+FFFD would hide the original bytes and collapse distinct invalid names.
+  if (!Buffer.from(decoded, "utf8").equals(bytes))
+    return fail("DirectoryString is not valid UTF-8.");
+  return decoded;
+};
+
 const decodeDirectoryString = (
   node: DerNode,
   budget: DecodedNameBudget,
@@ -214,8 +223,7 @@ const decodeDirectoryString = (
     case 0x17:
     case 0x18:
     case 0x1b:
-      chargeDecodedName(budget, node.content.length);
-      return node.content.toString("utf8");
+      return decodeUtf8(node.content, budget);
     default:
       chargeDecodedName(budget, node.content.length);
       return node.content.toString("latin1");
@@ -595,12 +603,17 @@ export const parsePkcs7SignedData = (bytes: Buffer): ParsedSignedData => {
   const content = children[1];
   if (type === undefined || type.tag !== 0x06)
     return fail("ContentInfo is missing contentType.");
+  if (content === undefined || content.tag !== 0xa0)
+    return fail("signedData content is missing.");
+  if (children.length !== 2)
+    return fail("ContentInfo has unexpected trailing fields.");
   const oid = decodeOid(type.content);
   if (oid !== "1.2.840.113549.1.7.2")
     return fail(`PKCS#7 contentType ${oid} is not signedData.`);
-  const signedData = content?.children[0];
-  if (content === undefined || content.tag !== 0xa0 || signedData === undefined)
-    return fail("signedData content is missing.");
+  const signedData = content.children[0];
+  if (signedData === undefined) return fail("signedData content is missing.");
+  if (content.children.length !== 1)
+    return fail("signedData content has unexpected trailing fields.");
   return parseSignedData(signedData, {
     remaining: MAX_DECODED_NAME_BYTES,
   });

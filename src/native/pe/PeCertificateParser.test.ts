@@ -158,6 +158,31 @@ const SHA256_ALG = derSeq(
 const contentInfo = (signedData: Buffer) =>
   derSeq(SIGNED_DATA_OID, der(0xa0, signedData));
 
+it("rejects extra ContentInfo and signedData wrapper values", () => {
+  const valid = pkcs7SignedDataFixture();
+  const root = readDer(valid);
+  const type = root.children[0];
+  const content = root.children[1];
+  const signedData = content?.children[0];
+  if (type === undefined || content === undefined || signedData === undefined)
+    throw new Error("fixture ContentInfo was not decoded");
+  const typeBytes = valid.subarray(type.start, type.end);
+  const contentBytes = valid.subarray(content.start, content.end);
+  const signedBytes = valid.subarray(signedData.start, signedData.end);
+  const nul = der(0x05, Buffer.alloc(0));
+  expect(() =>
+    parse(peCertificateFixture(false, derSeq(typeBytes, contentBytes, nul))),
+  ).toThrow(/ContentInfo has unexpected trailing fields/u);
+  expect(() =>
+    parse(
+      peCertificateFixture(
+        false,
+        derSeq(typeBytes, der(0xa0, Buffer.concat([signedBytes, nul]))),
+      ),
+    ),
+  ).toThrow(/signedData content has unexpected trailing fields/u);
+});
+
 it("fails signedData that omits encapContentInfo and signerInfos", () => {
   const truncated = contentInfo(derSeq(derInt(1), derSet()));
   expect(() => parse(peCertificateFixture(false, truncated))).toThrow(
@@ -398,6 +423,26 @@ it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () =>
       ),
     ),
   ).toThrow(/trailing fields/u);
+});
+
+it("rejects a UTF8String name that is not valid UTF-8", () => {
+  const certificate = readDer(
+    namedCertificate(
+      directoryName(der(0x0c, Buffer.from([0x80]))),
+      directoryName(der(0x0c, Buffer.from("A"))),
+    ),
+  );
+  expect(() => parseCertificate(certificate)).toThrow(/not valid UTF-8/u);
+  expect(
+    parseCertificate(
+      readDer(
+        namedCertificate(
+          directoryName(der(0x0c, Buffer.from([0xc3, 0xa9]))),
+          directoryName(der(0x0c, Buffer.from("A"))),
+        ),
+      ),
+    ).issuer.text,
+  ).toBe("commonName=é");
 });
 
 it("decodes BMPString names once and shares the decoded-byte budget", () => {
