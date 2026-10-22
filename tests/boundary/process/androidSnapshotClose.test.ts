@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   change: false,
   fail: false,
   failSource: false,
+  failAdmission: false,
   source: "",
   closeCalls: 0,
   sourceCloseCalls: 0,
@@ -54,13 +55,29 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       ) {
         state.sourceOpens += 1;
         const close = handle.close.bind(handle);
-        const record = { handle, close, snapshot: false };
+        const record = {
+          handle,
+          close,
+          snapshot: false,
+          admit: state.failAdmission && state.sourceOpens > 1,
+        };
         state.latestSource = record;
         state.sourceHandles.push(record);
+        if (record.admit) {
+          handle.stat = async () => {
+            throw Object.assign(new Error("controlled admission stat EIO"), {
+              code: "EIO",
+            });
+          };
+        }
         handle.close = async () => {
           state.sourceCloseCalls += 1;
           // Only the descriptor still open when the snapshot destination is
           // created belongs to the copy. Later admission reads must close.
+          if (record.admit && state.failAdmission)
+            throw Object.assign(new Error("controlled admission close EIO"), {
+              code: "EIO",
+            });
           if (record.snapshot && state.failSource)
             throw Object.assign(new Error("controlled source close EIO"), {
               code: "EIO",
@@ -401,6 +418,55 @@ test("keeps the changed-file diagnosis when both snapshot closes fail", async ()
     state.enabled = false;
     state.fail = false;
     state.failSource = false;
+    await fixture.provider.close().catch(() => undefined);
+    for (const owned of [...state.handles, ...state.sourceHandles])
+      if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);
+    await verifyJadxFixtureCleanup(fixture.launches);
+  }
+});
+
+test("retains the source descriptor when snapshot admission cleanup fails", async () => {
+  const fixture = await createJadxProtocolFixture();
+  state.source = fixture.apk;
+  state.change = false;
+  state.fail = false;
+  state.failSource = false;
+  state.failAdmission = true;
+  state.enabled = true;
+  state.closeCalls = 0;
+  state.sourceCloseCalls = 0;
+  state.opens = 0;
+  state.sourceOpens = 0;
+  state.handles = [];
+  state.sourceHandles = [];
+  state.latestSource = undefined;
+  try {
+    const result = await fixture.service.execute("inspect_android_package", {
+      path: fixture.apk,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(fixture.apk);
+    expect(state.opens).toBe(0);
+    const source = state.sourceHandles.find(
+      (candidate) => candidate.handle.fd >= 0,
+    );
+    if (source === undefined) throw new Error("missing source descriptor");
+    expect(source.handle.fd).toBeGreaterThanOrEqual(0);
+    await expect(fixture.provider.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
+    expect(source.handle.fd).toBeGreaterThanOrEqual(0);
+
+    state.failAdmission = false;
+    await fixture.provider.close();
+    expect(source.handle.fd).toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    state.enabled = false;
+    state.failAdmission = false;
     await fixture.provider.close().catch(() => undefined);
     for (const owned of [...state.handles, ...state.sourceHandles])
       if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);

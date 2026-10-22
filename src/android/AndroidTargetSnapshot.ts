@@ -16,6 +16,7 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import {
   openRegularFile,
+  RegularFileAdmissionFailure,
   assertRegularFileActive,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
@@ -173,7 +174,7 @@ const copyAndroidSnapshot = async (
     // copy outcome and stays retained until that owner is retried; the
     // partial file is removed only after those close attempts.
     const source = adoptSnapshotHandle(
-      await openRegularFile(sourcePath, { symlinks: "follow", signal }),
+      await openSnapshotSource(sourcePath, signal, retain(sourcePath)),
     );
     return await withOwnedFileHandle(
       sourcePath,
@@ -275,6 +276,44 @@ const copyAndroidSnapshot = async (
   }
 };
 
+/**
+ * Admission can reject after the descriptor opens. Keep that owner when its
+ * own close also rejects; the success path still adopts one close owner.
+ */
+const openSnapshotSource = async (
+  path: string,
+  signal: AbortSignal | undefined,
+  retention: {
+    readonly retainFailedClose?: (owner: OwnedFileHandle) => void;
+  },
+): Promise<FileHandle> => {
+  try {
+    return await openRegularFile(path, { symlinks: "follow", signal });
+  } catch (cause: unknown) {
+    if (!(cause instanceof RegularFileAdmissionFailure)) throw cause;
+    throw new RegularFileCleanupFailure(
+      path,
+      cause.owner,
+      { kind: "failed", cause: cause.cause },
+      cause.cleanupCause,
+      retainAdmissionOwner(retention.retainFailedClose, cause.owner),
+    );
+  }
+};
+
+const retainAdmissionOwner = (
+  retain: ((owner: OwnedFileHandle) => void) | undefined,
+  owner: OwnedFileHandle,
+): RegularFileCleanupFailure["retention"] => {
+  if (retain === undefined) return { kind: "not_requested" };
+  try {
+    retain(owner);
+    return { kind: "callback_returned" };
+  } catch (cause: unknown) {
+    return { kind: "callback_threw", cause };
+  }
+};
+
 /** Keep a stable-file diagnosis when descriptor cleanup fails around it. */
 const projectSnapshotFailure = (
   cause: unknown,
@@ -300,7 +339,7 @@ const projectSnapshotFailure = (
 };
 
 const verifySourceState = async (
-  handle: Awaited<ReturnType<typeof openRegularFile>>,
+  handle: FileHandle,
   path: string,
   initial: Stats,
   observedBytes: number,
