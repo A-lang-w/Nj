@@ -12,6 +12,101 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "alias-order-0.js",
+    source:
+      '(async()=>{try{const[value=await 0,next]=(function*(){try{yield u}finally{new Socket("wss://example.test/alias-late")}})()}catch{}const u=undefined;})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-order-1.js",
+    source:
+      '(async()=>{try{const values=(function*(){yield u;new Socket("wss://example.test/alias-created");yield{}})();const u=undefined;const[{[await 0]:x},next]=values; }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+
+  {
+    file: "alias-control-0.js",
+    endpoint: "wss://example.test/alias-mutable",
+    source:
+      '(async()=>{let u=undefined;u={};for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-mutable");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-control-1.js",
+    source:
+      '(async()=>{try{for(const{[await 0]:x}of(function*(){const u=undefined;yield u;new Socket("wss://example.test/alias-local");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-control-2.js",
+    source:
+      '(async()=>{try{for(const{[await 0]:x}of(function*(){const u=null;yield u;new Socket("wss://example.test/alias-local-null");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-control-3.js",
+    source:
+      '(async()=>{try{const u=undefined;for(const{[await 0]:x}of(function*(){try{yield u}finally{new Socket("wss://example.test/alias-cleanup")}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-control-4.js",
+    endpoint: "wss://example.test/alias-initialized-cleanup",
+    source:
+      'const Socket=globalThis.WebSocket;(async()=>{try{const u=undefined;for(const{[await 0]:x}of(function*(){try{yield u}finally{new Socket("wss://example.test/alias-initialized-cleanup")}})()){} }catch{}})();',
+  },
+  {
+    file: "alias-control-5.js",
+    endpoint: "wss://example.test/alias-number",
+    source:
+      '(async()=>{const u=1;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-number");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+  },
+
+  {
+    file: "alias-binding-0.js",
+    source:
+      '(async()=>{try{const u=undefined;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-undefined");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-1.js",
+    source:
+      '(async()=>{try{const u=null;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-null");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-2.js",
+    source:
+      '(async()=>{try{const u=void 0;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-void");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-3.js",
+    source:
+      '(async()=>{try{const first=undefined;const u=first;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-chain");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-4.js",
+    source:
+      '(async()=>{try{const u=undefined;for(const[x=await 0]of(function*(){yield u;new Socket("wss://example.test/alias-array");yield[]})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-5.js",
+    endpoint: "wss://example.test/alias-object",
+    source:
+      '(async()=>{const u={};for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-object");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-6.js",
+    endpoint: "wss://example.test/alias-default",
+    source:
+      '(async()=>{const u=undefined;const[value=await 0,next]=(function*(){yield u;new Socket("wss://example.test/alias-default");yield 1})();})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-7.js",
+    endpoint: "wss://example.test/alias-shadowed",
+    source:
+      '(async()=>{const undefined={};const u=undefined;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-shadowed");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "alias-binding-8.js",
+    endpoint: "wss://example.test/alias-parameter",
+    source:
+      '(async(u)=>{for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-parameter");yield{}})()){} })({});const Socket=globalThis.WebSocket;',
+  },
+
+  {
     file: "bare-binding-0.js",
     source:
       '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield;new Socket("wss://example.test/bare");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',

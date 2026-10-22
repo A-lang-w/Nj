@@ -5,6 +5,94 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "later alias initialization cannot lend default wait",
+    '(async()=>{try{const[value=await 0,next]=(function*(){try{yield u}finally{new Socket("wss://example.test/alias-late")}})()}catch{}const u=undefined;})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "alias initialized after generator creation",
+    '(async()=>{try{const values=(function*(){yield u;new Socket("wss://example.test/alias-created");yield{}})();const u=undefined;const[{[await 0]:x},next]=values; }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+
+  [
+    "mutable object is not treated as undefined",
+    '(async()=>{let u=undefined;u={};for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-mutable");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/alias-mutable"],
+  ],
+  [
+    "producer local undefined alias",
+    '(async()=>{try{for(const{[await 0]:x}of(function*(){const u=undefined;yield u;new Socket("wss://example.test/alias-local");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "producer local null alias",
+    '(async()=>{try{for(const{[await 0]:x}of(function*(){const u=null;yield u;new Socket("wss://example.test/alias-local-null");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "nullish alias cleanup precedes key wait",
+    '(async()=>{try{const u=undefined;for(const{[await 0]:x}of(function*(){try{yield u}finally{new Socket("wss://example.test/alias-cleanup")}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "initialized nullish alias cleanup",
+    'const Socket=globalThis.WebSocket;(async()=>{try{const u=undefined;for(const{[await 0]:x}of(function*(){try{yield u}finally{new Socket("wss://example.test/alias-initialized-cleanup")}})()){} }catch{}})();',
+    ["wss://example.test/alias-initialized-cleanup"],
+  ],
+  [
+    "number alias permits object coercion",
+    '(async()=>{const u=1;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-number");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/alias-number"],
+  ],
+
+  [
+    "constant undefined before binding",
+    '(async()=>{try{const u=undefined;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-undefined");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "constant null before binding",
+    '(async()=>{try{const u=null;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-null");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "constant void before binding",
+    '(async()=>{try{const u=void 0;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-void");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "constant alias chain before binding",
+    '(async()=>{try{const first=undefined;const u=first;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-chain");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "constant undefined blocks nested iterator",
+    '(async()=>{try{const u=undefined;for(const[x=await 0]of(function*(){yield u;new Socket("wss://example.test/alias-array");yield[]})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "constant object retains key wait",
+    '(async()=>{const u={};for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-object");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/alias-object"],
+  ],
+  [
+    "constant undefined selects array default",
+    '(async()=>{const u=undefined;const[value=await 0,next]=(function*(){yield u;new Socket("wss://example.test/alias-default");yield 1})();})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/alias-default"],
+  ],
+  [
+    "shadowed undefined is an object",
+    '(async()=>{const undefined={};const u=undefined;for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-shadowed");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/alias-shadowed"],
+  ],
+  [
+    "unknown parameter may be object",
+    '(async(u)=>{for(const{[await 0]:x}of(function*(){yield u;new Socket("wss://example.test/alias-parameter");yield{}})()){} })({});const Socket=globalThis.WebSocket;',
+    ["wss://example.test/alias-parameter"],
+  ],
+
+  [
     "bare yield blocks object binding",
     '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield;new Socket("wss://example.test/bare");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
     [],

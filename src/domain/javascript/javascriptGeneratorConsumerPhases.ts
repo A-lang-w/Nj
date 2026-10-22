@@ -25,7 +25,11 @@ import {
   semanticLiteralOwnKeysStable,
 } from "./javascriptSemanticLiteralProjection.js";
 import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
-import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
+import {
+  semanticInitializerPrecedesRead,
+  type SemanticExecutionFrame,
+} from "./javascriptSemanticEvaluationOrder.js";
+import { semanticExactValueIdentity } from "./javascriptSemanticPromiseIdentity.js";
 import {
   semanticArrayIndex,
   semanticPropertyPathKeyMatches,
@@ -197,13 +201,54 @@ const patternValueNode = (raw: t.Node): t.Node => {
   }
 };
 
+/** Nullish aliases require the shared identity and initialization proofs. */
+const patternNullishNode = (
+  raw: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): t.Node => {
+  const node = patternValueNode(raw);
+  if (!t.isIdentifier(node) || executionFrames === undefined) return node;
+  const exact = semanticExactValueIdentity(node, state);
+  if (exact === undefined) return node;
+  const literal = readExactJavaScriptNormalResult(
+    exact.node,
+    syntaxEvaluationCannotThrow,
+  );
+  if (
+    !(
+      t.isNullLiteral(exact.node) ||
+      isUnshadowedGlobal(exact.node, state, "undefined") ||
+      (literal.found && literal.value === undefined)
+    ) ||
+    !exact.aliases.every(
+      ({ initializer, read }) =>
+        semanticInitializerPrecedesRead({
+          initializer: initializer.node,
+          read,
+          ...(initializer.bindingNode === undefined
+            ? {}
+            : { bindingNode: initializer.bindingNode }),
+          parents: state.parentsByNode,
+          initializerContexts: executionFrames(initializer.node),
+          readContexts: executionFrames(read),
+        }) === true,
+    )
+  )
+    return node;
+  return exact.node;
+};
+
 const undefinedPatternValue = (
   value: PatternValue,
   state: JavaScriptSemanticAnalysisState,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
   if (!value.known) return false;
   const argument =
-    value.node === undefined ? undefined : patternValueNode(value.node);
+    value.node === undefined
+      ? undefined
+      : patternNullishNode(value.node, state, executionFrames);
   if (
     argument === undefined ||
     isUnshadowedGlobal(argument, state, "undefined")
@@ -220,11 +265,15 @@ const undefinedPatternValue = (
 const nullishPatternValue = (
   value: PatternValue,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  undefinedPatternValue(value, state) ||
-  (value.known &&
-    value.node !== undefined &&
-    t.isNullLiteral(patternValueNode(value.node)));
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): boolean => {
+  if (!value.known) return false;
+  if (value.node === undefined) return true;
+  const node = patternNullishNode(value.node, state, executionFrames);
+  return (
+    t.isNullLiteral(node) || undefinedPatternValue({ ...value, node }, state)
+  );
+};
 
 /** A string's native iterator cannot be credited after a visible lookup change. */
 const patternStringIterationIntact = (
@@ -267,8 +316,9 @@ const noniterablePatternValue = (
   value: PatternValue,
   state: JavaScriptSemanticAnalysisState,
   capture: t.Node,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
-  if (nullishPatternValue(value, state)) return true;
+  if (nullishPatternValue(value, state, executionFrames)) return true;
   if (!value.known || value.node === undefined) return false;
   const node = patternValueNode(value.node);
   const literal = readExactJavaScriptLiteral(node);
@@ -494,7 +544,7 @@ const patternCompletedSuspension = (
   if (pattern === target)
     return patternExpressionCompletion(pattern, suspended);
   if (t.isAssignmentPattern(pattern)) {
-    const selectsDefault = undefinedPatternValue(value, state);
+    const selectsDefault = undefinedPatternValue(value, state, executionFrames);
     // Optional default selection does not establish a required wait. A normal
     // next-step query may still inspect later mandatory work; cleanup/getter
     // entry does not itself prove that this earlier binding completed.
@@ -523,7 +573,7 @@ const patternCompletedSuspension = (
   if (t.isObjectPattern(pattern)) {
     // RequireObjectCoercible precedes property keys and rest operations.
     // A definite failure also blocks waits in later consumed slots.
-    if (nullishPatternValue(value, state)) return "blocked";
+    if (nullishPatternValue(value, state, executionFrames)) return "blocked";
     const excluded = new Set<string>();
     let unknownExclusion = false;
     for (const property of pattern.properties) {
@@ -604,7 +654,8 @@ const patternCompletedSuspension = (
   }
   if (t.isArrayPattern(pattern)) {
     // GetIterator runs even for an empty pattern, before later slots/defaults.
-    if (noniterablePatternValue(value, state, pattern)) return "blocked";
+    if (noniterablePatternValue(value, state, pattern, executionFrames))
+      return "blocked";
     if (value.known && value.node !== undefined) {
       const iterable = patternValueNode(value.node);
       const literal = readExactJavaScriptLiteral(iterable);
@@ -770,7 +821,9 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   state.memberMutationFactsPhase ??= "requested";
   const facts = generatorPrefixes(body, ordered, maySuspend, state);
   const count = facts.before.get(unwrapJavaScriptExpression(read).node);
-  if (count === undefined || count < 0) return false;
+  // No binding work has run while evaluating the first yielded value. Avoid
+  // asking that binding's value proof to establish its own read context.
+  if (count === undefined || count <= 0) return false;
   const cleanup = facts.cleanup.has(read);
   // A finite pattern closes its iterator after its last slot, not another next().
   if (
