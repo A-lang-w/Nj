@@ -50,7 +50,10 @@ export const translateArtifactFailure = (
     for (const failure of secondary) error.retainSecondaryFailure(failure);
     return error;
   }
-  if (cause instanceof ArtifactFileCleanupFailure) {
+  if (
+    cause instanceof ArtifactFileCleanupFailure &&
+    hasSeparatelyOwnedPrimary(cause)
+  ) {
     // An outer close owns only its exact file, not the source's classification
     // or cleanup lifecycle. Preserve that primary through this boundary too.
     const physical = cause.fileCleanupFailure;
@@ -119,6 +122,23 @@ export const translateArtifactFailure = (
   // Keep typed Evidence and other analysis failures instead of reducing them to I/O.
   if (cause instanceof AnalysisError) return cause;
   return new ArtifactOperationError(operation, "io");
+};
+
+/**
+ * The file failure already projects raw and reader primaries with its exact
+ * lease. Only a domain or composed source primary keeps its own translation.
+ */
+const hasSeparatelyOwnedPrimary = (
+  cause: ArtifactFileCleanupFailure,
+): boolean => {
+  const outcome = cause.fileCleanupFailure.outcome;
+  if (outcome.kind !== "failed") return false;
+  const primary = outcome.cause;
+  return primary instanceof ArtifactFileCleanupFailure
+    ? hasSeparatelyOwnedPrimary(primary)
+    : primary instanceof AnalysisError ||
+        primary instanceof SafeOutputSourceFailure ||
+        primary instanceof ArtifactResourceCleanupFailure;
 };
 
 /** A domain error already owns its live cleanup state; only classify raw errors. */
