@@ -1,3 +1,4 @@
+import { projectProtobufCapturePage } from "./protobufCaptureView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -8,9 +9,10 @@ import { err, ok, type Result } from "../result.js";
 import {
   webNetworkCaptureRecordSchema,
   webNetworkCaptureBinaryDescriptorSchema,
-  webNetworkCaptureSchema,
+  safeParseOwnedWebNetworkCapture,
   webNetworkCaptureArtifactSchema,
   webNetworkCaptureDecoderSchema,
+  protobufCaptureCoverageSchema,
   WEB_NETWORK_CAPTURE_FORMATS,
   type WebNetworkCaptureRecord,
   type WebNetworkCapture,
@@ -44,21 +46,43 @@ export const captureViewRequestSchema = z.strictObject({
     ),
 });
 
-const previewSchema = webNetworkCaptureRecordSchema.extend({
-  binary_fields: z.array(webNetworkCaptureBinaryDescriptorSchema),
+const protobufSummarySchema = z.strictObject({
+  bodies: z.number().int().nonnegative(),
+  frames: z.number().int().nonnegative(),
+  fields: z.number().int().nonnegative(),
+  incomplete_bodies: z.number().int().nonnegative(),
 });
+const summarizeProtobuf = (records: readonly WebNetworkCaptureRecord[]) => {
+  const counts = { bodies: 0, frames: 0, fields: 0, incomplete_bodies: 0 };
+  for (const record of records)
+    for (const body of record.protobuf ?? []) {
+      counts.bodies++;
+      counts.frames += body.frames.length;
+      counts.fields += body.fields.length;
+      counts.incomplete_bodies += Number(body.status !== "complete");
+    }
+  return counts.bodies === 0 ? undefined : counts;
+};
+const previewSchema = webNetworkCaptureRecordSchema
+  .omit({ protobuf: true })
+  .extend({
+    binary_fields: z.array(webNetworkCaptureBinaryDescriptorSchema),
+    protobuf_summary: protobufSummarySchema.exactOptional(),
+  });
 export const captureViewItemsSchema = z.array(
   z.union([webNetworkCaptureRecordSchema, previewSchema]),
 );
 
 /** Count/identity overview; bodies and the archive member inventory stay in the parent. */
 export const captureSummarySchema = z.strictObject({
+  protobuf_coverage: protobufCaptureCoverageSchema.exactOptional(),
   artifact: webNetworkCaptureArtifactSchema,
   decoder: webNetworkCaptureDecoderSchema,
   format: z.enum(WEB_NETWORK_CAPTURE_FORMATS),
   total_records: z.number().int().nonnegative(),
   retained_records: z.number().int().nonnegative(),
   runtime_attribution: z.literal("unknown"),
+  protobuf: protobufSummarySchema.exactOptional(),
   qlog: qlogSummarySchema.optional(),
 });
 
@@ -398,8 +422,13 @@ const preview = (
       reported[key] = selected;
     }
   }
+  const { protobuf: _protobuf, ...sourceRecord } = record;
+  const protobufSummary = summarizeProtobuf([record]);
   return {
-    ...record,
+    ...sourceRecord,
+    ...(protobufSummary === undefined
+      ? {}
+      : { protobuf_summary: protobufSummary }),
     reported: source === null ? record.reported : reported,
     binary_fields: record.binary_fields.map(
       ({ content_base64: _content, ...field }) => field,
@@ -417,7 +446,8 @@ const preview = (
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const parsed = webNetworkCaptureSchema.safeParse(parent.normalizedResult);
+  const parsed = safeParseOwnedWebNetworkCapture(parent.normalizedResult);
+
   if (!parsed.success)
     return err(
       analysisInputErrorFromIssues(
@@ -458,6 +488,7 @@ export const projectWebNetworkCaptureView = (
   if (
     view.kind !== "summary" &&
     view.kind !== "capture" &&
+    view.kind !== "protobuf" &&
     view.kind !== "qlog"
   )
     return err(
@@ -466,7 +497,7 @@ export const projectWebNetworkCaptureView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface or environment-manifest views.",
+            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface, environment-manifest or environment-state views.",
         },
       ]),
     );
@@ -492,6 +523,15 @@ export const projectWebNetworkCaptureView = (
         : []),
     ],
   };
+  if (view.kind === "protobuf")
+    return ok({
+      ...shared,
+      ...projectProtobufCapturePage(report, view),
+      unknowns: [
+        ...shared.unknowns,
+        "Decoding covers selected retained bodies only. Exhausting wire fields does not establish schema completeness or business meaning; compressed bodies and unsupported schema facets remain unknown.",
+      ],
+    });
   if (view.kind === "summary")
     return ok({
       kind: "summary",
@@ -504,6 +544,12 @@ export const projectWebNetworkCaptureView = (
         total_records: report.total_records,
         retained_records: report.records.length,
         runtime_attribution: report.runtime_attribution,
+        ...(report.protobuf_coverage === undefined
+          ? {}
+          : { protobuf_coverage: report.protobuf_coverage }),
+        ...(summarizeProtobuf(report.records) === undefined
+          ? {}
+          : { protobuf: summarizeProtobuf(report.records)! }),
         ...(report.format === "qlog"
           ? { qlog: summarizeQlogCapture(report.qlog) }
           : {}),

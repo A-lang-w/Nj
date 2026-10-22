@@ -43,6 +43,7 @@ import {
   analysisViewObjectDenseCapture,
   analysisViewNativeEvidence,
   environmentManifestCaptureFixture,
+  environmentStateCaptureFixture,
 } from "../../fixtures/analysisView.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
@@ -53,6 +54,7 @@ import type { RelationshipCoverage } from "../../../src/domain/relationshipCover
 const connect = async (
   binaryLayout?: BinaryLayoutService,
   webNetworkCapture?: WebNetworkCaptureService,
+  schemaProfile: "full" | "compact" = "full",
 ) => {
   const session = createTestBinarySession(() => {
     throw new Error("selected views must not start a deep provider");
@@ -60,6 +62,11 @@ const connect = async (
   const server = createServer(
     { kind: "session", session },
     {
+      // Full schemas retain nested negative controls; selection cases also exercise compact delivery.
+      environment: {
+        ...process.env,
+        REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
+      },
       ...(binaryLayout === undefined ? {} : { binaryLayout }),
       ...(webNetworkCapture === undefined ? {} : { webNetworkCapture }),
     },
@@ -254,82 +261,91 @@ it("projects opted-in query names identically from retained and portable MCP Evi
   expect(outputs[0]).toEqual(outputs[1]);
 });
 
-it("advertises HAR MIME preview selection and keeps large bodies retained across MCP projections", async () => {
-  const { client, session } = await connect();
-  const capture = analysisViewCaptureFixture();
-  capture.records = [capture.records[3]!, capture.records[1]!];
-  capture.records.forEach((record) => {
-    record.reported = {
-      request: {
-        method: "GET",
-        url: "https://api.test/items",
-        headers: [{ name: "X-private", value: "header-not-previewed" }],
-      },
-      response: {
-        status: 200,
-        content: {
-          mimeType: "application/json; charset=utf-8",
-          text: "body-not-previewed".repeat(100000),
+it.each(["full", "compact"] as const)(
+  "advertises HAR MIME preview selection and keeps large bodies retained across MCP projections (%s)",
+  async (schemaProfile) => {
+    const { client, session } = await connect(
+      undefined,
+      undefined,
+      schemaProfile,
+    );
+    const capture = analysisViewCaptureFixture();
+    capture.records = [capture.records[3]!, capture.records[1]!];
+    capture.records.forEach((record) => {
+      record.reported = {
+        request: {
+          method: "GET",
+          url: "https://api.test/items",
+          headers: [{ name: "X-private", value: "header-not-previewed" }],
         },
+        response: {
+          status: 200,
+          content: {
+            mimeType: "application/json; charset=utf-8",
+            text: "body-not-previewed".repeat(100000),
+          },
+        },
+      };
+    });
+    const parent = analysisViewCaptureEvidence(capture);
+    const retained = session.recordEvidence(parent);
+    if (!retained.ok) throw retained.error;
+    const schemas = await advertisedMcpToolSchemas(
+      client,
+      "inspect_analysis_view",
+    );
+    const input = {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: {
+        kind: "capture",
+        detail: "preview",
+        include_response_content_type: true,
+        limit: 2,
       },
     };
-  });
-  const parent = analysisViewCaptureEvidence(capture);
-  const retained = session.recordEvidence(parent);
-  if (!retained.ok) throw retained.error;
-  const schemas = await advertisedMcpToolSchemas(
-    client,
-    "inspect_analysis_view",
-  );
-  const input = {
-    source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-    view: {
-      kind: "capture",
-      detail: "preview",
-      include_response_content_type: true,
-      limit: 2,
-    },
-  };
-  expect(schemas.ajv.validate(schemas.inputSchema, input)).toBe(true);
-  const outputs = [];
-  for (const source of [input.source, { kind: "inline", evidence: parent }]) {
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: { ...input, source },
-    });
-    expect(response.isError).not.toBe(true);
-    expect(
-      schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
-    ).toBe(true);
-    const result = parseEvidence(response.structuredContent).normalized_result;
-    expect(result).toMatchObject({
-      parent_evidence_id: parent.evidence_id,
-      items: [
-        {
-          ordinal: 3,
-          reported: {
-            response: {
-              content: { mimeType: "application/json; charset=utf-8" },
+    expect(schemas.ajv.validate(schemas.inputSchema, input)).toBe(true);
+    const outputs = [];
+    for (const source of [input.source, { kind: "inline", evidence: parent }]) {
+      const response = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: { ...input, source },
+      });
+      expect(response.isError).not.toBe(true);
+      expect(
+        schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
+      ).toBe(true);
+      const result = parseEvidence(
+        response.structuredContent,
+      ).normalized_result;
+      expect(result).toMatchObject({
+        parent_evidence_id: parent.evidence_id,
+        items: [
+          {
+            ordinal: 3,
+            reported: {
+              response: {
+                content: { mimeType: "application/json; charset=utf-8" },
+              },
             },
           },
-        },
-        {
-          ordinal: 1,
-          reported: {
-            response: {
-              content: { mimeType: "application/json; charset=utf-8" },
+          {
+            ordinal: 1,
+            reported: {
+              response: {
+                content: { mimeType: "application/json; charset=utf-8" },
+              },
             },
           },
-        },
-      ],
-    });
-    for (const value of ["body-not-previewed", "header-not-previewed"])
-      expect(JSON.stringify(response)).not.toContain(value);
-    outputs.push(result);
-  }
-  expect(outputs[0]).toEqual(outputs[1]);
-  expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
-});
+        ],
+      });
+      for (const value of ["body-not-previewed", "header-not-previewed"])
+        expect(JSON.stringify(response)).not.toContain(value);
+      outputs.push(result);
+    }
+    expect(outputs[0]).toEqual(outputs[1]);
+    expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
+  },
+);
 
 it("discovers an oversized native dossier by exact metadata and reads its retained view", async () => {
   const { client, session } = await connect();
@@ -394,6 +410,9 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
   expect(broadError.code).toBe("resource_constraint");
   expect(broadError.remediation?.action).toContain(
     "get_evidence_bundle and detail: summary",
+  );
+  expect(broadError.remediation?.action).toContain(
+    "REA_MCP_MAX_RESPONSE_BYTES",
   );
   const response = await client.callTool({
     name: "get_evidence_bundle",
@@ -1244,7 +1263,80 @@ it.each(PUBLISHED_EXAMPLES)(
   },
 );
 
-it("projects an environment manifest identically from retained and portable MCP Evidence", async () => {
+it("extracts an environment state identically from retained, portable and file MCP Evidence", async () => {
+  const { client, session } = await connect();
+  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+    client,
+    "inspect_analysis_view",
+  );
+  const capture = environmentStateCaptureFixture();
+  const parent = analysisViewCaptureEvidence(capture);
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  const evidencePath = join(
+    await createTestTempDirectory("rea-state-file-mcp-"),
+    "capture.json",
+  );
+  await writeFile(evidencePath, JSON.stringify(parent));
+  const view = {
+    kind: "environment-state",
+    template_rules: ["after-uid-literal", "opaque-token", "sibling-variance"],
+  };
+  const outputs = [];
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    { kind: "evidence-file", path: evidencePath },
+  ]) {
+    expect(ajv.validate(inputSchema, { source, view })).toBe(true);
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(
+      ajv.validate(outputSchema, response.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence.confidence).toBe("inferred");
+    expect(evidence.normalized_result).toMatchObject({
+      kind: "environment-state",
+      views: expect.arrayContaining([
+        expect.objectContaining({
+          tool: "get_folders_by_uid",
+          shape: "item",
+        }),
+      ]),
+    });
+    expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+    outputs.push(evidence.normalized_result);
+  }
+  expect(outputs[0]).toEqual(outputs[1]);
+  expect(outputs[2]).toEqual(outputs[0]);
+  const hidden = createEvidence(
+    {
+      path: capture.artifact.path,
+      sha256: capture.artifact.sha256!,
+      format: "file",
+    },
+    { id: "fixture", name: "fixture", version: "1" },
+    {
+      operation: "inspect_web_network_capture",
+      parameters: { sensitive_value_count: 1 },
+      result: capture,
+      confidence: "observed",
+    },
+  );
+  const refused = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: { source: { kind: "inline", evidence: hidden }, view },
+  });
+  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  expect(JSON.stringify(refused)).not.toContain("probe folder");
+  await client.ping();
+});
+
+it("projects an environment manifest identically from retained, portable and file MCP Evidence", async () => {
   const { client, session } = await connect();
   const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
     client,
@@ -1253,6 +1345,11 @@ it("projects an environment manifest identically from retained and portable MCP 
   const capture = environmentManifestCaptureFixture();
   const parent = analysisViewCaptureEvidence(capture);
   expect(session.recordEvidence(parent).ok).toBe(true);
+  const evidencePath = join(
+    await createTestTempDirectory("rea-evidence-file-mcp-"),
+    "capture.json",
+  );
+  await writeFile(evidencePath, JSON.stringify(parent));
   const view = {
     kind: "environment-manifest",
     template_rules: ["after-uid-literal", "opaque-token", "sibling-variance"],
@@ -1261,6 +1358,7 @@ it("projects an environment manifest identically from retained and portable MCP 
   for (const source of [
     { kind: "inline", evidence: parent },
     { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    { kind: "evidence-file", path: evidencePath },
   ]) {
     expect(ajv.validate(inputSchema, { source, view })).toBe(true);
     expect(
@@ -1301,6 +1399,34 @@ it("projects an environment manifest identically from retained and portable MCP 
     outputs.push(evidence.normalized_result);
   }
   expect(outputs[0]).toEqual(outputs[1]);
+  expect(outputs[2]).toEqual(outputs[0]);
+  // JSON Schema cannot express "absolute"; the tool refuses a relative path when called.
+  const relative = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "evidence-file", path: "capture.json" },
+      view,
+    },
+  });
+  expect(parseMcpToolError(relative).error.code).toBe("invalid_request");
+  await writeFile(evidencePath, JSON.stringify({ hello: 1 }));
+  const invalidFile = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: { source: { kind: "evidence-file", path: evidencePath }, view },
+  });
+  expect(parseMcpToolError(invalidFile).error).toMatchObject({
+    details: {
+      path: evidencePath,
+      reason: "wrong-kind",
+      content_issues: expect.arrayContaining([
+        {
+          path: ["evidence_id"],
+          reason: "missing_argument",
+          expected: "string",
+        },
+      ]),
+    },
+  });
   const hidden = createEvidence(
     {
       path: capture.artifact.path,

@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import { projectAnalysisView } from "./analysisView.js";
 
@@ -76,6 +77,29 @@ const capture = () => {
     },
   };
 };
+
+it("checks each parent's subject even after its immutable capture has been validated", () => {
+  const { parent } = capture();
+  const source = {
+    ...parent,
+    normalizedResult: freezeJsonSnapshot(parent.normalizedResult),
+  };
+  expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+  expect(
+    projectAnalysisView({ ...source, subject: null }, { kind: "summary" }).ok,
+  ).toBe(false);
+  if (source.subject === null) throw new Error("Expected fixture subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...source,
+        subject: { ...source.subject, local_path: "/different.saz" },
+      },
+      { kind: "summary" },
+    ).ok,
+  ).toBe(false);
+  expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+});
 
 it("keeps selected-record page coverage distinct from capture coverage and unsafe number absence", () => {
   const { parent, report } = capture();
@@ -199,6 +223,34 @@ it("selects exact HAR MIME forms without payloads and preserves default previews
     "original body",
   );
 });
+
+it.each([
+  { response: { status: 204 } },
+  { response: { status: 200, content: { text: "not-previewed" } } },
+])(
+  "keeps absent HAR content or MIME fields absent in selected previews: %j",
+  (reported) => {
+    const { parent, report } = capture();
+    report.format = "har";
+    report.records[0]!.reported = reported;
+    const selected = projectAnalysisView(parent, {
+      kind: "capture",
+      detail: "preview",
+      offset: 0,
+      limit: 1,
+      include_response_content_type: true,
+    });
+    if (!selected.ok || selected.value.kind !== "capture")
+      throw new Error("Expected selected HAR preview");
+    expect(selected.value.items[0]?.reported).not.toHaveProperty(
+      "response.content",
+    );
+    expect(selected.value.items[0]?.ordinal).toBe(7);
+    expect(selected.value.parent_evidence_id).toBe(parent.evidenceId);
+    expect(report.records[0]!.reported).toEqual(reported);
+    expect(JSON.stringify(selected)).not.toContain("not-previewed");
+  },
+);
 
 it.each(["", "/response", "/response/content", "/response/content/mimeType"])(
   "keeps HAR MIME under an explicit redaction at %s out of previews",
