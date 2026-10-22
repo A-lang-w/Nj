@@ -434,6 +434,19 @@ export const indexVitePreloadDependencyTable = (
   return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
 };
 
+const requestConstructorUrl = (
+  node: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const target = unwrapJavaScriptExpression(node).node;
+  if (
+    (t.isNewExpression(target) || t.isCallExpression(target)) &&
+    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
+  )
+    return stringValue(target.arguments[0]);
+  return undefined;
+};
+
 const inspectEndpointCall = (
   node: JavaScriptCallLike,
   name: string,
@@ -444,7 +457,8 @@ const inspectEndpointCall = (
   if (isKnownNetworkRequest(node, bindings)) {
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) return;
-    const literal = stringValue(target);
+    const literal =
+      stringValue(target) ?? requestConstructorUrl(target, bindings);
     if (literal !== undefined) {
       addEndpoint(context, {
         node,
@@ -689,6 +703,8 @@ const urlObjectRequestTarget = (
   const initialized = unwrapJavaScriptExpression(initializer).node;
   if (t.isIdentifier(initialized))
     return urlObjectRequestTarget(initialized, site, bindings, index, seen);
+  const requestUrl = requestConstructorUrl(initialized, bindings);
+  if (requestUrl !== undefined) return requestUrl;
   if (!t.isNewExpression(initialized)) return undefined;
   if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
     return undefined;

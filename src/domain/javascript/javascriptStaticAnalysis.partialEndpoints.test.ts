@@ -263,3 +263,64 @@ it("keeps exact literal targets exact", () => {
     },
   ]);
 });
+
+it("resolves inline Request constructor targets with literal URLs", () => {
+  expect(
+    endpoints(`
+        fetch(new Request("/api/chat", { method: "POST" }));
+        fetch(Request("/api/stream"));
+        window.fetch(new Request("/api/window"));
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "/api/chat",
+      mechanism: "call:fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "/api/stream",
+      mechanism: "call:fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "/api/window",
+      mechanism: "call:window.fetch",
+      resolution: undefined,
+    },
+  ]);
+});
+
+it("resolves unchanged Request objects and aliases", () => {
+  expect(
+    endpoints(`
+        const req = new Request("/api/chat", { method: "POST" });
+        const alias = req;
+        fetch(alias);
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "/api/chat",
+      mechanism: "call:fetch",
+      resolution: undefined,
+    },
+  ]);
+});
+
+it("keeps Request objects partial when Request is locally shadowed", () => {
+  expect(
+    endpoints(`
+        function test(Request) {
+          fetch(new Request("/api/shadowed"));
+        }
+      `),
+  ).toContainEqual({
+    kind: "network",
+    value: 'new Request("/api/shadowed")',
+    mechanism: "call:fetch",
+    resolution: "partial",
+  });
+});
