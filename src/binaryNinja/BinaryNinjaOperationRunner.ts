@@ -1,3 +1,6 @@
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
+import { matchRegexValues } from "../process/RegexMatcher.js";
 import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
@@ -108,6 +111,8 @@ export class BinaryNinjaOperationRunner {
       /** Architecture of the bound BinaryView, which selects string decoding. */
       readonly architecture: string;
       readonly signal?: AbortSignal | undefined;
+      readonly regexMatchingDeadline?: RegexMatchingDeadline | undefined;
+      readonly regexWorkerHeapRequest?: RegexWorkerHeapRequest | undefined;
       readonly selectorOrigin?: "provider" | undefined;
     },
   ) {}
@@ -488,6 +493,29 @@ export class BinaryNinjaOperationRunner {
     return [...sources];
   }
 
+  private async search<T extends { readonly value: string }>(
+    operation: "search_procedures" | "search_strings",
+    parameters: Readonly<Record<string, JsonValue>>,
+    items: readonly T[],
+  ): Promise<T[]> {
+    const query = analysisSearchQuerySchema.parse(parameters);
+    if (query.mode === "literal") {
+      const matches = analysisSearchPredicate(query);
+      return items.filter(({ value }) => matches(value));
+    }
+    const matched = await matchRegexValues({
+      operation,
+      pattern: query.pattern,
+      caseSensitive: query.case_sensitive,
+      values: items.map(({ value }) => value),
+      signal: this.options.signal,
+      deadline: this.options.regexMatchingDeadline,
+      heapRequest: this.options.regexWorkerHeapRequest,
+    });
+    if (!matched.ok) throw matched.error;
+    return matched.value.map((index) => items[index]!);
+  }
+
   async run(
     operation: BinaryNinjaOperation,
     parameters: Readonly<Record<string, JsonValue>>,
@@ -498,18 +526,12 @@ export class BinaryNinjaOperationRunner {
         value: fn.name,
       }));
       if (operation === "list_procedures") return items;
-      const matches = analysisSearchPredicate(
-        analysisSearchQuerySchema.parse(parameters),
-      );
-      return items.filter(({ value }) => matches(value));
+      return this.search(operation, parameters, items);
     }
     if (operation === "list_strings" || operation === "search_strings") {
       const items = await this.strings();
       if (operation === "search_strings") {
-        const matches = analysisSearchPredicate(
-          analysisSearchQuerySchema.parse(parameters),
-        );
-        return items.filter(({ value }) => matches(value));
+        return this.search(operation, parameters, items);
       }
       if (parameters.address === undefined) return items;
       const address = binaryNinjaAddressSchema.parse(parameters.address);

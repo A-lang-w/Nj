@@ -248,3 +248,133 @@ describe("Binary Ninja provider", () => {
     expect(JSON.stringify(first.value.profile)).not.toContain("one");
   });
 });
+
+const regexFixture = async (deadlineMs = 5000) => {
+  const { root, target, bytes } = await createBinaryNinjaTarget();
+  roots.push(root);
+  const path = await registration({ url: "http://127.0.0.1:24642/mcp" });
+  const config = parseConfig({
+    REA_BINARY_NINJA_MCP_CONFIG: path,
+    REA_REGEX_MATCHING_DEADLINE_MS: String(deadlineMs),
+    REA_REGEX_WORKER_HEAP_REQUEST_MIB: "64",
+  });
+  if (!config.ok) throw config.error;
+  const producer = new RecordingBinaryNinjaMcp(target, bytes);
+  const candidate = new BinaryNinjaProvider(config.value, () => producer);
+  const selected = await candidate.resolveAnalysisProfile(target);
+  if (
+    !selected.ok ||
+    selected.value.profile === null ||
+    selected.value.createClient === undefined
+  )
+    throw new Error("Expected bound profile");
+  return {
+    producer,
+    client: selected.value.createClient(target, selected.value.profile),
+  };
+};
+
+describe.each(["search_procedures", "search_strings"] as const)(
+  "Binary Ninja %s regex matching",
+  (operation) => {
+    it("preserves Unicode matching, case sensitivity, and literal mode", async () => {
+      const { client, producer } = await regexFixture();
+      const text = "Ångström [x]";
+      producer.functions = producer.functions.map((fn) => ({
+        ...fn,
+        name: text,
+      }));
+      producer.strings = [
+        { address: "0x402000", type: "Utf8String", bytes: Buffer.from(text) },
+      ];
+      try {
+        const insensitive = await client.execute(operation, {
+          mode: "regex",
+          pattern: "^ångström",
+        });
+        expect(insensitive).toMatchObject({
+          ok: true,
+          value: {
+            result: expect.arrayContaining([
+              expect.objectContaining({ value: text }),
+            ]),
+          },
+        });
+        const sensitive = await client.execute(operation, {
+          mode: "regex",
+          pattern: "^ångström",
+          case_sensitive: true,
+        });
+        expect(sensitive).toMatchObject({ ok: true, value: { result: [] } });
+        const literal = await client.execute(operation, { pattern: "[x]" });
+        expect(literal.ok && literal.value.result).toEqual(
+          insensitive.ok && insensitive.value.result,
+        );
+        expect(
+          await client.execute(operation, { mode: "regex", pattern: "[" }),
+        ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    });
+
+    it.each(["deadline", "cancellation"] as const)(
+      "stops pathological matching on %s and keeps the session usable",
+      async (stop) => {
+        const { client, producer } = await regexFixture(
+          stop === "deadline" ? 150 : 5000,
+        );
+        const text = "a".repeat(64) + "!";
+        producer.functions = producer.functions.map((fn) => ({
+          ...fn,
+          name: text,
+        }));
+        producer.strings = [
+          {
+            address: "0x402000",
+            type: "AsciiString",
+            bytes: Buffer.from(text),
+          },
+        ];
+        const controller = new AbortController();
+        const timer =
+          stop === "cancellation"
+            ? setTimeout(() => controller.abort(), 150)
+            : undefined;
+        try {
+          const result = await client.execute(
+            operation,
+            { mode: "regex", pattern: "^(a+)+$" },
+            { signal: controller.signal },
+          );
+          expect(result).toMatchObject({
+            ok: false,
+            error: {
+              _tag:
+                stop === "deadline"
+                  ? "AnalysisResourceConstraintError"
+                  : "AnalysisCancelledError",
+            },
+          });
+          if (!result.ok && stop === "deadline")
+            expect(result).toMatchObject({
+              error: {
+                reportedLimits: {
+                  matching_deadline_ms: 150,
+                  matching_deadline_source: "setting",
+                },
+              },
+            });
+          const recovered = await client.execute(operation, { pattern: "!" });
+          expect(recovered.ok && recovered.value.result).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: text })]),
+          );
+        } finally {
+          clearTimeout(timer);
+          expect((await client.close()).ok).toBe(true);
+          expect(producer.closes).toBe(1);
+        }
+      },
+    );
+  },
+);

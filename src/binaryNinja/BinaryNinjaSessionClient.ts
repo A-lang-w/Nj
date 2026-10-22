@@ -1,3 +1,4 @@
+import type { AppConfig } from "../config/types.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -114,6 +115,9 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     private readonly target: BinaryTarget,
     private readonly connection: BinaryNinjaMcpConnection,
     private readonly profile?: AnalysisProfileCommitment,
+    private readonly regexOptions: Partial<
+      Pick<AppConfig, "regexMatchingDeadline" | "regexWorkerHeapRequest">
+    > = {},
   ) {}
 
   execute(
@@ -208,6 +212,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     return new BinaryNinjaOperationRunner(this.connection, {
       admittedDocument: this.target.path,
       architecture: binding.analysis.architecture,
+      ...this.regexOptions,
       signal: options?.signal,
       selectorOrigin: options?.selectorOrigin,
     });

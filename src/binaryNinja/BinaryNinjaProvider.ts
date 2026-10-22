@@ -207,6 +207,10 @@ export class BinaryNinjaProvider implements AnalysisProviderCandidate {
             target,
             this.connectionFactory(registration),
             profile,
+            {
+              regexMatchingDeadline: this.config.regexMatchingDeadline,
+              regexWorkerHeapRequest: this.config.regexWorkerHeapRequest,
+            },
           )
         : this.#unboundClient(
             "Binary Ninja client factory received a target or profile different from the resolved binding.",
