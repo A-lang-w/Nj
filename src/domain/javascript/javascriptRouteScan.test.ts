@@ -884,3 +884,51 @@ it("preserves initializer provenance for aliased registration segments", () => {
     source.slice(segment.location.start.column, segment.location.end.column),
   ).toBe("'/users/:id?'");
 });
+
+it.each(
+  [
+    "const paths=[];paths.push('/cache/key');",
+    "text.replace('/assets/logo.svg','');",
+    "const paths=[];paths.push(('/cache/key' as const));",
+    "const literal='/cache/key';const paths=[];paths.push(literal);",
+    "createBrowserRouter([{path:'/cache',component:View}]);const paths=[];paths.push('/cache/key');",
+  ].flatMap((source) => [source, `function module(){${source}}`]),
+)("does not admit data writes as navigation: %s", (source) => {
+  const facts = analyze(source);
+  expect(
+    facts.candidates.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toEqual([]);
+  expect(
+    facts.candidates.filter(
+      ({ path }) => path === "/cache/key" || path === "/assets/logo.svg",
+    ),
+  ).toEqual([]);
+});
+
+it.each(
+  [
+    "const fallback={path:'/independent',component:View};const {query=fallback}={query:{ok:1}};router.push({pathname:'/users',query});",
+    "const fallback={path:'/independent',component:View};const alias=fallback;const {query:payload=alias}={query:{ok:1}};router.push({pathname:'/users',query:payload});",
+    "const fallback={path:'/independent',component:View};const {options:{query=fallback}}={options:{query:{ok:1}}};router.push({pathname:'/users',query});",
+  ].flatMap((source) => [source, `function module(){${source}}`]),
+)("keeps inactive navigation defaults independent: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/users",
+    "/independent",
+  ]);
+});
+
+it.each(
+  [
+    "const fallback={path:'/query-data',component:Preview};const {query=fallback}={};router.push({pathname:'/users',query});",
+    "const target='/users';const paths=[];paths.push(target);router.push(target);",
+  ].flatMap((source) => [source, `function module(){${source}}`]),
+)("keeps actual defaults and recognized navigation owned: %s", (source) => {
+  const facts = analyze(source);
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/users",
+  ]);
+});

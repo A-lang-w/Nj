@@ -20,7 +20,10 @@ import {
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticCopiedReferencePath,
+  semanticReferenceSourcesInactive,
+} from "./javascriptSemanticReferenceSources.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
@@ -314,6 +317,13 @@ export class JavaScriptRouteScan {
             binding.referenceInitializers,
           ])
             for (const initializer of initializers) {
+              if (
+                semanticReferenceSourcesInactive(
+                  initializer,
+                  this.index.bindings,
+                )
+              )
+                continue;
               for (const selected of this.#initializerValues(initializer))
                 admit(selected);
             }
@@ -485,7 +495,12 @@ export class JavaScriptRouteScan {
     )
       return;
     const recognized = navigationRecognition(name, parts.at(-2) ?? "");
-    if (recognized !== undefined) this.#navigation(first, recognized);
+    if (recognized === true) this.#navigation(first);
+    else if (recognized === false) {
+      // Method spelling alone does not make array/string data a destination.
+      const value = this.#resolve(first, undefined, this.index);
+      if (value !== undefined) this.#propertyValues.add(value);
+    }
     if (name === "addRoute" && node.arguments.length === 2) {
       // This overload can name a parent rather than a URL. Resolve its record
       // only after the shared binding index is complete.
@@ -720,22 +735,21 @@ export class JavaScriptRouteScan {
       this.#dynamicValues.set(node, { node, navigation, reported, structured });
   }
 
-  #navigation(node: t.Node, recognized = true): void {
+  #navigation(node: t.Node): void {
     const prepared = this.#navigationValues.get(node);
     const unwrapped =
       prepared === undefined
         ? unwrapJavaScriptExpression(node).node
         : prepared.value;
     if (unwrapped === undefined) {
-      if (recognized)
-        this.#unknown(
-          "navigation-target",
-          node,
-          "The navigation destination may be dynamic, mutated, projected or cyclic.",
-        );
+      this.#unknown(
+        "navigation-target",
+        node,
+        "The navigation destination may be dynamic, mutated, projected or cyclic.",
+      );
       return;
     }
-    const pathnameObject = recognized && t.isObjectExpression(unwrapped);
+    const pathnameObject = t.isObjectExpression(unwrapped);
     let destination = unwrapped;
     if (pathnameObject) {
       const fields = this.#fields(unwrapped);
@@ -755,14 +769,12 @@ export class JavaScriptRouteScan {
     destination = unwrapJavaScriptExpression(destination).node;
     const value = stringValue(destination);
     if (value === undefined) {
-      if (recognized)
-        this.#unknown(
-          "navigation-target",
-          node,
-          "The recognized navigation destination is not a supported literal.",
-        );
-      if (!pathnameObject)
-        this.#ownDynamicValue(node, true, recognized, recognized);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "The recognized navigation destination is not a supported literal.",
+      );
+      if (!pathnameObject) this.#ownDynamicValue(node, true, true, true);
       return;
     }
     const path = routePath(value, { navigation: !pathnameObject });
@@ -775,9 +787,8 @@ export class JavaScriptRouteScan {
         true,
       );
     else if (
-      recognized &&
-      (pathnameObject ||
-        (!value.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/iu.test(value)))
+      pathnameObject ||
+      (!value.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/iu.test(value))
     )
       this.#unknown(
         "navigation-target",
