@@ -45,5 +45,9 @@ describe("ShannonEntropy", () => {
     expect(chunks.length).toBe(2);
     expect(chunks[0]).toBe(0);
     expect(chunks[1]).toBeGreaterThan(5.0);
+
+    expect(calculateChunkEntropy(combined, 0.5)).toEqual([]);
+    expect(calculateChunkEntropy(combined, -1)).toEqual([]);
+    expect(calculateChunkEntropy(combined, Number.NaN)).toEqual([]);
   });
 });

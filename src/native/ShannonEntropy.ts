@@ -41,7 +41,8 @@ export const calculateChunkEntropy = (
   bytes: Uint8Array,
   chunkSize = 1024,
 ): number[] => {
-  if (bytes.length === 0 || chunkSize <= 0) return [];
+  if (bytes.length === 0 || !Number.isSafeInteger(chunkSize) || chunkSize <= 0)
+    return [];
   const results: number[] = [];
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
     const end = Math.min(offset + chunkSize, bytes.length);

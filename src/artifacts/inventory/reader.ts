@@ -101,7 +101,12 @@ export const inventoryCoverage = (
     isZipPackageFormat(format) ||
     format === "directory" ||
     format === "asar" ||
-    format === "godot-pck"
+    format === "godot-pck" ||
+    format === "gzip" ||
+    format === "7z" ||
+    format === "tar" ||
+    format === "bzip2" ||
+    format === "xz"
   )
     return {
       coverage: { scope: "container-entries", status: "unknown" },

@@ -52,8 +52,11 @@ const createMockPeBinary = (): Buffer => {
   buf.writeUInt16LE(3, optOffset + 68); // Subsystem: Windows CUI (Console)
   buf.writeUInt16LE(0x0160, optOffset + 70); // DllCharacteristics: ASLR | DEP | HIGH_ENTROPY_VA
 
-  // Data directories (Offset 108 into Optional Header for 64-bit)
-  const rvaBase = optOffset + 108;
+  // Write NumberOfRvaAndSizes at optOffset + 108
+  buf.writeUInt32LE(16, optOffset + 108);
+
+  // Data directories (Offset 112 into Optional Header for 64-bit)
+  const rvaBase = optOffset + 112;
   // Security directory (index 4)
   const certOffset = 1024;
   const certSize = 64;
@@ -156,5 +159,22 @@ describe("PeFormatInspector", () => {
     expect(record?.vsVersion).toBe("VS 2019");
     expect(record?.toolName).toBe("Utc1920_C");
     expect(record?.count).toBe(5);
+  });
+
+  it("rejects short or invalid optional headers", () => {
+    // 88 bytes with SizeOfOptionalHeader = 0
+    const shortBuf = Buffer.alloc(88);
+    shortBuf[0] = 0x4d; // MZ
+    shortBuf[1] = 0x5a;
+    shortBuf.writeUInt32LE(64, 0x3c); // e_lfanew = 64
+    shortBuf.write("PE\0\0", 64, "ascii");
+    // SizeOfOptionalHeader is 0
+    expect(inspectPeFormat(shortBuf)).toBeNull();
+
+    // Invalid magic
+    const invalidMagicBuf = createMockPeBinary();
+    const optOffset = 128 + 4 + 20; // 152 (peOffset is 128 in createMockPeBinary)
+    invalidMagicBuf.writeUInt16LE(0x9999, optOffset);
+    expect(inspectPeFormat(invalidMagicBuf)).toBeNull();
   });
 });

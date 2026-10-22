@@ -1,8 +1,8 @@
 import { createGunzip } from "node:zlib";
-import { PassThrough, type Readable } from "node:stream";
+import { PassThrough, pipeline, type Readable } from "node:stream";
 import { basename } from "node:path";
+import { createReadStream, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import type { Stats } from "node:fs";
 
 import {
   ArtifactReaderFailure,
@@ -147,7 +147,7 @@ export class GzipArtifactReader implements ArtifactReader {
         compressedSize: size,
         executable: true,
         encrypted: false,
-        byteOffset: 0,
+        byteOffset: null,
         declaredIntegrity: null,
         unpacked: false,
         limitations: [],
@@ -184,26 +184,64 @@ export class GzipArtifactReader implements ArtifactReader {
       });
     }
 
-    const inputStream = handle.createReadStream({
-      start: 0,
-      autoClose: false,
-    });
+    const inputStream = createReadStream(this.path, signal ? { signal } : {});
     const gunzip = createGunzip();
     const output = new PassThrough();
 
-    inputStream.pipe(gunzip).pipe(output);
-
-    gunzip.on("error", (err) => {
-      output.destroy(
-        new ArtifactReaderFailure(
-          "format",
-          `GZIP decompression error: ${err.message}`,
-          {
-            cause: err,
-          },
-        ),
-      );
+    let totalBytes = 0;
+    const MAX_GZIP_EXPANSION = 512 * 1024 * 1024; // 512 MiB budget
+    gunzip.on("data", (chunk: Buffer) => {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_GZIP_EXPANSION) {
+        const err = new ArtifactReaderFailure(
+          "limit",
+          `GZIP decompression exceeded maximum expansion budget of ${MAX_GZIP_EXPANSION} bytes`,
+        );
+        inputStream.destroy();
+        gunzip.destroy(err);
+        output.destroy(err);
+      }
     });
+
+    pipeline(inputStream, gunzip, output, (err) => {
+      if (err) {
+        const failure =
+          err instanceof ArtifactReaderFailure
+            ? err
+            : new ArtifactReaderFailure(
+                "format",
+                `GZIP decompression error: ${err.message}`,
+                { cause: err },
+              );
+        output.destroy(failure);
+      }
+    });
+
+    output.on("close", () => {
+      if (!inputStream.destroyed) inputStream.destroy();
+      if (!gunzip.destroyed) gunzip.destroy();
+    });
+
+    if (signal) {
+      const onAbort = () => {
+        const failure = new ArtifactReaderFailure(
+          "cancelled",
+          "Decompression cancelled",
+          { cancellation: { reason: signal.reason } },
+        );
+        inputStream.destroy();
+        gunzip.destroy();
+        output.destroy(failure);
+      };
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+        output.on("close", () => {
+          signal.removeEventListener("abort", onAbort);
+        });
+      }
+    }
 
     return output;
   }

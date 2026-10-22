@@ -16,6 +16,7 @@ import {
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
+import { inventoryCoverage } from "./reader.js";
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
 
@@ -467,5 +468,50 @@ describe("extended artifact signature classification", () => {
       kind: "resource",
       format: "sqlite",
     });
+  });
+
+  it("classifies JVM class files larger than 8 KiB prefix without FAT misclassification", () => {
+    const prefix = Buffer.alloc(8192);
+    prefix.writeUInt32BE(0xcafebabe, 0); // magic
+    prefix.writeUInt16BE(0, 4); // minor = 0
+    prefix.writeUInt16BE(61, 6); // major = 61 (Java 17)
+    prefix.writeUInt16BE(4, 8); // constant pool count = 4 (entries 1, 2, 3)
+    // entry 1: UTF8 "Test"
+    prefix[10] = 1;
+    prefix.writeUInt16BE(4, 11);
+    prefix.write("Test", 13);
+    // entry 2: Class pointing to 1
+    prefix[17] = 7;
+    prefix.writeUInt16BE(1, 18);
+    // entry 3: UTF8 "java/lang/Object"
+    prefix[20] = 1;
+    prefix.writeUInt16BE(16, 21);
+    prefix.write("java/lang/Object", 23);
+
+    const result = classifyArtifactBytesAtPath(
+      "LargeService.class",
+      prefix,
+      65536,
+    );
+    expect(result).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+  });
+
+  it("reports unavailable child inventory coverage for unread archives", () => {
+    for (const format of ["7z", "tar", "bzip2", "xz"] as const) {
+      const res = inventoryCoverage(format, undefined, {
+        status: "complete",
+        limitations: [],
+      });
+      expect(res.coverage).toEqual({
+        scope: "container-entries",
+        status: "unknown",
+      });
+      expect(res.limitations).toContain(
+        `${format} child inventory reader is unavailable.`,
+      );
+    }
   });
 });

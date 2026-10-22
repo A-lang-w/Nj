@@ -111,17 +111,22 @@ const decodeDllCharacteristics = (dllCharValue: number): string[] => {
 
 const parseDataDirectories = (
   buffer: Buffer,
-  rvaOffset: number,
+  dirOffset: number,
+  count: number,
+  maxOffset: number,
 ): {
   directories: PeDataDirectory[];
   authenticode?: PeAuthenticodeInfo | undefined;
 } => {
   const directories: PeDataDirectory[] = [];
   let certInfo: PeAuthenticodeInfo | undefined;
+  const numDirs = Math.min(count, 16);
 
-  for (let i = 0; i < 16 && rvaOffset + (i + 1) * 8 <= buffer.length; i += 1) {
-    const va = buffer.readUInt32LE(rvaOffset + i * 8);
-    const size = buffer.readUInt32LE(rvaOffset + i * 8 + 4);
+  for (let i = 0; i < numDirs; i += 1) {
+    const entryOffset = dirOffset + i * 8;
+    if (entryOffset + 8 > maxOffset || entryOffset + 8 > buffer.length) break;
+    const va = buffer.readUInt32LE(entryOffset);
+    const size = buffer.readUInt32LE(entryOffset + 4);
     const name = DATA_DIRECTORY_NAMES[i] ?? `DIR_${i}`;
     directories.push({ name, virtualAddress: va, size });
 
@@ -206,10 +211,19 @@ export const inspectPeFormat = (buffer: Buffer): PeFormatReport | null => {
   const sizeOfOptionalHeader = buffer.readUInt16LE(fileHeaderOffset + 16);
 
   const optionalHeaderOffset = fileHeaderOffset + 20;
-  if (optionalHeaderOffset + sizeOfOptionalHeader > buffer.length) return null;
+  if (
+    sizeOfOptionalHeader < 2 ||
+    optionalHeaderOffset + sizeOfOptionalHeader > buffer.length
+  ) {
+    return null;
+  }
 
   const magic = buffer.readUInt16LE(optionalHeaderOffset);
+  if (magic !== 0x10b && magic !== 0x20b) return null;
   const is64Bit = magic === 0x20b;
+
+  const minRequiredOptSize = is64Bit ? 112 : 96;
+  if (sizeOfOptionalHeader < minRequiredOptSize) return null;
 
   const entryPointRva = buffer.readUInt32LE(optionalHeaderOffset + 16);
   const imageBase = is64Bit
@@ -220,10 +234,16 @@ export const inspectPeFormat = (buffer: Buffer): PeFormatReport | null => {
   const dllCharValue = buffer.readUInt16LE(optionalHeaderOffset + 70);
   const dllCharacteristics = decodeDllCharacteristics(dllCharValue);
 
-  const rvaOffset = optionalHeaderOffset + (is64Bit ? 108 : 92);
+  const numRvaAndSizesOffset = optionalHeaderOffset + (is64Bit ? 108 : 92);
+  const numberOfRvaAndSizes = buffer.readUInt32LE(numRvaAndSizesOffset);
+  const dirOffset = optionalHeaderOffset + (is64Bit ? 112 : 96);
+  const optHeaderEnd = optionalHeaderOffset + sizeOfOptionalHeader;
+
   const { directories: dataDirectories, authenticode } = parseDataDirectories(
     buffer,
-    rvaOffset,
+    dirOffset,
+    numberOfRvaAndSizes,
+    optHeaderEnd,
   );
 
   const sectionsOffset = optionalHeaderOffset + sizeOfOptionalHeader;

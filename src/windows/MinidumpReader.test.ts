@@ -33,7 +33,7 @@ const createMockMinidump = (): Buffer => {
 
   // 3. SystemInfo Stream payload (at 72)
   buf.writeUInt16LE(9, sysInfoRva); // x86-64 (AMD64)
-  buf.writeUInt8(8, sysInfoRva + 4); // 8 CPUs
+  buf.writeUInt8(8, sysInfoRva + 6); // 8 CPUs
   buf.writeUInt32LE(10, sysInfoRva + 8); // major = 10
   buf.writeUInt32LE(0, sysInfoRva + 12); // minor = 0
   buf.writeUInt32LE(19045, sysInfoRva + 16); // build = 19045

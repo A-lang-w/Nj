@@ -74,7 +74,7 @@ const parseSystemInfoStream = (
 ): MinidumpSystemInfo | undefined => {
   if (rva + size > buffer.length || size < 24) return undefined;
   const archCode = buffer.readUInt16LE(rva);
-  const numberOfProcessors = buffer.readUInt8(rva + 4);
+  const numberOfProcessors = buffer.readUInt8(rva + 6);
   const majorVersion = buffer.readUInt32LE(rva + 8);
   const minorVersion = buffer.readUInt32LE(rva + 12);
   const buildNumber = buffer.readUInt32LE(rva + 16);
@@ -97,7 +97,7 @@ const parseExceptionStream = (
   rva: number,
   size: number,
 ): MinidumpException | undefined => {
-  if (rva + size > buffer.length || size < 24) return undefined;
+  if (rva + size > buffer.length || size < 32) return undefined;
   const threadId = buffer.readUInt32LE(rva);
   const recOffset = rva + 8; // skip threadId + alignment
   const code = buffer.readUInt32LE(recOffset);
@@ -126,10 +126,13 @@ const parseModuleListStream = (
   const count = buffer.readUInt32LE(rva);
   const modules: MinidumpModule[] = [];
   const entrySize = 108; // MINIDUMP_MODULE size
+  const maxPossibleEntries = Math.floor((size - 4) / entrySize);
+  const safeCount = Math.min(count, maxPossibleEntries);
 
-  for (let i = 0; i < count; i += 1) {
+  for (let i = 0; i < safeCount; i += 1) {
     const offset = rva + 4 + i * entrySize;
-    if (offset + entrySize > buffer.length) break;
+    if (offset + entrySize > rva + size || offset + entrySize > buffer.length)
+      break;
 
     const baseAddress = buffer.readBigUInt64LE(offset);
     const modSize = buffer.readUInt32LE(offset + 8);

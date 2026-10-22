@@ -104,4 +104,31 @@ describe("PythonBytecode", () => {
     expect(parsed?.hashMode).toBe("checked");
     expect(parsed?.codeObjectOffset).toBe(16);
   });
+
+  it("builds and parses Python 3.2 bytecode headers (8 bytes)", () => {
+    const timestamp = new Date(1600000000000);
+    const header = buildPythonBytecodeHeader("3.2", { timestamp });
+    expect(header.length).toBe(8);
+
+    const parsed = parsePythonBytecodeHeader(header);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.version).toBe("3.2");
+    expect(parsed?.magicNumber).toBe(3180);
+    expect(parsed?.codeObjectOffset).toBe(8);
+  });
+
+  it("rejects truncated headers that do not have the complete version-specific length", () => {
+    // Only 4 bytes of Python 3.10 magic
+    const onlyMagic = Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]);
+    expect(parsePythonBytecodeHeader(onlyMagic)).toBeNull();
+
+    // 12 bytes of Python 3.10 (needs 16 bytes)
+    const partial310 = Buffer.alloc(12);
+    onlyMagic.copy(partial310);
+    expect(parsePythonBytecodeHeader(partial310)).toBeNull();
+
+    // 6 bytes of Python 2.7 (needs 8 bytes)
+    const partial27 = Buffer.from([0x03, 0xf3, 0x0d, 0x0a, 0x00, 0x00]);
+    expect(parsePythonBytecodeHeader(partial27)).toBeNull();
+  });
 });

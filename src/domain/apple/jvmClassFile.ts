@@ -259,3 +259,65 @@ export const isJvmClassFile = (bytes: Uint8Array): boolean => {
     cursor.atEnd
   );
 };
+
+/** Bounded framing check that distinguishes JVM class prefixes from Mach-O FAT without requiring full file EOF. */
+export const hasBoundedJvmClassFraming = (bytes: Uint8Array): boolean => {
+  if (bytes.byteLength < 10) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, false) !== 0xcafebabe) return false;
+  const minor = view.getUint16(4, false);
+  const major = view.getUint16(6, false);
+  const poolCount = view.getUint16(8, false);
+  if (
+    major < 45 ||
+    major > 100 ||
+    (minor !== 0 && minor !== 65535) ||
+    poolCount === 0
+  )
+    return false;
+  if (isJvmClassFile(bytes)) return true;
+
+  let offset = 10;
+  let parsed = 0;
+  for (
+    let index = 1;
+    index < poolCount && offset < bytes.byteLength;
+    index += 1
+  ) {
+    const tag = bytes[offset++]!;
+    parsed += 1;
+    if (tag === 1) {
+      if (offset + 2 > bytes.byteLength) break;
+      const len = view.getUint16(offset, false);
+      offset += 2 + len;
+      if (offset > bytes.byteLength) break;
+    } else if (tag === 3 || tag === 4) {
+      offset += 4;
+    } else if (tag === 5 || tag === 6) {
+      offset += 8;
+      index += 1;
+    } else if (
+      tag === 7 ||
+      tag === 8 ||
+      tag === 16 ||
+      tag === 19 ||
+      tag === 20
+    ) {
+      offset += 2;
+    } else if (
+      tag === 9 ||
+      tag === 10 ||
+      tag === 11 ||
+      tag === 12 ||
+      tag === 17 ||
+      tag === 18
+    ) {
+      offset += 4;
+    } else if (tag === 15) {
+      offset += 3;
+    } else {
+      return false;
+    }
+  }
+  return parsed >= Math.min(poolCount - 1, 3);
+};

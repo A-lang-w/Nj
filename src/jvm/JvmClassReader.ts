@@ -53,7 +53,44 @@ export const resolveJavaRelease = (majorVersion: number): string => {
   return JAVA_VERSIONS[majorVersion] ?? `Java (class format ${majorVersion})`;
 };
 
-const decodeAccessFlags = (
+export const decodeModifiedUtf8 = (bytes: Uint8Array): string => {
+  let result = "";
+  let i = 0;
+  const len = bytes.length;
+  while (i < len) {
+    const b1 = bytes[i++]!;
+    if ((b1 & 0x80) === 0) {
+      result += String.fromCharCode(b1);
+    } else if ((b1 & 0xe0) === 0xc0) {
+      if (i >= len) throw new Error("Truncated modified UTF-8 sequence");
+      const b2 = bytes[i++]!;
+      const code = ((b1 & 0x1f) << 6) | (b2 & 0x3f);
+      result += String.fromCharCode(code);
+    } else if ((b1 & 0xf0) === 0xe0) {
+      if (i + 1 >= len) throw new Error("Truncated modified UTF-8 sequence");
+      const b2 = bytes[i++]!;
+      const b3 = bytes[i++]!;
+      const code = ((b1 & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+      result += String.fromCharCode(code);
+    } else if ((b1 & 0xf8) === 0xf0) {
+      if (i + 2 >= len) throw new Error("Truncated UTF-8 sequence");
+      const b2 = bytes[i++]!;
+      const b3 = bytes[i++]!;
+      const b4 = bytes[i++]!;
+      const cp =
+        ((b1 & 0x07) << 18) |
+        ((b2 & 0x3f) << 12) |
+        ((b3 & 0x3f) << 6) |
+        (b4 & 0x3f);
+      result += String.fromCodePoint(cp);
+    } else {
+      throw new Error(`Invalid modified UTF-8 byte: 0x${b1.toString(16)}`);
+    }
+  }
+  return result;
+};
+
+export const decodeAccessFlags = (
   flags: number,
   kind: "class" | "field" | "method",
 ): string[] => {
@@ -64,11 +101,18 @@ const decodeAccessFlags = (
   if ((flags & 0x0008) !== 0) result.push("static");
   if ((flags & 0x0010) !== 0) result.push("final");
   if (kind === "class" && (flags & 0x0020) !== 0) result.push("super");
+  if (kind === "method" && (flags & 0x0020) !== 0) result.push("synchronized");
+  if (kind === "field" && (flags & 0x0040) !== 0) result.push("volatile");
+  if (kind === "method" && (flags & 0x0040) !== 0) result.push("bridge");
+  if (kind === "field" && (flags & 0x0080) !== 0) result.push("transient");
+  if (kind === "method" && (flags & 0x0080) !== 0) result.push("varargs");
+  if (kind === "method" && (flags & 0x0100) !== 0) result.push("native");
   if (kind === "class" && (flags & 0x0200) !== 0) result.push("interface");
   if ((flags & 0x0400) !== 0) result.push("abstract");
+  if (kind === "method" && (flags & 0x0800) !== 0) result.push("strictfp");
   if ((flags & 0x1000) !== 0) result.push("synthetic");
   if (kind === "class" && (flags & 0x2000) !== 0) result.push("annotation");
-  if (kind === "class" && (flags & 0x4000) !== 0) result.push("enum");
+  if ((flags & 0x4000) !== 0) result.push("enum");
   return result;
 };
 
@@ -133,7 +177,7 @@ const parseConstantPool = (
       // UTF-8
       const len = cursor.u2();
       const raw = cursor.bytesSlice(len);
-      pool.set(i, new TextDecoder("utf-8").decode(raw));
+      pool.set(i, decodeModifiedUtf8(raw));
     } else if (tag === 3 || tag === 4) {
       // Integer, Float
       cursor.skip(4);
@@ -161,7 +205,7 @@ const parseConstantPool = (
       // Dynamic, InvokeDynamic
       cursor.skip(4);
     } else {
-      break;
+      throw new Error(`Unsupported constant-pool tag: ${tag}`);
     }
   }
 

@@ -120,8 +120,11 @@ export const parsePyInstallerArchive = (
   const cookie = findPyInstallerCookie(buffer);
   if (!cookie) return null;
 
-  const carchiveOffset = cookie.offset - cookie.pkgLength;
-  if (carchiveOffset < 0) return null;
+  const cookieBytes = buffer.length >= cookie.offset + 88 ? 88 : 24;
+  const carchiveOffset = cookie.offset + cookieBytes - cookie.pkgLength;
+  if (carchiveOffset < 0 || carchiveOffset + cookie.pkgLength > buffer.length) {
+    return null;
+  }
 
   const absoluteTocOffset = carchiveOffset + cookie.tocOffset;
   if (
@@ -260,6 +263,9 @@ class SimpleMarshalReader {
   }
 
   private readTuple(count: number): unknown[] {
+    if (count < 0 || count > 100_000) {
+      throw new Error(`Marshal tuple count ${count} exceeds limit`);
+    }
     const tuple: unknown[] = [];
     for (let i = 0; i < count; i += 1) {
       tuple.push(this.readObject());
@@ -268,10 +274,22 @@ class SimpleMarshalReader {
   }
 
   readObject(): unknown {
-    if (!this.hasMore()) return null;
-    const type = this.readByte();
+    if (!this.hasMore()) throw new Error("Marshal EOF");
+    const rawType = this.readByte();
+    const type = rawType & 0x7f;
 
     if (type === 0x7b) return this.readDict();
+    if (type === 0x5b) {
+      const count = this.readUInt32LE();
+      if (count < 0 || count > 100_000) {
+        throw new Error(`Marshal list count ${count} exceeds limit`);
+      }
+      const list: unknown[] = [];
+      for (let i = 0; i < count; i += 1) {
+        list.push(this.readObject());
+      }
+      return list;
+    }
     if (type === 0x73 || type === 0x75 || type === 0x61 || type === 0x74) {
       return this.readString(this.readUInt32LE());
     }
@@ -289,6 +307,7 @@ class SimpleMarshalReader {
     }
     if (type === 0x54) return true;
     if (type === 0x46) return false;
+    if (type === 0x4e) return null;
     return null;
   }
 }
@@ -309,7 +328,20 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
   try {
     const reader = new SimpleMarshalReader(pyzBuffer, tocOffset);
     const toc = reader.readObject();
-    if (toc && typeof toc === "object") {
+    if (Array.isArray(toc)) {
+      for (const item of toc) {
+        if (!Array.isArray(item) || item.length < 2) continue;
+        const name = String(item[0]);
+        const val = item[1];
+        if (!Array.isArray(val) || val.length < 3) continue;
+        const isPackage = Boolean(val[0]);
+        const dataOffset = Number(val[1]);
+        const dataLength = Number(val[2]);
+        if (Number.isFinite(dataOffset) && Number.isFinite(dataLength)) {
+          modules.push({ name, isPackage, dataOffset, dataLength });
+        }
+      }
+    } else if (toc && typeof toc === "object") {
       for (const [name, val] of Object.entries(toc)) {
         if (!Array.isArray(val) || val.length < 3) continue;
         const isPackage = Boolean(val[0]);
@@ -337,9 +369,11 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
  * Extract all files, scripts, embedded modules, and libraries from a PyInstaller binary.
  * Reconstructs valid .pyc bytecode with compliant headers for decompiler compatibility.
  */
+const MAX_INFLATE_BYTES = 128 * 1024 * 1024; // 128 MiB per entry limit
 const inflatePayload = (
   raw: Buffer,
   flag: number,
+  maxOutputBytes = MAX_INFLATE_BYTES,
 ): {
   readonly data: Buffer;
   readonly decompressed: boolean;
@@ -347,7 +381,10 @@ const inflatePayload = (
 } => {
   if (flag === 0) return { data: raw, decompressed: true };
   try {
-    return { data: zlib.inflateSync(raw), decompressed: true };
+    return {
+      data: zlib.inflateSync(raw, { maxOutputLength: maxOutputBytes }),
+      decompressed: true,
+    };
   } catch (err) {
     return {
       data: raw,
@@ -368,11 +405,25 @@ const extractPyzModule = (
   }
   const raw = pyzData.subarray(mod.dataOffset, mod.dataOffset + mod.dataLength);
   const inflated = inflatePayload(raw, 1);
-  const header = buildPythonBytecodeHeader(pycMagic);
-  const pycData = Buffer.concat([header, inflated.data]);
   const modPath = mod.isPackage
     ? `${mod.name.replace(/\./g, "/")}/__init__.pyc`
     : `${mod.name.replace(/\./g, "/")}.pyc`;
+
+  if (!inflated.decompressed) {
+    return {
+      name: modPath,
+      kind: mod.isPackage ? "package" : "module",
+      data: raw,
+      decompressed: false,
+      pythonVersion,
+      limitations: [
+        inflated.error ?? "Failed to decompress PYZ module payload",
+      ],
+    };
+  }
+
+  const header = buildPythonBytecodeHeader(pycMagic);
+  const pycData = Buffer.concat([header, inflated.data]);
   return {
     name: modPath,
     kind: mod.isPackage ? "package" : "module",

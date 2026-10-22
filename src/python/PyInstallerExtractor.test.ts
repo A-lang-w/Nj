@@ -137,7 +137,7 @@ const createMockPyInstallerBinary = (): Buffer => {
 
   const tocOffset = carchiveData.length;
   const tocLength = tocEntries.length;
-  const pkgLength = carchiveData.length + tocLength;
+  const pkgLength = carchiveData.length + tocLength + 88;
 
   // Build PyInstaller Cookie (88 bytes)
   const cookie = Buffer.alloc(88);
@@ -212,5 +212,20 @@ describe("PyInstallerExtractor", () => {
     expect(dll).toBeDefined();
     expect(dll?.kind).toBe("binary");
     expect(dll?.data.toString("utf8")).toBe("MOCK_PYTHON_RUNTIME_DLL_PAYLOAD");
+  });
+
+  it("handles tiny PYZ with huge tuple count gracefully without memory exhaustion", () => {
+    // 17 bytes: valid header, tocOffset = 12, bytes: 28 ff ff ff ff (tuple count = 4294967295)
+    const header = Buffer.alloc(12);
+    PYZ_MAGIC.copy(header, 0);
+    Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]).copy(header, 4);
+    header.writeUInt32BE(12, 8);
+    const malformed = Buffer.concat([
+      header,
+      Buffer.from([0x28, 0xff, 0xff, 0xff, 0xff]),
+    ]);
+    const pyz = parsePyzArchive(malformed);
+    expect(pyz).not.toBeNull();
+    expect(pyz?.modules).toEqual([]);
   });
 });

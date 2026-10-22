@@ -69,9 +69,10 @@ export const parsePythonBytecodeHeader = (
   const major = Number(majorStr);
   const minor = Number(minorStr);
 
-  // Python 2.x header: 4-byte magic + 4-byte timestamp = 8 bytes
-  if (major === 2) {
-    const timestampSec = bytes.length >= 8 ? bytes.readUInt32LE(4) : 0;
+  // Python 2.x and Python 3.0 to 3.2: 4-byte magic + 4-byte timestamp = 8 bytes
+  if (major === 2 || (major === 3 && minor < 3)) {
+    if (bytes.length < 8) return null;
+    const timestampSec = bytes.readUInt32LE(4);
     return {
       version,
       magicNumber: magic,
@@ -81,10 +82,11 @@ export const parsePythonBytecodeHeader = (
     };
   }
 
-  // Python 3.0 to 3.6: 4-byte magic + 4-byte timestamp + 4-byte size = 12 bytes
+  // Python 3.3 to 3.6: 4-byte magic + 4-byte timestamp + 4-byte size = 12 bytes
   if (major === 3 && minor < 7) {
-    const timestampSec = bytes.length >= 8 ? bytes.readUInt32LE(4) : 0;
-    const sourceSize = bytes.length >= 12 ? bytes.readUInt32LE(8) : undefined;
+    if (bytes.length < 12) return null;
+    const timestampSec = bytes.readUInt32LE(4);
+    const sourceSize = bytes.readUInt32LE(8);
     return {
       version,
       magicNumber: magic,
@@ -96,7 +98,8 @@ export const parsePythonBytecodeHeader = (
   }
 
   // Python 3.7+ (PEP 552): 4-byte magic + 4-byte bitfield + 8-byte hash/timestamp + 4-byte size = 16 bytes
-  const bitfield = bytes.length >= 8 ? bytes.readUInt32LE(4) : 0;
+  if (bytes.length < 16) return null;
+  const bitfield = bytes.readUInt32LE(4);
   const isHashBased = (bitfield & 0x01) !== 0;
 
   if (isHashBased) {
@@ -110,8 +113,8 @@ export const parsePythonBytecodeHeader = (
     };
   }
 
-  const timestampSec = bytes.length >= 12 ? bytes.readUInt32LE(8) : 0;
-  const sourceSize = bytes.length >= 16 ? bytes.readUInt32LE(12) : undefined;
+  const timestampSec = bytes.readUInt32LE(8);
+  const sourceSize = bytes.readUInt32LE(12);
 
   return {
     version,
@@ -172,8 +175,8 @@ export const buildPythonBytecodeHeader = (
     : 0;
   const sourceSize = options?.sourceSize ?? 0;
 
-  // Python 2.x: 8 bytes
-  if (major === 2) {
+  // Python 2.x and Python 3.0 to 3.2: 8 bytes
+  if (major === 2 || (major === 3 && minor < 3)) {
     const header = Buffer.alloc(8);
     header.writeUInt16LE(magic, 0);
     header[2] = 0x0d;
@@ -182,7 +185,7 @@ export const buildPythonBytecodeHeader = (
     return header;
   }
 
-  // Python 3.0 to 3.6: 12 bytes
+  // Python 3.3 to 3.6: 12 bytes
   if (major === 3 && minor < 7) {
     const header = Buffer.alloc(12);
     header.writeUInt16LE(magic, 0);

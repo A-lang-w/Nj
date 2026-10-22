@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseJvmClass, resolveJavaRelease } from "./JvmClassReader.js";
+import {
+  decodeAccessFlags,
+  decodeModifiedUtf8,
+  parseJvmClass,
+  resolveJavaRelease,
+} from "./JvmClassReader.js";
 
 const createMockClassFile = (): Uint8Array => {
   const parts: Uint8Array[] = [];
@@ -132,5 +137,46 @@ describe("JvmClassReader", () => {
     expect(method?.descriptor).toBe("()Ljava/lang/String;");
     expect(method?.accessFlags).toContain("public");
     expect(method?.codeLength).toBe(4);
+  });
+
+  it("decodes Modified UTF-8 correctly including embedded null and surrogate pairs", () => {
+    // Embedded null: 0xC0 0x80
+    const nullBytes = new Uint8Array([0x61, 0xc0, 0x80, 0x62]);
+    expect(decodeModifiedUtf8(nullBytes)).toBe("a\0b");
+
+    // Standard 2-byte: U+00E9 (é) -> 0xC3 0xA9
+    const eAcute = new Uint8Array([0xc3, 0xa9]);
+    expect(decodeModifiedUtf8(eAcute)).toBe("é");
+
+    // Supplementary character outside BMP: U+10348 (𐍈)
+    // UTF-16: 0xD800 0xDF48
+    // MUTF-8: 0xED 0xA0 0x80 (for 0xD800) followed by 0xED 0xBD 0x88 (for 0xDF48)
+    const gothicChar = new Uint8Array([0xed, 0xa0, 0x80, 0xed, 0xbd, 0x88]);
+    expect(decodeModifiedUtf8(gothicChar)).toBe("𐍈");
+  });
+
+  it("decodes method and field access flags properly", () => {
+    // synchronized (0x0020) + native (0x0100) + strictfp (0x0800)
+    const methodFlags = decodeAccessFlags(0x0020 | 0x0100 | 0x0800, "method");
+    expect(methodFlags).toContain("synchronized");
+    expect(methodFlags).toContain("native");
+    expect(methodFlags).toContain("strictfp");
+
+    // volatile (0x0040) + transient (0x0080)
+    const fieldFlags = decodeAccessFlags(0x0040 | 0x0080, "field");
+    expect(fieldFlags).toContain("volatile");
+    expect(fieldFlags).toContain("transient");
+  });
+
+  it("rejects classes with unsupported constant-pool tags", () => {
+    // 25-byte buffer with valid magic and unknown tag 99
+    const b = new Uint8Array(25);
+    const view = new DataView(b.buffer);
+    view.setUint32(0, 0xcafebabe, false);
+    view.setUint16(4, 0, false); // minor
+    view.setUint16(6, 61, false); // major
+    view.setUint16(8, 2, false); // cpCount = 2
+    b[10] = 99; // unknown tag
+    expect(parseJvmClass(b)).toBeNull();
   });
 });

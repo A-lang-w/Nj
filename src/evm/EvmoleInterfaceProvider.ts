@@ -424,13 +424,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         throw new AnalysisCancelledError(OPERATION, {
           cause: options.signal.reason,
         });
-      const allowNonLinux =
-        this.environment.REA_ALLOW_NON_LINUX === "1" ||
-        this.environment.REA_ALLOW_NON_LINUX === "true";
-      if (
-        (process.platform !== "linux" || process.arch !== "x64") &&
-        !allowNonLinux
-      )
+      if (process.platform !== "linux" || process.arch !== "x64")
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
           OPERATION,
