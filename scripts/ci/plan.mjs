@@ -51,7 +51,7 @@ const SHARED_BOUNDARY =
 // real GDB/Rizin target lifecycle behavior. Keep that one provider lane when
 // the changed shared source directly participates in debugger ownership.
 const DEBUGGER_PROCESS_BOUNDARY =
-  /^src\/process\/(?:ProcessOwnership.*|ownedDebuggerSession|inferiorInputSink)\.ts$/;
+  /^src\/process\/(?:ProcessOwnership.*|OwnedCommand|ProviderProcess|ownedDebuggerSession|inferiorInputSink)\.ts$/;
 const full = (reason) => {
   if (tier === "full") {
     for (const flag of flags) selected[flag] = true;

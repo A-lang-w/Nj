@@ -433,13 +433,25 @@ export class ReverseEngineeringService {
     } catch (cause) {
       if (signal?.aborted)
         return err(new AnalysisCancelledError(operation, { cause }));
-      if (cause instanceof Error && Reflect.get(cause, "code") === "ETIMEDOUT")
+      if (
+        cause instanceof Error &&
+        Reflect.get(cause, "code") === "ETIMEDOUT"
+      ) {
+        const lookupTimeoutMs = providerPathLookupTimeoutMs(cause);
         return err(
-          new AnalysisTimeoutError(operation, timeoutMs, {
-            cause,
-            ...reverseCommandTimeoutGuidance(timeoutMs),
-          }),
+          lookupTimeoutMs === undefined
+            ? new AnalysisTimeoutError(operation, timeoutMs, {
+                cause,
+                ...reverseCommandTimeoutGuidance(timeoutMs),
+              })
+            : new AnalysisTimeoutError(operation, lookupTimeoutMs, {
+                cause,
+                userMessage: `The Windows provider PATH lookup reached its ${String(lookupTimeoutMs)} ms deadline. This is separate from command_timeout_ms.`,
+                remediationAction:
+                  "Set an absolute REA_OBJDUMP_COMMAND or REA_RIZIN_COMMAND path to avoid scanning PATH entries. command_timeout_ms does not change the PATH lookup deadline.",
+              }),
         );
+      }
       return err(
         new AnalysisOutputError(
           operation,
@@ -901,9 +913,7 @@ export class ReverseEngineeringService {
         predicateType: "rea.reverse-engineering.command-observation",
         operation,
         parameters: {
-          ...(absolutePath === undefined
-            ? { operation: "architectures" }
-            : parameters),
+          ...parameters,
           provider_executable: command,
           command_arguments: [...args],
         },
@@ -1336,6 +1346,16 @@ const commandFailureCode = (cause: unknown): string | number | undefined => {
   const code: unknown = Reflect.get(cause, "code");
   return typeof code === "string" || typeof code === "number"
     ? code
+    : undefined;
+};
+
+const providerPathLookupTimeoutMs = (cause: Error): number | undefined => {
+  if (Reflect.get(cause, "providerStage") !== "path_lookup") return undefined;
+  const timeoutMs = Reflect.get(cause, "timeoutMs");
+  return typeof timeoutMs === "number" &&
+    Number.isSafeInteger(timeoutMs) &&
+    timeoutMs > 0
+    ? timeoutMs
     : undefined;
 };
 

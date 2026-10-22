@@ -87,10 +87,12 @@ it("records pathless objdump architecture support as provider capability evidenc
   try {
     const result = await service.inspectWithObjdump({
       operation: "architectures",
+      command_timeout_ms: 5_000,
     });
     if (!result.ok) throw result.error;
     expect(result.value.subject).toBeNull();
     expect(result.value.parameters).not.toHaveProperty("path");
+    expect(result.value.parameters.command_timeout_ms).toBe(5_000);
     expect(result.value.parameters).not.toHaveProperty(
       "artifact_sha256_before",
     );

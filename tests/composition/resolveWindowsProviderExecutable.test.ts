@@ -206,7 +206,7 @@ describe("admitted Windows provider lookup", () => {
       });
       try {
         const result = service.inspectWithObjdump(
-          { operation: "architectures" },
+          { operation: "architectures", command_timeout_ms: 5_000 },
           { signal: controller.signal },
         );
         await probing;
@@ -214,7 +214,8 @@ describe("admitted Windows provider lookup", () => {
         if (mode === "close") closing = service.close();
         else if (mode === "cancel") controller.abort();
         else await vi.advanceTimersByTimeAsync(100);
-        expect(await result).toMatchObject({
+        const settled = await result;
+        expect(settled).toMatchObject({
           ok: false,
           error: {
             _tag:
@@ -223,6 +224,13 @@ describe("admitted Windows provider lookup", () => {
                 : "AnalysisCancelledError",
           },
         });
+        if (mode === "deadline" && !settled.ok) {
+          expect(settled.error).toMatchObject({
+            timeoutMs: 100,
+            userMessage: expect.stringContaining("PATH lookup"),
+            remediationAction: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+          });
+        }
         await closing;
         rejectProbe(new Error("late network failure"));
         await Promise.resolve();

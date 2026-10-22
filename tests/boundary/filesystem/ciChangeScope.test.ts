@@ -319,6 +319,8 @@ it.each([
   "src/gdb/GdbSessionManager.ts",
   "src/process/ownedDebuggerSession.ts",
   "src/process/inferiorInputSink.ts",
+  "src/process/OwnedCommand.ts",
+  "src/process/ProviderProcess.ts",
   "src/process/ProcessOwnership.ts",
   "src/process/ProcessOwnershipObservation.ts",
 ])("selects the real reverse-provider lane for %s", async (path) => {

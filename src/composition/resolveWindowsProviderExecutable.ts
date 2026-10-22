@@ -113,7 +113,11 @@ export const resolveWindowsProviderExecutable = async (
           "Provider PATH lookup timed out; set an absolute REA_OBJDUMP_COMMAND or REA_RIZIN_COMMAND path.",
           { cause },
         ),
-        { code: "ETIMEDOUT" },
+        {
+          code: "ETIMEDOUT",
+          providerStage: "path_lookup",
+          timeoutMs: deadline.timeoutMs,
+        },
       );
     throw cause;
   } finally {
