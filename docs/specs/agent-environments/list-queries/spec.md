@@ -31,11 +31,14 @@ the line recorded, from the collection's initial entities, explains it:
 - `inert` for a parameter that changes nothing, valid only for the values it recorded.
 
 Parameter names decide which roles are tried (`sort` for `orderBy`, `search` for `q`), and any parameter may be a
-filter or inert. A line with more than 12 query parameters is left unexplained, which bounds the search; names such as
-`__proto__` are kept as the query's own members. The lines' roles merge: lines that disagree drop the parameter, inert values gather, search fields
-unite. The merged query keeps the lines it reproduces, envelope and fields included; any other line keeps its
-recorded members. The view's `query` names the roles, those lines, and the envelope members that count every match
-before paging (`totals`); a `number`-of-items member such as `numberOfElements` counts the page.
+filter or inert. No two parameters of one call take the same `sort`, `direction` or paging role: the answer would
+depend on which applied last, and serving supplies a call's values in name order rather than as recorded, so such a
+combination explains no line and such a call replays its recording. A line with more than 12 query parameters is left
+unexplained, which bounds the search; names such as `__proto__` are kept as the query's own members. The lines' roles
+merge: lines that disagree drop the parameter, inert values gather, search fields unite. The merged query keeps the
+lines it reproduces, envelope and fields included; any other line keeps its recorded members. The view's `query` names
+the roles, those lines, and the envelope members that count every match before paging (`totals`); a `number`-of-items
+member such as `numberOfElements` counts the page.
 
 ## Serving and the write gate
 
@@ -45,17 +48,20 @@ before paging (`totals`); a `number`-of-items member such as `numberOfElements` 
   provenance says `membership: "query"`.
 - A value an inert parameter never recorded, or a parameter without a role, replays its recording as before.
 - The write gate checks a read on a query line, or one whose every query parameter has a role on a line it did not
-  name, against the query over its copy of the state, as serving answers it. Only a line whose
+  name, against the query over its copy of the state, as serving answers it: on the line replay ranks first, by the
+  most verbatim path values, then the most query values the read shares, then recorded order. Only a line whose
   parameters all sort or page, and whose answer holds every match, covers the collection; any other covers the
   entities it lists and those the line or the read listed that the state no longer holds, so a filtered list shows
-  whether a delete or create took effect without speaking for the rest of the collection. A read on a line it did not
-  name counts as gone only what it listed itself, since the line lists another call's members. A read with no query
-  answered on a query line, as serving does when no whole line fits, is checked against that line's recorded members,
-  as serving lists them. A read on a line that keeps its recorded members is compared with the totals it recorded, as
-  serving answers it. A read on a line it did not name is compared in its own envelope: that line's envelope, such as
-  a `next` link naming the line's own values, comes from another call, so it says nothing of a write. A read whose
-  query applies a sort shows where a create put its entity only when the sort leaves that entity tied with another,
-  so only then does it fix the create's insert position.
+  whether a delete or create took effect without speaking for the rest of the collection. A failed read also covers
+  the held entities it listed that the answer leaves out, as a write may have moved them out of it. A read on a line
+  it did not name counts as gone only what it listed itself, since the line lists another call's members. A read with
+  no query answered on a query line, as serving does when no whole line fits, is checked against that line's recorded
+  members, as serving lists them. A read on a line that keeps its recorded members is compared with the totals it
+  recorded, as serving answers it. A read on a line it did not name is compared in its own envelope: that line's
+  envelope, such as a `next` link naming the line's own values, comes from another call, so it says nothing of a
+  write. A read whose query applies a sort shows where a create put its entity only when the sort leaves that entity
+  tied with another, and an unsorted one only when more than its entity matches, so only then does it fix the create's
+  insert position.
 
 The roles are inferences from recorded behaviour and are stated as such. Nothing changes for a list whose lines all
 list the whole collection, or that no role explains.

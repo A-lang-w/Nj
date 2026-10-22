@@ -30,6 +30,7 @@ const queryKey = (query: string | undefined): string | undefined => {
 interface CheckedLine {
   readonly ordinal: number;
   readonly segments: readonly string[];
+  readonly query: string | undefined;
 }
 
 /** A list or document view's checked lines, by query, in the tool's recorded order, and which path segments are the tool's parameters. */
@@ -57,6 +58,31 @@ export interface ServedLine {
 
 type LineMatch = Pick<ServedLine, "ordinal" | "collection">;
 
+const lineOf = (record: StateRecordFacts): CheckedLine => ({
+  ordinal: record.ordinal,
+  segments: segmentsOf(record.path),
+  query: record.query,
+});
+
+/** A query list's roles, and its query and whole lines in the tool's recorded order, which replay keeps among equal matches. */
+const queryLines = (
+  view: StateView,
+  tool: StateToolFacts,
+  byOrdinal: ReadonlyMap<number, StateRecordFacts>,
+): CheckedLines["query"] => {
+  if (view.shape !== "list" || view.query === undefined) return undefined;
+  const answered = new Set([...view.query.record_ordinals, ...allLines(view)]);
+  return {
+    roles: new Set(Object.keys(view.query.parameters)),
+    lines: tool.record_ordinals.flatMap((ordinal) => {
+      const record = byOrdinal.get(ordinal);
+      return record === undefined || !answered.has(ordinal)
+        ? []
+        : [lineOf(record)];
+    }),
+  };
+};
+
 /** Each list or document view's checked lines. */
 export const checkedLines = (input: {
   readonly tools: readonly StateToolFacts[];
@@ -78,7 +104,7 @@ export const checkedLines = (input: {
       const record = byOrdinal.get(ordinal);
       const key = record === undefined ? undefined : queryKey(record.query);
       if (!checked.has(ordinal) || key === undefined) continue;
-      const line = { ordinal, segments: segmentsOf(record!.path) };
+      const line = lineOf(record!);
       byQuery.set(key, [...(byQuery.get(key) ?? []), line]);
       if (
         view.shape === "list" &&
@@ -92,20 +118,7 @@ export const checkedLines = (input: {
         isParam(segment) ? [index] : [],
       ),
     );
-    const query =
-      view.shape === "list" && view.query !== undefined
-        ? {
-            roles: new Set(Object.keys(view.query.parameters)),
-            lines: [...view.query.record_ordinals, ...allLines(view)].flatMap(
-              (ordinal) => {
-                const record = byOrdinal.get(ordinal);
-                return record === undefined
-                  ? []
-                  : [{ ordinal, segments: segmentsOf(record.path) }];
-              },
-            ),
-          }
-        : undefined;
+    const query = queryLines(view, tool, byOrdinal);
     byView.set(view.tool, {
       params,
       byQuery,
@@ -119,8 +132,8 @@ export const checkedLines = (input: {
 /**
  * The checked line serving answers a read's call from, ranked as replay ranks lines: every
  * parameter the read's value verbatim or once percent-decoded and the query the read's, then the
- * most verbatim parameters, then recorded order. A read with no query falls back, as serving does,
- * on a whole list's lines that only page it.
+ * most verbatim parameters, then the most query values the read shares, then recorded order. A
+ * read with no query falls back, as serving does, on a whole list's lines that only page it.
  */
 export const servedLine = (
   lines: CheckedLines | undefined,
@@ -146,14 +159,26 @@ export const servedLine = (
     : { ...line, named: false, queried: names.length > 0 };
 };
 
+/** How many of the read's query names a line recorded with the read's value, as replay counts them. */
+const queryMatches = (
+  read: ReadonlyMap<string, string>,
+  query: string | undefined,
+): number => {
+  const matched = new Set<string>();
+  for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
+    if (read.get(name) === value) matched.add(name);
+  return matched.size;
+};
+
 const bestLine = (
   lines: CheckedLines,
   candidates: readonly CheckedLine[],
   record: StateRecordFacts,
 ): LineMatch | undefined => {
   const read = segmentsOf(record.path);
-  let best: { line: LineMatch; verbatim: number } | undefined;
-  for (const { ordinal, segments } of candidates) {
+  const values = new Map(iterateUrlQueryParameters(record.query ?? ""));
+  let best: { line: LineMatch; verbatim: number; query: number } | undefined;
+  for (const { ordinal, segments, query } of candidates) {
     if (segments.length !== read.length) continue;
     let verbatim = 0;
     const matches = segments.every((segment, index) => {
@@ -163,10 +188,17 @@ const bestLine = (
       }
       return lines.params.has(index) && decodedSegment(segment) === read[index];
     });
-    if (matches && (best === undefined || verbatim > best.verbatim))
+    if (!matches) continue;
+    const matched = queryMatches(values, query);
+    if (
+      best === undefined ||
+      verbatim > best.verbatim ||
+      (verbatim === best.verbatim && matched > best.query)
+    )
       best = {
         line: { ordinal, collection: `/${segments.join("/")}` },
         verbatim,
+        query: matched,
       };
   }
   return best?.line;

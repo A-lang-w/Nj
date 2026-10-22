@@ -185,17 +185,22 @@ interface QueryCall {
   page?: { readonly index: number; readonly first: number };
 }
 
+/** Roles that only sort or page an answer; one value sets each for a call, as two parameters in one would answer by whichever applied last. */
+const PAGING_ROLES = new Set(["sort", "direction", "limit", "offset", "page"]);
+
 const readCall = (
   parameters: Readonly<Record<string, QueryParameter>>,
   values: ReadonlyMap<string, string>,
 ): QueryCall | undefined => {
   const call: QueryCall = { selections: [], offset: 0 };
+  const taken = new Set<string>();
   for (const [name, value] of values) {
     const parameter = Object.hasOwn(parameters, name)
       ? parameters[name]
       : undefined;
     const number = integer(value);
-    if (parameter === undefined) return undefined;
+    if (parameter === undefined || taken.has(parameter.role)) return undefined;
+    if (PAGING_ROLES.has(parameter.role)) taken.add(parameter.role);
     if (parameter.role === "filter")
       call.selections.push((entity) =>
         holds(entity.fields[parameter.field], value),
@@ -332,12 +337,10 @@ export const answerQuery = (
         ...result,
         whole:
           result.page.length === result.total &&
-          [...values.keys()].every((name) => {
-            const role = Object.hasOwn(query.parameters, name)
-              ? query.parameters[name]!.role
-              : undefined;
-            return role !== "filter" && role !== "search" && role !== "inert";
-          }),
+          // Every name has its own role, or evaluating the call would have refused it.
+          [...values.keys()].every((name) =>
+            PAGING_ROLES.has(query.parameters[name]!.role),
+          ),
       };
 };
 

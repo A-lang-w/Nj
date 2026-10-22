@@ -170,6 +170,18 @@ describe("learning a list's query", () => {
     expect(ids("?shelf=a", parameters)).toBeUndefined();
     expect(queryValues("?a=1&a=2")).toBeUndefined();
   });
+
+  it("gives no two parameters one paging role, which would answer differently in serving's name order", () => {
+    const both = { size: { role: "limit" }, limit: { role: "limit" } } as const;
+    expect(ids("?size=2&limit=1", both)).toBeUndefined();
+    const learned = learnQuery([line("?size=2&limit=1", [1], 40)]);
+    expect(learned?.parameters).toEqual({
+      size: { role: "inert", values: ["2"] },
+      limit: { role: "limit" },
+    });
+    // Serving supplies a call's values in name order.
+    expect(ids("?limit=1&size=2", learned!.parameters)).toEqual(["1"]);
+  });
 });
 
 describe("queries the state can always answer", () => {

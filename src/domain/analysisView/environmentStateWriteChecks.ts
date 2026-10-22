@@ -181,7 +181,7 @@ export interface CheckOutcome {
   readonly differing?: readonly string[];
 }
 
-/** Whether a passing check shows where a create placed its entity: a list's does unless a sort orders that entity, leaving it tied with none. */
+/** Whether a passing check shows where a create placed its entity: a list's does unless a sort orders that entity, leaving it tied with none, or it matched alone. */
 export const showsPlacement = (
   view: StateView,
   outcome: Pick<CheckOutcome, "positional">,
@@ -424,22 +424,30 @@ const checkQueryList = (
     state.members(view.type, collection),
   );
   if (result === undefined) return undefined;
+  const outcome = listCheck(view, check, result.page, result.total);
   return {
-    ...listCheck(view, check, result.page, result.total),
-    ...(result.positional === "all"
+    ...outcome,
+    // A lone match has no neighbour whose order it shows, so it shows nothing of where a create put it.
+    ...(result.positional === "all" && result.total > 1
       ? {}
       : {
           positional: new Set(
-            result.positional.map((entity) =>
-              entityTarget(view.type, collection, entity.id),
+            (result.positional === "all" ? [] : result.positional).map(
+              (entity) => entityTarget(view.type, collection, entity.id),
             ),
           ),
         }),
     targets: [
-      ...(result.whole ? [collectionTarget(view.type, collection)] : []),
-      ...result.page.map((entity) =>
-        entityTarget(view.type, collection, entity.id),
-      ),
+      ...new Set([
+        ...(result.whole ? [collectionTarget(view.type, collection)] : []),
+        ...result.page.map((entity) =>
+          entityTarget(view.type, collection, entity.id),
+        ),
+        // A failed read also covers the held entities it lists, as a write may have moved them out of the answer.
+        ...(outcome.pass
+          ? []
+          : listedTargets(state, view, { ...check, baseItems: [] }).targets),
+      ]),
     ],
     // What the base line or the read listed that the state no longer holds: the read shows whether it went.
     unheld: listedTargets(state, view, check).unheld,

@@ -439,6 +439,71 @@ describe("checked lines", () => {
       checked_record_ordinals: [6, 8, 9],
     });
   });
+
+  const TWICE = "/api/orgs/%61%63me1/books";
+  const shelved = (entry: Book, shelf: string): Book => ({ ...entry, shelf });
+  const ENCODED_LINE: TimedCaptureRow = [
+    "GET",
+    ENCODED,
+    [shelved(FIRST_BOOK, "a"), shelved(SECOND_BOOK, "b")],
+  ];
+  const TWICE_LINE: TimedCaptureRow = [
+    "GET",
+    TWICE,
+    [shelved(THIRD_BOOK, "a"), shelved(RENAMED, "b")],
+  ];
+  const SHELF_LINE: TimedCaptureRow = [
+    "GET",
+    `${ENCODED}?shelf=a`,
+    [shelved(FIRST_BOOK, "a")],
+  ];
+  /** Lines of one organisation spelled two encoded ways, deletes each whole list confirms, then a plain read of new query values still listing the deleted book. */
+  const deletedThenQueried = (
+    lines: readonly TimedCaptureRow[],
+    read: string,
+  ): TimedCaptureRow[] => [
+    ...lines,
+    ["GET", OTHER, [shelved(SECOND_BOOK, "a")]],
+    ["DELETE", `${TWICE}/1`, "", 204],
+    ["DELETE", `${OTHER}/2`, "", 204],
+    ["GET", TWICE, [shelved(THIRD_BOOK, "a")]],
+    ["GET", OTHER, []],
+    ["GET", read, [shelved(RENAMED, "b")]],
+  ];
+  const deleteOf = (rows: readonly TimedCaptureRow[]) =>
+    environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]).writes.find((candidate) => candidate.effect === "delete");
+
+  it("checks a read on new query values against the line serving ranks first by the values it shares", () => {
+    const rows = deletedThenQueried(
+      [
+        ENCODED_LINE,
+        TWICE_LINE,
+        SHELF_LINE,
+        ["GET", `${TWICE}?shelf=b`, [shelved(RENAMED, "b")]],
+        ["GET", `${ENCODED}?limit=1`, [shelved(FIRST_BOOK, "a")]],
+      ],
+      `${PLAIN}?shelf=b&limit=5`,
+    );
+    // Serving lists the twice-encoded collection, whose `shelf=b` line the read shares a value with.
+    expect(deleteOf(rows)).toMatchObject({
+      served: false,
+      contradicted_by: 10,
+    });
+  });
+
+  it("checks a read on new query values against the line serving takes first in record order", () => {
+    const rows = deletedThenQueried(
+      [TWICE_LINE, ENCODED_LINE, SHELF_LINE],
+      `${PLAIN}?shelf=b`,
+    );
+    // No line shares a value, so serving lists the collection of the line recorded first.
+    expect(deleteOf(rows)).toMatchObject({
+      served: false,
+      contradicted_by: 8,
+    });
+  });
 });
 
 describe("insert rules", () => {

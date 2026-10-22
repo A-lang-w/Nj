@@ -783,3 +783,58 @@ describe("list reads on a line they did not name", () => {
     });
   });
 });
+
+describe("what a list query read shows of writes", () => {
+  const shelved = (id: number, name: string, shelf: string, at: number) => ({
+    ...book(id, name, bookClock(at)),
+    shelf,
+  });
+  const beta = shelved(1, "Beta", "a", 0);
+  const mike = shelved(2, "Mike", "b", 1);
+  const zulu = shelved(3, "Zulu", "a", 2);
+  const INIT: TimedCaptureRow[] = [
+    ["GET", "/api/books", [beta, mike, zulu]],
+    ["GET", "/api/books?shelf=a", [beta, zulu]],
+    ["GET", "/api/books/1", beta],
+    ["GET", "/api/books/2", mike],
+    ["GET", "/api/books/3", zulu],
+  ];
+
+  it("blames a write that moved a book off a filter whose failed read still lists it", () => {
+    const moved = { ...beta, shelf: "b", updated_at: bookClock(5) };
+    const renamed = renamedBook(zulu, "Zulu Two", 7);
+    const rows: TimedCaptureRow[] = [
+      ...INIT,
+      ["PATCH", "/api/books/1", moved, 200, { shelf: "b" }],
+      ["PUT", "/api/books/3", renamed, 200, { name: "Zulu Two", shelf: "a" }],
+      // Serving lists Zulu alone on shelf a; the recording still lists the moved book there.
+      ["GET", "/api/books?shelf=a", [beta, renamed]],
+      ["GET", "/api/books/1", moved],
+    ];
+    const state = stateOf(rows);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 7,
+    });
+    expect(planOf(state, "put_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 7,
+    });
+  });
+
+  it("leaves a create's position open after a filter that lists only its book, for a later whole list to settle", () => {
+    const alpha = shelved(4, "Alpha", "c", 5);
+    const rows: TimedCaptureRow[] = [
+      ...INIT,
+      ["POST", "/api/books", alpha, 201, { name: "Alpha", shelf: "c" }],
+      // A lone match shows nothing of where the create put it among the other books.
+      ["GET", "/api/books?shelf=c", [alpha]],
+      ["GET", "/api/books", [alpha, beta, mike, zulu]],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [6, 7],
+      insert: { rule: "sorted", field: "name", direction: "ascending" },
+    });
+  });
+});
