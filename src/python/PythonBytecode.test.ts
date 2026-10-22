@@ -131,4 +131,20 @@ describe("PythonBytecode", () => {
     const partial27 = Buffer.from([0x03, 0xf3, 0x0d, 0x0a, 0x00, 0x00]);
     expect(parsePythonBytecodeHeader(partial27)).toBeNull();
   });
+
+  it("builds and parses Python 3.14 bytecode headers", () => {
+    expect(resolvePythonVersion(3627)).toBe("3.14");
+    expect(resolveMagicFromVersion("3.14")).toBe(3627);
+    const header = buildPythonBytecodeHeader("3.14", { sourceSize: 1024 });
+    expect(header.length).toBe(16);
+    const parsed = parsePythonBytecodeHeader(header);
+    expect(parsed?.version).toBe("3.14");
+    expect(parsed?.magicNumber).toBe(3627);
+  });
+
+  it("throws when building header for unknown or unsupported version string", () => {
+    expect(() => buildPythonBytecodeHeader("unknown_version")).toThrow(
+      /Unsupported or unknown Python bytecode version/,
+    );
+  });
 });

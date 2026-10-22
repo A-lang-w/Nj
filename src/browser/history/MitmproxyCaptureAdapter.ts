@@ -19,11 +19,8 @@ export class MitmproxyCaptureAdapter implements HistoricalCaptureFormatAdapter {
     runtimePath: string,
   ): Promise<{ command: string; arguments: readonly string[] }> {
     const command = this.environment.REA_MITMDUMP_COMMAND;
-    const allowNonLinux =
-      this.environment.REA_ALLOW_NON_LINUX === "1" ||
-      this.environment.REA_ALLOW_NON_LINUX === "true";
     if (
-      (process.platform !== "linux" && !allowNonLinux) ||
+      process.platform !== "linux" ||
       command === undefined ||
       !isAbsolute(command)
     )

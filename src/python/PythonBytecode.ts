@@ -36,6 +36,7 @@ const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
   3495: "3.11",
   3531: "3.12",
   3571: "3.13",
+  3627: "3.14",
 };
 
 /** Verify if bytes begin with valid Python bytecode magic and CRLF framing. */
@@ -161,10 +162,18 @@ export const buildPythonBytecodeHeader = (
   versionOrMagic: number | string,
   options?: PythonHeaderBuildOptions,
 ): Buffer => {
-  const magic =
-    typeof versionOrMagic === "number"
-      ? versionOrMagic
-      : (resolveMagicFromVersion(versionOrMagic) ?? 3439);
+  let magic: number;
+  if (typeof versionOrMagic === "number") {
+    magic = versionOrMagic;
+  } else {
+    const resolved = resolveMagicFromVersion(versionOrMagic);
+    if (resolved === null) {
+      throw new Error(
+        `Unsupported or unknown Python bytecode version: ${versionOrMagic}`,
+      );
+    }
+    magic = resolved;
+  }
   const version = resolvePythonVersion(magic);
   const [majorStr, minorStr] = version.split(".");
   const major = Number(majorStr);

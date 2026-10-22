@@ -1,7 +1,7 @@
 import { createGunzip } from "node:zlib";
 import { PassThrough, pipeline, type Readable } from "node:stream";
 import { basename } from "node:path";
-import { createReadStream, type Stats } from "node:fs";
+import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 import {
@@ -184,7 +184,10 @@ export class GzipArtifactReader implements ArtifactReader {
       });
     }
 
-    const inputStream = createReadStream(this.path, signal ? { signal } : {});
+    const inputStream = handle.createReadStream({
+      start: 0,
+      autoClose: false,
+    });
     const gunzip = createGunzip();
     const output = new PassThrough();
 
@@ -205,6 +208,7 @@ export class GzipArtifactReader implements ArtifactReader {
 
     pipeline(inputStream, gunzip, output, (err) => {
       if (err) {
+        if (!inputStream.destroyed) inputStream.destroy();
         const failure =
           err instanceof ArtifactReaderFailure
             ? err
@@ -218,7 +222,6 @@ export class GzipArtifactReader implements ArtifactReader {
     });
 
     output.on("close", () => {
-      if (!inputStream.destroyed) inputStream.destroy();
       if (!gunzip.destroyed) gunzip.destroy();
     });
 

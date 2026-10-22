@@ -140,14 +140,19 @@ const parseDataDirectories = (
   return { directories, authenticode: certInfo };
 };
 
+const MAX_TOTAL_SECTION_SCAN_BYTES = 64 * 1024 * 1024; // 64 MiB budget
+
 const parseSections = (
   buffer: Buffer,
   sectionsOffset: number,
   numberOfSections: number,
 ): PeSectionInfo[] => {
   const sections: PeSectionInfo[] = [];
+  const entropyCache = new Map<string, number>();
+  let totalScannedBytes = 0;
+  const safeSectionCount = Math.min(numberOfSections, 1024);
 
-  for (let i = 0; i < numberOfSections; i += 1) {
+  for (let i = 0; i < safeSectionCount; i += 1) {
     const secOffset = sectionsOffset + i * 40;
     if (secOffset + 40 > buffer.length) break;
 
@@ -159,15 +164,28 @@ const parseSections = (
     const rawOffset = secBuf.readUInt32LE(20);
     const characteristics = secBuf.readUInt32LE(36);
 
+    const endOffset = Math.min(rawOffset + rawSize, buffer.length);
     const sectionBytes =
-      rawOffset < buffer.length
-        ? buffer.subarray(
-            rawOffset,
-            Math.min(rawOffset + rawSize, buffer.length),
-          )
+      rawOffset < buffer.length && endOffset >= rawOffset
+        ? buffer.subarray(rawOffset, endOffset)
         : new Uint8Array(0);
 
-    const entropy = calculateShannonEntropy(sectionBytes);
+    const rangeKey = `${rawOffset}:${sectionBytes.length}`;
+    let entropy: number;
+    const cached = entropyCache.get(rangeKey);
+    if (cached !== undefined) {
+      entropy = cached;
+    } else if (
+      totalScannedBytes + sectionBytes.length <=
+      MAX_TOTAL_SECTION_SCAN_BYTES
+    ) {
+      entropy = calculateShannonEntropy(sectionBytes);
+      totalScannedBytes += sectionBytes.length;
+      entropyCache.set(rangeKey, entropy);
+    } else {
+      entropy = 0;
+    }
+
     const isPacked = isLikelyPackedOrEncrypted(entropy);
 
     sections.push({

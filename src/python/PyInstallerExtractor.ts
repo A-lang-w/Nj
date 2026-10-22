@@ -39,6 +39,7 @@ export interface PyInstallerTocEntry {
 
 export interface PyzModuleEntry {
   readonly name: string;
+  readonly typeCode: number;
   readonly isPackage: boolean;
   readonly dataOffset: number;
   readonly dataLength: number;
@@ -334,21 +335,23 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
         const name = String(item[0]);
         const val = item[1];
         if (!Array.isArray(val) || val.length < 3) continue;
-        const isPackage = Boolean(val[0]);
+        const typeCode = Number(val[0]);
+        const isPackage = typeCode === 1;
         const dataOffset = Number(val[1]);
         const dataLength = Number(val[2]);
         if (Number.isFinite(dataOffset) && Number.isFinite(dataLength)) {
-          modules.push({ name, isPackage, dataOffset, dataLength });
+          modules.push({ name, typeCode, isPackage, dataOffset, dataLength });
         }
       }
     } else if (toc && typeof toc === "object") {
       for (const [name, val] of Object.entries(toc)) {
         if (!Array.isArray(val) || val.length < 3) continue;
-        const isPackage = Boolean(val[0]);
+        const typeCode = Number(val[0]);
+        const isPackage = typeCode === 1;
         const dataOffset = Number(val[1]);
         const dataLength = Number(val[2]);
         if (Number.isFinite(dataOffset) && Number.isFinite(dataLength)) {
-          modules.push({ name, isPackage, dataOffset, dataLength });
+          modules.push({ name, typeCode, isPackage, dataOffset, dataLength });
         }
       }
     }
@@ -400,11 +403,48 @@ const extractPyzModule = (
   pythonVersion: string,
   mod: PyzModuleEntry,
 ): ExtractedPyInstallerFile | null => {
+  // Type 3: namespace package (no payload)
+  if (mod.typeCode === 3) {
+    return {
+      name: mod.name.replace(/\./g, "/"),
+      kind: "package",
+      data: Buffer.alloc(0),
+      decompressed: true,
+      pythonVersion,
+      limitations: [],
+    };
+  }
+
   if (mod.dataOffset < 0 || mod.dataOffset + mod.dataLength > pyzData.length) {
     return null;
   }
   const raw = pyzData.subarray(mod.dataOffset, mod.dataOffset + mod.dataLength);
   const inflated = inflatePayload(raw, 1);
+
+  // Type 2: raw data file (no bytecode header, no .pyc extension)
+  if (mod.typeCode === 2) {
+    if (!inflated.decompressed) {
+      return {
+        name: mod.name,
+        kind: "data",
+        data: raw,
+        decompressed: false,
+        pythonVersion,
+        limitations: [
+          inflated.error ?? "Failed to decompress PYZ data payload",
+        ],
+      };
+    }
+    return {
+      name: mod.name,
+      kind: "data",
+      data: inflated.data,
+      decompressed: true,
+      pythonVersion,
+      limitations: [],
+    };
+  }
+
   const modPath = mod.isPackage
     ? `${mod.name.replace(/\./g, "/")}/__init__.pyc`
     : `${mod.name.replace(/\./g, "/")}.pyc`;
@@ -448,7 +488,8 @@ const extractScriptEntry = (
   const { entry, data, decompressed, archive, limitations } = options;
   let fileData = data;
   if (decompressed && !isPythonBytecode(fileData)) {
-    const pyVer =
+    const pyVer: number | string =
+      archive.embeddedPyz?.pycMagic ??
       archive.embeddedPyz?.pythonVersion ??
       (archive.cookie.pythonVersion > 0
         ? archive.cookie.pythonVersion < 100

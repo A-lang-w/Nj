@@ -117,8 +117,8 @@ export const parsePeRichHeader = (buffer: Buffer): PeRichHeader | null => {
   // Decrypt and parse 8-byte tool records (skipping 16 bytes: DanS + 3 padding DWORDs)
   const records: PeRichRecord[] = [];
   for (let offset = dansOffset + 16; offset < richOffset; offset += 8) {
-    const dword1 = buffer.readUInt32LE(offset) ^ xorKey;
-    const count = buffer.readUInt32LE(offset + 4) ^ xorKey;
+    const dword1 = (buffer.readUInt32LE(offset) ^ xorKey) >>> 0;
+    const count = (buffer.readUInt32LE(offset + 4) ^ xorKey) >>> 0;
 
     const prodId = (dword1 >>> 16) & 0xffff;
     const buildNumber = dword1 & 0xffff;

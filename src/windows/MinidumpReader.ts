@@ -60,9 +60,13 @@ export const isMinidump = (buffer: Buffer): boolean => {
   return buffer.length >= 32 && buffer.readUInt32LE(0) === MINIDUMP_SIGNATURE;
 };
 
+const MAX_MINIDUMP_STRING_BYTES = 64 * 1024; // 64 KiB per string
+const MAX_TOTAL_MODULE_NAME_BYTES = 1024 * 1024; // 1 MiB total for all module names
+
 const readMinidumpString = (buffer: Buffer, rva: number): string => {
   if (rva < 0 || rva + 4 > buffer.length) return "";
-  const byteLen = buffer.readUInt32LE(rva);
+  const declaredLen = buffer.readUInt32LE(rva);
+  const byteLen = Math.min(declaredLen, MAX_MINIDUMP_STRING_BYTES);
   if (rva + 4 + byteLen > buffer.length) return "";
   return buffer.toString("utf16le", rva + 4, rva + 4 + byteLen);
 };
@@ -127,7 +131,9 @@ const parseModuleListStream = (
   const modules: MinidumpModule[] = [];
   const entrySize = 108; // MINIDUMP_MODULE size
   const maxPossibleEntries = Math.floor((size - 4) / entrySize);
-  const safeCount = Math.min(count, maxPossibleEntries);
+  const safeCount = Math.min(count, maxPossibleEntries, 10_000);
+  const nameCache = new Map<number, string>();
+  let totalNameBytes = 0;
 
   for (let i = 0; i < safeCount; i += 1) {
     const offset = rva + 4 + i * entrySize;
@@ -138,7 +144,17 @@ const parseModuleListStream = (
     const modSize = buffer.readUInt32LE(offset + 8);
     const timeDateStamp = buffer.readUInt32LE(offset + 16);
     const nameRva = buffer.readUInt32LE(offset + 20);
-    const name = readMinidumpString(buffer, nameRva);
+
+    let name = nameCache.get(nameRva);
+    if (name === undefined) {
+      if (totalNameBytes < MAX_TOTAL_MODULE_NAME_BYTES) {
+        name = readMinidumpString(buffer, nameRva);
+        totalNameBytes += name.length * 2;
+        nameCache.set(nameRva, name);
+      } else {
+        name = "";
+      }
+    }
 
     modules.push({
       name,

@@ -76,18 +76,15 @@ export const resolveFirmwareCommand = async (
   const variable =
     engine === "binwalk" ? "REA_BINWALK_COMMAND" : "REA_UNBLOB_COMMAND";
   const configured = environment[variable];
-  const allowNonLinux =
-    environment.REA_ALLOW_NON_LINUX === "1" ||
-    environment.REA_ALLOW_NON_LINUX === "true";
   if (
-    (process.platform !== "linux" && !allowNonLinux) ||
+    process.platform !== "linux" ||
     configured === undefined ||
     !isAbsolute(configured)
   )
     throw firmwareToolUnavailable(
       engine,
       operation,
-      `This integration requires Linux (or REA_ALLOW_NON_LINUX=1) and an absolute ${variable} path to the caller-supplied tool`,
+      `This integration requires Linux and an absolute ${variable} path to the caller-supplied tool`,
     );
   const command = await realpath(configured).catch((cause: unknown) => {
     throw firmwareToolUnavailable(
