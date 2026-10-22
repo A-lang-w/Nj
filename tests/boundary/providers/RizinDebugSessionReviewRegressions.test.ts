@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +17,7 @@ import {
 } from "../../../src/process/ProviderProcess.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
+import type { OwnedDebuggerDetachResult } from "../../../src/process/ownedDebuggerSession.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -95,6 +96,7 @@ const startRizinWithProvider = async (
 const startRizinWithOwnedStop = async (
   provider: string,
   readProcessTracerPid: (pid: string) => Promise<number> = async () => 777,
+  onInferiorDetachVerified?: (result: OwnedDebuggerDetachResult) => void,
 ) => {
   let debuggerProcess: ProviderProcessHandle | undefined;
   const manager = new RizinDebugSessionManager(
@@ -103,6 +105,9 @@ const startRizinWithOwnedStop = async (
       platform: "linux",
       readProcessTracerPid,
       readProcessTaskIds: async () => new Set(["777"]),
+      ...(onInferiorDetachVerified === undefined
+        ? {}
+        : { onInferiorDetachVerified }),
       spawnProcess: async (options) => {
         const launched = await spawnOwnedProviderProcess(options);
         debuggerProcess = launched.process;
@@ -192,13 +197,22 @@ const spawnTestInferior = async (): Promise<ChildProcess> => {
 
 const spawnTestInferiorOnTty = async (
   ttyPath: string,
+  closeSinksOnUsr1 = false,
+  sinksClosedMarker?: string,
 ): Promise<ChildProcess> => {
   const ttyFd = openSync(ttyPath, "w");
   let inferior: ChildProcess;
   try {
-    inferior = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-      stdio: [ttyFd, ttyFd, ttyFd],
-    });
+    inferior = spawn(
+      process.execPath,
+      [
+        "-e",
+        `${closeSinksOnUsr1 ? `process.on('SIGUSR1', () => { require('node:fs').closeSync(1); require('node:fs').closeSync(2); require('node:fs').writeFileSync(${JSON.stringify(sinksClosedMarker)}, 'closed'); }); ` : ""}setInterval(() => {}, 1000)`,
+      ],
+      {
+        stdio: [ttyFd, ttyFd, ttyFd],
+      },
+    );
   } finally {
     closeSync(ttyFd);
   }
@@ -504,12 +518,11 @@ process.stdin.on("data", (chunk) => {
       if (!detached) process.stdout.write(JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${selectedPid}" }]) + "\\0");
       else {
         postDetachReadbacks += 1;
-        const rows = postDetachReadbacks === 1
-          ? [{ fd: 13, raised: true, uri: "ptrace://${additionalPid}" }]
-          : postDetachReadbacks === 2
-            ? [{ fd: 12, raised: true, uri: "ptrace://${selectedPid}" }]
-            : postDetachReadbacks === 3
-              ? [{ fd: 13, raised: true, uri: "ptrace://${additionalPid}" }]
+        const rows =
+          postDetachReadbacks === 1
+            ? [{ fd: 13, raised: true, uri: "ptrace://${additionalPid}" }]
+            : postDetachReadbacks === 2
+              ? [{ fd: 13, raised: true, uri: "ptrace://${selectedPid}" }]
               : [];
         process.stdout.write(JSON.stringify(rows) + "\\0");
       }
@@ -1191,14 +1204,19 @@ it.skipIf(process.platform !== "linux")(
   "invalidates selected detach proof when a stale selected row hides another active inferior",
   async () => {
     const tty = await rizinTestInferiorTty();
-    const selected = await spawnTestInferiorOnTty(tty);
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-stale-proof-retry-"));
+    const sinksClosedMarker = join(directory, "selected-sinks-closed");
+    const selected = await spawnTestInferiorOnTty(
+      tty,
+      true,
+      sinksClosedMarker,
+    );
     const additional = await spawnTestInferiorOnTty(tty);
     const selectedPid = selected.pid;
     const additionalPid = additional.pid;
     expect(selectedPid).toBeDefined();
     expect(additionalPid).toBeDefined();
     if (selectedPid === undefined || additionalPid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-stale-proof-retry-"));
     const commandsPath = join(directory, "commands");
     const provider = await createStaleSelectedRowWithActiveAdditionalProvider(
       selectedPid,
@@ -1206,14 +1224,18 @@ it.skipIf(process.platform !== "linux")(
       commandsPath,
     );
     const selectedTracerReads = new Map<string, number>();
+    const detachResults: OwnedDebuggerDetachResult[] = [];
     const { manager, sessionId } = await startRizinWithOwnedStop(
       provider,
       async (pid) => {
+        if (pid === String(additionalPid))
+          return additional.exitCode === null ? 777 : 0;
         if (pid !== String(selectedPid)) return 777;
         const reads = selectedTracerReads.get(pid) ?? 0;
         selectedTracerReads.set(pid, reads + 1);
         return reads === 0 ? 777 : 0;
       },
+      (result) => detachResults.push(result),
     );
 
     expect((await manager.close(sessionId)).ok).toBe(false);
@@ -1227,12 +1249,23 @@ it.skipIf(process.platform !== "linux")(
     );
     additional.kill("SIGTERM");
     await additionalExit;
-    expect(await manager.retryCleanupFailures()).toEqual({
-      ok: true,
-      value: null,
-    });
+    selected.kill("SIGUSR1");
+    const sinksClosedDeadline = Date.now() + 2_000;
+    while (Date.now() < sinksClosedDeadline) {
+      try {
+        if ((await readFile(sinksClosedMarker, "utf8")) === "closed") break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    expect(await readFile(sinksClosedMarker, "utf8")).toBe("closed");
+    await expect(readlink(`/proc/${selectedPid}/fd/1`)).rejects.toThrow();
+    await expect(readlink(`/proc/${selectedPid}/fd/2`)).rejects.toThrow();
+    const retry = await manager.retryCleanupFailures();
+    expect(retry.ok).toBe(false);
+    expect(detachResults).toEqual([]);
     expect(selected.exitCode).toBeNull();
-    expect(manager.status(sessionId)).toBeUndefined();
+    expect(manager.status(sessionId)).toBeDefined();
   },
 );
 

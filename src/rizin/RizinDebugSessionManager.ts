@@ -1592,16 +1592,14 @@ export class RizinDebugSessionManager {
             `Rizin omitted retained inferior PID ${pid} from the ambiguous detach inventory while it is still active.`,
           );
       }
-      if (
-        !(await this.#verifyOmittedInferiorEnded(session, completed.identity))
-      )
-        throw new Error(
-          "Rizin did not confirm that the selected inferior was detached after an ambiguous readback.",
-        );
+      // An empty inventory after a contradictory readback does not prove that
+      // the selected process ended: TracerPid zero can mean it is still alive
+      // after detach. Reuse the confirmed-detach path so its identity and
+      // output descriptors are revalidated before cleanup can complete.
+      session.confirmedDetachedInferiorIdentity = completed.identity;
       session.completedDetachCommand = undefined;
-      session.confirmedDetachedInferiorIdentity = undefined;
       session.inferiorInventoryComplete = false;
-      return { status: "no-inferior" };
+      return this.#verifyConfirmedDetachedInferior(session, completed.identity);
     }
     // The selected FD's absence is useful durable proof even when another
     // active inferior makes it unsafe to stop the debugger. Retain both facts:

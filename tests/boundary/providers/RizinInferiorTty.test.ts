@@ -234,6 +234,7 @@ it.skipIf(process.platform !== "linux").each([
     afterDetach: (pid: number) =>
       `[{"raised":true,"fd":4,"uri":"ptrace://${pid}"}]`,
     closeSucceeds: false,
+    retryCleanupSucceeds: true,
   },
   {
     name: "an unexpected ptrace inferior remains listed",
@@ -242,9 +243,15 @@ it.skipIf(process.platform !== "linux").each([
   },
 ])(
   "reconciles $name using the target's process identity",
-  async ({ name, afterDetach, closeSucceeds }) => {
+  async ({ name, afterDetach, closeSucceeds, retryCleanupSucceeds }) => {
     const sessionId = await startFakeInferiorSession({ afterDetach });
     if (!closeSucceeds) {
+      if (retryCleanupSucceeds) {
+        expect((await manager!.close(sessionId)).ok).toBe(false);
+        await manager!.closeAll();
+        expect(manager!.status(sessionId)).toBeUndefined();
+        return;
+      }
       await expectCloseRejectedAndReleased(sessionId);
       return;
     }
@@ -706,7 +713,12 @@ async function waitForFakeInferiorExit(pid: number): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     try {
-      await readFile(`/proc/${pid}/stat`, "utf8");
+      const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+      const state = stat.slice(
+        stat.lastIndexOf(") ") + 2,
+        stat.lastIndexOf(") ") + 3,
+      );
+      if (state === "Z" || state === "X") return;
     } catch {
       return;
     }
