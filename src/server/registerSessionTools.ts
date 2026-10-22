@@ -205,10 +205,13 @@ const registerOpenLifecycleTool = (
             : {
                 // Read inside the open's turn: calls issued after it must not
                 // overtake a file read that precedes its place in the order.
-                loadSnapshot: () =>
+                // The read follows the signal of the open that owns it, so a
+                // background job reads under its own signal and a cancelled
+                // request stops the wait for the job, not the job itself.
+                loadSnapshot: (signal) =>
                   readAnalysisSnapshot(
                     snapshotPath,
-                    context.mcpReq.signal,
+                    signal ?? context.mcpReq.signal,
                     artifactResources,
                   ),
               }),

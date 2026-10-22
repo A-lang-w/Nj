@@ -616,7 +616,7 @@ export class BinarySession
           cause: options.signal?.reason,
         }),
       );
-    const loaded = await options.loadSnapshot();
+    const loaded = await options.loadSnapshot(options.signal);
     if (!loaded.ok) return loaded;
     const { loadSnapshot: _loaded, ...rest } = options;
     return ok({ ...rest, snapshot: loaded.value });

@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
+import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
@@ -104,6 +109,77 @@ const connectBackground = async () => {
     health,
     first,
     close: async () => {
+      await Promise.allSettled([client.close(), server.close()]);
+      await registry.closeAll();
+    },
+  };
+};
+
+/**
+ * A session whose composed workflow waits for its provider call.
+ *
+ * The workflow blocks in the provider call it makes, so another open can
+ * become the current target while the workflow is still running.
+ */
+const connectBlockingWorkflow = async () => {
+  const [first, second] = await createBinarySessionTargets();
+  const started = createDeferred<void>();
+  const blocked = createDeferred<ReturnType<typeof observed>>();
+  const provider: AnalysisProvider = {
+    identity: () => FIXTURE_PROVIDER,
+    resolveAnalysisProfile: () =>
+      Promise.resolve(
+        resultOk({
+          profile: createAnalysisProfile(FIXTURE_PROVIDER, { fixture: true }),
+        }),
+      ),
+    capabilities: () => [
+      {
+        provider: FIXTURE_PROVIDER,
+        operation: "read_binary_inventory_summary",
+        available: true,
+        reason: null,
+        effects: {
+          mutatesArtifact: false,
+          launchesProcess: false,
+          mayShowUi: false,
+          mayAccessNetwork: false,
+          mayWriteFilesystem: false,
+          changesPermissions: false,
+          requiresRoot: false,
+        },
+        limitations: [],
+      },
+    ],
+    createClient: () => ({
+      execute: (operation: string) => {
+        if (operation !== "read_binary_inventory_summary")
+          return Promise.resolve(observed(operation));
+        started.resolve();
+        return blocked.promise;
+      },
+      close: () => Promise.resolve(resultOk(null)),
+    }),
+  };
+  const registry = createTestBinaryTargetRegistry(provider);
+  const server = createServer(
+    { kind: "session", session: registry },
+    { logger: silentLogger },
+  );
+  const client = new Client({ name: "blocking-workflow", version: "1.0.0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return {
+    client,
+    registry,
+    started,
+    blocked,
+    first,
+    second,
+    close: async () => {
+      blocked.resolve(observed(null));
       await Promise.allSettled([client.close(), server.close()]);
       await registry.closeAll();
     },
@@ -350,6 +426,77 @@ describe("an overlapping open", () => {
       expect(
         (openedFirst.structuredContent as { result?: unknown }).result,
       ).toMatchObject({ analysis: { state: "starting" } });
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+/**
+ * The composed workflow of a call belongs to the target the call ran against.
+ *
+ * A call is admitted for one target, and another open may make another
+ * target the current one while the call runs. The workflow snapshot of the
+ * call belongs to the target the call was admitted for, so the snapshot of
+ * the target that became current holds no entry of that call.
+ */
+describe("the workflow snapshot of a call on a target that is not the current one", () => {
+  it("writes the workflow into the snapshot of the target the call ran against", async () => {
+    const harness = await connectBlockingWorkflow();
+    try {
+      const openedFirst = await harness.client.callTool({
+        name: "open_binary",
+        arguments: { path: harness.first },
+      });
+      expect(openedFirst.isError).not.toBe(true);
+      const firstId = targetId(openedFirst);
+
+      // The composed workflow waits for its provider call.
+      const workflow = harness.client.callTool({
+        name: "binary_overview",
+        arguments: {},
+      });
+      await harness.started.promise;
+
+      // Another open becomes the current target while the workflow runs.
+      const openedSecond = await harness.client.callTool({
+        name: "open_binary",
+        arguments: { path: harness.second, keep_others_open: true },
+      });
+      expect(openedSecond.isError).not.toBe(true);
+      const secondId = targetId(openedSecond);
+      expect(secondId).not.toBe(firstId);
+
+      harness.blocked.resolve(
+        observed({ document: "fixture", procedure_count: 0, string_count: 0 }),
+      );
+      const overview = await workflow;
+      expect(overview.isError).not.toBe(true);
+
+      // The workflow entry belongs to the first target's snapshot.
+      const firstSnapshot = join(harness.first + ".snapshot.json");
+      const closedFirst = await harness.client.callTool({
+        name: "close_binary",
+        arguments: { target_id: firstId, snapshot_path: firstSnapshot },
+      });
+      expect(closedFirst.isError).not.toBe(true);
+      expect(
+        parseAnalysisSnapshot(JSON.parse(await readFile(firstSnapshot, "utf8")))
+          .workflow_entries,
+      ).toHaveLength(1);
+
+      // The target that became current holds no entry of that workflow.
+      const secondSnapshot = join(harness.second + ".snapshot.json");
+      const closedSecond = await harness.client.callTool({
+        name: "close_binary",
+        arguments: { target_id: secondId, snapshot_path: secondSnapshot },
+      });
+      expect(closedSecond.isError).not.toBe(true);
+      expect(
+        parseAnalysisSnapshot(
+          JSON.parse(await readFile(secondSnapshot, "utf8")),
+        ).workflow_entries,
+      ).toHaveLength(0);
     } finally {
       await harness.close();
     }

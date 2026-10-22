@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
@@ -225,6 +226,15 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   readonly #reservedSlots = new Set<string>();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
   readonly #snapshotListeners = new Set<() => void | Promise<void>>();
+  /**
+   * The slot every Evidence write of the request in flight belongs to.
+   *
+   * A request is admitted for one slot, and its provider calls run against
+   * that slot. Another open may make another slot current while the request
+   * runs, so the slot the request was admitted for is carried with it and
+   * owns the Evidence it records.
+   */
+  readonly #admittedSlots = new AsyncLocalStorage<TargetSlot>();
   #primary: TargetSlot;
   #currentId: string;
   #activeStarts = 0;
@@ -374,7 +384,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     path: string,
     options: OpenOptions,
   ): Promise<Result<OpenAnswer, AnalysisError>> {
-    this.#cancelJob(this.#primary);
+    const cancelled = await this.#cancelJobAndWait(this.#primary);
+    if (!cancelled.ok) return cancelled;
     const closed = await this.#closeSlotsExcept(this.#primary);
     if (!closed.ok) return closed;
     return this.#openInSlot(this.#primary, path, options);
@@ -384,7 +395,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: OpenResolvedOptions,
   ): Promise<Result<OpenAnswer, AnalysisError>> {
-    this.#cancelJob(this.#primary);
+    const cancelled = await this.#cancelJobAndWait(this.#primary);
+    if (!cancelled.ok) return cancelled;
     const closed = await this.#closeSlotsExcept(this.#primary);
     if (!closed.ok) return closed;
     return this.#openResolvedInSlot(this.#primary, resolved, options);
@@ -636,9 +648,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     }
     const closed = await this.#closeSlotsExcept(this.#primary);
     if (!closed.ok) return closed;
-    const previousJob = this.#jobs.get(this.#primary.id);
-    previousJob?.controller.abort();
-    this.#jobs.delete(this.#primary.id);
+    const cancelled = await this.#cancelJobAndWait(this.#primary);
+    if (!cancelled.ok) return cancelled;
     return ok(this.#primary);
   }
 
@@ -1303,6 +1314,16 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     const job = this.#jobs.get(slot.id);
     if (job === undefined) return true;
     job.controller.abort();
+    return this.#waitForJobSettle(job);
+  }
+
+  /**
+   * Wait, bounded, for an interrupted start to unwind.
+   *
+   * A provider start that ignores its abort never settles, so the wait stops
+   * at the bound and reports that the start is still in flight.
+   */
+  async #waitForJobSettle(job: AnalysisJob): Promise<boolean> {
     let timer: NodeJS.Timeout | undefined;
     let settled = false;
     await Promise.race([
@@ -1316,6 +1337,42 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     ]);
     if (timer !== undefined) clearTimeout(timer);
     return settled;
+  }
+
+  /**
+   * Cancel a slot's job and release the slot for a replacement.
+   *
+   * The job stays registered until its start stopped, so a close that follows
+   * finds it and takes the bounded wait and the forced close instead of
+   * queueing behind a start that will never finish. A start that ignored its
+   * abort holds the session transition, and the ordinary open serializes
+   * behind it, so the slot is released with the forced close before it is
+   * reused.
+   */
+  async #cancelJobAndWait(
+    slot: TargetSlot,
+  ): Promise<Result<null, AnalysisError>> {
+    const job = this.#jobs.get(slot.id);
+    if (job === undefined) return ok(null);
+    job.controller.abort();
+    if (await this.#waitForJobSettle(job)) {
+      this.#jobs.delete(slot.id);
+      return ok(null);
+    }
+    // The start ignored its abort and still holds the session transition, so
+    // the open that replaces it would queue behind that transition forever.
+    // The forced close releases the pending client and retires the
+    // transition, and the slot is reusable once the client is released.
+    const closed = await this.#closeSlotWithoutTransition(
+      slot,
+      {},
+      {
+        clearRecords: false,
+        closeOwnedProviderResources: false,
+      },
+    );
+    if (closed.ok) this.#jobs.delete(slot.id);
+    return closed;
   }
 
   async status(
@@ -1422,7 +1479,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? slot.value.session.withAdmittedAnalysis(
             operationName,
             signal,
-            operation,
+            // The request runs against the slot it was admitted for, and the
+            // Evidence it records belongs to that slot even when another open
+            // made another slot current while the request ran.
+            (analysis) =>
+              this.#admittedSlots.run(slot.value, () => operation(analysis)),
             undefined,
             undefined,
             guard,
@@ -1535,8 +1596,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   }
 
   activeTarget(targetId?: string): BinaryTarget | undefined {
-    const slot = this.#resolveSlotResult(targetId);
-    return slot.ok ? this.#targetForSlot(slot.value) : undefined;
+    if (targetId !== undefined) {
+      const slot = this.#resolveSlotResult(targetId);
+      return slot.ok ? this.#targetForSlot(slot.value) : undefined;
+    }
+    return this.#targetForSlot(this.#evidenceSlot());
   }
 
   /**
@@ -1560,8 +1624,13 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     operation?: AnalysisOperation,
     targetId?: string,
   ): AnalysisProfileCommitment | undefined {
-    const slot = this.#resolveSlot(targetId, "analysis profile");
-    return slot.ok ? slot.value.session.analysisProfile(operation) : undefined;
+    if (targetId !== undefined) {
+      const slot = this.#resolveSlot(targetId, "analysis profile");
+      return slot.ok
+        ? slot.value.session.analysisProfile(operation)
+        : undefined;
+    }
+    return this.#evidenceSlot().session.analysisProfile(operation);
   }
 
   /** Report whether one target may replay a snapshot; an unknown handle may not. */
@@ -1569,40 +1638,55 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     operation: AnalysisOperation,
     targetId?: string,
   ): boolean {
-    const slot = this.#resolveSlot(targetId, "snapshot replay");
-    return slot.ok ? slot.value.session.allowsSnapshotReplay(operation) : false;
+    if (targetId !== undefined) {
+      const slot = this.#resolveSlot(targetId, "snapshot replay");
+      return slot.ok
+        ? slot.value.session.allowsSnapshotReplay(operation)
+        : false;
+    }
+    return this.#evidenceSlot().session.allowsSnapshotReplay(operation);
   }
 
   /** Invalidate one target's cached Evidence; an unknown handle owns none. */
   invalidateSnapshotForExternalMutation(targetId?: string): void {
-    const slot = this.#resolveSlot(targetId, "external mutation");
-    if (!slot.ok) return;
-    slot.value.session.invalidateSnapshotForExternalMutation();
+    if (targetId !== undefined) {
+      const slot = this.#resolveSlot(targetId, "external mutation");
+      if (!slot.ok) return;
+      slot.value.session.invalidateSnapshotForExternalMutation();
+      return;
+    }
+    this.#evidenceSlot().session.invalidateSnapshotForExternalMutation();
   }
 
   exportAnalysisSnapshot(
     targetId?: string,
   ): Result<AnalysisSnapshot, AnalysisError> {
-    const slot = this.#resolveSlot(targetId, "snapshot export");
-    return slot.ok
-      ? slot.value.session.exportAnalysisSnapshot()
-      : err(slot.error);
+    if (targetId !== undefined) {
+      const slot = this.#resolveSlot(targetId, "snapshot export");
+      return slot.ok
+        ? slot.value.session.exportAnalysisSnapshot()
+        : err(slot.error);
+    }
+    return this.#evidenceSlot().session.exportAnalysisSnapshot();
   }
 
   importAnalysisSnapshot(
     snapshot: AnalysisSnapshot,
     targetId?: string,
   ): Result<number, AnalysisError> {
-    const slot = this.#resolveSlot(targetId, "snapshot import");
-    return slot.ok
-      ? slot.value.session.importAnalysisSnapshot(snapshot)
-      : err(slot.error);
+    if (targetId !== undefined) {
+      const slot = this.#resolveSlot(targetId, "snapshot import");
+      return slot.ok
+        ? slot.value.session.importAnalysisSnapshot(snapshot)
+        : err(slot.error);
+    }
+    return this.#evidenceSlot().session.importAnalysisSnapshot(snapshot);
   }
 
   recordWorkflowSnapshot(
     input: WorkflowSnapshotRecordInput,
   ): Result<null, EvidenceIntegrityError> {
-    return this.#currentSlot().session.recordWorkflowSnapshot(input);
+    return this.#evidenceSlot().session.recordWorkflowSnapshot(input);
   }
 
   onAvailabilityChanged(listener: () => void | Promise<void>): () => void {
@@ -1615,32 +1699,33 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     return () => this.#snapshotListeners.delete(listener);
   }
 
-  // Investigation records stay session-wide. The current slot owns the target
-  // binding used to attach new unknowns and the only active snapshot cache.
+  // Investigation records stay session-wide. The slot the request was
+  // admitted for owns the target binding used to attach new unknowns and the
+  // only active snapshot cache.
   recordEvidence(
     evidence: Evidence,
   ): ReturnType<BinarySessionPort["recordEvidence"]> {
-    return this.#currentSlot().session.recordEvidence(evidence);
+    return this.#evidenceSlot().session.recordEvidence(evidence);
   }
 
   hasEvidence(evidenceId: string): boolean {
-    return this.#currentSlot().session.hasEvidence(evidenceId);
+    return this.#evidenceSlot().session.hasEvidence(evidenceId);
   }
 
   evidenceById(evidenceId: string): Evidence | undefined {
-    return this.#currentSlot().session.evidenceById(evidenceId);
+    return this.#evidenceSlot().session.evidenceById(evidenceId);
   }
 
   evidenceForAnalysis(evidenceId: string): Evidence | undefined {
-    return this.#currentSlot().session.evidenceForAnalysis(evidenceId);
+    return this.#evidenceSlot().session.evidenceForAnalysis(evidenceId);
   }
 
   exportEvidenceBundle(): EvidenceBundle {
-    return this.#currentSlot().session.exportEvidenceBundle();
+    return this.#evidenceSlot().session.exportEvidenceBundle();
   }
 
   evidenceBundleForSerialization(): EvidenceBundle {
-    return this.#currentSlot().session.evidenceBundleForSerialization();
+    return this.#evidenceSlot().session.evidenceBundleForSerialization();
   }
 
   writeAnalysisSnapshot(
@@ -1648,7 +1733,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     path: string,
     overwrite: boolean,
   ): ReturnType<BinarySession["writeAnalysisSnapshot"]> {
-    return this.#currentSlot().session.writeAnalysisSnapshot(
+    return this.#evidenceSlot().session.writeAnalysisSnapshot(
       snapshot,
       path,
       overwrite,
@@ -1656,26 +1741,26 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   }
 
   closeWriteResources(): Promise<Result<null, AnalysisError>> {
-    return this.#currentSlot().session.closeWriteResources();
+    return this.#evidenceSlot().session.closeWriteResources();
   }
 
   importEvidenceBundle(
     bundle: unknown,
   ): ReturnType<BinarySession["importEvidenceBundle"]> {
-    return this.#currentSlot().session.importEvidenceBundle(bundle);
+    return this.#evidenceSlot().session.importEvidenceBundle(bundle);
   }
 
   recordUnknown(
     input: RecordUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
-    return this.#currentSlot().session.recordUnknown(input);
+    return this.#evidenceSlot().session.recordUnknown(input);
   }
 
   recordEvidenceWithUnknown(
     evidence: Evidence,
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
-    return this.#currentSlot().session.recordEvidenceWithUnknown(
+    return this.#evidenceSlot().session.recordEvidenceWithUnknown(
       evidence,
       input,
     );
@@ -1684,7 +1769,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   updateUnknown(
     input: UpdateUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
-    return this.#currentSlot().session.updateUnknown(input);
+    return this.#evidenceSlot().session.updateUnknown(input);
   }
 
   listUnknowns(
@@ -1694,11 +1779,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       readonly domain?: string;
     } = {},
   ): ResidualUnknown[] {
-    return this.#currentSlot().session.listUnknowns(filters);
+    return this.#evidenceSlot().session.listUnknowns(filters);
   }
 
   listUnknownsPage(query: UnknownQuery = {}): UnknownPage {
-    return this.#currentSlot().session.listUnknownsPage(query);
+    return this.#evidenceSlot().session.listUnknownsPage(query);
   }
 
   verifyUnknownResolution(unknownId: string): Result<
@@ -1709,7 +1794,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     },
     UnknownRegistryError
   > {
-    return this.#currentSlot().session.verifyUnknownResolution(unknownId);
+    return this.#evidenceSlot().session.verifyUnknownResolution(unknownId);
   }
 
   #createSlot(): TargetSlot {
@@ -1827,13 +1912,6 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     return job !== undefined && jobBindsSlot(job) ? job : undefined;
   }
 
-  #cancelJob(slot: TargetSlot): void {
-    const job = this.#jobs.get(slot.id);
-    if (job === undefined) return;
-    job.controller.abort();
-    this.#jobs.delete(slot.id);
-  }
-
   async #waitForAnalysis(
     slot: TargetSlot,
     operation: string,
@@ -1904,6 +1982,19 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   /** The slot a call without an explicit target handle addresses. */
   #currentSlot(): TargetSlot {
     return this.#slotById(this.#currentId) ?? this.#primary;
+  }
+
+  /**
+   * The slot that owns the Evidence of the request in flight.
+   *
+   * A request is admitted for one slot and runs against it, so its Evidence
+   * belongs to that slot. Another open may make another slot current while
+   * the request runs, and the Evidence of a request that started on the first
+   * slot does not belong to the second one. A call outside an admitted
+   * request addresses the current slot.
+   */
+  #evidenceSlot(): TargetSlot {
+    return this.#admittedSlots.getStore() ?? this.#currentSlot();
   }
 
   #resolveSlot(

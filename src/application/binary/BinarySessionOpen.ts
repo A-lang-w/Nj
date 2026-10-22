@@ -24,10 +24,16 @@ import {
 } from "./ProfilelessNativeWorkflowSnapshot.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
 
-/** Read a staged snapshot once the open holds its place in the session order. */
-export type AnalysisSnapshotLoader = () => Promise<
-  Result<AnalysisSnapshot, AnalysisError>
->;
+/**
+ * Read a staged snapshot once the open holds its place in the session order.
+ *
+ * The loader is given the signal the open runs under, so the read follows the
+ * open it belongs to. A background job owns its own signal, and a cancelled
+ * request stops the wait for that job instead of the job itself.
+ */
+export type AnalysisSnapshotLoader = (
+  signal: AbortSignal | undefined,
+) => Promise<Result<AnalysisSnapshot, AnalysisError>>;
 
 export interface BinarySessionOpenOptions {
   readonly signal?: AbortSignal;
