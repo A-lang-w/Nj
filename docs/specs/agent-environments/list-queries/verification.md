@@ -2,6 +2,18 @@
 
 ## Maintainer integration, 2026-10-22
 
+Latest-main integration: main advanced to `e93e3b1e7` (APK signing declarations).
+Merged it without dropping that feature; the sole conflict was the shared tool
+description, resolved from main with only the existing list-query clause added.
+The integrated tree passes all 619 adjacent source tests, pinned typecheck/lint,
+build, docs/9 README checks and format validation. All 80 CLI/MCP/schema boundaries
+also passed on `02ff6304d` before this main merge. An interleaved pre-merge docs
+attempt saw stale generated skill output, and format saw the temporary conflict;
+both attempts are retained and the completed integration checks pass. They are
+not attributed to a defect in main. Fresh-head CI and compiled schema verification
+remain necessary. Earlier CI run `39773075218` succeeded on `665ec74c6`, not on
+the subsequent corrections or integration.
+
 Independent read-only Codex review of `665ec74c6` found one additional omission
 case: intersecting query-total names discarded a valid total when another envelope
 omitted it. A new service guard failed on that head (one failure, 41 passes).
