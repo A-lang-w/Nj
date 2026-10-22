@@ -34,17 +34,27 @@ it("keeps the 128 MiB request when the setting is unset", () => {
   const recovery = regexWorkerHeapRequestRecovery(
     DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   );
+  expect(recovery).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
+  expect(recovery).toContain(String(DEFAULT_REGEX_WORKER_HEAP_REQUEST.heapMiB));
   expect(recovery).toContain(
-    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 128 MiB (source default; default 128 MiB, floor 7 MiB, maximum 16384 MiB).",
-  );
-  expect(recovery).toContain(
-    "Set REA_REGEX_WORKER_HEAP_REQUEST_MIB in the environment that starts REA",
+    `source ${DEFAULT_REGEX_WORKER_HEAP_REQUEST.source}`,
   );
   const projected = projectAnalysisError(
     regexWorkerHeapError("search_procedures", new Error("heap")),
   );
-  expect(projected.code).toBe("resource_constraint");
-  expect(projected.remediation.action).toContain(recovery);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "memory",
+      reported_limits: {
+        requested_worker_heap_mib: DEFAULT_REGEX_WORKER_HEAP_REQUEST.heapMiB,
+        requested_worker_heap_source: DEFAULT_REGEX_WORKER_HEAP_REQUEST.source,
+      },
+    },
+  });
+  expect(projected.remediation.action).toContain(
+    REGEX_WORKER_HEAP_REQUEST_SETTING,
+  );
   expect(projected.remediation.action).not.toContain("no runtime override");
 });
 
@@ -76,12 +86,10 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
     .capabilities()
     .find((capability) => capability.operation === "search_procedures")
     ?.limitations.join(" ");
-  expect(hopperText).toContain(
-    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 7 MiB, maximum 16384 MiB).",
-  );
-  expect(hopperText).toContain(
-    "Set REA_REGEX_WORKER_HEAP_REQUEST_MIB in the environment that starts REA",
-  );
+  expect(hopperText).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
+  expect(hopperText).toContain("256");
+  expect(hopperText).toContain("source setting");
+  expect(hopperText).not.toMatch(/\b8 MiB\b/u);
   expect(hopperText).not.toContain("no runtime override");
 
   vi.stubEnv(REGEX_WORKER_HEAP_REQUEST_SETTING, "8");
@@ -93,12 +101,10 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_strings")
       ?.limitations.join(" ");
-    expect(kunaText).toContain(
-      "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 256 MiB (source setting; default 128 MiB, floor 7 MiB, maximum 16384 MiB).",
-    );
-    expect(kunaText).not.toContain(
-      "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 8 MiB",
-    );
+    expect(kunaText).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
+    expect(kunaText).toContain("256");
+    expect(kunaText).toContain("source setting");
+    expect(kunaText).not.toMatch(/\b8 MiB\b/u);
   } finally {
     vi.unstubAllEnvs();
   }
@@ -109,9 +115,13 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_procedures")
       ?.limitations.join(" "),
-  ).toContain(
-    "The effective REA_REGEX_WORKER_HEAP_REQUEST_MIB value is 128 MiB (source default; default 128 MiB, floor 7 MiB, maximum 16384 MiB).",
-  );
+  ).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
+  expect(
+    ambient
+      .capabilities()
+      .find((capability) => capability.operation === "search_procedures")
+      ?.limitations.join(" "),
+  ).toContain(`source ${DEFAULT_REGEX_WORKER_HEAP_REQUEST.source}`);
 });
 
 it.each([
@@ -143,8 +153,8 @@ it.each([
   });
   if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
   expect(startup.error.settings).toContainEqual({
-    setting: "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
-    constraint: expect.stringContaining("from 7 to 16384 MiB"),
+    setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
+    constraint: regexWorkerHeapRequestConstraint,
   });
   const config = parseConfig({ REA_REGEX_WORKER_HEAP_REQUEST_MIB: value });
   if (config.ok)

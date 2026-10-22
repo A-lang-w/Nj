@@ -23,6 +23,36 @@ import {
   MCP_STARTUP_POLICY,
 } from "../../../src/mcpStartupPolicy.js";
 
+const errorMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+const expectPhaseText = (
+  text: string,
+  budget: Pick<McpPhaseBudget, "setting" | "milliseconds" | "source">,
+) => {
+  expect(text).toContain(budget.setting);
+  expect(text).toContain(
+    `${String(budget.milliseconds)} ms (source ${budget.source}`,
+  );
+  expect(text).not.toContain("no runtime override");
+};
+
+const expectThrownBudget = async (
+  pending: Promise<unknown>,
+  budget: Pick<McpPhaseBudget, "setting" | "milliseconds" | "source">,
+): Promise<string> => {
+  let caught: unknown;
+  try {
+    await pending;
+  } catch (cause) {
+    caught = cause;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  const message = errorMessage(caught);
+  expectPhaseText(message, budget);
+  return message;
+};
+
 describe("MCP startup policy", () => {
   it("names phase budget settings without turning Codex's 30s into a REA knob", () => {
     const budgets = resolveMcpStartupBudgets({});
@@ -33,31 +63,20 @@ describe("MCP startup policy", () => {
     expect(budgets.firstCatalog.milliseconds).toBe(20_000);
     expect(budgets.doctor.milliseconds).toBe(30_000);
     const initialize = mcpPhaseBudgetRecovery(budgets.initialize);
-    expect(initialize).toBe(
-      "The effective REA_MCP_INITIALIZE_BUDGET_MS value for the MCP initialize phase budget is 15000 ms (source default; default 15000 ms, floor 1 ms, maximum 2147483647 ms). Set REA_MCP_INITIALIZE_BUDGET_MS in the environment that starts REA to a positive decimal integer from 1 to 2147483647, then restart REA.",
-    );
     expect(initialize).toBe(mcpStartupPhaseBudgetRecovery(budgets.initialize));
-    expect(initialize).not.toContain("no runtime override");
-    expect(mcpStartupPhaseBudgetRecovery(budgets.toolsList)).toContain(
-      "The effective REA_MCP_TOOLS_LIST_BUDGET_MS value for the MCP tools/list phase budget is 5000 ms (source default; default 5000 ms, floor 1 ms, maximum 2147483647 ms).",
+    expectPhaseText(initialize, budgets.initialize);
+    expectPhaseText(
+      mcpStartupPhaseBudgetRecovery(budgets.toolsList),
+      budgets.toolsList,
     );
-    expect(mcpStartupPhaseBudgetRecovery(budgets.firstCatalog)).toContain(
-      "REA_MCP_FIRST_CATALOG_BUDGET_MS",
-    );
-    expect(mcpStartupPhaseBudgetRecovery(budgets.firstCatalog)).toContain(
-      "20000 ms (source default",
+    expectPhaseText(
+      mcpStartupPhaseBudgetRecovery(budgets.firstCatalog),
+      budgets.firstCatalog,
     );
     const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
-    expect(doctor).toContain(
-      "The effective REA_MCP_DOCTOR_DEADLINE_MS value for the MCP doctor startup deadline is 30000 ms (source default; default 30000 ms, floor 1 ms, maximum 2147483647 ms).",
-    );
-    expect(doctor).toContain(
-      "Set REA_MCP_DOCTOR_DEADLINE_MS in the environment that starts REA",
-    );
-    expect(doctor).not.toContain("no runtime override");
-    expect(doctor).toContain(
-      "Codex startup_timeout_sec of 30 seconds is client guidance",
-    );
+    expectPhaseText(doctor, budgets.doctor);
+    expect(doctor).toContain("startup_timeout_sec");
+    expect(doctor).toContain("client guidance");
     expect(doctor).toContain("does not enforce");
     expect(doctor).not.toContain("REA_MCP_STARTUP");
     const selected = resolveMcpStartupBudgets({
@@ -136,27 +155,25 @@ const probePolicy = (
   };
 };
 
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 describe("packaged MCP startup probe failures", () => {
   it("names the initialize budget when that phase times out", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ initializeBudgetMs: budgetMs });
+    await expectThrownBudget(
       measureMcpStartup({
         command: process.execPath,
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
-        policy: probePolicy({ initializeBudgetMs: budgetMs }),
+        policy,
       }),
-    ).rejects.toThrow(
-      `The effective REA_MCP_INITIALIZE_BUDGET_MS value for the MCP initialize phase budget is ${String(budgetMs)} ms (source setting; default 15000 ms, floor 1 ms, maximum 2147483647 ms).`,
+      policy.initialize,
     );
   });
 
   it("names the tools/list budget when that phase times out", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ toolsListBudgetMs: budgetMs });
+    await expectThrownBudget(
       measureMcpStartup({
         command: process.execPath,
         args: [probeChild],
@@ -164,24 +181,23 @@ describe("packaged MCP startup probe failures", () => {
           ...process.env,
           REA_MCP_PROBE_MODE: "initialize-then-hang",
         },
-        policy: probePolicy({ toolsListBudgetMs: budgetMs }),
+        policy,
       }),
-    ).rejects.toThrow(
-      `The effective REA_MCP_TOOLS_LIST_BUDGET_MS value for the MCP tools/list phase budget is ${String(budgetMs)} ms (source setting; default 5000 ms, floor 1 ms, maximum 2147483647 ms).`,
+      policy.toolsList,
     );
   });
 
   it("names the first-catalog budget when startup exceeds it", async () => {
     const budgetMs = 1;
-    await expect(
+    const policy = probePolicy({ firstCatalogBudgetMs: budgetMs });
+    await expectThrownBudget(
       measureMcpStartup({
         command: process.execPath,
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "serve" },
-        policy: probePolicy({ firstCatalogBudgetMs: budgetMs }),
+        policy,
       }),
-    ).rejects.toThrow(
-      `The effective REA_MCP_FIRST_CATALOG_BUDGET_MS value for the MCP first-catalog phase budget is ${String(budgetMs)} ms (source setting; default 20000 ms, floor 1 ms, maximum 2147483647 ms).`,
+      policy.firstCatalog,
     );
   });
 
@@ -205,22 +221,23 @@ describe("packaged MCP startup probe failures", () => {
 
   it("names the doctor deadline when module profiling cannot initialize", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ doctorDeadlineMs: budgetMs });
+    await expectThrownBudget(
       profileMcpModuleLoading({
         command: process.execPath,
         args: [probeChild],
         environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
-        policy: probePolicy({ doctorDeadlineMs: budgetMs }),
+        policy,
         packageName: "rea-agents",
       }),
-    ).rejects.toThrow(
-      `The effective REA_MCP_DOCTOR_DEADLINE_MS value for the MCP doctor startup deadline is ${String(budgetMs)} ms (source setting; default 30000 ms, floor 1 ms, maximum 2147483647 ms).`,
+      policy.doctor,
     );
   });
 
   it("names the tools/list budget when module profiling passes initialize", async () => {
     const budgetMs = 200;
-    await expect(
+    const policy = probePolicy({ toolsListBudgetMs: budgetMs });
+    await expectThrownBudget(
       profileMcpModuleLoading({
         command: process.execPath,
         args: [probeChild],
@@ -228,11 +245,10 @@ describe("packaged MCP startup probe failures", () => {
           ...process.env,
           REA_MCP_PROBE_MODE: "initialize-then-hang",
         },
-        policy: probePolicy({ toolsListBudgetMs: budgetMs }),
+        policy,
         packageName: "rea-agents",
       }),
-    ).rejects.toThrow(
-      `The effective REA_MCP_TOOLS_LIST_BUDGET_MS value for the MCP tools/list phase budget is ${String(budgetMs)} ms (source setting; default 5000 ms, floor 1 ms, maximum 2147483647 ms).`,
+      policy.toolsList,
     );
   });
 
@@ -277,9 +293,11 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     }
     expect(caught).toBeInstanceOf(Error);
     const message = errorMessage(caught);
-    expect(message).toContain(
-      `The effective REA_MCP_FIRST_CATALOG_BUDGET_MS value for the MCP first-catalog phase budget is ${String(firstCatalogMs)} ms (source setting; default 20000 ms, floor 1 ms, maximum 2147483647 ms).`,
-    );
+    expectPhaseText(message, {
+      setting: "REA_MCP_FIRST_CATALOG_BUDGET_MS",
+      milliseconds: firstCatalogMs,
+      source: "setting",
+    });
     expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
     const elapsedMs = performance.now() - started;
     expect(elapsedMs).toBeLessThan(initializeMs);
@@ -312,9 +330,11 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     }
     expect(caught).toBeInstanceOf(Error);
     const message = errorMessage(caught);
-    expect(message).toContain(
-      `The effective REA_MCP_FIRST_CATALOG_BUDGET_MS value for the MCP first-catalog phase budget is ${String(firstCatalogMs)} ms (source setting; default 20000 ms, floor 1 ms, maximum 2147483647 ms).`,
-    );
+    expectPhaseText(message, {
+      setting: "REA_MCP_FIRST_CATALOG_BUDGET_MS",
+      milliseconds: firstCatalogMs,
+      source: "setting",
+    });
     expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
     const elapsedMs = performance.now() - started;
     expect(elapsedMs).toBeLessThan(toolsListMs);

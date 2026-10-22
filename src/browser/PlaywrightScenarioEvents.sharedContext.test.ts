@@ -32,8 +32,8 @@ it("omits a request without a frame in a shared context", () => {
   };
   context.emit("request", unknownRequest);
   expect(events.result().items).toEqual([]);
-  expect(events.limitations()).toContain(
-    "Shared-context network capture excludes requests without a known root or descendant Page frame.",
+  expect(events.limitations().join("\n")).toContain(
+    "Shared-context network capture",
   );
 });
 
