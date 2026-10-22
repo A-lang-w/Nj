@@ -7,6 +7,7 @@ import {
 } from "../application/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
+  DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
   type FirmwareRequest,
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
@@ -26,7 +27,6 @@ import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
-  FIRMWARE_LIMITS,
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
 } from "./FirmwareRelease.js";
@@ -130,6 +130,18 @@ const limitations = [
   "extraction_gaps lists regions that were carved or left unextracted and names extractor dependencies the producer reported as missing. A listed gap does not mean the target is corrupt or that a retained region is empty.",
   "The actual launcher executable is hashed. Interpreter, shared libraries and installed Python package dependencies are not independently attested; source revision remains unknown for caller-supplied builds.",
 ] as const;
+
+/** Unblob's safe-link handling rewrites absolute targets inside its output. */
+const UNBLOB_LINK_TARGET_LIMITATION =
+  "Symlink link_target values are read from Unblob's extracted tree, not from the firmware's filesystem metadata. Unblob rewrites absolute targets relative to the extraction root, so a relative link_target may have been stored as an absolute path in the image.";
+
+const publishedSymlinks = (result: unknown): boolean => {
+  const parsed = firmwareResultSchemas.extract_firmware.safeParse(result);
+  return (
+    parsed.success &&
+    parsed.data.unpublished_entries.some((entry) => entry.kind === "symlink")
+  );
+};
 
 /** Queued bring-your-own firmware adapters with private snapshots and owned cleanup. */
 export class FirmwareProvider implements FirmwareAnalysisPort {
@@ -324,7 +336,9 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         : AbortSignal.any([options.signal, phase.signal]);
     // Extraction and publication have separate budgets: publication time depends on the
     // destination filesystem, so it must not be charged to the extraction deadline.
-    let deadline = startFirmwareDeadline("analysis", FIRMWARE_LIMITS.timeoutMs);
+    const analysisTimeoutMs =
+      request.input.analysis_timeout_ms ?? DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS;
+    let deadline = startFirmwareDeadline("analysis", analysisTimeoutMs);
     let signal = withCaller(deadline);
     let outcome: Outcome;
     try {
@@ -356,6 +370,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           cwd: root?.path ?? "",
           environment: this.environment,
           signal,
+          deadline,
           retainCleanup: (supervisor) => {
             this.#pendingCleanup.set(ownedRoot.path, {
               supervisor,
@@ -415,6 +430,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           signal,
         });
         result = firmwareResultSchemas.inspect_firmware_regions.parse({
+          analysis_timeout_ms: analysisTimeoutMs,
           engine,
           input_size: target.size,
           regions: normalizeBinwalkReport(
@@ -497,6 +513,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         );
         signal = withCaller(deadline);
         result = await publishFirmwareExtraction({
+          analysisTimeoutMs,
           files: this.#files,
           workspacePath: root.path,
           deadline,
@@ -536,6 +553,9 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             rawResult: raw,
             limitations: [
               ...limitations,
+              ...(engineName === "unblob" && publishedSymlinks(result)
+                ? [UNBLOB_LINK_TARGET_LIMITATION]
+                : []),
               ...(admitted.status === "compatible"
                 ? [admitted.limitation]
                 : []),
