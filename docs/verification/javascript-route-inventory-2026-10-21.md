@@ -1,9 +1,9 @@
 # Static JavaScript route inventory verification
 
 Issue [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime
-`8eb1376f16096e90758efb8f31cffb1070c93076`, tree `1efaefcf7c5baeb129ee652ffd216c18cbb35683`,
+`63d4388ff635816d8dfa268a40f19e0fc03cf983`, tree `977af7f6545fddc2a95d9e5d39b6570bf22bbc3f`,
 integrates main `c8ed32853881b08aa83459d4da55a28a4e09b0c8`. Recorded at
-`2026-10-22T06:49:06.748Z`. Subsequent verification-only
+`2026-10-22T07:25:17.436Z`. Subsequent verification-only
 commits change these reports. The [JSON record](javascript-route-inventory-2026-10-21.json)
 pins original inputs, exact commands, profiles, failed controls and historical revisions.
 Current-head GitHub CI and automated review must be checked separately.
@@ -44,8 +44,8 @@ projects the two publication receipt scalars without cloning complete Evidence.
 The canonical web-bundle state and coordinate owners replace duplicate types.
 The coordinator parser-import boundary remains covered.
 
-**953 source checks and 116 compiled public checks passed**,
-including 219 scanner regressions, actual full/compact SDK profiles, both JSON
+**973 source checks and 116 compiled public checks passed**,
+including 238 scanner regressions, actual full/compact SDK profiles, both JSON
 Schema dialects, source selection/deletion, retained reads, cancellation,
 recovery, real workers and CLI/browser adapters. The current public selection additionally covers ASAR admission, selected
 environment, CLI resource closing and Electron file scope; earlier startup/
@@ -122,6 +122,25 @@ and unescaped character classes were equivalent across clients is withdrawn;
 no Dart-provider execution is claimed. The interrupted superseded local run and
 failed CI are retained in the JSON record.
 
+Two later review cases reproduced eleven failures while 222 controls passed:
+possible query fields cleared by spreads became pages, and selected member
+configurations claimed unrelated siblings. The selected-slot walk now uses the
+canonical possible object/array reference owners; exact fields still prove
+positive destinations. Configuration ownership preserves member and copied
+initializer paths through the same walk. Conditional-container selection reuses
+existing value-edge/truthiness rules. Normal paths advance offsets; exceptional
+path expansion is charged before allocation and node/path visits bound cycles.
+
+This also exposed a canonical computed-key overwrite defect: an independent
+semantic-analysis regression failed with unknown coverage before the owner fix
+and retains its original literal afterward. Earlier unknown computed values are
+excluded by later definite slots; a getter paired with only a later setter stays
+possible. Accessor and conditional-container controls pass. Both SDK profiles
+after source deletion and both browser adapters exclude a distinct possible-query
+payload and preserve the selected configuration's independent sibling with exact
+counts. Unsupported projected configurations keep explicit gaps. Actual SDK
+tool definitions remain structurally identical to the preceding qualified runtime.
+
 ## Real production inputs and oracle
 
 Every one of the 67 saved production scripts was rehashed and freshly analyzed
@@ -132,9 +151,9 @@ were read as data. No source facts were reused for this qualification.
 | Homepage capture | Scripts |     Bytes | Completed | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | --------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |        28 |                28 |               0 |
-| shadcn-ui        |      38 | 2,465,078 |        36 |                37 |              18 |
+| shadcn-ui        |      38 | 2,465,078 |        37 |                37 |              18 |
 
-The full task cost **209.907 s / 313.534 CPU s / 510,238,720 bytes peak family RSS**. The previous pinned runtime `972c5ad86` full-worker run
+The full task cost **202.252 s / 302.296 CPU s / 505,315,328 bytes peak family RSS**. The previous pinned runtime `972c5ad86` full-worker run
 took 277.184 s/409.684 CPU s. These are individual observations, not a timing
 distribution. Earlier paired source elapsed observations
 remain pinned to their measured revisions in JSON. There is no controlled causal ablation or repeated timing
@@ -156,7 +175,7 @@ Runtime.compileScript/persistScript on a blank local page without running it.
 Actual CLI and official SDK analyze_web_bundle calls passively captured it via
 CDP and returned all 18 patterns, original URL and SHA-256. Source parsing was
 complete, enumeration partial and application coverage unknown. Owned process
-and temporary-profile cleanup succeeded. Cost: **9.843 s / 12.659 CPU s / 2,099,322,880 bytes peak family RSS**.
+and temporary-profile cleanup succeeded. Cost: **9.795 s / 12.467 CPU s / 2,099,130,368 bytes peak family RSS**.
 
 ## Equivalent SDK task costs
 
@@ -167,8 +186,8 @@ Measurements include the instrumentation and use full input advertisements.
 
 | Delivery | Used declarations + all calls/replies, tokenx | Entire catalog + all calls/replies, tokenx | Task resources                                                |
 | -------- | --------------------------------------------: | -----------------------------------------: | ------------------------------------------------------------- |
-| Complete |                                     1,934,534 |                                  3,035,567 | 13.775 s / 17.884 CPU s / 1,479,249,920 bytes peak family RSS |
-| Selected |                                        58,902 |                                  1,159,935 | 12.179 s / 15.940 CPU s / 1,233,375,232 bytes peak family RSS |
+| Complete |                                     1,934,534 |                                  3,035,567 | 13.647 s / 17.943 CPU s / 1,438,629,888 bytes peak family RSS |
+| Selected |                                        58,902 |                                  1,159,935 | 12.745 s / 17.104 CPU s / 1,272,639,488 bytes peak family RSS |
 
 Tokenx counts actual advertised schemas, arguments and full SDK replies, including
 exports and follow-ups; it estimates tokens rather than actual model usage.
