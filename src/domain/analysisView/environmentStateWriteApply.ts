@@ -50,11 +50,13 @@ export const renewUuids = (
   return renew(value, "");
 };
 
-/** The value a generated rule takes: recorded values in the gate, the store's generators when served. */
-export type GenerateValue = (rule: GeneratedRule) => JsonValue;
-
 /** A refusal message naming what the call did wrong; the state is left unchanged. */
 type Applied<T> = Result<T, string>;
+
+/** A generated value or a typed refusal when the store cannot safely provide one. */
+export type GenerateValue = (
+  rule: GeneratedRule,
+) => Applied<JsonValue | undefined>;
 
 const kindOf = (value: JsonValue | undefined): string =>
   value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
@@ -138,7 +140,7 @@ const ruledValue = (
     case "unique":
     case "renewed":
     case "clock":
-      return ok(generate(rule));
+      return generate(rule);
     case "echo":
       return ok(Object.hasOwn(body, rule.field) ? body[rule.field] : undefined);
     case "copy": {
@@ -265,11 +267,16 @@ export const updatedFields = (
       const was = integerOf(before[rule.field]);
       if (was !== undefined)
         written[rule.field] = spelledLike(before[rule.field]!, was + 1);
-    } else if (rule.rule === "clock" || rule.rule === "unique")
-      written[rule.field] = generate(rule);
-    // Child rows are renewed only on an entity that holds them.
-    else if (rule.rule === "renewed" && Object.hasOwn(before, rule.field))
-      written[rule.field] = generate(rule);
+    } else if (
+      rule.rule === "clock" ||
+      rule.rule === "unique" ||
+      // Child rows are renewed only on an entity that holds them.
+      (rule.rule === "renewed" && Object.hasOwn(before, rule.field))
+    ) {
+      const value = generate(rule);
+      if (!value.ok) return value;
+      if (value.value !== undefined) written[rule.field] = value.value;
+    }
   }
   derive(
     plan.rules.filter(

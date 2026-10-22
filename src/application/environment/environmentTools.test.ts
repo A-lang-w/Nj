@@ -190,7 +190,7 @@ describe("environment tool response shapes", () => {
         { bodyText: JSON.stringify({ [member]: [{ id: 1 }, { id: 2 }] }) },
       ]),
     ).toContain(
-      `{numeric}; returns a JSON object whose "${"m".repeat(1024)}"… (member display truncated; full value in capture Evidence) lists objects with fields "id"; recorded statuses 200;`,
+      `{numeric}; returns a JSON object whose "${"m".repeat(1022)}"… (member display truncated; full value in capture Evidence) lists objects with fields "id"; recorded statuses 200;`,
     );
   });
 
@@ -218,6 +218,19 @@ describe("environment tool response shapes", () => {
     ]);
     expect(shown).toContain('whose "items; recorded statuses 500\\nmmm');
     expect(shown).not.toContain("items; recorded statuses 500\n");
+  });
+
+  it("applies the sample budget after JSON escaping", () => {
+    const member = "\u0000".repeat(1024);
+    const description = usersAnswering([
+      { bodyText: JSON.stringify({ [member]: [{ id: 1 }] }) },
+    ]);
+    const shown = /whose (?<name>"(?:\\u0000)*")/u.exec(description ?? "")
+      ?.groups?.name;
+    expect(shown).toBeDefined();
+    expect(Buffer.byteLength(shown ?? "")).toBeLessThanOrEqual(1024);
+    expect(description).toContain("member display truncated");
+    expect(description).not.toContain("\u0000");
   });
 });
 

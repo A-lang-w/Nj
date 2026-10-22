@@ -1,9 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
+import { ok } from "../result.js";
 import {
-  collectionPathOf,
   isObject,
   isStateWrite,
-  lastSegmentValue,
   locateItem,
   at,
   same,
@@ -32,7 +31,7 @@ import {
   laterObservation,
   type Observed,
 } from "./environmentStateWriteObserve.js";
-import { integerOf, slugOf } from "./environmentStateWriteValues.js";
+import { integerOf, readClock, slugOf } from "./environmentStateWriteValues.js";
 import {
   pathValuesOf,
   type FieldRule,
@@ -63,6 +62,11 @@ export interface WriteDraft {
   /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
   readonly sequences: Map<string, number>;
 }
+
+/** A write observation plus the fields its selected read view actually covers, if any. */
+type UpdateObservation = Observed & {
+  readonly readFields?: readonly string[];
+};
 
 /** Response bodies, request bodies and budget the effects read. */
 export interface WriteIo {
@@ -198,46 +202,90 @@ export const startOf = (
 export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   records: context.records,
   from: step.index,
+  ...(context.timed ? { after: step.record.end } : {}),
   viewOf: context.viewOf,
   withBody: context.io.withBody,
 });
 
-/** The entity an update's response shows, located by its identity, else a later item read of it spelled as the call was. */
+/** The entity an update's response shows, located by its identity, else a later item read of the target the write resolved. */
 const updatedObservation = (
   context: EffectContext,
   step: WriteStep,
-  entity: { readonly type: string; readonly idField: string },
-): Observed | undefined => {
-  const target = {
-    ...entity,
-    collection: collectionPathOf(step.record, true),
-    id: lastSegmentValue(step.record.path),
-  };
+  entity: {
+    readonly type: string;
+    readonly idField: string;
+    readonly collection: string;
+    readonly id: string;
+  },
+  required: readonly string[],
+): UpdateObservation | undefined => {
   const own = context.io.withBody(
     step.record.ordinal,
     (body): Observed | undefined => {
       const located =
-        body === undefined ? undefined : locateItem(body, target.id);
+        body === undefined ? undefined : locateItem(body, entity.id);
       const object =
         located === undefined ? undefined : at(body!, located.pointer);
-      return located?.keys.includes(target.idField) === true && isObject(object)
+      return located?.keys.includes(entity.idField) === true && isObject(object)
         ? {
             ordinal: step.record.ordinal,
             pointer: located.pointer,
             object,
-            id: target.id,
+            id: entity.id,
           }
         : undefined;
     },
   );
-  if (own !== undefined) return own;
+  if (
+    own !== undefined &&
+    required.every((field) => Object.hasOwn(own.object, field))
+  )
+    return own;
   const later = laterObservation(searchFrom(context, step), {
-    ...target,
+    type: entity.type,
+    collection: entity.collection,
+    idField: entity.idField,
+    id: entity.id,
     held: () => true,
     isWrite: isStateWrite,
+    sameItem: (record) => {
+      const found = itemTarget(context.state, entity.type, record);
+      return found.collection === entity.collection && found.id === entity.id;
+    },
+    ...(own === undefined
+      ? {}
+      : {
+          covers: (
+            view: Extract<StateView, { readonly shape: "item" | "list" }>,
+          ) => required.every((field) => view.fields.includes(field)),
+        }),
   });
-  if (later !== undefined) context.observed(later.ordinal);
-  return later;
+  if (later !== undefined) {
+    const view = context.viewOf(later.ordinal);
+    const readFields =
+      view?.shape === "item" || view?.shape === "list"
+        ? view.fields
+        : undefined;
+    const coversRequired = required.every((field) =>
+      readFields?.includes(field),
+    );
+    // A partial summary cannot replace members the write response did show. Only use it
+    // to fill an omitted generated field when that read view actually covers the field.
+    if (own === undefined || coversRequired) {
+      context.observed(later.ordinal);
+      const object = { ...own?.object, ...later.object };
+      // For covered fields, the later read's omission is evidence too; do not fill it back
+      // from an earlier write response. Fields outside that view retain response evidence.
+      for (const field of readFields ?? [])
+        if (!Object.hasOwn(later.object, field)) delete object[field];
+      return {
+        ...later,
+        object,
+        ...(readFields === undefined ? {} : { readFields }),
+      };
+    }
+  }
+  return own;
 };
 
 /** Add what a later call of an update showed to its plan: members, fixed values and rules not seen before. */
@@ -328,7 +376,7 @@ const contradictsEarlierCalls = (
   const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
   return rules.some(
     (rule) =>
-      (unsentChange(rule) || regenerates(rule)) &&
+      (unsentChange(rule) || regenerates(rule) || rule.rule === "clock") &&
       !ruled.has(rule.field) &&
       draft.updates.some(({ shown, sent, kept }) => {
         if (regenerates(rule)) return kept.includes(rule.field);
@@ -336,6 +384,8 @@ const contradictsEarlierCalls = (
         const value = shown.get(rule.field);
         if (value === undefined) return false;
         if (rule.rule === "increment") return integerOf(value) !== undefined;
+        // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
+        if (rule.rule === "clock") return true;
         const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
         return typeof from === "string" && slugOf(from) !== value;
       }),
@@ -395,7 +445,14 @@ export const applyUpdate = (
   const after =
     entity === undefined
       ? undefined
-      : updatedObservation(context, step, { type, idField });
+      : updatedObservation(
+          context,
+          step,
+          { type, idField, collection, id },
+          draft.plan.rules.flatMap((rule) =>
+            rule.rule === "clock" ? [rule.field] : [],
+          ),
+        );
   if (entity === undefined || after === undefined) {
     fail(draft, step, "no-observation");
     return UNKNOWN;
@@ -426,7 +483,7 @@ export const applyUpdate = (
     idField,
     id,
     startMs: startOf(context, step),
-    read: after.ordinal !== step.record.ordinal,
+    ...(after.readFields === undefined ? {} : { readFields: after.readFields }),
     others: otherFields(context.state.ofType(type), { collection, id }),
   });
   if (explained.unexplained.length > 0 && !unknown) {
@@ -438,6 +495,12 @@ export const applyUpdate = (
     built(draft) &&
     !unknown &&
     (contradictsEarlierCalls(draft, explained.rules) ||
+      contradictsGeneratedClock(
+        entity.fields,
+        after.object,
+        draft.plan.rules,
+        explained.rules,
+      ) ||
       conflictsWithPlan(draft.plan, explained))
   ) {
     refuse(draft, step, "unexplained-change");
@@ -449,7 +512,7 @@ export const applyUpdate = (
     draft.plan,
     { before: entity.fields, observed: draft.observed! },
     { ...call, id },
-    (rule) => after.object[rule.field] ?? null,
+    (rule) => ok(after.object[rule.field]),
   );
   const kept = keptFields(entity.fields, after.object);
   const disagrees =
@@ -484,6 +547,29 @@ export const applyUpdate = (
   };
   return { kind: "applied", targets, entity: target, fields: sent, changed };
 };
+
+/** Serving regenerates a learned clock on every update, so recorded calls must advance it. */
+const contradictsGeneratedClock = (
+  before: JsonObject,
+  after: JsonObject,
+  rules: readonly FieldRule[],
+  explained: readonly FieldRule[],
+): boolean =>
+  rules.some((rule) => {
+    if (rule.rule !== "clock" || !Object.hasOwn(after, rule.field))
+      return false;
+    const previous = readClock(before[rule.field]);
+    if (previous === undefined) return false;
+    const next = readClock(after[rule.field]);
+    return (
+      !explained.some(
+        (candidate) =>
+          candidate.field === rule.field && candidate.rule === "clock",
+      ) ||
+      next === undefined ||
+      next.ms <= previous.ms
+    );
+  });
 
 /** Apply a recorded delete: the held entity leaves its collection. */
 export const applyDelete = (

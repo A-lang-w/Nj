@@ -1,4 +1,5 @@
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   CANCELLED,
@@ -39,26 +40,27 @@ const documentError = (error: AnalysisInputError): RpcError => {
   );
 };
 
-/** What one queued call runs with: the live state, how documents arrive and what cancels it. */
+/** What one queued call runs with: the live state, how documents arrive, what cancels it and who owns file descriptors whose close failed. */
 interface CallContext {
   readonly store: EnvironmentStateStore;
   readonly intake: StateIntake;
   readonly cancel: AbortSignal;
+  readonly files: ArtifactResourceScope;
 }
 
 /** `data/add`: exactly one part, whose document replaces the whole state only when it is valid and the call was not cancelled. */
 const addState = async (
-  { store, intake, cancel }: CallContext,
+  { store, intake, cancel, files }: CallContext,
   params: unknown,
 ): Promise<RpcOutcome> => {
   const parts = isRecord(params) ? params.parts : undefined;
   if (!Array.isArray(parts) || parts.length !== 1)
     return { error: invalidParams("data/add takes exactly one part") };
-  const document = await partDocument(parts[0], intake, cancel);
+  const document = await partDocument(parts[0], intake, cancel, files);
   if (!document.ok) return { error: document.error };
   // A file read is not interruptible, so a cancellation during it is honoured here, before the state changes.
   if (cancel.aborted) return { error: CANCELLED };
-  const replaced = store.replace(document.value);
+  const replaced = store.replaceOwnedDocument(document.value);
   return replaced.ok
     ? { result: {} }
     : { error: documentError(replaced.error) };
@@ -91,12 +93,14 @@ const METHODS: ReadonlyMap<string, Method> = new Map<string, Method>([
  * at a time in the order they are made, across requests, so a slow load never
  * overwrites a later reset and at most one loaded document is parsed at once.
  * Once `stopped` or a call's own signal aborts, its download ends and a call
- * not yet run is answered as cancelled.
+ * not yet run is answered as cancelled. `files` keeps a state file whose close
+ * failed and retries it before the next file read; its owner closes it at shutdown.
  */
 export const stateDataPlane = (
   store: EnvironmentStateStore,
   intake: StateIntake = DEFAULT_STATE_INTAKE,
   stopped: AbortSignal = new AbortController().signal,
+  files: ArtifactResourceScope = new ArtifactResourceScope(),
 ): RpcMethods => {
   let previous: Promise<unknown> = Promise.resolve();
   return (method, params, signal) => {
@@ -107,7 +111,7 @@ export const stateDataPlane = (
     const next = previous.then(() =>
       cancel.aborted
         ? { error: CANCELLED }
-        : run({ store, intake, cancel }, params),
+        : run({ store, intake, cancel, files }, params),
     );
     previous = next.catch(() => undefined);
     return next;

@@ -63,7 +63,6 @@ const updated = (
   method: "PATCH",
   idField: "id",
   id: "42",
-  read: false,
   startMs: START,
   others: [],
   ...context,
@@ -392,6 +391,32 @@ it("explains an update's sent members as echoes, constants or the identity", () 
     },
     unexplained: [],
   });
+});
+
+it("treats omitted read fields as removed only when the selected view covers them", () => {
+  const before = {
+    id: "42",
+    name: "Old",
+    description: "Kept",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  const after = { id: "42", name: "New" };
+  const result = explainUpdate(
+    updated(before, after, { name: "New" }, { readFields: ["id", "name"] }),
+  );
+  expect(result.unexplained).toEqual([]);
+
+  const complete = explainUpdate(
+    updated(
+      before,
+      after,
+      { name: "New" },
+      {
+        readFields: ["id", "name", "description", "updated_at"],
+      },
+    ),
+  );
+  expect(complete.unexplained).toEqual(["description", "updated_at"]);
 });
 
 it("explains unsent changes as a clock, an increment or a slug of an echoed member", () => {

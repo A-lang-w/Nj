@@ -49,9 +49,9 @@ const generator = () => {
     renewed: ["renewed-9"],
     clock: NOW,
   };
-  const generate = (rule: GeneratedRule): JsonValue => {
+  const generate = (rule: GeneratedRule) => {
     asked.push(rule);
-    return values[rule.rule];
+    return ok(values[rule.rule]);
   };
   return { asked, generate };
 };
@@ -305,6 +305,24 @@ it("updates sent echoed members and derives the slug of a sent member", () => {
     ok({ ...BEFORE, ...ADVANCED, title: "New Title", slug: "new-title" }),
   );
   expect(asked).toEqual([UPDATE_PLAN.rules[6]]);
+});
+
+it("preserves an unknown generated field when the observation omits it", () => {
+  const result = updatedFields(
+    UPDATE_PLAN,
+    { before: BEFORE, observed: AFTER },
+    { ...callWith({ title: "New Title" }, { item: "42" }), id: "42" },
+    () => ok(undefined),
+  );
+  expect(result).toEqual(
+    ok({
+      ...BEFORE,
+      title: "New Title",
+      slug: "new-title",
+      version: 4,
+      revision: "10",
+    }),
+  );
 });
 
 it("applies a constant from the recorded update only when the call sends it", () => {

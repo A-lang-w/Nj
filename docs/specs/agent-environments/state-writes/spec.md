@@ -256,8 +256,8 @@ refuses to answer with.
   an update's changes confirms nothing of it, and leaves it for a later check
   of that entity or collection.
 - A mismatch contradicts each exercised write that no unmodelled write came
-  after its latest call on any of the read's entities or collections, whatever
-  earlier write is still pending. An item read checks the writes an unmodelled
+  after its latest call on any of the read's entities or collections where its
+  effect survives, whatever earlier write is still pending. An item read checks the writes an unmodelled
   write did follow only on the members they sent, and a list with such a write
   is not checked again: the unmodelled write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,

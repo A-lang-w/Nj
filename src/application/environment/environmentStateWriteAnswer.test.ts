@@ -25,6 +25,7 @@ import {
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
+import { seededUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
 import {
@@ -47,6 +48,65 @@ const expectReloadsUnchanged = (books: Served): void => {
 };
 
 describe("served creates", () => {
+  it("refuses an exhausted generated-value collision search without changing state", () => {
+    const existing = {
+      id: "123e4567-e89b-42d3-a456-426614174000",
+      ref: "223e4567-e89b-42d3-a456-426614174000",
+      name: "Existing",
+    };
+    const created = {
+      id: "323e4567-e89b-42d3-a456-426614174000",
+      ref: "423e4567-e89b-42d3-a456-426614174000",
+      name: "Created",
+    };
+    const books = servedFrom([
+      ["GET", "/api/items", [existing]],
+      ["GET", `/api/items/${existing.id}`, existing],
+      ["POST", "/api/items", created, 201, { name: "Created" }],
+      ["GET", `/api/items/${created.id}`, created],
+      ["GET", "/api/items", [existing, created]],
+    ]);
+    const plan = books.store.state.writes.get("post_items");
+    if (plan?.served !== true)
+      throw new Error("Expected post_items to be served");
+    const rule = plan.rules.find((candidate) => candidate.rule === "unique");
+    expect(rule).toMatchObject({ field: "ref", rule: "unique" });
+    if (rule?.rule !== "unique") throw new Error("Expected a unique ref rule");
+    const candidates = Array.from({ length: 65 }, (_, attempt) =>
+      seededUuid(
+        `${books.state.evidenceId}:${plan.tool}:${rule.field}:1:${String(attempt)}`,
+        created.ref,
+      ),
+    );
+    const snapshot = books.store.snapshot();
+    const collisions = candidates.map((ref, index) => ({
+      type: "/api/items",
+      collection: "/api/items",
+      id: `collision-${String(index)}`,
+      fields: { id: `collision-${String(index)}`, ref, name: "Collision" },
+      view_fields: [],
+      record_ordinals: [],
+    }));
+    const loaded = {
+      ...snapshot,
+      rea_state: {
+        ...snapshot.rea_state,
+        entities: [...snapshot.rea_state.entities, ...collisions],
+      },
+    };
+    const replaced = books.store.replace(loaded);
+    if (!replaced.ok) throw new Error(JSON.stringify(replaced.error));
+    const before = books.snapshot();
+    const pending = books.store.pendingWrite();
+
+    const refusal = books.refusal(plan.tool, { body: { name: "Created" } });
+
+    expect(JSON.stringify(refusal)).toContain(
+      "Could not generate a unique value for ref after 64 attempts",
+    );
+    expect(books.snapshot()).toBe(before);
+    expect(books.store.pendingWrite()).toEqual(pending);
+  });
   it("creates a book with the next id, the served clock and a derived slug, which later reads show", () => {
     const books = servedFrom();
     const created = books.answer("post_books", CREATE_NEW_BOOK);
@@ -366,6 +426,24 @@ describe("refusals", () => {
   });
 });
 
+/** Items whose `rank` is a collection sequence, with a recorded create at `recorded`. */
+const rankedItems = (initial: readonly [number, number], recorded: number) => {
+  const item = (id: number, rank: number) => ({
+    id,
+    name: `n${String(id)}`,
+    rank,
+  });
+  const [first, second] = initial;
+  return servedFrom([
+    ["GET", "/api/items", [item(1, first), item(2, second)]],
+    ["GET", "/api/items/1", item(1, first)],
+    ["GET", "/api/items/2", item(2, second)],
+    ["POST", "/api/items", item(3, recorded), 201, { name: "n3" }],
+    ["GET", "/api/items/3", item(3, recorded)],
+    ["GET", "/api/items", [item(1, first), item(2, second), item(3, recorded)]],
+  ]);
+};
+
 describe("generated values", () => {
   it("answers the same calls identically after a reset, never reusing a deleted id", () => {
     const books = servedFrom();
@@ -389,6 +467,24 @@ describe("generated values", () => {
       id: 4,
       name: "Another Book",
     });
+  });
+
+  it("serves the next rank when a collection sequence runs through negative values", () => {
+    const acrossZero = rankedItems([-2, -1], 0);
+    expect(
+      acrossZero.answer("post_items", { body: { name: "n4" } }).body,
+    ).toMatchObject({ id: 3, rank: 0 });
+    expect(
+      acrossZero.answer("post_items", { body: { name: "n5" } }).body,
+    ).toMatchObject({ id: 4, rank: 1 });
+    // The value after a stored negative rank stays on that sequence.
+    const negative = rankedItems([-4, -3], -2);
+    expect(
+      negative.answer("post_items", { body: { name: "n4" } }).body,
+    ).toMatchObject({ id: 3, rank: -2 });
+    expect(
+      negative.answer("post_items", { body: { name: "n5" } }).body,
+    ).toMatchObject({ id: 4, rank: -1 });
   });
 
   it("restarts the clock and the sequences when data/add loads a state", () => {
@@ -564,6 +660,25 @@ describe("collections a create chooses", () => {
         .rea_state.entities.find((entity) => entity.fields["name"] === "Zeta")
         ?.collection,
     ).toBe("/api/orgs/acme1/books");
+  });
+
+  it("refuses an empty parent segment before storing an unreadable collection", () => {
+    const books = servedFrom(ROWS);
+    const tool = books.source.manifest.tools.find(
+      (candidate) => candidate.method === "POST",
+    )!;
+    const [org] = environmentToolArguments(tool).path.values();
+    const before = books.snapshot();
+    expect(
+      books.refusal(tool.name, { [org!]: "", body: { name: "Invalid" } }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("path argument to be non-empty"),
+    });
+    expect(books.snapshot()).toBe(before);
+    expect(
+      books.store.knownCollectionsOf("/api/orgs/{org}/books"),
+    ).not.toContain("/api/orgs//books");
   });
 });
 
