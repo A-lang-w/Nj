@@ -67,7 +67,11 @@ export class CdpTargetSessionOwner {
     operation: BrowserObservationOperation,
     options: ExecutionOptions,
     resource: string,
-    limits?: { readonly maxPayloadBytes: number },
+    limits?: {
+      readonly maxPayloadBytes?: number;
+      readonly commandTimeoutMs?: number;
+      readonly handshakeTimeoutMs?: number;
+    },
   ): Promise<CdpConnection> {
     if (this.#closing)
       throw new ProviderCleanupError(
@@ -144,7 +148,10 @@ export class CdpTargetSessionOwner {
       connection,
       operation,
       resource,
-      cleanupLease: new AnalysisCleanupLease(() => connection.close()),
+      cleanupLease: new AnalysisCleanupLease(
+        () => connection.close(),
+        [resource],
+      ),
       active: true,
       settled,
       settle,

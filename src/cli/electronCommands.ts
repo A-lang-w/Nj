@@ -19,21 +19,29 @@ import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import {
   electronPageInspectionOptions,
   javascriptApplicationOptions,
+  selectedCommandTimeout,
 } from "../cliObservationOptions.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
+  options: {
+    readonly createActiveProvider?: (
+      environment: Readonly<Record<string, string | undefined>>,
+    ) => ElectronActiveObservationPort;
+  } = {},
 ): void => {
-  registerElectronObservationCommands(cli, logger);
+  registerElectronObservationCommands(cli, logger, environment);
   registerElectronFuseCommand(cli, logger);
-  registerElectronActiveCommand(cli, logger, environment);
-  registerJavaScriptApplicationCommand(cli, logger);
+  registerElectronActiveCommand(cli, logger, environment, options);
+  registerJavaScriptApplicationCommand(cli, logger, environment);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
 
@@ -41,7 +49,6 @@ const registerElectronFuseCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  const service = createElectronFuseService();
   cli.command(CLI_COMMANDS.inspectElectronFuses, {
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
@@ -55,11 +62,18 @@ const registerElectronFuseCommand = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectElectronFuses, async () => {
-          const result = await service.inspect(
-            { path: absoluteElectronFusePath(args.path) },
-            { signal },
+          const service = createElectronFuseService();
+          return finishAnalysisCommand(
+            () =>
+              service.inspect(
+                { path: absoluteElectronFusePath(args.path) },
+                { signal },
+              ),
+            service,
+            service.provider.identity.id,
+            "inspect_electron_fuses",
+            signal,
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
         }),
       ),
   });
@@ -79,6 +93,11 @@ const registerElectronActiveCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
+  options: {
+    readonly createActiveProvider?: (
+      environment: Readonly<Record<string, string | undefined>>,
+    ) => ElectronActiveObservationPort;
+  },
 ): void => {
   cli.command(CLI_COMMANDS.captureElectronScenario, {
     description: "Run one owned Electron scenario with cancellable actions",
@@ -115,14 +134,27 @@ const registerElectronActiveCommand = (
               );
             const { captureElectronScenario } =
               await import("../application/javascript/ElectronActiveObservationService.js");
-            const { createElectronScenarioProvider } =
-              await import("../composition/electronScenario.js");
-            const result = await captureElectronScenario(
-              createElectronScenarioProvider(environment),
-              parsed.data,
-              { signal },
+            const provider =
+              options.createActiveProvider === undefined
+                ? await import("../composition/electronScenario.js").then(
+                    ({ createElectronScenarioProvider }) =>
+                      createElectronScenarioProvider(environment),
+                  )
+                : options.createActiveProvider(environment);
+            const result = await finishAnalysisCommand(
+              () => captureElectronScenario(provider, parsed.data, { signal }),
+              {
+                close: async () => {
+                  await provider.close?.();
+                },
+              },
+              provider.identity().id,
+              "capture_electron_scenario",
+              signal,
             );
-            return result.ok ? result.value : cliError(result.error);
+            return "code" in result
+              ? { error: "Electron analysis failed", ...result }
+              : result;
           },
         ),
       ),
@@ -156,7 +188,9 @@ const registerJavaScriptRuntimeReconciliationCommand = (
           const { reconcileJavaScriptRuntimeEvidence } =
             await import("../application/javascript/JavaScriptRuntimeReconciliationService.js");
           const result = reconcileJavaScriptRuntimeEvidence(input.value);
-          return result.ok ? result.value : cliError(result.error);
+          return result.ok
+            ? result.value
+            : cliError(result.error, "Application workflow failed");
         },
       ),
   });
@@ -165,14 +199,16 @@ const registerJavaScriptRuntimeReconciliationCommand = (
 const registerElectronObservationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  registerElectronTargetList(cli, logger);
-  registerElectronPageInspection(cli, logger);
+  registerElectronTargetList(cli, logger, environment);
+  registerElectronPageInspection(cli, logger, environment);
 };
 
 const registerElectronTargetList = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.listElectronTargets, {
     description:
@@ -183,11 +219,17 @@ const registerElectronTargetList = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "list-electron-targets", async () => {
-          const context = await electronObservationContext();
-          const parsed = listElectronTargetsInputSchema.safeParse({
+          const context = await electronObservationContext(environment);
+          const input = {
             cdp_endpoint: args.endpoint,
-          });
-          if (!parsed.success) return inputError("list_electron_targets");
+          };
+          const parsed = listElectronTargetsInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "list_electron_targets",
+              parsed.error.issues,
+              input,
+            );
           const { listElectronTargets } =
             await import("../application/javascript/ElectronObservationService.js");
           return await finishAnalysisCommand(
@@ -200,7 +242,6 @@ const registerElectronTargetList = (
             },
             "rea-cdp-electron",
             "list_electron_targets",
-            undefined,
             signal,
           );
         }),
@@ -211,6 +252,7 @@ const registerElectronTargetList = (
 const registerElectronPageInspection = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.inspectElectronPage, {
     description: "Passively inspect one Electron file page",
@@ -222,14 +264,21 @@ const registerElectronPageInspection = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "inspect-electron-page", async () => {
-          const context = await electronObservationContext();
-          const parsed = inspectElectronPageInputSchema.safeParse({
+          const context = await electronObservationContext(environment);
+          const input = {
             cdp_endpoint: args.endpoint,
             target_id: args.targetId,
             observation_ms: options.observationMs,
             include_script_sources: options.includeScriptSources,
-          });
-          if (!parsed.success) return inputError("inspect_electron_page");
+            ...selectedCommandTimeout(options.commandTimeoutMs),
+          };
+          const parsed = inspectElectronPageInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "inspect_electron_page",
+              parsed.error.issues,
+              input,
+            );
           const { inspectElectronPage } =
             await import("../application/javascript/ElectronObservationService.js");
           return await finishAnalysisCommand(
@@ -242,7 +291,6 @@ const registerElectronPageInspection = (
             },
             "rea-cdp-electron",
             "inspect_electron_page",
-            undefined,
             signal,
           );
         }),
@@ -253,6 +301,7 @@ const registerElectronPageInspection = (
 const registerJavaScriptApplicationCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeJavaScriptApplication, {
     description:
@@ -266,7 +315,9 @@ const registerJavaScriptApplicationCommand = (
         logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
           runCliJavaScriptApplicationAnalysis(
             {
-              input_path: args.path,
+              // An empty path names no file; leave it for input validation.
+              input_path:
+                args.path === "" ? args.path : absoluteCallerPath(args.path),
               format: options.artifactFormat,
               integrity_policy: options.integrityPolicy,
               ...(options.maxSemanticNodes === undefined
@@ -278,6 +329,15 @@ const registerJavaScriptApplicationCommand = (
                     max_semantic_nodes_per_file:
                       options.maxSemanticNodesPerFile,
                   }),
+              ...(options.maxSemanticUnknowns === undefined
+                ? {}
+                : { max_semantic_unknowns: options.maxSemanticUnknowns }),
+              ...(options.maxSemanticUnknownsPerFile === undefined
+                ? {}
+                : {
+                    max_semantic_unknowns_per_file:
+                      options.maxSemanticUnknownsPerFile,
+                  }),
               ...(options.sourcePath === undefined
                 ? {}
                 : { source_paths: options.sourcePath }),
@@ -288,6 +348,7 @@ const registerJavaScriptApplicationCommand = (
                 ? {}
                 : { analysis_timeout_ms: options.analysisTimeoutMs }),
             },
+            environment,
             signal,
           ),
         ),
@@ -295,10 +356,12 @@ const registerJavaScriptApplicationCommand = (
   });
 };
 
-const electronObservationContext = async () => {
+const electronObservationContext = async (
+  environment: Readonly<Record<string, string | undefined>>,
+) => {
   const { createElectronObservationProvider } =
     await import("../composition/electronObservation.js");
-  return { provider: createElectronObservationProvider() };
+  return { provider: createElectronObservationProvider(environment) };
 };
 
 const inputError = (
@@ -316,7 +379,8 @@ const inputError = (
 
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],
+  label = "Electron analysis failed",
 ): JsonValue => ({
-  error: "Electron analysis failed",
+  error: label,
   ...projectAnalysisError(error),
 });
