@@ -830,6 +830,37 @@ describe("what a read shows of a write", () => {
     });
   });
 
+  it("confirms no document write a later replacement overwrote", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/settings", { theme: "light", lang: "en" }],
+      [
+        "PATCH",
+        "/api/settings",
+        { theme: "dark", lang: "en" },
+        200,
+        { theme: "dark" },
+      ],
+      [
+        "PUT",
+        "/api/settings",
+        { theme: "blue", lang: "fr" },
+        200,
+        { theme: "blue", lang: "fr" },
+      ],
+      ["GET", "/api/settings", { theme: "blue", lang: "fr" }],
+    ];
+    expect(gated(rows, "patch_settings")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+    expect(gated(rows, "put_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+  });
+});
+
+describe("document writes later writes overwrite", () => {
   it("confirms no document replacement a later merge overwrote", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/settings", { theme: "light", lang: "en" }],
@@ -859,24 +890,25 @@ describe("what a read shows of a write", () => {
     });
   });
 
-  it("confirms no document write a later replacement overwrote", () => {
+  it("confirms no document merge a later replacement of its object overwrote", () => {
     const rows: TimedCaptureRow[] = [
-      ["GET", "/api/settings", { theme: "light", lang: "en" }],
+      ["GET", "/api/settings", { prefs: { lang: "en" }, theme: "light" }],
       [
         "PATCH",
         "/api/settings",
-        { theme: "dark", lang: "en" },
+        { prefs: { lang: "fr" }, theme: "light" },
         200,
-        { theme: "dark" },
+        { prefs: { lang: "fr" } },
       ],
+      // The replacement holds `lang`, so it replaces all of `prefs`, which the merge wrote.
       [
         "PUT",
         "/api/settings",
-        { theme: "blue", lang: "fr" },
+        { prefs: { lang: "de" }, theme: "light" },
         200,
-        { theme: "blue", lang: "fr" },
+        { lang: "de" },
       ],
-      ["GET", "/api/settings", { theme: "blue", lang: "fr" }],
+      ["GET", "/api/settings", { prefs: { lang: "de" }, theme: "light" }],
     ];
     expect(gated(rows, "patch_settings")).toMatchObject({
       served: false,

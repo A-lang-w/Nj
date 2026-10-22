@@ -147,9 +147,13 @@ export const applyDocument = (
     before: value!,
     after: written.value,
   });
+  const replaced = draft.plan.merge === "merge" ? undefined : pointer;
   return {
     kind: "applied",
     targets: [documentTarget(tool)],
     ...(fields === undefined ? {} : { fields, pointers: true }),
+    ...(fields === undefined || replaced === undefined
+      ? {}
+      : { overwrites: [replaced] }),
   };
 };
