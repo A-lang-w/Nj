@@ -999,3 +999,18 @@ it.each([
     "/users",
   ]);
 });
+
+it.each([
+  "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};router.push({pathname:'/users',query:registry.query});",
+  "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};router.push({pathname:'/users',query:registry['query']});",
+  "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};router.push({pathname:'/users',query:registry?.query});",
+  "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};const selected=registry.query;router.push({pathname:'/users',query:selected});",
+  "const registry={options:{query:{path:'/query-data',component:Preview}},route:{path:'/independent',component:View}};router.push({pathname:'/users',query:registry.options.query});",
+  "const registry=[{path:'/query-data',component:Preview},{path:'/independent',component:View}];router.push({pathname:'/users',query:registry[0]});",
+])("owns only selected navigation member data: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/users",
+  ]);
+});

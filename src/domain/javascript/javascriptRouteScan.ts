@@ -3,6 +3,7 @@ import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "./javascriptAnalysisResourceControls.js";
 import {
+  semanticMemberChain,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   semanticStaticPropertyKey,
@@ -25,6 +26,11 @@ import {
   semanticCopiedReferencePath,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticAliasSelectionChoices,
+  type SemanticAliasSelectionPath,
+} from "./javascriptSemanticAliasSelections.js";
+import { semanticProjectedSourceEligibilityAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
@@ -333,6 +339,12 @@ export class JavaScriptRouteScan {
             !isNavigationDataEdge(node, parent) ||
             (parent !== null && nonValueReferences.has(parent));
           if (nonValue) nonValueReferences.add(node);
+          if (
+            !nonValue &&
+            (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+          ) {
+            for (const selected of this.#memberValues(node)) admit(selected);
+          }
           if (
             nonValue ||
             !t.isIdentifier(node) ||
@@ -887,14 +899,50 @@ export class JavaScriptRouteScan {
     }
   }
 
+  /** Select members without admitting their entire receiver as navigation data. */
+  *#memberValues(
+    node: t.MemberExpression | t.OptionalMemberExpression,
+  ): Generator<t.Node> {
+    const chain = semanticMemberChain(node, (part) => this.#queue(part));
+    if (chain === undefined || !t.isIdentifier(chain.root)) return;
+    const binding = this.index.bindingForReferenceAt(chain.root);
+    if (binding === undefined) return;
+    // Admit possible source expansion before the semantic owner allocates its
+    // selected-source list. Repeated reads share cached object field parsing.
+    for (const sources of [binding.initializers, binding.referenceInitializers])
+      for (const source of sources) if (!this.#queue(source.node)) return;
+    for (const write of binding.memberWrites) {
+      if (!this.#queue(write.node ?? node)) return;
+      for (const source of write.assignedSources ?? [])
+        if (!this.#queue(source.node)) return;
+    }
+    const sources = semanticProjectedSourceEligibilityAtRead(
+      binding,
+      chain.root,
+      chain.members,
+      this.index.bindings,
+      node,
+    );
+    for (const source of sources ?? [])
+      yield* this.#selectedValues(source.node, source.path);
+  }
+
   /** Follow copied data slots without claiming their excluded source siblings. */
   *#initializerValues(
     initializer: JavaScriptSemanticBindingState["referenceInitializers"][number],
   ): Generator<t.Node> {
     const projection = semanticCopiedReferencePath(initializer, [], "escape");
     if (projection === null) return;
-    if (!this.#queue(initializer.node)) return;
-    const pending = [{ node: initializer.node, depth: 0 }];
+    yield* this.#selectedValues(initializer.node, projection);
+  }
+
+  /** Member reads and copied initializers share the same selected-slot walk. */
+  *#selectedValues(
+    source: t.Node,
+    projection: SemanticAliasSelectionPath,
+  ): Generator<t.Node> {
+    if (!this.#queue(source)) return;
+    const pending = [{ node: source, depth: 0 }];
     const retain = (node: t.Node, depth: number): boolean => {
       if (!this.#queue(node)) return false;
       pending.push({ node, depth });
@@ -906,33 +954,33 @@ export class JavaScriptRouteScan {
         yield node;
         continue;
       }
-      const key = projection[depth]!;
-      if (key === null) continue;
-      // Source ownership retains possible identities even after an escape;
-      // positive destination inference separately requires per-call freshness.
-      const selected = this.#resolve(node, undefined, this.index);
-      if (selected !== undefined && t.isObjectExpression(selected)) {
-        const fields = this.#fields(selected).values;
-        if (typeof key !== "object") {
-          const property = fields.get(String(key));
-          if (property !== undefined && !retain(property.value, depth + 1))
-            return;
-        } else {
-          for (const [name, property] of fields)
-            if (
-              semanticPropertyPathKeyMatches(key, name) &&
-              !retain(property.value, depth + 1)
-            )
+      for (const key of semanticAliasSelectionChoices(projection[depth]!)) {
+        if (key === null || !this.#queue(node)) continue;
+        // Ownership retains possible source identities; positive navigation
+        // inference separately requires per-call freshness.
+        const selected = this.#resolve(node, undefined, this.index);
+        if (selected !== undefined && t.isObjectExpression(selected)) {
+          const fields = this.#fields(selected).values;
+          if (typeof key !== "object") {
+            const property = fields.get(String(key));
+            if (property !== undefined && !retain(property.value, depth + 1))
               return;
-        }
-      } else if (selected !== undefined && t.isArrayExpression(selected)) {
-        for (const [index, element] of selected.elements.entries()) {
-          // A spread leaves all subsequent element indices unknown.
-          if (t.isSpreadElement(element)) break;
-          if (element === null) continue;
-          if (!this.#queue(element)) return;
-          if (semanticPropertyPathKeyMatches(key, String(index)))
-            pending.push({ node: element, depth: depth + 1 });
+          } else {
+            for (const [name, property] of fields)
+              if (
+                semanticPropertyPathKeyMatches(key, name) &&
+                !retain(property.value, depth + 1)
+              )
+                return;
+          }
+        } else if (selected !== undefined && t.isArrayExpression(selected)) {
+          for (const [index, element] of selected.elements.entries()) {
+            if (t.isSpreadElement(element)) break;
+            if (element === null) continue;
+            if (!this.#queue(element)) return;
+            if (semanticPropertyPathKeyMatches(key, String(index)))
+              pending.push({ node: element, depth: depth + 1 });
+          }
         }
       }
     }

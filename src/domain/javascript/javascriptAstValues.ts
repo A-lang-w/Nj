@@ -390,3 +390,31 @@ export function* semanticWriteTargets(
  */
 export const javascriptDisplayText = (value: string): string =>
   value === "" ? '""' : value;
+
+/** Strip a static member chain, returning its root expression and member path. */
+export const semanticMemberChain = (
+  node: t.Node | null | undefined,
+  admit?: (node: t.Node) => boolean,
+):
+  | { readonly root: t.Node | null | undefined; readonly members: string[] }
+  | undefined => {
+  const members: string[] = [];
+  let current = node;
+  while (current !== null && current !== undefined) {
+    current = unwrapJavaScriptExpression(current).node;
+    if (admit?.(current) === false) return undefined;
+    if (
+      !t.isMemberExpression(current) &&
+      !t.isOptionalMemberExpression(current)
+    )
+      break;
+    const member = semanticStaticPropertyKey(
+      current.property,
+      current.computed,
+    );
+    if (member === null || !t.isNode(current.object)) return undefined;
+    members.push(member);
+    current = current.object;
+  }
+  return { root: current, members: members.reverse() };
+};
