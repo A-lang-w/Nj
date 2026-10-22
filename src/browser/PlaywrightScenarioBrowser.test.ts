@@ -145,9 +145,9 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("keeps Termux execution support when launching Chromium on Android", async () => {
+  const prefix = await createTestTempDirectory("rea-termux-exec-");
   Object.defineProperty(process, "platform", { value: "android" });
-  vi.stubEnv("PREFIX", "/data/data/com.termux/files/usr");
-  const selected = { LANG: "selected-language", PREFIX: process.env.PREFIX };
+  const selected = { LANG: "selected-language", PREFIX: prefix };
   let launchOptions: Parameters<
     typeof import("playwright-core").chromium.launchPersistentContext
   >[1];
@@ -180,9 +180,9 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
   ]);
   expect(launchOptions?.env).toEqual({
     LANG: "selected-language",
-    LD_PRELOAD: "/data/data/com.termux/files/usr/lib/libtermux-exec.so",
+    LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
-    TMPDIR: join("/data/data/com.termux/files/usr", "tmp"),
+    TMPDIR: join(prefix, "tmp"),
   });
 });
 
