@@ -59,7 +59,10 @@ it("uses one retry then a user handoff for transient MCP failures", () => {
 
 it("keeps non-retryable transport failures on their named fix", () => {
   expect(MCP_SHUTDOWN_FAILED).toContain("close cleanly");
-  expect(MCP_HTTP_LISTEN_FAILED).toContain("--port");
+  expect(MCP_SHUTDOWN_FAILED).toContain("End the REA process");
+  expect(MCP_SHUTDOWN_FAILED).toContain("before starting it again");
+  expect(MCP_HTTP_LISTEN_FAILED).toContain("Choose another --port");
+  expect(MCP_HTTP_LISTEN_FAILED).toContain("stop the process using it");
   expect(MCP_SHUTDOWN_FAILED).not.toContain("Retry");
   expect(MCP_SHUTDOWN_FAILED).not.toContain("tell the user");
   expect(MCP_HTTP_LISTEN_FAILED).not.toContain("tell the user");

@@ -32,9 +32,10 @@ it("omits a request without a frame in a shared context", () => {
   };
   context.emit("request", unknownRequest);
   expect(events.result().items).toEqual([]);
-  expect(events.limitations().join("\n")).toContain(
-    "Shared-context network capture",
-  );
+  const limitations = events.limitations().join("\n");
+  expect(limitations).toContain("Shared-context network capture");
+  expect(limitations).toContain("excludes requests");
+  expect(limitations).toContain("without a known root or descendant");
 });
 
 it("detaches root and popup listeners when a scenario finishes", async () => {
