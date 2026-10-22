@@ -1,6 +1,33 @@
 # APK signing verification
 
-## Current integration qualification
+## Current posture qualification
+
+Runtime `4fcbdf6fb78873b47f424c5e15ebda6af715befe`, tree `5cadce8a73107560d77045de481559b6eb6ef666`,
+integrates main `2c3dd946d59c870388b03c3417eeb5218af96eeb`. The latest review exposed two additional
+derived-fact errors: unchanged multi-signer sets could look rotated, and an
+unknown current signer could be replaced with its readable lineage origin.
+Three regressions failed against the previous published owner, with14 controls.
+The owner now shares one signer-set comparison and preserves missing identity.
+
+- **225 source tests /14 suites**, **11 public CLI/MCP tests /3 suites**,
+  **23 real SDK cases**, uncached typecheck/lint and CI static passed.
+- The new public regression proves the missing-identity result through real
+  CLI, SDK summary and retained lineage reads after source deletion. The
+  earlier416-test combined registration/schema matrix stays pinned to8f8541c;
+  contracts, raw framing and process-wide admission have not changed here.
+- Current complete versus selected F-Droid task, same answer and complete
+  parent: **5,246 → 4,230 tokenx estimates**,
+  **3.850 → 3.591s** elapsed,
+  **4.732 → 4.666 CPU s**,
+  **694,124,544 → 689,983,488 bytes** peak family RSS.
+
+JSON `latest_posture_fix` records exact profiles and scope. The prior
+three-provider comparison remains pinned to35a9b13. These are fresh-process,
+warm-cache observations; actual model tokens, statistical speedups,
+cryptographic authenticity and independent Windows/macOS behavior are unverified.
+Current-head CI/review follows publication.
+
+## Integration qualification at8f8541c
 
 Runtime `8f8541c39586d78911e4743d6ec07f75c449a0d5`, tree `50b93dccf15c40f9067030614d743d59e0aa334c`,
 integrates main `2c3dd946d59c870388b03c3417eeb5218af96eeb`. The previous published head passed all

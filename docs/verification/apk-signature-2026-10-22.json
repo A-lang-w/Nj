@@ -1339,5 +1339,306 @@
     ],
     "concurrent_measurement_reuse": "The process-wide admission/provider/signing/view/readStableArtifact owners are byte-identical to35a9b13. The three-provider resource measurements remain explicitly pinned there, not relabeled as fresh measurements of this integration. MCP startup/catalog and whole-task costs were measured again below.",
     "limits": "Same Linux/static-reader limitations as the earlier records. Fresh processes, warm OS caches, tokenx estimates, no statistical speed claim or cryptographic authenticity claim. Current-head CI and review follow publication."
+  },
+  "latest_posture_fix": {
+    "runtime": {
+      "commit": "4fcbdf6fb78873b47f424c5e15ebda6af715befe",
+      "tree": "5cadce8a73107560d77045de481559b6eb6ef666",
+      "main": "2c3dd946d59c870388b03c3417eeb5218af96eeb",
+      "previous_runtime": "8f8541c39586d78911e4743d6ec07f75c449a0d5",
+      "previous_published_head": "481bcaaeeb96d30cd107e05d9a8d6afe8d0006fe",
+      "fixture_preparation_runtime": "cfcfdb35d4ffe58b815a5295d6bdf5cacd610b0e"
+    },
+    "checks": [
+      {
+        "name": "apk-posture-final-source",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:local",
+          "--",
+          "src/apkSignature/ApkSignatureProvider.test.ts",
+          "src/apkSignature/apkV1Signers.test.ts",
+          "src/application/apkSignature/ApkSignatureService.test.ts",
+          "src/domain/apkSignature/apkContentDigest.test.ts",
+          "src/domain/apkSignature/apkSignatureReport.test.ts",
+          "src/domain/apkSignature/apkSignatureSchemes.test.ts",
+          "src/domain/apkSignature/apkSigningBlock.test.ts",
+          "src/domain/apkSignature/apkV1Signature.test.ts",
+          "src/domain/apkSignature/apkV1SignatureBlock.test.ts",
+          "src/domain/apkSignature/zipEntryName.test.ts",
+          "src/domain/analysisView/analysisView.test.ts",
+          "src/application/analysisView/AnalysisViewService.test.ts",
+          "src/apkSignature/ApkSignatureAdmission.test.ts",
+          "src/contracts/toolEffects.test.ts"
+        ],
+        "exit_code": 0,
+        "wall_s": 10.84718458999123,
+        "cpu_s": 17.49901,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1267478528,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "apk-posture-public-fast-final",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "check:fast",
+          "--",
+          "--force"
+        ],
+        "exit_code": 0,
+        "wall_s": 10.793883365011425,
+        "cpu_s": 19.700482,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1575550976,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "apk-posture-real-toolchain",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "verify:apk-signature",
+          "--",
+          "--require-tools"
+        ],
+        "exit_code": 0,
+        "wall_s": 39.48775443600607,
+        "cpu_s": 54.340119,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1238880256,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "apk-posture-public",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "tests/acceptance/apkSignatureV1Cli.test.ts",
+          "tests/acceptance/apkSignatureViewsCliMcp.test.ts",
+          "tests/boundary/filesystem/apkSignatureViewIdentity.test.ts"
+        ],
+        "exit_code": 0,
+        "wall_s": 51.73035240599711,
+        "cpu_s": 92.88071599999999,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 3176570880,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "apk-posture-task-full",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+          "complete",
+          "task-posture-full"
+        ],
+        "exit_code": 0,
+        "wall_s": 3.8497771859983914,
+        "cpu_s": 4.732453,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 694124544,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "apk-posture-task-selected",
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+          "selected",
+          "task-posture-selected"
+        ],
+        "exit_code": 0,
+        "wall_s": 3.5913410319917602,
+        "cpu_s": 4.666327,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 689983488,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      {
+        "name": "apk-posture-ci-static",
+        "command": ["taskset", "-c", "0,1", "npm", "run", "check:ci:fast"],
+        "exit_code": 0,
+        "wall_s": 11.573304717996507,
+        "cpu_s": 18.243097,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 1535651840,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    ],
+    "source_tests": 225,
+    "public_cli_mcp_tests": 11,
+    "real_sdk_cases": 23,
+    "reproduction": {
+      "head": "481bcaaeeb96d30cd107e05d9a8d6afe8d0006fe",
+      "failed": 3,
+      "controls_passed": 14,
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:local",
+          "--",
+          "src/domain/apkSignature/apkSignatureReport.test.ts"
+        ],
+        "exit_code": 1,
+        "wall_s": 1.5553970670007402,
+        "cpu_s": 1.8651929999999997,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 415830016,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    },
+    "failed_fixture_preparation": {
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "tests/acceptance/apkSignatureV1Cli.test.ts",
+          "tests/acceptance/apkSignatureViewsCliMcp.test.ts",
+          "tests/boundary/filesystem/apkSignatureViewIdentity.test.ts"
+        ],
+        "exit_code": 1,
+        "wall_s": 50.94071782899846,
+        "cpu_s": 88.657178,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 3357618176,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "reason": "The first public fixture encoded an empty certificate record, whose raw bytes have a known SHA-256, rather than omitting certificate records. The fixture now explicitly accepts null to encode an empty certificate sequence; no source-reader interpretation changed for this correction."
+    },
+    "structural_fix": "Calculate signer-set differences once and share them between observed agreement and declared rotation attribution. A missing current signer identity remains null before lineage-origin substitution. No schema or raw-reader/admission change.",
+    "public_regression": "A correctly framed synthetic APK has a known CMS v1 signer, an unreadable v3 signing certificate and a readable lineage origin matching v1. CLI and actual SDK summary must retain unknown matching and partial identity; lineage facts remain queryable after file deletion.",
+    "workflows": {
+      "complete": {
+        "mode": "complete",
+        "label": "task-posture-full",
+        "task": "Identify every declared v3 signer certificate fingerprint in the real F-Droid APK and export complete source Evidence",
+        "source": {
+          "original_url": "https://f-droid.org/F-Droid.apk",
+          "final_url": "https://f-droid.org/F-Droid.apk",
+          "path": "/home/yann/yann/rea-4537-lab/F-Droid.apk",
+          "bytes": 12569951,
+          "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+          "headers": {
+            "Content-Length": "12569951",
+            "Last-Modified": "Mon, 12 Oct 2026 13:59:40 GMT",
+            "ETag": "\"bfcd5f-65da51bf0f488\""
+          },
+          "execution": "downloaded as static data; never executed"
+        },
+        "parent_evidence_id": "ev_1a0c7752a0cec24756d2e82a7bb253b6708b52f408f0e6dcd819c5b871ffb49f",
+        "answer": [
+          "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+        ],
+        "used_input_declarations_plus_all_calls_estimated_tokens": 5246,
+        "whole_catalog_plus_all_calls_estimated_tokens": 1162284,
+        "elapsed_s": 3.5313849,
+        "token_accounting": "tokenx estimates; actual tools/list definitions and every argument/reply/export included; not actual model usage. Initialization and JSON-RPC envelopes unmeasured. Fresh process, OS cache warm. No repeated timing study.",
+        "profile": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+            "complete",
+            "task-posture-full"
+          ],
+          "exit_code": 0,
+          "wall_s": 3.8497771859983914,
+          "cpu_s": 4.732453,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 694124544,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      "selected": {
+        "mode": "selected",
+        "label": "task-posture-selected",
+        "task": "Identify every declared v3 signer certificate fingerprint in the real F-Droid APK and export complete source Evidence",
+        "source": {
+          "original_url": "https://f-droid.org/F-Droid.apk",
+          "final_url": "https://f-droid.org/F-Droid.apk",
+          "path": "/home/yann/yann/rea-4537-lab/F-Droid.apk",
+          "bytes": 12569951,
+          "sha256": "19d51fad482239f6df6a99120e34513667e9a86d136dafdc4a211a68c3327b52",
+          "headers": {
+            "Content-Length": "12569951",
+            "Last-Modified": "Mon, 12 Oct 2026 13:59:40 GMT",
+            "ETag": "\"bfcd5f-65da51bf0f488\""
+          },
+          "execution": "downloaded as static data; never executed"
+        },
+        "parent_evidence_id": "ev_1a0c7752a0cec24756d2e82a7bb253b6708b52f408f0e6dcd819c5b871ffb49f",
+        "answer": [
+          "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+        ],
+        "used_input_declarations_plus_all_calls_estimated_tokens": 4230,
+        "whole_catalog_plus_all_calls_estimated_tokens": 1161268,
+        "elapsed_s": 3.28882079,
+        "token_accounting": "tokenx estimates; actual tools/list definitions and every argument/reply/export included; not actual model usage. Initialization and JSON-RPC envelopes unmeasured. Fresh process, OS cache warm. No repeated timing study.",
+        "profile": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "node",
+            "/home/yann/yann/rea-4537-lab/bench-apk.mjs",
+            "selected",
+            "task-posture-selected"
+          ],
+          "exit_code": 0,
+          "wall_s": 3.5913410319917602,
+          "cpu_s": 4.666327,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 689983488,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      }
+    },
+    "scope": "The416-test integration/schema qualification stays pinned to8f8541c. Current focused public tests cover the changed semantic path; full current-head GitHub CI/review follows publication. Concurrent memory comparison remains a measurement at35a9b13; admission/stable-read code is unchanged, and current complete/selected tasks are freshly measured.",
+    "limits": "Same Linux, static-reader, unverified-authenticity and warm-cache/single-observation limits as earlier records."
   }
 }
