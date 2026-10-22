@@ -1,3 +1,4 @@
+import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import { locateGodotPck } from "../GodotPckLocation.js";
 import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
 import type { ArtifactCleanupAttempt } from "../ArtifactResourceScope.js";
@@ -23,6 +24,8 @@ import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
+import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
+import { containsPyInstallerArchive } from "../pyinstaller/CArchiveLayout.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -73,6 +76,7 @@ const extractArtifactInScope = async (
     resourceScope: input.resourceScope,
     signal,
     environment: input.environment,
+    asarHeaderAdmission: resolveAsarHeaderAdmission(input.environment),
     integrity: { mode: input.integrityPolicy },
   });
   return materializeArtifactInventoryInScope(
@@ -244,6 +248,7 @@ const materializeSelection = async ({
     sourcePath,
     input,
     inventory.manifest.root_format,
+    signal,
   );
   const readerOwner: ArtifactResourceOwner = {
     kind: "reader" as const,
@@ -314,14 +319,15 @@ const writeSelectedEntries = async ({
   for await (const entry of reader.entries(signal)) {
     const path = normalizeArtifactPath(entry.path);
     registry.add(path, entry.kind);
+    // Logical declarations may share a query path with a real file. They do
+    // not consume that file's selection or participate in materialization.
+    if (entry.kind !== "file" && entry.kind !== "slice") continue;
     const selectedItem = byPath.get(path);
     if (selectedItem === undefined) {
-      if (entry.kind === "file" || entry.kind === "slice")
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Regular artifact entry is missing from inventory: ${path}`,
-        );
-      continue;
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Regular artifact entry is missing from inventory: ${path}`,
+      );
     }
     preflight(entry);
     const stream = await reader.open(entry, signal);
@@ -444,10 +450,17 @@ const requireExtractableFormat = async (
       path,
       input.resourceScope,
       signal,
-      async (handle) =>
-        locateGodotPck(handle, (await handle.stat()).size, signal),
+      async (handle) => {
+        const size = (await handle.stat()).size;
+        if (await locateGodotPck(handle, size, signal)) return true;
+        if (format !== "elf" && format !== "pe") return false;
+        abortIfNeeded(signal);
+        const packaged = await containsPyInstallerArchive(handle, size, signal);
+        abortIfNeeded(signal);
+        return packaged;
+      },
     );
-    if (pack === undefined)
+    if (!pack)
       throw new AnalysisUnsupportedTargetError(
         "extract_artifact",
         input.inputPath,
@@ -464,12 +477,18 @@ const createReader = async (
     "inputPath" | "inputFormat" | "environment" | "resourceScope"
   >,
   containerFormat: ArtifactGraphManifest["root_format"],
+  signal?: AbortSignal,
 ): Promise<ArtifactReader> => {
   const format = input.inputFormat;
   if (containerFormat === "godot-pck") return new GodotPckArtifactReader(path);
-  if (await requireExtractableFormat(path, input))
+  if (containerFormat === "pyinstaller")
+    return new PyInstallerArtifactReader(path);
+  if (await requireExtractableFormat(path, input, signal))
     return new DirectoryArtifactReader(path);
-  if (format === "asar") return new AsarArtifactReader(path);
+  if (format === "asar")
+    return new AsarArtifactReader(path, {
+      headerAdmission: resolveAsarHeaderAdmission(input.environment),
+    });
   if (isZipPackageFormat(format)) return new ZipArtifactReader(path, format);
   return new MachOSliceArtifactReader(path, input.environment);
 };

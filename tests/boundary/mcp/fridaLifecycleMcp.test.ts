@@ -26,6 +26,7 @@ import type { AnalysisPartialObservation } from "../../../src/domain/analysisErr
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
+import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { nativeCallPartialObservationSchema } from "../../../src/domain/native/nativeCallPartialObservation.js";
@@ -268,9 +269,11 @@ it.each(["attached", "during-resume", "after-resume"] as const)(
         name: "frida_session_status",
         arguments: { session_id: id },
       });
-      return toolContract("frida_session_status").outputSchema.parse(
-        result.structuredContent,
-      ).normalized_result.state;
+      return fridaSessionStatusSchema.parse(
+        toolContract("frida_session_status").outputSchema.parse(
+          result.structuredContent,
+        ).normalized_result,
+      ).state;
     };
     const resuming = fixture.client.callTool({
       name: "resume_frida_session",
@@ -318,9 +321,11 @@ it("retains detached state and resume evidence when remote cleanup needs retry",
     arguments: { session_id: id },
   });
   expect(
-    toolContract("frida_session_status").outputSchema.parse(
-      result.structuredContent,
-    ).normalized_result.state,
+    fridaSessionStatusSchema.parse(
+      toolContract("frida_session_status").outputSchema.parse(
+        result.structuredContent,
+      ).normalized_result,
+    ).state,
   ).toBe("detached");
   expect(fixture.manager.status(id)?.targetResumeObserved).toBe(true);
   expect(fixture.controls.detachCalls).toBe(1);
@@ -471,7 +476,7 @@ it.each([
       response.structuredContent,
     );
     const result = evidence.normalized_result;
-    expect(result.messages_truncated).toBe(true);
+    expect(result.messages_truncated).toBe(false);
     const retained = jsonObjectSchema.parse(result.messages[0]);
     expect(retained.description_truncated).toBe(true);
     expect(
@@ -487,7 +492,7 @@ it.each([
         status.structuredContent,
       ),
     ).toMatchObject({
-      normalized_result: { messages: [retained], messages_truncated: true },
+      normalized_result: { messages: [retained], messages_truncated: false },
     });
   },
 );

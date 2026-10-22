@@ -144,8 +144,22 @@ class NodeFileReader extends Reader<string> {
         `ZIP metadata read requires ${readBytes} bytes, exceeding the ${this.maximumReadBytes}-byte read budget`,
       );
     const bytes = Buffer.alloc(readBytes);
-    const read = await handle.read(bytes, 0, bytes.length, index);
-    return bytes.subarray(0, read.bytesRead);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.length - offset,
+        index + offset,
+      );
+      if (bytesRead === 0)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `ZIP source ended before its admitted extent: ${this.path}`,
+        );
+      offset += bytesRead;
+    }
+    return bytes;
   }
 
   async closeHandle(): Promise<void> {
@@ -298,9 +312,22 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
+      ...legacyNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
   };
+};
+
+/** Preserve source bytes when an unflagged legacy name may use another code page. */
+const legacyNameLimitations = (entry: Entry): readonly string[] => {
+  if (entry.filenameUTF8 || entry.extraFieldUnicodePath?.valid === true)
+    return [];
+  const bytes = entry.rawFilename;
+  if (!bytes.some((byte) => byte >= 0x80)) return [];
+  const hex = Buffer.from(bytes).toString("hex");
+  return [
+    `ZIP name uses CP437 fallback; source encoding unverified; raw hex: ${hex}.`,
+  ];
 };
 
 const decodeZipEntryText = (

@@ -5,6 +5,10 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import {
+  BinaryTargetError,
+  ConfigurationError,
+} from "../domain/configurationErrors.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   artifactFileCancellationCause,
@@ -31,17 +35,22 @@ export const translateArtifactFailure = (
         ...(cause.partialObservation === undefined
           ? {}
           : { partialObservation: cause.partialObservation }),
+        ...(cause.admission === undefined
+          ? {}
+          : { admission: cause.admission }),
       },
     );
     bindArtifactFileCleanup(cause, error);
     return error;
   }
-  // Caller-selection and unsupported-target failures are already typed; keep
-  // their correction details instead of reducing them to an I/O failure.
+  // Caller-selection, target, unsupported-target and configuration failures are already typed;
+  // keep their correction details instead of reducing them to an I/O failure.
   if (
     cause instanceof AnalysisInputError ||
     cause instanceof AnalysisCancelledError ||
-    cause instanceof AnalysisUnsupportedTargetError
+    cause instanceof AnalysisUnsupportedTargetError ||
+    cause instanceof BinaryTargetError ||
+    cause instanceof ConfigurationError
   )
     return cause;
   return new ArtifactOperationError(operation, "io");
