@@ -457,8 +457,8 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
     code: "capability_unavailable",
     details: { provider_id: "pcap", operation: "inspect_pcap_capture" },
   });
-  expect(projected.message).toContain("REA_TSHARK_PRLIMIT_COMMAND");
-  expect(projected.message).toContain("absolute");
+  expect(projected.message).toContain("must be absolute");
+  expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
 });
 
 const nodeTool = async (

@@ -31,6 +31,9 @@ const expectDoctorDeadline = (
 ) => {
   expect(detail).toContain("REA_MCP_DOCTOR_DEADLINE_MS");
   expect(detail).toContain(`${String(milliseconds)} ms (source setting`);
+  expect(detail).toContain(
+    `startup_timeout_sec of ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)} seconds`,
+  );
   expect(detail).not.toContain("no runtime override");
 };
 
@@ -424,7 +427,6 @@ describe("production MCP doctor child lifecycle", () => {
     vi.useRealTimers();
     expect(result.healthy).toBe(false);
     expectDoctorDeadline(result.checks[0]?.detail, 60_000);
-    expect(result.checks[0]?.detail).toContain("startup_timeout_sec");
     expect(result.checks[0]?.detail).toContain("client guidance");
     expect(result.checks[0]?.detail).not.toContain("REA_MCP_STARTUP");
     await expect(waitForExit(pid)).resolves.toBeUndefined();
@@ -462,7 +464,6 @@ describe("production MCP doctor request-flow deadline", () => {
     );
     expect(requestFlow?.ok).toBe(false);
     expectDoctorDeadline(requestFlow?.detail, 60_000);
-    expect(requestFlow?.detail).toContain("startup_timeout_sec");
     expect(requestFlow?.detail).toContain("client guidance");
     expect(requestFlow?.detail).not.toContain("source default");
     expect(requestFlow?.detail).not.toContain("REA_MCP_STARTUP");

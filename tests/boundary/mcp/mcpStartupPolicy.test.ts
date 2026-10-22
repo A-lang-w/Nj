@@ -79,7 +79,9 @@ describe("MCP startup policy", () => {
     );
     const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
     expectPhaseText(doctor, budgets.doctor);
-    expect(doctor).toContain("startup_timeout_sec");
+    expect(doctor).toContain(
+      `startup_timeout_sec of ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)} seconds`,
+    );
     expect(doctor).toContain("client guidance");
     expect(doctor).toContain("does not enforce");
     expect(doctor).not.toContain("REA_MCP_STARTUP");
