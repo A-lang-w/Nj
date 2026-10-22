@@ -188,10 +188,16 @@ const writePlanSchema = z.strictObject({
       ),
       required: z.array(z.string()),
       identity: z.string().nullable(),
+      kinds: z.array(
+        z.strictObject({
+          member: z.string(),
+          kind: z.enum(["array", "boolean", "number", "object", "string"]),
+        }),
+      ),
     })
     .nullable()
     .describe(
-      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), and members every call sends (required).",
+      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), and the JSON type a later call stored an accepted member as when the observation does not show it (kinds).",
     ),
   rules: z
     .array(fieldRuleSchema)

@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
+import { storedKinds } from "./environmentStateWriteApply.js";
 import {
   isObject,
   locateItem,
@@ -204,6 +205,7 @@ const bodyOf = (
     .map(([member, sent]) => ({ member, sent })),
   required: [...required],
   identity: null,
+  kinds: [],
 });
 
 /** Explain every field of a created entity: echoed, copied, path, slug, generated, template or constant (unlisted). */
@@ -486,6 +488,33 @@ export const documentPointerOf = (
       best = { pointer, shared };
   }
   return best?.pointer;
+};
+
+/** A plan's body with the members and fixed values a later call's body adds, and the JSON types it stored those members as when the observation shows none. */
+export const refinedBody = (
+  body: WriteBody,
+  later: WriteBody,
+  values: { readonly observed: JsonObject; readonly stored: JsonObject },
+): WriteBody => {
+  const fixed = new Set(body.fixed.map((entry) => entry.member));
+  const accepted = later.accepted.filter(
+    (member) => !body.accepted.includes(member),
+  );
+  return {
+    ...body,
+    // A later call may be the first to show the body repeating the path's id.
+    identity: body.identity ?? later.identity,
+    accepted: [...body.accepted, ...accepted],
+    fixed: [
+      ...body.fixed,
+      ...later.fixed.filter((entry) => !fixed.has(entry.member)),
+    ],
+    // Serving reads member types from the observation, which may not show a member a later call stored.
+    kinds: [
+      ...body.kinds,
+      ...storedKinds(accepted, values.observed, values.stored),
+    ],
+  };
 };
 
 /** Whether a later call explains a member or field otherwise than the plan: echoed by one and stored as something else by the other, or ruled differently. */
