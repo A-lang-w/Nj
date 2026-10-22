@@ -78,6 +78,10 @@ const argumentFileTokens = (value: string): readonly string[] => {
       segment = "";
       if (next === "\n" || next === "\r") {
         while (/[ \t\n\r\f]/u.test(value[index + 1] ?? "")) index += 1;
+        if (index + 1 === value.length) {
+          active = false;
+          break;
+        }
       } else
         prefix +=
           (
@@ -89,9 +93,9 @@ const argumentFileTokens = (value: string): readonly string[] => {
       character === "\r" ||
       character === "\n" ||
       (quote === undefined && /[ \t\f]/u.test(character))
-    )
-      finish();
-    else if (quote === undefined && character === "#") {
+    ) {
+      if (active) finish();
+    } else if (quote === undefined && character === "#") {
       // Unquoted text adjoining a comment is discarded by the launcher; completed quoted fragments remain pending.
       segment = "";
       active = false;
@@ -122,6 +126,57 @@ const environmentToken = (value: string): string =>
     .map((part) => `'${part}'`)
     .join('"\'"');
 
+/** The file owner retains read/parse failure independently of final-close failure. */
+const readArgumentFile = (
+  path: string,
+  resources: ArtifactResourceScope,
+  signal: AbortSignal | undefined,
+  remainingBytes: number,
+): Promise<{
+  readonly text: string;
+  readonly bytes: number;
+  readonly disablesExpansion: boolean;
+}> =>
+  withArtifactRegularFile(
+    path,
+    resources,
+    signal,
+    async (file) => {
+      const data = await readBoundedFileBytes(file, remainingBytes, {
+        signal,
+        cancellationFailure: (reason) =>
+          new RegularFileOperationCancelled(reason),
+      });
+      if (data === undefined)
+        throw new Error(
+          `JDK_JAVA_OPTIONS argument files exceed the ${String(OPTIONS_BYTES)}-byte cumulative admission bound.`,
+        );
+      const text = new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(data);
+      const tokens = argumentFileTokens(text);
+      if (tokens.some(fileReference))
+        throw new Error(
+          "Ghidra LaunchSupport JDK_JAVA_OPTIONS argument files may not nest @ references.",
+        );
+      rejectJvmPlatformOverrides(tokens);
+      return {
+        text,
+        bytes: data.length,
+        disablesExpansion: tokens.includes("--disable-@files"),
+      };
+    },
+    "follow",
+  ).catch((cause: unknown) => {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      throw new Error(
+        `Ghidra LaunchSupport JDK_JAVA_OPTIONS argument file is unreadable: ${path}`,
+        { cause },
+      );
+    throw cause;
+  });
+
 /** Freeze validated bytes under the already owned runtime root; the JVM must not reopen a mutable caller file. */
 export const prepareJdkJavaOptions = async (
   value: string,
@@ -143,7 +198,14 @@ export const prepareJdkJavaOptions = async (
   assertActive();
   const args = jvmEnvironmentArguments(value);
   rejectJvmPlatformOverrides(args);
-  if (!args.some(fileReference)) return undefined;
+  const disabledAt = args.indexOf("--disable-@files");
+  if (
+    !args.some(
+      (argument, index) =>
+        fileReference(argument) && (disabledAt < 0 || index < disabledAt),
+    )
+  )
+    return undefined;
   const resources = options.resources;
   const directory = options.directory;
   if (resources === undefined || directory === undefined)
@@ -152,15 +214,21 @@ export const prepareJdkJavaOptions = async (
     );
   const snapshots = new Map<
     string,
-    { readonly path: string; readonly bytes: number }
+    {
+      readonly path: string;
+      readonly bytes: number;
+      readonly disablesExpansion: boolean;
+    }
   >();
   const prepared: string[] = [];
+  let expansionEnabled = true;
   let bytes = 0,
     encodedBytes = 0;
   for (const argument of args) {
     assertActive();
+    if (argument === "--disable-@files") expansionEnabled = false;
     let replacement = argument;
-    if (fileReference(argument)) {
+    if (expansionEnabled && fileReference(argument)) {
       const path = argument.slice(1);
       let snapshot = snapshots.get(path);
       if (snapshot === undefined) {
@@ -168,54 +236,17 @@ export const prepareJdkJavaOptions = async (
           throw new Error(
             "Ghidra LaunchSupport JDK_JAVA_OPTIONS argument file is unreadable.",
           );
-        const content = await withArtifactRegularFile(
+        const content = await readArgumentFile(
           path,
           resources,
           options.signal,
-          async (file) => {
-            const data = await readBoundedFileBytes(
-              file,
-              OPTIONS_BYTES - bytes,
-              {
-                signal: options.signal,
-                cancellationFailure: (reason) =>
-                  new RegularFileOperationCancelled(reason),
-              },
-            );
-            if (data === undefined)
-              throw new Error(
-                `JDK_JAVA_OPTIONS argument files exceed the ${String(OPTIONS_BYTES)}-byte cumulative admission bound.`,
-              );
-            bytes += data.length;
-            const text = new TextDecoder("utf-8", {
-              fatal: true,
-              ignoreBOM: true,
-            }).decode(data);
-            const tokens = argumentFileTokens(text);
-            if (tokens.some(fileReference))
-              throw new Error(
-                "Ghidra LaunchSupport JDK_JAVA_OPTIONS argument files may not nest @ references.",
-              );
-            rejectJvmPlatformOverrides(tokens);
-            return { text, bytes: data.length };
-          },
-          "follow",
-        ).catch((cause: unknown) => {
-          // Keep typed cancellation and failed-close owners; ordinary filesystem errors retain their original cause.
-          if (
-            cause instanceof Error &&
-            "code" in cause &&
-            cause.code === "ENOENT"
-          )
-            throw new Error(
-              `Ghidra LaunchSupport JDK_JAVA_OPTIONS argument file is unreadable: ${path}`,
-              { cause },
-            );
-          throw cause;
-        });
+          OPTIONS_BYTES - bytes,
+        );
+        bytes += content.bytes;
         snapshot = {
           path: join(directory, `rea-jdk-options-${randomUUID()}.args`),
           bytes: content.bytes,
+          disablesExpansion: content.disablesExpansion,
         };
         await writeGhidraRuntimeFile(
           snapshot.path,
@@ -231,6 +262,7 @@ export const prepareJdkJavaOptions = async (
           );
       }
       replacement = `@${snapshot.path}`;
+      if (snapshot.disablesExpansion) expansionEnabled = false;
     }
     const encoded = environmentToken(replacement);
     encodedBytes +=

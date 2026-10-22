@@ -436,6 +436,7 @@ describe.skipIf(process.platform === "win32")(
     it.each([
       '-Dnote="prefix\\"#suffix" -Dos.arch=rea_argfile_probe\n',
       '"-Dos.ar\\\n    ch=rea_argfile_probe"\n',
+      '"-Dos.ar"discard#comment\n  ch=rea_argfile_probe\n',
     ])(
       "rejects effective platform overrides after argfile quoting and continuation: %s",
       async (text) => {
@@ -540,6 +541,30 @@ describe.skipIf(process.platform === "win32")(
 describe.skipIf(process.platform === "win32")(
   "Ghidra argument-file admission",
   () => {
+    it.each([false, true])(
+      "keeps @ values literal after expansion was disabled by a file: %s",
+      async (fromFile) => {
+        const root = await createTestTempDirectory(
+          "rea-ghidra-options-disabled-",
+        );
+        const path = join(root, "options.args"),
+          missing = join(root, "literal-classpath");
+        await writeFile(path, "--disable-@files\n");
+        const value = `${fromFile ? `@${path}` : "--disable-@files"} --class-path @${missing}`;
+        const { session, launcher, resources, analysisEnvironments } =
+          await fixture(`env-injection:JDK_JAVA_OPTIONS=${value}`);
+        const result = await launcher.launch(session, {
+          resourceScope: resources,
+        });
+        if (!result.ok) throw result.error;
+        expect(analysisEnvironments[0]?.JDK_JAVA_OPTIONS).toContain(missing);
+        const snapshots = (await readdir(session.runtimeRoot)).filter((name) =>
+          name.startsWith("rea-jdk-options-"),
+        );
+        expect(snapshots).toHaveLength(fromFile ? 1 : 0);
+      },
+    );
+
     it.each([100, 40000])(
       "counts repeated references within the cumulative byte budget: %s",
       async (size) => {
