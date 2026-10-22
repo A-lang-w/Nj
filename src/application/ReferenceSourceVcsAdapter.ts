@@ -134,6 +134,10 @@ const gitConfigPath = async (
   return join(gitdir, "config");
 };
 
+// Git config syntax uses ASCII whitespace; Unicode whitespace remains data.
+const trimGitConfigWhitespace = (value: string): string =>
+  value.replace(/^[ \t\r]+|[ \t\r]+$/gu, "");
+
 /** Read Git's section/subsection syntax without flattening includeIf identities. */
 const parseEffectiveIgnoreCase = (text: string): boolean | null => {
   let section: string | undefined;
@@ -141,12 +145,13 @@ const parseEffectiveIgnoreCase = (text: string): boolean | null => {
   const values: string[] = [];
   let worktreeConfig: boolean | null | undefined;
   let worktreeConfigUnknown = false;
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const line = rawLine.trim();
+  // Only a BOM at the start of the file is an encoding marker.
+  for (const rawLine of text.replace(/^\uFEFF/u, "").split(/\r?\n/u)) {
+    const line = trimGitConfigWhitespace(rawLine);
     if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
     if (hasUnescapedTrailingBackslash(line)) return null;
     const header =
-      /^\[\s*([A-Za-z][A-Za-z0-9-]*)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\](?:\s*[#;].*)?$/u.exec(
+      /^\[([A-Za-z][A-Za-z0-9-]*)(?:[ \t]+"((?:[^"\\]|\\.)*)")?\](?:[ \t]*[#;].*)?$/u.exec(
         line,
       );
     if (header !== null) {
@@ -157,7 +162,9 @@ const parseEffectiveIgnoreCase = (text: string): boolean | null => {
       continue;
     }
     if (section === undefined) return null;
-    const variable = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/u.exec(line);
+    const variable = /^([A-Za-z][A-Za-z0-9-]*)[ \t]*(?:=[ \t\r]*(.*))?$/u.exec(
+      line,
+    );
     if (variable === null) return null;
     const name = variable[1]?.toLowerCase();
     const sourceValue = variable[2];
@@ -191,6 +198,7 @@ const parseGitBoolean = (value: string | undefined): boolean | null => {
     case "on":
     case "1":
       return true;
+    case "":
     case "false":
     case "no":
     case "off":
@@ -209,20 +217,19 @@ const hasUnescapedTrailingBackslash = (line: string): boolean => {
 };
 
 const parseGitConfigValue = (source: string): string | undefined => {
-  const value = source.trim();
+  const value = trimGitConfigWhitespace(source);
   if (!value.startsWith('"')) {
     if (value.includes('"')) return undefined;
-    return value.replace(/\s[#;].*$/u, "").trim();
+    return trimGitConfigWhitespace(value.replace(/[#;].*$/u, ""));
   }
   let parsed = "";
   for (let index = 1; index < value.length; index++) {
     const character = value[index];
     if (character === '"') {
-      const sourceRemainder = value.slice(index + 1);
-      const remainder = sourceRemainder.trim();
+      const remainder = trimGitConfigWhitespace(value.slice(index + 1));
       return remainder === "" ||
-        (sourceRemainder !== remainder &&
-          (remainder.startsWith("#") || remainder.startsWith(";")))
+        remainder.startsWith("#") ||
+        remainder.startsWith(";")
         ? parsed
         : undefined;
     }
