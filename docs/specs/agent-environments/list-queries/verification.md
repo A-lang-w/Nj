@@ -2,6 +2,17 @@
 
 ## Maintainer integration, 2026-10-22
 
+Independent read-only Codex review of `665ec74c6` found one additional omission
+case: intersecting query-total names discarded a valid total when another envelope
+omitted it. A new service guard failed on that head (one failure, 41 passes).
+The producer now gathers supported totals and rejects actual contradictory counts,
+not absent members; the existing projection guard preserves omission. The updated
+527-test adjacent batch passes, including deleting a locally loaded entity and
+observing the remaining total, plus an explicit contradictory-count control.
+This review was source-derived until the regression was run; no live application
+mutation was used. The original 618-test/80-boundary counts below describe the
+prior reviewed head, not a newly invented final-head run.
+
 The historical contributor runs below are not newly executed checks. This integration
 uses main `2c3dd946d` and contributor head `30e90fc64`, retaining main's zero-position
 whole-list guard and shared path decoder. New deterministic guards reproduced five

@@ -305,23 +305,28 @@ const listQuery = (
   const learned = learnQuery(lines);
   if (learned === undefined) return undefined;
   // Totals count every match on each line the query answers; a `number`-of-items member counts the page.
-  let totals: string[] | undefined;
+  const totals = new Set<string>();
+  const contradicted = new Set<string>();
+  const answered = new Set(learned.record_ordinals);
   for (const line of lines) {
-    if (!learned.record_ordinals.includes(line.ordinal)) continue;
+    if (!answered.has(line.ordinal)) continue;
     const { total } = evaluateQuery(
       learned.parameters,
       line.values,
       line.entities,
     )!;
-    const names = (counts.get(line.ordinal) ?? [])
-      .filter(
-        ([name, count]) =>
-          count === total && !nameTokens(name).includes("number"),
-      )
-      .map(([name]) => name);
-    totals = (totals ?? names).filter((name) => names.includes(name));
+    // Absence says nothing about another envelope's counter. Only a present
+    // count that disagrees invalidates the shared total interpretation.
+    for (const [name, count] of counts.get(line.ordinal) ?? []) {
+      if (nameTokens(name).includes("number")) continue;
+      if (count === total) totals.add(name);
+      else contradicted.add(name);
+    }
   }
-  return { ...learned, totals: (totals ?? []).sort(compare) };
+  return {
+    ...learned,
+    totals: [...totals].filter((name) => !contradicted.has(name)).sort(compare),
+  };
 };
 
 /** Whether one latest list recording renders from its own envelope and the state: the whole collection, the query's matches, or the listed entities. */

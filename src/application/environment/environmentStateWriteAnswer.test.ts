@@ -616,6 +616,45 @@ describe("list lines", () => {
 });
 
 describe("list queries", () => {
+  it("preserves a query total when another supported envelope omits it, but not when it contradicts it", () => {
+    const alpha = { id: 1, name: "Alpha" },
+      beta = { id: 2, name: "Beta" },
+      gamma = { id: 3, name: "Gamma" };
+    for (const contradicts of [false, true]) {
+      const books = servedFrom([
+        ["GET", "/api/books", { items: [alpha, beta, gamma] }],
+        ["GET", "/api/books?limit=1", { items: [alpha], total: 3 }],
+        [
+          "GET",
+          "/api/books?limit=2",
+          { items: [alpha, beta], ...(contradicts ? { total: 20 } : {}) },
+        ],
+      ]);
+      expect(books.state.views.get("get_books")).toMatchObject({
+        query: { totals: contradicts ? [] : ["total"] },
+      });
+      const snapshot = books.store.snapshot();
+      const loaded = books.store.replace({
+        ...snapshot,
+        rea_state: {
+          ...snapshot.rea_state,
+          entities: snapshot.rea_state.entities.filter(
+            (entity) => entity.id !== "3",
+          ),
+        },
+      });
+      if (!loaded.ok) throw loaded.error;
+      expect(books.answer("get_books", { limit: "1" })).toMatchObject({
+        body: { items: [alpha], total: contradicts ? 3 : 2 },
+        state: { source: "state", membership: "query" },
+      });
+      if (!contradicts)
+        expect(
+          books.answer("get_books", { limit: "2" }).body,
+        ).not.toHaveProperty("total");
+    }
+  });
+
   it("replays unsupported search syntax instead of inventing an empty state-backed result", () => {
     const books = servedFrom(QUERY_ROWS);
     for (const q of ["title:Gamma", "#sea", '"First Book"']) {
