@@ -12,6 +12,239 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "review37-0.mjs",
+    source:
+      'const {...rest}={get x(){new Socket("wss://example.test/review-copy-rest");}};const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-1.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;const {...rest}={get x(){new Socket("wss://example.test/review-copy-rest");}};',
+    endpoint: "wss://example.test/review-copy-rest",
+  },
+  {
+    file: "review37-2.mjs",
+    source:
+      'const copied={...{get x(){new Socket("wss://example.test/review-copy-spread");}}};const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-3.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;const copied={...{get x(){new Socket("wss://example.test/review-copy-spread");}}};',
+    endpoint: "wss://example.test/review-copy-spread",
+  },
+  {
+    file: "review37-4.mjs",
+    source:
+      'const copied={...{get x(){new Socket("wss://example.test/review-copy-spread-overwrite");}},x:0};const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-5.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;const copied={...{get x(){new Socket("wss://example.test/review-copy-spread-overwrite");}},x:0};',
+    endpoint: "wss://example.test/review-copy-spread-overwrite",
+  },
+  {
+    file: "review37-6.mjs",
+    source:
+      'let rest;({...rest}={get x(){new Socket("wss://example.test/review-copy-assignment-rest");}});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-7.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;let rest;({...rest}={get x(){new Socket("wss://example.test/review-copy-assignment-rest");}});',
+    endpoint: "wss://example.test/review-copy-assignment-rest",
+  },
+  {
+    file: "review37-8.mjs",
+    source:
+      '(async()=>{try{const {[await "x"]:unused,...rest}={get x(){new Socket("wss://example.test/review-copy-prefix");}};}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-copy-prefix",
+  },
+  {
+    file: "review37-9.mjs",
+    source:
+      '(async()=>{try{const {x:unused,y=await 0,...rest}={get x(){new Socket("wss://example.test/review-copy-prefix");}};}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-10.mjs",
+    source:
+      '(async()=>{try{const copy={...{get x(){new Socket("wss://example.test/review-copy-prefix");}},[await 0]:0};}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-11.mjs",
+    source:
+      '(async()=>{try{const copy={[await 0]:0,...{get x(){new Socket("wss://example.test/review-copy-prefix");}}};}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-copy-prefix",
+  },
+  {
+    file: "review37-12.mjs",
+    source:
+      'const copy={...{run(){new Socket("wss://example.test/review-copy-prefix");}}};const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-copy-prefix",
+  },
+  {
+    file: "review37-13.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-13");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-14.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-13");}})();}catch{}})();',
+    endpoint: "wss://example.test/review-failed-array-13",
+  },
+  {
+    file: "review37-15.mjs",
+    source:
+      '(async()=>{try{const [[x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-13");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-failed-array-13",
+  },
+  {
+    file: "review37-16.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-16");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-17.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-16");}})();}catch{}})();',
+    endpoint: "wss://example.test/review-failed-array-16",
+  },
+  {
+    file: "review37-18.mjs",
+    source:
+      '(async()=>{try{const [[], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-16");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-failed-array-16",
+  },
+  {
+    file: "review37-19.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[...x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-19");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-20.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[...x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-19");}})();}catch{}})();',
+    endpoint: "wss://example.test/review-failed-array-19",
+  },
+  {
+    file: "review37-21.mjs",
+    source:
+      '(async()=>{try{const [[...x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-19");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-failed-array-19",
+  },
+  {
+    file: "review37-22.ts",
+    source:
+      '(class {declare static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-22");}}).run();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-23.ts",
+    source:
+      'const Socket=globalThis.WebSocket;(class {declare static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-22");}}).run();',
+    endpoint: "wss://example.test/review-erased-22",
+  },
+  {
+    file: "review37-24.ts",
+    source:
+      '(class {declare static run: any;static run(){new Socket("wss://example.test/review-erased-24");}}).run();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-25.ts",
+    source:
+      'const Socket=globalThis.WebSocket;(class {declare static run: any;static run(){new Socket("wss://example.test/review-erased-24");}}).run();',
+    endpoint: "wss://example.test/review-erased-24",
+  },
+  {
+    file: "review37-26.ts",
+    source:
+      '(class {declare [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-26");}}).run();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-27.ts",
+    source:
+      'const Socket=globalThis.WebSocket;(class {declare [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-26");}}).run();',
+    endpoint: "wss://example.test/review-erased-26",
+  },
+  {
+    file: "review37-28.ts",
+    source:
+      '(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-iterator");}}).run();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-29.ts",
+    source:
+      'const Socket=globalThis.WebSocket;(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-iterator");}}).run();',
+    endpoint: "wss://example.test/review-runtime-symbol-iterator",
+  },
+  {
+    file: "review37-30.ts",
+    source:
+      '(class {static [Symbol.toStringTag]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-toStringTag");}}).run();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-31.ts",
+    source:
+      'const Socket=globalThis.WebSocket;(class {static [Symbol.toStringTag]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-toStringTag");}}).run();',
+    endpoint: "wss://example.test/review-runtime-symbol-toStringTag",
+  },
+  {
+    file: "review37-32.ts",
+    source:
+      '(class {static [Symbol.asyncIterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-asyncIterator");}}).run();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-33.ts",
+    source:
+      'const Socket=globalThis.WebSocket;(class {static [Symbol.asyncIterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-asyncIterator");}}).run();',
+    endpoint: "wss://example.test/review-runtime-symbol-asyncIterator",
+  },
+  {
+    file: "review37-34.ts",
+    source:
+      'const Symbol={iterator:"run"};(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-symbol-unknown");}}).run();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-symbol-unknown",
+  },
+  {
+    file: "review37-35.ts",
+    source:
+      'globalThis.Symbol={iterator:"run"};(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-symbol-unknown");}}).run();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-symbol-unknown",
+  },
+  {
+    file: "review37-36.mjs",
+    source:
+      '(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();Array.prototype[Symbol.iterator]=function(){throw 0;};const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-37.mjs",
+    source:
+      'Array.prototype.unrelated=1;(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-array-order",
+  },
+  {
+    file: "review37-38.mjs",
+    source:
+      'const prototype=Array.prototype;prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-39.mjs",
+    source:
+      'const prototype=[].__proto__;prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-40.ts",
+    source:
+      '(async()=>{(class{declare static [await 0]:any;static run(){new Socket("wss://example.test/review-erased-key-wait");}}).run()})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review37-41.ts",
+    source:
+      '(async()=>{(class{static [await 0]:any;static run(){new Socket("wss://example.test/review-erased-key-wait");}}).run()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/review-erased-key-wait",
+  },
+  {
     file: "review33-0.mjs",
     source:
       'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-object")})();try{({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',

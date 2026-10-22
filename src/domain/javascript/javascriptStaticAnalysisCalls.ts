@@ -435,6 +435,26 @@ export const indexVitePreloadDependencyTable = (
   return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
 };
 
+const isFetchCall = (
+  node: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean =>
+  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+  isUnmodifiedGlobalReference(node.callee, bindings, "fetch");
+
+const requestConstructorUrl = (
+  node: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const target = unwrapJavaScriptExpression(node).node;
+  if (
+    t.isNewExpression(target) &&
+    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
+  )
+    return stringValue(target.arguments[0]);
+  return undefined;
+};
+
 const inspectEndpointCall = (
   node: JavaScriptCallLike,
   name: string,
@@ -445,7 +465,11 @@ const inspectEndpointCall = (
   if (isKnownNetworkRequest(node, bindings)) {
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) return;
-    const literal = stringValue(target);
+    const literal =
+      stringValue(target) ??
+      (isFetchCall(node, bindings)
+        ? requestConstructorUrl(target, bindings)
+        : undefined);
     if (literal !== undefined) {
       addEndpoint(context, {
         node,
@@ -526,11 +550,7 @@ const isKnownNetworkRequest = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  if (
-    (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-    isUnmodifiedGlobalReference(node.callee, bindings, "fetch")
-  )
-    return true;
+  if (isFetchCall(node, bindings)) return true;
   if (
     t.isNewExpression(node) &&
     (isWebSocketEndpointCandidate(node.callee, bindings) ||
@@ -652,6 +672,7 @@ const urlObjectRequestTarget = (
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
   seen = new Set<string>(),
+  isToString = false,
 ): string | undefined => {
   let target = unwrapJavaScriptExpression(node).node;
   if (
@@ -663,8 +684,10 @@ const urlObjectRequestTarget = (
       (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
       semanticStaticPropertyName(callee.property, callee.computed) ===
         "toString"
-    )
+    ) {
       target = unwrapJavaScriptExpression(callee.object).node;
+      isToString = true;
+    }
   }
   if (!t.isIdentifier(target) || index.referenceMayHaveChangedAt(site, target))
     return undefined;
@@ -685,7 +708,18 @@ const urlObjectRequestTarget = (
   if (initializer === undefined) return undefined;
   const initialized = unwrapJavaScriptExpression(initializer).node;
   if (t.isIdentifier(initialized))
-    return urlObjectRequestTarget(initialized, site, bindings, index, seen);
+    return urlObjectRequestTarget(
+      initialized,
+      site,
+      bindings,
+      index,
+      seen,
+      isToString,
+    );
+  if (!isToString && isFetchCall(site, bindings)) {
+    const requestUrl = requestConstructorUrl(initialized, bindings);
+    if (requestUrl !== undefined) return requestUrl;
+  }
   if (!t.isNewExpression(initialized)) return undefined;
   if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
     return undefined;

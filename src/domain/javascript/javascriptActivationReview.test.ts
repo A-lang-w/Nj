@@ -4,6 +4,217 @@ import { analyzeCapturedWebBundle } from "../webBundleAnalyzer.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
+  // Later Array iterator writes remain conservative metadata, not native absence.
+  [
+    "copy rest",
+    'const {...rest}={get x(){new Socket("wss://example.test/review-copy-rest");}};const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "copy rest initialized",
+    'const Socket=globalThis.WebSocket;const {...rest}={get x(){new Socket("wss://example.test/review-copy-rest");}};',
+    ["wss://example.test/review-copy-rest"],
+  ],
+  [
+    "copy spread",
+    'const copied={...{get x(){new Socket("wss://example.test/review-copy-spread");}}};const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "copy spread initialized",
+    'const Socket=globalThis.WebSocket;const copied={...{get x(){new Socket("wss://example.test/review-copy-spread");}}};',
+    ["wss://example.test/review-copy-spread"],
+  ],
+  [
+    "copy spread-overwrite",
+    'const copied={...{get x(){new Socket("wss://example.test/review-copy-spread-overwrite");}},x:0};const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "copy spread-overwrite initialized",
+    'const Socket=globalThis.WebSocket;const copied={...{get x(){new Socket("wss://example.test/review-copy-spread-overwrite");}},x:0};',
+    ["wss://example.test/review-copy-spread-overwrite"],
+  ],
+  [
+    "copy assignment-rest",
+    'let rest;({...rest}={get x(){new Socket("wss://example.test/review-copy-assignment-rest");}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "copy assignment-rest initialized",
+    'const Socket=globalThis.WebSocket;let rest;({...rest}={get x(){new Socket("wss://example.test/review-copy-assignment-rest");}});',
+    ["wss://example.test/review-copy-assignment-rest"],
+  ],
+  [
+    "copy rest awaited selected key",
+    '(async()=>{try{const {[await "x"]:unused,...rest}={get x(){new Socket("wss://example.test/review-copy-prefix");}};}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-copy-prefix"],
+  ],
+  [
+    "copy rest excludes earlier getter",
+    '(async()=>{try{const {x:unused,y=await 0,...rest}={get x(){new Socket("wss://example.test/review-copy-prefix");}};}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "copy spread later wait",
+    '(async()=>{try{const copy={...{get x(){new Socket("wss://example.test/review-copy-prefix");}},[await 0]:0};}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "copy spread prior wait",
+    '(async()=>{try{const copy={[await 0]:0,...{get x(){new Socket("wss://example.test/review-copy-prefix");}}};}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-copy-prefix"],
+  ],
+  [
+    "copy ordinary method remains deferred",
+    'const copy={...{run(){new Socket("wss://example.test/review-copy-prefix");}}};const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-copy-prefix"],
+  ],
+  [
+    "failed array [[x], y=await 0]",
+    'Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-13");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "failed array [[x], y=await 0] initialized",
+    'const Socket=globalThis.WebSocket;Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-13");}})();}catch{}})();',
+    ["wss://example.test/review-failed-array-13"],
+  ],
+  [
+    "native array [[x], y=await 0]",
+    '(async()=>{try{const [[x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-13");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-failed-array-13"],
+  ],
+  [
+    "failed array [[], y=await 0]",
+    'Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-16");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "failed array [[], y=await 0] initialized",
+    'const Socket=globalThis.WebSocket;Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-16");}})();}catch{}})();',
+    ["wss://example.test/review-failed-array-16"],
+  ],
+  [
+    "native array [[], y=await 0]",
+    '(async()=>{try{const [[], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-16");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-failed-array-16"],
+  ],
+  [
+    "failed array [[...x], y=await 0]",
+    'Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[...x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-19");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "failed array [[...x], y=await 0] initialized",
+    'const Socket=globalThis.WebSocket;Array.prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[...x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-19");}})();}catch{}})();',
+    ["wss://example.test/review-failed-array-19"],
+  ],
+  [
+    "native array [[...x], y=await 0]",
+    '(async()=>{try{const [[...x], y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-failed-array-19");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-failed-array-19"],
+  ],
+  [
+    "erased declare static [Symbol.iterator]: any;",
+    '(class {declare static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-22");}}).run();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "erased declare static [Symbol.iterator]: any; initialized",
+    'const Socket=globalThis.WebSocket;(class {declare static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-22");}}).run();',
+    ["wss://example.test/review-erased-22"],
+  ],
+  [
+    "erased declare static run: any;",
+    '(class {declare static run: any;static run(){new Socket("wss://example.test/review-erased-24");}}).run();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "erased declare static run: any; initialized",
+    'const Socket=globalThis.WebSocket;(class {declare static run: any;static run(){new Socket("wss://example.test/review-erased-24");}}).run();',
+    ["wss://example.test/review-erased-24"],
+  ],
+  [
+    "erased declare [Symbol.iterator]: any;",
+    '(class {declare [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-26");}}).run();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "erased declare [Symbol.iterator]: any; initialized",
+    'const Socket=globalThis.WebSocket;(class {declare [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-erased-26");}}).run();',
+    ["wss://example.test/review-erased-26"],
+  ],
+  [
+    "runtime symbol iterator",
+    '(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-iterator");}}).run();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "runtime symbol iterator initialized",
+    'const Socket=globalThis.WebSocket;(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-iterator");}}).run();',
+    ["wss://example.test/review-runtime-symbol-iterator"],
+  ],
+  [
+    "runtime symbol toStringTag",
+    '(class {static [Symbol.toStringTag]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-toStringTag");}}).run();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "runtime symbol toStringTag initialized",
+    'const Socket=globalThis.WebSocket;(class {static [Symbol.toStringTag]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-toStringTag");}}).run();',
+    ["wss://example.test/review-runtime-symbol-toStringTag"],
+  ],
+  [
+    "runtime symbol asyncIterator",
+    '(class {static [Symbol.asyncIterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-asyncIterator");}}).run();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "runtime symbol asyncIterator initialized",
+    'const Socket=globalThis.WebSocket;(class {static [Symbol.asyncIterator]: any;static run(){new Socket("wss://example.test/review-runtime-symbol-asyncIterator");}}).run();',
+    ["wss://example.test/review-runtime-symbol-asyncIterator"],
+  ],
+  [
+    "runtime symbol shadowed",
+    'const Symbol={iterator:"run"};(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-symbol-unknown");}}).run();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-symbol-unknown"],
+  ],
+  [
+    "runtime symbol changed",
+    'globalThis.Symbol={iterator:"run"};(class {static [Symbol.iterator]: any;static run(){new Socket("wss://example.test/review-symbol-unknown");}}).run();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-symbol-unknown"],
+  ],
+  [
+    "later array iterator write remains conservative",
+    '(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();Array.prototype[Symbol.iterator]=function(){throw 0;};const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "array unrelated prototype write",
+    'Array.prototype.unrelated=1;(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-array-order"],
+  ],
+  [
+    "array aliased throwing prototype",
+    'const prototype=Array.prototype;prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "array instance prototype throwing iterator",
+    'const prototype=[].__proto__;prototype[Symbol.iterator]=function(){throw 0;};(async()=>{try{const [[x],y=await 0]=(function*(){try{yield [1];yield undefined;}finally{new Socket("wss://example.test/review-array-order");}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "erased class key does not wait",
+    '(async()=>{(class{declare static [await 0]:any;static run(){new Socket("wss://example.test/review-erased-key-wait");}}).run()})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "runtime class key really waits",
+    '(async()=>{(class{static [await 0]:any;static run(){new Socket("wss://example.test/review-erased-key-wait");}}).run()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/review-erased-key-wait"],
+  ],
   [
     "object",
     'export {};const pending=(async()=>{await 0;new Socket("wss://example.test/review-rhs-object")})();try{({}).x=await pending}catch{}const Socket=globalThis.WebSocket;',

@@ -1,7 +1,10 @@
 import * as t from "@babel/types";
 import { semanticExpressionCannotThrow } from "./javascriptSemanticExpressionResults.js";
 import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
-import { semanticLiteralOwnKeysStable } from "./javascriptSemanticLiteralProjection.js";
+import {
+  semanticLiteralOwnKeysStable,
+  semanticLiteralRestSlots,
+} from "./javascriptSemanticLiteralProjection.js";
 import {
   semanticPatternSuspendsBeforeGeneratorRead,
   semanticPatternSuspendsBeforeTarget,
@@ -70,6 +73,41 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import { semanticClassCandidates } from "./javascriptSemanticObjectReferences.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+
+const webSocketWellKnownSymbols = new Set([
+  "asyncIterator",
+  "hasInstance",
+  "isConcatSpreadable",
+  "iterator",
+  "match",
+  "matchAll",
+  "replace",
+  "search",
+  "species",
+  "split",
+  "toPrimitive",
+  "toStringTag",
+  "unscopables",
+]);
+
+/** Standard well-known Symbol slots are distinct from every string member. */
+const webSocketIntrinsicSymbolKey = (
+  raw: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const node = unwrapJavaScriptExpression(raw).node;
+  if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
+    return false;
+  const name = semanticStaticPropertyName(node.property, node.computed);
+  return (
+    webSocketWellKnownSymbols.has(name) &&
+    !semanticOpaqueGlobalMayHaveChanged(node, state) &&
+    !state.ambientEscapes.covers(["global", "Symbol", name]) &&
+    isUnmodifiedGlobalReference(node, state, ["Symbol", name])
+  );
+};
 
 /** A direct return preserves the value separately from the completed activation. */
 const webSocketReturnedOwner = (
@@ -156,6 +194,8 @@ const webSocketFreshMethodSelection = (
   | t.OptionalMemberExpression
   | t.ObjectExpression
   | t.ObjectProperty
+  | t.RestElement
+  | t.SpreadElement
   | undefined => {
   const parent = state.parentsByNode.get(value);
   const property =
@@ -201,6 +241,7 @@ const webSocketFreshMethodSelection = (
           key,
           isStatic,
           t.isClassMethod(property) && property.kind === "set" ? "set" : "get",
+          (node) => webSocketIntrinsicSymbolKey(node, state),
         )) === property;
   if (!final) return undefined;
   if (
@@ -228,7 +269,29 @@ const webSocketFreshMethodSelection = (
         // literal here would incorrectly place the getter before an awaited
         // computed key has finished evaluating.
         return selected;
+      const excluded = new Set<string>();
+      for (const item of pattern.properties) {
+        if (t.isObjectProperty(item)) {
+          const name = semanticStaticPropertyKey(item.key, item.computed);
+          if (name === null) return undefined;
+          excluded.add(name);
+        } else if (
+          semanticLiteralRestSlots(literal, excluded, item, state)?.some(
+            (slot) => slot.kind === "accessor" && slot.node === property,
+          )
+        )
+          return item;
+      }
     }
+    if (
+      t.isSpreadElement(consumer) &&
+      consumer.argument === result &&
+      t.isObjectExpression(state.parentsByNode.get(consumer)) &&
+      semanticLiteralRestSlots(literal, new Set(), consumer, state)?.some(
+        (slot) => slot.kind === "accessor" && slot.node === property,
+      )
+    )
+      return consumer;
   }
   const member = state.parentsByNode.get(object);
   if (
@@ -823,6 +886,8 @@ const webSocketImmediateInvocation = (
   | t.OptionalMemberExpression
   | t.ObjectExpression
   | t.ObjectProperty
+  | t.RestElement
+  | t.SpreadElement
   | undefined => {
   const value = webSocketOuterExpression(node, state);
   const selection = webSocketFreshMethodSelection(node, value, state);
@@ -2600,7 +2665,7 @@ const webSocketExecutionContextsForCalls = (
       } else if (
         t.isObjectMethod(parent) &&
         parent.kind === "get" &&
-        t.isObjectProperty(invocation)
+        (t.isObjectProperty(invocation) || t.isRestElement(invocation))
       ) {
         // A pattern key finishes before Get, while defaults and nested binding
         // work in the value occur only after the getter has returned.

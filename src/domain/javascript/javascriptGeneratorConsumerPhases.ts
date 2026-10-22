@@ -453,6 +453,8 @@ const patternPropertyValue = (
   if (selected.kind === "accessor") {
     return patternAccessorValue(selected.node, state);
   }
+  if (selected.kind === "invalid")
+    return { known: false, completionUnknown: true };
   return { known: false };
 };
 
@@ -591,6 +593,9 @@ const patternCompletedSuspension = (
           patternExpressionCompletion(property.argument, suspended),
         );
         if (patternStopped(phase)) return phase;
+        // The target reference precedes copying; the selected getter and
+        // assignment of the rest result have not run at this entry point.
+        if (property === target) return phase;
         const slots =
           value.known && value.node !== undefined && !unknownExclusion
             ? semanticLiteralRestSlots(
@@ -665,6 +670,10 @@ const patternCompletedSuspension = (
     if (value.known && value.node !== undefined) {
       const iterable = patternValueNode(value.node);
       const literal = readExactJavaScriptLiteral(iterable);
+      // GetIterator runs even for [] and may throw before any slot can be
+      // projected. An invalid iterator is not a completed unknown value.
+      if (t.isArrayExpression(iterable) && state.arrayIterationUnknown)
+        return "unproven";
       if (
         literal.found &&
         typeof literal.value === "string" &&

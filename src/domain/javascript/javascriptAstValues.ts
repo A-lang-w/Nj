@@ -9,11 +9,11 @@ export const isRuntimeJavaScriptClassProperty = (
 ): node is t.ClassProperty =>
   t.isClassProperty(node) && node.declare !== true && node.abstract !== true;
 
-/** All class field forms share value timing; keys remain definition-time syntax. */
+/** Runtime class fields share value timing; erased declarations evaluate no key. */
 export const javaScriptClassField = (
   node: t.Node | null | undefined,
 ): node is t.ClassProperty | t.ClassPrivateProperty | t.ClassAccessorProperty =>
-  t.isClassProperty(node) ||
+  (node != null && isRuntimeJavaScriptClassProperty(node)) ||
   t.isClassPrivateProperty(node) ||
   t.isClassAccessorProperty(node);
 
@@ -484,6 +484,7 @@ export const semanticFinalClassMember = (
   key: string,
   isStatic = true,
   access: "get" | "set" = "get",
+  symbolKey?: (node: t.Node) => boolean,
 ): t.ClassMethod | t.ClassProperty | undefined => {
   if (!isStatic && node.superClass != null) return undefined;
   if (node.decorators != null && node.decorators.length !== 0) return undefined;
@@ -525,7 +526,12 @@ export const semanticFinalClassMember = (
       continue;
     }
     if (t.isClassAccessorProperty(member)) return undefined;
-    const name = semanticStaticPropertyKey(member.key, member.computed);
+    // Proven symbol slots cannot replace a string-named member. Their field
+    // initializers still need the same side-effect checks below.
+    const name =
+      member.computed && symbolKey?.(member.key)
+        ? undefined
+        : semanticStaticPropertyKey(member.key, member.computed);
     if (
       name === null ||
       (member.decorators != null && member.decorators.length !== 0)
