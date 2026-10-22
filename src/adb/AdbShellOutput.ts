@@ -276,6 +276,17 @@ export interface AdbPackageDetails {
 const DETAIL_LINE = /^\s+([A-Za-z][A-Za-z0-9_]*)=(.*)$/u;
 
 /**
+ * Package Manager prints its `String` fields by concatenation, so an absent
+ * `installerPackageName` appears as the literal text `null`
+ * (morluto/rea#3943). No installer can be named "null", so an empty value or
+ * that sentinel is the absence of the fact and becomes the nullable result's
+ * null. `versionName` keeps the printed text: a manifest may declare the
+ * string "null" on purpose, and the parser cannot tell the two apart.
+ */
+const absentInstallerOrName = (value: string): string | null =>
+  value === "" || value === "null" ? null : value;
+
+/**
  * Project `dumpsys package PACKAGE` output. Only the listed fields are
  * extracted; the input is version-dependent and everything else is ignored
  * by design rather than guessed.
@@ -340,7 +351,7 @@ export const parseDumpsysPackageOutput = (
       key === "installerPackageName" &&
       details.installerPackageName === null
     )
-      details.installerPackageName = value === "" ? null : value;
+      details.installerPackageName = absentInstallerOrName(value);
     else if (key === "userId" && details.userId === null) {
       const parsed = /^(\d+)/u.exec(value);
       if (parsed !== null) details.userId = Number(parsed[1]!);
@@ -380,6 +391,14 @@ export const parseBugreportCopiedPath = (stdout: string): string | null => {
   const match = /^Bug report copied to (.+)\r?$/mu.exec(stdout.trim());
   return match === null ? null : match[1]!;
 };
+
+/**
+ * Read the digest from one `sha256sum FILE` line, or null when the output
+ * names none. GNU sha256sum starts the line with a backslash when it escaped
+ * the echoed name; the digest itself is never escaped.
+ */
+export const parseSha256sumOutput = (stdout: string): string | null =>
+  /^\\?([a-f0-9]{64}) [ *]/u.exec(stdout)?.[1] ?? null;
 
 /** Read the device's `Failure [REASON]` verdict from package-change output. */
 export const packageChangeFailureReason = (output: string): string | null =>

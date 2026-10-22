@@ -20,6 +20,7 @@ import { z } from "zod";
 
 import {
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -31,11 +32,11 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 
 const descriptorSchema = z.object({
   session_id: z.string().uuid(),
-  pid: z.number().int().positive(),
+  pid: z.int().positive(),
   host: z.literal("127.0.0.1"),
-  port: z.number().int().min(1).max(65535),
+  port: z.int().min(1).max(65535),
   token: z.string().min(20),
-  document_generation: z.number().int().nonnegative(),
+  document_generation: z.int().nonnegative(),
   current_file: z.string().nullable(),
   cutter_version: z.string().nullable(),
   identity_status: z.literal("partial"),
@@ -53,7 +54,7 @@ const responseSchema = z.object({
   output: z.unknown().optional(),
   current_file: z.string().nullable().optional(),
   cutter_version: z.string().nullable().optional(),
-  document_generation: z.number().int().nonnegative().optional(),
+  document_generation: z.int().nonnegative().optional(),
   identity_status: z.literal("partial").optional(),
   error: z.string().optional(),
   message: z.string().optional(),
@@ -82,6 +83,7 @@ const acknowledgementSchema = z.object({
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const FRAME_PAGE_BYTES = 64 * 1024;
+const REQUEST_TIMEOUT_MS = 25_000;
 // Bound admitted descriptor input bytes and concurrent file/socket handles.
 const MAX_DESCRIPTOR_CANDIDATES = MAX_FRAME_BYTES / MAX_DESCRIPTOR_BYTES;
 const DISCOVERY_CONCURRENCY = 8;
@@ -106,8 +108,11 @@ const serializeRequest = (
     throw new AnalysisResourceConstraintError(
       "cutter_command",
       "transport",
-      "Cutter request exceeds its authenticated frame limit; no command was sent.",
+      `Cutter request exceeds its authenticated frame limit of ${String(MAX_FRAME_BYTES)} bytes (16 MiB); no command was sent. This release has no runtime override.`,
       { frame_bytes: frameBytes, max_frame_bytes: MAX_FRAME_BYTES },
+      {
+        remediationAction: `Shorten the Cutter command. This ${String(MAX_FRAME_BYTES)} byte frame limit has no runtime override.`,
+      },
     );
   return requestBytes as AuthenticatedRequestBytes;
 };
@@ -130,13 +135,13 @@ class CutterBridgeResponseFrames {
         MAX_FRAME_BYTES
       )
         throw new Error(
-          "Cutter bridge response exceeded its framed transport limit",
+          `Cutter bridge response exceeded its framed transport limit of ${String(MAX_FRAME_BYTES)} bytes (16 MiB). This release has no runtime override`,
         );
       this.#append(segment);
       if (delimiter < 0) return;
       if (++this.#contentBytes > MAX_FRAME_BYTES)
         throw new Error(
-          "Cutter bridge response exceeded its framed transport limit",
+          `Cutter bridge response exceeded its framed transport limit of ${String(MAX_FRAME_BYTES)} bytes (16 MiB). This release has no runtime override`,
         );
       if (this.#pageLength > 0)
         this.#parts.push(this.#page.subarray(0, this.#pageLength));
@@ -176,9 +181,12 @@ class CutterBridgeResponseFrames {
   }
 }
 
-const assertCommandActive = (signal: AbortSignal | undefined): void => {
+const assertBridgeActive = (
+  signal: AbortSignal | undefined,
+  operation: "cutter_command" | "list_cutter_sessions",
+): void => {
   if (signal?.aborted)
-    throw new AnalysisCancelledError("cutter_command", {
+    throw new AnalysisCancelledError(operation, {
       cause: signal.reason,
     });
 };
@@ -186,9 +194,9 @@ const assertCommandActive = (signal: AbortSignal | undefined): void => {
 const mapDiscovery = async <Input, Output>(
   inputs: readonly Input[],
   operation: (input: Input) => Promise<Output>,
-  signal?: AbortSignal,
+  assertActive: () => void,
 ): Promise<Output[]> => {
-  signal?.throwIfAborted();
+  assertActive();
   const results = new Array<Output>(inputs.length);
   let next = 0;
   let stopped = false;
@@ -198,7 +206,7 @@ const mapDiscovery = async <Input, Output>(
       async () => {
         try {
           while (!stopped && next < inputs.length) {
-            signal?.throwIfAborted();
+            assertActive();
             const index = next++;
             results[index] = await operation(inputs[index]!);
           }
@@ -214,7 +222,7 @@ const mapDiscovery = async <Input, Output>(
   );
   if (failures.length > 1) throw new CutterDiscoveryFailure(failures);
   if (failures.length === 1) throw failures[0];
-  signal?.throwIfAborted();
+  assertActive();
   return results;
 };
 
@@ -244,6 +252,7 @@ class CutterBridgeRequestFailure extends Error {
   constructor(
     message: string,
     readonly requestSent: boolean,
+    readonly cancellation?: { readonly reason: unknown },
   ) {
     super(message);
   }
@@ -329,7 +338,7 @@ export class CutterBridgeClient {
     try {
       await this.#descriptorResources.retryCleanup();
     } catch (cause: unknown) {
-      throw descriptorFailure(cause, "close_cutter_descriptors");
+      throw discoveryFailure(cause, "close_cutter_descriptors");
     }
   }
 
@@ -337,7 +346,7 @@ export class CutterBridgeClient {
     try {
       await this.#descriptorResources.close();
     } catch (cause: unknown) {
-      throw descriptorFailure(cause, "close_cutter_descriptors");
+      throw discoveryFailure(cause, "close_cutter_descriptors");
     }
   }
 
@@ -356,10 +365,7 @@ export class CutterBridgeClient {
     const descriptors = await mapDiscovery(
       loaded.descriptors,
       async (descriptor) => {
-        if (options.signal?.aborted)
-          throw new AnalysisCancelledError("list_cutter_sessions", {
-            cause: options.signal.reason,
-          });
+        assertBridgeActive(signal, "list_cutter_sessions");
         try {
           const status = responseSchema.safeParse(
             await this.#request(
@@ -390,17 +396,21 @@ export class CutterBridgeClient {
               status.data.cutter_version ?? descriptor.cutter_version,
             identity_status: "partial" as const,
           };
-        } catch {
-          signal?.throwIfAborted();
+        } catch (cause) {
+          if (
+            cause instanceof CutterBridgeRequestFailure &&
+            cause.cancellation !== undefined
+          )
+            throw new AnalysisCancelledError("list_cutter_sessions", {
+              cause: cause.cancellation.reason,
+            });
           return undefined;
         }
       },
-      signal,
-    );
-    if (options.signal?.aborted)
-      throw new AnalysisCancelledError("list_cutter_sessions", {
-        cause: options.signal.reason,
-      });
+      () => assertBridgeActive(signal, "list_cutter_sessions"),
+    ).catch((cause: unknown) => {
+      throw discoveryFailure(cause, "list_cutter_sessions");
+    });
     const sessions = descriptors.filter(
       (value): value is CutterBridgeSession => value !== undefined,
     );
@@ -420,100 +430,140 @@ export class CutterBridgeClient {
     readonly json: boolean;
     readonly signal?: AbortSignal;
   }): Promise<CutterBridgeExecution> {
-    assertCommandActive(input.signal);
-    const descriptor = await this.#find(input.sessionId, input.signal);
-    assertCommandActive(input.signal);
-    const requestId = randomUUID();
-    const commandRequest = serializeRequest(descriptor, {
-      kind: "command",
-      request_id: requestId,
-      expected_generation: input.expectedGeneration,
-      command: input.command,
-      json: input.json,
-    });
-    await this.#recoverCompletedCommands(descriptor, input.signal);
-    await this.#retryPendingAcknowledgements(descriptor);
-    assertCommandActive(input.signal);
-    let completionToken: string | undefined;
-    let rawResponse: unknown;
     try {
-      rawResponse = await this.#request(
-        descriptor,
-        commandRequest,
-        input.signal,
-        (ordinal) => {
-          completionToken = ordinal;
-        },
-      );
+      assertBridgeActive(input.signal, "cutter_command");
+      const descriptor = await this.#find(input.sessionId, input.signal);
+      assertBridgeActive(input.signal, "cutter_command");
+      const requestId = randomUUID();
+      const commandRequest = serializeRequest(descriptor, {
+        kind: "command",
+        request_id: requestId,
+        expected_generation: input.expectedGeneration,
+        command: input.command,
+        json: input.json,
+      });
+      await this.#recoverCompletedCommands(descriptor, input.signal);
+      await this.#retryPendingAcknowledgements(descriptor);
+      assertBridgeActive(input.signal, "cutter_command");
+      let completionToken: string | undefined;
+      let rawResponse: unknown;
+      try {
+        rawResponse = await this.#request(
+          descriptor,
+          commandRequest,
+          input.signal,
+          (ordinal) => {
+            completionToken = ordinal;
+          },
+        );
+      } catch (cause) {
+        if (
+          !(cause instanceof CutterBridgeRequestFailure) ||
+          !cause.requestSent
+        )
+          throw cause;
+        return {
+          requestId,
+          output: null,
+          currentFile: descriptor.current_file,
+          documentGeneration: input.expectedGeneration,
+          identityStatus: "partial",
+          cutterVersion: descriptor.cutter_version,
+          executionState: "unknown",
+          error: "transport-response-missing",
+          message: `${cause.message}; the command may have completed; do not retry automatically`,
+          outputTruncated: false,
+          ...(completionToken === undefined ? {} : { completionToken }),
+        };
+      }
+      const parsed = responseSchema.safeParse(rawResponse);
+      if (!parsed.success)
+        return {
+          requestId,
+          output: null,
+          currentFile: descriptor.current_file,
+          documentGeneration: input.expectedGeneration,
+          identityStatus: "partial",
+          cutterVersion: descriptor.cutter_version,
+          executionState: "unknown",
+          error: "malformed-bridge-response",
+          message:
+            "Cutter may have completed the command, but its response was invalid; do not retry automatically",
+          outputTruncated: false,
+          ...(completionToken === undefined ? {} : { completionToken }),
+        };
+      const response = parsed.data;
+      const executionState: CutterBridgeExecutionState = response.ok
+        ? response.execution_state === undefined ||
+          response.execution_state === "complete"
+          ? "complete"
+          : response.execution_state === "not_started"
+            ? "not_started"
+            : "unknown"
+        : response.execution_state === "failed"
+          ? "failed"
+          : response.execution_state === "not_started"
+            ? "not_started"
+            : "unknown";
+      if (executionState !== "unknown")
+        await this.#acknowledgeCompletion(descriptor, requestId);
+      if (
+        executionState === "not_started" &&
+        response.error === "active-document-generation-changed"
+      )
+        throw new AnalysisInputError(
+          "cutter_command",
+          {
+            diagnostics: {
+              session_id: input.sessionId,
+              expected_generation: input.expectedGeneration,
+              ...(response.document_generation === undefined
+                ? {}
+                : { observed_generation: response.document_generation }),
+              execution_state: executionState,
+            },
+          },
+          [
+            {
+              path: ["expected_generation"],
+              reason: "invalid_value",
+              message:
+                "Cutter's active document generation changed. List sessions again and select the current generation.",
+            },
+          ],
+        );
+      return {
+        requestId,
+        output: response.output ?? null,
+        currentFile:
+          response.current_file === undefined
+            ? descriptor.current_file
+            : response.current_file,
+        documentGeneration:
+          response.document_generation ?? input.expectedGeneration,
+        identityStatus: "partial",
+        cutterVersion: response.cutter_version ?? descriptor.cutter_version,
+        executionState,
+        error: response.ok ? null : (response.error ?? "cutter-command-failed"),
+        message: response.message ?? null,
+        outputTruncated: response.output_truncated ?? false,
+        ...(completionToken === undefined ? {} : { completionToken }),
+      };
     } catch (cause) {
-      if (!(cause instanceof CutterBridgeRequestFailure) || !cause.requestSent)
-        throw cause;
-      return {
-        requestId,
-        output: null,
-        currentFile: descriptor.current_file,
-        documentGeneration: input.expectedGeneration,
-        identityStatus: "partial",
-        cutterVersion: descriptor.cutter_version,
-        executionState: "unknown",
-        error: "transport-response-missing",
-        message: `${cause.message}; the command may have completed; do not retry automatically`,
-        outputTruncated: false,
-        ...(completionToken === undefined ? {} : { completionToken }),
-      };
-    }
-    const parsed = responseSchema.safeParse(rawResponse);
-    if (!parsed.success)
-      return {
-        requestId,
-        output: null,
-        currentFile: descriptor.current_file,
-        documentGeneration: input.expectedGeneration,
-        identityStatus: "partial",
-        cutterVersion: descriptor.cutter_version,
-        executionState: "unknown",
-        error: "malformed-bridge-response",
-        message:
-          "Cutter may have completed the command, but its response was invalid; do not retry automatically",
-        outputTruncated: false,
-        ...(completionToken === undefined ? {} : { completionToken }),
-      };
-    const response = parsed.data;
-    const executionState: CutterBridgeExecutionState = response.ok
-      ? response.execution_state === undefined ||
-        response.execution_state === "complete"
-        ? "complete"
-        : response.execution_state === "not_started"
-          ? "not_started"
-          : "unknown"
-      : response.execution_state === "failed"
-        ? "failed"
-        : response.execution_state === "not_started"
-          ? "not_started"
-          : "unknown";
-    if (executionState !== "unknown")
-      await this.#acknowledgeCompletion(descriptor, requestId);
-    if (response.error === "active-document-generation-changed")
-      throw new Error(
-        "Cutter's active document generation changed. List sessions again and select the current generation.",
+      // Sent command failures already became an unknown execution above.
+      // A transport failure escaping here precedes command admission.
+      if (!(cause instanceof CutterBridgeRequestFailure)) throw cause;
+      if (cause.cancellation !== undefined)
+        throw new AnalysisCancelledError("cutter_command", {
+          cause: cause.cancellation.reason,
+        });
+      throw new AnalysisCapabilityUnavailableError(
+        "cutter",
+        "cutter_command",
+        cause.message,
+        { cause },
       );
-    return {
-      requestId,
-      output: response.output ?? null,
-      currentFile:
-        response.current_file === undefined
-          ? descriptor.current_file
-          : response.current_file,
-      documentGeneration:
-        response.document_generation ?? input.expectedGeneration,
-      identityStatus: "partial",
-      cutterVersion: response.cutter_version ?? descriptor.cutter_version,
-      executionState,
-      error: response.ok ? null : (response.error ?? "cutter-command-failed"),
-      message: response.message ?? null,
-      outputTruncated: response.output_truncated ?? false,
-      ...(completionToken === undefined ? {} : { completionToken }),
-    };
+    }
   }
 
   /** Confirm completion by exact receipt or authenticated connection watermark. */
@@ -665,10 +715,13 @@ export class CutterBridgeClient {
       throw new AnalysisResourceConstraintError(
         "cutter_command",
         "transport",
-        "Cutter descriptor discovery exceeded its candidate budget; no command was sent.",
+        `Cutter descriptor discovery exceeded its candidate budget of ${String(MAX_DESCRIPTOR_CANDIDATES)} descriptors; no command was sent. This release has no runtime override.`,
         {
           max_descriptor_candidates: MAX_DESCRIPTOR_CANDIDATES,
           bridge_directory: this.#directory,
+        },
+        {
+          remediationAction: `Reduce the number of Cutter bridge descriptors in the bridge directory. This budget of ${String(MAX_DESCRIPTOR_CANDIDATES)} descriptors has no runtime override. Descriptor files above ${String(MAX_DESCRIPTOR_BYTES)} bytes are skipped, and at most ${String(DISCOVERY_CONCURRENCY)} descriptors are probed at once; those caps also have no runtime override.`,
         },
       );
     if (loaded.error !== undefined)
@@ -681,7 +734,14 @@ export class CutterBridgeClient {
       (candidate) => candidate.session_id === sessionId,
     );
     if (descriptor === undefined)
-      throw new Error("Cutter bridge session is unavailable or stale");
+      throw new AnalysisInputError("cutter_command", undefined, [
+        {
+          path: ["session_id"],
+          reason: "invalid_value",
+          message:
+            "Cutter bridge session is unavailable or stale; list sessions again and select an available session.",
+        },
+      ]);
     return descriptor;
   }
 
@@ -701,7 +761,7 @@ export class CutterBridgeClient {
         this.#loadDescriptors(signal),
       );
     } catch (cause: unknown) {
-      throw descriptorFailure(cause, operation);
+      throw discoveryFailure(cause, operation);
     }
   }
 
@@ -805,61 +865,65 @@ export class CutterBridgeClient {
         error: "bridge_directory_unavailable",
       };
     }
-    const loaded = await mapDiscovery(entries, async (entry) => {
-      assertArtifactReadActive(signal);
-      try {
-        let bytes: Buffer;
-        if (this.#platform === "win32") {
-          bytes = windowsPrivateReader!.readDescriptor(
-            this.#directory,
-            entry,
-            MAX_DESCRIPTOR_BYTES,
-          );
-        } else {
-          const boundedBytes = await withArtifactRegularFile(
-            join(this.#directory, entry),
-            this.#descriptorResources,
-            signal,
-            async (file) => {
-              const info = await file.stat();
-              if (
-                info.size > MAX_DESCRIPTOR_BYTES ||
-                info.uid !== currentUid ||
-                (info.mode & 0o077) !== 0
-              )
-                return undefined;
-              assertArtifactReadActive(signal);
-              const bytes = await readBoundedFileBytes(
-                file,
-                MAX_DESCRIPTOR_BYTES,
-              );
-              assertArtifactReadActive(signal);
-              return bytes;
-            },
-          );
-          if (boundedBytes === undefined) return undefined;
-          bytes = boundedBytes;
-        }
+    const loaded = await mapDiscovery(
+      entries,
+      async (entry) => {
         assertArtifactReadActive(signal);
-        if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
-        const parsed = descriptorSchema.safeParse(
-          JSON.parse(bytes.toString("utf8")) as unknown,
-        );
-        if (
-          !parsed.success ||
-          entry !== `cutter-${parsed.data.pid}-${parsed.data.session_id}.json`
-        )
+        try {
+          let bytes: Buffer;
+          if (this.#platform === "win32") {
+            bytes = windowsPrivateReader!.readDescriptor(
+              this.#directory,
+              entry,
+              MAX_DESCRIPTOR_BYTES,
+            );
+          } else {
+            const boundedBytes = await withArtifactRegularFile(
+              join(this.#directory, entry),
+              this.#descriptorResources,
+              signal,
+              async (file) => {
+                const info = await file.stat();
+                if (
+                  info.size > MAX_DESCRIPTOR_BYTES ||
+                  info.uid !== currentUid ||
+                  (info.mode & 0o077) !== 0
+                )
+                  return undefined;
+                assertArtifactReadActive(signal);
+                const bytes = await readBoundedFileBytes(
+                  file,
+                  MAX_DESCRIPTOR_BYTES,
+                );
+                assertArtifactReadActive(signal);
+                return bytes;
+              },
+            );
+            if (boundedBytes === undefined) return undefined;
+            bytes = boundedBytes;
+          }
+          assertArtifactReadActive(signal);
+          if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
+          const parsed = descriptorSchema.safeParse(
+            JSON.parse(bytes.toString("utf8")) as unknown,
+          );
+          if (
+            !parsed.success ||
+            entry !== `cutter-${parsed.data.pid}-${parsed.data.session_id}.json`
+          )
+            return undefined;
+          return parsed.data;
+        } catch (cause: unknown) {
+          if (
+            cause instanceof ArtifactReaderFailure &&
+            (cause.cleanup !== undefined || cause.reason === "cancelled")
+          )
+            throw cause;
           return undefined;
-        return parsed.data;
-      } catch (cause: unknown) {
-        if (
-          cause instanceof ArtifactReaderFailure &&
-          (cause.cleanup !== undefined || cause.reason === "cancelled")
-        )
-          throw cause;
-        return undefined;
-      }
-    });
+        }
+      },
+      () => assertArtifactReadActive(signal),
+    );
     assertArtifactReadActive(signal);
     return {
       descriptors: loaded.filter(
@@ -896,15 +960,24 @@ export class CutterBridgeClient {
         // Retain this request until its owned socket has actually closed.
         connection.destroy();
       };
-      const rejectRequest = (message: string): void =>
+      const rejectRequest = (
+        message: string,
+        cancellation?: { readonly reason: unknown },
+      ): void =>
         finish(() =>
-          reject(new CutterBridgeRequestFailure(message, requestSent)),
+          reject(
+            new CutterBridgeRequestFailure(message, requestSent, cancellation),
+          ),
         );
       const timer = setTimeout(() => {
-        rejectRequest("Cutter bridge request timed out");
-      }, 25_000);
+        rejectRequest(
+          `Cutter bridge request timed out after ${String(REQUEST_TIMEOUT_MS)} ms (deadlineExpired). This release has no runtime override`,
+        );
+      }, REQUEST_TIMEOUT_MS);
       const onAbort = (): void => {
-        rejectRequest("Cutter bridge request was cancelled");
+        rejectRequest("Cutter bridge request was cancelled", {
+          reason: signal?.reason,
+        });
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted) onAbort();
@@ -1015,13 +1088,13 @@ class CutterDiscoveryFailure extends Error {
   }
 }
 
-const descriptorFailure = (
+const discoveryFailure = (
   cause: unknown,
   operation: string,
 ): AnalysisError | unknown => {
   if (cause instanceof CutterDiscoveryFailure) {
     const failures = cause.failures.map((failure) => {
-      const parsed = descriptorFailure(failure, operation);
+      const parsed = discoveryFailure(failure, operation);
       return parsed instanceof AnalysisError
         ? parsed
         : new ProviderAdapterError("cutter", operation, { cause: parsed });
@@ -1050,7 +1123,7 @@ const descriptorFailure = (
         : undefined;
     const primary =
       outcome?.kind === "failed"
-        ? descriptorFailure(outcome.cause, operation)
+        ? discoveryFailure(outcome.cause, operation)
         : outcome?.kind === "completed" &&
             cause instanceof ArtifactFileCleanupFailure &&
             cause.fileCleanupFailure.completionCancellation !== undefined

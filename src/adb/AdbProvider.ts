@@ -41,7 +41,6 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import { adbResultSchemas } from "../domain/adb/adbDeviceAnalysis.js";
 import {
-  AnalysisCapabilityUnavailableError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -73,7 +72,10 @@ import {
   type PrivateRuntimeRootOptions,
 } from "../process/PrivateRuntimeRoot.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../process/RuntimeControlUnavailableError.js";
 import {
   adbArguments,
   runAdb,
@@ -117,6 +119,7 @@ import {
   parseResolveActivityOutput,
   parseServiceListOutput,
   parseSettingsGetOutput,
+  parseSha256sumOutput,
   parseWindowFocusOutput,
   parseWmDensityOutput,
   parseWmSizeOutput,
@@ -271,6 +274,21 @@ const adbDigestError = (
 };
 
 type AdbFileDigest = Awaited<ReturnType<typeof hashStableFile>>;
+
+/**
+ * A pushed file's device-side digest together with its source, so a receipt
+ * cannot name `sha256sum` as the source of a digest that was never parsed.
+ */
+type AdbDeviceDigest =
+  | {
+      readonly device_sha256: string;
+      readonly device_digest_source: "device_sha256sum";
+    }
+  | {
+      readonly device_sha256: null;
+      readonly device_digest_source: "unavailable";
+      readonly reason: string;
+    };
 
 const partialObservationWithDigest = (
   observation:
@@ -1011,12 +1029,11 @@ export class AdbProvider {
       return err(
         cause instanceof AnalysisError
           ? cause
-          : cause instanceof PrivateRuntimeRootUnavailableError
-            ? new AnalysisCapabilityUnavailableError(
+          : cause instanceof RuntimeControlUnavailableError
+            ? runtimeControlCapabilityError(
                 ADB_PROVIDER_IDENTITY.id,
                 operation,
-                cause.message,
-                { cause, retryable: cause.retryable },
+                cause,
               )
             : new AnalysisOutputError(
                 operation,
@@ -2436,9 +2453,13 @@ export class AdbProvider {
         );
         if (!pushed.ok) return pushed;
         const receipt = (
-          deviceSha256: string | null,
-          source: "device_sha256sum" | "unavailable",
-          extra: readonly string[] = [],
+          deviceDigest: AdbDeviceDigest,
+          rawResult?: {
+            readonly device_sha256sum: {
+              readonly stdout: string;
+              readonly stderr: string;
+            };
+          },
         ) =>
           createAnalysisExecution(
             {
@@ -2448,15 +2469,18 @@ export class AdbProvider {
               device_path: input.device_path,
               bytes: digest.bytes,
               sha256: digest.sha256,
-              device_sha256: deviceSha256,
+              device_sha256: deviceDigest.device_sha256,
               overwritten: deviceExists,
-              device_digest_source: source,
+              device_digest_source: deviceDigest.device_digest_source,
             },
             provider,
             {
+              ...(rawResult === undefined ? {} : { rawResult }),
               limitations: [
                 "Push writes a private snapshot of the caller's file to the device",
-                ...extra,
+                ...(deviceDigest.device_digest_source === "unavailable"
+                  ? [deviceDigest.reason]
+                  : []),
               ],
             },
           );
@@ -2471,11 +2495,13 @@ export class AdbProvider {
         if (!deviceDigest.ok) {
           const cancelled =
             deviceDigest.error instanceof AnalysisCancelledError;
-          const completed = receipt(null, "unavailable", [
-            cancelled
+          const completed = receipt({
+            device_sha256: null,
+            device_digest_source: "unavailable",
+            reason: cancelled
               ? "The device-side digest check was cancelled after push completed"
               : "The device did not answer sha256sum, so the transfer is not device-side verified",
-          ]);
+          });
           if (cancelled)
             deviceDigest.error.retainPartialObservation(
               createEvidence(
@@ -2494,11 +2520,28 @@ export class AdbProvider {
             );
           return cancelled ? err(deviceDigest.error) : ok(completed);
         }
-        const digestMatch = /^([a-f0-9]{64})\s/u.exec(
-          deviceDigest.value.stdout,
-        );
-        const completed = receipt(digestMatch?.[1] ?? null, "device_sha256sum");
-        if (digestMatch !== null && digestMatch[1] !== digest.sha256)
+        const parsedDigest = parseSha256sumOutput(deviceDigest.value.stdout);
+        const completed =
+          parsedDigest === null
+            ? receipt(
+                {
+                  device_sha256: null,
+                  device_digest_source: "unavailable",
+                  reason:
+                    "The device's sha256sum output contained no recognizable digest, so the transfer is not device-side verified",
+                },
+                {
+                  device_sha256sum: {
+                    stdout: deviceDigest.value.stdout,
+                    stderr: deviceDigest.value.stderr,
+                  },
+                },
+              )
+            : receipt({
+                device_sha256: parsedDigest,
+                device_digest_source: "device_sha256sum",
+              });
+        if (parsedDigest !== null && parsedDigest !== digest.sha256)
           return err(
             new AnalysisArtifactChangedError(
               operation,
@@ -3174,10 +3217,12 @@ export class AdbProvider {
       await removeOwnedOutputDirectory(stagingDirectory, stagingIdentity);
     } catch (cause) {
       const primary = collectedResult.ok
-        ? new AnalysisOutputError(
-            operation,
-            "The archive was published, but its staging directory could not be removed",
-          )
+        ? signal?.aborted === true
+          ? new AnalysisCancelledError(operation, { cause: signal.reason })
+          : new AnalysisOutputError(
+              operation,
+              "The archive was published, but its staging directory could not be removed",
+            )
         : collectedResult.error;
       if (retainedObservation !== undefined)
         primary.retainPartialObservation(retainedObservation);
