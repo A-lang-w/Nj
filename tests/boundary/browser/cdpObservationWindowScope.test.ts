@@ -345,12 +345,24 @@ it("represents absent timeline timestamps as unknown and preserves an observed z
             navigationType: "historyApi",
           },
         },
+        // Network.loadingFailed has no frame; its Document request ties it
+        // to the main frame.
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "actual-zero-clock-value",
+            timestamp: 0,
+            type: "Document",
+            frameId: "frame-main",
+            request: { url: `${origin}/actual-zero-clock-value` },
+          },
+        },
         {
           method: "Network.loadingFailed",
           sessionId: command.sessionId,
           params: {
             requestId: "actual-zero-clock-value",
-            frameId: "frame-main",
             errorText: "net::ERR_CONNECTION_REFUSED",
             timestamp: 0,
           },
