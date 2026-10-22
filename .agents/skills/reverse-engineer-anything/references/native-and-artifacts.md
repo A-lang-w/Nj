@@ -312,8 +312,13 @@ string before parsing it, so this ceiling does not keep the paged wire frame
 and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
 and start Hopper or Cutter from that same environment. An out-of-band bridge
 without the setting stays at 16777216 bytes. The client reports that mismatch
-during discovery and does not send the command. A hello that never sends its
-authenticated frame does not hold the accept loop.
+during discovery and does not send the command. Discovery fails if any
+advertised ceiling differs, even when another live session matches. A hello
+that never sends its authenticated frame does not hold the accept loop.
+At most 8 connection threads run; a further accept is closed, and a failure
+to start a thread does not stop the listener. `completed_connection` is the
+longest prefix of connections that have terminated. Dense scalar replies are
+encoded in bounded batches.
 The 25000 ms Cutter request deadline and the 256-candidate discovery budget
 still have no runtime override.
 

@@ -62,6 +62,16 @@ _AUTHENTICATED_WRITE_BUFFER_BYTES = 64 * 1024
 # One character expands to at most six JSON bytes (\u00XX) before the outer
 # string escape, so a piece stays far below the frame ceiling.
 _JSON_CHUNK_CHARS = 64 * 1024
+# Fixed admission cap. It does not follow REA_BRIDGE_MAX_REQUEST_BYTES.
+# A further accept is closed. Starting a worker must not stop the listener.
+MAX_CONNECTION_WORKERS = 8
+
+
+def _close_socket(connection: socket.socket) -> None:
+    try:
+        connection.close()
+    except OSError:
+        pass
 
 
 def _bridge_max_request_bytes_constraint():
@@ -615,11 +625,15 @@ class _BridgeServer(threading.Thread):
         self.connection_ordinal = 0
         # The client proof is inside the authenticated frame, so that read
         # cannot start after proof. It runs off the accept loop. One
-        # authenticated command still runs at a time.
+        # authenticated command still runs at a time. completed_connection
+        # is the longest prefix of these ordinals whose handlers have
+        # terminated, not "this status ordinal minus one".
         self._command_lock = threading.Lock()
         self._connections_lock = threading.Lock()
         self._connections: set[socket.socket] = set()
         self._workers: list[threading.Thread] = []
+        self._finished_through = 0
+        self._finished_ordinals: set[int] = set()
         self.directory = _bridge_directory()
         self.descriptor = self.directory / f"cutter-{os.getpid()}-{self.session_id}.json"
 
@@ -682,21 +696,34 @@ class _BridgeServer(threading.Thread):
                 continue
             except OSError:
                 break
-            self.connection_ordinal += 1
-            connection_ordinal = self.connection_ordinal
             with self._connections_lock:
-                self._connections.add(connection)
                 self._workers = [
                     worker for worker in self._workers if worker.is_alive()
                 ]
+                at_capacity = len(self._workers) >= MAX_CONNECTION_WORKERS
+            if at_capacity:
+                _close_socket(connection)
+                continue
+            self.connection_ordinal += 1
+            connection_ordinal = self.connection_ordinal
             worker = threading.Thread(
                 target=self._serve_connection,
                 args=(connection, connection_ordinal),
                 name="rea-cutter-bridge-connection",
                 daemon=True,
             )
-            self._workers.append(worker)
-            worker.start()
+            with self._connections_lock:
+                self._connections.add(connection)
+                self._workers.append(worker)
+            try:
+                worker.start()
+            except RuntimeError:
+                with self._connections_lock:
+                    self._connections.discard(connection)
+                    if worker in self._workers:
+                        self._workers.remove(worker)
+                self._note_connection_finished(connection_ordinal)
+                _close_socket(connection)
         with self._connections_lock:
             workers = list(self._workers)
         for worker in workers:
@@ -771,7 +798,7 @@ class _BridgeServer(threading.Thread):
                             }, client_nonce, server_nonce)
                         else:
                             if request.get("kind") == "status" and reply.get("ok") is True:
-                                reply["completed_connection"] = f"{connection_ordinal - 1:016x}"
+                                reply["completed_connection"] = self._completion_watermark()
                             self._send_authenticated(connection, reply, client_nonce, server_nonce)
                 except socket.timeout:
                     if authenticated:
@@ -784,8 +811,28 @@ class _BridgeServer(threading.Thread):
                 except Exception as error:
                     self._send(connection, {"ok": False, "error": str(error)})
         finally:
+            self._note_connection_finished(connection_ordinal)
             with self._connections_lock:
                 self._connections.discard(connection)
+
+    def _note_connection_finished(self, ordinal: int) -> None:
+        """Record one accepted connection as terminated.
+
+        The watermark is the longest prefix 1..W that has terminated. A later
+        status cannot report an earlier connection that is still reading or
+        still waiting to run.
+        """
+        with self._connections_lock:
+            if ordinal <= self._finished_through or ordinal in self._finished_ordinals:
+                return
+            self._finished_ordinals.add(ordinal)
+            while self._finished_through + 1 in self._finished_ordinals:
+                self._finished_through += 1
+                self._finished_ordinals.discard(self._finished_through)
+
+    def _completion_watermark(self) -> str:
+        with self._connections_lock:
+            return f"{self._finished_through:016x}"
 
     @staticmethod
     def _receive_frame(
@@ -1120,16 +1167,76 @@ def _response_fragments(value: Any):
         yield "}"
         return
     if isinstance(value, (list, tuple)):
-        yield "["
-        first = True
-        for item in value:
-            if not first:
-                yield ","
-            first = False
-            yield from _response_fragments(item)
-        yield "]"
+        yield from _list_fragments(value)
         return
-    yield json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    token = _scalar_token(value)
+    if token is None:
+        raise TypeError("response value is not JSON")
+    yield token
+
+
+def _scalar_token(value: Any) -> str | None:
+    """Compact JSON for one scalar. None means the value needs structure."""
+    if type(value) is int:
+        return str(value)
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, float):
+        return json.dumps(value, separators=(",", ":"))
+    return None
+
+
+def _list_fragments(value: list[Any] | tuple[Any, ...]):
+    """Encode a list, batching scalars into bounded pieces.
+
+    One ``json.dumps`` per number makes a dense array miss the client
+    deadline. A batch is at most ``_JSON_CHUNK_CHARS`` of compact JSON.
+    """
+    yield "["
+    first = True
+    batch: list[str] = []
+    batch_len = 0
+
+    def flush_batch() -> str | None:
+        nonlocal first, batch, batch_len
+        if not batch:
+            return None
+        piece = ",".join(batch)
+        batch = []
+        batch_len = 0
+        if first:
+            first = False
+            return piece
+        return "," + piece
+
+    for item in value:
+        token = _scalar_token(item)
+        if token is None:
+            emitted = flush_batch()
+            if emitted is not None:
+                yield emitted
+            if first:
+                first = False
+            else:
+                yield ","
+            yield from _response_fragments(item)
+            continue
+        extra = len(token) if not batch else len(token) + 1
+        if batch and batch_len + extra > _JSON_CHUNK_CHARS:
+            emitted = flush_batch()
+            if emitted is not None:
+                yield emitted
+            extra = len(token)
+        batch.append(token)
+        batch_len += extra
+    emitted = flush_batch()
+    if emitted is not None:
+        yield emitted
+    yield "]"
 
 
 def _escape_json_fragment(fragment: str) -> bytes:

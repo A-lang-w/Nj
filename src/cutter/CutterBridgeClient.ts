@@ -393,13 +393,13 @@ export class CutterBridgeClient {
     const sessions = descriptors.filter(
       (value): value is CutterBridgeSession => value !== undefined,
     );
-    if (sessions.length === 0 && mismatches.length > 0)
+    if (mismatches.length > 0)
       throw bridgeRequestLimitMismatchError(
         "list_cutter_sessions",
         this.#maxRequestBytes,
         mismatches[0] ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
         "Cutter",
-        "No status request was sent.",
+        "No status request was sent to the mismatched session.",
       );
     return {
       sessions,

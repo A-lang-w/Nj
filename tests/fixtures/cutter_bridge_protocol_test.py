@@ -290,6 +290,23 @@ class ResponseEncodingTest(unittest.TestCase):
             json.dumps(value, ensure_ascii=False, separators=(",", ":")),
         )
 
+    def test_scalar_lists_are_batched_and_match_json(self):
+        mixed = [0, True, False, None, -2, 1.5, {"n": 1}, "ab", [3, 4]]
+        self.assertEqual(
+            "".join(bridge._response_fragments(mixed)),
+            json.dumps(mixed, ensure_ascii=False, separators=(",", ":")),
+        )
+        zeroes = [0] * 40000
+        pieces = list(bridge._response_fragments(zeroes))
+        self.assertEqual(
+            "".join(pieces),
+            json.dumps(zeroes, separators=(",", ":")),
+        )
+        self.assertLess(len(pieces), 8)
+        self.assertGreater(len(pieces), 2)
+        for piece in pieces:
+            self.assertLessEqual(len(piece), bridge._JSON_CHUNK_CHARS + 1)
+
     def test_unencodable_output_preserves_authenticated_completion(self):
         for index, surrogate in ((0, "\ud800"), (5 * 1024 * 1024 - 1, "\udfff")):
             with self.subTest(index=index):
@@ -420,6 +437,95 @@ class ProtocolProducerTest(unittest.TestCase):
             self.assertEqual(response["session_id"], self.server.session_id)
         finally:
             stalled.close()
+
+    def test_status_does_not_complete_an_earlier_connection_still_reading(self):
+        earlier = socket.create_connection(("127.0.0.1", self.server.port), timeout=2)
+        try:
+            _send(earlier, {"kind": "rea-auth-v2", "nonce": "c" * 64})
+            challenge = _frame(earlier)
+            earlier_ordinal = challenge["nonce"][:16]
+            self.assertEqual(earlier_ordinal, "0000000000000001")
+            response, _nonce = self.exchange({
+                "kind": "status",
+                "session_id": self.server.session_id,
+            })
+            self.assertEqual(response["completed_connection"], "0" * 16)
+        finally:
+            earlier.close()
+        deadline = time.monotonic() + 2
+        latest = "0" * 16
+        while time.monotonic() < deadline:
+            response, _nonce = self.exchange({
+                "kind": "status",
+                "session_id": self.server.session_id,
+            })
+            latest = response["completed_connection"]
+            if latest >= earlier_ordinal:
+                break
+            time.sleep(0.02)
+        self.assertGreaterEqual(latest, earlier_ordinal)
+
+    def test_worker_admission_is_bounded_and_keeps_listening(self):
+        previous = bridge.MAX_CONNECTION_WORKERS
+        bridge.MAX_CONNECTION_WORKERS = 1
+        stalled = socket.create_connection(("127.0.0.1", self.server.port), timeout=2)
+        try:
+            _send(stalled, {"kind": "rea-auth-v2", "nonce": "d" * 64})
+            self.assertEqual(_frame(stalled)["session_id"], self.server.session_id)
+            rejected = socket.create_connection(("127.0.0.1", self.server.port), timeout=2)
+            try:
+                rejected.settimeout(1)
+                try:
+                    observed = rejected.recv(16)
+                except OSError:
+                    observed = b""
+                self.assertEqual(observed, b"")
+            finally:
+                rejected.close()
+        finally:
+            stalled.close()
+            bridge.MAX_CONNECTION_WORKERS = previous
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and any(
+            worker.is_alive() for worker in self.server._workers
+        ):
+            time.sleep(0.01)
+        response, _nonce = self.exchange({
+            "kind": "status",
+            "session_id": self.server.session_id,
+        })
+        self.assertTrue(response["ok"])
+        self.assertTrue(self.server.descriptor.exists())
+
+    def test_failed_worker_start_does_not_stop_the_listener(self):
+        calls = {"n": 0}
+        original = threading.Thread.start
+
+        def start(thread):
+            if thread.name == "rea-cutter-bridge-connection":
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise RuntimeError("cannot start new thread")
+            return original(thread)
+
+        with patch.object(threading.Thread, "start", start):
+            rejected = socket.create_connection(("127.0.0.1", self.server.port), timeout=2)
+            try:
+                rejected.settimeout(1)
+                try:
+                    observed = rejected.recv(16)
+                except OSError:
+                    observed = b""
+                self.assertEqual(observed, b"")
+            finally:
+                rejected.close()
+        self.assertTrue(self.server.descriptor.exists())
+        response, _nonce = self.exchange({
+            "kind": "status",
+            "session_id": self.server.session_id,
+        })
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["completed_connection"], "0000000000000001")
 
     def test_rejects_legacy_peers_before_ui_dispatch(self):
         with socket.create_connection(("127.0.0.1", self.server.port), timeout=2) as connection:

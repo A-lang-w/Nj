@@ -73,9 +73,43 @@ it("reports a Cutter ceiling mismatch during discovery before opening a socket",
     expect(error.reason).toContain("source setting");
     expect(error.reason).toContain("7464");
     expect(error.reason).toContain("536870887");
-    expect(error.reason).toContain("No status request was sent.");
+    expect(error.reason).toContain(
+      "No status request was sent to the mismatched session.",
+    );
     expect(error.remediationAction).toContain(
       "Set REA_BRIDGE_MAX_REQUEST_BYTES",
+    );
+    return true;
+  });
+});
+
+it("fails discovery when one live session matches and another ceiling does not", async () => {
+  const directory = await privateDirectory();
+  const server = authenticatedServer(TOKEN, SESSION, () => undefined);
+  const port = await listen(server);
+  const other = "00000000-0000-4000-8000-000000000002";
+  await writeDescriptor(directory, SESSION, port, TOKEN, {
+    maxRequestBytes: 8192,
+  });
+  await writeDescriptor(directory, other, 1, TOKEN);
+  const client = clientFor(directory, "8192");
+  await expect(client.listSessions()).rejects.toSatisfy((error: unknown) => {
+    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(error instanceof AnalysisResourceConstraintError)) return false;
+    expect(error.operation).toBe("list_cutter_sessions");
+    expect(error.resource).toBe("transport");
+    expect(error.reportedLimits).toMatchObject({
+      bridge_max_request_bytes: 16_777_216,
+      client_max_request_bytes: 8192,
+    });
+    expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+    expect(error.reason).toContain("8192");
+    expect(error.reason).toContain("16777216");
+    expect(error.reason).toContain("source setting");
+    expect(error.reason).toContain("7464");
+    expect(error.reason).toContain("536870887");
+    expect(error.reason).toContain(
+      "No status request was sent to the mismatched session.",
     );
     return true;
   });
