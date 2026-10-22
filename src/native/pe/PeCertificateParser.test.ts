@@ -281,7 +281,7 @@ it("decodes BMPString names once and shares the decoded-byte budget", () => {
     namedCertificate(directoryName(bmp("REA")), directoryName(bmp("Fixture"))),
   );
   expect(parseCertificate(certificate).subject.text).toBe("commonName=Fixture");
-  const half = MAX_DECODED_NAME_BYTES / 2;
+  const half = Math.floor((MAX_DECODED_NAME_BYTES - (2 + 13 * 6 * 2)) / 4) * 2;
   const within = readDer(
     namedCertificate(
       directoryName(der(0x1e, Buffer.alloc(half))),
@@ -293,7 +293,7 @@ it("decodes BMPString names once and shares the decoded-byte budget", () => {
   );
   const over = readDer(
     namedCertificate(
-      directoryName(der(0x1e, Buffer.alloc(half + 2))),
+      directoryName(der(0x1e, Buffer.alloc(half + 4))),
       directoryName(der(0x1e, Buffer.alloc(half))),
     ),
   );

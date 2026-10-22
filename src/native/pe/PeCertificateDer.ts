@@ -124,7 +124,7 @@ interface DecodedNameBudget {
 const chargeDecodedName = (budget: DecodedNameBudget, bytes: number): void => {
   if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > budget.remaining)
     fail(
-      `Certificate name text exceeds the ${String(MAX_DECODED_NAME_BYTES)}-byte decoded budget.`,
+      `Certificate text exceeds the ${String(MAX_DECODED_NAME_BYTES)}-byte decoded budget.`,
     );
   budget.remaining -= bytes;
 };
@@ -222,9 +222,10 @@ const decodeDirectoryString = (
   }
 };
 
-const integerHex = (content: Buffer): string => {
+const integerHex = (content: Buffer, budget: DecodedNameBudget): string => {
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
+  chargeDecodedName(budget, (content.length - start) * 2);
   return content.subarray(start).toString("hex");
 };
 
@@ -284,9 +285,11 @@ const decodeName = (
   return { text, attributes };
 };
 
-const validityTime = (node: DerNode): string => {
+const validityTime = (node: DerNode, budget: DecodedNameBudget): string => {
   if (node.tag !== 0x17 && node.tag !== 0x18)
     return fail("Validity instant is not UTCTime or GeneralizedTime.");
+  // A zero byte becomes "\u0000" (six characters) in the hashed evidence JSON.
+  chargeDecodedName(budget, node.content.length * 6);
   return node.content.toString("utf8");
 };
 
@@ -336,11 +339,11 @@ export const parseCertificate = (
   return {
     start: node.start,
     end: node.end,
-    serial_hex: integerHex(serial.content),
+    serial_hex: integerHex(serial.content, names),
     issuer: decodeName(issuer, names),
     subject: decodeName(subject, names),
-    not_before: validityTime(notBefore),
-    not_after: validityTime(notAfter),
+    not_before: validityTime(notBefore, names),
+    not_after: validityTime(notAfter, names),
     signature_algorithm_oid: algorithmOid(signatureAlgorithm),
   };
 };
@@ -373,7 +376,7 @@ const signerIdentifier = (
       return fail("SignerInfo issuerAndSerialNumber is truncated.");
     return {
       issuer: decodeName(name, names),
-      serial_hex: integerHex(serial.content),
+      serial_hex: integerHex(serial.content, names),
     };
   }
   if (sid.tag === 0x80) {
