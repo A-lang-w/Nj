@@ -1,4 +1,8 @@
 import {
+  parseAnalysisViewResult,
+  analysisViewResultInputError,
+} from "./analysisViewParent.js";
+import {
   sourceToBundleViewRequestSchema,
   sourceToBundleViewItemsSchema,
   sourceToBundleViewContextSchema,
@@ -115,7 +119,6 @@ import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type JavaScriptApplicationAnalysisResult,
 } from "../javascript/javascriptApplicationAnalysis.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { projectBinaryLayoutView } from "./binaryLayoutView.js";
 import { projectJavaScriptApplicationView } from "./javascriptApplicationView.js";
 import {
@@ -226,7 +229,7 @@ const facetViewSchema = z.strictObject({
   facet: z.enum(["mitigations", "linkage"]),
 });
 const indexSelectorSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
 });
 const nameSelectorSchema = z.strictObject({ name: z.string() });
 const pathSelectorSchema = z.strictObject({
@@ -264,8 +267,8 @@ const itemViewSchema = z.discriminatedUnion("collection", [
 const pageViewSchema = z.strictObject({
   kind: z.literal("page"),
   collection: z.enum(["sections", "symbols", "modules"]),
-  offset: z.number().int().nonnegative(),
-  limit: z.number().int().positive(),
+  offset: z.int().nonnegative(),
+  limit: z.int().positive(),
 });
 
 /** Bounded native function facets of already authenticated analyze_function Evidence. */
@@ -294,8 +297,8 @@ const nativeViewSchema = z.strictObject({
     "value_flow_parameters",
     "value_flow_parameter_uses",
   ]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 /** Caller-selected projection of already completed analysis Evidence. */
@@ -367,9 +370,9 @@ export const inspectAnalysisViewInputSchema = z.strictObject({
 
 const coverageSchema = z.strictObject({
   status: z.enum(["complete-within-view", "page", "empty"]),
-  examined: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative(),
-  next_offset: z.number().int().nonnegative().nullable(),
+  examined: z.int().nonnegative(),
+  total: z.int().nonnegative(),
+  next_offset: z.int().nonnegative().nullable(),
   exhausted: z.boolean(),
 });
 
@@ -393,12 +396,12 @@ const layoutSummarySchema = z.strictObject({
     execution_status: z.literal("unknown"),
   }),
   counts: z.strictObject({
-    sections: z.number().int().nonnegative(),
-    segments: z.number().int().nonnegative(),
-    symbols: z.number().int().nonnegative(),
-    relocations: z.number().int().nonnegative(),
+    sections: z.int().nonnegative(),
+    segments: z.int().nonnegative(),
+    symbols: z.int().nonnegative(),
+    relocations: z.int().nonnegative(),
   }),
-  limitation_count: z.number().int().nonnegative(),
+  limitation_count: z.int().nonnegative(),
 });
 
 const javascriptSummarySchema = z.strictObject({
@@ -409,7 +412,7 @@ const javascriptSummarySchema = z.strictObject({
   statistics: jsonObjectSchema,
   electron: jsonObjectSchema,
   coverage: jsonObjectSchema,
-  limitation_count: z.number().int().nonnegative(),
+  limitation_count: z.int().nonnegative(),
 });
 
 const viewResultBase = {
@@ -983,17 +986,7 @@ const parseJavaScriptParent = (
     return ok(step.value);
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
-    return err(
-      analysisInputErrorFromIssues(
-        INSPECT_ANALYSIS_VIEW_OPERATION,
-        cause.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: input } },
-        { cause },
-      ),
-    );
+    return err(analysisViewResultInputError(input, cause));
   }
 };
 
@@ -1149,20 +1142,9 @@ export const projectAnalysisView = (
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "analyze_function") {
-    const native = functionDossierSchema.safeParse(parent.normalizedResult);
-    if (!native.success)
-      return err(
-        analysisInputErrorFromIssues(
-          INSPECT_ANALYSIS_VIEW_OPERATION,
-          native.error.issues.map((issue) => ({
-            ...issue,
-            path: ["source", "normalized_result", ...issue.path],
-          })),
-          { source: { normalized_result: parent.normalizedResult } },
-          { cause: native.error },
-        ),
-      );
-    const projected = projectNativeFunctionView(parent, native.data, view);
+    const native = parseAnalysisViewResult(functionDossierSchema, parent);
+    if (!native.ok) return native;
+    const projected = projectNativeFunctionView(parent, native.value, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   const project = retainedViewProjectors.get(parent.operation);
