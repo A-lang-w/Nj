@@ -518,19 +518,27 @@ class TimelineCapture {
 
   #loadingFailed(params: UnknownRecord, bufferedBeforeArm: boolean): void {
     const requestId = cdpStringValue(params.requestId);
-    if (requestId === undefined) return;
-    const candidate = this.#documentCandidates.get(requestId);
-    if (candidate === undefined) return;
-    this.#documentCandidates.delete(requestId);
+    const candidate =
+      requestId === undefined
+        ? undefined
+        : this.#documentCandidates.get(requestId);
+    if (requestId !== undefined) this.#documentCandidates.delete(requestId);
     // The failure's resource type decides; a request that omitted its type is
     // not proof of a document.
     const failureType = cdpStringValue(params.type);
     if (failureType !== undefined && failureType !== "Document") return;
+    // An untracked request was not a possible main-frame document. Without a
+    // request ID the failure cannot be joined to its frame at all.
+    if (requestId !== undefined && candidate === undefined) return;
     const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
     if (!eventTime.keep) return;
     // Only a failure inside the window can leave the timeline incomplete.
-    const document = failureType !== undefined || candidate.declaredDocument;
-    if (!document || !candidate.mainFrame) {
+    if (
+      requestId === undefined ||
+      candidate === undefined ||
+      !(failureType !== undefined || candidate.declaredDocument) ||
+      !candidate.mainFrame
+    ) {
       this.completeness.exclude("timeline", "invalid_protocol_value");
       return;
     }

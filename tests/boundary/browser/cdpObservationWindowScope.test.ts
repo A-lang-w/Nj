@@ -548,6 +548,44 @@ it("reports a document failure whose request omitted its frame as unknown covera
   ).toEqual([expect.objectContaining({ count: 1 })]);
 });
 
+it("reports a possible document failure without a request ID as unknown coverage", async () => {
+  const failureWithoutRequestId = (
+    command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+    type: string,
+  ) => ({
+    method: "Network.loadingFailed",
+    sessionId: command.sessionId,
+    params: {
+      timestamp: 22,
+      type,
+      errorText: "net::ERR_CONNECTION_REFUSED",
+    },
+  });
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        failureWithoutRequestId(command, "Image"),
+        failureWithoutRequestId(command, "Document"),
+      ];
+    },
+  });
+
+  // The image is filtered by its own type; the document cannot be joined to a
+  // frame, so its coverage is reported as unknown.
+  expect(
+    observation.timeline.filter((event) => event.type === "load_failed"),
+  ).toEqual([]);
+  expect(
+    observation.completeness.excluded.filter(
+      (exclusion) =>
+        exclusion.section === "timeline" &&
+        exclusion.reason === "invalid_protocol_value",
+    ),
+  ).toEqual([expect.objectContaining({ count: 1 })]);
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
