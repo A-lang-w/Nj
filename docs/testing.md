@@ -26,6 +26,14 @@ behavior, and complete CI evidence before merging.
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
 
+The general source suite above runs on Linux in CI, and Windows CI runs a
+curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).
+A Windows source checkout can fail source tests for reasons unrelated to the
+change, such as POSIX fixture paths, `#!/bin/sh` tool stubs, or POSIX rename
+semantics. Compare failures against the base revision, or run the suite on
+Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
+Windows source checkouts.
+
 For example:
 
 ```bash
@@ -257,6 +265,13 @@ cases. Share setup without hiding inputs or expected evidence. For successful
 `Result` values, throw the typed error before asserting the value; a preceding
 `.ok` assertion adds no coverage. Protocol fixtures must reject unmodeled
 commands and preserve actual producer reply shapes.
+
+Packed bridge validation uses Python's standard-library AST and tar readers
+with `-I -S`: caller-local modules, `PYTHONPATH`, and site startup hooks must
+not replace those readers or execute during validation. Controlled `ast.py`
+and `sitecustomize.py` fixtures must leave their markers absent and still
+reject malformed packed Python with `SyntaxError`. This checks static package
+verification, not real Hopper or Ghidra behavior.
 
 Stateless source-analysis matrices may share a file-owned stdio MCP connection
 and retain representative compiled CLI parity checks. Every distinct source
@@ -707,13 +722,18 @@ miss. Native
 artifacts, dependency installs, package archives, and runtime verification remain
 host-local. Keep platform-dependent outputs out of this shared cache.
 
-The Windows native verifier's private-runtime ACL observer reads SID rules once
-for both trustee validation and counting. It deliberately rejects the convenience
-`Access` property, which resolves account names. Its `private-runtime-acl` stderr
-markers report completed phases and elapsed time; inspect these on a timeout
-before attributing it to startup, ACL reads, or identity lookup. The original
-15-second deadline and all ownership, DACL, and readonly assertions remain in
-force. A passing retry alone does not explain a previous timeout.
+The Windows native verifier's private-runtime ACL observer reads the owner and
+access rules only in SID form, checks that every identity it compares is a
+`SecurityIdentifier`, and never uses `Get-Acl` or the convenience `Access`
+property, which resolves account names. Its Windows PowerShell observers call
+.NET members directly and build their JSON without cmdlets, pipelines, module
+autoloading, or type-table updates. The `private-runtime-acl` stderr markers
+report the powershell.exe process uptime and each completed phase; inspect them
+on a timeout before attributing it to startup, ACL reads, or identity lookup.
+The 60-second observer deadline bounds a hung observer while covering a cold
+powershell.exe start on a starved hosted runner. All ownership, DACL, and
+readonly assertions remain in force. A passing retry alone does not explain a
+previous timeout.
 
 Record cold and warm preparation separately from fresh test execution when
 benchmarking the optional `npm run check:pr` gate. Compare multiple runs on the
@@ -1243,7 +1263,9 @@ host behavior or native process-supervision controls.
 real `.nib` with Xcode `ibtool`, wraps it in a temporary app bundle, and runs
 the compiled CLI and stdio MCP server with production providers. It compares
 their decoded results and checks the view hierarchy, outlet, action, evidence coverage, and truncation
-status. Storyboard compilation additionally requires an installed iOS platform.
+status. It also recompiles the XIB with toggled control booleans and requires
+both decodes to match `ibtool --export` for each source. Storyboard compilation
+additionally requires an installed iOS platform.
 
 Keep the provider-specific acceptance path independent from optional
 cross-compilers. Cross-format failures belong to the cross-format lane and must
@@ -1479,14 +1501,19 @@ fallback weight for new files, rather than dividing only by file count.
 Each file keeps its full duration on one worker. Extra workers overlap other
 files in the same sequence group, and `process-boundary` runs after that
 group. History published before the competing-loader split still names only
-`javascriptLiteralPercentPaths.test.ts`. Until that artifact records one of
-the three new files, the sequencer assigns that recorded duration by the
-pre-split case counts: 54/192 to the remaining file and 46/192 to each new
-file. Every discovered file still belongs to exactly one shard; worker limits
-and project ordering remain unchanged. Fast qualification keeps eight built
-shards without coverage. The merge job rejects successful reports with missing,
-unexpected, or duplicate portable files. Coverage instrumentation and aggregate
-thresholds remain enforced in full qualification.
+`javascriptLiteralPercentPaths.test.ts`. Until an artifact records
+`javascriptLiteralLoaderOwnership.test.ts`, the sequencer assigns that
+recorded duration by the pre-split case counts: 54/192 stays with the
+percent-path file and 138/192 goes to the consolidated loader file. History
+that names the retired Early, Middle, and Late shards sums those durations
+onto the consolidated file instead, and scales a partial set as three equal
+shares. That weight is the old dual-surface cost. The demoted file runs every
+loader once through the shared stdio MCP session, so the first schedule
+overestimates it. Every discovered file still belongs to exactly one shard;
+worker limits and project ordering remain unchanged. Fast qualification keeps
+eight built shards without coverage. The merge job rejects successful reports
+with missing, unexpected, or duplicate portable files. Coverage instrumentation
+and aggregate thresholds remain enforced in full qualification.
 Missing or unusable history falls back to Vitest's default assignment. Only
 timing data is reused; live provider results are never cached. Turbo outputs are
 restored by task hash, with trusted default-branch runs as cache writers and PRs
@@ -1818,7 +1845,7 @@ the built CLI, packs the checkout with `npm pack`, exports the bundle with
 registry package, and runs `agent-env run` on the bundle. It checks that the
 export reports the planned file set with the inputs copied byte-exact and a
 bundle served from the derived state, which serves fewer tools than the
-manifest because write tools are not served, that the runner exits `0` with
+manifest because write tools the capture did not confirm are not served, that the runner exits `0` with
 `tasks/smoke.json` reported as passed and the verifier's description naming
 that served tool count, and that no container exists
 after the run that did not exist before; the container inventory runs even when
