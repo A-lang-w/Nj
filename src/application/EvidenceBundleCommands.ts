@@ -4,6 +4,7 @@ import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 
 import {
   EvidenceFileError,
+  type OverwritePolicy,
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -63,7 +64,11 @@ export const exportEvidenceBundleCommand = async (
   if (!loaded.ok) return loaded;
   return projectWrite(
     loaded.value,
-    await persistEvidenceBundleCommand(loaded.value, outputPath, overwrite),
+    await persistEvidenceBundleCommand(
+      loaded.value,
+      outputPath,
+      overwrite ? "replace" : "refuse",
+    ),
   );
 };
 
@@ -130,10 +135,11 @@ export const publishEvidenceDelivery = async (input: {
   readonly signal?: AbortSignal | undefined;
 }): Promise<Result<PublishedEvidenceDelivery, AnalysisError>> => {
   const { signal, operation } = input;
+  // Delivery outputs have no overwrite option; refusals must not offer one.
   const written = await persistEvidenceBundleCommand(
     input.bundle,
     input.outputPath,
-    false,
+    "never",
     signal,
     operation,
   );
@@ -204,7 +210,7 @@ export const inspectAnalysisViewFromBundle = async (
 const persistEvidenceBundleCommand = async (
   bundle: EvidenceBundle,
   outputPath: string,
-  overwrite: boolean,
+  overwrite: OverwritePolicy,
   signal?: AbortSignal,
   operation?: string,
 ): Promise<Result<PublishedEvidenceFile, AnalysisError>> => {
