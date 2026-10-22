@@ -15,10 +15,10 @@ import {
 } from "./ManagedPeReader.js";
 import {
   readManagedResourceDirectory,
-  managedTableRowCounts,
   readManagedMetadataInventory,
   readManagedModuleIdentity,
 } from "./ManagedMetadataInventory.js";
+import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
 import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   appendManagedParseIssues,
@@ -216,23 +216,13 @@ export const inspectManagedMembersBytes = (
             )?.toString("hex") ?? null,
         };
       });
-    const artifact = {
-      path: target.path,
-      sha256: target.sha256,
-      byte_length: bytes.length,
-      format: "pe" as const,
-    };
-    const identityScope = {
-      token_identity: "build-local" as const,
-      requires_artifact_sha256: target.sha256,
-      requires_mvid: identity.module?.mvid ?? null,
-    };
-    const metadata = {
-      status:
-        issues.length === 0 ? ("complete" as const) : ("partial" as const),
-      version: layout.version,
-      table_row_counts: managedTableRowCounts(layout),
-    };
+    const envelope = managedPeInspectionEnvelope(
+      target,
+      bytes.length,
+      layout,
+      identity.module,
+      issues,
+    );
     const unnamedTypes = types.reduce(
       (count, type) => count + Number(type.name_sha256 === null),
       0,
@@ -257,10 +247,7 @@ export const inspectManagedMembersBytes = (
     ];
     recover = prepareManagedMemberRecovery(
       {
-        artifact,
-        module: identity.module,
-        metadata,
-        identity_scope: identityScope,
+        ...envelope,
         types,
         nesting_read: parsedTypes.nesting.complete,
         selection,
@@ -334,14 +321,11 @@ export const inspectManagedMembersBytes = (
     return managedMemberInspectionSchema.parse(
       admitManagedProjection(
         {
-          artifact,
-          module: identity.module,
+          ...envelope,
           metadata: {
+            ...envelope.metadata,
             status: issues.length === 0 ? "complete" : "partial",
-            version: metadata.version,
-            table_row_counts: metadata.table_row_counts,
           },
-          identity_scope: identityScope,
           types,
           signature_resolution: "type-names-v1",
           nesting_read: parsedTypes.nesting.complete,

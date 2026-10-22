@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 
 import {
   anatomyNameIs,
@@ -21,18 +22,20 @@ import {
 import { evidenceSchema } from "../evidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   bridgeCandidateCoverageSchema,
   projectCartesianCandidates,
 } from "../bridgeCandidateProjection.js";
+import type { MobileApplicationProjectionWithSources } from "../mobileApplicationGraphProjection.js";
 import {
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
-  projectionDigest,
   unavailableComponentSchema,
   type ProjectedInventoryEntry,
 } from "../mobileApplicationGraphProjection.js";
+import { uniqueSortedBy } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -113,7 +116,7 @@ type RootFormat = (typeof APPLE_ROOT_FORMATS)[number];
 /** Project exact Apple application paths and hashes without parsing or executing target code. */
 export const projectAppleApplication = (
   input: AppleApplicationProjectionInput,
-): AppleApplicationProjectionResult => {
+): MobileApplicationProjectionWithSources<AppleApplicationProjectionResult> => {
   const parsed = appleApplicationProjectionInputSchema.parse(input);
   const { evidence, inventory } = parseArtifactInventoryEvidence(
     parsed.inventory_evidence,
@@ -144,10 +147,10 @@ export const projectAppleApplication = (
   const runtimeFamilies = identifyRuntimeFamilies(all);
   const bridgeProjection = identifyBridgeCandidates(
     classified.javascript,
-    deduplicateComponents([
-      ...classified.executables,
-      ...classified.native_libraries,
-    ]),
+    uniqueSortedBy(
+      [...classified.executables, ...classified.native_libraries],
+      (component) => component.path,
+    ),
     roots,
   );
   const uninventoriedImage =
@@ -200,15 +203,18 @@ export const projectAppleApplication = (
     },
     limitations,
   };
-  return appleApplicationProjectionResultSchema.parse({
-    ...withoutId,
-    projection_id: appleProjectionId(withoutId),
-  });
+  return {
+    projection: appleApplicationProjectionResultSchema.parse({
+      ...withoutId,
+      projection_id: appleProjectionId(withoutId),
+    }),
+    sources: evidence,
+  };
 };
 
 /** Identify the complete projection, including source Evidence provenance. */
 export const appleProjectionId = (projection: unknown): string =>
-  `aap_${digest(projection)}`;
+  `aap_${digestCanonicalValue(projection, "Apple application projection")}`;
 
 /**
  * AppleDouble sidecars describe neighbouring files and are never components.
@@ -232,9 +238,19 @@ const attributeComponents = <Entry extends { readonly path: string }>(
 const appleRootFormat = (format: string): RootFormat => {
   const root = APPLE_ROOT_FORMATS.find((candidate) => candidate === format);
   if (root === undefined)
-    throw new TypeError(
-      `Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got ${format})`,
-    );
+    throw new AnalysisInputError("project_apple_application_graph", {}, [
+      {
+        path: [
+          "inventory_evidence",
+          0,
+          "normalized_result",
+          "manifest",
+          "root_format",
+        ],
+        reason: "invalid_value",
+        message: `Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got ${format})`,
+      },
+    ]);
   return root;
 };
 
@@ -299,11 +315,6 @@ const classifyComponents = (
     ),
   };
 };
-
-const deduplicateComponents = (values: readonly Component[]): Component[] =>
-  [...new Map(values.map((value) => [value.path, value])).values()].sort(
-    (left, right) => compare(left.path, right.path),
-  );
 
 const identifyRuntimeFamilies = (all: readonly Component[]) => {
   const families = new Set<
@@ -438,6 +449,3 @@ const projectionLimitations = (facts: {
   "Bridge candidates are path-based hypotheses, not observed runtime calls.",
   "A bridge basis is inferred from the native path and is repeated for every managed component.",
 ];
-
-const digest = (value: unknown): string =>
-  projectionDigest(value, "Apple application projection");
