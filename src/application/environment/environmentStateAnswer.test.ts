@@ -62,10 +62,11 @@ const refusal = (
   return projectAnalysisError(result.error);
 };
 
-/** A membership-all list keeps an entity added to an empty later page off that page. */
+/** A list with one proved whole line keeps an entity added to an empty later page off that page. */
 const expectAddedEntityStaysOffPage = (
   query: string,
   args: Readonly<Record<string, unknown>>,
+  membership: "recorded" | "query" = "query",
 ): void => {
   const alpha = { id: 1, name: "Alpha" };
   const serving = servingFrom([
@@ -75,7 +76,7 @@ const expectAddedEntityStaysOffPage = (
   ]);
   expect(serving.store.state.views.get("get_orgs_books_by_id")).toMatchObject({
     shape: "list",
-    membership: "all",
+    membership: "recorded",
   });
   load(serving, (entities) => [
     ...entities,
@@ -90,16 +91,19 @@ const expectAddedEntityStaysOffPage = (
     answer(serving, "get_orgs_books_by_id", { id: "2", ...args }),
   ).toMatchObject({
     body: [],
-    state: { source: "state", membership: "all", listed: 0 },
+    state: { source: "state", membership, listed: 0 },
   });
-  // A call that does not name the later page still lists the grown collection.
+  // Without a proved whole line here, the argument-less call keeps recorded members.
   expect(answer(serving, "get_orgs_books_by_id", { id: "2" })).toMatchObject({
-    body: [{ id: 9, name: "Added" }],
-    state: { source: "state", membership: "all", listed: 1 },
+    body: [],
+    state:
+      membership === "query"
+        ? { source: "state", membership: "recorded", listed: 0 }
+        : { source: "recording", reason: "unrecorded-request" },
   });
 };
 
-/** A membership-all list keeps an entity added to an empty start page off that page. */
+/** A list with one proved whole line keeps an entity added to an empty start page off that page. */
 const expectAddedEntityStaysOffStartPage = (name: string): void =>
   expectAddedEntityStaysOffPage(`${name}=1`, { [name]: "1" });
 
@@ -223,6 +227,21 @@ describe("item answers", () => {
   });
 });
 
+describe("loaded later pages", () => {
+  it.each(["offset", "start", "_start"])(
+    "skips an entity added under an empty ?%s=1 page without whole-collection evidence",
+    expectAddedEntityStaysOffStartPage,
+  );
+
+  it("does not list an entity added under an empty ?page=2&per_page=1 page", () => {
+    expectAddedEntityStaysOffPage(
+      "page=2&per_page=1",
+      { page: "2", per_page: "1" },
+      "recorded",
+    );
+  });
+});
+
 describe("list answers", () => {
   it("lists every entity of the collection in state order when membership is all", () => {
     const serving = servingOf();
@@ -308,15 +327,6 @@ describe("list answers", () => {
     });
   });
 
-  it.each(["offset", "start", "_start"])(
-    "skips an entity added under an empty ?%s=1 page of a membership-all list",
-    expectAddedEntityStaysOffStartPage,
-  );
-
-  it("does not list an entity added under an empty ?page=2 page", () => {
-    expectAddedEntityStaysOffPage("page=2", { page: "2" });
-  });
-
   it("answers an unfiltered call from a paging-only line of the parent its path arguments name", () => {
     const books = servingFrom([
       ["GET", "/api/orgs/1/books?limit=50", [{ id: 1 }, { id: 2 }]],
@@ -336,6 +346,20 @@ describe("list answers", () => {
     expect(answer(books, "get_orgs_books_by_id", { id: "9" })).toMatchObject({
       state: { source: "recording", reason: "unrecorded-request" },
     });
+  });
+
+  it("answers a recorded call that pages by two parameters as it recorded, whatever order they are supplied in", () => {
+    const books = servingFrom([
+      ["GET", "/api/books", [{ id: 1 }, { id: 2 }, { id: 3 }]],
+      ["GET", "/api/books?size=2&limit=1", [{ id: 1 }]],
+    ]);
+    expect(answer(books, "get_books", { size: "2", limit: "1" })).toMatchObject(
+      {
+        body: [{ id: 1 }],
+        replay: { record_ordinal: 1, exact_match: true },
+        state: { source: "state", membership: "query", listed: 1 },
+      },
+    );
   });
 
   it("refuses a list whose member lacks a field every recording carried, never answering a partial body", () => {

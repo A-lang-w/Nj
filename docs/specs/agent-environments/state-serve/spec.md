@@ -59,10 +59,7 @@ this increment: write tools are not served from the state.
   view's `checked_record_ordinals` exactly (every path and query value equal and
   no recorded query parameter unsupplied), choosing among them as replay
   chooses: every collection entity in state order for `membership: "all"`,
-  otherwise the recorded members the state still holds. A checked line the call
-  names with a nonzero `offset`, `start` or `_start`, or a `page` after the
-  first, lists those recorded members even when membership is `all`, because
-  serving does not skip to that index. A member lacking one
+  otherwise the recorded members the state still holds. A member lacking one
   of the view's `required_fields` makes the call a tool error stating that the
   state holds no complete member, never a partial body, as for items. Lines
   recorded after a write or with other filters were never checked and answer

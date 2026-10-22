@@ -225,10 +225,10 @@ from the state:
   of zero is no bound on a line whose recording listed items under it, while its
   other sizes and range still bound the page) of a
   whole list checks nothing once the collection holds more entities than the
-  page, which serving then answers from its recording. A read whose query names
-  a nonzero `offset`, `start` or `_start`, or a `page` after the first, is
-  compared as the recorded members, as serving lists them, so an empty later
-  page does not contradict a create the page skips.
+  page, which serving then answers from its recording. A line without proof of
+  whole membership lists its recorded members still held, unless a learned
+  query evaluates the read over the state. An empty later page therefore does
+  not contradict a create outside that page.
 - A read made while a modelled write to its entity or collection was still
   running, starting before that write ended, checks nothing: it may show the
   state before or after the write. Nor does such a read show an unknown entity
@@ -373,16 +373,15 @@ answers with the tool's latest recorded 400, 404 or 410 response, or 2xx JSON
 them, so the read gate's `membership: "all"` also covers a line that only pages
 its list (`limit`, `offset`, `page`, `per_page`, `perpage`, `page_size`,
 `pagesize`, `size`, `start`, `_start`, `_end`) when its recording listed the
-whole collection. A nonzero `offset`, `start` or `_start`, or a `page` after
-the first, does not establish
-that membership: serving does not skip to that index, so the line stays on the
-recorded path unless another line proves the collection. A call that names such
-a line lists the recorded members still held, including when membership is
-`all`. A list call with no query argument answers from such a line
-of an `all` view of the collection its path arguments name, with
+whole collection at a proved zero start. Positive `page` values do not prove
+the beginning, because their base is unknown. Whole membership is per line:
+`all_record_ordinals` can name whole lines within a recorded-membership view.
+A learned query can filter, search, sort and page the state; otherwise a later
+page lists its recorded members still held. A list call with no query argument
+answers from a whole line of the collection its path arguments name, with
 `replay.exact_match` false; a collection with no such line answers from its
-recording. A call that asks for a page
-still answers from its recording.
+recording. A call that asks for a page evaluates a learned query when one
+covers its arguments; otherwise it keeps the recorded page members.
 
 **Provenance.** Write answers carry `state: {source: "state", view: "create" |
 "update" | "delete", type, collection, id}`, or `{source: "state", view:

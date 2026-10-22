@@ -1,3 +1,4 @@
+import { decodedSegment } from "../../domain/analysisView/environmentStateRules.js";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -39,7 +40,6 @@ import {
   type EnvironmentSource,
 } from "./environmentSource.js";
 import {
-  decodedPathSegment,
   selectsRecordedLine,
   type ReplayArguments,
   type ReplayResult,
@@ -299,7 +299,7 @@ const compareStep = (
   const unknownPath = call.pathArguments.some((name) => {
     const value = call.args[name];
     if (typeof value !== "string") return false;
-    const id = decodedPathSegment(value);
+    const id = decodedSegment(value);
     return !run.map.hasEnv(id) && !held.has(id);
   });
   const refusedWith = (message: string): CompareStep | undefined =>

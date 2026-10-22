@@ -2,7 +2,8 @@ import {
   collectionPathOf,
   selectedCollection,
 } from "../../domain/analysisView/environmentStateRules.js";
-import { callSegments, type StateServing } from "./environmentStateAnswer.js";
+import type { StateServing } from "./environmentStateAnswer.js";
+import { callSegments } from "./environmentStateCallLines.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import type { EnvironmentManifestTool } from "./environmentSource.js";
 

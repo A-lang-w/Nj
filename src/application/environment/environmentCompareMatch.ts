@@ -1,7 +1,7 @@
+import { decodedSegment } from "../../domain/analysisView/environmentStateRules.js";
 import { isPagingParameter } from "../../domain/analysisView/environmentStatePaging.js";
 import { segmentRule } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { decodedPathSegment } from "./environmentReplay.js";
 import type {
   EnvironmentManifest,
   EnvironmentManifestTool,
@@ -57,7 +57,7 @@ const collectionAt = (
       const value = segments?.[index];
       return value === undefined || value === ""
         ? "{}"
-        : encodeURIComponent(decodedPathSegment(value));
+        : encodeURIComponent(decodedSegment(value));
     })
     .join("/")}`;
 };
@@ -120,13 +120,13 @@ const fitOf = (
     const segment = segments[index]!;
     const param = params.get(index);
     if (param === undefined) {
-      if (part !== segment && part !== decodedPathSegment(segment))
+      if (part !== segment && part !== decodedSegment(segment))
         return undefined;
       literals += 1;
     } else if (
       // Replay matches a path value decoded, so its format is the decoded value's.
       FORMAT_RULES.has(param.rule) &&
-      segmentRule(decodedPathSegment(segment)) !== param.rule
+      segmentRule(decodedSegment(segment)) !== param.rule
     )
       return undefined;
     else if (segment === "") return undefined;

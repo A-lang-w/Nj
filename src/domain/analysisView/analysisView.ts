@@ -1,7 +1,29 @@
 import {
+  apkSignatureViewRequestSchema,
+  apkSignatureViewItemsSchema,
+} from "../apkSignature/apkSignatureQuery.js";
+import {
+  projectApkSignatureView,
+  apkSignatureSummarySchema,
+  apkSignatureSourceCoverageSchema,
+} from "./apkSignatureView.js";
+import { byteEntropySchema } from "../native/byteEntropy.js";
+import {
+  byteEntropySummarySchema,
+  projectByteEntropyView,
+} from "./byteEntropyView.js";
+import {
   parseAnalysisViewResult,
   analysisViewResultInputError,
 } from "./analysisViewParent.js";
+import {
+  javaScriptRoutesViewRequestSchema,
+  javaScriptRoutesViewItemsSchema,
+  javaScriptRoutesViewSummarySchema,
+  javaScriptRoutesSourceReferenceSchema,
+  projectJavaScriptRoutesView,
+} from "./javascriptRoutesView.js";
+import { javaScriptRouteInventorySchema } from "../javascript/javascriptRouteInventory.js";
 import {
   sourceToBundleViewRequestSchema,
   sourceToBundleViewItemsSchema,
@@ -303,6 +325,7 @@ const nativeViewSchema = z.strictObject({
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  javaScriptRoutesViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   summaryViewSchema,
@@ -333,6 +356,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   pcapViewRequestSchema,
   dartAotViewRequestSchema,
   il2cppMetadataViewRequestSchema,
+  apkSignatureViewRequestSchema,
   modelArtifactViewRequestSchema,
   gpuCodeObjectsViewRequestSchema,
 ]);
@@ -418,6 +442,7 @@ const javascriptSummarySchema = z.strictObject({
 const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
+    "inspect_byte_entropy",
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
@@ -425,6 +450,7 @@ const viewResultBase = {
     "inspect_with_objdump",
     "inspect_desktop_application",
     "analyze_javascript_application",
+    "analyze_web_bundle",
     "analyze_function",
     "inspect_artifact",
     "inventory_artifact",
@@ -457,6 +483,12 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+export const byteEntropySummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  summary: byteEntropySummarySchema,
+  parent_operation: z.literal("inspect_byte_entropy"),
+});
 
 /** Opt-in command delivery keeps output once and retains the complete parent. */
 export const gdbCommandSummaryViewResultSchema = z.strictObject({
@@ -626,6 +658,26 @@ export const dartAotSummaryViewResultSchema = z.strictObject({
   summary: dartAotSummarySchema,
 });
 
+export const javaScriptRoutesViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  artifact: artifactSchema.nullable(),
+  kind: z.literal("javascript-routes"),
+  parent_operation: z.enum([
+    "analyze_javascript_application",
+    "analyze_web_bundle",
+  ]),
+  view: javaScriptRoutesViewRequestSchema,
+  inventory_id: javaScriptRouteInventorySchema.shape.inventory_id,
+  source_manifest_sha256: digestSchema,
+  source_coverage: javaScriptRouteInventorySchema.shape.coverage,
+  inventory_capacity: javaScriptRouteInventorySchema.shape.capacity,
+  capture_url: z.string().nullable(),
+  items: javaScriptRoutesViewItemsSchema,
+  sources: z.array(javaScriptRoutesSourceReferenceSchema),
+  summary: javaScriptRoutesViewSummarySchema.nullable(),
+  byte_limited: z.boolean(),
+});
+
 export const gpuCodeObjectsSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_gpu_code_objects"),
@@ -639,6 +691,20 @@ export const gpuCodeObjectsPageViewResultSchema = z.strictObject({
   source_coverage: gpuCodeObjectsObjectSchema.shape.coverage,
   ...viewResultBase,
   parent_operation: z.literal("inspect_gpu_code_objects"),
+});
+
+export const apkSignatureSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_apk_signature"),
+  summary: apkSignatureSummarySchema,
+});
+export const apkSignaturePageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("apk-signature"),
+  parent_operation: z.literal("inspect_apk_signature"),
+  view: apkSignatureViewRequestSchema,
+  items: apkSignatureViewItemsSchema,
+  source_coverage: apkSignatureSourceCoverageSchema,
 });
 
 export const modelArtifactSummaryViewResultSchema = z.strictObject({
@@ -698,6 +764,7 @@ export const sourceToBundlePageViewResultSchema = z.strictObject({
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  javaScriptRoutesViewResultSchema,
   sourceToBundlePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
@@ -740,6 +807,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentStateViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
     fridaSessionStatusSummaryViewResultSchema,
@@ -760,6 +828,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     pcapCaptureSummaryViewResultSchema,
     dartAotSummaryViewResultSchema,
     il2cppMetadataSummaryViewResultSchema,
+    apkSignatureSummaryViewResultSchema,
     modelArtifactSummaryViewResultSchema,
     gpuCodeObjectsSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
@@ -911,6 +980,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ...dartAotViewContextSchema.shape,
     parent_operation: z.literal("inspect_dart_aot"),
   }),
+  apkSignaturePageViewResultSchema,
   modelArtifactPageViewResultSchema,
   gpuCodeObjectsPageViewResultSchema,
   z.strictObject({
@@ -1042,6 +1112,7 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_android_package", projectAndroidPackageView],
   ["inspect_dart_aot", projectDartAotView],
   ["inspect_il2cpp_metadata", projectIl2cppMetadataView],
+  ["inspect_apk_signature", projectApkSignatureView],
   ["inspect_model_artifact", projectModelArtifactView],
   ["inspect_gpu_code_objects", projectGpuCodeObjectsView],
   ["match_native_functions", projectNativeFunctionMatchingView],
@@ -1103,6 +1174,10 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "javascript-routes") {
+    const projected = projectJavaScriptRoutesView(parent, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
   if (isGroupingView(view)) {
     const grouped = projectGroupingView(parent, view, accumulators);
     return grouped.ok ? ok(sealAnalysisView(grouped.value)) : grouped;
@@ -1113,6 +1188,22 @@ export const projectAnalysisView = (
   }
   if (parent.operation === "inspect_pcap_capture") {
     const projected = projectPcapCaptureView(parent, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (parent.operation === "inspect_byte_entropy") {
+    const report = byteEntropySchema.safeParse(parent.normalizedResult);
+    if (!report.success)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["source"],
+            reason: "invalid_value",
+            message:
+              "Parent Evidence result does not match inspect_byte_entropy.",
+          },
+        ]),
+      );
+    const projected = projectByteEntropyView(parent, report.data, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "inspect_binary_layout") {

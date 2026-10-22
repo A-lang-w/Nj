@@ -6,6 +6,10 @@ import {
   type StateItemView,
   type StateView,
 } from "./environmentStateRules.js";
+import {
+  collectionTarget,
+  entityTarget,
+} from "./environmentStateWriteChecks.js";
 
 /** The fields a read of a view shows of its entities, less volatile ones it does not compare; all of a document's. */
 export const shownFields = (
@@ -183,6 +187,27 @@ export class WriteEffects {
       else
         for (const tool of byTool.get(key)?.keys() ?? [])
           if (!unseen.has(tool)) byTool.get(key)!.delete(tool);
+  }
+
+  /** A read showed the entity absent: no write's effect on it remains, so a write left with no entity drops from the collection. */
+  removed(
+    touched: TouchedTargets,
+    gone: {
+      readonly type: string;
+      readonly collection: string;
+      readonly id: string;
+    },
+  ): void {
+    const entity = entityTarget(gone.type, gone.collection, gone.id);
+    const collection = collectionTarget(gone.type, gone.collection);
+    this.#changed.delete(entity);
+    const byTool = this.#members.get(collection);
+    if (byTool === undefined) return;
+    for (const [tool, entities] of byTool) {
+      if (!entities.delete(entity) || entities.size > 0) continue;
+      byTool.delete(tool);
+      touched.get(collection)?.delete(tool);
+    }
   }
 
   /** Whether a read showing `fields` of a target shows anything of a tool's effect there: a create's or delete's always, an update's through a field it changed; unknown claims count as shown. */

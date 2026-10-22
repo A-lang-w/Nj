@@ -27,8 +27,19 @@ export const pagesOnly = (query: string | undefined): boolean =>
   query === undefined ||
   [...parseUrlQueryParameterNames(query)].every(isPagingParameter);
 
-/** Parameters that name the first item of a page. `page` counts pages, not items. */
-const PAGE_START_PARAMETERS = new Set(["offset", "start", "_start"]);
+const PAGE_POSITION_PARAMETERS = new Set(["offset", "start", "_start", "page"]);
+
+/** A paging-only line that can start at the collection's beginning. Positive page numbers are ambiguous (zero- or one-based); malformed or conflicting positions do not establish whole membership. */
+export const startsAtBeginning = (query: string | undefined): boolean => {
+  if (!pagesOnly(query)) return false;
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
+    const number = Number(value);
+    if (!/^\d+$/u.test(value) || !Number.isSafeInteger(number)) return false;
+    if (PAGE_POSITION_PARAMETERS.has(name.toLowerCase()) && number !== 0)
+      return false;
+  }
+  return true;
+};
 
 /** Paging parameters that bound how many items a page holds. */
 const PAGE_SIZE_PARAMETERS = new Set([
@@ -39,38 +50,6 @@ const PAGE_SIZE_PARAMETERS = new Set([
   "pagesize",
   "size",
 ]);
-
-/** Pages 0 and 1 are the first page; a greater `page` is a later one. */
-const FIRST_PAGE = 1;
-
-/**
- * The first item a query asks for. A whole-number `offset`, `start` or `_start`
- * names that index. A `page` of 0 or 1 is the first page. A later page uses
- * `(page - 1)` times a positive page size when one is named, and otherwise is
- * not item 0. The result is the greatest of those. Serving lists a whole
- * collection from item 0 and does not skip to this index, so a nonzero start
- * stays on the recorded path in the read gate, in serving and in the write gate.
- */
-export const pageStart = (query: string | undefined): number => {
-  let start = 0;
-  let page: number | undefined;
-  let pageSize: number | undefined;
-  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
-    if (!/^\d+$/u.test(value)) continue;
-    const number = Number(value);
-    const key = name.toLowerCase();
-    if (PAGE_START_PARAMETERS.has(key)) start = Math.max(start, number);
-    else if (key === "page") page = Math.max(page ?? 0, number);
-    else if (PAGE_SIZE_PARAMETERS.has(key) && number > 0)
-      pageSize = Math.min(pageSize ?? Infinity, number);
-  }
-  if (page !== undefined && page > FIRST_PAGE) {
-    const established =
-      pageSize === undefined ? undefined : (page - FIRST_PAGE) * pageSize;
-    start = Math.max(start, established ?? 1);
-  }
-  return start;
-};
 
 /** The most items a query's page holds: its smallest whole-number page-size value or `_start`–`_end` range width, or undefined without one; with `unboundedZero`, a size of zero is no bound. */
 const pageLimit = (

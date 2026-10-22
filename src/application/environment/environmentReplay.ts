@@ -48,19 +48,7 @@ interface MatchScore {
   readonly exact: boolean;
 }
 
-/** A path segment percent-decoded, or as written when it is not valid percent-encoding. */
-export const decodedPathSegment = (segment: string): string => {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
-};
-
-/**
- * Replay's path rule: a supplied value matches a recorded segment equal to it, equal after decoding the segment, or
- * equal to the segment after decoding the value once. Decoding both sides would make `book%2531` match `book1`.
- */
+/** Replay matches verbatim segments or either spelling decoded once. */
 export const pathValueMatches = (segment: string, value: string): boolean =>
   pathSegmentMatches(segment, value);
 

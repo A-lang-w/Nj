@@ -41,8 +41,8 @@ import {
   type ReplayArguments,
 } from "./environmentReplay.js";
 import type { EnvironmentManifestTool } from "./environmentSource.js";
+import { callSegments } from "./environmentStateCallLines.js";
 import {
-  callSegments,
   itemCall,
   missingAnswer,
   namedEntity,

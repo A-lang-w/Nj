@@ -1055,7 +1055,7 @@ it("does not let ?page=2&per_page=1 prove membership all when it lists the colle
   });
 });
 
-it("keeps membership all when page 1 lists the collection", () => {
+it("keeps page 1 membership recorded because the page base is unproven", () => {
   const state = stateOf(
     captureOf([
       ["GET", "/api/orgs/1/books?page=1", [{ id: 1, name: "Alpha" }]],
@@ -1064,7 +1064,7 @@ it("keeps membership all when page 1 lists the collection", () => {
   );
   expect(viewOf(state, "get_orgs_books_by_id")).toMatchObject({
     shape: "list",
-    membership: "all",
+    membership: "recorded",
   });
 });
 
