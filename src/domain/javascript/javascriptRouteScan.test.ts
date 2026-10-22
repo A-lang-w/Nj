@@ -1014,3 +1014,28 @@ it.each([
     "/users",
   ]);
 });
+
+it.each([
+  "router.push({pathname:'/users',query:{['__proto__']:payload,__proto__:null}});",
+  "router.push({pathname:'/users',query:{['__proto__']:payload,'__proto__':null}});",
+  "router.push({pathname:'/users',query:{__proto__:payload,['__proto__']:0}});",
+  "router.push({pathname:'/users',query:{__proto__:null,['__proto__']:payload}});",
+  "router.push({pathname:'/users',query:{['__proto__']:0,__proto__:payload}});",
+  "const registry={['__proto__']:payload,__proto__:null};router.push({pathname:'/users',query:registry['__proto__']});",
+  "const registry={['__proto__']:payload,__proto__:null};const {['__proto__']:query}=registry;router.push({pathname:'/users',query});",
+])("distinguishes prototype setters from own query slots: %s", (navigation) => {
+  const facts = analyze(
+    `const payload={path:'/query-data',component:Preview};${navigation}`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
+});
+
+it("keeps an overwritten shorthand proto property independent", () => {
+  const facts = analyze(
+    "const __proto__={path:'/independent',component:View};router.push({pathname:'/users',query:{__proto__,['__proto__']:0}});",
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/users",
+  ]);
+});

@@ -168,7 +168,8 @@ type StaticObjectMember =
 
 const UNKNOWN_STATIC_OBJECT_MEMBER: StaticObjectMember = { kind: "unknown" };
 
-const isObjectPrototypeSetter = (property: t.ObjectProperty): boolean =>
+/** Object-literal prototype setters are never ordinary own-property writes. */
+export const isObjectPrototypeSetter = (property: t.ObjectProperty): boolean =>
   !property.computed &&
   !property.shorthand &&
   semanticStaticPropertyKey(property.key, false) === "__proto__";

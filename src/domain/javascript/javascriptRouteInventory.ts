@@ -64,13 +64,13 @@ export const javaScriptInventoryRouteSchema = z.strictObject({
   ]),
   confidence,
   mechanisms: z.array(javaScriptRouteMechanismSchema),
-  occurrence_count: z.number().int().nonnegative(),
-  source_count: z.number().int().nonnegative(),
+  occurrence_count: z.int().nonnegative(),
+  source_count: z.int().nonnegative(),
   primary_occurrence_id: javaScriptRouteOccurrenceSchema.shape.id,
 });
 export const javaScriptRouteCaptureOmissionSchema = z.strictObject({
   unit: z.enum(["script-records", "script-sources"]),
-  count: z.number().int().nonnegative().nullable(),
+  count: z.int().nonnegative().nullable(),
 });
 export const javaScriptRouteGapSchema = z.strictObject({
   id: z.string().regex(/^jsg:[a-f0-9]{32}$/u),
@@ -87,8 +87,8 @@ export const javaScriptRouteGapSchema = z.strictObject({
   capture_omission: javaScriptRouteCaptureOmissionSchema.exactOptional(),
 });
 const capacitySchema = z.strictObject({
-  limit_bytes: z.number().int().nonnegative(),
-  accounted_bytes: z.number().int().nonnegative(),
+  limit_bytes: z.int().nonnegative(),
+  accounted_bytes: z.int().nonnegative(),
 });
 const inventoryShape = z.strictObject({
   inventory_id: z.string().regex(/^jsri:[a-f0-9]{64}$/u),
@@ -104,11 +104,11 @@ const inventoryShape = z.strictObject({
     application_routes: z.literal("unknown"),
   }),
   statistics: z.strictObject({
-    sources_seen: z.number().int().nonnegative(),
-    sources_retained: z.number().int().nonnegative(),
-    route_patterns: z.number().int().nonnegative(),
-    occurrences: z.number().int().nonnegative(),
-    unanchored_literals_excluded: z.number().int().nonnegative(),
+    sources_seen: z.int().nonnegative(),
+    sources_retained: z.int().nonnegative(),
+    route_patterns: z.int().nonnegative(),
+    occurrences: z.int().nonnegative(),
+    unanchored_literals_excluded: z.int().nonnegative(),
   }),
   capacity: capacitySchema.nullable(),
   limitations: z.array(z.string()),

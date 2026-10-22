@@ -4,6 +4,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "./javascriptAnalysisResourceControls.js";
 import {
   semanticMemberChain,
+  isObjectPrototypeSetter,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   semanticStaticPropertyKey,
@@ -321,7 +322,11 @@ export class JavaScriptRouteScan {
           }
           this.#dynamicValues.set(node, owner);
           let overwritten = false;
-          if (t.isObjectProperty(node) && t.isObjectExpression(parent)) {
+          if (
+            t.isObjectProperty(node) &&
+            !isObjectPrototypeSetter(node) &&
+            t.isObjectExpression(parent)
+          ) {
             const key = semanticStaticPropertyKey(node.key, node.computed);
             if (key !== null) {
               const fields = this.#fields(parent);
@@ -853,6 +858,12 @@ export class JavaScriptRouteScan {
       if (t.isSpreadElement(property)) {
         values.clear();
         dynamicNames.clear();
+        unknownKeys = true;
+        continue;
+      }
+      if (t.isObjectProperty(property) && isObjectPrototypeSetter(property)) {
+        // Inheritance may supply an unresolved lookup, but cannot replace an
+        // explicit own slot, including a computed or shorthand __proto__.
         unknownKeys = true;
         continue;
       }

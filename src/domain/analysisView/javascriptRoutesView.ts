@@ -34,8 +34,8 @@ import {
 
 const identity = { kind: z.literal("javascript-routes") };
 const paging = {
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 };
 const ids = z.array(z.string()).exactOptional();
 export const javaScriptRoutesViewRequestSchema = z.discriminatedUnion(
@@ -174,17 +174,17 @@ export const javaScriptRoutesViewSummarySchema = z.strictObject({
     }),
   ),
   statistics: javaScriptRouteInventorySchema.shape.statistics,
-  gaps: z.number().int().nonnegative(),
+  gaps: z.int().nonnegative(),
   source_status_counts: z.strictObject({
-    complete: z.number().int().nonnegative(),
-    partial: z.number().int().nonnegative(),
-    unavailable: z.number().int().nonnegative(),
-    unknown: z.number().int().nonnegative(),
+    complete: z.int().nonnegative(),
+    partial: z.int().nonnegative(),
+    unavailable: z.int().nonnegative(),
+    unknown: z.int().nonnegative(),
   }),
   patterns_by_classification: z.strictObject({
-    page: z.number().int().nonnegative(),
-    system: z.number().int().nonnegative(),
-    unknown: z.number().int().nonnegative(),
+    page: z.int().nonnegative(),
+    system: z.int().nonnegative(),
+    unknown: z.int().nonnegative(),
   }),
 });
 export const javaScriptRoutesSourceReferenceSchema =
