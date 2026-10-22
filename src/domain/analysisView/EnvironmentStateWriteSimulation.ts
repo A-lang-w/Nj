@@ -126,8 +126,7 @@ export class EnvironmentStateWriteSimulation {
       new Map(
         input.documents.map((document) => [document.tool, document.path]),
       ),
-      (type, collection, id) =>
-        this.#state.entity(type, collection, id) !== undefined,
+      this.#state,
     );
   }
 
@@ -289,6 +288,8 @@ export class EnvironmentStateWriteSimulation {
     // A read begun while a modelled write to the entity still ran may show either state, so it neither checks nor shows it.
     const target = entityTarget(view.type, collection, id);
     if (runningAt(this.#touchedSince, target, record.start)) return true;
+    // A failed read that is no absence shows nothing of the entity, so it stays unknown for a usable read.
+    if (!succeeded(record) && !isAbsence(record.status)) return true;
     const entity = this.#state.entity(view.type, collection, id);
     // A recorded absence of an entity the state no longer holds is still a check of its delete.
     if (entity === undefined) {

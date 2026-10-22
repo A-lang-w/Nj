@@ -1,6 +1,6 @@
 import {
+  decodedSegment,
   isParam,
-  lastSegmentValue,
   normalizedPath,
   segmentsOf,
 } from "./environmentStateRules.js";
@@ -8,11 +8,11 @@ import {
   collectionTarget,
   documentTarget,
   entityTarget,
+  heldCollection,
+  itemTarget,
+  type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
-
-/** Whether the state holds an entity, so a write below its item path names it. */
-type Held = (type: string, collection: string, id: string) => boolean;
 
 /**
  * What writes the gate does not model leave unknown: an entity below whose item path one wrote,
@@ -30,24 +30,26 @@ export class WriteTaint {
   constructor(
     private readonly types: readonly string[],
     private readonly documents: ReadonlyMap<string, string>,
-    private readonly held: Held,
+    private readonly state: SimulatedState,
   ) {}
 
-  /** Record an unmodelled write's path against every related type and document. */
+  /** Record an unmodelled write's path against every related type and document, naming entities and collections as modelled writes do. */
   write(path: string): void {
     const segments = segmentsOf(path);
     for (const type of this.types) {
       if (!prefixRelated(type, path)) continue;
       const depth = segmentsOf(type).length;
-      const collection = `/${segments.slice(0, depth).join("/")}`;
+      const written = `/${segments.slice(0, depth).join("/")}`;
+      const collection = () =>
+        collectionTarget(type, heldCollection(this.state, type, written));
       if (segments.length > depth) {
-        const id = lastSegmentValue(`/${segments[depth]!}`);
-        if (this.held(type, collection, id))
-          this.#entities.add(entityTarget(type, collection, id));
-        else
-          this.#collections.set(collectionTarget(type, collection), new Set());
-      } else if (segments.length === depth)
-        this.#targets.add(collectionTarget(type, collection));
+        const item = itemTarget(this.state, type, {
+          path: `${written}/${segments[depth]!}`,
+        });
+        if (this.state.entity(type, item.collection, item.id) !== undefined)
+          this.#entities.add(entityTarget(type, item.collection, item.id));
+        else this.#collections.set(collection(), new Set());
+      } else if (segments.length === depth) this.#targets.add(collection());
       else this.#prefixes.push(normalizedPath(path));
     }
     for (const [tool, documentPath] of this.documents)
@@ -64,12 +66,15 @@ export class WriteTaint {
     return this.#targets.has(target);
   }
 
-  /** Whether an unmodelled write above a collection path left everything under it unknown. */
+  /** Whether an unmodelled write above a collection path left everything under it unknown, each collection segment matching the write's verbatim or once percent-decoded. */
   under(collection: string): boolean {
     const concrete = segmentsOf(collection);
     return this.#prefixes.some((prefix) =>
       segmentsOf(prefix).every(
-        (segment, index) => isParam(segment) || segment === concrete[index],
+        (segment, index) =>
+          isParam(segment) ||
+          segment === concrete[index] ||
+          decodedSegment(concrete[index] ?? "") === segment,
       ),
     );
   }

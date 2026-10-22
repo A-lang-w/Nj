@@ -69,7 +69,8 @@ identity the client sends is an echo:
    the body (the shallowest match).
 3. **Path.** The value of a path parameter of the call, percent-decoded.
    Serving decodes it from the collection the call names, whichever spelling
-   the call uses.
+   the call uses, and the gate fills a recorded call's path fields from that
+   collection too.
 4. **Slug.** The slug of a body string member: lower case, runs of other
    characters joined by `-`.
 5. **Identity.** The type's `id_field` is generated. A sequence when it is an
@@ -114,7 +115,9 @@ calls use a member both as the identity and as a fixed member, or fix it at
 different values, is `unexplained-change`, as serving could not take every
 recorded call. So is an update a later read shows dropped a field the
 entity held, since serving keeps every field an update does not write; a write's
-own response may leave fields out.
+own response may leave fields out. A member a later call is the first to store,
+which the plan's observation does not show, keeps the JSON type that call stored
+it as (the body's `kinds`), as an exemplar's member keeps the observation's.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
@@ -170,11 +173,15 @@ the initial state.
 **Writes.** Only a 2xx write is modelled. A modelled write applies its effect, using the values it recorded
 for generated fields and the stored values for fields it transformed. A
 modelled write whose call the plan does not explain brings its entity to the
-recorded outcome instead, without attribution. A later create whose generated
+recorded outcome instead, without attribution. So does an update of an unknown
+entity (below): its call cannot be checked, so it adds nothing to a built plan.
+A later create whose generated
 values take another form than serving gives them (a sequence value out of
 order, a clock in another format, a non-UUID unique value) makes the plan
 `unexplained-change`; integer identities are left to the id mapping. An update or
-delete names its entity as an item read does (below).
+delete names its entity as an item read does (below). A later update that does
+not answer with its entity is observed only by a read whose view shows every
+clock the plan learned, since serving stamps them; without one it is unmodelled.
 
 Any other write that may have changed state, including a redirected or
 unanswered one, is unmodelled, and what it may have changed
@@ -187,9 +194,16 @@ depends on where its path lies relative to each type's collection paths
 - **At a collection path:** that collection is not checked again.
 - **Above collection paths:** everything under the path is not checked again.
 
+The path names its entity as an update's does and its collection as a create's
+does, so a plain spelling reaches a collection held under an encoded one; a
+path above collections covers each collection whose segments are its own
+verbatim or once percent-decoded.
+
 An item read of an unknown entity shows it again: the copy takes its recorded
-values. Writes that changed it since its last check are checked only on the
-members they sent.
+values. A failed read that is no absence shows nothing, and the entity stays
+unknown. Writes that changed it since its last check are checked only on the
+members they sent, less those the view treats as volatile, which show nothing
+of a write.
 
 **Reads.** A read is checked when the served environment would answer it
 from the state:
@@ -277,7 +291,9 @@ contradicts it. Otherwise the reason, in this precedence, is:
    when no initial entity holds every field its recorded answer shows (for
    example a delete that answers with an edit view of the entity the reads
    never showed), so it could answer only for entities the environment itself
-   created.
+   created. An update's answer renders the entity it wrote, so a field one of
+   its rules writes counts as held, except an increment's, which adds only to
+   a held value.
 
 `checked_record_ordinals` lists the confirming reads.
 
@@ -302,8 +318,8 @@ changes it atomically, so every MCP session and `data/get` see one state.
 - a body that is not an object;
 - a missing required member;
 - a member that is not accepted;
-- a value of another JSON type than the exemplar's, for documents as well as
-  entities;
+- a value of another JSON type than the exemplar's (for a member only a later
+  update stored, that call's), for documents as well as entities;
 - an update or delete of an entity the state does not hold;
 - a create in another collection when the plan is tied to its own;
 - a document write at a path other than the one the state holds it at;

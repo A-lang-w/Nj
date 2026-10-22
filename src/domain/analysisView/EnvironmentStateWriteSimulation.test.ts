@@ -1012,6 +1012,127 @@ describe("reads named as serving names them", () => {
   });
 });
 
+describe("writes named as serving names them", () => {
+  const orgBook = (
+    id: number,
+    org: string,
+    name: string,
+    archived = false,
+  ) => ({
+    id,
+    org,
+    name,
+    archived,
+  });
+  const ALPHA = orgBook(1, "acme1", "Alpha");
+  const BETA = orgBook(2, "beta2", "Beta");
+  const RENAMED_BETA = orgBook(2, "beta2", "Renamed Beta");
+  const INIT_ROWS: readonly TimedCaptureRow[] = [
+    ["GET", "/api/orgs/%61cme1/books", [ALPHA]],
+    ["GET", "/api/orgs/beta2/books", [BETA]],
+    ["GET", "/api/orgs/%61cme1/books/1", ALPHA],
+    ["GET", "/api/orgs/beta2/books/2", BETA],
+  ];
+  const RENAME_BETA: readonly TimedCaptureRow[] = [
+    [
+      "PATCH",
+      "/api/orgs/beta2/books/2",
+      RENAMED_BETA,
+      200,
+      { name: "Renamed Beta" },
+    ],
+    ["GET", "/api/orgs/beta2/books/2", RENAMED_BETA],
+  ];
+  const CREATE_DELTA: readonly TimedCaptureRow[] = [
+    [
+      "POST",
+      "/api/orgs/beta2/books",
+      orgBook(4, "beta2", "Delta"),
+      201,
+      { name: "Delta" },
+    ],
+  ];
+  const planned = (rows: readonly TimedCaptureRow[], effect: string) =>
+    environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]).writes.find((plan) => plan.effect === effect);
+
+  it("contradicts a create named plainly by a list of the encoded collection it went to that omits it", () => {
+    const gamma = orgBook(3, "acme1", "Gamma");
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      ["POST", "/api/orgs/acme1/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/orgs/acme1/books/3", gamma],
+      // Serving lists the create in the encoded collection, which the recording shows without it.
+      ["GET", "/api/orgs/%61cme1/books", [ALPHA]],
+      ...CREATE_DELTA,
+    ];
+    expect(planned(rows, "create")).toMatchObject({
+      served: false,
+      contradicted_by: 6,
+    });
+  });
+
+  it("leaves unknown the entity a plainly named action changed under the encoded collection", () => {
+    const archived = orgBook(1, "acme1", "Alpha", true);
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      ["POST", "/api/orgs/acme1/books/1/archive", archived, 200],
+      // The rename's answer also shows the archive, which no rule of the rename explains.
+      [
+        "PATCH",
+        "/api/orgs/acme1/books/1",
+        orgBook(1, "acme1", "Renamed", true),
+        200,
+        { name: "Renamed" },
+      ],
+      ...RENAME_BETA,
+    ];
+    expect(planned(rows, "update")).toMatchObject({
+      served: true,
+      reason: null,
+    });
+  });
+
+  it("checks no list of the encoded collection after a plainly named write at the collection", () => {
+    const gamma = orgBook(3, "acme1", "Gamma");
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      ["DELETE", "/api/orgs/acme1/books", "", 204],
+      ["POST", "/api/orgs/acme1/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/orgs/acme1/books/3", gamma],
+      // The cleared collection now lists only the create, which the state alone cannot show.
+      ["GET", "/api/orgs/%61cme1/books", [gamma]],
+      ...CREATE_DELTA,
+    ];
+    expect(planned(rows, "create")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+    });
+  });
+
+  it("checks no read under the encoded collection after a plainly named write above it", () => {
+    const rows: TimedCaptureRow[] = [
+      ...INIT_ROWS,
+      [
+        "PATCH",
+        "/api/orgs/%61cme1/books/1",
+        orgBook(1, "acme1", "Renamed"),
+        200,
+        { name: "Renamed" },
+      ],
+      ["DELETE", "/api/orgs/acme1", "", 204],
+      // The organisation's books went with it, which the state alone cannot show.
+      ["GET", "/api/orgs/%61cme1/books/1", BOOK_NOT_FOUND, 404],
+      ...RENAME_BETA,
+    ];
+    expect(planned(rows, "update")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+    });
+  });
+});
+
 describe("resolved encoded item observations", () => {
   it("matches the resolved raw ID when the collection alias and response ID are encoded", () => {
     const collection = "/api/orgs/%61cme1/books";
@@ -1661,6 +1782,79 @@ describe("what an unmodelled write explains", () => {
   });
 });
 
+describe("reads and calls on an entity an unmodelled write left unknown", () => {
+  const named = (name: string) => ({ id: 1, name });
+  const other = { id: 2, name: "B" };
+  const ARCHIVE: TimedCaptureRow = [
+    "POST",
+    "/api/books/1/archive",
+    null,
+    204,
+    {},
+  ];
+
+  it("keeps the entity unknown through a failed read that is no absence, for a later read to check", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [named("A"), other]],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/2", other],
+      ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
+      ARCHIVE,
+      // The application was briefly unavailable, so this answer shows nothing of the book.
+      ["GET", "/api/books/1", { error: "unavailable" }, 503],
+      ["GET", "/api/books/1", named("Z")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [6],
+      contradicted_by: null,
+    });
+  });
+
+  it("confirms no update of a volatile field by a read that shows the entity again, as no other read does", () => {
+    const seen = (id: number, count: number) => ({
+      id,
+      name: id === 1 ? "A" : "B",
+      seen: count,
+    });
+    const rows = (archive: boolean): TimedCaptureRow[] => [
+      ["GET", "/api/books", [seen(1, 1), seen(2, 1)]],
+      ["GET", "/api/books/1", seen(1, 1)],
+      // The same read again shows another count, so the count changes with no write.
+      ["GET", "/api/books/1", seen(1, 2)],
+      ["GET", "/api/books/2", seen(2, 1)],
+      ["PATCH", "/api/books/1", seen(1, 5), 200, { seen: 5 }],
+      ...(archive ? [ARCHIVE] : []),
+      ["GET", "/api/books/1", seen(1, 9)],
+    ];
+    for (const archive of [false, true])
+      expect(gated(rows(archive), "patch_books_by_id")).toMatchObject({
+        served: false,
+        reason: "unconfirmed",
+        checked_record_ordinals: [],
+      });
+  });
+
+  it("adds nothing to an update's plan from a call it cannot check", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [named("A"), other]],
+      ["GET", "/api/books/1", named("A")],
+      ["GET", "/api/books/2", other],
+      ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
+      ["GET", "/api/books/1", named("Z")],
+      ARCHIVE,
+      // The application stored this name otherwise than sent; a call on a known book would conflict with the echo.
+      ["PATCH", "/api/books/1", named("Y!"), 200, { name: "y" }],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      body: { accepted: ["name"], fixed: [] },
+      rules: [{ field: "name", rule: "echo" }],
+      checked_record_ordinals: [4],
+    });
+  });
+});
+
 describe("timed write observations and generated clocks", () => {
   it("does not learn an update from a read that began before the write completed", () => {
     const changed = { ...FIRST_BOOK, name: "Changed", slug: "changed" };
@@ -1746,6 +1940,36 @@ describe("timed write observations and generated clocks", () => {
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: true,
       checked_record_ordinals: [7],
+    });
+  });
+
+  it("leaves a later update unknown when neither its answer nor a read before the next write shows its learned clock", () => {
+    const summary = ({ id, name }: Book): Book => ({ id: id!, name: name! });
+    const renamed = renamedBook(FIRST_BOOK, "Renamed Book", 3);
+    const retitled = renamedBook(renamed, "Retitled Book", 5);
+    const rows = (answer: JsonValue, status: number): TimedCaptureRow[] => [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", summary(FIRST_BOOK)],
+      ["GET", "/api/books/2", summary(SECOND_BOOK)],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books", [renamed, SECOND_BOOK]],
+      ["PATCH", "/api/books/1", answer, status, { name: "Retitled Book" }],
+      // The item view shows no clock; the list shows the one the second call stamped.
+      ["GET", "/api/books/1", summary(retitled)],
+      ["GET", "/api/books", [retitled, SECOND_BOOK]],
+    ];
+    expect(gated(rows("", 204), "patch_books_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "updated_at", rule: "clock" }),
+      ]),
+      checked_record_ordinals: [4],
+      contradicted_by: null,
+    });
+    // An answer that shows the clock observes the call, so the list checks it.
+    expect(gated(rows(retitled, 200), "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6, 7],
     });
   });
 });
@@ -1927,6 +2151,45 @@ describe("what later calls must keep consistent", () => {
     ];
     const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
     expect(writes.find((plan) => plan.effect === "create")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+});
+
+describe("path fields of a create", () => {
+  const held = "/api/orgs/uid/%2561cme1/books";
+  /** A create held under a doubly encoded parent, then one whose call spells the parent once encoded, read back with `org`. */
+  const rowsWith = (org: string): TimedCaptureRow[] => {
+    const alpha = {
+      ...book(1, "Alpha", "2026-10-01T09:00:00Z"),
+      org: "%61cme1",
+    };
+    const made = { ...book(2, "Made", bookClock(2)), org: "%61cme1" };
+    const other = { ...book(3, "Other", bookClock(3)), org };
+    return [
+      ["GET", held, [alpha]],
+      ["GET", `${held}/1`, alpha],
+      ["POST", held, made, 201, { name: "Made" }],
+      ["POST", "/api/orgs/uid/%61cme1/books", other, 201, { name: "Other" }],
+      ["GET", `${held}/3`, other],
+    ];
+  };
+  const planOf = (rows: TimedCaptureRow[]) =>
+    environmentStateViewOf(timedCaptureEvidence(rows), [
+      "after-uid-literal",
+    ]).writes.find((candidate) => candidate.effect === "create");
+
+  it("contradicts a later create whose read shows a parent serving would not write", () => {
+    expect(planOf(rowsWith("acme1"))).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+      contradicted_by: 4,
+    });
+  });
+
+  it("confirms a later create whose read shows the parent decoded from the collection serving selects", () => {
+    expect(planOf(rowsWith("%61cme1"))).toMatchObject({
       served: true,
       checked_record_ordinals: [4],
     });
