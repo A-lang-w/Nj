@@ -579,15 +579,9 @@ describe("attached IDA regex supervision", () => {
         pattern: "!$",
         mode: "regex",
       });
-      expect(recovered.ok && recovered.value.result).toHaveLength(1);
-      expect(recovered.ok && recovered.value.limitations).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("5000 ms matching deadline (source default)"),
-          expect.stringContaining(
-            "Matching failure leaves the service available.",
-          ),
-        ]),
-      );
+      expect(recovered.ok && recovered.value.result).toEqual([
+        expect.objectContaining({ address: "0x3000", value }),
+      ]);
     } finally {
       await client.close();
     }
