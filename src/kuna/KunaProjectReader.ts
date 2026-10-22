@@ -13,6 +13,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
+  RegularFileCancelled,
   RegularFileCleanupFailure,
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
@@ -84,8 +85,13 @@ const readSpan = async (
         },
       ),
     );
-  if (signal?.aborted === true)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  const callerAborted = (): AbortSignal | undefined =>
+    signal?.aborted === true ? signal : undefined;
+  const cancelled = callerAborted();
+  if (cancelled !== undefined)
+    return err(
+      new AnalysisCancelledError(operation, { cause: cancelled.reason }),
+    );
   const opened =
     ownership.admitSpan === undefined
       ? ok(await open(path, "r"))
@@ -132,17 +138,29 @@ const readSpan = async (
         : await ownership.finishSpan(finish);
     return ok(value);
   } catch (cause: unknown) {
-    if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-    return err(
-      spanCloseFailure(
-        operation,
-        path,
-        offset,
-        length,
-        spanCloseAfterRead(cause, text, readFailure, signal),
-        ownership,
-      ),
-    );
+    if (cause instanceof RegularFileCleanupFailure)
+      return err(
+        spanCloseFailure(
+          operation,
+          path,
+          offset,
+          length,
+          spanCloseAfterRead(cause, text, readFailure, signal),
+          ownership,
+        ),
+      );
+    // Close succeeded. The caller's abort reason is the cancellation cause,
+    // not the wrapper thrown after that close.
+    const aborted = callerAborted();
+    if (
+      aborted !== undefined &&
+      (cause instanceof RegularFileOperationCancelled ||
+        cause instanceof RegularFileCancelled)
+    )
+      return err(
+        new AnalysisCancelledError(operation, { cause: aborted.reason }),
+      );
+    throw cause;
   }
 };
 

@@ -292,6 +292,64 @@ it("does not open a queued span after its caller aborts", async () => {
   }
 });
 
+it.each(["before close", "during close"] as const)(
+  "keeps the caller abort reason when span close succeeds (%s)",
+  async (when) => {
+    const reason = { requested: "span-close" };
+    const { cacheRoot, open: createClient } = await session(
+      `rea-kuna-span-close-reason-${when.replace(" ", "-")}-`,
+    );
+    const client = createClient();
+    try {
+      await run(client, "procedure_assembly", { procedure: "main" });
+      const [key] = await readdir(join(cacheRoot, "projects"));
+      fault.span = join(
+        cacheRoot,
+        "projects",
+        key ?? "",
+        "project",
+        "program.asm",
+      );
+      const abort = new AbortController();
+      if (when === "before close") fault.afterRead = () => abort.abort(reason);
+      else {
+        fault.hold = new Promise<void>((resolve) => {
+          fault.releaseHold = resolve;
+        });
+      }
+      const pending = client.execute(
+        "procedure_assembly",
+        { procedure: "main" },
+        { signal: abort.signal },
+      );
+      if (when === "during close") {
+        await vi.waitFor(() => {
+          expect(fault.closeEntered).toBe(1);
+        });
+        abort.abort(reason);
+        fault.releaseHold();
+      }
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(fault.handles[0]?.fd).toBe(-1);
+      expect(fault.opens).toBe(1);
+    } finally {
+      fault.releaseHold();
+      fault.fail = false;
+      fault.hold = undefined;
+      fault.span = "";
+      fault.afterRead = () => undefined;
+      await client.close();
+      for (const handle of fault.handles)
+        if (handle.fd >= 0) await handle.close().catch(() => undefined);
+    }
+  },
+);
+
 it("keeps cancellation when a completed span close fails after abort", async () => {
   const reason = { requested: "span-close" };
   const { cacheRoot, open: createClient } = await session(
