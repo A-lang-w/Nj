@@ -167,7 +167,9 @@ explicit path or endpoint and do not need it.
   ambiguity. No implicit fetch or target execution; WAT is not original source.
   See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/wasm-artifacts.md).
 - Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
-  `raw` or `hex` encoding. Preserve carrier/decoded digests and treat selectors,
+  `raw` or `hex` encoding. The owned worker deadline is `timeout_ms` (default
+  30000 ms, range 1..2147483647, next call). It does not raise the fixed byte,
+  address-space, or CPU allowances. Preserve carrier/decoded digests and treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
   lookup or target execution. For the complete inferred interface without hex or
   duplicate stdout, discover support and select `detail: "summary"`; complete
@@ -181,6 +183,8 @@ explicit path or endpoint and do not need it.
   absent metadata does not prove a binary is not Go, and unparsed text records
   remain explicit. See the
   [Go binary guide](https://github.com/morluto/rea/blob/main/docs/go-binaries.md).
+- Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
+  first, then decode selected payloads and query retained GPU Evidence.
 - Bundled GGUF or safetensors model declarations: `inspect_model_artifact`
   with the explicit local file. Default header hashing leaves full-file identity
   unknown; `hash: "full"` additionally reads all weights for SHA-256. MCP returns
@@ -207,8 +211,41 @@ explicit path or endpoint and do not need it.
   package order, dependency indices, and the section file range. A missing
   `.dep-v0` section is null metadata, not proof the binary has no dependencies.
   A rustc commit hash is an inference from a read-only `/rustc/<40-hex>/` path.
+  For selected crates, use `view: {collection: "packages", names: [...],
+  fields: ["name", "version", "source"]}` on the first call; explicitly include
+  `dependencies` for direct index references. Use `detail: "summary"` for counts
+  and ranges, or retained `inspect_analysis_view` Rust package/edge pages for
+  subsequent filters. Keep the complete parent Evidence accessible; CLI compact
+  delivery requires `--evidence_output`.
   See the
   [Rust binary guide](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+- PE Authenticode certificate table: `inspect_pe_certificates` with the explicit
+  local PE32/PE32+ file. This built-in target-free inspection requires no
+  Windows SDK. Preserve WIN_CERTIFICATE ranges, types, payload SHA-256, and
+  PKCS#7 signer/X.509 identity fields, including `subject_key_identifier_hex`
+  when the signer uses that form. A missing security directory is observed
+  absence of that table, not proof the image is unsigned in every catalog sense.
+  Signatures are not verified. See the
+  [PE certificate guide](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).
+- ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
+  file. This built-in target-free inspection requires no disassembler. Preserve
+  PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU
+  build-id or ABI-tag fields. A missing table is observed absence of those
+  declarations, not proof the image never carried notes. See the
+  [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- CPython 3.7–3.13 `.pyc` header, nested marshal code objects and bytecode
+  identity: `inspect_python_pyc` with the explicit local file. This built-in
+  target-free inspection requires no Python installation. Preserve magic,
+  PEP 552 hash or mtime/size, nested names, and bytecode SHA-256. Bytecode is
+  not decompiled, and a decoded header does not prove the matching `.py` is
+  present. See the
+  [CPython pyc guide](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
+- Erlang BEAM IFF container: `inspect_erlang_beam` with the explicit local
+  `.beam` file. This built-in target-free inspection requires no Erlang
+  installation. Preserve chunk names, atom order, export/import/lambda tables,
+  and the Code header. Missing optional tables stay null. Bytecode is not
+  executed. See the
+  [Erlang BEAM guide](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema
@@ -231,6 +268,8 @@ explicit path or endpoint and do not need it.
 - PE resource type/name/language trees and static icon group references:
   `inspect_pe_resources` with an explicit path. This portable operation requires
   no active target or engine; opaque payloads retain file ranges and SHA-256.
+- PE export directories and ELF dynamic-symbol exports: `inspect_native_exports`
+  with an explicit path; portable, no active target or engine.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
   inventory context is useful and available from the selected provider.
