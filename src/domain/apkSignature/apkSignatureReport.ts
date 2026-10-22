@@ -296,13 +296,13 @@ const setKey = (fingerprints: readonly string[]): string =>
 
 /** Unknown signer identity or an undecoded lineage can hide the answer. */
 const signerChangeDeclared = (
-  identityUnknown: boolean,
+  signerSetsDiffer: boolean | null,
   signers: ReadonlySet<string>,
   lineage: ReadonlySet<string>,
   lineageUnknown: boolean,
 ): boolean | null => {
-  if (identityUnknown) return null;
-  if (signers.size <= 1) return false;
+  if (signerSetsDiffer === null) return null;
+  if (!signerSetsDiffer || signers.size <= 1) return false;
   if ([...signers].every((fp) => lineage.has(fp))) return true;
   return lineageUnknown ? null : false;
 };
@@ -321,7 +321,11 @@ const expectedV1Certificate = (
   scheme: ApkBlockScheme,
   signer: ApkPostureSigner,
 ): Expected => {
-  if (scheme === "v2" || signer.lineage.kind === "absent")
+  if (
+    signer.fingerprint === null ||
+    scheme === "v2" ||
+    signer.lineage.kind === "absent"
+  )
     return { ok: true, fingerprint: signer.fingerprint };
   if (signer.lineage.kind === "undecoded")
     return {
@@ -394,6 +398,9 @@ export const deriveApkPosture = (
     fps.filter((fp): fp is string => fp !== null),
   );
   const union = new Set(known.flat());
+  const signerSetsDiffer = identityUnknown
+    ? null
+    : new Set(known.map(setKey)).size > 1;
   const lineages = present.flatMap(({ signers }) =>
     signers.map(({ lineage }) => lineage),
   );
@@ -411,11 +418,11 @@ export const deriveApkPosture = (
     posture: {
       v1_only: input.v1Present && !blockPresent,
       schemes_agree_on_signer:
-        union.size === 0 || identityUnknown
+        union.size === 0 || signerSetsDiffer === null
           ? null
-          : new Set(known.map(setKey)).size === 1,
+          : !signerSetsDiffer,
       signer_change_declared_by_rotation: signerChangeDeclared(
-        identityUnknown,
+        signerSetsDiffer,
         union,
         lineage,
         lineages.some((l) => l.kind === "undecoded"),

@@ -291,10 +291,12 @@ const PROOF_OF_ROTATION_ATTR_ID = 0x3ba06f8c;
 /**
  * An APK Signature Scheme v3 value with one signer carrying `certificate` and,
  * when given, a proof-of-rotation lineage over `lineage` (oldest first, every
- * capability retained). Node signatures are empty: nothing here is verified.
+ * capability retained). Null declares an empty certificate sequence rather
+ * than a certificate containing zero bytes. Node signatures are empty:
+ * nothing here is verified.
  */
 export const v3SchemeValue = (
-  certificate: Uint8Array,
+  certificate: Uint8Array | null,
   lineage?: readonly Uint8Array[],
 ): Uint8Array => {
   const digest = lp(
@@ -323,7 +325,7 @@ export const v3SchemeValue = (
         ];
   const signedData = Buffer.concat([
     lp(digest),
-    lp(lp(certificate)),
+    lp(certificate === null ? new Uint8Array() : lp(certificate)),
     Buffer.from(u32(28)),
     Buffer.from(u32(0x7fffffff)),
     lp(Buffer.concat(attributes)),

@@ -21,6 +21,8 @@ import {
   LEAF_CERTIFICATE,
   LEAF_SHA256,
   ROOT_CERTIFICATE,
+  signedDataBlock,
+  signerInfo,
   v2SchemeValue,
   v3SchemeValue,
   withSigningBlock,
@@ -61,6 +63,66 @@ const signedFixture = async (root: string) => {
   );
   return path;
 };
+
+cliTest(
+  "keeps unknown block signer identity through CLI and retained MCP views despite a readable lineage",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-unknown-block-");
+    const path = join(root, "unknown-block.apk");
+    await writeFile(
+      path,
+      withSigningBlock(
+        await zipWith([
+          { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+          {
+            name: "META-INF/CERT.EC",
+            data: signedDataBlock({
+              certificates: [LEAF_CERTIFICATE],
+              signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+            }),
+          },
+        ]),
+        [
+          {
+            id: APK_SIGNATURE_V3_ID,
+            value: v3SchemeValue(null, [LEAF_CERTIFICATE, ROOT_CERTIFICATE]),
+          },
+        ],
+      ),
+    );
+    const complete = await cli.run({
+      arguments: ["inspect-apk-signature", path, "--json"],
+    });
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    const report = apkSignatureResultSchema.parse(
+      parseEvidence(complete.json).normalized_result,
+    );
+    expect(report.schemes.v1.signers[0]!.certificate?.sha256_fingerprint).toBe(
+      LEAF_SHA256,
+    );
+    expect(report.schemes.v3.signers[0]!.certificate).toBeNull();
+    expect(
+      report.schemes.v3.signers[0]!.rotation.lineage[0]!.certificate
+        ?.sha256_fingerprint,
+    ).toBe(LEAF_SHA256);
+    expect(report.posture.v1_signers_match_block_signers).toBeNull();
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_apk_signature", { path });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    const summary = apkSignatureSummaryViewResultSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    expect(summary.summary.posture.v1_signers_match_block_signers).toBeNull();
+    expect(summary.summary.source_coverage.signer_identity).toBe("partial");
+    await rm(path);
+    const page = await readPage(call, summary.parent_evidence_id, {
+      kind: "apk-signature",
+      collection: "lineage",
+    });
+    expect(page.items).toHaveLength(2);
+    expect(page.source_coverage.signer_identity).toBe("partial");
+  },
+);
 
 cliTest(
   "delivers identical selected signing facts through CLI and SDK with complete historical Evidence",

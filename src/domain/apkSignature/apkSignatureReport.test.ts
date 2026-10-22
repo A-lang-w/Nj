@@ -42,6 +42,35 @@ const blocks = (
 const derive = (input: Partial<ApkPostureInput>) =>
   deriveApkPosture({ ...base, ...input }).posture;
 
+it("does not attribute unchanged multi-signer sets to rotation", () => {
+  const result = derive({
+    v2Present: true,
+    v3Present: true,
+    blockSchemes: blocks(
+      ["aa", "bb"],
+      [signer("bb", decoded("aa", "bb")), "aa"],
+    ),
+  });
+  expect(result.schemes_agree_on_signer).toBe(true);
+  expect(result.signer_change_declared_by_rotation).toBe(false);
+});
+
+it.each(["v3", "v3.1"] as const)(
+  "keeps a missing %s signer identity unknown despite a readable lineage",
+  (scheme) => {
+    const result = derive({
+      v1Present: true,
+      v3Present: scheme === "v3",
+      v31Present: scheme === "v3.1",
+      blockSchemes: [
+        { scheme, signers: [signer(null, decoded("old", "new"))] },
+      ],
+      v1SignerFingerprints: ["old"],
+    });
+    expect(result.v1_signers_match_block_signers).toBeNull();
+  },
+);
+
 describe("deriveApkPosture", () => {
   it("includes present empty signer sets when comparing declared schemes", () => {
     expect(
