@@ -48,6 +48,7 @@ export const closeCliJavaScriptResources = (): Promise<void> => {
 /** Execute the shared CLI boundary for static JavaScript analysis. */
 export const runCliJavaScriptApplicationAnalysis = async (
   input: unknown,
+  environment: Readonly<Record<string, string | undefined>>,
   signal?: AbortSignal,
   delivery?: {
     readonly detail: "complete" | "summary";
@@ -65,6 +66,7 @@ export const runCliJavaScriptApplicationAnalysis = async (
   );
   const resources = cliAnalysisScope();
   const result = await analyzeJavaScriptApplication(input, resources, {
+    environment,
     progress,
     ...(signal === undefined ? {} : { signal }),
   });
