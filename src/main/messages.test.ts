@@ -29,17 +29,18 @@ const STALE_LIMIT_COPY =
 
 it("uses one retry then a user handoff for transient MCP failures", () => {
   expect(MCP_CONNECTION_LOST).toBe(
-    "Retry the tool call once. If it fails again, tell the user REA lost its MCP client connection and ask them to restart the MCP client.",
+    "Retry the tool call once only when it is safe to repeat or known not to have started. If it may already have changed the target, or it fails again, tell the user REA lost its MCP client connection and ask them to restart the MCP client.",
   );
   expect(MCP_CONNECTION_LOST).not.toContain("rea doctor");
   expect(MCP_CONNECTION_START_FAILED).toBe(
     "Retry once. If it fails again, tell the user REA could not start its MCP connection and ask them to restart the MCP client, then run `rea doctor`.",
   );
+  expect(MCP_CONNECTION_START_FAILED).toContain("Retry once.");
   expect(SERVER_START_FAILED).toBe(
-    "Retry once. If it fails again, tell the user REA could not start and ask them to restart the MCP client, then run `rea doctor`.",
+    "Do not repeat this startup. Tell the user REA could not start and ask them to restart the MCP client, then run `rea doctor`.",
   );
+  expect(SERVER_START_FAILED).not.toMatch(/\bretry\b/iu);
   for (const message of [MCP_CONNECTION_START_FAILED, SERVER_START_FAILED]) {
-    expect(message).toContain("Retry once.");
     expect(message).toContain("tell the user");
     expect(message).toContain("restart the MCP client");
     expect(message).toContain("`rea doctor`");
@@ -107,15 +108,39 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
     ),
     "utf8",
   );
-  expect(skill).toContain("Retry that call once.");
+  expect(skill).toContain(
+    "retry that call once only when it is safe to repeat or known not to have started",
+  );
   expect(skill).toContain("tell the user REA's connection failed");
   expect(skill).toContain("Do not invent a setting");
+  expect(skill).toContain("explicitly recommends that change");
+  expect(skill).toContain("not a recommendation to change it");
+  expect(skill).not.toContain("names a request field");
   const instructions = await readFile(
     join(root, "src/server/createServer.ts"),
     "utf8",
   );
-  expect(instructions).toContain("retry that call once");
   expect(instructions).toContain(
-    "When that remediation names a request field or REA_* setting",
+    "retry that call once only when it is safe to repeat or known not to have started",
   );
+  expect(instructions).toContain("explicitly recommends that change");
+  expect(instructions).toContain("not a recommendation to change it");
+  expect(instructions).not.toContain("names a request field");
+
+  const wakaru = await readFile(
+    join(root, "src/javascript/recovery/RecoveryFiles.ts"),
+    "utf8",
+  );
+  expect(wakaru).toContain(
+    "Raising analysis_timeout_ms or max_heap_mb does not raise it",
+  );
+  for (const path of [
+    "docs/mcp-contracts.md",
+    "docs/user-visible-errors.csv",
+  ]) {
+    const text = await readFile(join(root, path), "utf8");
+    expect(text, path).toContain("explicitly recommends that change");
+    expect(text, path).toContain("not a recommendation to change it");
+    expect(text, path).not.toContain("names a request field");
+  }
 });

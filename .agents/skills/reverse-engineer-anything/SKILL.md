@@ -32,10 +32,14 @@ original task after repair. Client approval, shell PATH, registration and engine
 availability have different remedies; avoid repeating setup for all of them.
 If the host times out without a REA result, do not repeat the unchanged call or
 assume work stopped. Read the recovery guide's deadline distinction before retrying.
-If the MCP connection drops or REA cannot start, retry that call once. If it
-fails again, tell the user and ask them to restart the MCP client. Run
-`rea doctor` only when REA could not start or tools stay missing after that
-restart. Read the recovery guide before a second repair attempt.
+If the MCP connection drops, retry that call once only when it is safe to
+repeat or known not to have started. If it may already have changed the
+target, or it fails again, tell the user and ask them to restart the MCP
+client. If REA could not start its connection, retry once, then tell the user
+and ask them to restart the MCP client. Do not retry a startup failure that
+returns the same unchanged result. Run `rea doctor` when REA could not start
+or tools stay missing after that restart. Read the recovery guide before a
+second repair attempt.
 
 1. Diagnose without changing REA or client configuration. `npx` may download
    the package and write to npm's cache. For Codex, run
