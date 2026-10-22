@@ -272,11 +272,13 @@ try {
     report.status = "passed";
   }
   if (values["diagnostic-heap"]) {
+    report.status = "incomplete";
     assert.ok(inspectorEndpoint, "Missing explicitly launched inspector");
     report.diagnostic_heap = await sampleRetainedHeap(
       inspectorEndpoint,
       transport.pid,
     );
+    report.status = "passed";
   }
 } finally {
   await client.close();
