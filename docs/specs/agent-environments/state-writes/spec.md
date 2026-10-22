@@ -44,7 +44,9 @@ search. The capture shows it by the first of these that applies:
 2. every call names read operations only, in its body's `operation` or
    `operations[].operation`, else its query's `operation`, `op` or `action`
    (`batch` and similar only wrap them, in either place, so a call needs at
-   least one other); an operation reads when its words name one of `list`,
+   least one other, and every `operations` entry must name one of its own, so
+   an entry with no string operation or another container keeps the call a
+   write); an operation reads when its words name one of `list`,
    `get`, `count`, `aggregate`, `info`, `search`, `find`, `read`, `query`,
    `schema`, `describe`, `fetch` or `lookup`, and none of `create`, `insert`,
    `update`, `delete`, `remove`, `upsert`, `add`, `set`, `save` and similar;
@@ -82,12 +84,14 @@ id is read under: its exemplar's response names an id (an identity member of the
 body or of an object member, or a scalar body or sole member of four characters
 or more), and the first later successful item read naming that id belongs to a
 state type. The entity must be new: neither the initial state nor any earlier
-read holds that id. An id shorter than four characters may be any type's, so it
-links only to a type a successful read showed before the call. The plan records
-that read's collection, and serving creates there, since the call's own path
-names no collection of the type. That collection holds only for the exemplar's
-path arguments: serving refuses a call with others, and the gate counts such a
-recorded call as a write no built plan models.
+read holds that id, whether an item read of it, a list read of its type, or any
+read of the item read's collection, with or without a query, whose body shows it
+under an identity member. An id shorter than four characters may be any type's,
+so it links only to a type a successful read showed before the call. The plan
+records that read's collection, and serving creates there, since the call's own
+path names no collection of the type. That collection holds only for the
+exemplar's path arguments: serving refuses a call with others, and the gate
+counts such a recorded call as a write no built plan models.
 
 **Exemplar.** A plan is built from its first successful (2xx) recorded call,
 the exemplar.

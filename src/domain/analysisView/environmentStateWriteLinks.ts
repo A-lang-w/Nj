@@ -54,26 +54,28 @@ export const respondedIds = (body: JsonValue | undefined): string[] => {
   ];
 };
 
+/** The identity-named scalar values a body shows at any depth. */
+const identitiesIn = (root: JsonValue | undefined): Set<string> => {
+  const shown = new Set<string>();
+  const pending: JsonValue[] = root === undefined ? [] : [root];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    // One push per child: spreading a large array would exceed the engine's argument limit.
+    if (Array.isArray(next)) for (const child of next) pending.push(child);
+    else if (isObject(next)) {
+      for (const id of identityValues(next)) shown.add(id);
+      for (const child of Object.values(next)) pending.push(child);
+    }
+  }
+  return shown;
+};
+
 /** The identity-named scalar values a read's body shows at any depth, or its path's id for an item read. */
 const shownIds = (
   record: StateRecordFacts,
   item: boolean,
   body: () => JsonValue | undefined,
-): Set<string> => {
-  if (item) return new Set([lastSegmentValue(record.path)]);
-  const shown = new Set<string>();
-  const pending: JsonValue[] = [];
-  const root = body();
-  if (root !== undefined) pending.push(root);
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (Array.isArray(next)) pending.push(...next);
-    else if (isObject(next)) {
-      for (const id of identityValues(next)) shown.add(id);
-      pending.push(...Object.values(next));
-    }
-  }
-  return shown;
-};
+): Set<string> =>
+  item ? new Set([lastSegmentValue(record.path)]) : identitiesIn(body());
 
 /** One read of a type: where it ran, whether it reads one item, and the ids it shows. */
 interface ShownRead {
@@ -191,8 +193,8 @@ export const creationLimit = (
 /**
  * The state type and collection a POST whose path names none creates into: that of the first later
  * successful item read naming an id its first successful call returned, when neither the initial
- * state nor any earlier read held that id. A short id may be any type's, so it links only to a type
- * read before the call.
+ * state nor any earlier read of that id, its type's lists or its collection showed that id. A short
+ * id may be any type's, so it links only to a type read before the call.
  */
 export const linkedCreate = (input: {
   readonly tool: StateToolFacts;
@@ -200,6 +202,7 @@ export const linkedCreate = (input: {
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly entities: readonly StateEntity[];
   readonly respondedIds: (ordinal: number) => readonly string[];
+  readonly shownIds: (ordinal: number) => ReadonlySet<string>;
 }): { readonly type: string; readonly collection: string } | undefined => {
   const { tool, records } = input;
   const own = new Set(tool.record_ordinals);
@@ -226,9 +229,21 @@ export const linkedCreate = (input: {
     )
       continue;
     const id = lastSegmentValue(record.path);
-    const held = input.entities.some(
-      (entity) => entity.type === view.type && entity.id === id,
-    );
+    const collection = collectionPathOf(record, true);
+    const held =
+      input.entities.some(
+        (entity) => entity.type === view.type && entity.id === id,
+      ) ||
+      records.slice(0, first).some((earlier) => {
+        const read = input.viewOf(earlier.ordinal);
+        return (
+          earlier.method === "GET" &&
+          succeeded(earlier) &&
+          ((read?.shape === "list" && read.type === view.type) ||
+            normalizedPath(earlier.path) === normalizedPath(collection)) &&
+          input.shownIds(earlier.ordinal).has(id)
+        );
+      });
     const unseen =
       id.length < MIN_ID_LENGTH &&
       !records.slice(0, first).some((earlier) => {
@@ -240,9 +255,7 @@ export const linkedCreate = (input: {
           read.type === view.type
         );
       });
-    return held || unseen
-      ? undefined
-      : { type: view.type, collection: collectionPathOf(record, true) };
+    return held || unseen ? undefined : { type: view.type, collection };
   }
   return undefined;
 };
@@ -307,6 +320,7 @@ export const linkedTarget = (
           viewOf: input.viewOf,
           entities: input.entities,
           respondedIds: (ordinal) => input.io.withBody(ordinal, respondedIds),
+          shownIds: (ordinal) => input.io.withBody(ordinal, identitiesIn),
         })
       : undefined;
   return link === undefined

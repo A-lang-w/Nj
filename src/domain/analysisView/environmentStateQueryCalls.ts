@@ -97,27 +97,34 @@ const succeeded = (record: StateRecordFacts): boolean =>
 const unresolved = (record: StateRecordFacts): boolean =>
   isStateWrite(record) && !succeeded(record);
 
+/** Whether a name is an operation's: a string that is no container wrapping others. */
+const isOperation = (name: JsonValue | undefined): name is string =>
+  typeof name === "string" && !OPERATION_CONTAINERS.has(name.toLowerCase());
+
 /** The names among these that are operations rather than containers wrapping them. */
 const realOperations = (names: readonly (JsonValue | undefined)[]): string[] =>
-  names.filter(
-    (name): name is string =>
-      typeof name === "string" && !OPERATION_CONTAINERS.has(name.toLowerCase()),
-  );
+  names.filter(isOperation);
 
-/** The operations an RPC call names: its body's `operation` or `operations[].operation`, else its query's, containers aside. */
+/**
+ * The operations an RPC call names: its body's `operation` or `operations[].operation`, else its
+ * query's, containers aside. Undefined when `operations` is no list or one of its entries names no
+ * operation of its own: no string, or another container.
+ */
 const operationsOf = (
   record: StateRecordFacts,
   body: JsonValue | undefined,
-): string[] => {
+): string[] | undefined => {
+  const listed = isObject(body) ? body.operations : undefined;
+  const entries = Array.isArray(listed)
+    ? listed.map((entry) => (isObject(entry) ? entry.operation : undefined))
+    : [];
+  if (
+    (listed !== undefined && !Array.isArray(listed)) ||
+    !entries.every(isOperation)
+  )
+    return undefined;
   const named = isObject(body)
-    ? realOperations([
-        body.operation,
-        ...(Array.isArray(body.operations)
-          ? body.operations.map((entry) =>
-              isObject(entry) ? entry.operation : undefined,
-            )
-          : []),
-      ])
+    ? realOperations([body.operation, ...entries])
     : [];
   if (named.length > 0) return named;
   const query = new URLSearchParams(record.query ?? "");
@@ -225,7 +232,11 @@ const namesReadOperations = (
 ): boolean =>
   calls.every((call) => {
     const operations = operationsOf(call, io.request(call.ordinal));
-    return operations.length > 0 && operations.every(readsOnly);
+    return (
+      operations !== undefined &&
+      operations.length > 0 &&
+      operations.every(readsOnly)
+    );
   });
 
 /** The path's last literal segment is a session segment, or names a lookup by its last meaningful word and no write word. */

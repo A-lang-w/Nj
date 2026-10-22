@@ -1427,25 +1427,26 @@ describe("types whose reads disagree across a write", () => {
   });
 });
 
-describe("creates read under another path", () => {
-  const note = (id: number, title: string) => ({ id, title });
-  const A = note(1001, "Alpha");
-  const B = note(1002, "Beta");
-  const C = note(1003, "Gamma");
-  const notesOf = (state: StateView) =>
-    state.entities
-      .filter((entity) => entity.type === "/api/notes")
-      .map((entity) => entity.id);
-  const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
-    ["GET", "/api/notes", [A, B]],
-    ["GET", "/api/notes/1001", A],
-    ["GET", "/api/notes/1002", B],
-    ...before,
-    ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
-    ["GET", "/api/notes/1003", C],
-    ["GET", "/api/notes", [A, B, C]],
-  ];
+const note = (id: number, title: string) => ({ id, title });
+const A = note(1001, "Alpha");
+const B = note(1002, "Beta");
+const C = note(1003, "Gamma");
+const notesOf = (state: StateView) =>
+  state.entities
+    .filter((entity) => entity.type === "/api/notes")
+    .map((entity) => entity.id);
+/** Two notes read, the given exchanges, then a POST elsewhere whose returned id the notes are read under. */
+const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
+  ["GET", "/api/notes", [A, B]],
+  ["GET", "/api/notes/1001", A],
+  ["GET", "/api/notes/1002", B],
+  ...before,
+  ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+  ["GET", "/api/notes/1003", C],
+  ["GET", "/api/notes", [A, B, C]],
+];
 
+describe("creates read under another path", () => {
   it("plans a POST to another path as a create into the type its returned id is first read under", () => {
     const state = stateOf(published([]));
     expect(planOf(state, "post_drafts_publish")).toMatchObject({
@@ -1584,6 +1585,29 @@ describe("creates read under another path", () => {
     expect(planOf(stateOf(published([])), "post_drafts_publish")).toMatchObject(
       { effect: "create" },
     );
+  });
+});
+
+describe("creates whose returned id an earlier read showed", () => {
+  it("links no create whose returned id a list of its collection showed before it", () => {
+    const listed = (shown: JsonValue[]): TimedCaptureRow[] =>
+      published([
+        [
+          "PATCH",
+          "/api/notes/1001",
+          note(1001, "Alpha 2"),
+          200,
+          { title: "Alpha 2" },
+        ],
+        ["GET", "/api/notes?include=archived", shown],
+      ]);
+    const alpha = note(1001, "Alpha 2");
+    expect(
+      planOf(stateOf(listed([alpha, B, C])), "post_drafts_publish"),
+    ).toMatchObject({ effect: "none", reason: "no-state-target" });
+    expect(
+      planOf(stateOf(listed([alpha, B])), "post_drafts_publish"),
+    ).toMatchObject({ effect: "create", target: "/api/notes" });
   });
 });
 

@@ -267,4 +267,23 @@ describe("POSTs that read state but stay writes", () => {
     // A refused call changed nothing, so it does not hold the tool.
     expect(readOnlyOf([post(200), post(400)])).toEqual(["post_ids"]);
   });
+
+  it("keeps a batch a write when one of its entries names no read operation of its own", () => {
+    const rpc = (operations: JsonValue): Call => ({
+      method: "POST",
+      path: "/rpc",
+      tool: "post_rpc",
+      request: { operation: "batch", operations },
+      response: {},
+    });
+    const read = { operation: "getUser" };
+    expect(readOnlyOf([rpc([read, read])])).toEqual(["post_rpc"]);
+    expect(readOnlyOf([rpc([read, { method: "deleteUser" }])])).toEqual([]);
+    expect(readOnlyOf([rpc([read, "deleteUser"])])).toEqual([]);
+    expect(readOnlyOf([rpc([read, { operation: 7 }])])).toEqual([]);
+    expect(
+      readOnlyOf([rpc([read, { operation: "batch", operations: [] }])]),
+    ).toEqual([]);
+    expect(readOnlyOf([rpc({ first: read })])).toEqual([]);
+  });
 });
