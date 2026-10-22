@@ -95,11 +95,15 @@ optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
 do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
-the operation and the REA server/provider deadline; inspect partial Evidence
-and reported cleanup state, then follow producer-specific remediation or reduce
-supported work. Generic errors do not assume adjustable timeout controls. Raising
-only the MCP client's deadline cannot extend this budget. These hints never
-include the complete catalog or caller arguments.
+the operation and the REA server/provider deadline. Inspect partial Evidence
+and reported cleanup state, then follow the returned remediation. Change a
+request field or REA_* setting only when the returned remediation explicitly
+recommends that change. Restart REA when that text says the value is read at
+startup. A mention that a control does not raise the deadline is not a
+recommendation to change it. When it names no setting, reduce supported work;
+do not invent one. Raising only the MCP
+client's deadline cannot extend this budget. These hints never include the
+complete catalog or caller arguments.
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
@@ -234,11 +238,14 @@ The destination changes only when a complete export is atomically published.
 
 Clients that explicitly configure a larger receive buffer can set the REA
 server's `REA_MCP_MAX_RESPONSE_BYTES` environment variable to the same byte
-count. This setting must be a safe decimal integer at least 10485760; REA
-reserves 1024 bytes for the envelope. Raising it restores complete inline
-delivery for responses that fit that buffer and Node's single-string limit.
-It does not change the client's buffer, analysis coverage, or retained content.
-Ordinary responses keep their existing complete result contract.
+count. This setting must be a safe decimal integer at least 10485760 (10 MiB);
+REA reserves 1024 bytes for the envelope. The value is read when the REA
+process starts, so a change requires a restart and a matching client receive
+buffer. Raising it restores complete inline delivery for responses that fit
+that buffer. It does not raise REA's reserved single-string limit, which is
+1024 UTF-16 code units below Node's single-string ceiling, and it does not
+raise that Node ceiling. It does not change analysis coverage or retained
+content. Ordinary responses keep their existing complete result contract.
 
 ### Error recovery and deadline ownership
 
@@ -307,7 +314,9 @@ that complete Evidence in the session and returns the derived
 `normalized_result.parent_evidence_id` and `evidence_links` name the retained
 analysis, so later views and application workflows read it without repeating
 analysis or moving the complete record through the response. A server without
-session retention refuses summary detail with `capability_unavailable`.
+session retention refuses summary detail with `capability_unavailable`;
+`inspect_artifact`, `inspect_wasm_artifact`, `inspect_macho` and
+`decode_interface_builder` refuse before any analysis starts.
 For `inspect_artifact`, omission also keeps the original request parameters and
 complete output shape. Delivery selection never reaches the inventory engine;
 the complete inspection and its atomic inventory Evidence remain retained.
@@ -329,7 +338,7 @@ See [environment manifests](web-network-captures.md#environment-manifest).
 
 `inspect_analysis_view` also accepts `environment-state` for the same parents,
 extracting the initial state the recorded reads observed: entity types with an
-identity field, entities, documents for written non-entity paths, and a render
+identity field, entities, documents for non-entity reads, and a render
 plan per read tool that reproduces its recordings from the state or names why it
 cannot. Types and identity are inferences, so the Evidence is always inferred.
 See [environment state](web-network-captures.md#environment-state).

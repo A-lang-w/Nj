@@ -39,6 +39,13 @@ import {
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
+/** File export when one MCP frame cannot carry the retained session bundle. */
+export const MCP_TRANSPORT_EVIDENCE_EXPORT =
+  "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";
+
+/** Next step when one MCP frame cannot carry a complete retained session bundle. */
+export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, then inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
 ): string => {
@@ -51,6 +58,11 @@ export const analysisErrorRemediationAction = (
     return error.remediationAction;
   if (
     error instanceof BrowserObservationError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
+  if (
+    error instanceof BrowserObservationError &&
     error.reason === "service_worker_blocked"
   )
     return "Set environment.service_workers to allow to permit this capture, or remove the service worker registration through the browser. REA never removes existing registrations.";
@@ -58,6 +70,11 @@ export const analysisErrorRemediationAction = (
     return "Review details.reason, then retry the same analysis after the condition clears.";
   if (error instanceof EvidenceFileError && error.published !== undefined)
     return "Use the published file at details.published_path and resolve the reported staging cleanup failure.";
+  if (
+    error instanceof ProviderSelectionError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.";
   if (error instanceof AnalysisUnsupportedTargetError)
@@ -76,7 +93,7 @@ export const analysisErrorRemediationAction = (
         : error.resource === "capacity"
           ? "Wait for an active analysis to complete, then retry within the reported admission limits."
           : error.resource === "transport"
-            ? "Discover retained records with get_evidence_bundle and detail: summary, then inspect compatible records through inspect_analysis_view using an exact Evidence reference. Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable."
+            ? MCP_TRANSPORT_EVIDENCE_DISCOVERY
             : error.resource === "cpu"
               ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
               : error.resource === "file-size"
@@ -106,7 +123,7 @@ export const analysisErrorRemediationAction = (
       ? "Correct the reported address, document, or arguments and retry."
       : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.";
   if (error instanceof EvidenceReferenceError)
-    return "Use an exact Evidence reference retained by this session, supply the complete inline Evidence, re-run its producer, or import its Evidence bundle. close_binary clears retained records.";
+    return "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. close_binary clears a server session's retained records.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
@@ -274,7 +291,7 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   if (error instanceof ArtifactOperationError) return artifactMessage(error);
   if (error instanceof EvidenceReferenceError)
     return error.reason === "missing"
-      ? `Evidence ${error.evidenceId} is not retained in this session. Supply complete inline Evidence, re-run its producer, or import its bundle before using this reference.`
+      ? `Evidence ${error.evidenceId} is not available from the selected source. Supply complete inline Evidence, re-run its producer, or select/import its bundle before using this reference.`
       : `Evidence ${error.evidenceId} does not match the requested reference (${error.reason}). Check the expected and actual identity in the diagnostic details.`;
   if (error instanceof EvidenceIntegrityError)
     return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";

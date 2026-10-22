@@ -93,7 +93,7 @@ export const registerApplicationCommands = (
         await import("../application/android/AndroidApplicationService.js");
       const result = projectAndroidApplicationEvidence(input);
       return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        ? { ok: true, value: jsonValueSchema.parse(result.value.evidence) }
         : result;
     },
   });
@@ -109,7 +109,7 @@ export const registerApplicationCommands = (
         await import("../application/apple/AppleApplicationService.js");
       const result = projectAppleApplicationEvidence(input);
       return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        ? { ok: true, value: jsonValueSchema.parse(result.value.evidence) }
         : result;
     },
   });
@@ -125,7 +125,7 @@ export const registerApplicationCommands = (
         await import("../application/harmony/HarmonyApplicationService.js");
       const result = projectHarmonyApplicationEvidence(input);
       return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        ? { ok: true, value: jsonValueSchema.parse(result.value.evidence) }
         : result;
     },
   });
@@ -163,10 +163,7 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     workflow: async (input) => {
       const { evaluateReconstructionCoverage } =
         await import("../application/ReconstructionCoverageService.js");
-      const result = evaluateReconstructionCoverage(input);
-      return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value) }
-        : result;
+      return evaluateReconstructionCoverage(input);
     },
   });
 
