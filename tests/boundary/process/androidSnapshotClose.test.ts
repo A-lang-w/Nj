@@ -484,6 +484,51 @@ test("retains the source descriptor when snapshot admission cleanup fails", asyn
   }
 });
 
+test("keeps the snapshot hash when a successful close is cancelled", () => {
+  const reason = { requested: "snapshot-close" };
+  const copy = {
+    kind: "android-snapshot-copy" as const,
+    sha256: "c".repeat(64),
+    sourcePath: "/workspace/sample.apk",
+    snapshotPath: "/workspace/snap/target.apk",
+    bytes: 36,
+  };
+  const cancelled = new RegularFileCancelled(
+    copy.snapshotPath,
+    new OwnedFileHandle({
+      fd: 7,
+      close: async () => undefined,
+    } as FileHandle),
+    { outcome: { kind: "completed", value: copy }, reason },
+  );
+  const error = captureJadxFailure({
+    cause: cancelled,
+    request: {
+      operation: "inspect_android_package",
+      input: { path: copy.sourcePath },
+    } as AndroidRequest,
+    timeout: new AbortController().signal,
+    timeoutMs: 1000,
+    signal: AbortSignal.abort(reason),
+    session: undefined,
+  })();
+  expect(error).toBeInstanceOf(AnalysisCancelledError);
+  expect(error.cause).toBe(reason);
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path: copy.snapshotPath,
+    sha256: copy.sha256,
+    bytes: copy.bytes,
+  });
+  expect(error.diagnostics).toMatchObject({
+    snapshot_copy: "completed",
+    source_path: copy.sourcePath,
+    snapshot_sha256: copy.sha256,
+    snapshot_bytes: copy.bytes,
+  });
+});
+
 test("keeps the snapshot hash when cancellation wraps the finished copy", () => {
   const reason = { requested: "snapshot-close" };
   const copy = {

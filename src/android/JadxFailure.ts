@@ -206,7 +206,24 @@ const observeJadxFailure = (
       composed.retainPartialObservation(snapshotObservation);
     return composed;
   }
-  if (cancellationError !== undefined) return cancellationError;
+  if (cancellationError !== undefined) {
+    const completed = completedSnapshotCopy(cause);
+    if (completed !== undefined) {
+      cancellationError.retainPartialObservation({
+        kind: "file-snapshot-hash",
+        path: completed.snapshotPath,
+        sha256: completed.sha256,
+        bytes: completed.bytes,
+      });
+      cancellationError.retainDiagnostics({
+        snapshot_copy: "completed",
+        source_path: completed.sourcePath,
+        snapshot_sha256: completed.sha256,
+        snapshot_bytes: completed.bytes,
+      });
+    }
+    return cancellationError;
+  }
   if (cause instanceof StableFileHashFailure)
     return new ProviderAdapterError("jadx", request.operation, {
       cause: cause.cause,
