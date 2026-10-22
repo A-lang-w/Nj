@@ -454,9 +454,10 @@ export const createJavaScriptSemanticGraphProjection = (
         limit,
       );
     }
+    const remainingTreeBudget = nodeCeiling - state.nodes.size;
     state.fileNodeBudget = Math.min(
       fileNodeCeiling,
-      Math.max(0, nodeCeiling - state.nodes.size),
+      Math.max(0, remainingTreeBudget),
     );
     state.fileNodesDropped = false;
     const module = retainNode(state, file, {
@@ -466,7 +467,14 @@ export const createJavaScriptSemanticGraphProjection = (
       label: file.path,
       functionNodeId: null,
     });
-    if (state.fileNodesDropped) truncatedFiles += 1;
+    if (state.fileNodesDropped) {
+      truncatedFiles += 1;
+      noteSemanticCeilingReached(
+        nodeCeilingsReached,
+        remainingTreeBudget,
+        fileNodeCeiling,
+      );
+    }
     state.fileNodeBudget = null;
     if (module !== null) state.roots.add(module.node_id);
     const evidence = {
@@ -477,9 +485,11 @@ export const createJavaScriptSemanticGraphProjection = (
       coverage: partialApplicationCoverage(retainedLimits, null),
       limitations: [reason],
     };
+    const unknownsBefore = state.unknowns.size;
+    const omissionsBefore = semanticUnknownOccurrences(state.unknownOmissions);
     state.unknownCapacity = Math.min(
       unknownCeiling,
-      state.unknowns.size + fileUnknownCeiling,
+      unknownsBefore + fileUnknownCeiling,
     );
     for (const family of JAVASCRIPT_SEMANTIC_RELATION_FAMILIES) {
       addSemanticGraphUnknown(state, {
@@ -496,6 +506,13 @@ export const createJavaScriptSemanticGraphProjection = (
       });
     }
     state.unknownCapacity = null;
+    if (semanticUnknownOccurrences(state.unknownOmissions) > omissionsBefore) {
+      noteSemanticCeilingReached(
+        unknownCeilingsReached,
+        unknownCeiling - unknownsBefore,
+        fileUnknownCeiling,
+      );
+    }
     unavailableFiles += 1;
     if (unknownReason === "resource-limit" && retainedLimits.length > 0)
       resourceTruncatedFiles += 1;
