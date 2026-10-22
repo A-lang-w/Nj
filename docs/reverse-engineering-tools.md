@@ -27,7 +27,7 @@ rea inspect-with-objdump ./program dwarf
 rea inspect-with-objdump ./program dwarf --follow-debug-links
 ```
 
-Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit.
+Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. `command_timeout_ms` sets the per-phase wall-clock deadline for target preflight and the one-shot command (default 120000 ms, range 1..2147483647); the CLI exposes it as `--command-timeout-ms`. The value applies on the next call and does not change the output cap.
 
 `execute_rizin_command` reserves `REA_PROCESS_RUN_ID` for owned-process cleanup.
 Rizin and its plugins receive a generated ownership marker instead of any caller
@@ -36,6 +36,9 @@ Rizin invocation. This is a disclosed input override, not an equivalence claim.
 The marker stays intact so cleanup can identify provider descendants. REA does
 not persist the ambient environment merely because the provider inherits it.
 Debugger inferior environment restoration is a separate boundary.
+`command_timeout_ms` sets the per-phase wall-clock deadline (default 120000 ms,
+range 1..2147483647); the CLI exposes it as `--command-timeout-ms`. It does not
+raise the output cap or a Rizin debugger session deadline.
 
 ## GDB
 

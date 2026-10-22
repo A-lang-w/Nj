@@ -28,6 +28,8 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
+  DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+  MAX_REVERSE_COMMAND_TIMEOUT_MS,
   objdumpInputSchema,
   rizinInputSchema,
 } from "../../domain/reverseEngineering.js";
@@ -161,7 +163,16 @@ export class ReverseEngineeringService {
         original instanceof Error &&
         "code" in original &&
         original.code === "ETIMEDOUT"
-          ? new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, options)
+          ? new AnalysisTimeoutError(
+              operation,
+              arguments_[3] ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+              {
+                ...options,
+                ...reverseCommandTimeoutGuidance(
+                  arguments_[3] ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+                ),
+              },
+            )
           : original instanceof AnalysisCancelledError || arguments_[1]?.aborted
             ? new AnalysisCancelledError(operation, options)
             : new AnalysisOutputError(
@@ -257,7 +268,7 @@ export class ReverseEngineeringService {
     const parsed = objdumpInputSchema.safeParse(rawInput);
     if (!parsed.success)
       return err(new AnalysisInputError("inspect_with_objdump"));
-    const { detail, ...input } = parsed.data;
+    const { detail, command_timeout_ms: commandTimeoutMs, ...input } = parsed.data;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
         "inspect_with_objdump",
@@ -276,6 +287,8 @@ export class ReverseEngineeringService {
       const { symbol, ...base } = input;
       parameters = symbol === undefined ? base : { ...base, symbol };
     } else parameters = input;
+    if (commandTimeoutMs !== undefined)
+      parameters = { ...parameters, command_timeout_ms: commandTimeoutMs };
     const observed = await this.#observe(
       "inspect_with_objdump",
       (signal) =>
@@ -283,6 +296,8 @@ export class ReverseEngineeringService {
       bound.operation === "architectures" ? undefined : bound.path,
       parameters,
       options.signal,
+      undefined,
+      commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
     );
     return observed.ok && detail === "summary"
       ? summarizeRetainedAnalysis(observed.value, retention)
@@ -301,7 +316,7 @@ export class ReverseEngineeringService {
       return Promise.resolve(
         err(new AnalysisInputError("execute_rizin_command")),
       );
-    const input = parsed.data;
+    const { command_timeout_ms: commandTimeoutMs, ...input } = parsed.data;
     const absolutePath = absoluteCallerPath(input.path);
     return this.#observe(
       "execute_rizin_command",
@@ -311,9 +326,10 @@ export class ReverseEngineeringService {
           signal === undefined ? {} : { signal },
         ),
       absolutePath,
-      input,
+      commandTimeoutMs === undefined ? input : parsed.data,
       options.signal,
       options.onDispatch,
+      commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
     );
   }
 
@@ -328,6 +344,7 @@ export class ReverseEngineeringService {
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
     onDispatch?: () => void,
+    timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
       return Promise.resolve(
@@ -377,6 +394,7 @@ export class ReverseEngineeringService {
       parameters,
       operationSignal,
       onDispatch,
+      timeoutMs,
     );
     const tracked = running.finally(() => {
       signal?.removeEventListener("abort", relayAbort);
@@ -397,6 +415,7 @@ export class ReverseEngineeringService {
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
     onDispatch?: () => void,
+    timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
       return err(
@@ -412,7 +431,10 @@ export class ReverseEngineeringService {
         return err(new AnalysisCancelledError(operation, { cause }));
       if (cause instanceof Error && Reflect.get(cause, "code") === "ETIMEDOUT")
         return err(
-          new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, { cause }),
+          new AnalysisTimeoutError(operation, timeoutMs, {
+            cause,
+            ...reverseCommandTimeoutGuidance(timeoutMs),
+          }),
         );
       return err(
         new AnalysisOutputError(
@@ -434,6 +456,7 @@ export class ReverseEngineeringService {
           absolutePath,
           signal,
           this.#stat,
+          timeoutMs,
           this.#open,
         );
     } catch (cause) {
@@ -455,7 +478,10 @@ export class ReverseEngineeringService {
       }
       if (code === "ETIMEDOUT")
         return err(
-          new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, { cause }),
+          new AnalysisTimeoutError(operation, timeoutMs, {
+            cause,
+            ...reverseCommandTimeoutGuidance(timeoutMs),
+          }),
         );
       if (
         code !== "ENOENT" &&
@@ -526,7 +552,7 @@ export class ReverseEngineeringService {
             ...profile.environmentOverrides,
           },
           signal,
-          timeout: DEFAULT_TIMEOUT_MS,
+          timeout: timeoutMs,
           stopSignal: "SIGTERM",
           maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
           ...(onDispatch === undefined ? {} : { onDispatch }),
@@ -604,9 +630,10 @@ export class ReverseEngineeringService {
         else if (code === "ETIMEDOUT")
           earlyFailure = new AnalysisTimeoutError(
             operation,
-            DEFAULT_TIMEOUT_MS,
+            timeoutMs,
             {
               cause,
+              ...reverseCommandTimeoutGuidance(timeoutMs),
               ...ownedCleanupOptions(cause),
             },
           );
@@ -662,9 +689,10 @@ export class ReverseEngineeringService {
             ...ownedCleanupOptions(cause),
           });
         else if (code === "ETIMEDOUT")
-          failure = new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, {
+          failure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
             capturedOutput,
+            ...reverseCommandTimeoutGuidance(timeoutMs),
             ...ownedCleanupOptions(cause),
           });
         else if (code === "EACCES" || code === "EPERM")
@@ -738,6 +766,7 @@ export class ReverseEngineeringService {
           absolutePath,
           signal,
           this.#stat,
+          timeoutMs,
           this.#open,
         );
       } catch (cause) {
@@ -983,7 +1012,7 @@ const runOwnedCommandOutput =
             : { onDispatch: options.onDispatch }),
         },
         {
-          timeoutMs: DEFAULT_TIMEOUT_MS,
+          timeoutMs: options.timeout ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
           diagnosticBytes: MAX_COMBINED_OUTPUT_BYTES,
           acceptNonZeroExit: true,
         },
@@ -1151,9 +1180,11 @@ const digestFile = async (
   path: string,
   signal?: AbortSignal,
   stat: (path: string) => Promise<Stats> = statPath,
+  timeoutMs: number = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   openArtifact: (path: string, flags: number) => Promise<FileHandle> = open,
 ): Promise<string> => {
-  const info = await statWithDeadline(path, signal, stat);
+  const startedAt = performance.now();
+  const info = await statWithDeadline(path, signal, stat, timeoutMs);
   if (!info.isFile())
     throw Object.assign(new Error("Artifact digest requires a regular file"), {
       code: "EINVAL",
@@ -1173,6 +1204,9 @@ const digestFile = async (
     rejectInterrupted(cause);
   };
   // Armed before the open so the deadline also covers it.
+  const remainingMs = Math.max(0, Math.ceil(timeoutMs - (performance.now() - startedAt)));
+  if (remainingMs === 0)
+    throw Object.assign(new Error("Artifact digest timed out"), { code: "ETIMEDOUT" });
   const timer = setTimeout(
     () =>
       interrupt(
@@ -1180,7 +1214,7 @@ const digestFile = async (
           code: "ETIMEDOUT",
         }),
       ),
-    DEFAULT_TIMEOUT_MS,
+    remainingMs,
   );
   const abort = (): void =>
     interrupt(new AnalysisCancelledError("artifact_digest"));
@@ -1300,10 +1334,22 @@ const commandFailureCode = (cause: unknown): string | number | undefined => {
     : undefined;
 };
 
+const reverseCommandTimeoutGuidance = (
+  timeoutMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `This objdump or rizin command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms) during target preflight or the one-shot command (deadlineExpired). This is not a Ghidra or Hopper startup deadline and not a debugger session deadline.`,
+  remediationAction: `${
+    timeoutMs < MAX_REVERSE_COMMAND_TIMEOUT_MS
+      ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
+      : `command_timeout_ms is already at the maximum ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)} ms; no higher deadline is supported.`
+  } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
+
 const statWithDeadline = (
   path: string,
   signal: AbortSignal | undefined,
   stat: (path: string) => Promise<Stats>,
+  timeoutMs: number,
 ): Promise<Stats> => {
   if (signal?.aborted)
     return Promise.reject(new AnalysisCancelledError("artifact_digest"));
@@ -1328,7 +1374,7 @@ const statWithDeadline = (
             }),
           ),
         ),
-      DEFAULT_TIMEOUT_MS,
+      timeoutMs,
     );
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) {

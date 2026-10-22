@@ -1401,7 +1401,7 @@ export class GdbSessionManager {
                   "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
                   ...(result.output_truncated
                     ? [
-                        "Retained MI records are a truncated prefix; output completeness is unknown.",
+                        `Retained MI records reached the ${String(this.#maxCommandOutputBytes)} byte or ${String(MAX_COMMAND_OUTPUT_RECORDS)} record cap. This release has no runtime override. Output completeness is unknown.`,
                       ]
                     : []),
                 ],
