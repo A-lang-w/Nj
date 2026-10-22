@@ -45,6 +45,11 @@ const TYPE_ASCII_INTERNED = 0x41;
 const TYPE_SMALL_TUPLE = 0x29;
 const TYPE_SHORT_ASCII = 0x7a;
 const TYPE_SHORT_ASCII_INTERNED = 0x5a;
+/** CPython `CO_VARARGS` / `CO_VARKEYWORDS`. Each consumes one local name. */
+const CO_VARARGS = 0x04;
+const CO_VARKEYWORDS = 0x08;
+/** CPython `_PyLocals_Kind` bit counted by `_PyCode_Validate` as a local. */
+const CO_FAST_LOCAL = 0x20;
 
 type MarshalValue =
   | { readonly kind: "null" }
@@ -85,6 +90,27 @@ type CodeNode = Omit<PythonPycCodeObject, "nested_code" | "consts"> & {
 
 const EMPTY_CODES: readonly CodeNode[] = [];
 
+type KeyMode = "hash" | "const";
+
+/**
+ * Equality token plus the size of the expanded CPython-style key.
+ * Container tokens are interned so a reference chain does not copy every
+ * ancestor into the next string. `expanded` is still the size that string
+ * would have, so a repeated child cannot double without bound.
+ */
+type ResolvedKey = {
+  readonly token: string;
+  readonly expanded: number;
+};
+
+type KeyFrame = {
+  value: MarshalValue;
+  index: number;
+  parts: string[];
+  expanded: number[];
+  failed: boolean;
+};
+
 const isContainer = (value: MarshalValue): boolean =>
   value.kind === "tuple" ||
   value.kind === "list" ||
@@ -121,6 +147,16 @@ type CodeEquality = {
 
 const malformed = (message: string): never => {
   throw new PythonPycFormatFailure("malformed", message);
+};
+
+/** Locals CPython's 3.11+ validator counts toward `co_varnames`. */
+const fastLocalCount = (kinds: Buffer): number => {
+  let count = 0;
+  for (let index = 0; index < kinds.length; index += 1) {
+    const kind = kinds[index] ?? 0;
+    if ((kind & CO_FAST_LOCAL) !== 0) count += 1;
+  }
+  return count;
 };
 
 const unsupported = (message: string): never => {
@@ -220,19 +256,24 @@ class MarshalReader {
   #reportedStringBytes = 0;
   /** Const summaries the report copies, including tables shared by TYPE_REF. */
   #reportedConsts = 0;
-  /** Bytes of hash keys materialized for set and dict rules. */
+  /** Bytes of hash-key descriptors materialized for set and dict rules. */
   #keyBytes = 0;
   /** Identity keys for NaN values, which are not equal to themselves. */
   readonly #identities = new WeakMap<MarshalValue, number>();
   #identityNext = 0;
   /** One Python equality key per object. Null means the value is unhashable. */
-  readonly #keyCache = new WeakMap<MarshalValue, string | null>();
+  readonly #keyCache = new WeakMap<MarshalValue, ResolvedKey | null>();
+  /** Constant keys keep signed zeroes distinct and give cycles an identity. */
+  readonly #constCache = new WeakMap<MarshalValue, ResolvedKey>();
+  /** Interned descriptors so equal values share one token within this walk. */
+  readonly #keyTokens = new Map<string, string>();
+  #keyTokenNext = 0;
+  /** Explicit key-walk steps. Stream `max_depth` does not bound reference chains. */
+  #keySteps = 0;
   /** One code-equality key per code object. Empty while that key is in progress. */
   readonly #codeKeys = new WeakMap<CodeNode, string>();
   readonly #codeIdentities = new WeakMap<CodeNode, number>();
   readonly #codeEquality = new WeakMap<CodeNode, CodeEquality>();
-  /** Constant keys are not set-equality keys: -0 stays distinct from 0. */
-  readonly #constCache = new WeakMap<MarshalValue, string>();
   /** Code objects whose const summaries wait until the graph is fully decoded. */
   readonly #codes: CodeNode[] = [];
   /**
@@ -360,6 +401,10 @@ class MarshalReader {
     const stacksize = this.signedCount("co_stacksize");
     const flags = this.u32();
     const bytecode = asBytes(this.readObject(depth + 1), "co_code");
+    // 3.11+ `_PyCode_Validate` rejects a length that is not a whole code unit.
+    // 3.7–3.10 constructors do not, so an odd `co_code` stays readable there.
+    if (this.layout === "py311" && bytecode.length % 2 !== 0)
+      malformed("co_code is malformed.");
     const consts = asTuple(this.readObject(depth + 1), "co_consts");
     this.#chargeConsts(consts.length);
     const names = this.#nameTable(
@@ -383,6 +428,12 @@ class MarshalReader {
           "co_localspluskinds length does not match co_localsplusnames.",
         );
       localspluskinds_hex = localspluskinds.toString("hex");
+      this.#rejectUndersizedLocals(
+        argcount,
+        kwonlyargcount,
+        flags,
+        fastLocalCount(localspluskinds),
+      );
     } else {
       varnames = this.#nameTable(
         asTuple(this.readObject(depth + 1), "co_varnames"),
@@ -392,6 +443,12 @@ class MarshalReader {
       );
       cellvars = this.#nameTable(
         asTuple(this.readObject(depth + 1), "co_cellvars"),
+      );
+      this.#rejectUndersizedLocals(
+        argcount,
+        kwonlyargcount,
+        flags,
+        varnames.length,
       );
     }
     const filename = asString(this.readObject(depth + 1), "co_filename");
@@ -816,29 +873,158 @@ class MarshalReader {
     return [...seen.values()];
   }
 
+  /**
+   * CPython rejects code whose argument counts do not fit the local table.
+   * 3.11+ counts `CO_FAST_LOCAL` entries (`co_varnames is too small`).
+   * 3.7–3.10 count `co_varnames` the same way, including `*args` and `**kwargs`.
+   */
+  #rejectUndersizedLocals(
+    argcount: number,
+    kwonlyargcount: number,
+    flags: number,
+    locals: number,
+  ): void {
+    let plain = locals - argcount - kwonlyargcount;
+    if ((flags & CO_VARARGS) !== 0) plain -= 1;
+    if ((flags & CO_VARKEYWORDS) !== 0) plain -= 1;
+    if (plain < 0) malformed("co_varnames is too small.");
+  }
+
   #hashKey(value: MarshalValue, role: string): string {
-    return (
-      this.#pythonKey(value, new Set()) ?? malformed(`Unhashable ${role}.`)
-    );
+    return this.#equalityKey(value, "hash") ?? malformed(`Unhashable ${role}.`);
   }
 
   /**
-   * Python equality key for hash-based containers. Null means the value is
-   * unhashable. NaN uses object identity because NaN is not equal to NaN.
-   * Shared tuples are cached, and the joined key is charged before it is built.
+   * Python equality for hash-based containers and for code-constant identity.
+   * Tuple and frozenset chains use an explicit stack: a `TYPE_REF` chain is
+   * not stream nesting, and `max_depth` must not turn a loadable file into
+   * a stack overflow. Expanded size is checked per container so a shared
+   * child that is stored twice still cannot double without bound.
    */
-  #pythonKey(value: MarshalValue, stack: Set<MarshalValue>): string | null {
-    const cached = this.#keyCache.get(value);
-    if (cached !== undefined) return cached;
-    const key = this.#pythonKeyUncached(value, stack);
-    if (!stack.has(value)) this.#keyCache.set(value, key);
-    return key;
+  #equalityKey(value: MarshalValue, mode: KeyMode): string | null {
+    const resolved = this.#resolveKey(value, mode);
+    return resolved === null ? null : resolved.token;
   }
 
-  #pythonKeyUncached(
+  #resolveKey(value: MarshalValue, mode: KeyMode): ResolvedKey | null {
+    const cached = this.#cachedKey(value, mode);
+    if (cached !== undefined) return cached;
+    const frames: KeyFrame[] = [
+      { value, index: 0, parts: [], expanded: [], failed: false },
+    ];
+    const gray = new Set<MarshalValue>();
+    gray.add(value);
+    while (frames.length > 0) {
+      this.#takeKeyStep();
+      const frame = frames[frames.length - 1];
+      if (frame === undefined) break;
+      const items =
+        frame.value.kind === "tuple" || frame.value.kind === "frozenset"
+          ? frame.value.items
+          : undefined;
+      if (items === undefined) {
+        const key = this.#leafKey(frame.value, mode);
+        this.#storeKey(frame.value, mode, key, gray);
+        frames.pop();
+        this.#recordChild(frames, key);
+        continue;
+      }
+      if (frame.failed || frame.index >= items.length) {
+        const key = frame.failed
+          ? null
+          : this.#containerKey(frame.value, frame.parts, frame.expanded);
+        this.#storeKey(frame.value, mode, key, gray);
+        frames.pop();
+        this.#recordChild(frames, key);
+        continue;
+      }
+      const child = items[frame.index];
+      frame.index += 1;
+      if (child === undefined) continue;
+      const known = this.#cachedKey(child, mode);
+      if (known !== undefined) {
+        if (known === null) frame.failed = true;
+        else this.#pushPart(frame, known);
+        continue;
+      }
+      if (gray.has(child)) {
+        if (mode === "hash") frame.failed = true;
+        else this.#pushPart(frame, this.#identityKey(child));
+        continue;
+      }
+      gray.add(child);
+      frames.push({
+        value: child,
+        index: 0,
+        parts: [],
+        expanded: [],
+        failed: false,
+      });
+    }
+    const resolved = this.#cachedKey(value, mode);
+    return resolved === undefined ? null : resolved;
+  }
+
+  #cachedKey(
     value: MarshalValue,
-    stack: Set<MarshalValue>,
-  ): string | null {
+    mode: KeyMode,
+  ): ResolvedKey | null | undefined {
+    return mode === "hash"
+      ? this.#keyCache.get(value)
+      : this.#constCache.get(value);
+  }
+
+  #storeKey(
+    value: MarshalValue,
+    mode: KeyMode,
+    key: ResolvedKey | null,
+    gray: Set<MarshalValue>,
+  ): void {
+    if (mode === "hash") this.#keyCache.set(value, key);
+    else if (key !== null) this.#constCache.set(value, key);
+    gray.delete(value);
+  }
+
+  #recordChild(frames: KeyFrame[], key: ResolvedKey | null): void {
+    const parent = frames[frames.length - 1];
+    if (parent === undefined) return;
+    if (key === null) {
+      parent.failed = true;
+      return;
+    }
+    this.#pushPart(parent, key);
+  }
+
+  #pushPart(frame: KeyFrame, key: ResolvedKey): void {
+    frame.parts.push(key.token);
+    frame.expanded.push(key.expanded);
+  }
+
+  /**
+   * One step per explicit-stack iteration. The cap follows decoded objects,
+   * not `max_depth`, because a reference chain is shallow in the stream.
+   */
+  #takeKeyStep(): void {
+    this.#keySteps += 1;
+    const limit = this.input.max_objects * 8;
+    if (this.#keySteps > limit)
+      throw new PythonPycResourceFailure(
+        "objects",
+        { max_objects: this.input.max_objects },
+        `Marshal key walk exceeds ${limit} steps (max_objects * 8).`,
+      );
+  }
+
+  #leafKey(value: MarshalValue, mode: KeyMode): ResolvedKey | null {
+    const descriptor = this.#leafDescriptor(value, mode);
+    if (descriptor === null) return null;
+    return {
+      token: this.#internToken(descriptor),
+      expanded: descriptor.length,
+    };
+  }
+
+  #leafDescriptor(value: MarshalValue, mode: KeyMode): string | null {
     switch (value.kind) {
       case "none":
         return "N";
@@ -847,55 +1033,94 @@ class MarshalReader {
       case "stopiter":
         return "S";
       case "bool":
-        return value.value ? "i1" : "i0";
+        if (mode === "hash") return value.value ? "i1" : "i0";
+        return value.value ? "B1" : "B0";
       case "int":
         if (value.bits > this.input.max_string_bytes * 3)
           this.#keyTooLarge(value.bits);
         return this.#boundedJoin("i", [value.value.toString()], "");
       case "float":
-        return Number.isNaN(value.value)
-          ? this.#identity(value)
-          : this.#numberKey(value.value);
+        if (Number.isNaN(value.value)) return this.#identity(value);
+        if (mode === "const") return this.#constFloat(value.value);
+        return this.#numberKey(value.value);
       case "complex":
         if (Number.isNaN(value.real) || Number.isNaN(value.imag))
           return this.#identity(value);
-        if (value.imag === 0) return this.#numberKey(value.real);
+        if (mode === "hash" && value.imag === 0)
+          return this.#numberKey(value.real);
+        if (mode === "hash")
+          return this.#boundedJoin(
+            "c",
+            [this.#numberKey(value.real), this.#numberKey(value.imag)],
+            ":",
+          );
         return this.#boundedJoin(
           "c",
-          [this.#numberKey(value.real), this.#numberKey(value.imag)],
+          [
+            this.#signedZero(value.real),
+            this.#signedZero(value.imag),
+            this.#numberKey(value.real),
+            this.#numberKey(value.imag),
+          ],
           ":",
         );
       case "str":
         return this.#stringKey(value.raw);
-      case "bytes":
+      case "bytes": {
         this.#reserveKey(value.value.length * 2 + 8);
-        return `b${value.value.length}:${value.value.toString("hex")}`;
+        const prefix = mode === "hash" ? "b" : "y";
+        return `${prefix}${value.value.length}:${value.value.toString("hex")}`;
+      }
       case "code":
         return this.#codeKey(value.value);
-      case "tuple":
-      case "frozenset": {
-        if (stack.has(value)) return null;
-        stack.add(value);
-        const parts: string[] = [];
-        for (const item of value.items) {
-          const key = this.#pythonKey(item, stack);
-          if (key === null) {
-            stack.delete(value);
-            return null;
-          }
-          parts.push(`${key.length}:${key}`);
-        }
-        stack.delete(value);
-        if (value.kind === "frozenset") parts.sort();
-        return this.#boundedJoin(
-          value.kind === "tuple" ? "t" : "f",
-          parts,
-          ",",
-        );
-      }
       default:
-        return null;
+        return mode === "const" ? this.#identity(value) : null;
     }
+  }
+
+  #constFloat(value: number): string {
+    if (Object.is(value, -0)) return "z-0";
+    if (Object.is(value, 0)) return "z0";
+    return `z${this.#numberKey(value)}`;
+  }
+
+  #containerKey(
+    value: MarshalValue,
+    parts: readonly string[],
+    childExpanded: readonly number[],
+  ): ResolvedKey {
+    const expanded = this.#expandedContainerSize(childExpanded);
+    if (expanded > this.input.max_string_bytes) this.#keyTooLarge(expanded);
+    const ordered = value.kind === "frozenset" ? [...parts].sort() : parts;
+    const kind = value.kind === "tuple" ? "T" : "F";
+    const descriptor = `${kind}:${ordered.join(",")}`;
+    // Charge the descriptor that is stored, not the unmaterialized expansion.
+    // A linear reference chain stays within the file budget; repeating one
+    // child still fails above when `expanded` passes max_string_bytes.
+    this.#reserveKey(descriptor.length);
+    return { token: this.#internToken(descriptor), expanded };
+  }
+
+  /** Size of the old length-prefixed container key, without building it. */
+  #expandedContainerSize(childExpanded: readonly number[]): number {
+    let size = 1;
+    if (childExpanded.length > 0) size += childExpanded.length - 1;
+    for (const child of childExpanded) size += String(child).length + 1 + child;
+    return size;
+  }
+
+  #internToken(descriptor: string): string {
+    const existing = this.#keyTokens.get(descriptor);
+    if (existing !== undefined) return existing;
+    this.#keyTokenNext += 1;
+    const token = `k${this.#keyTokenNext.toString(36)}`;
+    this.#keyTokens.set(descriptor, token);
+    return token;
+  }
+
+  #identityKey(value: MarshalValue): ResolvedKey {
+    const token = this.#identity(value);
+    return { token, expanded: token.length };
   }
 
   /**
@@ -910,28 +1135,34 @@ class MarshalReader {
     const material =
       this.#codeEquality.get(node) ??
       malformed("Code object is missing equality material.");
-    const locals = node.localsplusnames ?? [
-      ...(node.varnames ?? []),
-      ...(node.cellvars ?? []),
-      ...(node.freevars ?? []),
+    const nameTables = [
+      this.#nameTableKey(node.names),
+      ...(node.localsplusnames !== null
+        ? [this.#nameTableKey(node.localsplusnames)]
+        : [
+            this.#nameTableKey(node.varnames ?? []),
+            this.#nameTableKey(node.freevars ?? []),
+            this.#nameTableKey(node.cellvars ?? []),
+          ]),
+    ];
+    const fields = [
+      node.name,
+      String(node.argcount),
+      String(node.posonlyargcount ?? 0),
+      String(node.kwonlyargcount),
+      node.nlocals === null ? "" : String(node.nlocals),
+      String(node.flags),
+      String(node.firstlineno),
+      `${node.bytecode.bytes}:${node.bytecode.sha256}`,
+      this.#constKeyItems(material.consts),
+      ...nameTables,
+      material.linetable,
+      material.exceptiontable,
     ];
     const key = this.#boundedJoin(
       "",
-      [
-        node.name,
-        String(node.argcount),
-        String(node.posonlyargcount ?? 0),
-        String(node.kwonlyargcount),
-        String(node.flags),
-        String(node.firstlineno),
-        `${node.bytecode.bytes}:${node.bytecode.sha256}`,
-        this.#constKeyItems(material.consts),
-        node.names.join("\0"),
-        locals.join("\0"),
-        material.linetable,
-        material.exceptiontable,
-      ],
-      "|",
+      fields.map((field) => `${field.length}:${field}`),
+      ",",
     );
     this.#codeKeys.set(node, key);
     return key;
@@ -945,12 +1176,23 @@ class MarshalReader {
     return this.#identityNext;
   }
 
+  /**
+   * One name table, with its length and each entry's boundary. Joining on a
+   * bare NUL makes `()` and `("",)` the same key, and the same join hides
+   * which of `co_varnames`, `co_freevars`, and `co_cellvars` held each name.
+   */
+  #nameTableKey(items: readonly string[]): string {
+    const entries = items.map((item) => `${item.length}:${item}`).join(",");
+    return `${items.length}[${entries}]`;
+  }
+
   /** Constant key used when two code objects compare their co_consts. */
   #constKeyItems(items: readonly MarshalValue[]): string {
     const parts: string[] = [];
     for (const item of items) {
-      const key = this.#constKey(item, new Set());
-      parts.push(`${key.length}:${key}`);
+      const key = this.#resolveKey(item, "const");
+      const token = key === null ? this.#identity(item) : key.token;
+      parts.push(`${token.length}:${token}`);
     }
     return this.#boundedJoin("k", parts, ",");
   }
@@ -959,75 +1201,6 @@ class MarshalReader {
   #stringKey(raw: Buffer): string {
     this.#reserveKey(raw.length * 2 + 8);
     return `s${raw.length}:${raw.toString("hex")}`;
-  }
-
-  #constKey(value: MarshalValue, stack: Set<MarshalValue>): string {
-    const cached = this.#constCache.get(value);
-    if (cached !== undefined) return cached;
-    const key = this.#constKeyUncached(value, stack);
-    if (!stack.has(value)) this.#constCache.set(value, key);
-    return key;
-  }
-
-  #constKeyUncached(value: MarshalValue, stack: Set<MarshalValue>): string {
-    switch (value.kind) {
-      case "none":
-        return "N";
-      case "ellipsis":
-        return "E";
-      case "stopiter":
-        return "S";
-      case "bool":
-        return value.value ? "B1" : "B0";
-      case "int":
-        if (value.bits > this.input.max_string_bytes * 3)
-          this.#keyTooLarge(value.bits);
-        return this.#boundedJoin("i", [value.value.toString()], "");
-      case "float":
-        if (Number.isNaN(value.value)) return this.#identity(value);
-        if (Object.is(value.value, -0)) return "z-0";
-        if (Object.is(value.value, 0)) return "z0";
-        return `z${this.#numberKey(value.value)}`;
-      case "complex":
-        if (Number.isNaN(value.real) || Number.isNaN(value.imag))
-          return this.#identity(value);
-        return this.#boundedJoin(
-          "c",
-          [
-            this.#signedZero(value.real),
-            this.#signedZero(value.imag),
-            this.#numberKey(value.real),
-            this.#numberKey(value.imag),
-          ],
-          ":",
-        );
-      case "str":
-        return this.#stringKey(value.raw);
-      case "bytes":
-        this.#reserveKey(value.value.length * 2 + 8);
-        return `y${value.value.length}:${value.value.toString("hex")}`;
-      case "code":
-        return this.#codeKey(value.value);
-      case "tuple":
-      case "frozenset": {
-        if (stack.has(value)) return this.#identity(value);
-        stack.add(value);
-        const parts: string[] = [];
-        for (const item of value.items) {
-          const key = this.#constKey(item, stack);
-          parts.push(`${key.length}:${key}`);
-        }
-        stack.delete(value);
-        if (value.kind === "frozenset") parts.sort();
-        return this.#boundedJoin(
-          value.kind === "tuple" ? "t" : "f",
-          parts,
-          ",",
-        );
-      }
-      default:
-        return this.#identity(value);
-    }
   }
 
   #signedZero(value: number): string {

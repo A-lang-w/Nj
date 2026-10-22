@@ -99,7 +99,7 @@ export const marshalCode = (
   parts.push(
     u32(fields.stacksize ?? 1),
     u32(fields.flags ?? 0),
-    marshalBytes(fields.bytecode ?? Buffer.from([0x53])),
+    marshalBytes(fields.bytecode ?? Buffer.from([0x53, 0x00])),
     fields.constsObject ?? marshalSmallTuple(fields.consts ?? [marshalNone()]),
     fields.namesObject ??
       marshalSmallTuple(
@@ -167,7 +167,7 @@ export const pythonPycFixture = (
           qualname: "inner",
           filename: "sample.py",
           firstlineno: 2,
-          bytecode: Buffer.from([0x53]),
+          bytecode: Buffer.from([0x53, 0x00]),
         })
       : undefined;
   const module = marshalCode(layout, {
@@ -177,7 +177,7 @@ export const pythonPycFixture = (
     firstlineno: 1,
     names: nested === undefined ? [] : ["inner"],
     consts: nested === undefined ? [marshalNone()] : [nested, marshalNone()],
-    bytecode: Buffer.from([0x64, 0x00, 0x53]),
+    bytecode: Buffer.from([0x64, 0x00, 0x53, 0x00]),
     ...(options.flaggedCode === true ? { flagged: true } : {}),
   });
   return concat(pythonPycHeader(magic, options.header), module);

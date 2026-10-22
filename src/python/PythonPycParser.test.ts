@@ -130,6 +130,7 @@ const marshalUnicode = (bytes: Buffer): Buffer =>
   Buffer.concat([Buffer.from([0x75]), u32(bytes.length), bytes]);
 const withConsts = (consts: Buffer[]): Buffer =>
   Buffer.concat([pythonPycHeader(3531), marshalCode("py311", { consts })]);
+const CO_VARARGS = 0x04;
 
 /** Each level keeps one flagged child and two TYPE_REF copies of it. */
 const sharedChain = (levels: number): Buffer => {
@@ -1161,9 +1162,17 @@ it("rejects negative CPython code counts and keeps them out of the schema", () =
   expect(() =>
     parse(negative("py311", { argcount: 1, posonlyargcount: 2 })),
   ).toThrow(/co_argcount is smaller than co_posonlyargcount/);
-  const high = parse(negative("py311", { argcount: 0x7fffffff }));
-  expect(root(high).argcount).toBe(0x7fffffff);
+  expect(() => parse(negative("py311", { argcount: 0x7fffffff }))).toThrow(
+    /co_varnames is too small/,
+  );
+  const high = parse(negative("py311", {}));
   expect(pythonPycSchema.safeParse(high).success).toBe(true);
+  expect(
+    pythonPycSchema.safeParse({
+      ...high,
+      code_objects: [{ ...root(high), argcount: 0x7fffffff }],
+    }).success,
+  ).toBe(true);
   expect(
     pythonPycSchema.safeParse({
       ...high,
@@ -1176,6 +1185,148 @@ it("rejects negative CPython code counts and keeps them out of the schema", () =
       code_objects: [{ ...root(high), stacksize: 0xffffffff }],
     }).success,
   ).toBe(false);
+});
+
+it("keeps code objects whose name tables differ only by boundaries", () => {
+  const frozen = (...members: Buffer[]): Buffer =>
+    Buffer.concat([Buffer.from([0x3e]), u32(members.length), ...members]);
+  const code = (
+    layout: "py311" | "py38",
+    fields: Parameters<typeof marshalCode>[1],
+  ): Buffer =>
+    marshalCode(layout, {
+      name: "f",
+      qualname: "f",
+      filename: "f.py",
+      firstlineno: 1,
+      ...fields,
+    });
+  const split = parse(
+    withConsts([
+      frozen(
+        code("py311", { names: [] }),
+        code("py311", { names: [""] }),
+        code("py311", { names: ["a\0b"] }),
+        code("py311", { names: ["a", "b"] }),
+        code("py311", { names: ["a"] }),
+        code("py311", { names: ["a"], filename: "other.py" }),
+      ),
+    ]),
+  );
+  expect(root(split).consts[0]).toEqual({ kind: "frozenset", length: 5 });
+  expect(split.code_objects).toHaveLength(6);
+  expect(split.coverage).toMatchObject({ status: "complete", code_objects: 6 });
+  expect(pythonPycSchema.safeParse(split).success).toBe(true);
+
+  const tables = parse(
+    Buffer.concat([
+      pythonPycHeader(3439),
+      marshalCode("py38", {
+        consts: [
+          frozen(
+            code("py38", { varnames: ["a"], cellvars: ["b"] }),
+            code("py38", { varnames: ["a", "b"] }),
+            code("py38", { varnames: ["a"], freevars: ["b"] }),
+          ),
+        ],
+      }),
+    ]),
+  );
+  expect(root(tables).consts[0]).toEqual({ kind: "frozenset", length: 3 });
+  expect(tables.code_objects).toHaveLength(4);
+  expect(tables.coverage.status).toBe("complete");
+});
+
+it("hashes a long TYPE_REF tuple chain without recursing", () => {
+  const links = 6000;
+  // Outer pair is (tuple chain, ref to the set) so the set length is visible.
+  // Small tuples are flagged in order; each one references the previous slot.
+  const pieces: Buffer[] = [
+    Buffer.from([0x29, 2, 0x28 | 0x80]),
+    u32(links + 1),
+    Buffer.from([0x29 | 0x80, 1, 0x69]),
+    i32(1),
+  ];
+  for (let index = 1; index < links; index += 1)
+    pieces.push(Buffer.from([0x29 | 0x80, 1]), marshalRef(index));
+  pieces.push(
+    Buffer.from([0x3c | 0x80]),
+    u32(1),
+    marshalRef(links),
+    marshalRef(links + 1),
+  );
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
+  ]);
+  expect(bytes.length).toBeLessThan(64_000);
+  const started = Date.now();
+  const report = parse(bytes);
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(root(report).consts[0]).toEqual({ kind: "tuple", length: links + 1 });
+  expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
+  expect(report.coverage.status).toBe("complete");
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("rejects code CPython treats as corrupt instead of complete coverage", () => {
+  const file = (
+    layout: "py37" | "py38" | "py311",
+    magic: number,
+    fields: Parameters<typeof marshalCode>[1],
+  ): Buffer =>
+    Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]);
+  expect(() =>
+    parse(file("py311", 3531, { bytecode: Buffer.from([0x53]) })),
+  ).toThrow(/co_code is malformed/);
+  expect(() => parse(file("py311", 3531, { argcount: 100 }))).toThrow(
+    /co_varnames is too small/,
+  );
+  expect(() =>
+    parse(
+      file("py311", 3531, {
+        argcount: 1,
+        localsplusnames: ["a"],
+        localspluskinds: Buffer.from([0x00]),
+      }),
+    ),
+  ).toThrow(/co_varnames is too small/);
+  expect(() => parse(file("py311", 3531, { flags: CO_VARARGS }))).toThrow(
+    /co_varnames is too small/,
+  );
+  expect(() => parse(file("py38", 3439, { argcount: 1 }))).toThrow(
+    /co_varnames is too small/,
+  );
+  expect(() =>
+    parse(file("py38", 3439, { argcount: 1, cellvars: ["a"] })),
+  ).toThrow(/co_varnames is too small/);
+  expect(() => parse(file("py37", 3394, { argcount: 1 }))).toThrow(
+    /co_varnames is too small/,
+  );
+
+  const valid = parse(
+    file("py311", 3531, {
+      argcount: 1,
+      kwonlyargcount: 1,
+      flags: CO_VARARGS,
+      localsplusnames: ["a", "b", "c"],
+      localspluskinds: Buffer.from([0x20, 0x20, 0x20]),
+      bytecode: Buffer.alloc(0),
+    }),
+  );
+  expect(root(valid).argcount).toBe(1);
+  expect(valid.coverage.status).toBe("complete");
+  const py37 = parse(
+    file("py37", 3394, {
+      argcount: 1,
+      varnames: ["a"],
+      bytecode: Buffer.from([0x53]),
+    }),
+  );
+  expect(root(py37).argcount).toBe(1);
+  expect(root(py37).bytecode.bytes).toBe(1);
+  expect(py37.coverage.status).toBe("complete");
+  expect(pythonPycSchema.safeParse(valid).success).toBe(true);
 });
 
 it("leaves 3.11 alpha magics with other code layouts unsupported", () => {

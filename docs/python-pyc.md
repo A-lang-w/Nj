@@ -62,12 +62,22 @@ The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
 budget fails without partial success. Argument counts, positional-only counts,
 keyword-only counts, local counts, and stack size are signed CPython fields; a
-negative encoding is malformed. Nested code collection walks reference chains
-iteratively and keeps one shared descendant list for a container that merely
-wraps another, instead of copying that list onto every wrapper. Names repeated
-through a marshal reference, including each code-constant name the report copies,
-count against
-the file budget once per copy. Empty strings add no bytes, so every copied
+negative encoding is malformed. On the 3.11+ layout, `co_code` must cover a
+whole number of code units. Every layout rejects argument counts that do not
+fit the local table CPython checks (`co_varnames`, including `*args` /
+`**kwargs`, or fast locals on 3.11+). Those files are malformed, so the
+workflow does not report complete coverage. 3.7–3.10 still accept an odd
+`co_code`, matching those constructors. Nested code collection walks reference
+chains iteratively and keeps one shared descendant list for a container that
+merely wraps another, instead of copying that list onto every wrapper. Set and
+dictionary keys walk tuple and frozenset reference chains the same way, so a
+long `TYPE_REF` chain stays within the call stack. A shared child stored twice
+still counts its expanded key against the string budget. Code-object equality
+keys record each name table's length and each entry's boundaries, so `()` and
+`("",)` stay distinct, and `co_varnames`, `co_freevars`, and `co_cellvars` stay
+separate tables. Names repeated through a marshal reference, including each
+code-constant name the report copies, count against the file budget once per
+copy. Empty strings add no bytes, so every copied
 name-table entry (`co_names`, varnames, freevars, cellvars, and
 `localsplusnames`) counts against the object budget before its array is built.
 Copied constant tables and each reported nested code relationship count
