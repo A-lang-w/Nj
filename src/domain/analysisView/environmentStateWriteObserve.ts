@@ -8,6 +8,7 @@ import {
   pointerTo,
   scalarText,
   type JsonObject,
+  type StateEntity,
   type StateRecordFacts,
   type StateView,
 } from "./environmentStateRules.js";
@@ -57,6 +58,25 @@ export const newEntityIn = (
     if (found.length > 0) return found.length === 1 ? found[0] : undefined;
   }
   return undefined;
+};
+
+/** The fields an item or list view shows; undefined for any other view. */
+export const viewFields = (
+  view: StateView | undefined,
+): readonly string[] | undefined =>
+  view?.shape === "item" || view?.shape === "list" ? view.fields : undefined;
+
+/** The fields of the view a read observed an entity with, when that view had shown the entity before. */
+export const shownBefore = (
+  viewOf: (ordinal: number) => StateView | undefined,
+  entity: Pick<StateEntity, "record_ordinals">,
+  ordinal: number,
+): readonly string[] => {
+  const view = viewOf(ordinal);
+  const shown = entity.record_ordinals.some(
+    (earlier) => viewOf(earlier)?.tool === view?.tool,
+  );
+  return (shown ? viewFields(view) : undefined) ?? [];
 };
 
 /** What a forward search for an observation reads: records after a position, read views and response bodies. */

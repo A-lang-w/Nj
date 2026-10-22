@@ -8,6 +8,34 @@ import {
 import type { FieldRule } from "./environmentStateWriteRules.js";
 import { isUuid, seededUuid } from "./environmentStateWriteValues.js";
 
+/** The rules whose values the application generates. */
+export const GENERATED: ReadonlySet<FieldRule["rule"]> = new Set([
+  "identity",
+  "sequence",
+  "unique",
+]);
+
+/** A UUID the update put where another UUID was, that the call did not send and no other entity holds, in any letter case. */
+export const freshUuid = (
+  evidence: {
+    readonly before: JsonObject;
+    readonly after: JsonObject;
+    readonly others: readonly JsonObject[];
+  },
+  field: string,
+  sent: JsonValue | undefined,
+): boolean => {
+  const before = evidence.before[field];
+  const after = evidence.after[field];
+  if (!isUuid(before) || !isUuid(after)) return false;
+  const fresh = after.toLowerCase();
+  return (
+    before.toLowerCase() !== fresh &&
+    !uuidsIn(sent).has(fresh) &&
+    !uuidsIn(evidence.others.map((other) => other[field] ?? null)).has(fresh)
+  );
+};
+
 /** What an update renewed in a value: each old UUID's new one, and the pointers (`*` for any array index) it renewed at. */
 export interface Renewal {
   readonly uuids: ReadonlyMap<string, string>;

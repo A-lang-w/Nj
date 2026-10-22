@@ -67,7 +67,7 @@ const CONTRACT: WriteBody = {
 };
 const RECORDED = { title: "A", tags: ["x"], meta: null, priority: "high" };
 const LISTED =
-  "accepted members: title, tags, meta, note; members accepted only with their recorded value: priority, options; required: title";
+  'accepted members: "title", "tags", "meta", "note"; members accepted only with their recorded value: "priority", "options"; required: "title"';
 
 const problemOf = (body: JsonObject | undefined): string | undefined =>
   bodyProblem(CONTRACT, callWith(body), { entity: RECORDED, id: "42" });
@@ -114,9 +114,13 @@ it.each<[string, JsonObject | undefined, string]>([
   [
     "a missing required member",
     { tags: ["y"] },
-    `The call lacks required members title (${LISTED}).`,
+    `The call lacks required members "title" (${LISTED}).`,
   ],
-  ["no body", undefined, `The call lacks required members title (${LISTED}).`],
+  [
+    "no body",
+    undefined,
+    `The call lacks required members "title" (${LISTED}).`,
+  ],
   [
     "another identity",
     { id: "43", title: "B" },
@@ -237,7 +241,7 @@ it.each<[string, Plan, WriteCall, string]>([
     "a body problem",
     CREATE_PLAN,
     callWith({ ...NEW_ITEM, extra: 1 }, { project: "42" }),
-    "Member extra is not one the capture showed stored (accepted members: title, meta; members accepted only with their recorded value: none; required: title, meta).",
+    'Member extra is not one the capture showed stored (accepted members: "title", "meta"; members accepted only with their recorded value: none; required: "title", "meta").',
   ],
 ])("refuses a create with %s", (_, plan, call, message) => {
   expect(

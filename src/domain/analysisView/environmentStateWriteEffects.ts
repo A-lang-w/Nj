@@ -28,10 +28,19 @@ import {
 } from "./environmentStateWriteExplain.js";
 import { otherFields } from "./environmentStateWriteGenerated.js";
 import {
+  contradictsEarlierCalls,
+  disagreesWithCall,
+  keptFields,
+  scalars,
+  type UpdateCall,
+} from "./environmentStateWriteCalls.js";
+import {
   laterObservation,
+  shownBefore,
+  viewFields,
   type Observed,
 } from "./environmentStateWriteObserve.js";
-import { integerOf, readClock, slugOf } from "./environmentStateWriteValues.js";
+import { readClock } from "./environmentStateWriteValues.js";
 import {
   pathValuesOf,
   type FieldRule,
@@ -54,11 +63,7 @@ export interface WriteDraft {
   sideEffect: boolean;
   calls: number;
   /** The scalar values each modelled update call showed and sent, and the fields it kept, which later rules must reproduce. */
-  readonly updates: {
-    readonly shown: ReadonlyMap<string, JsonValue>;
-    readonly sent: ReadonlyMap<string, JsonValue>;
-    readonly kept: readonly string[];
-  }[];
+  readonly updates: UpdateCall[];
   /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
   readonly sequences: Map<string, number>;
 }
@@ -261,11 +266,7 @@ const updatedObservation = (
         }),
   });
   if (later !== undefined) {
-    const view = context.viewOf(later.ordinal);
-    const readFields =
-      view?.shape === "item" || view?.shape === "list"
-        ? view.fields
-        : undefined;
+    const readFields = viewFields(context.viewOf(later.ordinal));
     const coversRequired = required.every((field) =>
       readFields?.includes(field),
     );
@@ -326,70 +327,6 @@ export const retainFixed = (
 ): void => {
   if (fixed.length > 0)
     context.io.retain(64 + JSON.stringify(fixed).length * 2);
-};
-
-/** Whether a rule changes its field on calls that do not send it: serving applies it to every call that could. */
-const unsentChange = (rule: FieldRule): boolean =>
-  rule.rule === "increment" || rule.rule === "slug";
-
-/** Whether serving gives a rule's field a new value on every call, so no call may have kept it. */
-const regenerates = (rule: FieldRule): boolean =>
-  rule.rule === "unique" || rule.rule === "renewed";
-
-/** The fields a call showed as they were before it. */
-const keptFields = (before: JsonObject, after: JsonObject): string[] =>
-  Object.keys(after).filter(
-    (field) =>
-      Object.hasOwn(before, field) && same(before[field], after[field]),
-  );
-
-/** Whether a plan's rules give a recorded call another value than it showed, or one of them regenerates a field the call kept. */
-const disagreesWithCall = (
-  rules: readonly FieldRule[],
-  call: {
-    readonly written: JsonObject;
-    readonly after: JsonObject;
-    readonly kept: readonly string[];
-  },
-): boolean =>
-  rules.some(
-    (rule) =>
-      (unsentChange(rule) &&
-        Object.hasOwn(call.after, rule.field) &&
-        !same(call.written[rule.field], call.after[rule.field])) ||
-      (regenerates(rule) && call.kept.includes(rule.field)),
-  );
-
-/** A call's scalar members by name, as much of it as later rules are checked against. */
-const scalars = (object: JsonObject): Map<string, JsonValue> =>
-  new Map(
-    Object.entries(object).filter(
-      ([, value]) => value === null || typeof value !== "object",
-    ),
-  );
-
-/** Whether a rule a later call showed gives an earlier call a value other than the one it showed for a field it did not send. */
-const contradictsEarlierCalls = (
-  draft: WriteDraft,
-  rules: readonly FieldRule[],
-): boolean => {
-  const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
-  return rules.some(
-    (rule) =>
-      (unsentChange(rule) || regenerates(rule) || rule.rule === "clock") &&
-      !ruled.has(rule.field) &&
-      draft.updates.some(({ shown, sent, kept }) => {
-        if (regenerates(rule)) return kept.includes(rule.field);
-        // An unruled field an earlier call showed is one it left as it was.
-        const value = shown.get(rule.field);
-        if (value === undefined) return false;
-        if (rule.rule === "increment") return integerOf(value) !== undefined;
-        // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
-        if (rule.rule === "clock") return true;
-        const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
-        return typeof from === "string" && slugOf(from) !== value;
-      }),
-  );
 };
 
 /** Build an update plan from its exemplar, or add what a later call showed. */
@@ -485,6 +422,7 @@ export const applyUpdate = (
     startMs: startOf(context, step),
     ...(after.readFields === undefined ? {} : { readFields: after.readFields }),
     others: otherFields(context.state.ofType(type), { collection, id }),
+    shown: shownBefore(context.viewOf, entity, after.ordinal),
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");
