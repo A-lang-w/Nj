@@ -73,14 +73,17 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
   expect(hopperText).not.toContain("no runtime override");
 
   vi.stubEnv(REGEX_MATCHING_DEADLINE_SETTING, "1");
-  const kuna = new KunaProvider({ REA_REGEX_MATCHING_DEADLINE_MS: "10000" });
-  const kunaText = kuna
-    .capabilities()
-    .find((capability) => capability.operation === "search_strings")
-    ?.limitations.join(" ");
-  expect(kunaText).toContain("10000 ms matching deadline (source setting)");
-  expect(kunaText).not.toContain("1 ms matching deadline");
-  vi.unstubAllEnvs();
+  try {
+    const kuna = new KunaProvider({ REA_REGEX_MATCHING_DEADLINE_MS: "10000" });
+    const kunaText = kuna
+      .capabilities()
+      .find((capability) => capability.operation === "search_strings")
+      ?.limitations.join(" ");
+    expect(kunaText).toContain("10000 ms matching deadline (source setting)");
+    expect(kunaText).not.toContain("1 ms matching deadline");
+  } finally {
+    vi.unstubAllEnvs();
+  }
 
   const ambient = new KunaProvider({});
   expect(
