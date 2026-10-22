@@ -79,6 +79,8 @@ const SOURCE_PATHS = {
   rustProvider: "dist/rust/RustBinaryProvider.js",
   pythonPycContracts: "dist/contracts/python/pythonPycToolContracts.js",
   pythonPycProvider: "dist/python/PythonPycProvider.js",
+  erlangContracts: "dist/contracts/erlang/beamToolContracts.js",
+  erlangProvider: "dist/erlang/BeamProvider.js",
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   desktopContracts: "dist/contracts/desktopApplicationToolContracts.js",
   managedContracts: "dist/contracts/managed/managedToolContracts.js",

@@ -37,6 +37,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
     "reads an embedded dependency list without executing the target",
   inspect_python_pyc:
     "states that it does not execute bytecode or invoke CPython",
+  inspect_erlang_beam: "states that it does not execute bytecode",
   inspect_sqlite_database:
     "uses a trusted inspector worker without executing application code or caller SQL",
   inspect_binary_layout:

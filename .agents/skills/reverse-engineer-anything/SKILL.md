@@ -240,6 +240,12 @@ explicit path or endpoint and do not need it.
   not decompiled, and a decoded header does not prove the matching `.py` is
   present. See the
   [CPython pyc guide](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
+- Erlang BEAM IFF container: `inspect_erlang_beam` with the explicit local
+  `.beam` file. This built-in target-free inspection requires no Erlang
+  installation. Preserve chunk names, atom order, export/import/lambda tables,
+  and the Code header. Missing optional tables stay null. Bytecode is not
+  executed. See the
+  [Erlang BEAM guide](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema

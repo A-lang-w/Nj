@@ -419,6 +419,7 @@ const workflowAvailabilityFor = ({
     name === "inspect_gpu_code_objects" ||
     name === "inspect_rust_binary" ||
     name === "inspect_python_pyc" ||
+    name === "inspect_erlang_beam" ||
     name === "inspect_electron_fuses"
   )
     return { reason: "available", remediation: null };
