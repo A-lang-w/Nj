@@ -176,11 +176,11 @@ class TimelineCapture {
   #pendingReload = false;
   /**
    * Network.loadingFailed carries no frame, so a failure is attributed to the
-   * main frame only through its request. Main-frame requests that may be
-   * documents map to whether the request declared the Document type. Entries
-   * leave when their request fails or, once armed, finishes.
+   * main frame only through its request. Requests that may be main-frame
+   * documents keep what the request established about its type and frame.
+   * Entries leave when their request fails or, once armed, finishes.
    */
-  readonly #mainFrameDocumentCandidates = new Map<string, boolean>();
+  readonly #documentCandidates = new Map<string, DocumentCandidate>();
   #scopeExcluded = false;
   #endReason: EndReason | undefined;
   #armTimestamp: number | undefined;
@@ -460,34 +460,31 @@ class TimelineCapture {
     this.finalUrl = destination.url;
   }
 
-  /** A request without a reported resource type is treated as a document. */
-  #isMainFrameDocumentRequest(params: UnknownRecord): boolean {
-    const resourceType = cdpStringValue(params.type);
-    return (
-      (resourceType === undefined || resourceType === "Document") &&
-      cdpStringValue(params.frameId) === this.mainFrameId
-    );
-  }
-
   #trackDocumentRequest(params: UnknownRecord): void {
     const requestId = cdpStringValue(params.requestId);
-    if (requestId !== undefined && this.#isMainFrameDocumentRequest(params))
-      this.#mainFrameDocumentCandidates.set(
-        requestId,
-        cdpStringValue(params.type) === "Document",
-      );
+    const resourceType = cdpStringValue(params.type);
+    if (requestId === undefined) return;
+    if (resourceType !== undefined && resourceType !== "Document") return;
+    // An omitted frame leaves ownership unknown; another frame excludes it.
+    const frame = cdpStringValue(params.frameId);
+    if (frame !== undefined && frame !== this.mainFrameId) return;
+    this.#documentCandidates.set(requestId, {
+      declaredDocument: resourceType === "Document",
+      mainFrame: frame !== undefined,
+    });
   }
 
   /** A finished document request can no longer fail. */
   #loadingFinished(event: CdpTransportEvent): void {
     const requestId = cdpStringValue(recordValue(event.params)?.requestId);
-    if (requestId !== undefined)
-      this.#mainFrameDocumentCandidates.delete(requestId);
+    if (requestId !== undefined) this.#documentCandidates.delete(requestId);
   }
 
   #redirect(params: UnknownRecord, bufferedBeforeArm: boolean): void {
+    const resourceType = cdpStringValue(params.type);
+    if (resourceType !== undefined && resourceType !== "Document") return;
     if (
-      !this.#isMainFrameDocumentRequest(params) ||
+      cdpStringValue(params.frameId) !== this.mainFrameId ||
       recordValue(params.redirectResponse) === undefined
     )
       return;
@@ -522,9 +519,9 @@ class TimelineCapture {
   #loadingFailed(params: UnknownRecord, bufferedBeforeArm: boolean): void {
     const requestId = cdpStringValue(params.requestId);
     if (requestId === undefined) return;
-    const declaredDocument = this.#mainFrameDocumentCandidates.get(requestId);
-    if (declaredDocument === undefined) return;
-    this.#mainFrameDocumentCandidates.delete(requestId);
+    const candidate = this.#documentCandidates.get(requestId);
+    if (candidate === undefined) return;
+    this.#documentCandidates.delete(requestId);
     // The failure's resource type decides; a request that omitted its type is
     // not proof of a document.
     const failureType = cdpStringValue(params.type);
@@ -532,7 +529,8 @@ class TimelineCapture {
     const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
     if (!eventTime.keep) return;
     // Only a failure inside the window can leave the timeline incomplete.
-    if (failureType === undefined && !declaredDocument) {
+    const document = failureType !== undefined || candidate.declaredDocument;
+    if (!document || !candidate.mainFrame) {
       this.completeness.exclude("timeline", "invalid_protocol_value");
       return;
     }
@@ -720,6 +718,13 @@ const frameId = (result: unknown): string | undefined =>
   cdpStringValue(
     recordValue(recordValue(recordValue(result)?.frameTree)?.frame)?.id,
   );
+
+interface DocumentCandidate {
+  /** The request declared `Document`; otherwise its type was omitted. */
+  readonly declaredDocument: boolean;
+  /** The request named the main frame; otherwise its frame was omitted. */
+  readonly mainFrame: boolean;
+}
 
 const hasNoComparableProducerTimestamp = (method: string): boolean =>
   method === "Page.frameRequestedNavigation" ||

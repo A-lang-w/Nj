@@ -483,6 +483,71 @@ it("does not report an untyped failure before the window as incomplete coverage"
   );
 });
 
+it("reports a document failure whose request omitted its frame as unknown coverage", async () => {
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "frameless-document",
+            timestamp: 21,
+            type: "Document",
+            request: { url: `${origin}/frameless-document` },
+          },
+        },
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "frameless-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_CONNECTION_REFUSED",
+          },
+        },
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "child-frame-document",
+            timestamp: 21,
+            type: "Document",
+            frameId: "frame-child",
+            request: { url: `${origin}/child-frame-document` },
+          },
+        },
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "child-frame-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_CONNECTION_REFUSED",
+          },
+        },
+      ];
+    },
+  });
+
+  // Neither failure is attributed to the main frame. Only the frameless one
+  // leaves ownership unknown; the child frame's failure is out of scope.
+  expect(
+    observation.timeline.filter((event) => event.type === "load_failed"),
+  ).toEqual([]);
+  expect(
+    observation.completeness.excluded.filter(
+      (exclusion) =>
+        exclusion.section === "timeline" &&
+        exclusion.reason === "invalid_protocol_value",
+    ),
+  ).toEqual([expect.objectContaining({ count: 1 })]);
+});
+
 it("represents absent timeline timestamps as unknown and preserves an observed zero", async () => {
   const { browser, observation } = await observeWithFake({
     eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
