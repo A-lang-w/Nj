@@ -118,16 +118,18 @@ const expectWorkflowQuestionsRetained = (
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   expect(snapshot.evidence_bundle.unknowns).toEqual(
     expect.arrayContaining(
-      result.residual_unknowns.map((question) =>
-        expect.objectContaining({
+      result.residual_unknowns.map((question) => {
+        if (typeof question !== "string")
+          throw new Error("Expected residual unknown questions to be strings");
+        return expect.objectContaining({
           question: expect.stringMatching(
             new RegExp(
               `^${escapeRegex(question)}(?: \\(Evidence ev_[0-9a-f]+\\))?$`,
             ),
           ),
           supporting_evidence_ids: [evidence.evidence_id],
-        }),
-      ),
+        });
+      }),
     ),
   );
 };
