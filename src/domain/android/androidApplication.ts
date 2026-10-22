@@ -1,3 +1,7 @@
+import {
+  bridgeCandidateCoverageSchema,
+  projectCartesianCandidates,
+} from "../bridgeCandidateProjection.js";
 import { z } from "zod";
 
 import {
@@ -6,18 +10,16 @@ import {
 } from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   applicationInventoryProjectionInputSchema,
   type MobileApplicationProjectionWithSources,
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
   projectionCoverage,
-  projectionDigest,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
 } from "../mobileApplicationGraphProjection.js";
@@ -153,7 +155,7 @@ export const projectAndroidApplication = (
   return {
     projection: androidApplicationProjectionResultSchema.parse({
       ...withoutId,
-      projection_id: `adp_${projectionDigest(withoutId, "Android application projection")}`,
+      projection_id: `adp_${digestCanonicalValue(withoutId, "Android application projection")}`,
     }),
     sources: evidence,
   };

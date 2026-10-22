@@ -1,3 +1,7 @@
+import {
+  bridgeCandidateCoverageSchema,
+  projectCartesianCandidates,
+} from "../bridgeCandidateProjection.js";
 import { z } from "zod";
 
 import {
@@ -6,18 +10,16 @@ import {
 } from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   applicationInventoryProjectionInputSchema,
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
   type MobileApplicationProjectionWithSources,
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
   projectionCoverage,
-  projectionDigest,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
 } from "../mobileApplicationGraphProjection.js";
@@ -149,7 +151,7 @@ export const projectHarmonyApplication = (
   return {
     projection: harmonyApplicationProjectionResultSchema.parse({
       ...withoutId,
-      projection_id: `hmp_${projectionDigest(withoutId, "HarmonyOS application projection")}`,
+      projection_id: `hmp_${digestCanonicalValue(withoutId, "HarmonyOS application projection")}`,
     }),
     sources: evidence,
   };
