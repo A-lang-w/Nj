@@ -341,6 +341,36 @@ it("binds initial mixed cleanup to only its unresolved owners", async () => {
   }
 });
 
+it("keeps a typed cleanup classification when the operation itself completed", async () => {
+  const scope = new ArtifactResourceScope();
+  let denied = true;
+  const owner = {
+    kind: "lease" as const,
+    resource: "typed owner",
+    lease: {
+      async release() {
+        if (denied)
+          throw new ArtifactReaderFailure("unavailable", "typed close denied");
+      },
+    },
+  };
+  try {
+    const attempt = await scope.release(owner);
+    if (attempt.kind !== "failed") throw new Error("Expected owned failure");
+    const error = translateArtifactFailure(
+      "extract_artifact",
+      scope.cleanupFailure({ kind: "completed" }, [attempt]),
+    );
+    expect(error).toMatchObject({
+      reason: "unavailable",
+      cleanup: { resources: ["typed owner"] },
+    });
+  } finally {
+    denied = false;
+    await scope.close();
+  }
+});
+
 it.each(["owned-close", "independent-primary"] as const)(
   "keeps the scope of unknown cleanup explicit: %s",
   async (kind) => {

@@ -155,10 +155,13 @@ const translateResourceCleanupFailure = (
     new AnalysisCleanupLeaseGroup(error, [lease]);
     return error;
   });
+  // Without an operation failure, the scope projected the first cleanup
+  // failure as the primary; keep its classification instead of reducing it to I/O.
+  const completed = cause.outcome.kind === "completed";
   const cleanup = new ArtifactOperationError(
     operation,
-    "io",
-    undefined,
+    completed ? cause.reason : "io",
+    completed ? cause.details : undefined,
     "Artifact resource cleanup remains incomplete",
     {
       cause: new AggregateError(owners, "Artifact resource cleanup failures"),
@@ -173,7 +176,7 @@ const translateResourceCleanupFailure = (
         : { partialObservation: cause.partialObservation }),
     },
   ).bindCleanupDependencies(owners);
-  if (cause.outcome.kind === "completed") return cleanup;
+  if (completed) return cleanup;
   const primary = translateOwnedArtifactFailure(operation, cause.outcome.cause);
   // Existing artifact callers inspect reason/detail/cause even while cleanup
   // is pending. Keep those fields, with the original failure as the live primary.
@@ -197,6 +200,12 @@ const translateResourceCleanupFailure = (
             ...(primary.partialObservation === undefined
               ? {}
               : { partialObservation: primary.partialObservation }),
+            ...(semanticPrimary.userMessage === undefined
+              ? {}
+              : { userMessage: semanticPrimary.userMessage }),
+            ...(semanticPrimary.admission === undefined
+              ? {}
+              : { admission: semanticPrimary.admission }),
           },
         )
       : analysisErrorWithCleanupFailure(primary, cleanup, operation);
