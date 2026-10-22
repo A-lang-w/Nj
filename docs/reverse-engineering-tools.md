@@ -98,14 +98,12 @@ Hopper bootstrap and the bridge also reads the process environment; an injected
 value wins. Cutter reads the environment that starts Cutter and publishes
 `max_request_bytes` on its session descriptor. A Hopper or Cutter process
 started out of band without the setting uses 16777216 bytes. The client
-compares that advertisement with its own ceiling and reports the mismatch
-before a discovery status probe and before sending a command. A live Cutter
-whose ceiling differs is that mismatch, not an absent session. Discovery fails if any advertised ceiling differs, even when another live session matches. A hello that
+compares that advertisement with its own ceiling before a discovery status probe and before sending a command. A different ceiling is a mismatch only after the hello proves that descriptor is a live authenticated bridge; a stale descriptor is ignored. That hello does not send a status request. Discovery fails if any such live ceiling differs, even when another live session matches. A hello that
 never sends its authenticated frame does not hold the bridge accept loop.
 At most 8 connection threads run. A further accept is closed, and a failure to start a thread closes that socket without stopping the listener. A status `completed_connection` is the longest prefix of accepted connections that have terminated. It does not treat an earlier connection as finished because a later status reached the command lock first. Scalar values in one Cutter reply are encoded in bounded batches.
 A command reply that does not fit keeps its completion state and document
 generation, and reports an oversized path as unknown. Cutter response frames use this same ceiling and
-also exclude the terminating LF. Hopper response reads are unchanged.
+also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper response reads are unchanged.
 Each bridge request waits 25000 ms. The Cutter hello frame still must arrive
 within 1 second. The authenticated command frame is read with one second per
 mebibyte of `REA_BRIDGE_MAX_REQUEST_BYTES`, and that read never waits longer

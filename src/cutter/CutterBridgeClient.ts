@@ -140,6 +140,35 @@ const serializeRequest = (
   return requestBytes as AuthenticatedRequestBytes;
 };
 
+const serverChallengeSchema = z.object({
+  session_id: z.string().uuid(),
+  nonce: z.string().regex(/^[0-9a-f]{64}$/),
+  proof: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+/** Nonce from a hello whose proof shows this descriptor's bridge is the peer. */
+const authenticatedServerNonce = (
+  descriptor: { readonly session_id: string; readonly token: string },
+  clientNonce: string,
+  value: unknown,
+): string => {
+  const challenge = serverChallengeSchema.parse(value);
+  if (challenge.session_id !== descriptor.session_id)
+    throw new Error("unexpected peer session");
+  const expected = createHmac("sha256", descriptor.token)
+    .update(
+      `rea-cutter-server-v2:${descriptor.session_id}:${clientNonce}:${challenge.nonce}`,
+    )
+    .digest();
+  const presented = Buffer.from(challenge.proof, "hex");
+  if (
+    expected.length !== presented.length ||
+    !timingSafeEqual(expected, presented)
+  )
+    throw new Error("peer proof failed");
+  return challenge.nonce;
+};
+
 const assertBridgeActive = (
   signal: AbortSignal | undefined,
   operation: "cutter_command" | "list_cutter_sessions",
@@ -332,7 +361,11 @@ export class CutterBridgeClient {
         const advertised =
           descriptor.max_request_bytes ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES;
         if (advertised !== this.#maxRequestBytes.maximumBytes) {
-          mismatches.push(advertised);
+          // A crashed process can leave the previous ceiling on disk. Count
+          // the mismatch only after the hello proves a live authenticated
+          // bridge. The probe does not send a status request.
+          if (await this.#liveAuthenticatedBridge(descriptor, signal))
+            mismatches.push(advertised);
           return undefined;
         }
         try {
@@ -472,7 +505,9 @@ export class CutterBridgeClient {
           executionState: "unknown",
           error: "transport-response-missing",
           message: `${cause.message}; the command may have completed; do not retry automatically`,
-          outputTruncated: false,
+          // The carried limit is the framed response ceiling. The command was
+          // sent, and the discarded response is omitted output.
+          outputTruncated: cause.limit !== undefined,
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       }
@@ -934,6 +969,84 @@ export class CutterBridgeClient {
     };
   }
 
+  /**
+   * Hello only. A matching server proof means this descriptor is a live
+   * authenticated bridge. The socket closes before any status or command.
+   */
+  #liveAuthenticatedBridge(
+    descriptor: z.infer<typeof descriptorSchema>,
+    signal: AbortSignal | undefined,
+  ): Promise<boolean> {
+    assertBridgeActive(signal, "list_cutter_sessions");
+    return new Promise((resolve, reject) => {
+      const connection = createConnection({
+        host: descriptor.host,
+        port: descriptor.port,
+      });
+      const frames = new CutterBridgeResponseFrames(this.#maxRequestBytes);
+      let settled = false;
+      const settle = (
+        outcome:
+          | { readonly ok: true; readonly live: boolean }
+          | { readonly ok: false; readonly cause: unknown },
+      ): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        connection.destroy();
+        if (outcome.ok) resolve(outcome.live);
+        else reject(outcome.cause);
+      };
+      const timer = setTimeout(
+        () => settle({ ok: true, live: false }),
+        REQUEST_TIMEOUT_MS,
+      );
+      const onAbort = (): void => {
+        settle({
+          ok: false,
+          cause: new AnalysisCancelledError("list_cutter_sessions", {
+            cause: signal?.reason,
+          }),
+        });
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      const clientNonce = randomBytes(32).toString("hex");
+      connection.once("connect", () => {
+        if (settled) return;
+        connection.write(
+          `${JSON.stringify({ kind: "rea-auth-v2", nonce: clientNonce })}\n`,
+        );
+      });
+      connection.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        try {
+          frames.push(chunk, (frame) => {
+            if (frame.kind !== "challenge") {
+              settle({ ok: true, live: false });
+              return false;
+            }
+            try {
+              authenticatedServerNonce(descriptor, clientNonce, frame.value);
+              settle({ ok: true, live: true });
+            } catch {
+              settle({ ok: true, live: false });
+            }
+            return false;
+          });
+        } catch {
+          settle({ ok: true, live: false });
+        }
+      });
+      connection.once("error", () => settle({ ok: true, live: false }));
+      connection.once("close", () => settle({ ok: true, live: false }));
+    });
+  }
+
   #request(
     descriptor: z.infer<typeof descriptorSchema>,
     requestBytes: AuthenticatedRequestBytes,
@@ -999,29 +1112,15 @@ export class CutterBridgeClient {
           frames.push(chunk, (frame) => {
             if (frame.kind === "challenge") {
               if (authenticated) throw new Error("unexpected challenge");
-              const challenge = z
-                .object({
-                  session_id: z.string().uuid(),
-                  nonce: z.string().regex(/^[0-9a-f]{64}$/),
-                  proof: z.string().regex(/^[0-9a-f]{64}$/),
-                })
-                .parse(frame.value);
-              if (challenge.session_id !== descriptor.session_id)
-                throw new Error("unexpected peer session");
-              serverNonce = challenge.nonce;
-              connectionOrdinal = challenge.nonce.slice(0, 16);
-              const expected = createHmac("sha256", descriptor.token)
-                .update(
-                  `rea-cutter-server-v2:${descriptor.session_id}:${clientNonce}:${challenge.nonce}`,
-                )
-                .digest();
-              if (
-                !timingSafeEqual(expected, Buffer.from(challenge.proof, "hex"))
-              )
-                throw new Error("peer proof failed");
+              serverNonce = authenticatedServerNonce(
+                descriptor,
+                clientNonce,
+                frame.value,
+              );
+              connectionOrdinal = serverNonce.slice(0, 16);
               onAuthenticated?.(connectionOrdinal);
               const proof = cutterBridgeMac(descriptor.token, [
-                `rea-cutter-client-v2:${descriptor.session_id}:${clientNonce}:${challenge.nonce}:`,
+                `rea-cutter-client-v2:${descriptor.session_id}:${clientNonce}:${serverNonce}:`,
                 requestBytes,
               ]).toString("hex");
               authenticated = true;

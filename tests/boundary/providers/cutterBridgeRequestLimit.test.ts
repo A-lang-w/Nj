@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
+import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -59,31 +60,42 @@ it("rejects a bridge ceiling below the floor at client construction", () => {
   ).toThrow(ConfigurationError);
 });
 
-it("reports a Cutter ceiling mismatch during discovery before opening a socket", async () => {
+const closedPort = async (): Promise<number> => {
+  const server = createServer();
+  const port = await listen(server);
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  });
+  return port;
+};
+
+const ceilingMismatch = (error: unknown): boolean => {
+  expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(error instanceof AnalysisResourceConstraintError)) return false;
+  expect(error.operation).toBe("list_cutter_sessions");
+  expect(error.resource).toBe("transport");
+  expect(error.reportedLimits).toMatchObject({
+    bridge_max_request_bytes: 16_777_216,
+    client_max_request_bytes: 8192,
+  });
+  expect(error.reason).toContain(
+    "No status request was sent to the mismatched session.",
+  );
+  expect(error.remediationAction).toContain("Set REA_BRIDGE_MAX_REQUEST_BYTES");
+  return true;
+};
+
+it("ignores a stale Cutter descriptor whose advertised ceiling differs", async () => {
   const directory = await privateDirectory();
-  await writeDescriptor(directory, SESSION, 1, TOKEN);
+  await writeDescriptor(directory, SESSION, await closedPort(), TOKEN);
   const client = clientFor(directory, "8192");
-  await expect(client.listSessions()).rejects.toSatisfy((error: unknown) => {
-    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
-    if (!(error instanceof AnalysisResourceConstraintError)) return false;
-    expect(error.operation).toBe("list_cutter_sessions");
-    expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-    expect(error.reason).toContain("8192");
-    expect(error.reason).toContain("16777216");
-    expect(error.reason).toContain("source setting");
-    expect(error.reason).toContain("7464");
-    expect(error.reason).toContain("536870887");
-    expect(error.reason).toContain(
-      "No status request was sent to the mismatched session.",
-    );
-    expect(error.remediationAction).toContain(
-      "Set REA_BRIDGE_MAX_REQUEST_BYTES",
-    );
-    return true;
+  await expect(client.listSessions()).resolves.toMatchObject({
+    sessions: [],
+    discovery_status: "no_live_bridge_found",
   });
 });
 
-it("fails discovery when one live session matches and another ceiling does not", async () => {
+it("returns the matching session when the other ceiling descriptor is stale", async () => {
   const directory = await privateDirectory();
   const server = authenticatedServer(TOKEN, SESSION, () => undefined);
   const port = await listen(server);
@@ -91,27 +103,66 @@ it("fails discovery when one live session matches and another ceiling does not",
   await writeDescriptor(directory, SESSION, port, TOKEN, {
     maxRequestBytes: 8192,
   });
-  await writeDescriptor(directory, other, 1, TOKEN);
+  await writeDescriptor(directory, other, await closedPort(), TOKEN);
   const client = clientFor(directory, "8192");
-  await expect(client.listSessions()).rejects.toSatisfy((error: unknown) => {
-    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
-    if (!(error instanceof AnalysisResourceConstraintError)) return false;
-    expect(error.operation).toBe("list_cutter_sessions");
-    expect(error.resource).toBe("transport");
-    expect(error.reportedLimits).toMatchObject({
-      bridge_max_request_bytes: 16_777_216,
-      client_max_request_bytes: 8192,
-    });
-    expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-    expect(error.reason).toContain("8192");
-    expect(error.reason).toContain("16777216");
-    expect(error.reason).toContain("source setting");
-    expect(error.reason).toContain("7464");
-    expect(error.reason).toContain("536870887");
-    expect(error.reason).toContain(
-      "No status request was sent to the mismatched session.",
+  await expect(client.listSessions()).resolves.toMatchObject({
+    discovery_status: "sessions_found",
+    sessions: [{ session_id: SESSION }],
+  });
+});
+
+it("fails discovery when a live authenticated session has a different ceiling", async () => {
+  const directory = await privateDirectory();
+  const server = authenticatedServer(TOKEN, SESSION, () => undefined);
+  const port = await listen(server);
+  const other = "00000000-0000-4000-8000-000000000002";
+  const requests: string[] = [];
+  let connections = 0;
+  const mismatched = authenticatedServer(
+    TOKEN,
+    other,
+    (request) => {
+      requests.push(String(request.kind));
+    },
+    true,
+  );
+  mismatched.on("connection", () => {
+    connections += 1;
+  });
+  const mismatchedPort = await listen(mismatched);
+  await writeDescriptor(directory, SESSION, port, TOKEN, {
+    maxRequestBytes: 8192,
+  });
+  await writeDescriptor(directory, other, mismatchedPort, TOKEN);
+  const client = clientFor(directory, "8192");
+  await expect(client.listSessions()).rejects.toSatisfy(ceilingMismatch);
+  expect(connections).toBe(1);
+  expect(requests).toEqual([]);
+});
+
+it("does not treat an unauthenticated listener as a Cutter ceiling mismatch", async () => {
+  const directory = await privateDirectory();
+  const server = authenticatedServer(TOKEN, SESSION, () => undefined);
+  const port = await listen(server);
+  const other = "00000000-0000-4000-8000-000000000002";
+  const stranger = createServer((socket) => {
+    socket.end(
+      `${JSON.stringify({
+        session_id: other,
+        nonce: "ab".repeat(32),
+        proof: "00".repeat(32),
+      })}\n`,
     );
-    return true;
+  });
+  const strangerPort = await listen(stranger);
+  await writeDescriptor(directory, SESSION, port, TOKEN, {
+    maxRequestBytes: 8192,
+  });
+  await writeDescriptor(directory, other, strangerPort, TOKEN);
+  const client = clientFor(directory, "8192");
+  await expect(client.listSessions()).resolves.toMatchObject({
+    discovery_status: "sessions_found",
+    sessions: [{ session_id: SESSION }],
   });
 });
 
@@ -312,20 +363,56 @@ it("accepts a Cutter response at the ceiling and excludes the terminating LF", a
     output,
     executionState: "complete",
   });
-  const oversize = await client.execute({
-    sessionId: SESSION,
-    expectedGeneration: 0,
+  const oversize = await new CutterBridgeService(client).execute({
+    session_id: SESSION,
+    expected_generation: 0,
     command: "over",
     json: false,
   });
   expect(oversize).toMatchObject({
-    executionState: "unknown",
-    error: "transport-response-missing",
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      partialObservation: {
+        normalized_result: {
+          execution_state: "unknown",
+          error: "transport-response-missing",
+          output_truncated: true,
+          message: expect.stringContaining("8192"),
+        },
+        limitations: expect.arrayContaining([
+          "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+        ]),
+      },
+    },
   });
-  expect(oversize.message).toContain("8192");
-  expect(oversize.message).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-  expect(oversize.message).toContain("may have completed");
-  expect(oversize.message).not.toContain("no runtime override");
+  expect(oversize).toMatchObject({
+    error: {
+      partialObservation: {
+        normalized_result: {
+          message: expect.stringContaining("REA_BRIDGE_MAX_REQUEST_BYTES"),
+        },
+      },
+    },
+  });
+  expect(oversize).toMatchObject({
+    error: {
+      partialObservation: {
+        normalized_result: {
+          message: expect.stringContaining("may have completed"),
+        },
+      },
+    },
+  });
+  expect(oversize).toMatchObject({
+    error: {
+      partialObservation: {
+        normalized_result: {
+          message: expect.not.stringContaining("no runtime override"),
+        },
+      },
+    },
+  });
 });
 
 it("sends a Cutter command above 16 MiB when both sides raise the ceiling", async () => {
