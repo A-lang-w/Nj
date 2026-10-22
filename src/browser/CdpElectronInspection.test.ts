@@ -626,29 +626,57 @@ it("admits a prefix and fitting suffix around an oversized Electron source", asy
 });
 
 it.each([
-  ...[2, 3].flatMap((stage) =>
-    [false, true].map((lateEvent) => ({
-      scope: "main",
-      stage,
+  ...[
+    ...[2, 3].flatMap((stage) =>
+      [false, true].map((lateEvent) => ({
+        scope: "main",
+        stage,
+        lateEvent,
+        changed: true,
+      })),
+    ),
+    ...[false, true].map((lateEvent) => ({
+      scope: "child",
+      stage: 2,
       lateEvent,
       changed: true,
     })),
+    ...["main", "child"].map((scope) => ({
+      scope,
+      stage: 2,
+      lateEvent: true,
+      changed: false,
+    })),
+  ].map((item) => ({ ...item, urlChange: "", fullReplay: false })),
+  ...["#next", "?route=next"].flatMap((urlChange) =>
+    [false, true].map((lateEvent) => ({
+      scope: "child",
+      stage: 2,
+      lateEvent,
+      changed: false,
+      urlChange,
+      fullReplay: false,
+    })),
   ),
-  ...[false, true].map((lateEvent) => ({
+  {
     scope: "child",
-    stage: 2,
-    lateEvent,
-    changed: true,
-  })),
-  ...["main", "child"].map((scope) => ({
-    scope,
     stage: 2,
     lateEvent: true,
     changed: false,
+    urlChange: "#next",
+    fullReplay: true,
+  },
+  ...[2, 3].map((stage) => ({
+    scope: "main",
+    stage,
+    lateEvent: false,
+    changed: false,
+    urlChange: "#next",
+    fullReplay: false,
   })),
 ])(
-  "detects tree-first document replacement $scope/read$stage/late=$lateEvent/changed=$changed",
-  async ({ scope, stage, lateEvent, changed }) => {
+  "detects tree-first document replacement $scope/read$stage/late=$lateEvent/changed=$changed/url=$urlChange/full=$fullReplay",
+  async ({ scope, stage, lateEvent, changed, urlChange, fullReplay }) => {
     const root = await mkdtemp(join(tmpdir(), "rea-tree-first-document-"));
     temporary.push(root);
     const main = join(root, "main.html"),
@@ -682,7 +710,9 @@ it.each([
     const document = (id: string) => ({
       id,
       ...(id === "main" ? {} : { parentId: id === "child" ? "main" : "child" }),
-      url: id === "main" ? mainUrl : childUrl,
+      url:
+        (id === "main" ? mainUrl : childUrl) +
+        (reads >= stage && id === scope ? urlChange : ""),
       loaderId:
         changed && reads >= stage && id === scope
           ? "replacement"
@@ -692,10 +722,17 @@ it.each([
       if (replayed || reads < stage) return;
       replayed = true;
       if (lateEvent)
-        listener({
-          method: "Page.frameNavigated",
-          params: { frame: document(scope) },
-        });
+        listener(
+          urlChange && !fullReplay
+            ? {
+                method: "Page.navigatedWithinDocument",
+                params: { frameId: scope, url: document(scope).url },
+              }
+            : {
+                method: "Page.frameNavigated",
+                params: { frame: document(scope) },
+              },
+        );
       emitScript("after-child", "child", 10);
       emitScript("after-grandchild", "grandchild", 11);
     };
@@ -740,7 +777,7 @@ it.each([
         if (update.completed === 3) replay();
       },
     });
-    if (scope === "main" && changed)
+    if (scope === "main" && (changed || urlChange))
       await expect(result).rejects.toMatchObject({ reason: "target_changed" });
     else {
       const captured = await result;

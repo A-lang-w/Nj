@@ -1440,3 +1440,80 @@ it.each([
     expect(reads).toBeGreaterThanOrEqual(stage);
   },
 );
+
+it.each(["#next", "?route=next#details"])(
+  "keeps script authority for a tree-first same-document child URL %s",
+  async (suffix) => {
+    const root = await electronFixture();
+    const main = pathToFileURL(join(root, "index.html")).href;
+    const child = pathToFileURL(join(root, "child.html")).href;
+    const source = pathToFileURL(join(root, "app.js")).href;
+    const tree = (reads: number) => ({
+      frameTree: {
+        frame: { id: "frame-main", url: main, loaderId: "main-loader" },
+        childFrames: [
+          {
+            frame: {
+              id: "child",
+              parentId: "frame-main",
+              url: child + (reads > 1 ? suffix : ""),
+              loaderId: "child-loader",
+            },
+            childFrames: [
+              {
+                frame: {
+                  id: "grandchild",
+                  parentId: "child",
+                  url: child,
+                  loaderId: "grandchild-loader",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: main,
+      commandResult: ({ method }, _origin, reads) =>
+        method === "Page.getFrameTree" ? tree(reads) : undefined,
+      commandEvents: ({ method, sessionId }) => {
+        const scripts = replayScripts(source, sessionId);
+        if (method === "Runtime.enable") return [];
+        if (method === "Debugger.enable")
+          return [
+            ...scripts("before-child", "child", 70),
+            ...scripts("before-grandchild", "grandchild", 71),
+          ];
+        if (method === "DOMSnapshot.captureSnapshot")
+          return [
+            {
+              method: "Page.navigatedWithinDocument",
+              ...(sessionId === undefined ? {} : { sessionId }),
+              params: { frameId: "child", url: child + suffix },
+            },
+            ...scripts("after-child", "child", 72),
+            ...scripts("after-grandchild", "grandchild", 73),
+          ];
+        return undefined;
+      },
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "electron-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    for (const id of ["child", "grandchild"])
+      for (const phase of ["before", "after"])
+        expect(result.value.scripts.items).toContainEqual(
+          expect.objectContaining({ cdp_hash: `${phase}-${id}`, frame_id: id }),
+        );
+    expect(result.value.completeness.attach_limited_sections).not.toContain(
+      "scripts",
+    );
+  },
+);

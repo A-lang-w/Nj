@@ -306,7 +306,8 @@ const advanceFrameGeneration = (
   if (
     document !== undefined &&
     previous !== undefined &&
-    sameFrameDocument(document, previous)
+    sameFrameDocument(document, previous) &&
+    document.url === previous.url
   )
     return;
   invalidateFrameGenerations(id, state);
@@ -315,16 +316,37 @@ const advanceFrameGeneration = (
     cdpStringValue(frame?.parentId) ?? cdpStringValue(frame?.parentFrameId);
   if (parent !== undefined && parent !== "") state.frameParents.set(id, parent);
   else state.frameParents.delete(id);
-  if (document !== undefined) state.frameDocuments.set(id, document);
+  if (document !== undefined) retainFrameDocument(id, document, state);
 };
 
+/** A stable loader and parent identify the document independently of its URL. */
 const sameFrameDocument = (
   left: ElectronFrameDocument,
   right: ElectronFrameDocument,
 ): boolean =>
-  left.url === right.url &&
-  left.loaderId === right.loaderId &&
-  left.parentId === right.parentId;
+  left.loaderId === right.loaderId && left.parentId === right.parentId;
+
+/** URL observations can move without replacing the loader-owned document. */
+const retainFrameDocument = (
+  id: string,
+  document: ElectronFrameDocument,
+  state: ElectronInspectionState,
+): void => {
+  const previous = state.frameDocuments.get(id);
+  if (
+    previous !== undefined &&
+    sameFrameDocument(previous, document) &&
+    previous.url === document.url
+  )
+    return;
+  if (
+    id === state.mainFrameId &&
+    previous !== undefined &&
+    previous.url !== document.url
+  )
+    state.navigationDuringCapture = true;
+  state.frameDocuments.set(id, document);
+};
 
 /** Tree and event observations invalidate the same document generation. */
 const invalidateFrameGenerations = (
@@ -393,7 +415,7 @@ const seedFrameDocuments = (
       const previous = documents.get(id);
       if (previous !== undefined && !sameFrameDocument(previous, document))
         invalidateFrameGenerations(id, state);
-      state.frameDocuments.set(id, document);
+      retainFrameDocument(id, document, state);
     }
   }
 };
