@@ -311,6 +311,74 @@ it("closes a session reopened by a server whose start raced a shutdown request",
   expect(output).toEqual([]);
 });
 
+it("closes a session reopened behind a raced close that settles after the transport attaches", async () => {
+  const [initialTarget, reopenedTarget] = await createBinarySessionTargets();
+  const firstCloseStarted = createDeferred<void>();
+  const releaseFirstClose = createDeferred<void>();
+  let clientCloses = 0;
+  const session = createTestBinarySession((): AnalysisClient => ({
+    execute: async () => observed(null),
+    close: async () => {
+      clientCloses += 1;
+      if (clientCloses === 1) {
+        firstCloseStarted.resolve();
+        await releaseFirstClose.promise;
+      }
+      return ok(null);
+    },
+  }));
+  const serveStarted = createDeferred<void>();
+  const releaseServe = createDeferred<void>();
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  let reopened: Promise<unknown> | undefined;
+  let handleCloses = 0;
+  const running = run(
+    runtime({
+      env: {
+        HOPPER_TARGET_PATH: initialTarget,
+        HOPPER_TARGET_KIND: "database",
+      },
+      createSession: () => session,
+      serve: async () => {
+        serveStarted.resolve();
+        await releaseServe.promise;
+        // A request the live server admitted queues behind the raced close.
+        reopened = session.open(reopenedTarget);
+        return {
+          prepareShutdown: async () => {
+            await reopened;
+          },
+          close: async () => {
+            handleCloses += 1;
+          },
+        };
+      },
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await serveStarted.promise;
+  requests[0]?.();
+  await firstCloseStarted.promise;
+  releaseServe.resolve();
+  // The transport attaches while the first close is still in flight.
+  await expect.poll(() => reopened !== undefined).toBe(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstClose.resolve();
+
+  await expect(running).resolves.toBe(0);
+  expect(await reopened).toMatchObject({ ok: true });
+  expect(handleCloses).toBe(1);
+  expect(clientCloses).toBe(2);
+  expect(await session.status()).toMatchObject({ open: false });
+  expect(unregistrations).toEqual(["shutdown"]);
+  expect(output).toEqual([]);
+});
+
 it("treats a cancelled open that reports its own incomplete cleanup as the shutdown's", async () => {
   const [target] = await createBinarySessionTargets();
   const healthStarted = createDeferred<void>();

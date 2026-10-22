@@ -12,6 +12,8 @@ interface ShutdownCleanupOwner {
   attempted: boolean;
   /** Left out of shutdown attempts while its operation is in progress. */
   deferred: boolean;
+  /** Advanced on re-arm, so a close that began earlier cannot mark it closed. */
+  generation: number;
 }
 
 /**
@@ -123,8 +125,9 @@ export const createShutdown = (input: {
       prepareShutdown = owners.handle?.prepareShutdown;
       cleanupOwners.unshift(...transportCleanupOwners(owners));
       // A server that started before this attachment can reopen the session
-      // after an earlier attempt closed it, so the next attempt closes it again.
-      sessionOwner.closed = false;
+      // during or after an earlier attempt's close, so the next attempt closes
+      // it again even if that close is still in flight.
+      rearm(sessionOwner);
     },
     shutdown,
     request: requestShutdown,
@@ -168,7 +171,13 @@ const cleanupOwner = (close: () => Promise<void>): ShutdownCleanupOwner => ({
   closed: false,
   attempted: false,
   deferred: false,
+  generation: 0,
 });
+
+const rearm = (owner: ShutdownCleanupOwner): void => {
+  owner.generation += 1;
+  owner.closed = false;
+};
 
 const transportCleanupOwners = ({
   handle,
@@ -219,8 +228,9 @@ const closeOwners = async (
   for (const owner of owners) owner.attempted = true;
   const results = await Promise.allSettled(
     owners.map(async (owner) => {
+      const { generation } = owner;
       await owner.close();
-      owner.closed = true;
+      owner.closed = owner.generation === generation;
     }),
   );
   const failures = results.flatMap((result) =>
