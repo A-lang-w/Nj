@@ -122,11 +122,7 @@ const expectWorkflowQuestionsRetained = (
         if (typeof question !== "string")
           throw new Error("Expected residual unknown questions to be strings");
         return expect.objectContaining({
-          question: expect.stringMatching(
-            new RegExp(
-              `^${escapeRegex(question)}(?: \\(Evidence ev_[0-9a-f]+\\))?$`,
-            ),
-          ),
+          question: `${question} (Evidence ${evidence.evidence_id})`,
           supporting_evidence_ids: [evidence.evidence_id],
         });
       }),
