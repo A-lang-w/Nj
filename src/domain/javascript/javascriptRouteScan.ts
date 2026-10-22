@@ -18,6 +18,7 @@ import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
+  type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
@@ -306,10 +307,14 @@ export class JavaScriptRouteScan {
           const binding = this.index.bindingForReferenceAt(node);
           if (binding === undefined || bindings.has(binding)) return;
           bindings.add(binding);
-          for (const initializer of binding.initializers)
-            admit(initializer.node);
-          for (const initializer of binding.referenceInitializers)
-            admit(initializer.node);
+          for (const initializers of [
+            binding.initializers,
+            binding.referenceInitializers,
+          ])
+            for (const initializer of initializers) {
+              const selected = this.#initializerValue(initializer);
+              if (selected !== undefined) admit(selected);
+            }
         },
       });
     }
@@ -430,7 +435,7 @@ export class JavaScriptRouteScan {
         this.onLegacyRoute?.({ node, value, mechanism: `property:${name}` });
     }
     if (this.#result.capacity === null && isRouteSegmentKey(name))
-      this.#propertyValues.add(node.value);
+      this.#propertyValues.add(unwrapJavaScriptExpression(node.value).node);
     if (
       this.#result.capacity === null &&
       isRouteSegmentKey(name) &&
@@ -492,6 +497,7 @@ export class JavaScriptRouteScan {
   }
 
   #registeredPath(first: t.Node): void {
+    this.#propertyValues.add(unwrapJavaScriptExpression(first).node);
     if (stringValue(first) === undefined) this.#ownDynamicValue(first, false);
     const value = stringValue(first),
       path =
@@ -631,6 +637,9 @@ export class JavaScriptRouteScan {
     for (const literal of this.#literalPaths) {
       if (this.#result.capacity !== null) break;
       yield;
+      // Alias initializers may have been visited before their registration.
+      // Decide generic-constant admission only after all specific owners finish.
+      if (this.#propertyValues.has(literal.node)) continue;
       const path = routePath(literal.value, { navigation: true });
       if (
         path === undefined ||
@@ -835,6 +844,20 @@ export class JavaScriptRouteScan {
     }
   }
 
+  /** Select own literal fields at the initializer's capture, never its namespace. */
+  #initializerValue(
+    initializer: JavaScriptSemanticInitializer,
+  ): t.Node | undefined {
+    let node: t.Node | undefined = initializer.node;
+    for (const key of initializer.projection) {
+      if (key === null || node === undefined) return;
+      const selected = this.#resolve(node, node, this.index);
+      if (selected === undefined || !t.isObjectExpression(selected)) return;
+      node = this.#fields(selected).values.get(String(key))?.value;
+    }
+    return node;
+  }
+
   /** Ownership is per interpretation; return whether inferred roots were found. */
   #claimConfiguration(
     root: t.Node,
@@ -1026,7 +1049,9 @@ export class JavaScriptRouteScan {
       let link = uncertain && property === undefined ? undefined : frame.parent,
         emit = property !== undefined;
       if (property !== undefined) {
-        const value = stringValue(property.value);
+        const literal = this.#resolve(property.value, site, index);
+        if (literal !== undefined) this.#propertyValues.add(literal);
+        const value = literal === undefined ? undefined : stringValue(literal);
         if (
           value === undefined ||
           (value !== "" && routePath(value, { relative: true }) === undefined)
@@ -1043,7 +1068,7 @@ export class JavaScriptRouteScan {
             previous: value.startsWith("/") ? null : link!,
             segment: {
               value,
-              location: range(property.value),
+              location: range(literal!),
               origin: "literal",
             },
             inferred: false,

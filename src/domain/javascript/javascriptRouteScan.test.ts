@@ -822,3 +822,58 @@ it.each([
   );
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
 });
+
+it.each([
+  "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {query}=registry;router.push({pathname:'/users',query});",
+  "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query}=registry;router.push({pathname:'/users',query});",
+  "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query:payload}=registry;router.push({pathname:'/users',query:payload});",
+  "const registry={route:{path:'/independent',component:View},settings:{query:{path:'/query-data',component:Preview}}};const {settings:{query}}=registry;router.push({pathname:'/users',query});",
+  "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {route,...query}=registry;router.push({pathname:'/users',query});",
+])(
+  "preserves independent routes beside selected query projections: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/users",
+      "/independent",
+    ]);
+  },
+);
+
+it.each([
+  "route('/users/:id?');",
+  "createBrowserRouter([{path:('/users/:id?' as const)}]);",
+  "const route={path:('/users/:id?' as const),component:View};",
+  "const pattern='/users/:id?';createBrowserRouter([{path:pattern}]);",
+])(
+  "keeps optional registration patterns out of URL inference: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/users/:id?"]);
+  },
+);
+
+it("preserves explicit URL navigation beside an optional registered pattern", () => {
+  const facts = analyze(
+    "route('/users/:id?');router.push('/users/:id?query=x');",
+  );
+  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
+    "/users/:id?",
+    "/users/:id",
+  ]);
+  expect(
+    facts.candidates.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toEqual([expect.objectContaining({ path: "/users/:id" })]);
+});
+
+it("preserves initializer provenance for aliased registration segments", () => {
+  const source =
+    "const pattern='/users/:id?';createBrowserRouter([{path:pattern}]);";
+  const facts = analyze(source);
+  const segment = facts.candidates[0]!.segments[0]!;
+  expect(
+    source.slice(segment.location.start.column, segment.location.end.column),
+  ).toBe("'/users/:id?'");
+});

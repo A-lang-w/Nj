@@ -8,13 +8,18 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
 
+const routeViewFromEvidence = (evidence: unknown) =>
+  javaScriptRoutesViewResultSchema.parse(
+    parseEvidence(evidence).normalized_result,
+  );
+
 const interceptedSource = "export default function Photo(){return null;}";
 
 const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});const aliasQuery={path:'/download/alias',component:'preview',href:'/alias-query-data',module:'app/fake/page.tsx'};const target={pathname:'/reports/aliased',query:aliasQuery};router.push(target);const independent={path:'/checks/independent',component:View};router.push({pathname:'/reports/aliased',query:independent ? {ok:1}:{ok:2}});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
+    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});const aliasQuery={path:'/download/alias',component:'preview',href:'/alias-query-data',module:'app/fake/page.tsx'};const target={pathname:'/reports/aliased',query:aliasQuery};router.push(target);const independent={path:'/checks/independent',component:View};router.push({pathname:'/reports/aliased',query:independent ? {ok:1}:{ok:2}});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const registry={route:{path:'/checks/projected',component:View},query:{path:'/download/projected-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased',query:payload});const pattern='/checks/optional/:id?';createBrowserRouter([{path:pattern}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
   );
   const intercepted = join(path, "app/feed/(.)photo");
   await mkdir(intercepted, { recursive: true });
@@ -53,9 +58,7 @@ cliTest(
       summary: unknown;
       evidence_bundle: { path: string };
     };
-    const view = javaScriptRoutesViewResultSchema.parse(
-      parseEvidence(envelope.summary).normalized_result,
-    );
+    const view = routeViewFromEvidence(envelope.summary);
     expect(view.items).toHaveLength(2);
     expect(view.coverage).toMatchObject({ total: 6, next_offset: 2 });
     expect(view.sources[0]!.sha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -92,11 +95,7 @@ cliTest(
       ],
     });
     expect(repeated.exitCode, repeated.stdout + repeated.stderr).toBe(0);
-    expect(
-      javaScriptRoutesViewResultSchema.parse(
-        parseEvidence(repeated.json).normalized_result,
-      ).items,
-    ).toHaveLength(2);
+    expect(routeViewFromEvidence(repeated.json).items).toHaveLength(2);
   },
 );
 cliTest(
@@ -167,9 +166,7 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(response.isError).not.toBe(true);
-    const selected = javaScriptRoutesViewResultSchema.parse(
-      parseEvidence(response.structuredContent).normalized_result,
-    );
+    const selected = routeViewFromEvidence(response.structuredContent);
     expect(selected.items).toHaveLength(2);
     await rm(path, { recursive: true });
     const occurrences = await call("inspect_analysis_view", {
@@ -185,9 +182,7 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(occurrences.isError).not.toBe(true);
-    const result = javaScriptRoutesViewResultSchema.parse(
-      parseEvidence(occurrences.structuredContent).normalized_result,
-    );
+    const result = routeViewFromEvidence(occurrences.structuredContent);
     expect(result.items).toHaveLength(2);
     expect(result.sources).toHaveLength(1);
     expect(result.source_coverage.application_routes).toBe("unknown");
@@ -206,16 +201,16 @@ it.each(["full", "compact"] as const)(
             "/download/alias",
             "/alias-query-data",
             "/fake",
+            "/download/projected-query",
+            "/checks/optional/:id",
           ],
         },
       },
     });
     expect(dataPaths.isError).not.toBe(true);
-    expect(
-      javaScriptRoutesViewResultSchema.parse(
-        parseEvidence(dataPaths.structuredContent).normalized_result,
-      ).items,
-    ).toEqual([]);
+    expect(routeViewFromEvidence(dataPaths.structuredContent).items).toEqual(
+      [],
+    );
     const independent = await call("inspect_analysis_view", {
       source: {
         kind: "retained-evidence",
@@ -224,16 +219,24 @@ it.each(["full", "compact"] as const)(
       view: {
         kind: "javascript-routes",
         collection: "routes",
-        where: { paths: ["/checks/independent"] },
+        where: {
+          paths: [
+            "/checks/independent",
+            "/checks/projected",
+            "/checks/optional/:id?",
+          ],
+        },
         fields: ["path"],
       },
     });
     expect(independent.isError).not.toBe(true);
-    expect(
-      javaScriptRoutesViewResultSchema.parse(
-        parseEvidence(independent.structuredContent).normalized_result,
-      ).items,
-    ).toEqual([expect.objectContaining({ path: "/checks/independent" })]);
+    expect(routeViewFromEvidence(independent.structuredContent).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "/checks/independent" }),
+        expect.objectContaining({ path: "/checks/optional/:id?" }),
+        expect.objectContaining({ path: "/checks/projected" }),
+      ]),
+    );
     const unknowns = await call("inspect_analysis_view", {
       source: {
         kind: "retained-evidence",
@@ -246,9 +249,7 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(unknowns.isError).not.toBe(true);
-    const gaps = javaScriptRoutesViewResultSchema.parse(
-      parseEvidence(unknowns.structuredContent).normalized_result,
-    );
+    const gaps = routeViewFromEvidence(unknowns.structuredContent);
     expect(gaps.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -276,7 +277,7 @@ cliTest(
       commandResult: ({ method }) =>
         method === "Debugger.getScriptSource"
           ? {
-              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});`,
+              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});const registry={route:{path:'/checks/projected-web',component:View},query:{path:'/download/projected-web-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased-web',query:payload});route(('/checks/optional-web/:id?'));`,
             }
           : undefined,
     });
@@ -293,6 +294,10 @@ cliTest(
             "/download/web-data",
             "/web-query-data",
             "/web-fake",
+            "/checks/projected-web",
+            "/checks/optional-web/:id?",
+            "/checks/optional-web/:id",
+            "/download/projected-web-query",
           ],
         },
       };
@@ -320,14 +325,14 @@ cliTest(
       });
       expect(response.exitCode, response.stderr).toBe(0);
       const envelope = response.json as { summary: unknown };
-      const selected = javaScriptRoutesViewResultSchema.parse(
-        parseEvidence(envelope.summary).normalized_result,
-      );
-      expect(selected.items).toHaveLength(4);
+      const selected = routeViewFromEvidence(envelope.summary);
+      expect(selected.items).toHaveLength(6);
       expect(selected.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "/reports/aliased-web" }),
           expect.objectContaining({ path: "/checks/independent-web" }),
+          expect.objectContaining({ path: "/checks/projected-web" }),
+          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
         ]),
       );
       expect(selected.artifact).toBeNull();
@@ -341,14 +346,14 @@ cliTest(
         view,
       });
       expect(observed.isError).not.toBe(true);
-      const result = javaScriptRoutesViewResultSchema.parse(
-        parseEvidence(observed.structuredContent).normalized_result,
-      );
-      expect(result.items).toHaveLength(4);
+      const result = routeViewFromEvidence(observed.structuredContent);
+      expect(result.items).toHaveLength(6);
       expect(result.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "/reports/aliased-web" }),
           expect.objectContaining({ path: "/checks/independent-web" }),
+          expect.objectContaining({ path: "/checks/projected-web" }),
+          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
         ]),
       );
       const retained = await call("inspect_analysis_view", {
@@ -360,9 +365,7 @@ cliTest(
       });
       expect(retained.isError).not.toBe(true);
       expect(
-        javaScriptRoutesViewResultSchema.parse(
-          parseEvidence(retained.structuredContent).normalized_result,
-        ).items.length,
+        routeViewFromEvidence(retained.structuredContent).items.length,
       ).toBeGreaterThan(0);
     } finally {
       await browser.close();
@@ -396,9 +399,7 @@ it("keeps a large source's partial route facts queryable through SDK delivery", 
     },
   });
   expect(response.isError).not.toBe(true);
-  const selected = javaScriptRoutesViewResultSchema.parse(
-    parseEvidence(response.structuredContent).normalized_result,
-  );
+  const selected = routeViewFromEvidence(response.structuredContent);
   expect(selected.items).toHaveLength(2);
   expect(selected.source_coverage.candidate_enumeration).toBe("partial");
   expect(selected.sources[0]).toMatchObject({
@@ -423,8 +424,6 @@ it("keeps a large source's partial route facts queryable through SDK delivery", 
   });
   expect(unknowns.isError).not.toBe(true);
   expect(
-    javaScriptRoutesViewResultSchema.parse(
-      parseEvidence(unknowns.structuredContent).normalized_result,
-    ).items.length,
+    routeViewFromEvidence(unknowns.structuredContent).items.length,
   ).toBeGreaterThan(0);
 }, 60000);
