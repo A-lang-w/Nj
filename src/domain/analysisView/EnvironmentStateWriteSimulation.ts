@@ -361,6 +361,8 @@ export class EnvironmentStateWriteSimulation {
       )
     )
       return;
+    // Only a read the gate counts shows which fields the application leaves out.
+    this.omitted.keep(view, outcome);
     const exercised = exercisedBy(this.#touched, keys, borrowers);
     const interferes = interference(this.#history, outcome);
     if (borrowers !== undefined) {

@@ -21,6 +21,7 @@ import {
   assetBook,
   book,
   bookClock,
+  detailedBook,
   environmentStateViewOf,
   rawCaptureEvidence,
   renamedBook,
@@ -334,6 +335,38 @@ describe("write coverage limits", () => {
     expect(planOf(stateOf(spelled("000-004")), "post_books")).toMatchObject({
       served: true,
     });
+  });
+});
+
+describe("omissions shown by reads the gate ignores", () => {
+  it("notes no omission from a read begun while the create still ran, nor from a page the collection outgrew", () => {
+    const first = detailedBook(FIRST_BOOK);
+    const second = detailedBook(SECOND_BOOK);
+    const running: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      // The create runs from second 3 to 4.5, so the read at second 4 may show the book before its detail.
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }, 1500],
+      ["GET", "/api/books/3", THIRD_BOOK],
+    ];
+    const outgrown: TimedCaptureRow[] = [
+      ["GET", "/api/books?_start=0&_end=2", [second, first]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      // Serving answers the range from its recording once the collection outgrows it.
+      ["GET", "/api/books?_start=0&_end=2", [THIRD_BOOK, second]],
+    ];
+    const requiresDetail = {
+      required_fields: expect.arrayContaining(["detail"]),
+    };
+    const itemView = (rows: readonly TimedCaptureRow[]) =>
+      stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
+    expect([running, outgrown].map(itemView)).toMatchObject([
+      requiresDetail,
+      requiresDetail,
+    ]);
   });
 });
 

@@ -30,7 +30,7 @@ export class OmittedFields {
 
   constructor(private readonly retain: (bytes: number) => void) {}
 
-  /** Check an item or list read with the fields reads showed omitted, this one's included, no longer required. */
+  /** Check an item or list read with the fields reads showed omitted, this one's included, no longer required, naming this one's in the outcome. */
   check(
     state: SimulatedState,
     view: StateItemView | StateListView,
@@ -40,31 +40,23 @@ export class OmittedFields {
       readonly collection: string;
     },
   ): CheckOutcome | undefined {
-    const relaxed = this.#relax(state, view, record, read);
-    return relaxed.shape === "item"
-      ? checkItemRead(state, relaxed, record, read)
-      : checkListRead(state, relaxed, record, read);
+    const omitted = lackedFields(state, view, record, read);
+    const noted = this.#omitted.get(view.type);
+    const loosened = relaxed(
+      view,
+      omitted.length === 0 ? noted : new Set([...(noted ?? []), ...omitted]),
+    );
+    const outcome =
+      loosened.shape === "item"
+        ? checkItemRead(state, loosened, record, read)
+        : checkListRead(state, loosened, record, read);
+    return outcome === undefined ? undefined : { ...outcome, omitted };
   }
 
-  /** Note the required fields the read's held entities lack, and the view without every field noted so far for its type. */
-  #relax<View extends StateItemView | StateListView>(
-    state: SimulatedState,
-    view: View,
-    record: StateRecordFacts,
-    read: Pick<ReadBodies, "body"> & {
-      readonly idField: string;
-      readonly collection: string;
-    },
-  ): View {
-    if (
-      succeeded(record) &&
-      read.body !== undefined &&
-      !projectsFields(record.query)
-    )
-      for (const entity of heldEntities(state, view, record, read))
-        for (const field of view.required_fields)
-          if (!Object.hasOwn(entity, field)) this.#note(view.type, field);
-    return relaxed(view, this.#omitted.get(view.type));
+  /** Note the fields a read the gate counts shows left out, so no view of its type requires them. */
+  keep(view: StateView, outcome: CheckOutcome): void {
+    if (view.shape !== "item" && view.shape !== "list") return;
+    for (const field of outcome.omitted ?? []) this.#note(view.type, field);
   }
 
   /** The views with the fields reads showed omitted no longer required. */
@@ -88,6 +80,29 @@ export class OmittedFields {
     }
   }
 }
+
+/** The required fields a successful whole read's held entities lack. */
+const lackedFields = (
+  state: SimulatedState,
+  view: StateItemView | StateListView,
+  record: StateRecordFacts,
+  read: Pick<ReadBodies, "body"> & {
+    readonly idField: string;
+    readonly collection: string;
+  },
+): string[] => {
+  if (
+    !succeeded(record) ||
+    read.body === undefined ||
+    projectsFields(record.query)
+  )
+    return [];
+  const lacked = new Set<string>();
+  for (const entity of heldEntities(state, view, record, read))
+    for (const field of view.required_fields)
+      if (!Object.hasOwn(entity, field)) lacked.add(field);
+  return [...lacked];
+};
 
 /** The entities a read shows that the state holds: an item read's object naming the path's id, a list read's items. */
 const heldEntities = (

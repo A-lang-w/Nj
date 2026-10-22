@@ -271,6 +271,8 @@ export interface CheckOutcome {
   readonly unheld: readonly string[];
   /** For a failed list read that differs only in some members' fields, those members' targets. */
   readonly differing?: readonly string[];
+  /** Required fields the read shows the application leaves out of entities the state holds. */
+  readonly omitted?: readonly string[];
 }
 
 /** What a check compares: the read's recorded body and the served base recording it would answer on. */

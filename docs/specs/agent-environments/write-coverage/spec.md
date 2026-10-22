@@ -23,7 +23,8 @@ what the writes did:
   `204` or `205`, an empty text, or a recorded size of zero) and one succeeded. A missing text alone does not count.
 - **Omitted fields.** The write gate notes required fields missing from the entities the state holds that successful
   reads it checks return, when the read names no projection parameter: the item whose id the path names, or the listed
-  items. No view of the type requires them any more.
+  items. No view of the type requires them any more. A read that checks nothing, such as one begun while a modelled
+  write to its targets still ran or a page the collection has outgrown, notes none.
 - **Projected reads.** An item read naming `fields`, `fields[...]`, `select` or `$select` that does not return the item
   is left out of the identity proof and the view's checks. The view lists it in `projected_record_ordinals`, and serving
   replays a call to that tool naming such a parameter, for an entity the state holds, with the reason `projection`;
