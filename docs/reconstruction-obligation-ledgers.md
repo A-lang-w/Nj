@@ -327,8 +327,10 @@ A manifest binding names one owner and its exact implementation digest. Both
 }
 ```
 
-Create one negative control by changing exactly one behavior in a copy of the
-reconstruction, then run the **same verifier implementation** against it. Bind
+Create one negative control by introducing one relevant defect in a separate
+candidate copy. For a verifier that compares recorded outputs, this can be a
+changed output fixture, as shown below. Run the **same verifier implementation**
+against both candidates. Bind
 that implementation's digest in `implementation_sha256`. The verifier's control
 Evidence must carry that digest, the same verifier/claim/obligation IDs, the
 candidate fixture ID or artifact SHA-256, and the stated `defect`. For a valid
@@ -342,6 +344,24 @@ the control candidate differs from the bound positive fixture or artifact.
 Artifact controls also require a valid `candidate_sha256` in the passing
 verifier Evidence; missing or malformed identity keeps closure open because
 the candidate difference cannot be established.
+
+For fixture controls, different names are not enough: `original.json` and
+`corrupted.json` might contain identical bytes. Both verifier result Evidence
+records must include `normalized_result.fixture_sha256s`, an object mapping
+fixture IDs to lowercase SHA-256 content digests. The passing result must
+identify every fixture in the binding and every additional fixture named in
+its `fixture_ids`; the control result must identify the selected control fixture.
+REA rejects a control whose digest matches any of those positive fixtures.
+Missing or invalid digests also produce `invalid-control-candidate` and keep
+closure open. Hash the exact consumed contents using the same representation
+for both runs; do not hash filenames. Different digests establish changed
+contents, not that the change is a relevant defect or that every bug is detected.
+
+Migration: existing fixture-control manifests and stored ledgers still parse.
+Re-record positive and control verifier Evidence with `fixture_sha256s`, then
+update their Evidence references and rebuild. Historical readiness checks apply
+the same requirement without rewriting the stored ledger.
+
 Old manifests without controls still parse, but a freshly built ledger keeps
 their obligations open with `unchallenged-verifier`. Previously exported ledger
 Evidence retains its historical digest and status. When a readiness report
@@ -443,8 +463,14 @@ if fingerprint(control) == fingerprint(candidate):
     raise RuntimeError("The control did not change the candidate")
 
 print(json.dumps({
-    "baseline": baseline_result,
-    "control": control_result,
+    "baseline": {
+        **baseline_result,
+        "fixture_sha256s": {"after-restart": fingerprint(candidate)},
+    },
+    "control": {
+        **control_result,
+        "fixture_sha256s": {"after-restart.corrupted": fingerprint(control)},
+    },
     "invalid_fixture": invalid_result,
     "reference_sha256": fingerprint(reference),
     "candidate_sha256": fingerprint(candidate),
@@ -476,7 +502,8 @@ comparison boundary before this technique applies.
 The JSON printed above is an example report, not a REA Evidence record, and its
 fingerprints are not Evidence IDs. Capturing the example with
 [process capture](process-capture.md) records the caller's run; it does not
-automatically turn its output into a reconstruction proof. Linking controls to
-verifier bindings and deciding their effect on closure is the separate proposal
-in [#4396](https://github.com/morluto/rea/issues/4396). This example adds no fields
-to the current ledger request and makes no closure-policy change.
+automatically turn its output into a reconstruction proof. A caller must retain
+the existing proof fields and provenance when recording verifier Evidence; the
+`fixture_sha256s` maps supplement that proof. The manifest still selects the
+control by fixture ID and result Evidence ID. See
+[#4396](https://github.com/morluto/rea/issues/4396) for the control requirement.

@@ -114,7 +114,67 @@ const evaluateControl = (
     );
     return "unverified";
   }
+  if (control.candidate.kind === "fixture") {
+    const issue = fixtureContentIssue(
+      context,
+      control.candidate.fixture_id,
+      result,
+    );
+    if (issue !== null) {
+      addDiagnostic(diagnostics, "invalid-control-candidate", issue);
+      return "unverified";
+    }
+  }
   return "failed";
+};
+
+// Read the digest for this exact fixture, not an unrelated artifact or label.
+const fixtureDigest = (
+  evidence: Evidence | undefined,
+  fixtureId: string,
+): string | null => {
+  const result = evidence?.normalized_result;
+  if (typeof result !== "object" || result === null || Array.isArray(result))
+    return null;
+  const digests = result.fixture_sha256s;
+  if (typeof digests !== "object" || digests === null || Array.isArray(digests))
+    return null;
+  const parsed = digestSchema.safeParse(digests[fixtureId]);
+  return parsed.success ? parsed.data : null;
+};
+
+const fixtureContentIssue = (
+  { binding, positiveEvidence }: ControlContext,
+  controlId: string,
+  controlEvidence: Evidence,
+): string | null => {
+  const controlDigest = fixtureDigest(controlEvidence, controlId);
+  if (controlDigest === null)
+    return `Negative control fixture ${controlId} requires a valid content SHA-256 in its result Evidence.`;
+  const positiveResult = positiveEvidence?.normalized_result;
+  const reportedIds =
+    typeof positiveResult === "object" &&
+    positiveResult !== null &&
+    !Array.isArray(positiveResult) &&
+    Array.isArray(positiveResult.fixture_ids)
+      ? positiveResult.fixture_ids.filter(
+          (id): id is string => typeof id === "string",
+        )
+      : [];
+  const positiveIds = new Set([
+    ...binding.fixtures.map(({ fixture_id }) => fixture_id),
+    ...reportedIds,
+  ]);
+  if (positiveIds.size === 0)
+    return "A fixture control requires identified positive fixtures in the passing verifier Evidence or binding.";
+  for (const id of positiveIds) {
+    const digest = fixtureDigest(positiveEvidence, id);
+    if (digest === null)
+      return `Positive fixture ${id} requires a valid content SHA-256 in the passing verifier Evidence.`;
+    if (digest === controlDigest)
+      return `Negative control fixture ${controlId} reuses the contents of positive fixture ${id}. Renaming a fixture does not establish a defect.`;
+  }
+  return null;
 };
 
 const controlCandidateIssue = (

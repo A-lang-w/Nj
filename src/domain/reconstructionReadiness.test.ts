@@ -45,6 +45,7 @@ const replaceNegativeControlEvidence = (
     readonly claim_ids?: readonly string[];
     readonly obligation_ids?: readonly string[];
     readonly fixture_ids?: readonly string[];
+    readonly fixture_sha256s?: Readonly<Record<string, string>>;
   },
   authority: "controlled-replay" | "shipped-artifact" = "controlled-replay",
 ): string => {
@@ -77,6 +78,9 @@ const replaceNegativeControlEvidence = (
       ...(changes.fixture_ids === undefined
         ? {}
         : { fixture_ids: [...changes.fixture_ids] }),
+      ...(changes.fixture_sha256s === undefined
+        ? {}
+        : { fixture_sha256s: { ...changes.fixture_sha256s } }),
     },
     confidence: original.confidence,
     authority,
@@ -230,6 +234,28 @@ describe("readiness verifier control Evidence", () => {
     expect(createReconstructionReadinessReport(value).status).not.toBe("pass");
     expect(value.obligation_ledger.closure_digest).toBe(digest);
   });
+
+  it.each([
+    [
+      "identical contents under a different name",
+      { "fixture.deliberate-defect": "a".repeat(64) },
+    ],
+    ["missing content digest", {}],
+    ["invalid content digest", { "fixture.deliberate-defect": "not-a-sha256" }],
+  ])(
+    "does not accept historical fixture controls with %s",
+    (_label, digests) => {
+      const value = input();
+      replaceNegativeControlEvidence(value, { fixture_sha256s: digests });
+      committedReadyLedger(value);
+      const before = structuredClone(value.obligation_ledger);
+
+      expect(createReconstructionReadinessReport(value).status).not.toBe(
+        "pass",
+      );
+      expect(value.obligation_ledger).toEqual(before);
+    },
+  );
 
   it.each([
     [

@@ -36,6 +36,7 @@ const buildWithSiblingControl = (
           },
           "controlled-replay",
           {
+            fixtureSha256: "4".repeat(64),
             control: {
               verifier_sha256: binding.verifier.implementation_sha256 ?? "",
               defect,
@@ -349,6 +350,7 @@ describe("reconstruction obligation verifier compatibility", () => {
       },
       "controlled-replay",
       {
+        fixtureSha256: "4".repeat(64),
         control: {
           verifier_sha256: binding.verifier.implementation_sha256 ?? "",
           defect: "The candidate omits the shutdown result.",
@@ -444,6 +446,7 @@ describe("reconstruction obligation control Evidence", () => {
       },
       "controlled-replay",
       {
+        fixtureSha256: "4".repeat(64),
         control: {
           verifier_sha256: binding.verifier.implementation_sha256 ?? "",
           defect: "The candidate omits the shutdown result.",
@@ -487,6 +490,7 @@ describe("reconstruction obligation control Evidence", () => {
     if (control === undefined) throw new Error("Expected negative control");
     const cases = [
       {
+        fixtureSha256: "4".repeat(64),
         control: {
           ...control,
           candidate: {
@@ -497,6 +501,7 @@ describe("reconstruction obligation control Evidence", () => {
         diagnostic: "invalid-control-candidate",
       },
       {
+        fixtureSha256: "4".repeat(64),
         control: {
           ...control,
           result_evidence_id: `ev_${"a".repeat(64)}`,
@@ -557,6 +562,7 @@ describe("reconstruction obligation control Evidence identity", () => {
         "controlled-replay",
         {
           passed: false,
+          fixtureSha256: "4".repeat(64),
           control: {
             verifier_sha256:
               item.digest ?? binding.verifier.implementation_sha256 ?? "",
@@ -665,6 +671,7 @@ describe("reconstruction obligation control identities", () => {
       "controlled-replay",
       {
         passed: false,
+        fixtureSha256: "4".repeat(64),
         control: {
           verifier_sha256: binding.verifier.implementation_sha256 ?? "",
           candidate_sha256: candidateSha256,
@@ -757,6 +764,7 @@ describe("reconstruction obligation control result boundaries", () => {
         "controlled-replay",
         {
           passed: false,
+          fixtureSha256: "4".repeat(64),
           control: {
             verifier_sha256: binding.verifier.implementation_sha256 ?? "",
             candidate_sha256: candidateSha256,
@@ -820,6 +828,7 @@ describe("reconstruction obligation control result boundaries", () => {
       "controlled-replay",
       {
         passed: false,
+        fixtureSha256: "4".repeat(64),
         control: {
           verifier_sha256: binding.verifier.implementation_sha256 ?? "",
           defect: control.defect,
@@ -905,9 +914,11 @@ describe("reconstruction obligation manifest references", () => {
       });
       expect(open.status).not.toBe("ready");
       expect(open.obligations[0]?.status).toBe("implemented");
-      expect(open.obligations[0]?.diagnostics).toEqual([
-        { code, detail: expect.stringContaining(absent) },
-      ]);
+      expect(open.obligations[0]?.diagnostics).toEqual(
+        expect.arrayContaining([
+          { code, detail: expect.stringContaining(absent) },
+        ]),
+      );
     }
   });
 });

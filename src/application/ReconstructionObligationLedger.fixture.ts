@@ -64,6 +64,7 @@ export const boundProofEvidence = (
   authority: "shipped-artifact" | "controlled-replay" = "controlled-replay",
   options: {
     readonly passed?: boolean;
+    readonly fixtureSha256?: string;
     readonly control?: {
       readonly defect?: string;
       readonly verifier_sha256: string;
@@ -83,6 +84,12 @@ export const boundProofEvidence = (
         passed: options.passed ?? true,
         obligation_ids: [...result.obligation_ids],
         fixture_ids: [...result.fixture_ids],
+        fixture_sha256s: Object.fromEntries(
+          result.fixture_ids.map((id) => [
+            id,
+            options.fixtureSha256 ?? "6".repeat(64),
+          ]),
+        ),
         case_kinds: [...result.case_kinds],
         verifier_ids: [...result.verifier_ids],
         claim_ids: [...result.claim_ids],
@@ -133,6 +140,7 @@ export const originalCases = (
 /** Build a request whose packaged-process obligation closes as ready. */
 export const readyProcessLedgerRequest = (
   positiveCandidateSha256: string | null = "6".repeat(64),
+  controlFixtureSha256 = "4".repeat(64),
 ): ReconstructionObligationLedgerInput => {
   const capture = processEvidence();
   const initial = build(request([capture]));
@@ -173,6 +181,7 @@ export const readyProcessLedgerRequest = (
     "controlled-replay",
     {
       passed: false,
+      fixtureSha256: controlFixtureSha256,
       control: {
         verifier_sha256: verifierSha256,
         defect: "The candidate omits the shutdown result.",
