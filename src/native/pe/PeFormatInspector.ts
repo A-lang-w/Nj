@@ -11,8 +11,8 @@ export interface PeSectionInfo {
   readonly rawSize: number;
   readonly rawOffset: number;
   readonly characteristics: number;
-  readonly entropy: number;
-  readonly isPackedOrEncrypted: boolean;
+  readonly entropy?: number | undefined;
+  readonly isPackedOrEncrypted?: boolean | undefined;
   readonly isExecutable: boolean;
   readonly isWritable: boolean;
 }
@@ -171,7 +171,7 @@ const parseSections = (
         : new Uint8Array(0);
 
     const rangeKey = `${rawOffset}:${sectionBytes.length}`;
-    let entropy: number;
+    let entropy: number | undefined;
     const cached = entropyCache.get(rangeKey);
     if (cached !== undefined) {
       entropy = cached;
@@ -183,10 +183,11 @@ const parseSections = (
       totalScannedBytes += sectionBytes.length;
       entropyCache.set(rangeKey, entropy);
     } else {
-      entropy = 0;
+      entropy = undefined;
     }
 
-    const isPacked = isLikelyPackedOrEncrypted(entropy);
+    const isPacked =
+      entropy !== undefined ? isLikelyPackedOrEncrypted(entropy) : undefined;
 
     sections.push({
       name,
@@ -195,7 +196,7 @@ const parseSections = (
       rawSize,
       rawOffset,
       characteristics,
-      entropy: Number(entropy.toFixed(3)),
+      entropy: entropy !== undefined ? Number(entropy.toFixed(3)) : undefined,
       isPackedOrEncrypted: isPacked,
       isExecutable: isExecutableSection(characteristics),
       isWritable: isWritableSection(characteristics),
