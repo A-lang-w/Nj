@@ -48,6 +48,8 @@ Linux x64 / AMD EPYC 7B12 / kernel 6.1.0-54-cloud-amd64 / Node 24.18.0, npm 11.1
 
 The moved transport/delivery implementation preserves current complete-error retention, escaped-preview fitting, response/string-limit recovery, target-content provenance and native Evidence continuations. Canonical parsers remain authoritative after lazy binding. Both protocol eras, input/output profile choices, invalid input/output, completion cancellation, partial startup and cleanup retry are exercised.
 
+Aggregation keeps catalog, producer-script and guard-script digests in distinct variables. Before publishing a trial it verifies that the catalog digest matches both its catalog-file receipt and the shared profile identity. Deliberately selecting the guard digest for that field is rejected. Regeneration preserves all measured timing, CPU, memory, context and parent-Evidence values.
+
 Executed local gates: 125 focused tests across 14 files; a repeated 22-case schema/profile subset after the pinned main merge; all six static-check tasks plus architecture guards; builds for both pinned runtimes; six documentation checks and five README consistency tests. HTTP coverage includes the real compiled CLI session/replacement/Host tests. Runtime-binding admission rejects a mismatched compiled graph before MCP launch; aggregation rejects a tampered trial binding. The raw receipts remain in `/tmp/rea-perf-mcp-startup-20261022`, identified by hashes in the data. Real initial-target providers, foreign OS runtime behavior and other providers remain outside this measurement.
 
 ## Reproduction

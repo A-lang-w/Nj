@@ -38,22 +38,22 @@ for case in inputs['cases']:
     assert report['status'] == 'passed' and report['cleanup_verified']
     assert report['runtime_binding_verified']
     assert report['measurement_inputs_sha256'] == sha(input_bytes)
-    for name, digest in report['producer_sources_sha256'].items():
-        assert digest == inputs['harness_sources_sha256'][name]
+    for name, producer_digest in report['producer_sources_sha256'].items():
+        assert producer_digest == inputs['harness_sources_sha256'][name]
     assert report['runtime_binding'] == expected[case['role']]
     for key in ['role', 'cache', 'profile', 'phase']:
         assert report[key] == case[key]
     raw = (directory / 'catalog.json').read_bytes()
-    digest = sha(raw)
-    assert digest == report['catalog_sha256']
+    catalog_digest = sha(raw)
+    assert catalog_digest == report['catalog_sha256']
     profile = case['profile']
     if profile not in catalogs:
         catalog = json.loads(raw)
         definitions = [{key: tool[key] for key in ['name', 'description', 'inputSchema']} for tool in catalog['tools']]
-        catalogs[profile] = {'sha256': digest, 'tool_count': len(catalog['tools']),
+        catalogs[profile] = {'sha256': catalog_digest, 'tool_count': len(catalog['tools']),
                              'input_catalog_tokens': count(compact(definitions)),
                              'raw_catalog_tokens': count(raw.decode()), 'raw_catalog_bytes': len(raw)}
-    assert digest == catalogs[profile]['sha256'], 'Directory differs across roles or phases'
+    assert catalog_digest == catalogs[profile]['sha256'], 'Directory differs across roles or phases'
     transcript = json.loads((directory / 'transcript.json').read_text())
     server = json.loads((directory / 'server.json').read_text())
     tokens = {'question_and_recipe': count(inputs['questions'][case['phase']] + '\n' + inputs['recipes'][case['phase']]),
@@ -78,11 +78,11 @@ for case in inputs['cases']:
         tokens['prompt_directory'] = count(prompts.decode())
     tokens['whole_task'] = sum(tokens.values())
     resource = module.resource(directory)
-    for name, digest in resource['guard_sources_sha256'].items():
-        assert digest == inputs['harness_sources_sha256'][name]
+    for name, guard_digest in resource['guard_sources_sha256'].items():
+        assert guard_digest == inputs['harness_sources_sha256'][name]
     del resource['guard_sources_sha256']
     row = {**case, 'runtime_binding_sha256': sha(compact(report['runtime_binding']).encode()), 'runtime_audit_ms': report['runtime_audit_ms'],
-           'catalog_sha256': digest, 'parent_evidence_id': report.get('parent_evidence_id'),
+           'catalog_sha256': catalog_digest, 'parent_evidence_id': report.get('parent_evidence_id'),
            'parent_semantic_sha256': report.get('parent_semantic_sha256'),
            'answer_sha256': sha(compact(report['answer']).encode()), 'tokens_estimated': tokens,
            'raw_catalog_result_tokens_all_lists': catalogs[profile]['raw_catalog_tokens'] * requests['tools/list'],
@@ -90,6 +90,7 @@ for case in inputs['cases']:
            'actual_model_usage': None, 'protocol_era': report['protocol_era'], 'protocol_requests': requests, 'calls': report['calls'],
            **resource,
            'receipt_sha256': {name: sha((directory / name).read_bytes()) for name in ['report.json', 'catalog.json', 'server.json', 'transcript.json']}}
+    assert row['catalog_sha256'] == row['receipt_sha256']['catalog.json'] == catalogs[profile]['sha256']
     rows.append(row)
 assert len(rows) == 72
 summary = []
