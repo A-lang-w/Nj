@@ -2,20 +2,26 @@ import type { ExtractedState } from "./environmentStateRules.js";
 import { EnvironmentStateWriteSimulation } from "./EnvironmentStateWriteSimulation.js";
 import type { WriteSimulationInput } from "./environmentStateWriteEffects.js";
 
-/** The instant a served clock starts from: the end of the last timed record, to the next whole second. */
+/** The latest end a record can have and still round up to a whole second a date can hold. */
+const LATEST_END_MS = 8_640_000_000_000_000 - 1000;
+
+/** The instant a served clock starts from: the end of the last timed record a date can hold, to the next whole second. */
 const clockStart = (
   records: WriteSimulationInput["records"],
   timed: boolean,
 ): string | null => {
-  if (!timed || records.length === 0) return null;
+  if (!timed) return null;
+  // A record timed past the range of a date carries no usable time, so the clock starts from the others.
   const end = records.reduce(
-    (latest, record) => Math.max(latest, record.end),
+    (latest, record) =>
+      Math.abs(record.end) <= LATEST_END_MS
+        ? Math.max(latest, record.end)
+        : latest,
     Number.NEGATIVE_INFINITY,
   );
-  if (!Number.isFinite(end)) return null;
-  const start = new Date(Math.ceil(end / 1000) * 1000);
-  // A recorded time past the range a date can hold gives no served clock.
-  return Number.isNaN(start.getTime()) ? null : start.toISOString();
+  return Number.isFinite(end)
+    ? new Date(Math.ceil(end / 1000) * 1000).toISOString()
+    : null;
 };
 
 /** The write plans a capture's own timeline confirms against an extracted state, and the served clock's start. */
