@@ -239,8 +239,8 @@ export const providerCatalog = (sources) => {
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
           ({ name }) =>
-            name !== "inspect_pe_resources" &&
-            name !== "inspect_pe_certificates",
+            name === "inspect_binary_layout" ||
+            name === "inspect_recorded_crash",
         ),
     },
     {
@@ -255,6 +255,13 @@ export const providerCatalog = (sources) => {
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
           ({ name }) => name === "inspect_pe_certificates",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.BYTE_ENTROPY_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_byte_entropy",
         ),
     },
     {

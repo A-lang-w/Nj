@@ -9,8 +9,10 @@ import {
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { REPLAY_BODY_LIMIT_BYTES } from "./environmentReplay.js";
-import type { EnvironmentSource } from "./environmentSource.js";
+import {
+  REPLAY_BODY_LIMIT_BYTES,
+  type EnvironmentSource,
+} from "./environmentSource.js";
 import {
   answerFromState,
   type StateServing,
@@ -262,6 +264,27 @@ describe("list answers", () => {
       body: [{ id: 1 }],
       replay: { record_ordinal: 0 },
       state: { source: "state", listed: 1 },
+    });
+  });
+
+  it("answers an unfiltered call from a paging-only line of the parent its path arguments name", () => {
+    const books = servingFrom([
+      ["GET", "/api/orgs/1/books?limit=50", [{ id: 1 }, { id: 2 }]],
+      ["GET", "/api/orgs/2/books?limit=50", [{ id: 3 }]],
+      ["GET", "/api/orgs/3/books?limit=50", [{ id: 4 }]],
+    ]);
+    expect(answer(books, "get_orgs_books_by_id", { id: "2" })).toMatchObject({
+      body: [{ id: 3 }],
+      replay: { record_ordinal: 1, exact_match: false },
+      state: {
+        source: "state",
+        collection: "/api/orgs/2/books",
+        membership: "all",
+        listed: 1,
+      },
+    });
+    expect(answer(books, "get_orgs_books_by_id", { id: "9" })).toMatchObject({
+      state: { source: "recording", reason: "unrecorded-request" },
     });
   });
 
