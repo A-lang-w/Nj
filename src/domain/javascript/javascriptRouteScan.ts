@@ -4,6 +4,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "./javascriptAnalysisResourceControls.js";
 import {
   semanticStaticPropertyName,
+  staticJavaScriptTruthiness,
   semanticStaticPropertyKey,
   javaScriptExpressionWrapperTarget,
   unwrapJavaScriptExpression,
@@ -118,13 +119,28 @@ const isNavigationDataEdge = (node: t.Node, parent: t.Node | null): boolean => {
   if (t.isTaggedTemplateExpression(parent)) return node !== parent.tag;
   if (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent))
     return false;
-  if (t.isConditionalExpression(parent)) return node !== parent.test;
+  if (t.isConditionalExpression(parent)) {
+    if (node === parent.test) return false;
+    const truthiness = staticJavaScriptTruthiness(parent.test);
+    return (
+      truthiness === undefined ||
+      node === (truthiness ? parent.consequent : parent.alternate)
+    );
+  }
   if (t.isUnaryExpression(parent)) return false;
   if (t.isBinaryExpression(parent)) return parent.operator === "+";
-  // A falsy left operand can be returned by &&, but cannot be a rooted path or
-  // structured route/query object. The right operand supplies those values.
-  if (t.isLogicalExpression(parent, { operator: "&&" }))
-    return node !== parent.left;
+  if (t.isLogicalExpression(parent)) {
+    const left = unwrapJavaScriptExpression(parent.left).node;
+    const truthiness = staticJavaScriptTruthiness(left);
+    // A falsy && result cannot be a rooted path or structured route value.
+    if (parent.operator === "&&")
+      return node === parent.right && truthiness !== false;
+    if (parent.operator === "||")
+      return node === parent.left || truthiness !== true;
+    return (
+      node === parent.left || truthiness === undefined || t.isNullLiteral(left)
+    );
+  }
   if (t.isSequenceExpression(parent)) return node === parent.expressions.at(-1);
   if (t.isObjectProperty(parent)) return node === parent.value;
   return true;

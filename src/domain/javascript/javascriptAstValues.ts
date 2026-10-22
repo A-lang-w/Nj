@@ -126,6 +126,26 @@ export const semanticStaticPropertyKey = (
   return !computed && t.isIdentifier(property) ? property.name : null;
 };
 
+/** Determine value truthiness from syntax, without executing source or resolving bindings. */
+export const staticJavaScriptTruthiness = (
+  node: t.Node,
+): boolean | undefined => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (t.isBooleanLiteral(value)) return value.value;
+  if (t.isNullLiteral(value)) return false;
+  if (t.isStringLiteral(value)) return value.value.length > 0;
+  if (t.isNumericLiteral(value))
+    return value.value !== 0 && !Number.isNaN(value.value);
+  if (
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isArrowFunctionExpression(value)
+  )
+    return true;
+  return undefined;
+};
+
 /** Syntax whose value cannot contribute own properties to an object spread. */
 export const isNullishJavaScriptSyntax = (node: t.Node): boolean => {
   node = unwrapJavaScriptExpression(node).node;

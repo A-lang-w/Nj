@@ -932,3 +932,36 @@ it.each(
     "/users",
   ]);
 });
+
+it.each(
+  [
+    "true ? {} : independent",
+    "false ? independent : {}",
+    "false && independent",
+    "true || independent",
+    "0 ?? independent",
+    "({}) ?? independent",
+  ].flatMap((expression) => [expression, `(${expression}) as unknown`]),
+)("keeps literal-inactive query branches independent: %s", (expression) => {
+  const facts = analyze(
+    `const independent={path:'/independent',component:View};router.push({pathname:'/users',query:${expression}});`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/users",
+    "/independent",
+  ]);
+});
+it.each(
+  [
+    "true ? independent : {}",
+    "false ? {} : independent",
+    "true && independent",
+    "false || independent",
+    "null ?? independent",
+  ].flatMap((expression) => [expression, `(${expression}) as unknown`]),
+)("owns literal-selected query branches: %s", (expression) => {
+  const facts = analyze(
+    `const independent={path:'/query-data',component:Preview};router.push({pathname:'/users',query:${expression}});`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
+});
