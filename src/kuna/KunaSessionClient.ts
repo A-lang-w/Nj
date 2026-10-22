@@ -2,6 +2,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
+import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
 import { z } from "zod";
 
 import {
@@ -270,8 +271,17 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #runSlots: KunaRunSlots;
   readonly #launcher: KunaProcessLauncher | undefined;
   readonly #resourceScope = new ArtifactResourceScope();
-  readonly #spanLeases = new Map<OwnedFileHandle, AnalysisCleanupLease>();
-  /** Serializes span admission and finalization. Not the installation scope. */
+  readonly #spanLeases = new Map<
+    OwnedFileHandle,
+    {
+      readonly lease: AnalysisCleanupLease;
+      readonly scopeOwner: ArtifactResourceOwner;
+    }
+  >();
+  /**
+   * Serializes span admission and finalization. The byte read stays outside
+   * this queue so one held read does not block another span's open.
+   */
   #spanAdmission: Promise<void> = Promise.resolve();
   /** Single-function runs in flight, by entry address. */
   readonly #singleFunctionRuns = new Map<string, SingleFunctionRun>();
@@ -382,8 +392,8 @@ export class KunaSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    // A peer can retain a descriptor after this check. Span opens recheck
-    // under #runSpan, which holds admission through that open's close.
+    // A peer can retain a descriptor after this check. Each span open rechecks
+    // under #admitSpan, which shares its queue with that descriptor's close.
     const pendingDescriptors = await this.#pendingDescriptorCleanup(operation);
     if (pendingDescriptors !== undefined) return err(pendingDescriptors);
     if (cancelled(options.signal))
@@ -1000,7 +1010,11 @@ export class KunaSessionClient implements AnalysisClient {
       const reader = this.#reader;
       if (reader !== undefined) {
         try {
-          const text = await reader.pseudocode(entry.address, operation);
+          const text = await reader.pseudocode(
+            entry.address,
+            operation,
+            options.signal,
+          );
           if (!text.ok) return text;
           return ok({
             ...text.value,
@@ -1232,7 +1246,11 @@ export class KunaSessionClient implements AnalysisClient {
   ): Promise<Result<Answer, AnalysisError>> {
     const assembly = await reader.assembly(entry.address, operation, signal);
     if (!assembly.ok) return assembly;
-    const pseudocode = await reader.pseudocode(entry.address, operation);
+    const pseudocode = await reader.pseudocode(
+      entry.address,
+      operation,
+      signal,
+    );
     if (!pseudocode.ok) return pseudocode;
     const text =
       typeof pseudocode.value.result === "string"
@@ -1584,39 +1602,68 @@ export class KunaSessionClient implements AnalysisClient {
           own: (work) => this.#own(work),
           retainFailedClose: (path, owner) => {
             const lease = AnalysisCleanupLease.forCloseOwner(owner, path);
-            this.#spanLeases.set(owner, lease);
-            this.#resourceScope.retain({
+            const scopeOwner: ArtifactResourceOwner = {
               kind: "lease",
               resource: path,
               lease,
-            });
+            };
+            this.#spanLeases.set(owner, { lease, scopeOwner });
+            this.#resourceScope.retain(scopeOwner);
           },
           bindSpanCleanup: (owner, marker) => {
-            this.#spanLeases.get(owner)?.bindCleanupError(marker);
+            this.#spanLeases.get(owner)?.lease.bindCleanupError(marker);
           },
-          runSpan: (operation, read) => this.#runSpan(operation, read),
+          admitSpan: (operation, signal, open) =>
+            this.#admitSpan(operation, signal, open),
+          finishSpan: (finish) => this.#finishSpan(finish),
         });
   }
 
-  /**
-   * One span open at a time, including its close. The pending-lease check at
-   * request entry can pass for every overlapping caller; this gate is the
-   * admission that runs again immediately before open.
-   */
-  #runSpan<T>(
-    operation: string,
-    read: () => Promise<Result<T, AnalysisError>>,
-  ): Promise<Result<T, AnalysisError>> {
-    const admitted = this.#spanAdmission.then(async () => {
-      const pending = await this.#pendingDescriptorCleanup(operation);
-      if (pending !== undefined) return err(pending);
-      return read();
-    });
+  #enqueueSpan<T>(work: () => Promise<T>): Promise<T> {
+    const admitted = this.#spanAdmission.then(work, work);
     this.#spanAdmission = admitted.then(
       () => undefined,
       () => undefined,
     );
     return admitted;
+  }
+
+  /**
+   * Recheck retained closes and the caller signal immediately before open.
+   * Finalization uses the same queue, so this cannot pass between a rejected
+   * close and the lease that records it.
+   */
+  #admitSpan<T>(
+    operation: string,
+    signal: AbortSignal | undefined,
+    open: () => Promise<T>,
+  ): Promise<Result<T, AnalysisError>> {
+    const callerAborted = (): AbortSignal | undefined =>
+      signal?.aborted === true ? signal : undefined;
+    return this.#enqueueSpan(async () => {
+      const cancelledBefore = callerAborted();
+      if (cancelledBefore !== undefined)
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: cancelledBefore.reason,
+          }),
+        );
+      const pending = await this.#pendingDescriptorCleanup(operation);
+      if (pending !== undefined) return err(pending);
+      const cancelledAfter = callerAborted();
+      if (cancelledAfter !== undefined)
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: cancelledAfter.reason,
+          }),
+        );
+      return ok(await open());
+    });
+  }
+
+  /** Release or retain this descriptor before the next span is admitted. */
+  #finishSpan<T>(finish: () => Promise<T>): Promise<T> {
+    return this.#enqueueSpan(finish);
   }
 
   /**
@@ -1627,7 +1674,7 @@ export class KunaSessionClient implements AnalysisClient {
     operation: string,
   ): Promise<AnalysisError | undefined> {
     const pending = [...this.#spanLeases.entries()].filter(
-      ([, lease]) => !lease.released,
+      ([, retained]) => !retained.lease.released,
     );
     if (pending.length === 0) return undefined;
     const failures: {
@@ -1635,14 +1682,15 @@ export class KunaSessionClient implements AnalysisClient {
       readonly cause: unknown;
       readonly path: string;
     }[] = [];
-    for (const [owner, lease] of pending) {
-      try {
-        await lease.release();
-      } catch (cause: unknown) {
+    for (const [owner, retained] of pending) {
+      const attempt = await this.#resourceScope.release(retained.scopeOwner);
+      if (attempt.kind === "failed") {
         failures.push({
-          lease,
-          cause,
-          path: lease.cleanupResources?.[0] ?? "Kuna span descriptor",
+          lease: retained.lease,
+          cause: attempt.cause,
+          path:
+            retained.lease.cleanupResources?.[0] ??
+            retained.scopeOwner.resource,
         });
         continue;
       }

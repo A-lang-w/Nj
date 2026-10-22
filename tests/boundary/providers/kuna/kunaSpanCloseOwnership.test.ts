@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 
+import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { run, session } from "./kunaSessionFixture.js";
@@ -13,10 +15,11 @@ const fault = vi.hoisted(() => ({
   short: false,
   reads: 0,
   entered: 0,
+  closeEntered: 0,
   closes: 0,
   opens: 0,
   hold: undefined as Promise<void> | undefined,
-  releaseHold: () => undefined as () => void,
+  releaseHold: (): void => undefined,
   handles: [] as FileHandle[],
   cause: Object.assign(new Error("controlled close refusal"), { code: "EIO" }),
 }));
@@ -35,13 +38,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           if (key === "read")
             return async (...readArgs: unknown[]) => {
               fault.entered += 1;
-              if (fault.hold !== undefined) await fault.hold;
               const read = await Reflect.apply(target.read, target, readArgs);
               fault.reads += 1;
               return fault.short ? { ...read, bytesRead: 0 } : read;
             };
           if (key === "close")
             return async () => {
+              fault.closeEntered += 1;
+              if (fault.hold !== undefined) await fault.hold;
               fault.closes += 1;
               if (fault.fail) throw fault.cause;
               return target.close();
@@ -61,6 +65,7 @@ afterEach(() => {
   fault.short = false;
   fault.reads = 0;
   fault.entered = 0;
+  fault.closeEntered = 0;
   fault.closes = 0;
   fault.opens = 0;
   fault.hold = undefined;
@@ -174,7 +179,7 @@ it("does not open a second span while a peer still holds a failed close", async 
       "program.asm",
     );
     fault.fail = true;
-    fault.hold = new Promise((resolve) => {
+    fault.hold = new Promise<void>((resolve) => {
       fault.releaseHold = resolve;
     });
     const first = client.execute(
@@ -183,7 +188,7 @@ it("does not open a second span while a peer still holds a failed close", async 
       {},
     );
     await vi.waitFor(() => {
-      expect(fault.entered).toBe(1);
+      expect(fault.closeEntered).toBe(1);
     });
     const second = client.execute(
       "procedure_assembly",
@@ -194,7 +199,7 @@ it("does not open a second span while a peer still holds a failed close", async 
       setImmediate(resolve);
     });
     expect(fault.opens).toBe(1);
-    expect(fault.entered).toBe(1);
+    expect(fault.reads).toBe(1);
     fault.releaseHold();
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult.ok).toBe(false);
@@ -205,7 +210,6 @@ it("does not open a second span while a peer still holds a failed close", async 
     expect(secondResult.error.cleanupIncomplete).toBe(true);
     expect(secondResult.error.cleanupResources).toContain(fault.span);
     expect(fault.opens).toBe(1);
-    expect(fault.entered).toBe(1);
     expect(fault.reads).toBe(1);
     expect(fault.closes).toBeGreaterThanOrEqual(2);
     const handle = fault.handles[0];
@@ -217,6 +221,108 @@ it("does not open a second span while a peer still holds a failed close", async 
     fault.releaseHold();
     fault.fail = false;
     fault.hold = undefined;
+    fault.span = "";
+    await client.close();
+    for (const handle of fault.handles)
+      if (handle.fd >= 0) await handle.close().catch(() => undefined);
+  }
+});
+
+it("does not open a queued span after its caller aborts", async () => {
+  const { cacheRoot, open: createClient } = await session(
+    "rea-kuna-span-close-cancel-",
+  );
+  const client = createClient();
+  try {
+    await run(client, "procedure_assembly", { procedure: "main" });
+    const [key] = await readdir(join(cacheRoot, "projects"));
+    fault.span = join(
+      cacheRoot,
+      "projects",
+      key ?? "",
+      "project",
+      "program.asm",
+    );
+    fault.fail = true;
+    fault.hold = new Promise<void>((resolve) => {
+      fault.releaseHold = resolve;
+    });
+    const first = client.execute(
+      "procedure_assembly",
+      { procedure: "main" },
+      {},
+    );
+    await vi.waitFor(() => {
+      expect(fault.closeEntered).toBe(1);
+    });
+    const abort = new AbortController();
+    const second = client.execute(
+      "procedure_assembly",
+      { procedure: "parse" },
+      { signal: abort.signal },
+    );
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    abort.abort();
+    fault.releaseHold();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.ok).toBe(false);
+    expect(secondResult.ok).toBe(false);
+    if (secondResult.ok) return;
+    expect(secondResult.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(fault.opens).toBe(1);
+  } finally {
+    fault.releaseHold();
+    fault.fail = false;
+    fault.hold = undefined;
+    fault.span = "";
+    await client.close();
+    for (const handle of fault.handles)
+      if (handle.fd >= 0) await handle.close().catch(() => undefined);
+  }
+});
+
+it("removes a span lease from the resource scope after close succeeds", async () => {
+  const release = vi.spyOn(ArtifactResourceScope.prototype, "release");
+  const { cacheRoot, open: createClient } = await session(
+    "rea-kuna-span-scope-release-",
+  );
+  const client = createClient();
+  try {
+    await run(client, "procedure_assembly", { procedure: "main" });
+    const [key] = await readdir(join(cacheRoot, "projects"));
+    fault.span = join(
+      cacheRoot,
+      "projects",
+      key ?? "",
+      "project",
+      "program.asm",
+    );
+    fault.fail = true;
+    const failed = await client.execute(
+      "procedure_assembly",
+      { procedure: "main" },
+      {},
+    );
+    expect(failed.ok).toBe(false);
+    fault.fail = false;
+    const recovered = await client.execute(
+      "procedure_assembly",
+      { procedure: "main" },
+      {},
+    );
+    expect(recovered.ok).toBe(true);
+    expect(
+      release.mock.calls.some(
+        ([owner]) =>
+          owner.kind === "lease" && owner.resource === fault.span,
+      ),
+    ).toBe(true);
+    expect(fault.handles[0]?.fd).toBe(-1);
+  } finally {
+    release.mockRestore();
+    fault.fail = false;
     fault.span = "";
     await client.close();
     for (const handle of fault.handles)
