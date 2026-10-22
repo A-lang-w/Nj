@@ -146,13 +146,14 @@ it("does not treat an unauthenticated listener as a Cutter ceiling mismatch", as
   const port = await listen(server);
   const other = "00000000-0000-4000-8000-000000000002";
   const stranger = createServer((socket) => {
-    socket.end(
+    socket.write(
       `${JSON.stringify({
         session_id: other,
         nonce: "ab".repeat(32),
         proof: "00".repeat(32),
       })}\n`,
     );
+    socket.destroy();
   });
   const strangerPort = await listen(stranger);
   await writeDescriptor(directory, SESSION, port, TOKEN, {
