@@ -125,8 +125,8 @@ const expectWorkflowQuestionsRetained = (
         expect.objectContaining({
           question: `${question} (Evidence ${evidence.evidence_id})`,
           supporting_evidence_ids: [evidence.evidence_id],
-        });
-      }),
+        }),
+      ),
     ),
   );
 };
