@@ -135,7 +135,6 @@ const writeBundleFiles = async (
   const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
   let written: WrittenBundleFile[] | undefined;
-  let admitted = false;
   let outcome:
     | {
         readonly kind: "completed";
@@ -152,7 +151,6 @@ const writeBundleFiles = async (
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;
     }
-    admitted = true;
     written = [];
     for (const file of plan.files)
       written.push(
@@ -200,14 +198,12 @@ const writeBundleFiles = async (
   }
   if (outcome.kind === "failed") {
     if (owner?.published === true && written !== undefined) return written;
-    // Only destination admission can blame the selected directory.
-    throw admitted
-      ? outcome.cause
-      : outputDirectoryAdmissionRefusal(
-          ENVIRONMENT_EXPORT_OPERATION,
-          "directory",
-          outcome.cause,
-        );
+    // Only a destination refusal can blame the selected directory.
+    throw outputDirectoryAdmissionRefusal(
+      ENVIRONMENT_EXPORT_OPERATION,
+      "directory",
+      outcome.cause,
+    );
   }
   return outcome.files;
 };

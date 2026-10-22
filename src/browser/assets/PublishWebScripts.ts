@@ -72,10 +72,8 @@ export const publishWebScripts = async (
         : [];
     let tree: SafeOutputTree | undefined;
     let result: WebScriptExportResult | undefined;
-    let admitted = false;
     try {
       tree = await SafeOutputTree.create(input.output_directory);
-      admitted = true;
       assertActive();
       const records: ExportedWebScript[] = [];
       for (const [index, item] of planned.entries()) {
@@ -179,10 +177,12 @@ export const publishWebScripts = async (
         if (tree.published && result !== undefined) return result;
       }
       if (cancellation !== undefined) throw cancellation;
-      // Only destination admission can blame the selected output directory.
-      throw admitted
-        ? cause
-        : outputDirectoryAdmissionRefusal(OPERATION, "output_directory", cause);
+      // Only a destination refusal can blame the selected output directory.
+      throw outputDirectoryAdmissionRefusal(
+        OPERATION,
+        "output_directory",
+        cause,
+      );
     }
   });
 
