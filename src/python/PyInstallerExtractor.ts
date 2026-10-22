@@ -510,7 +510,7 @@ export const extractPyInstallerEntries = (
     if (inflated.decompressed) {
       remainingBudget -= inflated.data.length;
     } else if (isExpansionLimitError(inflated.error)) {
-      remainingBudget -= entryBudget;
+      remainingBudget = 0;
     } else {
       remainingBudget -= rawData.length;
     }
@@ -542,11 +542,12 @@ export const extractPyInstallerEntries = (
             if (extractedMod.decompressed) {
               remainingBudget -= extractedMod.data.length;
             } else if (isExpansionLimitError(extractedMod.limitations[0])) {
-              remainingBudget -= modBudget;
+              remainingBudget = 0;
             } else {
               remainingBudget -= mod.dataLength;
             }
             results.push(extractedMod);
+            if (remainingBudget <= 0) break;
           }
         }
       }
