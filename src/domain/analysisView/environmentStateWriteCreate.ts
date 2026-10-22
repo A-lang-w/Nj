@@ -3,7 +3,6 @@ import { ok } from "../result.js";
 import {
   isObject,
   isStateWrite,
-  normalizedPath,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -12,6 +11,7 @@ import { createdFields } from "./environmentStateWriteApply.js";
 import {
   collectionTarget,
   entityTarget,
+  heldCollection,
 } from "./environmentStateWriteChecks.js";
 import {
   built,
@@ -261,7 +261,8 @@ export const applyCreate = (
 ): EffectResult => {
   const type = draft.plan.target!;
   const idField = context.idField(type);
-  const collection = normalizedPath(step.record.path);
+  // The held collection serving would pick for this path, as an item read's names its entity.
+  const collection = heldCollection(context.state, type, step.record.path);
   const body = requestObject(context, step.record);
   const observed = createdObservation(context, step, {
     type,

@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
@@ -10,10 +7,6 @@ import {
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import { digestSchema } from "./digests.js";
 import { prefixedDigestSchema } from "./digests.js";
-import {
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
-} from "./bridgeCandidateProjection.js";
 
 /** Evidence-scoped identifier schemas shared by application graph projections. */
 export const projectionEvidenceIdSchema = prefixedDigestSchema("ev");
@@ -145,13 +138,3 @@ export const projectedFileComponents = (
       ? [component]
       : [],
   );
-
-export { bridgeCandidateCoverageSchema, projectCartesianCandidates };
-
-/** Digest a canonical JSON projection payload for its stable identifier. */
-export const projectionDigest = (value: unknown, label: string): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError(`${label} is not canonical JSON`);
-  return createHash("sha256").update(encoded).digest("hex");
-};

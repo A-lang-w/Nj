@@ -42,15 +42,28 @@ export interface CreateEvidence {
   readonly type: readonly JsonObject[];
 }
 
-/** The JSON pointer of a string equal to `value` inside the body, the shallowest first (breadth-first, members in order). */
-const bodyPointerOf = (body: JsonValue, value: string): string | undefined => {
+/** What explaining a create looks values up in, built once per request body. */
+interface BodyIndex {
+  /** Each body string long enough to show a copy, at its shallowest pointer (breadth-first, members in order). */
+  readonly copies: ReadonlyMap<string, string>;
+  /** Each slug a top-level string member slugs to, other than its own value, from the first such member. */
+  readonly slugs: ReadonlyMap<string, string>;
+}
+
+/** Index a request body once, so explaining each field looks values up rather than walking the body again. */
+const indexBody = (body: JsonObject): BodyIndex => {
+  const copies = new Map<string, string>();
   const pending: { readonly value: JsonValue; readonly pointer: string }[] = [
     { value: body, pointer: "" },
   ];
   // An index walks the queue: shifting a wide body's values one by one would take quadratic time.
   for (let at = 0; at < pending.length; at += 1) {
     const next = pending[at]!;
-    if (next.value === value) return next.pointer;
+    if (typeof next.value === "string") {
+      if (next.value.length >= COPY_MIN_LENGTH && !copies.has(next.value))
+        copies.set(next.value, next.pointer);
+      continue;
+    }
     const children: [string, JsonValue][] = Array.isArray(next.value)
       ? next.value.map((item, index) => [String(index), item])
       : isObject(next.value)
@@ -62,7 +75,13 @@ const bodyPointerOf = (body: JsonValue, value: string): string | undefined => {
         pointer: `${next.pointer}${pointerTo(key)}`,
       });
   }
-  return undefined;
+  const slugs = new Map<string, string>();
+  for (const [member, sent] of Object.entries(body))
+    if (typeof sent === "string") {
+      const slug = slugOf(sent);
+      if (slug !== sent && !slugs.has(slug)) slugs.set(slug, member);
+    }
+  return { copies, slugs };
 };
 
 const isClockNear = (
@@ -106,6 +125,7 @@ const identityRule = (field: string, value: JsonValue): FieldRule => ({
 /** The rule a request explains a created field by, before generated values and templates are considered. */
 const requestRule = (
   evidence: CreateEvidence,
+  index: BodyIndex,
   field: string,
   value: JsonValue,
 ): FieldRule | undefined => {
@@ -113,18 +133,18 @@ const requestRule = (
   if (Object.hasOwn(body, field) && same(body[field], value))
     return { field, rule: "echo" };
   if (typeof value === "string" && value.length >= COPY_MIN_LENGTH) {
-    const from = bodyPointerOf(body, value);
+    const from = index.copies.get(value);
     if (from !== undefined) return { field, rule: "copy", from };
   }
   const text = scalarText(value);
   for (const [name, pathValue] of pathValues)
     if (text !== undefined && text === pathValue)
       return { field, rule: "path", from: name };
-  if (typeof value === "string" && value.length >= 3)
-    for (const [member, sent] of Object.entries(body))
-      if (typeof sent === "string" && sent !== value && slugOf(sent) === value)
-        return { field, rule: "slug", from: member };
-  return undefined;
+  const slugged = typeof value === "string" && value.length >= 3;
+  const member = slugged ? index.slugs.get(value) : undefined;
+  return member === undefined
+    ? undefined
+    : { field, rule: "slug", from: member };
 };
 
 /** The rule a created field's generated value follows, if it follows one. */
@@ -198,9 +218,10 @@ export const explainCreate = (
 } => {
   const rules: FieldRule[] = [];
   const unexplained: string[] = [];
+  const index = indexBody(evidence.call.body);
   for (const [field, value] of Object.entries(evidence.entity)) {
     const rule =
-      requestRule(evidence, field, value) ??
+      requestRule(evidence, index, field, value) ??
       generatedRule(evidence, field, value);
     if (rule === undefined) unexplained.push(field);
     else rules.push(rule);
@@ -249,13 +270,15 @@ export interface UpdateEvidence {
   readonly startMs: number | undefined;
   /** Fields covered by a later read view. Missing fields outside that coverage remain unknown. */
   readonly readFields?: readonly string[];
+  /** The fields of the observing read's view when that view showed the entity before, so one the entity lacked was added. */
+  readonly shown?: readonly string[];
 }
 
-/** The rule a field the update changed without sending follows, if any. */
+/** The rule a field the update changed without sending follows, if any; `slugs` maps each echoed member's slug to the first such member. */
 const changeRule = (
   evidence: UpdateEvidence,
   field: string,
-  echoed: ReadonlySet<string>,
+  slugs: ReadonlyMap<string, string>,
 ): FieldRule | undefined => {
   const before = evidence.before[field];
   const after = evidence.after[field]!;
@@ -264,13 +287,24 @@ const changeRule = (
   const was = integerOf(before);
   if (was !== undefined && integerOf(after) === was + 1)
     return { field, rule: "increment" };
-  if (typeof after === "string")
-    for (const member of echoed) {
-      const sent = evidence.call.body[member];
-      if (typeof sent === "string" && slugOf(sent) === after)
-        return { field, rule: "slug", from: member };
-    }
-  return undefined;
+  const member = typeof after === "string" ? slugs.get(after) : undefined;
+  return member === undefined
+    ? undefined
+    : { field, rule: "slug", from: member };
+};
+
+/** Each slug an echoed string member slugs to, from the first such member. */
+const echoedSlugs = (
+  body: JsonObject,
+  echoed: ReadonlySet<string>,
+): Map<string, string> => {
+  const slugs = new Map<string, string>();
+  for (const member of echoed) {
+    const sent = body[member];
+    if (typeof sent === "string" && !slugs.has(slugOf(sent)))
+      slugs.set(slugOf(sent), member);
+  }
+  return slugs;
 };
 
 /** Explain an update: echoed members, fixed members whose stored value is constant, and the changes it made unsent. */
@@ -313,14 +347,16 @@ export const explainUpdate = (
         !Object.hasOwn(evidence.after, field)
       )
         unexplained.push(field);
+  const slugs = echoedSlugs(body, echoed);
   for (const field of Object.keys(evidence.after)) {
     if (
       Object.hasOwn(body, field) ||
-      !Object.hasOwn(evidence.before, field) ||
+      (!Object.hasOwn(evidence.before, field) &&
+        !(evidence.shown ?? []).includes(field)) ||
       same(evidence.before[field], evidence.after[field])
     )
       continue;
-    const rule = changeRule(evidence, field, echoed);
+    const rule = changeRule(evidence, field, slugs);
     if (rule === undefined) unexplained.push(field);
     else rules.push(rule);
   }

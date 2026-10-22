@@ -125,7 +125,7 @@ const describeText = (
 };
 
 /** Sample whole values before joining; keep full lists in the Evidence that owns them. */
-const describeList = <Value>(
+export const describeList = <Value>(
   values: Iterable<Value>,
   count: number,
   display: (value: Value) => string = String,
@@ -156,7 +156,7 @@ const describeList = <Value>(
  * A captured name as a JSON string, so a separator, quote or newline in it cannot read as more of the
  * description. A name too long for a sample is left as it is: the sample refuses it either way.
  */
-const quotedName = (name: string): string =>
+export const quotedName = (name: string): string =>
   name.length > DESCRIPTION_SAMPLE_BYTES ? name : JSON.stringify(name);
 
 /** Field names of the objects in first-seen order; the recorded bodies stay in the capture Evidence. */
