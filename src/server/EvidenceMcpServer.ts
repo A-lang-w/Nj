@@ -1,11 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
-  McpServer,
   isCallToolResult,
+  isJSONRPCErrorResponse,
   isJSONRPCRequest,
   isJSONRPCNotification,
   isJSONRPCResultResponse,
+  type CallToolResult,
   type Implementation,
   type Icon,
   type JSONRPCMessage,
@@ -25,14 +26,23 @@ import {
   presentAdvertisedInputSchema,
   type CompactInputSchemaPresentation,
 } from "../contracts/compactInputSchema.js";
-import { CATALOG_IDENTITY, createCatalogIdentity } from "../catalogIdentity.js";
+import {
+  FULL_CATALOG_IDENTITY,
+  createCatalogIdentity,
+} from "../catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  mcpResponseOverflowProjection,
+  type ToolResultDelivery,
+} from "./toolResult.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
 import {
   carriesTargetContentMarker,
@@ -40,6 +50,7 @@ import {
   measureMcpResultWithinBudget,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
+import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 
 export type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 
@@ -64,6 +75,39 @@ const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Recognize the SDK's argument diagnostic after its wire size is checked. */
+const sdkInputValidationDiagnostic = (
+  text: string | undefined,
+  tool: string | undefined,
+): string | undefined => {
+  if (text === undefined || tool === undefined) return undefined;
+  const prefix = `Input validation error: Invalid arguments for tool ${tool}`;
+  if (!text.startsWith(prefix) || text[prefix.length] !== ":") return undefined;
+  const diagnostic = text.slice(prefix.length + 1).trimStart();
+  return diagnostic.length === 0 ? undefined : diagnostic;
+};
+
+/** Replace the tool payload after the SDK codec while retaining its envelope. */
+const replaceToolResultPayload = (
+  original: CallToolResult,
+  replacement: CallToolResult,
+): CallToolResult => {
+  const {
+    content: _content,
+    structuredContent: _structuredContent,
+    isError: _isError,
+    _meta,
+    ...envelope
+  } = original;
+  return {
+    ...envelope,
+    ...replacement,
+    ...(_meta === undefined && replacement._meta === undefined
+      ? {}
+      : { _meta: { ..._meta, ...replacement._meta } }),
+  };
+};
 
 /** Remove only client-facing output schemas; SDK registrations stay canonical. */
 const omitOutputSchemasFromToolsList = (
@@ -104,7 +148,7 @@ export const forgetPendingMcpRequest = (
 };
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
-export class EvidenceMcpServer extends McpServer {
+export class EvidenceMcpServer extends RequestTrackingMcpServer {
   readonly catalogIdentity: ReturnType<typeof createCatalogIdentity>;
   private readonly compactPresentation:
     | CompactInputSchemaPresentation
@@ -127,7 +171,7 @@ export class EvidenceMcpServer extends McpServer {
         : { budgetBytes: compactPresentation.budgetBytes };
     this.catalogIdentity =
       this.compactPresentation === undefined && !this.omitOutputSchemas
-        ? CATALOG_IDENTITY
+        ? FULL_CATALOG_IDENTITY
         : createCatalogIdentity(
             this.compactPresentation,
             this.omitOutputSchemas ? "off" : "full",
@@ -305,7 +349,7 @@ class ErrorEvidenceTransport implements Transport {
       id !== undefined &&
       this.pendingToolLists.has(id);
     try {
-      const recovered = this.recoverError(message, tool);
+      const recovered = this.recoverProtocolError(message, tool);
       const advertised = omitToolSchemas
         ? omitOutputSchemasFromToolsList(recovered, id)
         : recovered;
@@ -377,16 +421,45 @@ class ErrorEvidenceTransport implements Transport {
             },
           }
         : message.result;
-    const encoded =
-      structured !== undefined
-        ? encodeToolResult(structured, budget, "error-text", targetContent)
-        : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
-    if (encoded.ok) return message;
-    const operation = tool ?? "mcp_tool_error";
-    const originalResult = jsonObjectSchema.parse(message.result);
     const sdkDiagnostic = !isStructured
       ? message.result.content.find((item) => item.type === "text")?.text
       : undefined;
+    let encoded =
+      structured !== undefined
+        ? encodeToolResult(structured, budget, "error-text", targetContent)
+        : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
+    const normalized = encoded.ok
+      ? this.normalizeSdkValidationError(
+          message,
+          tool,
+          targetContent,
+          sdkInputValidationDiagnostic(sdkDiagnostic, tool),
+        )
+      : undefined;
+    if (
+      normalized !== undefined &&
+      isJSONRPCResultResponse(normalized) &&
+      isCallToolResult(normalized.result)
+    ) {
+      // The structured diagnostic is a private carrier removed before sending.
+      // Measure the actual wire result, including its preserved SDK metadata.
+      const { structuredContent, ...wireResult } = normalized.result;
+      encoded =
+        normalized.result.content.length === 0
+          ? encodeToolResult(
+              jsonObjectSchema.parse(structuredContent),
+              budget,
+              "error-text",
+              targetContent,
+            )
+          : measureMcpResultWithinBudget(wireResult, budget);
+      if (encoded.ok) return normalized;
+      // JSON escaping and recovery fields can exceed the budget even when
+      // the original SDK result fits. Retain that original before replacing it.
+    }
+    if (encoded.ok) return message;
+    const operation = tool ?? "mcp_tool_error";
+    const originalResult = jsonObjectSchema.parse(message.result);
     const retainedResult = structured ?? originalResult;
     const originalError = isStructured
       ? analysisErrorProjectionSchema.safeParse(structured?.["error"])
@@ -413,10 +486,20 @@ class ErrorEvidenceTransport implements Transport {
     );
     const recorded = this.recordEvidence?.(evidence);
     const retained = recorded !== undefined && recorded.ok;
-    const failure = new AnalysisResourceConstraintError(
+    const projected = mcpResponseOverflowProjection({
+      completed: false,
+      constraint: encoded.constraint,
+      effectiveResponseBytes: this.delivery.maximumResponseBytes,
+      nextStep: retained
+        ? "Export the retained original error through export_evidence_bundle to a caller-selected path. The connection remains usable."
+        : encoded.constraint === "string-length"
+          ? "The original error could not be retained by this server. Use complete CLI JSON output when the analysis completed. Repeating the unchanged MCP call fails the same way."
+          : "The original error could not be retained by this server. Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and a matching client receive buffer, then retry.",
+    });
+    const replacement = this.transportConstraintResult(
       operation,
-      "transport",
-      "The tool failed, but its complete error response exceeds the MCP response budget.",
+      projected.reason,
+      projected.remediationAction,
       {
         boundary: "mcp-response",
         ...(originalError?.success
@@ -443,15 +526,118 @@ class ErrorEvidenceTransport implements Transport {
           ? { retention_error: projectAnalysisError(recorded.error) }
           : {}),
       },
-      {
-        remediationAction: retained
-          ? "Export the retained original error through export_evidence_bundle to a caller-selected path. The connection remains usable."
-          : "Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and matching client receive buffer, then retry. The original error could not be retained by this server.",
-      },
+      targetContent,
     );
     return {
       ...message,
-      result: this.delivery.toErrorToolResult(failure, targetContent),
+      result: replaceToolResultPayload(message.result, replacement),
+    };
+  }
+
+  /**
+   * Encode a transport-constraint error inside the MCP text budget.
+   * The complete SDK diagnostic stays in retained Evidence. Its character
+   * preview can still expand past the budget when quotes and backslashes are
+   * escaped into that text, so shorten only the preview and keep the reference.
+   */
+  private transportConstraintResult(
+    operation: string,
+    reason: string,
+    remediationAction: string,
+    limits: Readonly<Record<string, JsonValue>>,
+    targetContent: boolean,
+  ): CallToolResult {
+    const deliver = (
+      reportedLimits: Readonly<Record<string, JsonValue>>,
+    ): CallToolResult =>
+      this.delivery.toErrorToolResult(
+        new AnalysisResourceConstraintError(
+          operation,
+          "transport",
+          reason,
+          reportedLimits,
+          { remediationAction },
+        ),
+        targetContent,
+      );
+    const delivered = deliver(limits);
+    const preview = limits.diagnostic_preview;
+    if (delivered.content.length > 0 || typeof preview !== "string")
+      return delivered;
+    let low = 0;
+    let high = preview.length - 1;
+    let fitted: CallToolResult | undefined;
+    let fittedLength = -1;
+    while (low <= high) {
+      const length = Math.floor((low + high) / 2);
+      const candidate = deliver({
+        ...limits,
+        diagnostic_preview: preview.slice(0, length),
+        diagnostic_truncated: true,
+      });
+      if (candidate.content.length > 0) {
+        fitted = candidate;
+        fittedLength = length;
+        low = length + 1;
+      } else high = length - 1;
+    }
+    if (fitted !== undefined && fittedLength > 0) return fitted;
+    const { diagnostic_preview: _preview, ...withoutPreview } = limits;
+    const omitted = deliver({
+      ...withoutPreview,
+      diagnostic_truncated: preview.length > 0,
+    });
+    return omitted.content.length > 0 || fitted === undefined
+      ? omitted
+      : fitted;
+  }
+
+  private normalizeSdkValidationError(
+    message: JSONRPCMessage,
+    tool: string | undefined,
+    targetContent: boolean,
+    diagnostic: string | undefined,
+  ): JSONRPCMessage | undefined {
+    if (
+      tool === undefined ||
+      diagnostic === undefined ||
+      !isJSONRPCResultResponse(message) ||
+      !isCallToolResult(message.result)
+    )
+      return undefined;
+    const error = new AnalysisInputError(
+      tool,
+      {
+        userMessage: `The arguments for MCP tool ${tool} do not match its advertised input schema.`,
+      },
+      [{ path: [], reason: "invalid_value", message: diagnostic }],
+    );
+    const result = this.delivery.toErrorToolResult(error, targetContent);
+    return {
+      ...message,
+      result: replaceToolResultPayload(message.result, result),
+    };
+  }
+
+  private recoverProtocolError(
+    message: JSONRPCMessage,
+    tool: string | undefined,
+  ): JSONRPCMessage {
+    const recovered = this.recoverError(message, tool);
+    if (
+      !isJSONRPCErrorResponse(recovered) ||
+      tool === undefined ||
+      recovered.error.code !== -32602 ||
+      recovered.error.message !== `Tool ${tool} not found`
+    )
+      return recovered;
+    return {
+      ...recovered,
+      error: {
+        ...recovered.error,
+        message:
+          "The requested MCP tool is not advertised by this REA server. Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
+      },
     };
   }
 }

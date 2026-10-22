@@ -1,14 +1,15 @@
 import { z } from "zod";
 
 import type { BinaryArchitecture } from "../binaryTargetTypes.js";
-import { localPathStringSchema } from "../localPath.js";
-import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
+import { pwntoolsTimeoutField } from "./nativeDeadlines.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { canonicalBase64Schema } from "../stringPatterns.js";
 import { recordedNoteCoverageIssues } from "./recordedCrashNoteCoverage.js";
 
 const hex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
 const index = z.number().int().nonnegative();
 const signed32 = z.number().int().min(-2147483648).max(2147483647);
-const base64 = z.string().regex(CANONICAL_BASE64_PATTERN);
+const base64 = canonicalBase64Schema;
 const range = z.strictObject({ offset: hex, bytes: hex });
 const diagnostics = z.strictObject({
   stdout: z.string(),
@@ -140,7 +141,7 @@ const recordedCoreRegisterSets: Record<
 
 /** Select an explicit recording and optionally request debugger-derived mapping context. */
 export const inspectRecordedCrashInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a supplied Linux ELF core",
   ),
   include_debugger_context: z
@@ -149,6 +150,7 @@ export const inspectRecordedCrashInputSchema = z.strictObject({
     .describe(
       "Add core-only mapping candidates through caller-supplied GDB/pwndbg",
     ),
+  pwntools_timeout_ms: pwntoolsTimeoutField,
 });
 
 /** Debugger map candidates preserve reported flags; zero does not establish absent permissions. */
