@@ -1,3 +1,4 @@
+import { javascriptSourceRangeSchema } from "../javascript/javascriptSourceCoordinates.js";
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
@@ -18,10 +19,7 @@ import {
   type JavaScriptRouteOccurrence,
   type JavaScriptRouteInventorySource,
 } from "../javascript/javascriptRouteInventory.js";
-import {
-  javaScriptRouteMechanismSchema,
-  javaScriptRouteRangeSchema,
-} from "../javascript/javascriptRouteFacts.js";
+import { javaScriptRouteMechanismSchema } from "../javascript/javascriptRouteFacts.js";
 import type {
   AnalysisViewParent,
   AnalysisViewRequest,
@@ -137,7 +135,7 @@ export const webRoutesDeliverySchema = z.discriminatedUnion("detail", [
 export const javaScriptRouteProvenanceSchema = z.strictObject({
   source_id: javaScriptRouteInventorySourceSchema.shape.id,
   occurrence_id: javaScriptRouteOccurrenceSchema.shape.id.nullable(),
-  source_range: javaScriptRouteRangeSchema.nullable(),
+  source_range: javascriptSourceRangeSchema.nullable(),
   mechanism: javaScriptRouteMechanismSchema.nullable(),
   derivation: javaScriptRouteOccurrenceSchema.shape.derivation.nullable(),
   inferred_base_path: z.string().nullable(),

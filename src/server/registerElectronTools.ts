@@ -33,7 +33,10 @@ import type { Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import {
+  applicationToolRegistrationOptions,
+  toolRegistrationOptions,
+} from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 import { createEvidenceToolHandler } from "./contractToolHandler.js";
@@ -174,7 +177,7 @@ const registerElectronFuseTool = (
   );
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    applicationToolRegistrationOptions(contract),
     handler(contract),
   );
 };

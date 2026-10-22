@@ -1,24 +1,7 @@
 import { z } from "zod";
 
-const point = z.strictObject({
-  line: z.number().int().positive().describe("One-based source line."),
-  column: z
-    .number()
-    .int()
-    .nonnegative()
-    .describe("Zero-based UTF-16 source column; end is exclusive."),
-});
-export const javaScriptRouteRangeSchema = z
-  .strictObject({
-    start: point,
-    end: point,
-  })
-  .refine(
-    ({ start, end }) =>
-      end.line > start.line ||
-      (end.line === start.line && end.column >= start.column),
-    "Source range end precedes its start.",
-  );
+import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
+
 export const javaScriptRouteMechanismSchema = z.enum([
   "router-call",
   "nested-route-object",
@@ -29,7 +12,7 @@ export const javaScriptRouteMechanismSchema = z.enum([
 ]);
 export const javaScriptRouteSegmentSchema = z.strictObject({
   value: z.string(),
-  location: javaScriptRouteRangeSchema,
+  location: javascriptSourceRangeSchema,
   origin: z.enum(["literal", "property-name", "next-app-path"]),
 });
 export const javaScriptRouteCandidateSchema = z.strictObject({
@@ -37,7 +20,7 @@ export const javaScriptRouteCandidateSchema = z.strictObject({
   mechanism: javaScriptRouteMechanismSchema,
   confidence: z.enum(["low", "medium", "high"]),
   derivation: z.enum(["literal", "joined", "inferred"]),
-  location: javaScriptRouteRangeSchema,
+  location: javascriptSourceRangeSchema,
   segments: z.array(javaScriptRouteSegmentSchema),
 });
 export const javaScriptRouteWorkCapacitySchema = z.strictObject({
@@ -51,7 +34,7 @@ export const javaScriptRouteSourceFactsSchema = z.strictObject({
   unresolved: z.array(
     z.strictObject({
       mechanism: javaScriptRouteMechanismSchema,
-      location: javaScriptRouteRangeSchema,
+      location: javascriptSourceRangeSchema,
       reason: z.string(),
     }),
   ),

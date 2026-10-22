@@ -20,10 +20,10 @@ import {
   projectGpuCodeObjectsView,
 } from "./gpuCodeObjectsView.js";
 import { gpuCodeObjectsObjectSchema } from "../gpu/gpuCodeObjects.js";
+import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
 import {
   projectModelArtifactView,
   modelArtifactSummarySchema,
-  modelArtifactViewRequestSchema,
   modelArtifactViewItemsSchema,
   modelArtifactViewContextSchema,
 } from "./modelArtifactView.js";
@@ -39,6 +39,10 @@ import {
 } from "./fridaSessionStatusView.js";
 import { commandObservationSchema } from "../commandObservation.js";
 import {
+  rustBinaryViewPageSchema,
+  rustBinaryViewRequestSchema,
+} from "../rust/rustBinaryQuery.js";
+import {
   goBinarySummarySchema,
   goBinaryViewContextSchema,
   goBinaryViewPageSchema,
@@ -48,8 +52,6 @@ import {
 import {
   rustBinarySummarySchema,
   rustBinaryViewContextSchema,
-  rustBinaryViewPageSchema,
-  rustBinaryViewRequestSchema,
   projectRustBinaryView,
 } from "./rustBinaryView.js";
 import {

@@ -1,3 +1,4 @@
+import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
@@ -7,7 +8,6 @@ import { JAVASCRIPT_STATIC_FACT_BYTES } from "./javascriptAnalysisResourceContro
 import {
   javaScriptRouteCandidateSchema,
   javaScriptRouteMechanismSchema,
-  javaScriptRouteRangeSchema,
   javaScriptRouteSegmentSchema,
   javaScriptRouteSourceFactsSchema,
   type JavaScriptRouteCandidate,
@@ -46,7 +46,7 @@ export const javaScriptRouteOccurrenceSchema = z.strictObject({
   mechanism: javaScriptRouteMechanismSchema,
   confidence,
   derivation: javaScriptRouteCandidateSchema.shape.derivation,
-  source_range: javaScriptRouteRangeSchema.nullable(),
+  source_range: javascriptSourceRangeSchema.nullable(),
   origin: z.enum(["source-syntax", "source-path", "source-url"]),
   unprefixed_path: z.string(),
   inferred_base_path: z.string().nullable(),
@@ -82,7 +82,7 @@ export const javaScriptRouteGapSchema = z.strictObject({
     "capacity",
     "capture-omission",
   ]),
-  source_range: javaScriptRouteRangeSchema.nullable(),
+  source_range: javascriptSourceRangeSchema.nullable(),
   reason: z.string(),
   capture_omission: javaScriptRouteCaptureOmissionSchema.exactOptional(),
 });
@@ -413,7 +413,7 @@ export function* buildJavaScriptRouteInventorySteps(
     source: JavaScriptRouteInventorySource,
     kind: z.infer<typeof javaScriptRouteGapSchema>["kind"],
     reason: string,
-    source_range: z.infer<typeof javaScriptRouteRangeSchema> | null = null,
+    source_range: z.infer<typeof javascriptSourceRangeSchema> | null = null,
   ): void => retainGap({ source_id: source.id, kind, source_range, reason });
   for (const { unit, count, reason } of captureOmissions) {
     yield;
@@ -541,7 +541,7 @@ export function* buildJavaScriptRouteInventorySteps(
   const append = (
     source: JavaScriptRouteInventorySource,
     candidate: Omit<JavaScriptRouteCandidate, "location"> & {
-      location: z.infer<typeof javaScriptRouteRangeSchema> | null;
+      location: z.infer<typeof javascriptSourceRangeSchema> | null;
     },
     origin: JavaScriptRouteOccurrence["origin"],
   ): void => {
