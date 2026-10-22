@@ -1,7 +1,28 @@
 import { cp, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { exec, execNpm, pathExists } from "./lib/verify-package-core.mjs";
+import { exec, pathExists } from "./lib/verify-package-core.mjs";
+
+/** Locate the lockfile-installed Skills CLI so verification needs no registry fetch. */
+const lockedSkillsCli = async (root) => {
+  const manifestPath = fileURLToPath(
+    import.meta.resolve("skills/package.json"),
+  );
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const rootManifest = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  );
+  const pinned = rootManifest.devDependencies?.skills;
+  if (manifest.version !== pinned)
+    throw new Error(
+      `installed skills ${manifest.version} does not match the pinned ${pinned}; run npm ci`,
+    );
+  return {
+    version: manifest.version,
+    entry: join(dirname(manifestPath), manifest.bin.skills),
+  };
+};
 
 /** Exercise Skills' default root discovery without ignored build outputs. */
 export async function verifyRepositorySkill({ root, workspace }) {
@@ -33,15 +54,11 @@ export async function verifyRepositorySkill({ root, workspace }) {
     throw new Error("repository skill check must run without generated skills");
   await mkdir(consumer, { recursive: true });
   await mkdir(home, { recursive: true });
-  const skillsVersion = "1.7.2";
-  await execNpm(
+  const { version: skillsVersion, entry } = await lockedSkillsCli(root);
+  await exec(
+    process.execPath,
     [
-      "exec",
-      "--yes",
-      "--package",
-      `skills@${skillsVersion}`,
-      "--",
-      "skills",
+      entry,
       "add",
       snapshot,
       "--skill",
