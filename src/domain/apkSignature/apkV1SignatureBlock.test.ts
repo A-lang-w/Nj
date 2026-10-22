@@ -38,6 +38,24 @@ const errorOf = (bytes: Uint8Array) => {
   return result.error;
 };
 
+it.each([
+  new Uint8Array(),
+  tlv(0x02, Uint8Array.of(1)),
+  Uint8Array.of(0x04, 0x02, 1),
+])(
+  "refuses an absent, mistagged or truncated SignerInfo signature",
+  (signature) => {
+    expect(
+      decodeV1SignatureBlock(
+        signedDataBlock({
+          certificates: [LEAF_CERTIFICATE],
+          signerInfos: [signerInfo({ names: LEAF_CERTIFICATE, signature })],
+        }),
+      ),
+    ).toMatchObject({ ok: false, error: { kind: "malformed-pkcs7" } });
+  },
+);
+
 describe("v1 signature block (PKCS#7 SignedData)", () => {
   it("names the leaf an OpenSSL SignerInfo identifies by issuer and serial", () => {
     const block = decoded(OPENSSL_BLOCK_ISSUER_SERIAL);

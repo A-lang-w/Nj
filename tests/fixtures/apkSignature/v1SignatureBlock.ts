@@ -165,16 +165,18 @@ export const withSubject = (
 export interface SignerInfoSpec {
   /** Certificate whose issuer and serial the SignerInfo names. */
   readonly names: Uint8Array;
+  /** Replace the required signature TLV, including omission for malformed fixtures. */
+  readonly signature?: Uint8Array;
 }
 
-export const signerInfo = ({ names }: SignerInfoSpec): Uint8Array =>
+export const signerInfo = ({ names, signature }: SignerInfoSpec): Uint8Array =>
   tlv(
     0x30,
     integer(1),
     issuerAndSerial(names),
     algorithm(OID_SHA256),
     algorithm(OID_ECDSA_SHA256),
-    tlv(0x04, Uint8Array.from([1, 2, 3])),
+    signature ?? tlv(0x04, Uint8Array.from([1, 2, 3])),
   );
 
 /** ContentInfo { signedData, [0] SignedData { … certificates, signerInfos } }. */

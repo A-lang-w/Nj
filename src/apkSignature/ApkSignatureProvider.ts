@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { apkSignatureAdmission } from "./ApkSignatureAdmission.js";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -374,21 +375,26 @@ export class ApkSignatureProvider implements ApkSignaturePort {
   ): Promise<Result<ApkSignatureExecution, AnalysisError>> {
     try {
       return await this.#resources.run(async () => {
-        const selected = await readStableArtifact(
-          input.path,
-          APK_SIGNATURE_LIMITS.inputBytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const analyzed = this.#analyze(selected.bytes, {
-          path: input.path,
-          sha256: selected.sha256,
-          bytes: selected.bytes.length,
-        });
-        assertArtifactReadActive(options?.signal);
-        return analyzed;
+        const release = await apkSignatureAdmission.acquire(options?.signal);
+        try {
+          const selected = await readStableArtifact(
+            input.path,
+            APK_SIGNATURE_LIMITS.inputBytes,
+            options?.signal,
+            undefined,
+            this.#resources,
+          );
+          assertArtifactReadActive(options?.signal);
+          const analyzed = this.#analyze(selected.bytes, {
+            path: input.path,
+            sha256: selected.sha256,
+            bytes: selected.bytes.length,
+          });
+          assertArtifactReadActive(options?.signal);
+          return analyzed;
+        } finally {
+          release();
+        }
       });
     } catch (cause: unknown) {
       return err(apkSignatureFailure(cause, input.path, options?.signal));

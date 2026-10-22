@@ -44,6 +44,16 @@ const named = (names: readonly string[]) =>
 
 const NO_DUPLICATES = { count: 0, sample: [] };
 
+it("rejects out-of-file extents instead of clamping the declared directory", () => {
+  const bytes = centralDirectory(["classes.dex"]);
+  expect(
+    centralDirectoryV1SignatureEntries(bytes, 0, bytes.length + 1, 1),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "malformed-central-directory" },
+  });
+});
+
 describe("APK v1 (JAR) signature detection", () => {
   const names = [
     "AndroidManifest.xml",

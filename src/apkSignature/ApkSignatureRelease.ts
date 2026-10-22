@@ -6,6 +6,8 @@ export const APK_SIGNATURE_PROVIDER_IDENTITY = {
 } as const;
 
 export const APK_SIGNATURE_LIMITS = {
+  /** Pending requests retain no APK bytes; process-wide scans are serialized. */
+  waitingScans: 8,
   /**
    * Whole-APK bounded read; the content digest needs the whole file. Above
    * Play's 200 MB APK ceiling with headroom for sideloaded/system APKs.

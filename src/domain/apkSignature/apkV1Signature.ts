@@ -284,10 +284,18 @@ export const centralDirectoryV1SignatureEntries = (
   apksigRecords: number = totalEntries,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const end = Math.min(
-    bytes.length,
-    centralDirectoryOffset + centralDirectorySize,
-  );
+  const end = centralDirectoryOffset + centralDirectorySize;
+  if (
+    !Number.isSafeInteger(end) ||
+    centralDirectoryOffset < 0 ||
+    centralDirectorySize < 0 ||
+    end > bytes.length
+  )
+    return err({
+      kind: "malformed-central-directory",
+      offset: centralDirectoryOffset,
+      detail: "declared central-directory extent is outside the file",
+    });
   // A record takes at least its fixed bytes, so the walk fails before a
   // declared count past this capacity is reached.
   const capacity = Math.min(

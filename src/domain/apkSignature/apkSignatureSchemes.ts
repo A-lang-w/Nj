@@ -306,8 +306,13 @@ export const decodeRotationLineage = (
     const flags = nodeReader.u32();
     if (signedData === null || flags === null)
       return malformed("lineage node malformed");
-    const certificate = new LeReader(signedData).lenChunk();
+    const signedReader = new LeReader(signedData);
+    const certificate = signedReader.lenChunk();
     if (certificate === null) return malformed("lineage certificate missing");
+    if (signedReader.u32() === null)
+      return malformed("lineage signed algorithm missing or truncated");
+    if (nodeReader.u32() === null || nodeReader.lenChunk() === null)
+      return malformed("lineage algorithm or signature missing or truncated");
     nodes.push({ certificate, flags });
   }
   return ok(nodes);

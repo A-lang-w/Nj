@@ -108,6 +108,27 @@ it("preserves an unknown unsigned algorithm ID", () => {
 });
 
 describe("APK scheme signer decoder", () => {
+  it.each(
+    [
+      [...lp(lp([1])), ...u32(0), ...u32(0x0103), ...lp([1])],
+      [...lp([...lp([1]), ...u32(0x0103)]), ...u32(0)],
+      [...lp([...lp([1]), ...u32(0x0103)]), ...u32(0), ...u32(0x0103)],
+      [
+        ...lp([...lp([1]), ...u32(0x0103)]),
+        ...u32(0),
+        ...u32(0x0103),
+        ...u32(2),
+        1,
+      ],
+    ].map((node) => ({ node })),
+  )(
+    "refuses lineage nodes missing required algorithm/signature framing",
+    ({ node }) => {
+      expect(
+        decodeRotationLineage(Uint8Array.from([...u32(1), ...lp(node)])),
+      ).toMatchObject({ ok: false, error: { kind: "malformed-signer" } });
+    },
+  );
   it("decodes a v2 signer's digests, certificate and attributes", () => {
     const signedData = [
       ...seq([digestElement]),

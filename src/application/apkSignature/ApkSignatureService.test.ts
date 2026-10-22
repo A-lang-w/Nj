@@ -9,6 +9,23 @@ import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ok } from "../../domain/result.js";
 import { ApkSignatureService } from "./ApkSignatureService.js";
 
+it("preserves pre-aborted cancellation reasons without starting the provider", async () => {
+  const reason = new Error("cancelled before inspection");
+  const service = new ApkSignatureService({
+    close: () => Promise.resolve(),
+    inspect: () => {
+      throw new Error("provider must not start");
+    },
+  });
+  const result = await service.inspect(
+    { path: join(tmpdir(), "unopened.apk") },
+    { signal: AbortSignal.abort(reason) },
+  );
+  if (result.ok) throw new Error("expected cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+});
+
 it("retains completed APK Evidence and the abort reason on late cancellation", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-apk-service-"));
   const provider = new ApkSignatureProvider();

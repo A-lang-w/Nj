@@ -342,7 +342,7 @@ const v1MatchesBlockSigners = (
   v1: readonly (string | null)[],
   lowest: ApkPostureInput["blockSchemes"][number] | undefined,
 ): { readonly match: boolean | null; readonly note: string | null } => {
-  if (v1.length === 0 || lowest === undefined)
+  if (v1.length === 0 || lowest === undefined || lowest.signers.length === 0)
     return { match: null, note: null };
   const expected: (string | null)[] = [];
   for (const signer of lowest.signers) {
@@ -377,10 +377,14 @@ export const deriveApkPosture = (
         : input.v1Present
           ? "v1"
           : "none";
-  const withSigners = input.blockSchemes.filter(
-    ({ signers }) => signers.length > 0,
+  const present = input.blockSchemes.filter(({ scheme }) =>
+    scheme === "v2"
+      ? input.v2Present
+      : scheme === "v3"
+        ? input.v3Present
+        : input.v31Present,
   );
-  const sets = withSigners.map(({ signers }) =>
+  const sets = present.map(({ signers }) =>
     signers.map(({ fingerprint }) => fingerprint),
   );
   // A signer without a certificate has unknown identity: agreement is unknown,
@@ -390,7 +394,7 @@ export const deriveApkPosture = (
     fps.filter((fp): fp is string => fp !== null),
   );
   const union = new Set(known.flat());
-  const lineages = input.blockSchemes.flatMap(({ signers }) =>
+  const lineages = present.flatMap(({ signers }) =>
     signers.map(({ lineage }) => lineage),
   );
   const lineage = new Set(
@@ -401,13 +405,13 @@ export const deriveApkPosture = (
     ),
   );
   const v1Match = input.v1Present
-    ? v1MatchesBlockSigners(input.v1SignerFingerprints, withSigners[0])
+    ? v1MatchesBlockSigners(input.v1SignerFingerprints, present[0])
     : { match: null, note: null };
   return {
     posture: {
       v1_only: input.v1Present && !blockPresent,
       schemes_agree_on_signer:
-        sets.length === 0 || identityUnknown
+        union.size === 0 || identityUnknown
           ? null
           : new Set(known.map(setKey)).size === 1,
       signer_change_declared_by_rotation: signerChangeDeclared(

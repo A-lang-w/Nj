@@ -327,6 +327,7 @@ const signerInfo = (
     fields[next],
     `${what} signatureAlgorithm`,
   );
+  expectTag(fields[next + 1], TAG.octetString, `${what} signature`);
   return {
     identifiedBy,
     certificateIndex: certificateIndex < 0 ? null : certificateIndex,

@@ -43,6 +43,19 @@ const derive = (input: Partial<ApkPostureInput>) =>
   deriveApkPosture({ ...base, ...input }).posture;
 
 describe("deriveApkPosture", () => {
+  it("includes present empty signer sets when comparing declared schemes", () => {
+    expect(
+      derive({
+        v2Present: true,
+        v3Present: true,
+        blockSchemes: blocks([], ["aa"]),
+      }).schemes_agree_on_signer,
+    ).toBe(false);
+    expect(
+      derive({ v2Present: true, blockSchemes: blocks([]) })
+        .schemes_agree_on_signer,
+    ).toBeNull();
+  });
   it("flags v1-only when only JAR signing is present", () => {
     const p = derive({ v1Present: true });
     expect(p.v1_only).toBe(true);
@@ -173,7 +186,8 @@ describe("deriveApkPosture v1 comparison", () => {
       ...base,
       v1Present: true,
       v2Present: (schemes[0]?.length ?? 0) > 0,
-      v3Present: true,
+      v3Present: (schemes[1]?.length ?? 0) > 0,
+      v31Present: (schemes[2]?.length ?? 0) > 0,
       blockSchemes: blocks(...schemes),
       v1SignerFingerprints,
     });

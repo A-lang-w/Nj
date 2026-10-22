@@ -119,7 +119,7 @@ const centralDirectoryOffset = (
   bytes: Uint8Array,
   eocdOffset: number,
 ): Result<
-  { offset: number; size: number; entries: number },
+  { offset: number; size: number; entries: number; end: number },
   ApkSigningBlockError
 > => {
   const dv = view(bytes);
@@ -130,7 +130,7 @@ const centralDirectoryOffset = (
     offset === ZIP64_SENTINEL ||
     size === ZIP64_SENTINEL ||
     entries === ZIP64_ENTRIES_SENTINEL;
-  if (!saturated) return ok({ offset, size, entries });
+  if (!saturated) return ok({ offset, size, entries, end: eocdOffset });
   // Zip64: a locator precedes the EOCD, pointing at the Zip64 EOCD record.
   const locator = eocdOffset - 20;
   if (
@@ -140,7 +140,7 @@ const centralDirectoryOffset = (
     // Exactly 65,535 entries saturates the count without Zip64; that archive
     // is still described completely by its 32-bit EOCD fields.
     if (offset !== ZIP64_SENTINEL && size !== ZIP64_SENTINEL)
-      return ok({ offset, size, entries });
+      return ok({ offset, size, entries, end: eocdOffset });
     return err({
       kind: "zip64-unsupported",
       detail: "missing Zip64 EOCD locator",
@@ -149,7 +149,7 @@ const centralDirectoryOffset = (
   const recordOffset = u64(dv, locator + 8);
   if (
     recordOffset === null ||
-    recordOffset + 56 > bytes.length ||
+    recordOffset + 56 > locator ||
     dv.getUint32(recordOffset, true) !== ZIP64_EOCD_SIGNATURE
   )
     return err({
@@ -165,7 +165,12 @@ const centralDirectoryOffset = (
       kind: "zip64-unsupported",
       detail: "Zip64 sizes exceed safe range",
     });
-  return ok({ offset: z64Offset, size: z64Size, entries: z64Entries });
+  return ok({
+    offset: z64Offset,
+    size: z64Size,
+    entries: z64Entries,
+    end: recordOffset,
+  });
 };
 
 /** Parse the ZIP end-of-central-directory to find the central directory. */
@@ -204,11 +209,15 @@ export const parseZipTail = (
         });
   const cd = centralDirectoryOffset(bytes, eocdOffset);
   if (!cd.ok) return cd;
-  if (cd.value.offset > eocdOffset || cd.value.offset > bytes.length)
+  if (
+    cd.value.offset > cd.value.end ||
+    cd.value.size > cd.value.end - cd.value.offset
+  )
     return err({
       kind: "malformed-zip",
       offset: eocdOffset,
-      detail: "central-directory offset is past the end-of-central-directory",
+      detail:
+        "central-directory extent overlaps or extends past the ZIP end records",
     });
   // An EOCD declaring no entries cannot describe an archive that holds a
   // local file entry (e.g. a fake EOCD planted in the real one's comment);

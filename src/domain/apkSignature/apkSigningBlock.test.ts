@@ -65,6 +65,23 @@ const apkWithBlock = (
 };
 
 describe("APK signing block locator", () => {
+  it.each([1, 22, 23, 0xffffffff])(
+    "refuses a directory extent overlapping or extending beyond the EOCD by %s bytes",
+    (extra) => {
+      const bytes = apkWithBlock([]);
+      const eocd = bytes.length - 22;
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      dv.setUint32(
+        eocd + 12,
+        extra === 0xffffffff ? extra - 1 : 4 + extra,
+        true,
+      );
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-zip" },
+      });
+    },
+  );
   it("parses the ZIP tail to the central-directory offset", () => {
     const tail = parseZipTail(
       apkWithBlock([{ id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] }]),

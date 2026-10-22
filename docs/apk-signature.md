@@ -212,7 +212,12 @@ Not yet read: v4 `.apk.idsig` (a sibling file), verity (`0x0421`/`0x0423`/`0x042
 
 The archive is read once, bounded at 512 MiB, without following symlinks and
 with change detection. Every size and offset in the ZIP tail and signing block
-is checked against the buffer before use. Signers per scheme, v1 signers and
+is checked against its containing section before use, including the complete
+central-directory extent before ZIP end records. A process-wide queue permits
+one active whole-file inspection and eight pending scans across provider
+instances; pending scans retain no APK bytes and can be cancelled with their
+original reason. Further requests receive a capacity error. The active slot
+is held through parsing and cleanup. Signers per scheme, v1 signers and
 lineage nodes are capped at 32 each as resource admission limits, not format
 maxima (apksig separately accepts at most 10 v1 signers). Each v1 block is inflated to at most 1 MiB, and its DER
 is read within 32 levels of nesting and 65,536 elements, with at most 32

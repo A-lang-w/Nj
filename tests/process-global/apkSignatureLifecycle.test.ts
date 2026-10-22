@@ -11,6 +11,9 @@ const fault = vi.hoisted(() => ({
   abortAtStat: undefined as
     | { controller: AbortController; reason: unknown }
     | undefined,
+  pauseAtStat: undefined as
+    | { started: () => void; resume: Promise<void> }
+    | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -22,10 +25,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (args[0] !== fault.path) return handle;
       const close = handle.close.bind(handle);
       const stat = handle.stat.bind(handle);
-      handle.stat = ((...statArgs: Parameters<typeof stat>) => {
+      handle.stat = (async (...statArgs: Parameters<typeof stat>) => {
         const abort = fault.abortAtStat;
         fault.abortAtStat = undefined;
         abort?.controller.abort(abort.reason);
+        const pause = fault.pauseAtStat;
+        fault.pauseAtStat = undefined;
+        if (pause !== undefined) {
+          pause.started();
+          await pause.resume;
+        }
         return stat(...statArgs);
       }) as typeof handle.stat;
       handle.close = async () => {
@@ -48,6 +57,13 @@ import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.j
 let root = "";
 let path = "";
 const exitCode = process.exitCode;
+const deferred = () => {
+  let complete = () => {};
+  const promise = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  return { promise, resolve: () => complete() };
+};
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "rea-apk-lifecycle-"));
   path = join(root, "unsigned.apk");
@@ -59,10 +75,51 @@ afterEach(() => {
   fault.path = "";
   fault.failClose = "never";
   fault.abortAtStat = undefined;
+  fault.pauseAtStat = undefined;
   process.exitCode = exitCode;
 });
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });
+});
+
+it("serializes reads across providers, preserves queued aborts and drains admitted work on close", async () => {
+  const first = new ApkSignatureProvider();
+  const second = new ApkSignatureProvider();
+  const started = deferred();
+  const resume = deferred();
+  fault.path = path;
+  fault.pauseAtStat = {
+    started: () => started.resolve(),
+    resume: resume.promise,
+  };
+  const reading = first.inspect({ path });
+  await started.promise;
+  const queued = second.inspect({ path });
+  const controller = new AbortController();
+  const reason = new Error("cancel while queued");
+  const cancelled = second.inspect({ path }, { signal: controller.signal });
+  let closed = false;
+  const closing = second.close().then(() => {
+    closed = true;
+  });
+  try {
+    controller.abort(reason);
+    expect(await cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(closed).toBe(false);
+    resume.resolve();
+    expect((await reading).ok).toBe(true);
+    expect((await queued).ok).toBe(true);
+    await closing;
+    expect(closed).toBe(true);
+  } finally {
+    resume.resolve();
+    await Promise.all([reading, queued, cancelled, closing]);
+    await first.close();
+    await second.close();
+  }
 });
 
 it("keeps the abort reason itself as the cancellation cause", async () => {
