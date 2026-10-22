@@ -97,6 +97,13 @@ export const checkElfProgramHeaderTable = (
   const entrySize = readU16(wide ? 54 : 42);
   const count = readU16(wide ? 56 : 44);
   if (count === 0 || count === 0xffff) return ok(null);
+  // Entries narrower than a program header cannot hold one, whatever extent
+  // their declared width produces.
+  const minimumEntrySize = wide ? 56 : 32;
+  if (entrySize < minimumEntrySize)
+    return err(
+      `invalid ELF program header entry size: the header declares ${entrySize} bytes per entry; an ELF${header.elfClass} program header needs ${minimumEntrySize}`,
+    );
   const end = offset + BigInt(entrySize) * BigInt(count);
   if (end > BigInt(totalBytes))
     return err(

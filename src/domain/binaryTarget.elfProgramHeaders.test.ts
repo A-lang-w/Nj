@@ -50,6 +50,28 @@ describe("ELF program header table", () => {
     );
   });
 
+  it.each([
+    ["ELF64", () => elf(2, 1, 62), 56],
+    ["ELF32", () => elf(1, 1, 62), 32],
+  ])(
+    "rejects entries narrower than a program header: %s",
+    (_name, make, minimum) => {
+      const header = make();
+      // The table starts at the end of the file, so its extent alone is in bounds.
+      const atEnd = BigInt(header.length);
+      const declared = header[4] === 2 ? 64 : 32;
+      for (const entrySize of [0, minimum - 1]) {
+        expect(reason(withTable(make(), [atEnd, entrySize, 1]))).toBe(
+          `invalid ELF program header entry size: the header declares ${entrySize} bytes per entry; an ELF${declared} program header needs ${minimum}`,
+        );
+      }
+      // A full-width entry is judged by its extent as before.
+      expect(reason(withTable(make(), [atEnd, minimum, 1]))).toContain(
+        "truncated ELF program header table",
+      );
+    },
+  );
+
   it("compares a 64-bit offset without overflow", () => {
     expect(
       reason(withTable(elf(2, 1, 62), [0xffffffffffffff00n, 56, 1]), 4096),
