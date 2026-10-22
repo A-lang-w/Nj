@@ -1654,6 +1654,63 @@ describe("what an unmodelled write explains", () => {
   });
 });
 
+describe("an unmodelled write under another collection spelling", () => {
+  it("keeps a confirmed update when the write spells the held collection plainly", () => {
+    const acme = (name: string, status: string) => ({
+      id: 1,
+      org: "acme1",
+      name,
+      status,
+    });
+    const beta = (name: string) => ({
+      id: 2,
+      org: "beta2",
+      name,
+      status: "open",
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [acme("Alpha", "open")]],
+      ["GET", "/api/orgs/beta2/books", [beta("Beta")]],
+      ["GET", "/api/orgs/%61cme1/books/1", acme("Alpha", "open")],
+      ["GET", "/api/orgs/beta2/books/2", beta("Beta")],
+      [
+        "PATCH",
+        "/api/orgs/acme1/books/1",
+        acme("Renamed", "open"),
+        200,
+        { name: "Renamed" },
+      ],
+      [
+        "PATCH",
+        "/api/orgs/beta2/books/2",
+        beta("Renamed Beta"),
+        200,
+        { name: "Renamed Beta" },
+      ],
+      ["GET", "/api/orgs/%61cme1/books/1", acme("Renamed", "open")],
+      ["GET", "/api/orgs/beta2/books/2", beta("Renamed Beta")],
+      // Book 1 is held under the encoded collection. This archive spells it plainly.
+      ["POST", "/api/orgs/acme1/books/1/archive", null, 204, {}],
+      // The response shows the status the archive changed. The patch sent only the name.
+      [
+        "PATCH",
+        "/api/orgs/%61cme1/books/1",
+        acme("Retitled", "archived"),
+        200,
+        { name: "Retitled" },
+      ],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "update")).toMatchObject({
+      served: true,
+      reason: null,
+      checked_record_ordinals: [6, 7],
+    });
+  });
+});
+
 describe("timed write observations and generated clocks", () => {
   it("does not learn an update from a read that began before the write completed", () => {
     const changed = { ...FIRST_BOOK, name: "Changed", slug: "changed" };

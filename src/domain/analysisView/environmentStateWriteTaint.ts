@@ -1,6 +1,5 @@
 import {
   isParam,
-  lastSegmentValue,
   normalizedPath,
   segmentsOf,
 } from "./environmentStateRules.js";
@@ -8,11 +7,10 @@ import {
   collectionTarget,
   documentTarget,
   entityTarget,
+  itemTarget,
+  type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
-
-/** Whether the state holds an entity, so a write below its item path names it. */
-type Held = (type: string, collection: string, id: string) => boolean;
 
 /**
  * What writes the gate does not model leave unknown: an entity below whose item path one wrote,
@@ -30,7 +28,7 @@ export class WriteTaint {
   constructor(
     private readonly types: readonly string[],
     private readonly documents: ReadonlyMap<string, string>,
-    private readonly held: Held,
+    private readonly state: SimulatedState,
   ) {}
 
   /** Record an unmodelled write's path against every related type and document. */
@@ -41,11 +39,18 @@ export class WriteTaint {
       const depth = segmentsOf(type).length;
       const collection = `/${segments.slice(0, depth).join("/")}`;
       if (segments.length > depth) {
-        const id = lastSegmentValue(`/${segments[depth]!}`);
-        if (this.held(type, collection, id))
-          this.#entities.add(entityTarget(type, collection, id));
+        // Name the entity a modelled write would, so another spelling of its
+        // collection still counts.
+        const named = itemTarget(this.state, type, {
+          path: `${collection}/${segments[depth]!}`,
+        });
+        if (this.state.entity(type, named.collection, named.id) !== undefined)
+          this.#entities.add(entityTarget(type, named.collection, named.id));
         else
-          this.#collections.set(collectionTarget(type, collection), new Set());
+          this.#collections.set(
+            collectionTarget(type, named.collection),
+            new Set(),
+          );
       } else if (segments.length === depth)
         this.#targets.add(collectionTarget(type, collection));
       else this.#prefixes.push(normalizedPath(path));

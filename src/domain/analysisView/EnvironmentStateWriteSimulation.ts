@@ -124,8 +124,7 @@ export class EnvironmentStateWriteSimulation {
       new Map(
         input.documents.map((document) => [document.tool, document.path]),
       ),
-      (type, collection, id) =>
-        this.#state.entity(type, collection, id) !== undefined,
+      this.#state,
     );
   }
 
