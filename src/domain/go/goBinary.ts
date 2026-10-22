@@ -28,8 +28,8 @@ export const goArchitectureForSubject = (architecture: string) => {
 };
 
 const sourceRangeSchema = z.strictObject({
-  offset: z.number().int().nonnegative(),
-  bytes: z.number().int().nonnegative(),
+  offset: z.int().nonnegative(),
+  bytes: z.int().nonnegative(),
 });
 const moduleIdentitySchema = z.strictObject({
   path: z.string(),
@@ -69,7 +69,7 @@ export const inspectGoBinaryInputSchema = z.strictObject({
 
 /** Compiler-written build information and its original file-backed source ranges. */
 export const goBuildInfoSchema = z.strictObject({
-  header_offset: z.number().int().nonnegative(),
+  header_offset: z.int().nonnegative(),
   encoding: z.enum(["inline", "pointer"]),
   go_version: z.string().nullable(),
   go_version_bytes_base64: canonicalBase64Schema,
@@ -86,7 +86,7 @@ export const goBinarySchema = z
     artifact: z.strictObject({
       path: localPathStringSchema,
       sha256: digestSchema,
-      bytes: z.number().int().nonnegative(),
+      bytes: z.int().nonnegative(),
     }),
     format: z.enum(["elf", "pe", "macho"]),
     architecture: z.string(),
@@ -158,12 +158,7 @@ export const goBinarySchema = z
       ["module_bytes_base64", info.module_location, "module"],
     ] as const) {
       const encoded = info[field];
-      const padding = encoded.endsWith("==")
-        ? 2
-        : encoded.endsWith("=")
-          ? 1
-          : 0;
-      if ((encoded.length / 4) * 3 - padding !== range.bytes)
+      if (Buffer.byteLength(encoded, "base64") !== range.bytes)
         context.addIssue({
           code: "custom",
           path: ["build_info", field],
