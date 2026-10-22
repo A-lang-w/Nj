@@ -316,10 +316,22 @@ it.each([
       input: { path },
     });
     if (result.ok) throw new Error("expected owned I/O failure");
-    expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
     expect(result.error.cause).toBe(cause);
-    expect(result.error.message).toContain(
-      "Provider-owned Flutter snapshot storage",
+    // Only storage exhaustion is a resource constraint; other owned-storage
+    // failures keep their system code instead of claiming a size allowance.
+    expect(projectAnalysisError(result.error)).toMatchObject(
+      code === "ENOSPC"
+        ? {
+            code: "resource_constraint",
+            details: { reported_limits: { system_code: code } },
+          }
+        : {
+            code: "execution_failure",
+            details: {
+              provider_id: "flutter",
+              diagnostics: { stage: "workspace", system_code: code },
+            },
+          },
     );
   },
 );

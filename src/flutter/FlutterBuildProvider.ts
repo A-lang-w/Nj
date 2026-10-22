@@ -57,6 +57,7 @@ import {
   readSnapshotHeader,
 } from "./DartElf.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
+import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 /** Stable identity for the Flutter build-identification provider. */
 export const FLUTTER_PROVIDER_IDENTITY = {
@@ -239,12 +240,11 @@ const mapOwnedIoFailure = (
     "code" in cause &&
     typeof cause.code === "string"
   )
-    return new AnalysisResourceConstraintError(
+    return privateWorkspaceFailure(
+      FLUTTER_PROVIDER_IDENTITY.id,
       operation,
-      "file-size",
-      `Provider-owned Flutter snapshot storage failed (${cause.code}): ${cause.message}`,
+      cause,
       null,
-      { cause },
     );
   return new AnalysisProtocolError(operation, { cause });
 };
