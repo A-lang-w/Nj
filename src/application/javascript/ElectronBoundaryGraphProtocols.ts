@@ -21,6 +21,8 @@ interface ProtocolInput {
   readonly coverage: JavaScriptArtifactGraphCoverage;
 }
 
+const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/u;
+
 const REGISTRATION_LIMITATION =
   "A registration shows a reachable entry point in source; whether the operating system or a session currently routes the scheme to this application is not established.";
 
@@ -47,22 +49,18 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
   );
   if (source === undefined) return;
   const literal = value.scheme.status === "literal";
+  const raw = value.scheme.value;
+  // RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
   const scheme =
-    literal && typeof value.scheme.value === "string"
-      ? value.scheme.value
-      : null;
-  // A number, boolean or null literal is observed exactly but names no scheme.
-  const nonString = literal && scheme === null;
+    literal && typeof raw === "string" && URL_SCHEME.test(raw) ? raw : null;
+  // A non-string or malformed literal is observed exactly but names no scheme.
+  const invalid = literal && scheme === null;
   const facts = {
     scheme,
     scheme_expression: value.scheme.expression,
-    scheme_literal: nonString ? value.scheme.value : null,
+    scheme_literal: invalid ? raw : null,
     resolution:
-      scheme !== null
-        ? "literal"
-        : nonString
-          ? "non-string-literal"
-          : "dynamic",
+      scheme !== null ? "literal" : invalid ? "invalid-literal" : "dynamic",
     api: value.api,
     role: value.role,
     session: value.session,
@@ -71,10 +69,10 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
   const limitations =
     scheme !== null
       ? [REGISTRATION_LIMITATION]
-      : nonString
+      : invalid
         ? [
             REGISTRATION_LIMITATION,
-            "The scheme argument is a literal that is not a string, so it does not name a URL scheme as written.",
+            "The scheme argument is a literal that is not a valid URL scheme, so no URL can target it as written.",
           ]
         : [
             REGISTRATION_LIMITATION,

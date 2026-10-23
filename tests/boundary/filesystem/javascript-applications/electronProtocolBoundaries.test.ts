@@ -103,7 +103,7 @@ describe("Electron URL scheme boundaries", () => {
     });
   });
 
-  it("keeps a non-string literal scheme as observed rather than dynamic", async () => {
+  it("keeps non-string and malformed literal schemes as observed, not dynamic", async () => {
     const root = await createTestTempDirectory(
       "rea-electron-protocol-literal-",
     );
@@ -120,21 +120,35 @@ describe("Electron URL scheme boundaries", () => {
         [
           'const { protocol } = require("electron");',
           "protocol.handle(42, () => null);",
+          'protocol.handle("not a scheme", () => null);',
         ].join("\n"),
       ),
     ]);
     const result = await reconstructJavaScriptArtifact({ input_path: root });
-    const [node] = parseJavaScriptApplicationGraph(result.graph).nodes.filter(
-      ({ kind }) => kind === "url-scheme",
-    );
-    expect(node?.observations[0]).toMatchObject({
-      label: "42",
-      properties: {
-        scheme: null,
-        scheme_literal: 42,
-        resolution: "non-string-literal",
+    const observations = parseJavaScriptApplicationGraph(result.graph)
+      .nodes.filter(({ kind }) => kind === "url-scheme")
+      .map(({ observations: [first] }) => first)
+      .toSorted((left, right) =>
+        String(left?.label).localeCompare(String(right?.label)),
+      );
+    expect(observations).toMatchObject([
+      {
+        label: "42",
+        properties: {
+          scheme: null,
+          scheme_literal: 42,
+          resolution: "invalid-literal",
+        },
       },
-    });
+      {
+        label: "not a scheme",
+        properties: {
+          scheme: null,
+          scheme_literal: "not a scheme",
+          resolution: "invalid-literal",
+        },
+      },
+    ]);
   });
 });
 

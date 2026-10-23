@@ -10,8 +10,8 @@ import {
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
 import {
+  isNullishJavaScriptSyntax,
   staticObjectProperty,
-  staticObjectPropertyNames,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
@@ -20,6 +20,18 @@ import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.j
 
 type Role = ElectronProtocolFinding["role"];
 type Session = ElectronProtocolFinding["session"];
+
+/** Electron's `CustomScheme` privileges for `protocol.registerSchemesAsPrivileged`. */
+const PRIVILEGE_NAMES = [
+  "allowServiceWorkers",
+  "bypassCSP",
+  "codeCache",
+  "corsEnabled",
+  "secure",
+  "standard",
+  "stream",
+  "supportFetchAPI",
+] as const;
 
 const HANDLERS = new Set([
   "handle",
@@ -108,7 +120,17 @@ const inspectPrivilegedSchemes = (
   const entries = t.isArrayExpression(list) ? list.elements : [list];
   for (const [index, entry] of entries.entries()) {
     const candidate = typeless(entry ?? undefined);
-    const scheme = staticObjectProperty(candidate, "scheme");
+    const scheme = staticObjectProperty(
+      candidate,
+      "scheme",
+      isNullishJavaScriptSyntax,
+    );
+    // A hole or an object without `scheme` names no scheme at all.
+    if (
+      candidate === undefined ||
+      (t.isObjectExpression(candidate) && scheme.status === "missing")
+    )
+      continue;
     addProtocol(context, {
       node,
       // Each present entry keeps its own range; holes share the call's.
@@ -139,16 +161,18 @@ const enabledPrivileges = (
     context.accumulator.unknownFindings += 1;
     return null;
   }
-  // The shared object rules own spreads, accessors and `__proto__` setters.
-  const names = staticObjectPropertyNames(privileges);
-  if (names.status !== "complete") {
-    context.accumulator.unknownFindings += 1;
-    return null;
-  }
+  // The shared object rules own spreads, accessors, `__proto__` setters and
+  // nullish spreads. Only Electron's privilege names are read, so the work
+  // stays linear in the object size.
   const enabled: string[] = [];
-  for (const name of names.names) {
-    const lookup = staticObjectProperty(privileges, name);
+  for (const name of PRIVILEGE_NAMES) {
+    const lookup = staticObjectProperty(
+      privileges,
+      name,
+      isNullishJavaScriptSyntax,
+    );
     if (lookup.status !== "explicit") {
+      if (lookup.status === "missing") continue;
       context.accumulator.unknownFindings += 1;
       return null;
     }
@@ -177,6 +201,9 @@ const addProtocol = (
   context: JavaScriptFindingContext,
   input: ProtocolInput,
 ): void => {
+  // An omitted, `undefined` or `null` scheme is known absence, not an unknown.
+  const schemeNode = typeless(input.scheme);
+  if (schemeNode === undefined || isNullishJavaScriptSyntax(schemeNode)) return;
   const located = input.located ?? input.node;
   const scheme = schemeValue(context, input.scheme, located);
   if (scheme.status === "dynamic") context.accumulator.unknownFindings += 1;

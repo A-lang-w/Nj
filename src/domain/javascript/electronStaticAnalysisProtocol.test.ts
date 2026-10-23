@@ -208,6 +208,12 @@ describe("Electron privileged scheme spreads", () => {
       "{ ...{ __proto__: true }, secure: true }",
       ["secure"],
     ],
+    ["a nullish spread", "{ secure: true, ...null, ...void 0 }", ["secure"]],
+    [
+      "a key that is not an Electron privilege",
+      "{ secure: true, notAPrivilege: true }",
+      ["secure"],
+    ],
   ])("reads %s", (_name, privileges, expected) => {
     expect(privilegesOf(privileges)).toEqual(expected);
   });
@@ -220,5 +226,31 @@ describe("Electron privileged scheme spreads", () => {
     ],
   ])("keeps %s unknown", (_name, privileges) => {
     expect(privilegesOf(privileges)).toBeNull();
+  });
+});
+
+describe("Electron protocol registrations without a scheme", () => {
+  it("records nothing when the scheme is known to be absent", () => {
+    expect(
+      protocolsOf(`
+        const { app, protocol } = require("electron");
+        protocol.handle();
+        app.setAsDefaultProtocolClient(void 0);
+        protocol.registerFileProtocol(null, serve);
+      `),
+    ).toEqual([]);
+  });
+
+  it("skips holes and entries without a scheme but keeps the rest", () => {
+    expect(
+      protocolsOf(`
+        const { protocol } = require("electron");
+        protocol.registerSchemesAsPrivileged([
+          ,
+          { privileges: { secure: true } },
+          { scheme: "app" },
+        ]);
+      `),
+    ).toMatchObject([{ scheme: literal("app") }]);
   });
 });

@@ -270,7 +270,7 @@ const semanticValue = (
     );
   const literalKey = LITERAL_NAME_PROPERTIES[node.kind];
   if (literalKey !== undefined)
-    return ["dynamic", "non-string-literal"].includes(
+    return ["dynamic", "invalid-literal"].includes(
       String(properties.resolution),
     )
       ? null
