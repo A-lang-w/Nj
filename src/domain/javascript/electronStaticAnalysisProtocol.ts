@@ -10,8 +10,8 @@ import {
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
 import {
-  semanticStaticPropertyName,
   staticObjectProperty,
+  staticObjectPropertyNames,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
@@ -139,54 +139,25 @@ const enabledPrivileges = (
     context.accumulator.unknownFindings += 1;
     return null;
   }
-  const effective = effectiveProperties(privileges);
-  if (effective === undefined) {
+  // The shared object rules own spreads, accessors and `__proto__` setters.
+  const names = staticObjectPropertyNames(privileges);
+  if (names.status !== "complete") {
     context.accumulator.unknownFindings += 1;
     return null;
   }
   const enabled: string[] = [];
-  for (const [key, node] of effective) {
-    const value = typeless(node);
-    if (t.isBooleanLiteral(value, { value: true })) enabled.push(key);
+  for (const name of names.names) {
+    const lookup = staticObjectProperty(privileges, name);
+    if (lookup.status !== "explicit") {
+      context.accumulator.unknownFindings += 1;
+      return null;
+    }
+    const value = typeless(lookup.property.value);
+    if (t.isBooleanLiteral(value, { value: true })) enabled.push(name);
     else if (!t.isBooleanLiteral(value))
       context.accumulator.unknownFindings += 1;
   }
   return enabled.toSorted();
-};
-
-const SPREAD_DEPTH_LIMIT = 8;
-
-/**
- * Each key's effective value with the last definition winning, as at runtime,
- * through spreads of object literals. Undefined when any key could come from
- * somewhere unseen: a computed key, a method, or a spread of anything else.
- */
-const effectiveProperties = (
-  object: t.ObjectExpression,
-): ReadonlyMap<string, t.Node> | undefined => {
-  const effective = new Map<string, t.Node>();
-  const visit = (current: t.ObjectExpression, depth: number): boolean => {
-    for (const property of current.properties.toReversed()) {
-      if (t.isSpreadElement(property)) {
-        const spread = typeless(property.argument);
-        // Copying a getter runs code, so only plain data literals are read.
-        if (
-          !t.isObjectExpression(spread) ||
-          depth >= SPREAD_DEPTH_LIMIT ||
-          !visit(spread, depth + 1)
-        )
-          return false;
-        continue;
-      }
-      const key = t.isObjectProperty(property)
-        ? semanticStaticPropertyName(property.key, property.computed)
-        : "";
-      if (key === "" || !t.isObjectProperty(property)) return false;
-      if (!effective.has(key)) effective.set(key, property.value);
-    }
-    return true;
-  };
-  return visit(object, 0) ? effective : undefined;
 };
 
 interface ProtocolInput {

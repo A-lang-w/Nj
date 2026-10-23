@@ -203,6 +203,11 @@ describe("Electron privileged scheme spreads", () => {
       "{ ...{ ...{ secure: true } as const } }",
       ["secure"],
     ],
+    [
+      "a __proto__ setter, which is not an own key",
+      "{ ...{ __proto__: true }, secure: true }",
+      ["secure"],
+    ],
   ])("reads %s", (_name, privileges, expected) => {
     expect(privilegesOf(privileges)).toEqual(expected);
   });
