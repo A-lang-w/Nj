@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { prepareReferenceSourceImport } from "../../../src/application/ReferenceSourceImportPolicy.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
@@ -455,6 +457,214 @@ describe.skipIf(process.platform === "win32")(
         });
       },
     );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "reference ignore UTF-8 byte matching",
+  () => {
+    it.each([
+      { prefix: "", ignoreCase: false },
+      { prefix: "", ignoreCase: true },
+      { prefix: "paqué/", ignoreCase: false },
+      { prefix: "paqué/", ignoreCase: true },
+    ])(
+      "matches Git UTF-8 byte wildcards in $prefix (ignoreCase=$ignoreCase)",
+      async ({ prefix, ignoreCase }) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-ignore-bytes-",
+        );
+        const policyPath = `${prefix}.gitignore`;
+        const patterns = [
+          "literal/é.ts",
+          "range/[é-ê].ts",
+          "prefix/[é-ê]*",
+          "member/[é].ts",
+          "one/?.ts",
+          "two/??.ts",
+          "four/????.ts",
+          "negative/[!a].ts",
+          String.raw`escaped/\é.ts`,
+          "negation/*.ts",
+          "!negation/[é-ê].ts",
+          "space/\u00a0.ts",
+        ];
+        const paths = [
+          "literal/é.ts",
+          "literal/É.ts",
+          "range/é.ts",
+          "range/ê.ts",
+          "range/a.ts",
+          "prefix/é.ts",
+          "prefix/ê.ts",
+          "prefix/a.ts",
+          "member/é.ts",
+          "member/a.ts",
+          "one/a.ts",
+          "one/é.ts",
+          "one/😀.ts",
+          "two/a.ts",
+          "two/é.ts",
+          "two/😀.ts",
+          "four/é.ts",
+          "four/😀.ts",
+          "negative/a.ts",
+          "negative/b.ts",
+          "negative/é.ts",
+          "escaped/é.ts",
+          "escaped/É.ts",
+          "negation/é.ts",
+          "negation/ê.ts",
+          "space/\u00a0.ts",
+          "space/\u0085.ts",
+        ];
+        await writeTree(root, {
+          [policyPath]: `${patterns.join("\n")}\n`,
+          ...Object.fromEntries(
+            paths.map((path) => [prefix + path, "export {};\n"]),
+          ),
+        });
+        const expected = gitInventory(root, ignoreCase);
+        for (const path of [
+          "range/é.ts",
+          "range/ê.ts",
+          "member/é.ts",
+          "one/é.ts",
+          "two/😀.ts",
+          "negative/é.ts",
+        ])
+          expect(expected).toContain(prefix + path);
+        for (const path of [
+          "literal/é.ts",
+          "prefix/é.ts",
+          "two/é.ts",
+          "four/😀.ts",
+          "escaped/é.ts",
+          "negation/é.ts",
+        ])
+          expect(expected).not.toContain(prefix + path);
+        const result = await importReferenceSource({
+          root,
+          caller: "ignore-byte-test",
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        expect(
+          result.value.entries
+            .filter(({ kind }) => kind === "file")
+            .map(({ path }) => path)
+            .sort(),
+        ).toEqual(expected);
+        expect(result.value.exclusions).toContainEqual({
+          path: prefix + "two/é.ts",
+          entry_kind: "file",
+          reason: "project-ignored",
+          pattern: "two/??.ts",
+          policy_path: policyPath,
+        });
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "reference ignore byte matching composition",
+  () => {
+    it.each([
+      { name: "missing", childPolicy: undefined },
+      { name: "empty", childPolicy: "" },
+    ])(
+      "keeps caller-reopened Unicode directories admitted with $name policy",
+      async ({ childPolicy }) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-byte-reopen-",
+        );
+        await writeTree(root, {
+          ".gitignore": "café/\n*.tmp\n",
+          ...(childPolicy === undefined
+            ? {}
+            : { "café/.gitignore": childPolicy }),
+          "café/keep.ts": "export {};\n",
+          "café/drop.tmp": "ignored by inherited project rule\n",
+          "café/pkg/.gitignore": "!keep.tmp\n",
+          "café/pkg/keep.tmp": "child negation still wins\n",
+          "café/pkg/drop.tmp": "inherited project rule still applies\n",
+        });
+        gitInventory(root, false);
+        const result = await importReferenceSource({
+          root,
+          caller: "ignore-byte-reopen",
+          excludePaths: ["!CAFÉ/"],
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        const paths = result.value.entries
+          .filter(({ kind }) => kind === "file")
+          .map(({ path }) => path);
+        expect(paths).toContain("café/keep.ts");
+        expect(paths).toContain("café/pkg/keep.tmp");
+        expect(paths).not.toContain("café/drop.tmp");
+        expect(paths).not.toContain("café/pkg/drop.tmp");
+        expect(result.value.exclusions).toContainEqual({
+          path: "café/drop.tmp",
+          entry_kind: "file",
+          reason: "project-ignored",
+          pattern: "*.tmp",
+          policy_path: ".gitignore",
+        });
+      },
+    );
+
+    it("preserves project evidence until a caller negation changes the match", async () => {
+      const root = await createTestTempDirectory("rea-reference-byte-origin-");
+      await writeTree(root, {
+        ".gitignore": "café.ts\nnaïve.ts\n",
+        "café.ts": "keeps project provenance\n",
+        "naïve.ts": "caller negation followed by exclusion\n",
+      });
+      gitInventory(root, false);
+      const result = await importReferenceSource({
+        root,
+        caller: "ignore-byte-origin",
+        excludePaths: ["café.ts", "!naïve.ts", "naïve.ts"],
+        policy: { secretPatterns: [] },
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.exclusions).toContainEqual({
+        path: "café.ts",
+        entry_kind: "file",
+        reason: "project-ignored",
+        pattern: "café.ts",
+        policy_path: ".gitignore",
+      });
+      expect(result.value.exclusions).toContainEqual({
+        path: "naïve.ts",
+        entry_kind: "file",
+        reason: "caller-excluded",
+        pattern: "naïve.ts",
+      });
+    });
+
+    it("combines project and caller rules before aggregating unknown entry kinds", async () => {
+      const root = await createTestTempDirectory("rea-reference-byte-kind-");
+      await writeTree(root, { ".gitignore": "é\n" });
+      await withArtifactResourceScope(async (resources) => {
+        const result = await prepareReferenceSourceImport(
+          {
+            root,
+            caller: "ignore-byte-kind",
+            excludePaths: ["!é/"],
+            policy: { secretPatterns: [] },
+          },
+          resources,
+        );
+        if (!result.ok) throw result.error;
+        const exclude = result.value.policy.shouldExclude;
+        expect(exclude?.("é", "directory")).toBe(false);
+        expect(exclude?.("é", "file")).toBe(true);
+        expect(exclude?.("é", "unknown")).toBe(true);
+      });
+    });
   },
 );
 

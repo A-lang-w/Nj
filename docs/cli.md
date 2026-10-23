@@ -382,10 +382,14 @@ tree matches that commit remains unknown. It loads `.gitignore` files inside the
 selected root as it enters each directory. Child rules apply within that directory
 and can override inherited project rules; excluded directories are not traversed.
 Ignore files above the selected root and Git's global excludes are not loaded.
-Project rules use the locally observed `core.ignoreCase` setting. Insensitive
-matching folds ASCII letters only, so `é` does not exclude `É`. If the setting
-cannot be determined, the importer uses this insensitive fallback and records
-that uncertainty in the graph's limitations. Original paths and patterns remain
+Project rules match UTF-8 bytes, so `?` consumes one byte rather than one
+Unicode character. They use the locally observed `core.ignoreCase` setting;
+insensitive matching folds ASCII letters only, so `é` does not exclude `É`.
+Local Boolean settings accept Git's textual forms and portable decimal, octal
+and hexadecimal integers with optional `k`, `m` or `g` multipliers. Binary
+prefixes depend on the Git build and remain unknown. If the setting cannot be
+determined, the importer uses the insensitive fallback and records that
+uncertainty in the graph's limitations. Original paths and patterns remain
 unchanged in the evidence; caller and secret patterns retain their own matching
 semantics.
 Nested ignore files explicitly marked sensitive are skipped before their contents

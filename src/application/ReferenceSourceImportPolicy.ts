@@ -70,15 +70,18 @@ const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 type IgnoreReason = "project-ignored" | "default-ignored" | "caller-excluded";
 
+// Project wildcards consume UTF-8 bytes, whereas caller/secret patterns use
+// JavaScript characters. Latin-1 gives each byte one matcher character while
+// preserving ASCII separators and syntax; source evidence never uses this form.
+const gitByteString = (value: string): string =>
+  Buffer.from(value, "utf8").toString("latin1");
+
 // Hex atoms survive ignore's wildcard rewrites, including its terminal-star
 // rewrite. Encode both range endpoints with uppercase hex so its textual
 // range sanitizer cannot mistake their suffixes for a descending range.
 const literalIgnoreAtom = (character: string, inClass: boolean): string => {
   const code = character.charCodeAt(0);
-  const atom =
-    code < 256
-      ? `\\x${code.toString(16).toUpperCase().padStart(2, "0")}`
-      : `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`;
+  const atom = `\\x${code.toString(16).toUpperCase().padStart(2, "0")}`;
   return inClass ? atom : `[${atom}]`;
 };
 
@@ -279,7 +282,7 @@ const scopedPattern = (
   // A terminal directory globstar must consume a descendant. ignore otherwise
   // lets its zero-depth match include the named parent, including for negations.
   const pattern = normalizeIgnorePattern(
-    sourcePattern,
+    projectPolicy ? gitByteString(sourcePattern) : sourcePattern,
     projectPolicy,
     ignoreCase,
   ).replace(/(^!?|\/)\*\*\/(?= *$)/u, "$1**/*/");
@@ -536,6 +539,7 @@ export const prepareReferenceSourceImport = async (
           root: root.value,
           ignoreCase,
           overrides,
+          ignoredOverrides: new Map(),
           secrets,
           exclusions,
           resources,
@@ -563,6 +567,7 @@ interface ExclusionPolicyContext {
   readonly root: string;
   readonly ignoreCase: boolean | null;
   readonly overrides: ReturnType<typeof ignore>;
+  readonly ignoredOverrides: Map<number, ReturnType<typeof ignore>>;
   readonly secrets: ReturnType<typeof ignore>;
   readonly exclusions: HistoricalSourceGraphInput["exclusions"];
   readonly resources: ArtifactResourceScope;
@@ -576,12 +581,36 @@ const createExclusionPolicy = (
 ): ReferenceSourceExclusionPolicy => {
   const { root, overrides, secrets, exclusions, resources, signal } = context;
   const policy: ReferenceSourceExclusionPolicy = {
-    shouldExclude: createShouldExclude(
-      exclusions,
-      secrets,
-      ignore().add(project).add(overrides),
-      context.ignoreCase ?? true,
-    ),
+    shouldExclude: createShouldExclude(exclusions, secrets, {
+      test: (path) => {
+        const bytes = gitByteString(path);
+        const projectMatch = project.test(
+          context.ignoreCase === false ? bytes : foldGitCase(bytes),
+        );
+        if (!projectMatch.ignored) {
+          const override = overrides.test(path);
+          return override.ignored || override.unignored
+            ? override
+            : projectMatch;
+        }
+        // ignore skips positive rules until a negation changes an already
+        // ignored result. Seed that state at this depth, leaving admitted
+        // ancestors alone, so duplicate positives keep the project evidence.
+        const depth = path.split("/").filter(Boolean).length;
+        let matcher = context.ignoredOverrides.get(depth);
+        if (matcher === undefined) {
+          matcher = ignore()
+            .add({
+              pattern: `/${Array<string>(depth).fill("*").join("/")}`,
+              mark: "",
+            })
+            .add(overrides);
+          context.ignoredOverrides.set(depth, matcher);
+        }
+        const override = matcher.test(path);
+        return override.rule?.mark === "" ? projectMatch : override;
+      },
+    }),
     prepareDirectory: async (directory) => {
       // Root admission already read its policy before any inventory or VCS work.
       if (directory === ".") return ok(policy);
@@ -598,7 +627,13 @@ const createExclusionPolicy = (
           tag: "reference-source-reader",
           code: text.error.code === "cancelled" ? "cancelled" : "io",
         });
-      if (text.value === "") return ok(policy);
+      const bytes = gitByteString(`${directory}/`);
+      const projectPath =
+        context.ignoreCase === false ? bytes : foldGitCase(bytes);
+      // Caller negations may admit a directory excluded by project rules. Its
+      // children must consume that admission even without a new ignore file.
+      if (text.value === "" && !project.test(projectPath).ignored)
+        return ok(policy);
       const inherited = ignore({ ignoreCase: false }).add(project);
       addMarkedPatterns(
         inherited,
@@ -615,7 +650,7 @@ const createExclusionPolicy = (
 
 /** Use the same kind interpretation for policy admission and inventory. */
 const matchIgnorePath = (
-  matcher: ReturnType<typeof ignore>,
+  matcher: Pick<ReturnType<typeof ignore>, "test">,
   path: string,
   kind: ReferenceSourceExclusionKind,
 ) => {
@@ -635,8 +670,7 @@ const createShouldExclude =
   (
     exclusions: HistoricalSourceGraphInput["exclusions"],
     secrets: ReturnType<typeof ignore>,
-    ignored: ReturnType<typeof ignore>,
-    ignoreCase: boolean,
+    ignored: Pick<ReturnType<typeof ignore>, "test">,
   ): ((path: string, kind: ReferenceSourceExclusionKind) => boolean) =>
   (path, kind) => {
     const secretMatch = matchIgnorePath(secrets, path, kind);
@@ -654,13 +688,7 @@ const createShouldExclude =
       });
       return true;
     }
-    // Caller/default rules retain their own case-insensitive regexes. ASCII
-    // folding their input is equivalent; project rules use explicit Git folds.
-    const match = matchIgnorePath(
-      ignored,
-      ignoreCase ? foldGitCase(path) : path,
-      kind,
-    );
+    const match = matchIgnorePath(ignored, path, kind);
     if (match?.ignored !== true) return false;
     if (!match.rule)
       throw new Error(`Ignored path has no matching rule: ${path}`);
