@@ -198,6 +198,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         if (signal?.aborted === true) {
           interruption = new AnalysisCancelledError(
             "analyze_javascript_application",
+            { cause: signal.reason },
           );
           break;
         }
@@ -292,49 +293,6 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         break;
       }
     } catch (cause: unknown) {
-      if (signal?.aborted !== true && !(cause instanceof AnalysisError))
-        throw cause;
-      interruption =
-        signal?.aborted === true
-          ? new AnalysisCancelledError("analyze_javascript_application")
-          : cause instanceof AnalysisError
-            ? cause
-            : null;
-      if (interruption !== null) {
-        if (file.kind === "javascript" && !file.text.included) {
-          state.files.push({ file, javascript: null, semantic: null });
-          projection.recordUnavailableFile(
-            file,
-            unavailableJavaScriptSourceReason(file.text.reason),
-            null,
-            "incomplete-module",
-          );
-        } else {
-          const scope = javascriptArtifactAnalysisScopes[file.kind];
-          state.files.push({
-            file,
-            javascript: null,
-            semantic: null,
-            ...(scope === null
-              ? {}
-              : {
-                  analysis_failure: {
-                    scope,
-                    status: analysisStarted ? "interrupted" : "not-started",
-                    reason: `${file.path}: ${interruption.message}`,
-                    error: projectAnalysisError(interruption),
-                    limits: null,
-                  },
-                }),
-          });
-          projection.recordUnavailableFile(
-            file,
-            interruption.message,
-            null,
-            "incomplete-module",
-          );
-        }
-      }
       if (cause instanceof AnalysisError) interruption = cause;
       else if (
         cause instanceof ArtifactReaderFailure &&

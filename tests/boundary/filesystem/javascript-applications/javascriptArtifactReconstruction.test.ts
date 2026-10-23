@@ -556,6 +556,38 @@ it("reports file progress and honors cancellation before the next source", async
   expect(progress[0]).not.toBe(progress[1]);
 });
 
+it("preserves cancellation reason when cancelled before an invalid-utf8 source", async () => {
+  const root = await fixtureDirectory();
+  await writeFile(join(root, "z-invalid.js"), Buffer.from([0xff, 0xfe, 0xff]));
+  const controller = new AbortController();
+  const reason = { request: "cancel before invalid utf8 source" };
+  const failure = await reconstructJavaScriptArtifact(
+    { input_path: root },
+    controller.signal,
+    {
+      report: async (event) => {
+        if (event.phase === "parse_javascript_source") {
+          controller.abort(reason);
+        }
+      },
+    },
+  ).then(
+    () => {
+      throw new Error("Expected cancellation");
+    },
+    (cause: unknown) => cause,
+  );
+  if (!(failure instanceof AnalysisError)) throw failure;
+  expect(failure.cause).toBe(reason);
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cancelled",
+    category: "cancelled",
+    details: {
+      partial_observation: { operation: "analyze_javascript_application" },
+    },
+  });
+});
+
 it("preserves graph commitments and export shapes when consuming file-local IR", async () => {
   const root = await fixtureDirectory();
   await writeFile(
