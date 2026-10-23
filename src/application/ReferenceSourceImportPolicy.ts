@@ -159,14 +159,10 @@ const normalizeGitClass = (
   let text = "";
   let previous: string | undefined;
   let first = true;
-  let unsupported = false;
   for (; index < pattern.length; index += 1) {
     let character = pattern[index]!;
     if (character === "]" && !first) {
       const end = index + 1;
-      // An explicit slash also changes Git's path anchoring. Preserve the
-      // existing handling of that syntax rather than hide it in a hex atom.
-      if (unsupported) return { text: pattern.slice(start, end), end };
       return {
         text: `[${negative ? "!" : ""}${text}${negative ? "\\x2F" : ""}]`,
         end,
@@ -187,7 +183,6 @@ const normalizeGitClass = (
       if (pattern[index] === "\\") index += 1;
       if (index === pattern.length) break;
       const endpoint = pattern[index]!;
-      if (endpoint === "/") unsupported = true;
       const lower = previous.charCodeAt(0);
       const upper = endpoint.charCodeAt(0);
       // The preceding literal was already added, so descending ranges keep
@@ -220,8 +215,7 @@ const normalizeGitClass = (
       // Without the closing colon, Git treats '[' as an ordinary member and
       // the first ']' closes the outer class. Do not consume the suffix here.
     }
-    if (character === "/") unsupported = true;
-    text += literalIgnoreAtom(character, true);
+    if (character !== "/") text += literalIgnoreAtom(character, true);
     previous = character;
   }
   return { text: undefined, end: pattern.length };
@@ -232,7 +226,7 @@ const normalizeIgnorePattern = (
   sourcePattern: string,
   gitEscapes = false,
   ignoreCase = false,
-): string => {
+): { readonly text: string; readonly anchored: boolean } => {
   const pattern = gitEscapes
     ? sourcePattern.replace(
         /((?:\\\\)*?)(\\? +)$/u,
@@ -240,6 +234,10 @@ const normalizeIgnorePattern = (
           pairs + (trailing.startsWith("\\") ? "\\ " : ""),
       )
     : sourcePattern;
+  // Git decides directory scope from raw separators before interpreting classes
+  // or escapes. Keep that fact after encoding a slash-bearing class as bytes.
+  const body = pattern.startsWith("!") ? pattern.slice(1) : pattern;
+  const anchored = body.startsWith("/") || body.slice(0, -1).includes("/");
   let result = "";
   let inClass = false;
   let classFirst = false;
@@ -248,7 +246,7 @@ const normalizeIgnorePattern = (
     const character = pattern[index]!;
     if (gitEscapes && character === "[") {
       const characterClass = normalizeGitClass(pattern, index, ignoreCase);
-      if (characterClass.text === undefined) return "";
+      if (characterClass.text === undefined) return { text: "", anchored };
       result += characterClass.text;
       index = characterClass.end;
       continue;
@@ -267,7 +265,7 @@ const normalizeIgnorePattern = (
             next === undefined ||
             (next === "/" && end === pattern.length - 1)
           )
-            return "";
+            return { text: "", anchored };
           // A quoted internal separator still separates path components in Git.
           result += next === "/" ? "/" : literalIgnoreAtom(next, false);
           index = end + 1;
@@ -340,7 +338,7 @@ const normalizeIgnorePattern = (
       result += gitEscapes && ignoreCase ? foldGitCase(character) : character;
     index += 1;
   }
-  return result;
+  return { text: result, anchored };
 };
 
 /** Scope Git patterns once while retaining their original text for evidence. */
@@ -350,21 +348,26 @@ const scopedPattern = (
   projectPolicy: boolean,
   ignoreCase: boolean,
 ): string | undefined => {
-  // A terminal directory globstar must consume a descendant. ignore otherwise
-  // lets its zero-depth match include the named parent, including for negations.
-  const pattern = normalizeIgnorePattern(
+  const normalized = normalizeIgnorePattern(
     projectPolicy ? gitByteString(sourcePattern) : sourcePattern,
     projectPolicy,
     ignoreCase,
-  ).replace(/(^!?|\/)\*\*\/(?= *$)/u, "$1**/*/");
-  if (prefix === undefined) return pattern;
+  );
+  // Git's terminal directory globstar consumes a descendant. Caller/default
+  // rules retain the dependency's existing zero-depth directory match.
+  const pattern = projectPolicy
+    ? normalized.text.replace(/(^!?|\/)\*\*\/(?= *$)/u, "$1**/*/")
+    : normalized.text;
+  if (prefix === undefined && (!projectPolicy || !normalized.anchored))
+    return pattern;
   if (pattern.length === 0 || /^ *$/u.test(pattern) || pattern.startsWith("#"))
     return undefined;
   const negative = pattern.startsWith("!");
   const body = negative ? pattern.slice(1) : pattern;
   if (body === "" || body === "/") return undefined;
-  const anchored = body.startsWith("/") || body.slice(0, -1).includes("/");
-  return `${negative ? "!" : ""}/${prefix}/${anchored ? "" : "**/"}${body.replace(/^\//u, "")}`;
+  const scope = prefix === undefined ? "" : `${prefix}/`;
+  const descendants = normalized.anchored ? "" : "**/";
+  return `${negative ? "!" : ""}/${scope}${descendants}${body.replace(/^\//u, "")}`;
 };
 
 const addMarkedPatterns = (
@@ -601,7 +604,7 @@ export const prepareReferenceSourceImport = async (
       const secrets = ignore();
       for (const pattern of options.policy.secretPatterns)
         secrets.add({
-          pattern: normalizeIgnorePattern(pattern),
+          pattern: normalizeIgnorePattern(pattern).text,
           mark: pattern,
         });
       return ok({

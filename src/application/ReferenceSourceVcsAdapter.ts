@@ -263,9 +263,10 @@ const parseGitBoolean = (value: string | undefined): boolean | null => {
       : 1024 ** ("kmg".indexOf(numeric[3]!.toLowerCase()) + 1);
   const integer =
     Number.parseInt(digits, radix) * multiplier * (numeric[1] === "-" ? -1 : 1);
-  // Every integer within Git's signed-int range is exact in a Number; larger
-  // values (including Infinity) must stay unknown, never wrap into a boolean.
-  return integer >= -2147483648 && integer <= 2147483647 ? integer !== 0 : null;
+  // Git 2.43 rejects INT_MIN; newer Git accepts it. Without the target Git
+  // version, only the shared range is certain, including after unit scaling.
+  // These integers are exact in a Number; overflow and Infinity stay unknown.
+  return integer >= -2147483647 && integer <= 2147483647 ? integer !== 0 : null;
 };
 
 const parseGitConfigValue = (source: string): string | undefined => {

@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import ignore from "ignore";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -129,3 +130,60 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+describe("reference source caller and secret globstars", () => {
+  it.each(["caller", "secret"] as const)(
+    "preserves %s pattern syntax and default exclusions",
+    async (source) => {
+      const root = await createTestTempDirectory(
+        "rea-reference-caller-globstar-",
+      );
+      const pattern = "foo/**/";
+      const files = [
+        "direct.ts",
+        "foo/direct.ts",
+        "foo/child/nested.ts",
+        "other/foo/direct.ts",
+        "node_modules/package/index.ts",
+      ];
+      for (const path of files) {
+        const absolute = join(root, path);
+        await mkdir(dirname(absolute), { recursive: true });
+        await writeFile(absolute, "export const value = 1;\n");
+      }
+      const matcher = ignore().add(pattern);
+      expect(matcher.ignores("foo/")).toBe(true);
+      expect(matcher.ignores("other/foo/direct.ts")).toBe(false);
+      const result = await importReferenceSource({
+        root,
+        caller: "caller-globstar-test",
+        ...(source === "caller" ? { excludePaths: [pattern] } : {}),
+        policy: { secretPatterns: source === "secret" ? [pattern] : [] },
+      });
+      if (!result.ok) throw result.error;
+      expect(
+        result.value.entries
+          .filter(({ kind }) => kind === "file")
+          .map(({ path }) => path),
+      ).toEqual(
+        files.filter(
+          (path) => !matcher.ignores(path) && !path.startsWith("node_modules/"),
+        ),
+      );
+      expect(result.value.exclusions).toEqual([
+        {
+          path: "foo",
+          entry_kind: "directory",
+          reason: source === "caller" ? "caller-excluded" : "configured-secret",
+          pattern,
+        },
+        {
+          path: "node_modules",
+          entry_kind: "directory",
+          reason: "default-ignored",
+          pattern: "node_modules/",
+        },
+      ]);
+    },
+  );
+});

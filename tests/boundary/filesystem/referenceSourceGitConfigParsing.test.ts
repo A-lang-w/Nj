@@ -164,10 +164,8 @@ const validConfigCases = [
       ["kilobyte nonzero", "1K", true],
       ["negative megabyte nonzero", "-2m", true],
       ["gigabyte nonzero", "1g", true],
-      ["scaled signed minimum", "-2g", true],
       ["signed maximum", "2147483647", true],
-      ["signed minimum", "-2147483648", true],
-      ["hexadecimal signed minimum", "-0x80000000", true],
+      ["portable negative boundary", "-2147483647", true],
       ["octal signed maximum", "017777777777", true],
       ["quoted leading space", '" 00"', false],
       ["decoded leading tab", '"\\t-0"', false],
@@ -204,6 +202,12 @@ const validConfigCases = [
   {
     name: "numeric false worktree extension",
     config: "[core]\nignoreCase=false\n[extensions]\nworktreeConfig=-0k\n",
+    expected: false,
+  },
+  {
+    name: "portable negative worktree extension before false",
+    config:
+      "[core]\nignoreCase=false\n[extensions]\nworktreeConfig=-2147483647\nworktreeConfig=false\n",
     expected: false,
   },
   ...(
@@ -279,6 +283,54 @@ describe.skipIf(process.platform === "win32")(
         expect(graph.limitations).not.toContain(UNKNOWN_CASE);
       },
     );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "reference source version-dependent Git config values",
+  () => {
+    it.each([
+      ...(
+        [
+          ["decimal", "-2147483648"],
+          ["hexadecimal", "-0x80000000"],
+          ["octal", "-020000000000"],
+          ["kilobytes", "-2097152k"],
+          ["megabytes", "-2048m"],
+          ["gigabytes", "-2g"],
+        ] as const
+      ).map(([name, value]) => ({
+        name: `signed minimum in ${name}`,
+        config: `[core]\nignoreCase = ${value}\n`,
+      })),
+      {
+        name: "earlier signed minimum core.ignoreCase before false",
+        config: "[core]\nignoreCase=-2147483648\nignoreCase=false\n",
+      },
+      {
+        name: "earlier signed minimum worktreeConfig before false",
+        config:
+          "[core]\nignoreCase=false\n[extensions]\nworktreeConfig=-2g\nworktreeConfig=false\n",
+      },
+    ])("retains portable uncertainty for $name", async ({ config }) => {
+      // Git 2.43 rejects INT_MIN, while newer versions accept it. The importer
+      // cannot infer the target Git version from the stored configuration.
+      const root = await fixture(config);
+      const graph = await readInventory(root);
+      expect(graph.limitations).toContain(UNKNOWN_CASE);
+      expect(graph.entries.map(({ path }) => path)).toContain("visible.ts");
+      for (const path of ["Generated", "pkg/Generated"])
+        expect(graph.exclusions).toContainEqual(
+          expect.objectContaining({
+            path,
+            reason: "project-ignored",
+            pattern: path.startsWith("pkg/") ? "generated/" : "/generated/",
+            policy_path: path.startsWith("pkg/")
+              ? "pkg/.gitignore"
+              : ".gitignore",
+          }),
+        );
+    });
   },
 );
 

@@ -205,6 +205,11 @@ describe.skipIf(process.platform === "win32")(
 
 const syntaxCases: readonly PatternCase[] = [
   {
+    pattern: "implicit-slash-[.-0].txt",
+    ignored: ["implicit-slash-..txt", "implicit-slash-0.txt"],
+    kept: ["implicit-slash-a.txt", "implicit-slash-/x.txt"],
+  },
+  {
     pattern: "ascii-bytes-[[:graph:]][[:graph:]].txt",
     ignored: ["ascii-bytes-ab.txt"],
     kept: ["ascii-bytes-é.txt", "ascii-bytes-\u00a0.txt"],
@@ -363,5 +368,116 @@ describe.skipIf(process.platform === "win32")(
         policy_path: ".gitignore",
       });
     });
+  },
+);
+
+const slashClassCases: readonly PatternCase[] = [
+  {
+    pattern: "positive-[A-C/].txt",
+    ignored: ["positive-a.txt", "positive-B.txt"],
+    kept: ["positive-z.txt"],
+  },
+  {
+    pattern: String.raw`escaped-[A-C\/].txt`,
+    ignored: ["escaped-a.txt", "escaped-B.txt"],
+    kept: ["escaped-z.txt"],
+  },
+  {
+    pattern: "negative-[!A-C/].txt",
+    ignored: ["negative-z.txt"],
+    kept: ["negative-a.txt", "negative-B.txt"],
+  },
+  {
+    pattern: "named-[[:upper:]/].txt",
+    ignored: ["named-a.txt", "named-B.txt"],
+    kept: ["named-1.txt"],
+  },
+  {
+    pattern: "range-start-[/-C].txt",
+    ignored: ["range-start-a.txt", "range-start-0.txt"],
+    kept: ["range-start-z.txt"],
+  },
+  {
+    pattern: "range-end-[.-/].txt",
+    ignored: ["range-end-..txt"],
+    kept: ["range-end-0.txt"],
+  },
+  {
+    pattern: "member-[A/].txt",
+    ignored: [],
+    kept: ["member-a.txt", "member-A.txt"],
+  },
+  {
+    pattern: "separator-x[!/]y.txt",
+    ignored: ["separator-xay.txt"],
+    kept: ["separator-x/y.txt"],
+  },
+];
+
+describe.skipIf(process.platform === "win32")(
+  "reference source explicit slash classes",
+  () => {
+    it.each(["", "packages/pkg/"])(
+      "normalizes classes without losing Git anchoring at %s",
+      async (prefix) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-slash-classes-",
+        );
+        const policyPath = `${prefix}.gitignore`;
+        const files: Record<string, string> = {
+          [policyPath]: [
+            ...slashClassCases.map(({ pattern }) => pattern),
+            "reopen-*.txt",
+            "!reopen-[A-C/].txt",
+            "#comment-[A-C/].txt",
+            "",
+          ].join("\n"),
+        };
+        for (const { ignored, kept } of slashClassCases)
+          for (const directory of [prefix, `${prefix}deeper/`])
+            for (const path of [...ignored, ...kept])
+              files[directory + path] = "reference source\n";
+        for (const path of ["reopen-a.txt", "reopen-z.txt", "#comment-a.txt"])
+          for (const directory of [prefix, `${prefix}deeper/`])
+            files[directory + path] = "scoping control\n";
+        if (prefix !== "")
+          files["sibling/positive-a.txt"] = "sibling control\n";
+        await writeTree(root, files);
+        const expected = gitInventory(root, true);
+        for (const { ignored, kept } of slashClassCases) {
+          for (const path of ignored)
+            expect(expected).not.toContain(prefix + path);
+          for (const path of kept) expect(expected).toContain(prefix + path);
+          for (const path of [...ignored, ...kept])
+            expect(expected).toContain(`${prefix}deeper/${path}`);
+        }
+        expect(expected).toContain(`${prefix}reopen-a.txt`);
+        expect(expected).not.toContain(`${prefix}reopen-z.txt`);
+        expect(expected).not.toContain(`${prefix}deeper/reopen-a.txt`);
+        expect(expected).toContain(`${prefix}#comment-a.txt`);
+        if (prefix !== "") expect(expected).toContain("sibling/positive-a.txt");
+        const result = await importReferenceSource({
+          root,
+          caller: "slash-class-test",
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        expect(
+          result.value.entries
+            .filter(({ kind }) => kind === "file")
+            .map(({ path }) => path)
+            .sort(),
+        ).toEqual(expected);
+        for (const { pattern, ignored } of slashClassCases)
+          for (const path of ignored)
+            expect(result.value.exclusions).toContainEqual({
+              path: prefix + path,
+              entry_kind: "file",
+              reason: "project-ignored",
+              pattern,
+              policy_path: policyPath,
+            });
+      },
+    );
   },
 );
