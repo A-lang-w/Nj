@@ -44,7 +44,10 @@ that defeats filesystem metadata checks.
 GGUF reports version, byte order, alignment, typed metadata, and each tensor's
 name, original type ID, dimensions, relative data offset, file offset and derived
 byte length. Alignment accepts every positive UINT32 multiple of eight, including
-non-powers of two. Metadata keys use ASCII lower-snake-case hierarchy components;
+non-powers of two. Partial Evidence retains explicit alignment once validated;
+the default alignment becomes known after metadata completes. Cancellation
+during tensor parsing or hashing retains that fact without claiming finalized
+digests or file identity. Metadata keys use ASCII lower-snake-case hierarchy components;
 standard numeric components such as `general.base_model.0.name` are preserved.
 Scalar metadata is complete. Arrays have declared element types,
 counts and at most eight preview elements per array, with an explicit
@@ -79,7 +82,9 @@ GGUF supports zero extents and scalar shapes, with at most four dimensions;
 known quantized types still require complete blocks in the first dimension.
 
 MCP defaults to a compact summary with counts, selected short headline metadata,
-chat-template presence and derived totals. The full type histogram and all rows
+chat-template presence (default or named template content) and derived totals.
+A names-only `tokenizer.chat_templates` inventory does not establish template
+content. The full type histogram and all rows
 remain in complete Evidence. Headline metadata uses short keys/types and scalar
 values; long or compound values remain available through explicit metadata
 queries. Use the returned `parent_evidence_id`:
