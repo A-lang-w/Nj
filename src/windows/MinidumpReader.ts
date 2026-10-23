@@ -37,6 +37,7 @@ export interface MinidumpReport {
 }
 
 const MINIDUMP_SIGNATURE = 0x504d444d; // "MDMP" in LE
+const MINIDUMP_VERSION = 0xa793; // Low word of MINIDUMP_HEADER.Version
 
 const ARCH_NAMES: Readonly<Record<number, string>> = {
   0: "x86",
@@ -58,7 +59,11 @@ const EXCEPTION_NAMES: Readonly<Record<number, string>> = {
 };
 
 export const isMinidump = (buffer: Buffer): boolean => {
-  return buffer.length >= 32 && buffer.readUInt32LE(0) === MINIDUMP_SIGNATURE;
+  return (
+    buffer.length >= 32 &&
+    buffer.readUInt32LE(0) === MINIDUMP_SIGNATURE &&
+    buffer.readUInt16LE(4) === MINIDUMP_VERSION
+  );
 };
 
 const MAX_MINIDUMP_STRING_BYTES = 64 * 1024; // 64 KiB per string

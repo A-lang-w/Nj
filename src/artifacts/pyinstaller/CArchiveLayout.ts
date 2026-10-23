@@ -23,8 +23,8 @@ export const PYINSTALLER_COOKIE_V20_BYTES = 24;
  */
 export const PYINSTALLER_COOKIE_SEARCH_BYTES = 16 * 1024 * 1024;
 
-const MAX_TOC_BYTES = 32 * 1024 * 1024;
-const MAX_TOC_ENTRIES = 100_000;
+export const MAX_TOC_BYTES = 32 * 1024 * 1024;
+export const MAX_TOC_ENTRIES = 100_000;
 const TOC_HEADER_BYTES = 18;
 
 /** Observed CArchive cookie. Offsets are relative to the archive start. */

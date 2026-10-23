@@ -71,6 +71,11 @@ describe("MinidumpReader", () => {
     const valid = createMockMinidump();
     expect(isMinidump(valid)).toBe(true);
 
+    const invalidVersion = createMockMinidump();
+    invalidVersion.writeUInt16LE(0x1234, 4);
+    expect(isMinidump(invalidVersion)).toBe(false);
+    expect(parseMinidump(invalidVersion)).toBeNull();
+
     const invalid = Buffer.from("NOT_A_MINIDUMP_FILE");
     expect(isMinidump(invalid)).toBe(false);
   });

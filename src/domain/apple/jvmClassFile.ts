@@ -1,13 +1,12 @@
 /** Class-file identity used to disambiguate JVM CAFEBABE from Mach-O FAT. */
 
-export const MAX_JVM_CLASS_PROBE_BYTES = 64 * 1024;
+export const MAX_JVM_CLASS_PROBE_BYTES = 10 + 3 * (3 + 0xffff);
 
 export type JvmClassProbeState = "pending" | "matched" | "rejected";
 
 const isValidJvmVersion = (major: number, minor: number): boolean => {
   if (major < 45 || major > 100) return false;
-  if (major === 45) return true;
-  if (major < 56) return minor === 0;
+  if (major < 56) return true;
   return minor === 0 || minor === 65535;
 };
 

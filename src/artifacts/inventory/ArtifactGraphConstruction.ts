@@ -34,6 +34,7 @@ import {
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
 import { hasBoundedJvmClassFraming } from "../../domain/apple/jvmClassFile.js";
+import { isPythonBytecode } from "../../python/PythonBytecode.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -535,11 +536,6 @@ export const classifyArtifactContent = (
   return artifactRoleForFormat(path, format);
 };
 
-const hasPythonBytecodeMagic = (magic: number): boolean =>
-  (magic >= 3000 && magic <= 4000) ||
-  (magic >= 62000 && magic <= 63000) ||
-  (magic >= 20000 && magic <= 25000);
-
 const artifactRoleForFormat = (
   path: string,
   format: ArtifactOccurrence["artifact_format"],
@@ -633,13 +629,7 @@ export const classifyArtifactBytes = (
     prefix.subarray(257, 262).toString("ascii") === "ustar"
   )
     return "tar";
-  if (
-    prefix.length >= 4 &&
-    prefix[2] === 0x0d &&
-    prefix[3] === 0x0a &&
-    hasPythonBytecodeMagic(prefix.readUInt16LE(0))
-  )
-    return "python-bytecode";
+  if (isPythonBytecode(prefix)) return "python-bytecode";
   if (prefix.length >= 4) {
     const magic = prefix.readUInt32BE(0);
     if (magic === 0xcafebabe && hasBoundedJvmClassFraming(prefix))

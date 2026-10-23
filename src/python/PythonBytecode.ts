@@ -42,34 +42,25 @@ const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
   3627: "3.14",
 };
 
-const isEightByteHeader = (
-  magic: number,
-  major: number,
-  minor: number,
-): boolean =>
-  major === 2 ||
-  (major === 3 && minor < 3) ||
-  (Number.isNaN(major) && magic >= 3000 && magic < 3190);
+const isEightByteHeader = (major: number, minor: number): boolean =>
+  major === 2 || (major === 3 && minor < 3);
 
-const isTwelveByteHeader = (
-  magic: number,
-  major: number,
-  minor: number,
-): boolean =>
-  (major === 3 && minor >= 3 && minor < 7) ||
-  (Number.isNaN(major) && magic >= 3190 && magic < 3390);
+const isTwelveByteHeader = (major: number, minor: number): boolean =>
+  major === 3 && minor >= 3 && minor < 7;
 
-/** Verify if bytes begin with valid Python bytecode magic and CRLF framing. */
-export const isPythonBytecode = (bytes: Uint8Array): boolean => {
+const hasPythonMagicFraming = (bytes: Uint8Array): boolean => {
   if (bytes.length < 4) return false;
   // Pyc files end the 4-byte header prefix with \r\n (0x0d, 0x0a)
   if (bytes[2] !== 0x0d || bytes[3] !== 0x0a) return false;
   const magic = bytes[0]! | (bytes[1]! << 8);
-  return (
-    Object.hasOwn(PYTHON_MAGIC_VERSIONS, magic) ||
-    (magic >= 3000 && magic <= 4000)
-  );
+  return Object.hasOwn(PYTHON_MAGIC_VERSIONS, magic);
 };
+
+/** Verify if bytes begin with a structurally valid Python bytecode (.pyc) header. */
+export const isPythonBytecode = (bytes: Uint8Array): boolean =>
+  parsePythonBytecodeHeader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+  ) !== null;
 
 /** Identify Python release version from raw magic number. */
 export const resolvePythonVersion = (magic: number): string => {
@@ -82,7 +73,7 @@ export const resolvePythonVersion = (magic: number): string => {
 export const parsePythonBytecodeHeader = (
   bytes: Buffer,
 ): PythonBytecodeMetadata | null => {
-  if (!isPythonBytecode(bytes)) return null;
+  if (!hasPythonMagicFraming(bytes)) return null;
 
   const magic = bytes.readUInt16LE(0);
   const version = resolvePythonVersion(magic);
@@ -91,7 +82,7 @@ export const parsePythonBytecodeHeader = (
   const minor = Number(minorStr);
 
   // Python 2.x and Python 3.0 to 3.2: 4-byte magic + 4-byte timestamp = 8 bytes
-  if (isEightByteHeader(magic, major, minor)) {
+  if (isEightByteHeader(major, minor)) {
     if (bytes.length < 8) return null;
     const timestampSec = bytes.readUInt32LE(4);
     return {
@@ -104,7 +95,7 @@ export const parsePythonBytecodeHeader = (
   }
 
   // Python 3.3 to 3.6: 4-byte magic + 4-byte timestamp + 4-byte size = 12 bytes
-  if (isTwelveByteHeader(magic, major, minor)) {
+  if (isTwelveByteHeader(major, minor)) {
     if (bytes.length < 12) return null;
     const timestampSec = bytes.readUInt32LE(4);
     const sourceSize = bytes.readUInt32LE(8);
@@ -121,6 +112,9 @@ export const parsePythonBytecodeHeader = (
   // Python 3.7+ (PEP 552): 4-byte magic + 4-byte bitfield + 8-byte hash/timestamp + 4-byte size = 16 bytes
   if (bytes.length < 16) return null;
   const bitfield = bytes.readUInt32LE(4);
+  if ((bitfield & ~0x03) !== 0 || bitfield === 0x02) {
+    return null;
+  }
   const isHashBased = (bitfield & 0x01) !== 0;
 
   if (isHashBased) {
@@ -205,7 +199,7 @@ export const buildPythonBytecodeHeader = (
   const sourceSize = options?.sourceSize ?? 0;
 
   // Python 2.x and Python 3.0 to 3.2: 8 bytes
-  if (isEightByteHeader(magic, major, minor)) {
+  if (isEightByteHeader(major, minor)) {
     const header = Buffer.alloc(8);
     header.writeUInt16LE(magic, 0);
     header[2] = 0x0d;
@@ -215,7 +209,7 @@ export const buildPythonBytecodeHeader = (
   }
 
   // Python 3.3 to 3.6: 12 bytes
-  if (isTwelveByteHeader(magic, major, minor)) {
+  if (isTwelveByteHeader(major, minor)) {
     const header = Buffer.alloc(12);
     header.writeUInt16LE(magic, 0);
     header[2] = 0x0d;

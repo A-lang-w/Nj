@@ -19,39 +19,9 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 
-/** Extract original filename from GZIP header flags (RFC 1952) if present. */
-const readGzipOriginalFilename = (
-  prefix: Buffer,
-  fallbackPath: string,
-): string => {
-  if (prefix.length >= 10 && prefix[0] === 0x1f && prefix[1] === 0x8b) {
-    const flags = prefix[3] ?? 0;
-    // Bit 3 is FNAME
-    if ((flags & 0x08) !== 0) {
-      let offset = 10;
-      // If FEXTRA is set, skip extra field
-      if ((flags & 0x04) !== 0 && prefix.length >= 12) {
-        const xlen = prefix.readUInt16LE(10);
-        offset = 12 + xlen;
-      }
-      if (offset < prefix.length) {
-        const nullByte = prefix.indexOf(0, offset);
-        const name =
-          nullByte > offset
-            ? prefix.subarray(offset, nullByte).toString("latin1")
-            : "";
-        if (
-          name.length > 0 &&
-          name !== "." &&
-          name !== ".." &&
-          !name.includes("/") &&
-          !name.includes("\\")
-        ) {
-          return name;
-        }
-      }
-    }
-  }
+const MAX_GZIP_FNAME_BYTES = 4_096;
+
+const deriveFallbackFilename = (fallbackPath: string): string => {
   const base = basename(fallbackPath);
   if (base.toLowerCase().endsWith(".gz")) {
     const stem = base.slice(0, -3);
@@ -63,6 +33,97 @@ const readGzipOriginalFilename = (
   return base.length > 0 && base !== "." && base !== ".."
     ? `${base}.unpacked`
     : "decompressed_payload";
+};
+
+const isSafeGzipFilename = (name: string): boolean =>
+  name.length > 0 &&
+  name !== "." &&
+  name !== ".." &&
+  !name.includes("/") &&
+  !name.includes("\\");
+
+/** Extract original filename from GZIP header flags (RFC 1952) if present. */
+const resolveGzipOriginalFilename = async (
+  handle: FileHandle,
+  size: number,
+  fallbackPath: string,
+): Promise<{
+  readonly path: string;
+  readonly limitations: readonly string[];
+}> => {
+  const fallback = deriveFallbackFilename(fallbackPath);
+  if (size < 10) {
+    return { path: fallback, limitations: [] };
+  }
+  const headerBuf = Buffer.alloc(Math.min(512, size));
+  const headerRead = await handle.read(headerBuf, 0, headerBuf.length, 0);
+  const prefix = headerBuf.subarray(0, headerRead.bytesRead);
+  if (prefix.length < 10 || prefix[0] !== 0x1f || prefix[1] !== 0x8b) {
+    return { path: fallback, limitations: [] };
+  }
+  const flags = prefix[3] ?? 0;
+  // Bit 3 is FNAME
+  if ((flags & 0x08) === 0) {
+    return { path: fallback, limitations: [] };
+  }
+
+  let fnameOffset = 10;
+  // If FEXTRA is set, skip extra field
+  if ((flags & 0x04) !== 0) {
+    if (prefix.length < 12) {
+      return {
+        path: fallback,
+        limitations: [
+          "GZIP FEXTRA header is truncated before FNAME; substituted carrier-derived filename.",
+        ],
+      };
+    }
+    const xlen = prefix.readUInt16LE(10);
+    fnameOffset = 12 + xlen;
+  }
+
+  if (fnameOffset >= size) {
+    return {
+      path: fallback,
+      limitations: [
+        "GZIP FNAME offset exceeds archive size; substituted carrier-derived filename.",
+      ],
+    };
+  }
+
+  let fnameSlice: Buffer;
+  const nullInPrefix =
+    fnameOffset < prefix.length ? prefix.indexOf(0, fnameOffset) : -1;
+  if (nullInPrefix >= fnameOffset) {
+    fnameSlice = prefix.subarray(fnameOffset, nullInPrefix + 1);
+  } else {
+    const readLen = Math.min(MAX_GZIP_FNAME_BYTES, size - fnameOffset);
+    const fnameBuf = Buffer.alloc(readLen);
+    const fnameRead = await handle.read(fnameBuf, 0, readLen, fnameOffset);
+    fnameSlice = fnameBuf.subarray(0, fnameRead.bytesRead);
+  }
+
+  const nullByte = fnameSlice.indexOf(0);
+  if (nullByte === -1) {
+    return {
+      path: fallback,
+      limitations: [
+        "GZIP FNAME header is unterminated or exceeds bound; substituted carrier-derived filename.",
+      ],
+    };
+  }
+
+  const name = fnameSlice.subarray(0, nullByte).toString("latin1");
+  if (!isSafeGzipFilename(name)) {
+    return {
+      path: fallback,
+      limitations: [
+        "GZIP FNAME header contains an unsafe or empty path; substituted carrier-derived filename.",
+      ],
+    };
+  }
+
+  return { path: name, limitations: [] };
 };
 
 /** Single-stream decompression reader for GZIP archives. */
@@ -128,17 +189,8 @@ export class GzipArtifactReader implements ArtifactReader {
     }
     if (this.cachedEntry === null) {
       const { handle, size } = await this.ensureOpen(signal);
-      const prefix = Buffer.alloc(512);
-      const readResult = await handle.read(
-        prefix,
-        0,
-        Math.min(prefix.length, size),
-        0,
-      );
-      const innerName = readGzipOriginalFilename(
-        prefix.subarray(0, readResult.bytesRead),
-        this.path,
-      );
+      const { path: innerName, limitations } =
+        await resolveGzipOriginalFilename(handle, size, this.path);
 
       this.cachedEntry = {
         path: innerName,
@@ -150,7 +202,7 @@ export class GzipArtifactReader implements ArtifactReader {
         byteOffset: null,
         declaredIntegrity: null,
         unpacked: false,
-        limitations: [],
+        limitations,
         adapterKey: this.path,
       };
     }
@@ -159,7 +211,10 @@ export class GzipArtifactReader implements ArtifactReader {
         cancellation: { reason: signal.reason },
       });
     }
-    options?.onCoverage?.({ status: "complete", limitations: [] });
+    options?.onCoverage?.({
+      status: "complete",
+      limitations: [...this.cachedEntry.limitations],
+    });
     yield copyArtifactEntry(this.cachedEntry);
   }
 

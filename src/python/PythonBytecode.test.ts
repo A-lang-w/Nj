@@ -7,11 +7,14 @@ import {
   resolvePythonVersion,
 } from "./PythonBytecode.js";
 
-describe("PythonBytecode", () => {
+describe("PythonBytecode - magic and version resolution", () => {
   it("detects valid Python bytecode magic bytes and framing", () => {
-    // 3439 (0x0d6f) -> [0x6f, 0x0d, 0x0d, 0x0a]
-    const py310 = Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]);
+    const py310 = buildPythonBytecodeHeader(3439, { sourceSize: 128 });
     expect(isPythonBytecode(py310)).toBe(true);
+
+    // 4-byte magic without full 16-byte PEP 552 header is rejected
+    const magicOnly = Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]);
+    expect(isPythonBytecode(magicOnly)).toBe(false);
 
     const invalidFraming = Buffer.from([0x6f, 0x0d, 0x00, 0x00]);
     expect(isPythonBytecode(invalidFraming)).toBe(false);
@@ -38,7 +41,9 @@ describe("PythonBytecode", () => {
     expect(resolveMagicFromVersion("3.12.1")).toBe(3531);
     expect(resolveMagicFromVersion("nonexistent")).toBeNull();
   });
+});
 
+describe("PythonBytecode - header building and parsing", () => {
   it("builds and parses Python 2.7 bytecode headers (8 bytes)", () => {
     const timestamp = new Date(1600000000000);
     const header = buildPythonBytecodeHeader("2.7", { timestamp });
@@ -162,5 +167,19 @@ describe("PythonBytecode", () => {
     expect(() => buildPythonBytecodeHeader("unknown_version")).toThrow(
       /Unsupported or unknown Python bytecode version/,
     );
+  });
+
+  it("rejects Python 3.7+ headers with reserved PEP 552 bitfield values", () => {
+    const reservedBit = buildPythonBytecodeHeader(3439, { sourceSize: 64 });
+    reservedBit.writeUInt32LE(0x04, 4);
+    expect(parsePythonBytecodeHeader(reservedBit)).toBeNull();
+    expect(isPythonBytecode(reservedBit)).toBe(false);
+
+    const checkSourceWithoutHash = buildPythonBytecodeHeader(3439, {
+      sourceSize: 64,
+    });
+    checkSourceWithoutHash.writeUInt32LE(0x02, 4);
+    expect(parsePythonBytecodeHeader(checkSourceWithoutHash)).toBeNull();
+    expect(isPythonBytecode(checkSourceWithoutHash)).toBe(false);
   });
 });

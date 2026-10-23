@@ -5,7 +5,11 @@ import {
   resolvePythonVersion,
 } from "./PythonBytecode.js";
 import { readMarshalSubset } from "../artifacts/pyinstaller/MarshalSubset.js";
-import { isCArchiveDeclaration } from "../artifacts/pyinstaller/CArchiveLayout.js";
+import {
+  isCArchiveDeclaration,
+  MAX_TOC_BYTES,
+  MAX_TOC_ENTRIES,
+} from "../artifacts/pyinstaller/CArchiveLayout.js";
 import { MAX_PYZ_TABLE_BYTES } from "../artifacts/pyinstaller/PyzArchive.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 
@@ -140,6 +144,7 @@ export const parsePyInstallerArchive = (
 
   const absoluteTocOffset = carchiveOffset + cookie.tocOffset;
   if (
+    cookie.tocLength > MAX_TOC_BYTES ||
     absoluteTocOffset < 0 ||
     absoluteTocOffset + cookie.tocLength > buffer.length
   ) {
@@ -154,6 +159,9 @@ export const parsePyInstallerArchive = (
     currentOffset + 18 <= endOffset &&
     currentOffset + 18 <= buffer.length
   ) {
+    if (tocEntries.length >= MAX_TOC_ENTRIES) {
+      return null;
+    }
     const entryStructLen = buffer.readUInt32BE(currentOffset);
     if (
       entryStructLen < 18 ||

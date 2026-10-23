@@ -45,7 +45,7 @@ export interface PeFormatReport {
   readonly dataDirectories: readonly PeDataDirectory[];
   readonly richHeader?: PeRichHeader | undefined;
   readonly authenticode?: PeAuthenticodeInfo | undefined;
-  readonly overallEntropy: number;
+  readonly overallEntropy?: number | undefined;
 }
 
 const MACHINE_NAMES: Readonly<Record<number, string>> = {
@@ -140,13 +140,13 @@ const parseDataDirectories = (
   return { directories, authenticode: certInfo };
 };
 
-const MAX_TOTAL_SECTION_SCAN_BYTES = 64 * 1024 * 1024; // 64 MiB budget
+export const MAX_TOTAL_SECTION_SCAN_BYTES = 64 * 1024 * 1024; // 64 MiB budget
 
 const parseSections = (
   buffer: Buffer,
   sectionsOffset: number,
   numberOfSections: number,
-): PeSectionInfo[] => {
+): { sections: PeSectionInfo[]; scannedBytes: number } => {
   const sections: PeSectionInfo[] = [];
   const entropyCache = new Map<string, number>();
   let totalScannedBytes = 0;
@@ -203,7 +203,7 @@ const parseSections = (
     });
   }
 
-  return sections;
+  return { sections, scannedBytes: totalScannedBytes };
 };
 
 /** Deep-inspect Windows PE executable (PE32 / PE32+) structures, entropy, and telemetry. */
@@ -266,7 +266,15 @@ export const inspectPeFormat = (buffer: Buffer): PeFormatReport | null => {
   );
 
   const sectionsOffset = optionalHeaderOffset + sizeOfOptionalHeader;
-  const sections = parseSections(buffer, sectionsOffset, numberOfSections);
+  const { sections, scannedBytes } = parseSections(
+    buffer,
+    sectionsOffset,
+    numberOfSections,
+  );
+  const overallEntropy =
+    scannedBytes + buffer.length <= MAX_TOTAL_SECTION_SCAN_BYTES
+      ? Number(calculateShannonEntropy(buffer).toFixed(3))
+      : undefined;
 
   return {
     machine:
@@ -284,6 +292,6 @@ export const inspectPeFormat = (buffer: Buffer): PeFormatReport | null => {
     dataDirectories,
     richHeader: parsePeRichHeader(buffer) ?? undefined,
     authenticode,
-    overallEntropy: Number(calculateShannonEntropy(buffer).toFixed(3)),
+    overallEntropy,
   };
 };

@@ -521,12 +521,43 @@ describe("extended artifact signature classification", () => {
       format: "jvm-class",
     });
 
-    // Java 1.1 (45.3) class file with non-zero minor version
+    // Java 1.1 (45.3) and Java 8 (52.3) class files with non-zero minor versions
     const java11Prefix = Buffer.from(prefix);
     java11Prefix.writeUInt16BE(3, 4); // minor = 3
     java11Prefix.writeUInt16BE(45, 6); // major = 45 (Java 1.1)
     expect(
       classifyArtifactBytesAtPath("Legacy11.class", java11Prefix, 65536),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    const java8MinorPrefix = Buffer.from(prefix);
+    java8MinorPrefix.writeUInt16BE(3, 4); // minor = 3
+    java8MinorPrefix.writeUInt16BE(52, 6); // major = 52 (Java 8)
+    expect(
+      classifyArtifactBytesAtPath("Java8Minor.class", java8MinorPrefix, 65536),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    // Maximal 65,535-byte CONSTANT_Utf8 in first entry (> 64 KiB)
+    const maxUtf8Class = Buffer.alloc(10 + 3 + 0xffff + 3);
+    maxUtf8Class.writeUInt32BE(0xcafebabe, 0);
+    maxUtf8Class.writeUInt16BE(0, 4);
+    maxUtf8Class.writeUInt16BE(61, 6);
+    maxUtf8Class.writeUInt16BE(3, 8); // 2 entries
+    maxUtf8Class[10] = 1; // CONSTANT_Utf8
+    maxUtf8Class.writeUInt16BE(0xffff, 11);
+    maxUtf8Class[13 + 0xffff] = 7; // CONSTANT_Class
+    maxUtf8Class.writeUInt16BE(1, 14 + 0xffff);
+    expect(
+      classifyArtifactBytesAtPath(
+        "MaxUtf8.class",
+        maxUtf8Class,
+        maxUtf8Class.length,
+      ),
     ).toEqual({
       kind: "executable",
       format: "jvm-class",

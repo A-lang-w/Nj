@@ -175,11 +175,11 @@ export const createArtifactClassificationProbe = (
         const limit =
           retainedBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES
             ? ARTIFACT_CLASSIFICATION_PREFIX_BYTES
-            : xml.state === "pending"
-              ? MAX_XML_PLIST_PROBE_BYTES
-              : jvm.state === "pending"
-                ? MAX_JVM_CLASS_PROBE_BYTES
-                : retainedBytes;
+            : Math.max(
+                retainedBytes,
+                xml.state === "pending" ? MAX_XML_PLIST_PROBE_BYTES : 0,
+                jvm.state === "pending" ? MAX_JVM_CLASS_PROBE_BYTES : 0,
+              );
         if (retainedBytes >= limit) break;
         const selected = bytes.subarray(
           offset,

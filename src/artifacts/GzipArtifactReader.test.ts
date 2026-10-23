@@ -60,4 +60,72 @@ describe("GzipArtifactReader", () => {
     await reader.close();
     await rm(tempDir, { recursive: true, force: true });
   });
+
+  it("extracts FNAME when preceded by a large FEXTRA field exceeding 512 bytes", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "rea-gzip-fextra-test-"));
+    const gzipPath = join(tempDir, "carrier.gz");
+    const baseCompressed = gzipSync(Buffer.from("inner payload"));
+    const extraLen = 1024;
+    const extraField = Buffer.alloc(2 + extraLen, 0x41);
+    extraField.writeUInt16LE(extraLen, 0);
+    const fname = Buffer.from("embedded_payload.bin\0", "latin1");
+
+    const header = Buffer.from(baseCompressed.subarray(0, 10));
+    header[3] = 0x04 | 0x08; // FEXTRA | FNAME
+    const customGzip = Buffer.concat([
+      header,
+      extraField,
+      fname,
+      baseCompressed.subarray(10),
+    ]);
+    await writeFile(gzipPath, customGzip);
+
+    const reader = new GzipArtifactReader(gzipPath);
+    const entries = [];
+    for await (const entry of reader.entries()) {
+      entries.push(entry);
+    }
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.path).toBe("embedded_payload.bin");
+    expect(entries[0]!.limitations).toEqual([]);
+
+    await reader.close();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("records a limitation and partial coverage when FNAME is unsafe or unterminated", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "rea-gzip-unsafe-fname-"));
+    const gzipPath = join(tempDir, "archive.gz");
+    const baseCompressed = gzipSync(Buffer.from("inner payload"));
+    const header = Buffer.from(baseCompressed.subarray(0, 10));
+    header[3] = 0x08; // FNAME
+    const unsafeFname = Buffer.from("../evil.bin\0", "latin1");
+    await writeFile(
+      gzipPath,
+      Buffer.concat([header, unsafeFname, baseCompressed.subarray(10)]),
+    );
+
+    const reader = new GzipArtifactReader(gzipPath);
+    const coverages: unknown[] = [];
+    const entries = [];
+    for await (const entry of reader.entries(undefined, {
+      onCoverage: (cov) => coverages.push(cov),
+    })) {
+      entries.push(entry);
+    }
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.path).toBe("archive");
+    expect(entries[0]!.limitations[0]).toMatch(/unsafe or empty path/);
+    expect(coverages).toEqual([
+      {
+        status: "complete",
+        limitations: entries[0]!.limitations,
+      },
+    ]);
+
+    await reader.close();
+    await rm(tempDir, { recursive: true, force: true });
+  });
 });

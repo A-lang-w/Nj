@@ -457,4 +457,14 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
       /contradicts declared uncompressed length/,
     );
   });
+
+  it("rejects CArchive cookies whose declared tocLength exceeds MAX_TOC_BYTES", () => {
+    const cookie = Buffer.alloc(88);
+    PYINSTALLER_MAGIC.copy(cookie, 0);
+    cookie.writeUInt32BE(88, 8);
+    cookie.writeUInt32BE(0, 12);
+    cookie.writeUInt32BE(32 * 1024 * 1024 + 1, 16); // > MAX_TOC_BYTES
+    cookie.writeInt32BE(310, 20);
+    expect(parsePyInstallerArchive(cookie)).toBeNull();
+  });
 });
