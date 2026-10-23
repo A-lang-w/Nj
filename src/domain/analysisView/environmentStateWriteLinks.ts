@@ -7,6 +7,7 @@ import {
   isParam,
   lastSegmentValue,
   listItems,
+  locateItem,
   locateList,
   normalizedPath,
   pathSegmentMatches,
@@ -103,13 +104,20 @@ const listedIds = (body: JsonValue | undefined): Set<string> => {
   ]);
 };
 
-/** The ids a read shows: its listed entities' for a list read, or its path's id for an item read. */
+/** Whether an item read's body shows the entity its path names, not an absence such as JSON null. */
+const showsItem = (body: JsonValue | undefined, id: string): boolean =>
+  body !== undefined && body !== null && locateItem(body, id) !== undefined;
+
+/** The ids a read shows: its listed entities' for a list read, or its path's id for an item read that shows the item. */
 const shownIds = (
   record: StateRecordFacts,
   item: boolean,
   body: () => JsonValue | undefined,
-): Set<string> =>
-  item ? new Set([lastSegmentValue(record.path)]) : listedIds(body());
+): Set<string> => {
+  if (!item) return listedIds(body());
+  const id = lastSegmentValue(record.path);
+  return showsItem(body(), id) ? new Set([id]) : new Set();
+};
 
 /** One read of a type: where it ran, when it finished, whether it reads one item, and the ids it shows. */
 interface ShownRead {
@@ -245,6 +253,7 @@ export const linkedCreate = (input: {
   readonly entities: readonly StateEntity[];
   readonly respondedIds: (ordinal: number) => readonly string[];
   readonly shownIds: (ordinal: number) => ReadonlySet<string>;
+  readonly showsItem: (ordinal: number, id: string) => boolean;
 }): { readonly type: string; readonly collection: string } | undefined => {
   const { tool, records } = input;
   const own = new Set(tool.record_ordinals);
@@ -259,13 +268,6 @@ export const linkedCreate = (input: {
   const before = records
     .slice(0, first)
     .filter((record) => record.end <= post.start);
-  for (const record of before)
-    if (
-      record.method === "GET" &&
-      succeeded(record) &&
-      ids.has(lastSegmentValue(record.path))
-    )
-      return undefined;
   for (const record of records.slice(first + 1)) {
     // Another write may have made what a later read shows, so the search ends there.
     if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
@@ -279,7 +281,21 @@ export const linkedCreate = (input: {
       continue;
     const id = lastSegmentValue(record.path);
     const collection = collectionPathOf(record, true);
+    // An earlier read of the id under another type or collection names another entity.
+    const readBefore = before.some((earlier) => {
+      const read = input.viewOf(earlier.ordinal);
+      return (
+        earlier.method === "GET" &&
+        succeeded(earlier) &&
+        lastSegmentValue(earlier.path) === id &&
+        ((read?.shape === "item" && read.type === view.type) ||
+          normalizedPath(collectionPathOf(earlier, true)) ===
+            normalizedPath(collection)) &&
+        input.showsItem(earlier.ordinal, id)
+      );
+    });
     const held =
+      readBefore ||
       input.entities.some(
         (entity) => entity.type === view.type && entity.id === id,
       ) ||
@@ -395,6 +411,8 @@ export const linkedTarget = (
           entities: input.entities,
           respondedIds: (ordinal) => input.io.withBody(ordinal, respondedIds),
           shownIds: (ordinal) => input.io.withBody(ordinal, listedIds),
+          showsItem: (ordinal, id) =>
+            input.io.withBody(ordinal, (body) => showsItem(body, id)),
         })
       : undefined;
   return link === undefined

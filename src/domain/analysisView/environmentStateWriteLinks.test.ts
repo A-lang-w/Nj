@@ -140,6 +140,41 @@ describe("creation limits", () => {
     ).toBeUndefined();
   });
 
+  it("counts no id an item read answered with JSON null, the absence the gate accepts, as shown", () => {
+    const item = record(0, "GET", "/api/projects/proj-0002");
+    const post = record(1, "POST", "/api/imports");
+    const later = record(2, "GET", "/api/projects");
+    const bodies = new Map<number, JsonValue>([
+      [0, null],
+      [2, [{ id: "proj-0001" }, { id: "proj-0002" }]],
+    ]);
+    const limit = creationLimit(
+      [{ record: post, ids: ["proj-0002"] }],
+      {
+        type: "/api/projects",
+        tools: [
+          {
+            name: "get_projects_by_id",
+            method: "GET",
+            path_template: "/api/projects/{id}",
+            record_ordinals: [0],
+          },
+          {
+            name: "get_projects",
+            method: "GET",
+            path_template: "/api/projects",
+            record_ordinals: [2],
+          },
+        ],
+        records: new Map([item, post, later].map((at) => [at.ordinal, at])),
+        position: (at) => at.ordinal,
+        body: (ordinal) => bodies.get(ordinal),
+      },
+      undefined,
+    );
+    expect(limit).toBe(post);
+  });
+
   it("reads the ids a list shows from its listed entities, not the entities they nest", () => {
     const [list, post, later] = [
       record(0, "GET", "/api/projects"),

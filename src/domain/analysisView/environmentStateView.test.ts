@@ -928,6 +928,33 @@ const allowance = (parent: AnalysisViewParent): number => {
   return high * 1024;
 };
 
+it("counts the member names of later item lines against the budget before keeping them", () => {
+  const reads = 20;
+  // Each later read of an item names members its initial reads never did, `width` characters long.
+  const capture = (width: number) =>
+    captureOf([
+      ["GET", "/api/items/1", { id: 1, name: "One" }],
+      ["POST", "/api/items", { id: 2, name: "Two" }, 201, { name: "Two" }],
+      ...Array.from({ length: reads }, (_, read): TimedCaptureRow => [
+        "GET",
+        `/api/items/1?expand=meta&view=${String(read)}`,
+        {
+          id: 1,
+          name: "One",
+          ...Object.fromEntries(
+            Array.from({ length: 5 }, (_, member) => [
+              `${String(read)}_${String(member)}_`.padEnd(width, "m"),
+              1,
+            ]),
+          ),
+        },
+      ]),
+    ]);
+  expect(
+    allowance(capture(400)) - allowance(capture(10)),
+  ).toBeGreaterThanOrEqual((reads * 5 * 390 * 14) / 2);
+});
+
 it("counts each change of a line's membership across a write against the budget", () => {
   const tags = 64;
   // Each tag's list is read three times across two writes; the third read shows the first book again or keeps the second.

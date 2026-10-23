@@ -128,7 +128,9 @@ or more), and the first later successful item read naming that id belongs to a
 state type. That read must come before any other tool's write, which may have
 made what it shows, as a publish call makes a note from a draft. The entity must
 be new: neither the initial state nor any read finished before the call began
-holds that id (one still running may show what the call made), whether an
+holds that id (one still running may show what the call made): an item read of
+it under the item read's type or collection whose body shows the item (a JSON
+`null` is an absence), a list read of its type, or any read of that collection, whether an
 item read of it, a list read of its type, or any read of the item read's
 collection, with or without a query, that lists it under an identity member of
 its own (a body with no list counts an identity member at any depth). An id shorter than four characters may be any type's,

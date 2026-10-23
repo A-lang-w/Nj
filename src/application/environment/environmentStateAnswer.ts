@@ -329,9 +329,11 @@ const answerItem = (
   // A projection or another representation of an entity the state holds replays as the capture's reads did.
   const replayed = replayedCall(source, view, callQuery(tool, args));
   if (entity === undefined) {
-    // An item only a replayed line showed, which the state never started with, answers with its own recording.
+    // An item only a replayed line showed, which the state never held, answers with its own recording; a created
+    // item may since have been deleted, so a type a served create added to keeps the missing answer.
     if (
       replayed !== undefined &&
+      !store.createdInto(view.type) &&
       !startedWithItem(store, view.type, call) &&
       selectReplayExchange(tool, source.exchanges, args, observedQuery)
         ?.exact === true

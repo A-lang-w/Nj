@@ -31,7 +31,9 @@ later increments.
   more) that the type's reads show only once it began: the `POST` made that
   entity, so it is not in the initial state. A read finished before the `POST`
   began shows what was there, and one still running may show its effect. A list
-  read shows the ids its listed entities carry as their own identity members, and
+  read shows the ids its listed entities carry as their own identity members, an
+  item read its path's id only when its body shows the item (a JSON `null` shows
+  none), and
   across two or more of them, when no id-named field (`id`, `uuid`, …; not `key`,
   `slug` or `name`) identifies them, the first suffix-named field (`projectId`)
   distinct on each, so a foreign key beside an `id` is none of theirs, nor are the
