@@ -22,7 +22,8 @@ const directoryHandle = (items: readonly (string | Error | null)[]): Dir => {
       if (item instanceof Error) throw item;
       return item === null || item === undefined
         ? null
-        : ({ name: item } as Dirent);
+        : // Production requests encoding: "buffer" to preserve filename identity.
+          ({ name: Buffer.from(item, "utf8") } as unknown as Dirent);
     },
     async close() {},
   } as unknown as Dir;
