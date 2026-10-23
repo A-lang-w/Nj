@@ -3059,7 +3059,8 @@ export class AdbProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const started = Date.now();
+    // Monotonic: a host clock correction must not stretch or cut the caller's timeout_ms.
+    const started = performance.now();
     let probes = 0;
     let lastError: string | null = null;
     let properties: [string | null, string | null, string | null] = [
@@ -3069,7 +3070,7 @@ export class AdbProvider {
     ];
     for (;;) {
       probes += 1;
-      const probeBudget = input.timeout_ms - (Date.now() - started);
+      const probeBudget = input.timeout_ms - (performance.now() - started);
       const ran = await runAdb(
         operation,
         { device: input.serial },
@@ -3106,7 +3107,7 @@ export class AdbProvider {
           lastError = null;
         } else lastError = `unrecognized boot probe output: ${line}`;
       }
-      const waited = Date.now() - started;
+      const waited = Math.round(performance.now() - started);
       const completed = properties[0] === "1";
       // Probe once more at the deadline instead of stopping a full interval early.
       const remaining = input.timeout_ms - waited;
