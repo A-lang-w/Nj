@@ -78,6 +78,8 @@ import {
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
 import { GoBinaryProvider } from "../../src/go/GoBinaryProvider.js";
+import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
+import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
@@ -303,6 +305,30 @@ it.each(staticProviders)(
     }
   },
 );
+it("clears the Python pyc cleanup flag once a retained descriptor closes", async () => {
+  const path = await selectedImage();
+  const provider = new PythonPycProvider();
+  const primary = new ArtifactReaderFailure(
+    "integrity",
+    "controlled source replacement",
+  );
+  fault.readFailure = { cause: primary };
+  try {
+    const result = await provider.inspect(
+      inspectPythonPycInputSchema.parse({ path }),
+    );
+    if (result.ok)
+      throw new Error("Expected primary failure and retained descriptor");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    fault.blocked.clear();
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    fault.blocked.clear();
+    await provider.close();
+  }
+});
+
 afterEach(async () => {
   fault.blockNew = false;
   fault.blocked.clear();
@@ -676,6 +702,7 @@ const fileFailureProviders = [
   ["PE certificates", () => new PeCertificatesProvider()],
   ["native exports", () => new NativeExportsProvider()],
   ["BEAM", () => new BeamProvider()],
+  ["Python pyc", () => new PythonPycProvider()],
 ] as const;
 
 const inspectFileFailure = (
@@ -684,6 +711,11 @@ const inspectFileFailure = (
   signal?: AbortSignal,
 ) => {
   const options = signal === undefined ? undefined : { signal };
+  if (provider instanceof PythonPycProvider)
+    return provider.inspect(
+      inspectPythonPycInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof ElfNotesProvider)
     return provider.inspect(
       inspectElfNotesInputSchema.parse({ path }),
@@ -817,6 +849,42 @@ it.each(
       fault.blocked.clear();
       await provider.close();
       await scope.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves a pyc permission failure through late cancellation (failed close: %s)",
+  async (failedClose) => {
+    const path = await selectedImage();
+    const provider = new PythonPycProvider();
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("pyc descriptor stat denied"), {
+      code: "EACCES",
+    });
+    fault.blockNew = failedClose;
+    fault.readFailure = { cause: physical };
+    fault.onClose = () => controller.abort(physical);
+    try {
+      const result = await provider.inspect(
+        inspectPythonPycInputSchema.parse({ path }),
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected physical read failure");
+      const primary = result.error.cleanupPrimary ?? result.error;
+      expect(primary).toBeInstanceOf(AnalysisAccessDeniedError);
+      expect(primary.cause).toBe(physical);
+      expect(result.error.cleanupIncomplete).toBe(failedClose);
+      expect(fault.handles).toHaveLength(1);
+      expect(fault.handles[0]!.fd >= 0).toBe(failedClose);
+      fault.blocked.clear();
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(fault.handles[0]!.fd).toBe(-1);
+    } finally {
+      fault.onClose = undefined;
+      fault.blocked.clear();
+      await provider.close();
     }
   },
 );

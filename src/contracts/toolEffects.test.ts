@@ -35,6 +35,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_go_binary: "reads embedded metadata without executing the target",
   inspect_rust_binary:
     "reads an embedded dependency list without executing the target",
+  inspect_python_pyc:
+    "states that it does not execute bytecode or invoke CPython",
   inspect_erlang_beam: "states that it does not execute bytecode",
   inspect_sqlite_database:
     "uses a trusted inspector worker without executing application code or caller SQL",
@@ -99,6 +101,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_adb_package: "reports install times without changing the device",
   list_adb_processes: "lists running processes without changing the device",
   inspect_web_event_listeners: "states it does not evaluate JavaScript",
+  inspect_apk_signature: "states that no Android code executes",
 };
 
 const declaresForeignAuthority = (name: string): boolean => {
