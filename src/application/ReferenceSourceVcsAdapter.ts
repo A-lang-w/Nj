@@ -391,10 +391,32 @@ const readOwnedMetadataBytes = async (
 // Loose symbolic refs have a different grammar from directory pointers:
 // `ref:` allows Git's SP/TAB/CR/LF padding around the target, while Unicode
 // whitespace remains part of the ref name. VT and FF are not Git whitespace.
-const parseGitSymbolicRef = (record: string): string | undefined =>
-  record.startsWith("ref:")
-    ? record.slice(4).replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "")
-    : undefined;
+const parseGitSymbolicRef = (record: string): string | undefined => {
+  if (!record.startsWith("ref:")) return undefined;
+  const ref = record.slice(4).replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
+  // Symbolic targets are exact full refs, not revision expressions. The
+  // dependency's resolver accepts shorthands and normalized filesystem paths;
+  // validate Git's ref-name grammar before allowing either form of lookup.
+  if (
+    !ref.startsWith("refs/") ||
+    // Git's ref-name grammar explicitly excludes ASCII control bytes.
+    // eslint-disable-next-line no-control-regex
+    /[\x00-\x20\x7f~^:?*[\\]/u.test(ref) ||
+    ref.includes("..") ||
+    ref.includes("@{") ||
+    ref.endsWith(".") ||
+    ref
+      .split("/")
+      .some(
+        (component) =>
+          component === "" ||
+          component.startsWith(".") ||
+          component.endsWith(".lock"),
+      )
+  )
+    throw new Error("Invalid Git symbolic ref target");
+  return ref;
+};
 
 const resolveSourceHead = async (
   metadata: GitMetadataIdentity,
@@ -484,6 +506,8 @@ const resolveSourceHead = async (
           // Leading record whitespace is invalid; only trailing Git ASCII
           // whitespace can be discarded before the record is interpreted.
           const text = decodeGitMetadataRecord(bytes);
+          // Ordinary HEAD and recursive loose refs share the same target parser.
+          parseGitSymbolicRef(text);
           if (text.trim() !== text.replace(/[ \t\r\n]+$/u, ""))
             throw new Error("Git ref identity cannot be preserved");
           return encoding === "utf8" || encoding === "utf-8"

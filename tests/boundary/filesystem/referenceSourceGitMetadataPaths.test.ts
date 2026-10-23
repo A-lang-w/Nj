@@ -628,3 +628,97 @@ describe.skipIf(process.platform === "win32")(
     );
   },
 );
+
+describe.skipIf(process.platform === "win32")(
+  "reference source symbolic ref target grammar",
+  () => {
+    it.each([
+      { form: "tab-separated short name", target: "main", separator: "\t" },
+      { form: "unseparated short name", target: "main", separator: "" },
+      { form: "space-separated short name", target: "main", separator: " " },
+      { form: "SHA target", target: "HEAD_OID", separator: "\t" },
+      { form: "partial namespace", target: "heads/main", separator: "\t" },
+      { form: "duplicate slash", target: "refs/heads//main", separator: "\t" },
+      {
+        form: "parent traversal",
+        target: "refs/heads/../heads/main",
+        separator: "",
+      },
+      { form: "dot component", target: "refs/heads/.hidden", separator: " " },
+      { form: "lock suffix", target: "refs/heads/target.lock", separator: " " },
+      { form: "trailing dot", target: "refs/heads/target.", separator: " " },
+      { form: "double dot", target: "refs/heads/tar..get", separator: " " },
+      {
+        form: "reflog syntax",
+        target: "refs/heads/target@{1}",
+        separator: " ",
+      },
+      { form: "embedded space", target: "refs/heads/tar get", separator: " " },
+      { form: "backslash", target: "refs/heads/ta\\rget", separator: " " },
+    ])(
+      "keeps a linked $form unknown without losing ignoreCase",
+      async ({ target, separator }) => {
+        const repository = await fixture("linked", "metadata");
+        const { root, gitdir, common, git, initialHead } = repository;
+        const ref = target === "HEAD_OID" ? initialHead : target;
+        // A real loose ref or its normalized/DWIM sibling must not make malformed
+        // symbolic targets authoritative just because the dependency resolves it.
+        if (ref.startsWith("refs/")) {
+          await mkdir(dirname(join(common, ref)), { recursive: true });
+          await writeFile(join(common, ref), `${initialHead}\n`);
+        }
+        await writeFile(join(gitdir, "HEAD"), `ref:${separator}${ref}\n`);
+        await expect(
+          git(root, "rev-parse", "--verify", "HEAD"),
+        ).rejects.toMatchObject({
+          code: 128,
+        });
+        const { vcs, graph } = await observe(root);
+        expect(vcs).toEqual({ info: unknownVcs, ignoreCase: true });
+        expect(graph.vcs).toEqual(unknownVcs);
+        expect(graph.limitations).not.toContain(UNKNOWN_CASE);
+        expect(graph.entries.map(({ path }) => path)).toContain("visible.ts");
+        expect(graph.entries.map(({ path }) => path)).not.toContain(
+          "Generated/drop.ts",
+        );
+      },
+    );
+
+    it.each(["ordinary", "recursive"] as const)(
+      "rejects invalid targets in %s loose symbolic records",
+      async (form) => {
+        const repository = await fixture(
+          form === "ordinary" ? "ordinary" : "linked",
+        );
+        const { root, gitdir, common, git } = repository;
+        const ref = "refs/heads/intermediate";
+        await writeFile(join(common, ref), "ref: refs/heads/../heads/main\n");
+        await writeFile(join(gitdir, "HEAD"), `ref: ${ref}\n`);
+        await expect(
+          git(root, "rev-parse", "--verify", "HEAD"),
+        ).rejects.toMatchObject({
+          code: 128,
+        });
+        const { vcs, graph } = await observe(root);
+        expect(vcs).toEqual({ info: unknownVcs, ignoreCase: true });
+        expect(graph.vcs).toEqual(unknownVcs);
+        expect(graph.limitations).not.toContain(UNKNOWN_CASE);
+      },
+    );
+
+    it.each([
+      "refs/tags/release+@!",
+      "refs/heads/nested./-target",
+      "refs/worktree/target\u2003",
+    ])("preserves the valid full target %s", async (ref) => {
+      const repository = await fixture("linked", "metadata");
+      const { root, gitdir, git, head, initialHead } = repository;
+      await git(root, "check-ref-format", ref);
+      await git(root, "update-ref", ref, head);
+      if (ref.trimEnd() !== ref)
+        await git(root, "update-ref", ref.trimEnd(), initialHead);
+      await writeFile(join(gitdir, "HEAD"), `ref:\t${ref} \r\n`);
+      await expectGitInventory(repository, true);
+    });
+  },
+);
