@@ -538,6 +538,39 @@ describe("Apple bundle layouts and containers", () => {
 });
 
 describe("Apple IPA components", () => {
+  it("preserves IPA framework descendants outside application roots", () => {
+    const rooted =
+      "Payload/Fixture.app/Frameworks/Core.FRAMEWORK/Versions/A/Core";
+    const archived = "SwiftSupport/iphoneos/Support.fRaMeWoRk/Support";
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        macho("Payload/Fixture.app/Fixture"),
+        macho(rooted),
+        macho(archived),
+        macho("SwiftSupport/iphoneos/Decoy.framework2/Decoy"),
+        { path: "SwiftSupport/iphoneos/Standalone.framework" },
+        { path: "SwiftSupport/iphoneos/Support.fRaMeWoRk/._Support" },
+      ]),
+    );
+    expect(result.application_roots).toEqual(["Payload/Fixture.app"]);
+    expect(
+      result.bundles.find(({ path }) => path.endsWith("Core.FRAMEWORK"))?.role,
+    ).toBe("framework");
+    expect(
+      result.bundles.some(({ path }) => path.startsWith("SwiftSupport/")),
+    ).toBe(false);
+    expect(
+      result.components.frameworks.map(({ path, sha256 }) => ({
+        path,
+        sha256,
+      })),
+    ).toEqual(
+      [rooted, archived]
+        .sort(compareUnicodeCodePoints)
+        .map((path) => ({ path, sha256: sha(`file:${path}`) })),
+    );
+  });
+
   it("excludes AppleDouble sidecars from IPA components", () => {
     const result = project(
       inventoryEvidence("ipa", "Fixture.ipa", [
