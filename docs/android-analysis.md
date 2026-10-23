@@ -193,8 +193,9 @@ with `inspect_android_method` using its `class_name` (the lookup name, which JAD
   returned `sites` or `r_fields`. That budget is smaller than the bridge's 8 MiB
   frame because the MCP result repeats every site as raw, normalized and
   structured-plus-text copies.
-- The scan does not read layout XML, data binding, or reflection
-  (`getIdentifier`), and a literal equal to an id is not proof of a view
+- The scan does not read layout XML, data binding, reflection
+  (`getIdentifier`), or `fill-array-data` payloads (an `int[]` initialized from
+  `R.id` constants), and a literal equal to an id is not proof of a view
   lookup. Views referenced only from layouts can show zero code sites.
 
 ## Interpret the result
