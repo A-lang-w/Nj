@@ -217,13 +217,20 @@ export const generator = (
     switch (rule.rule) {
       case "clock":
       case "held-clock":
-        return ok(formatClock(write.clockMs, rule.format));
-      case "nested-clock":
-        return nestedClockValue(
-          (target.current ?? target.observed)[rule.field],
-          rule,
-          formatClock(write.clockMs, rule.format),
-        );
+      case "nested-clock": {
+        const value = formatClock(write.clockMs, rule.format);
+        if (value === undefined)
+          return err(
+            `The generated clock for ${rule.field} is outside its recorded four-digit year format.`,
+          );
+        return rule.rule === "nested-clock"
+          ? nestedClockValue(
+              (target.current ?? target.observed)[rule.field],
+              rule,
+              value,
+            )
+          : ok(value);
+      }
       case "sequence":
         return ok(
           spelledLike(
