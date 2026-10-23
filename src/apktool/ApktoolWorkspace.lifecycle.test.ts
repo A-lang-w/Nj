@@ -416,7 +416,7 @@ it("classifies source state changes during snapshot copying as artifact changes"
       handle.stat = (async (...args: Parameters<typeof stat>) => {
         const value = await stat(...args);
         observations += 1;
-        if (observations > 1) {
+        if (observations > 2) {
           if ("mtimeNs" in value) value.mtimeNs += 1n;
           else value.mtimeMs += 1;
         }

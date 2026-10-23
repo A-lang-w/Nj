@@ -233,7 +233,7 @@ it.each([
   {
     captured: true,
     code: "EACCES",
-    tag: "AnalysisAccessDeniedError",
+    tag: "AnalysisCapabilityUnavailableError",
   },
   {
     captured: true,
@@ -248,7 +248,7 @@ it.each([
   {
     captured: false,
     code: "EACCES",
-    tag: "AnalysisAccessDeniedError",
+    tag: "AnalysisCapabilityUnavailableError",
   },
   {
     captured: false,

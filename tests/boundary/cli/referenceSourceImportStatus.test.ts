@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import {
+  analysisCliErrorEnvelopeSchema,
+  analysisErrorProjectionSchema,
+} from "../../../src/contracts/errorSchemas.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const unsupportedHostOutput = expect.objectContaining({
@@ -49,7 +52,10 @@ describe("compiled Windows reference-source import", () => {
           scenario.fullOutput
             ? expect.objectContaining({
                 ok: false,
-                error: unsupportedHostOutput,
+                error: expect.objectContaining({
+                  category: "unsupported_provider",
+                  code: "capability_unavailable",
+                }),
               })
             : unsupportedHostOutput,
         );
@@ -116,7 +122,10 @@ describe("compiled reference-source import preflight failures", () => {
         if (scenario.fullOutput) {
           expect(result.json).toMatchObject({
             ok: false,
-            error: invalidRootOutput,
+            error: {
+              category: invalidRootOutput.category,
+              message: invalidRootOutput.message,
+            },
           });
         } else {
           expect(result.json).toMatchObject(invalidRootOutput);
@@ -125,7 +134,10 @@ describe("compiled reference-source import preflight failures", () => {
           ? (result.json as { error: unknown }).error
           : result.json;
         expect(
-          analysisCliErrorEnvelopeSchema.safeParse(projection).success,
+          (scenario.fullOutput
+            ? analysisErrorProjectionSchema
+            : analysisCliErrorEnvelopeSchema
+          ).safeParse(projection).success,
         ).toBe(true);
         const messagePath = scenario.fullOutput ? "error.message" : "message";
         expect(result.json).toHaveProperty(

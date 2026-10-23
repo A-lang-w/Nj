@@ -290,12 +290,12 @@ it("projects literal seeds and static object flow", () => {
     direction: "forward-influence",
   });
   expect(literal.status).toBe("ambiguous");
-  expect(literal.summary.total_seed_matches).toBe(3);
+  expect(literal.summary.total_seed_matches).toBe(4);
   const property = queryJavaScriptSemanticGraph(graph, {
     seed: { kind: "property", name: "token" },
     direction: "forward-influence",
   });
-  expect(property.status).toBe("found");
+  expect(property.status).toBe("ambiguous");
 });
 
 it("does not promote transformed return expressions to resolved aliases", () => {

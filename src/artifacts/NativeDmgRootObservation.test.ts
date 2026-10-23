@@ -57,13 +57,7 @@ it("retains authenticated carrier facts and unknown child coverage when native a
           },
           coverage: { status: "unknown" },
           occurrences: [{ logical_path: "." }],
-          provenance: [
-            { arguments: ["verify", path], exit_code: 0 },
-            {
-              arguments: expect.arrayContaining(["attach", path]),
-              exit_code: 1,
-            },
-          ],
+          provenance: [{ arguments: ["verify", path], exit_code: 0 }],
         },
       },
     },

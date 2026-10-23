@@ -778,8 +778,12 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
     const directory = await createTestTempDirectory("rea-target-");
     const path = join(directory, "large-commands");
     const header = thinMach(0xcffaedfe, 0x0100000c);
+    header.writeUInt32LE(1, 16);
     header.writeUInt32LE(8192, 20);
-    await writeFile(path, Buffer.concat([header, Buffer.alloc(8192)]));
+    const commands = Buffer.alloc(8192);
+    commands.writeUInt32LE(0x777, 0);
+    commands.writeUInt32LE(commands.length, 4);
+    await writeFile(path, Buffer.concat([header, commands]));
     const result = await parseBinaryTarget(path, {
       cwd: directory,
       hostArchitecture: "arm64",

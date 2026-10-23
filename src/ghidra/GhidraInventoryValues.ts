@@ -193,6 +193,7 @@ export const ghidraProcedureIdentitySchema = z
   .object({
     address: nativeAddressObservationSchema,
     name: z.string().min(1),
+    symbol: symbolFacts.nullable().optional(),
     classification: ghidraFunctionClassificationSchema,
     body: ghidraFunctionBodySchema,
   })

@@ -283,7 +283,9 @@ describe("identityless lineage refresh follows tree membership", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason: expect.stringContaining(
+        "process lineage ownership remains unverified",
+      ),
     });
     expect(outsiderReads).toBe(2);
     expect(environment.mock.calls.filter(([pid]) => pid === 50)).toHaveLength(
@@ -309,7 +311,9 @@ describe("identityless lineage refresh follows tree membership", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason: expect.stringContaining(
+        "process lineage ownership remains unverified",
+      ),
     });
     expect(reads()).toBe(2);
   });
@@ -425,7 +429,9 @@ describe("identityless lineage refresh rechecks the launcher", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason: expect.stringContaining(
+        "process lineage ownership remains unverified",
+      ),
     });
     expect(launcherReads).toBe(2);
   });
@@ -459,7 +465,9 @@ describe("identityless lineage refresh rechecks an initial descendant", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason: "process lineage contains an unowned or PID-reused process",
+      reason: expect.stringContaining(
+        "process lineage ownership remains unverified",
+      ),
     });
     expect(reads).toBe(2);
   });

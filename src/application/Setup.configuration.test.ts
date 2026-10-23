@@ -446,7 +446,11 @@ describe("setup workflow action selection", () => {
     host.clients = [{ name: "internal_client_key", configPath: "/agent.json" }];
     host.clientResults.set("internal_client_key", { status: "failed", reason });
     const result = await runSetup(
-      { ...options(true), clientIds: ["internal_client_key"] },
+      {
+        ...options(true),
+        installSkill: false,
+        clientIds: ["internal_client_key"],
+      },
       host,
     );
     expect(result.status).toBe("needs_human");

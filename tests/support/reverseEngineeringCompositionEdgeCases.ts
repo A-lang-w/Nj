@@ -298,8 +298,8 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
 
   it.each([
     ["ETIMEDOUT", "AnalysisTimeoutError"],
-    ["EACCES", "AnalysisAccessDeniedError"],
-    ["EPERM", "AnalysisAccessDeniedError"],
+    ["EACCES", "AnalysisCapabilityUnavailableError"],
+    ["EPERM", "AnalysisCapabilityUnavailableError"],
     ["ABORT_ERR", "AnalysisCancelledError"],
     ["unknown", "AnalysisCapabilityUnavailableError"],
   ])(
@@ -326,7 +326,13 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
             cause: { message: "provider failure" },
             ...(code === "ETIMEDOUT" ? { timeoutMs: 120_000 } : {}),
             ...(code === "EACCES" || code === "EPERM"
-              ? { path: "objdump", systemCode: code }
+              ? {
+                  diagnostics: {
+                    boundary: "provider-launch",
+                    command: "objdump",
+                    system_code: code,
+                  },
+                }
               : {}),
             ...(code === "unknown"
               ? {
@@ -417,7 +423,7 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
         expect(result).toMatchObject({
           ok: false,
           error: {
-            _tag: "AnalysisAccessDeniedError",
+            _tag: "AnalysisCapabilityUnavailableError",
             capturedOutput: {
               stdout: "partial provider output",
               stderr: "permission diagnostic",

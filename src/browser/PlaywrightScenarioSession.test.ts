@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     | {
         initialize: ReturnType<typeof vi.fn>;
         settle: ReturnType<typeof vi.fn>;
+        limitations: () => readonly string[];
         close: ReturnType<typeof vi.fn>;
       }
     | undefined,
@@ -26,9 +27,16 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./CdpTargetSession.js", () => ({
-  openCdpEndpoint: async () => ({
-    discovery: { targets: [{ id: "target" }] },
-    connection: {
+  openCdpEndpoint: async (
+    _endpoint: unknown,
+    operation: never,
+    _signal: unknown,
+    _fetch: unknown,
+    owner: {
+      register(connection: unknown, operation: never, resource: string): void;
+    },
+  ) => {
+    const connection = {
       send: mocks.policySend,
       onEvent: (listener: typeof mocks.policyEvent) => {
         mocks.policyEvent = listener;
@@ -36,8 +44,10 @@ vi.mock("./CdpTargetSession.js", () => ({
       },
       close: mocks.policyTransportClose,
       beginCleanupGrace: mocks.policyBeginCleanupGrace,
-    },
-  }),
+    };
+    owner.register(connection, operation, "target");
+    return { discovery: { targets: [{ id: "target" }] }, connection };
+  },
   attachCdpTargetSession: async (connection: unknown) => ({
     connection,
     sessionId: "policy-session",
@@ -205,6 +215,7 @@ const fixture = () => {
   mocks.storage = {
     initialize: vi.fn(async () => undefined),
     settle: vi.fn(async () => undefined),
+    limitations: () => [],
     close: vi.fn(async (stopLoading = false) => ({
       loadingStopped: stopLoading,
     })),
@@ -1037,10 +1048,13 @@ it("retries transport close without detaching an already released policy session
   const session = await PlaywrightScenarioSession.open(attached, {}, {});
   const failure = new Error("transport close rejected");
   mocks.policyTransportClose.mockRejectedValueOnce(failure);
-  await expect(session.close()).rejects.toMatchObject({
-    cause: failure,
-    cleanupIncomplete: true,
-  });
+  const rejected: unknown = await session
+    .close()
+    .catch((cause: unknown) => cause);
+  expect(rejected).toMatchObject({ cleanupIncomplete: true });
+  await expect(mocks.policyTransportClose.mock.results[0]?.value).rejects.toBe(
+    failure,
+  );
   await expect(session.close()).resolves.toBe("disconnected-external");
   expect(
     mocks.policySend.mock.calls.filter(

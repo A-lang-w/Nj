@@ -41,7 +41,7 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   environmentCard,
@@ -957,9 +957,11 @@ describe("serveEnvironment with a state", () => {
     await expect(
       add({ kind: "data", data: renamedDocument() }),
     ).resolves.toMatchObject({ result: {} });
-    await expect(environment.close()).rejects.toBeInstanceOf(
-      ArtifactResourceRetryFailure,
-    );
+    await expect(environment.close()).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      cleanupIncomplete: true,
+      diagnostics: { cleanup_stages: ["state-files"] },
+    });
     expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
     failing = false;
     await expect(environment.close()).resolves.toBeUndefined();
@@ -990,12 +992,13 @@ describe("serveEnvironment cleanup retries", () => {
 
     const listenerFailure = new Error("injected listener cleanup failure");
     closeFailureControl.failure = listenerFailure;
-    await expect(environment.close()).rejects.toSatisfy((cause: unknown) => {
-      if (!(cause instanceof AggregateError)) return false;
-      return (
-        cause.errors[0] === listenerFailure &&
-        cause.errors[1] instanceof ArtifactResourceRetryFailure
-      );
+    await expect(environment.close()).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      cleanupIncomplete: true,
+      diagnostics: { cleanup_stages: ["http-server", "state-files"] },
+      cause: expect.objectContaining({
+        errors: [listenerFailure, expect.any(Error)],
+      }),
     });
     expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
 

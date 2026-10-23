@@ -105,7 +105,10 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     arguments: { path: plistPath },
   });
   expect(unbound.isError).toBe(true);
-  expect(unbound.structuredContent).toMatchObject({
+  expect(
+    unbound.structuredContent ??
+      JSON.parse((unbound.content[0] as { text: string }).text),
+  ).toMatchObject({
     error: { code: "target_unavailable", category: "unavailable" },
   });
   const unopened = await client.callTool({
@@ -119,13 +122,15 @@ it("routes bundle resource MCP calls with null executable identity and retained 
   ).toMatchObject({
     result: {
       open: false,
-      tool_availability: expect.arrayContaining([
-        expect.objectContaining({
-          name: "inspect_plist",
-          available: false,
-          reason: "target_required",
-        }),
-      ]),
+      tool_availability: {
+        groups: expect.arrayContaining([
+          expect.objectContaining({
+            names: expect.arrayContaining(["inspect_plist"]),
+            available: false,
+            reason: "target_required",
+          }),
+        ]),
+      },
     },
   });
 
@@ -348,6 +353,8 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       validResult: jsonObjectSchema.parse({
         target_sha256: "a".repeat(64),
         catalogs: [],
+        catalog_coverage: { status: "complete", reason: null },
+        resource_key_coverage: { status: "complete", reason: null },
         inventory_coverage: { scope: "container-entries", status: "unknown" },
         total_records: 0,
         offset: 0,
@@ -450,7 +457,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
     ).toBe(true);
     expect(
       validateAdvertised(resourceEvidence),
-      `${name} advertised root branch`,
+      `${name} advertised root branch: ${JSON.stringify(validateAdvertised.errors)}`,
     ).toBe(true);
     expect(
       validateAdvertised(malformedEvidence),

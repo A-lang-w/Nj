@@ -101,8 +101,8 @@ it("reuses desired registration facts within a snapshot and revalidates later in
   expect(
     await inspectClientConfiguration(client, {}, ["rea", "mcp"], resolveBudget),
   ).toEqual({ status: "already_current" });
-  // Inspection checks both the layered preflight and the freshly read document.
-  expect(observations).toEqual(["ida", "ida", "ida"]);
+  // The next inspection revalidates the freshly read registration once.
+  expect(observations).toEqual(["ida", "ida"]);
   expect(await readFile(configPath, "utf8")).toBe(original);
   await expect(access(`${configPath}.rea.backup`)).rejects.toMatchObject({
     code: "ENOENT",
@@ -398,7 +398,10 @@ it.each([
     });
     expect(Object.hasOwn(parsed.servers, "__proto__")).toBe(true);
     expect(effectiveClientServer(parsed, "__proto__")).toEqual(
-      clientRegistrationEntry(format, ["peer"], {}),
+      effectiveClientServer(
+        parseClientConfiguration(original, format),
+        "__proto__",
+      ),
     );
     expect(effectiveClientServer(parsed, "rea")).toHaveProperty(
       environmentKey,

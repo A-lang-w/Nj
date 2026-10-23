@@ -187,7 +187,16 @@ export async function verifyDylibResolution(app) {
     });
     assert.equal(invalid.isError, true);
   });
-  assert.equal(trace.coverage.status, "complete");
+  // The fixture deliberately includes framework aliases. Unfollowed symlinks
+  // leave root discovery incomplete even when every selected image parsed.
+  assert.equal(trace.coverage.status, "partial");
+  assert.deepEqual(trace.coverage.unparsed_images, []);
+  assert.deepEqual(trace.coverage.roots_without_architecture, []);
+  assert.ok(
+    trace.limitations.some((text) =>
+      text.includes("did not follow 4 symlink(s)"),
+    ),
+  );
   assert.deepEqual(trace.roots.map(({ image }) => image).sort(), [
     "Contents/Frameworks/Core.framework/Versions/A/XPCServices/FwSvc.xpc/Contents/MacOS/FwSvc",
     "Contents/Helpers/rea-tool",

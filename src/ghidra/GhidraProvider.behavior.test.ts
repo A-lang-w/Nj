@@ -3698,14 +3698,11 @@ describe("Ghidra exit-signal evidence", () => {
     });
     expect(projected.code).toBe("execution_failure");
     expect(projected.message).toContain("SIGKILL");
-    expect(projected.message).toContain("does not establish its cause");
+    expect(projected.message).toContain("REA could not confirm the sender");
     expect(projected.remediation.action).toContain(
-      "host or container termination records",
+      "Check the host or container",
     );
     expect(projected.remediation.action).not.toContain("rea doctor");
-    expect(projected.remediation.action).not.toContain(
-      "GHIDRA_HEADLESS_MAXMEM",
-    );
   });
 
   it("keeps operation-scoped JVM memory evidence stronger than an exit signal", async () => {

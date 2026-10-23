@@ -1638,7 +1638,7 @@ describe("malformed Apple dispatch metadata", () => {
     const bytes = fixture();
     bytes.writeUInt32LE(7, 36);
     expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
-      "command size",
+      "invalid cmdsize",
     );
     expect(() =>
       decodeAppleDispatchMetadata(Buffer.alloc(10), 100, provenance),
