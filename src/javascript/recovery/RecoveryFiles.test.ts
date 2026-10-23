@@ -22,6 +22,49 @@ vi.mock("../../filesystem/RegularFile.js", async (importOriginal) => {
   return { ...actual, openRegularFile: vi.fn(actual.openRegularFile) };
 });
 
+// Fault injection for the snapshot write; other calls use the real filesystem.
+const snapshotFault = vi.hoisted(() => ({
+  mkdir: undefined as Error | undefined,
+  writeFile: undefined as Error | undefined,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    mkdir: async (...args: Parameters<typeof actual.mkdir>) => {
+      if (snapshotFault.mkdir !== undefined) throw snapshotFault.mkdir;
+      return actual.mkdir(...args);
+    },
+    writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+      if (snapshotFault.writeFile !== undefined) throw snapshotFault.writeFile;
+      return actual.writeFile(...args);
+    },
+  };
+});
+
+const filesystemError = (code: string): NodeJS.ErrnoException =>
+  Object.assign(new Error(`${code}: injected snapshot failure`), { code });
+
+const snapshotWithFault = async (
+  fault: Partial<typeof snapshotFault>,
+): Promise<unknown> => {
+  const root = await createTestTempDirectory("rea-recovery-fault-");
+  const selected = join(root, "bundle.js");
+  await writeFile(selected, "module.exports = 1;\n");
+  const snapshots = join(root, "snapshots");
+  await mkdir(snapshots);
+  Object.assign(snapshotFault, fault);
+  try {
+    return await snapshotRecoveryInputs([selected], snapshots).catch(
+      (cause: unknown) => cause,
+    );
+  } finally {
+    snapshotFault.mkdir = undefined;
+    snapshotFault.writeFile = undefined;
+  }
+};
+
 it.skipIf(process.platform === "win32")(
   "rejects a named pipe without waiting for a writer",
   async () => {
@@ -106,4 +149,28 @@ it("reports one file selected twice as an input error", async () => {
       message: expect.stringContaining("collides with another selected input"),
     }),
   ]);
+  // The filesystem's own report stays attached for diagnosis.
+  expect((failure as AnalysisInputError).cause).toMatchObject({
+    code: "EEXIST",
+  });
+});
+
+it("reports a file and directory name clash as an input error", async () => {
+  const clash = filesystemError("ENOTDIR");
+
+  const failure = await snapshotWithFault({ mkdir: clash });
+
+  expect(failure).toBeInstanceOf(AnalysisInputError);
+  expect((failure as AnalysisInputError).issues).toEqual([
+    expect.objectContaining({ path: ["additional_paths"] }),
+  ]);
+  expect((failure as AnalysisInputError).cause).toBe(clash);
+});
+
+it("keeps an unrelated snapshot write failure unchanged", async () => {
+  const fullDisk = filesystemError("ENOSPC");
+
+  await expect(snapshotWithFault({ writeFile: fullDisk })).resolves.toBe(
+    fullDisk,
+  );
 });
