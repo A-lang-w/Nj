@@ -324,9 +324,15 @@ const addMarkedPatterns = (
     const projectPolicy = reason === "project-ignored";
     const text = projectPolicy ? pattern.replace(/^\uFEFF/u, "") : pattern;
     for (const rawLine of text.split(projectPolicy ? /\n/u : /\r?\n/u)) {
-      // Git removes one terminal CR even from a final line without LF.
-      // Do this only for policy files, before protecting literal whitespace.
-      const line = projectPolicy ? rawLine.replace(/\r$/u, "") : rawLine;
+      let line = rawLine;
+      if (projectPolicy) {
+        // Git removes the physical line's terminal CR before interpreting its
+        // NUL-terminated pattern. A CR immediately before an embedded NUL is
+        // literal; bytes after that NUL cannot change the effective rule.
+        line = line.replace(/\r$/u, "");
+        const terminator = line.indexOf("\0");
+        if (terminator !== -1) line = line.slice(0, terminator);
+      }
       const scoped = scopedPattern(line, prefix, projectPolicy, ignoreCase);
       if (scoped !== undefined)
         matcher.add({

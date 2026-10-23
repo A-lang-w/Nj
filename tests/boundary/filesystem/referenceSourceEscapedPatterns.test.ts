@@ -732,3 +732,138 @@ describe.skipIf(process.platform === "win32")(
     );
   },
 );
+
+describe.skipIf(process.platform === "win32")(
+  "reference ignore NUL-terminated policy lines",
+  () => {
+    it.each(["", "pkg/"])(
+      "matches Git physical-line parsing in %j",
+      async (prefix) => {
+        const root = await createTestTempDirectory("rea-reference-ignore-nul-");
+        const policyPath = `${prefix}.gitignore`;
+        const lines = [
+          "\uFEFFfoo\0bar",
+          "\0hidden",
+          "#comment\0active",
+          "\\#hash\0ignored",
+          "open*",
+          "!open\0tail",
+          "dir/\0ignored",
+          "cr\r\0suffix",
+          "crlf\0suffix\r",
+          "trim   \0suffix",
+          "space\\ \0suffix",
+          "odd\\\0suffix",
+          "even\\\\\0suffix",
+          "last\0trailer",
+        ];
+        const paths = [
+          "foo",
+          "bar",
+          "hidden",
+          "active",
+          "#comment",
+          "#hash",
+          "open",
+          "openOther",
+          "dir/file.ts",
+          "cr",
+          "cr\r",
+          "crlf",
+          "trim",
+          "trim   ",
+          "space",
+          "space ",
+          "odd",
+          "odd\\",
+          "even\\",
+          "last",
+          "trailer",
+        ];
+        await writeTree(root, {
+          [policyPath]: lines.join("\n"),
+          ...Object.fromEntries(
+            paths.map((path) => [prefix + path, "export {};\n"]),
+          ),
+        });
+        const expected = gitInventory(root);
+        for (const path of [
+          "foo",
+          "#hash",
+          "openOther",
+          "dir/file.ts",
+          "cr\r",
+          "crlf",
+          "trim",
+          "space ",
+          "even\\",
+          "last",
+        ])
+          expect(expected).not.toContain(prefix + path);
+        for (const path of [
+          "bar",
+          "hidden",
+          "active",
+          "#comment",
+          "open",
+          "cr",
+          "trim   ",
+          "space",
+          "odd",
+          "odd\\",
+          "trailer",
+        ])
+          expect(expected).toContain(prefix + path);
+        const result = await importReferenceSource({
+          root,
+          caller: "ignore-nul-test",
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        expect(
+          result.value.entries
+            .filter(({ kind }) => kind === "file")
+            .map(({ path }) => path)
+            .sort(),
+        ).toEqual(expected);
+        for (const [path, pattern] of [
+          ["foo", "foo"],
+          ["cr\r", "cr\r"],
+          ["trim", "trim   "],
+          ["#hash", String.raw`\#hash`],
+        ])
+          expect(result.value.exclusions).toContainEqual({
+            path: prefix + path,
+            entry_kind: "file",
+            reason: "project-ignored",
+            pattern,
+            policy_path: policyPath,
+          });
+      },
+    );
+
+    it("does not truncate caller or secret patterns at NUL", async () => {
+      const root = await createTestTempDirectory("rea-reference-caller-nul-");
+      await writeTree(root, {
+        ".gitignore": "project\0suffix\n",
+        project: "excluded\n",
+        caller: "kept\n",
+        secret: "kept\n",
+      });
+      gitInventory(root);
+      const result = await importReferenceSource({
+        root,
+        caller: "ignore-nul-scope",
+        excludePaths: ["caller\0suffix"],
+        policy: { secretPatterns: ["secret\0suffix"] },
+      });
+      if (!result.ok) throw result.error;
+      expect(
+        result.value.entries
+          .filter(({ kind }) => kind === "file")
+          .map(({ path }) => path)
+          .sort(),
+      ).toEqual([".gitignore", "caller", "secret"]);
+    });
+  },
+);

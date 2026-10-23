@@ -389,9 +389,10 @@ Local Boolean settings accept Git's textual forms and portable decimal, octal
 and hexadecimal integers with optional `k`, `m` or `g` multipliers. Binary
 prefixes depend on the Git build and remain unknown. If the setting cannot be
 determined, the importer uses the insensitive fallback and records that
-uncertainty in the graph's limitations. Original paths and patterns remain
-unchanged in the evidence; caller and secret patterns retain their own matching
-semantics.
+uncertainty in the graph's limitations. A project-policy line ends at its first
+NUL byte, as in Git; the recorded pattern retains that effective prefix. Original
+paths remain unchanged in the evidence. Caller and secret patterns retain their
+own matching semantics, including NUL handling.
 Nested ignore files explicitly marked sensitive are skipped before their contents
 are read; their configured-secret exclusions are recorded during inventory.
 If a nested policy's entry kind cannot be determined, sensitive patterns are
