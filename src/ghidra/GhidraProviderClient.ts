@@ -954,9 +954,8 @@ const projectPrimarySessionError = (
           failure,
           "Only this procedure's decompilation was stopped; the Ghidra session remains usable.",
         )}`,
-        remediationAction: ghidraDecompileTimeoutRemediation(
-          limits.ghidraDecompileTimeoutSeconds,
-        ),
+        remediationAction:
+          "Use analyze_function (CLI: `rea function`) for listing facts. Raise REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS and restart REA to allow a longer decompile. The MCP tool-call deadline must cover Ghidra startup plus that limit; an earlier cancellation closes the session. `rea setup` derives matching Codex/Kimi deadlines.",
       },
     );
   if (failure.kind === "analysis_timeout")
@@ -1156,10 +1155,6 @@ const ghidraSessionContinuationMessage = (
     ? "The request was also cancelled before the failure settled, so REA closed the Ghidra session; the next request starts a new session and repeats import and analysis."
     : "The request was also cancelled, and Ghidra session shutdown left cleanup unconfirmed. Close the target to retry retained cleanup before starting another Ghidra session.";
 };
-
-/** Name the setting and MCP deadline that bound one native decompile. */
-const ghidraDecompileTimeoutRemediation = (limitSeconds: number): string =>
-  `Call analyze_function (CLI: \`rea function\`) for the same procedure to get its assembly, callers, callees, references and basic blocks without pseudocode. Repeating the unchanged decompile request under the same ${String(limitSeconds)}-second limit is not expected to succeed. To allow a longer decompile, raise REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS in REA's launch environment and restart REA; the limit is read when a Ghidra session starts. Over MCP, the client's tool-call deadline must cover Ghidra startup plus the new limit, or the client cancels the request first and REA closes the Ghidra session; \`rea setup\` includes the limit in the Codex and Kimi tool deadlines it derives.`;
 
 /** Name the settings that change Ghidra's import-and-analysis startup deadline. */
 const ghidraStartupTimeoutGuidance = (timeoutMs: number) => ({
