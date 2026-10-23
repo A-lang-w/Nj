@@ -63,7 +63,8 @@ export class CdpCaptureCompleteness {
     if (
       reason === "provider_unavailable" ||
       reason === "unattributed_target" ||
-      reason === "invalid_protocol_value"
+      reason === "invalid_protocol_value" ||
+      reason === "unknown_target_relationship"
     )
       this.#unavailable.add(section);
     if (reason === "resource_budget_exhausted") this.#truncated.add(section);

@@ -1,4 +1,5 @@
 import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -1453,3 +1454,172 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     await provider.close();
   }
 });
+
+it.each(["launch", "connect"] as const)(
+  "bounds never-settling initial navigation and awaits %s cleanup",
+  async (mode) => {
+    vi.useFakeTimers();
+    const { cleanup, page, storage } = fixture();
+    const request = browserScenarioSchema.parse({
+      ...(mode === "launch" ? scenario : connectedScenario("allow")),
+      command_timeout_ms: 250,
+    });
+    page.goto.mockImplementation(() => new Promise<never>(() => {}));
+    try {
+      const opening = PlaywrightScenarioSession.open(request, {}, {}).catch(
+        (cause: unknown) => cause,
+      );
+      await vi.advanceTimersByTimeAsync(250);
+      const failure = await opening;
+      expect(failure).toMatchObject({
+        _tag: "AnalysisTimeoutError",
+        operation: "capture_browser_scenario",
+        timeoutMs: 250,
+      });
+      expect(cleanup.close).toHaveBeenCalledOnce();
+      expect(storage?.close).toHaveBeenCalledWith(true);
+      expect(page.goto).toHaveBeenCalledOnce();
+    } finally {
+      await cleanup.cleanupLease.release();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([false, true])(
+  "checks attached worker policy after final artifacts, worker takeover=%s",
+  async (takeover) => {
+    const { page, cleanup } = fixture();
+    let controlled = false;
+    let captures = 0;
+    Object.assign(page, {
+      waitForTimeout: vi.fn(async () => undefined),
+      content: vi.fn(async () => {
+        captures += 1;
+        controlled = takeover && captures === 2;
+        return controlled ? "<worker-response/>" : "<uncontrolled-response/>";
+      }),
+    });
+    page.evaluate.mockImplementation(async (script: unknown) =>
+      controlled &&
+      typeof script === "string" &&
+      script.includes("serviceWorker.controller")
+        ? "service_worker_blocked"
+        : null,
+    );
+    const input = browserScenarioSchema.parse({
+      ...connectedScenario("block"),
+      capture: { after_each_step: ["dom"], at_end: ["dom"], events: [] },
+    });
+    const provider = new PlaywrightBrowserScenarioProvider(
+      (scenario, options) =>
+        PlaywrightScenarioSession.open(scenario, {}, options),
+    );
+    try {
+      const result = await provider.captureScenario(input, {});
+      expect(captures).toBe(2);
+      expect(cleanup.browserClosed).toBe(true);
+      if (takeover) {
+        if (result.ok)
+          throw new Error("Expected final worker policy rejection");
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          details: {
+            diagnostics: {
+              collected_artifacts: {
+                dom: { value: { text: "<worker-response/>" } },
+              },
+            },
+          },
+        });
+        expect(result.error).toMatchObject({
+          reason: "service_worker_blocked",
+          cleanupIncomplete: false,
+          diagnostics: {
+            collected_artifacts: {
+              dom: { state: "captured", value: { text: "<worker-response/>" } },
+            },
+          },
+          partialObservation: {
+            capture: {
+              browser: { cleanup: "disconnected-external" },
+              steps: [{ action: "goto_start" }],
+            },
+          },
+        });
+      } else {
+        if (!result.ok) throw result.error;
+        expect(result.value.steps).toHaveLength(2);
+        expect(result.value.steps[1]).toMatchObject({
+          status: "completed",
+          completeness: { status: "complete", equality_eligible: true },
+        });
+      }
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it.each(["absent", "undefined", "inherited", "empty"] as const)(
+  "resolves declared environment secrets before browser acquisition: %s",
+  async (state) => {
+    const { page } = fixture();
+    Object.assign(page, { waitForTimeout: async () => undefined });
+    const environment: Record<string, string | undefined> = {
+      AVAILABLE_SECRET: "already-supplied-private-value",
+    };
+    if (state === "inherited")
+      Object.setPrototypeOf(environment, {
+        REQUIRED_SECRET: "inherited-value",
+      });
+    if (state === "undefined") environment.REQUIRED_SECRET = undefined;
+    if (state === "empty") environment.REQUIRED_SECRET = "";
+    const input = browserScenarioSchema.parse({
+      ...scenario,
+      secrets: [
+        { secret_id: "available", environment_variable: "AVAILABLE_SECRET" },
+        { secret_id: "required", environment_variable: "REQUIRED_SECRET" },
+      ],
+    });
+    const provider = new PlaywrightBrowserScenarioProvider(
+      (scenario, options) =>
+        PlaywrightScenarioSession.open(scenario, environment, options),
+    );
+    try {
+      const result = await provider.captureScenario(input, {});
+      if (state === "empty") {
+        if (!result.ok) throw result.error;
+        expect(mocks.openBrowser).toHaveBeenCalledOnce();
+      } else {
+        if (result.ok) throw new Error("Expected unresolved environment input");
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          details: {
+            issues: [
+              {
+                path: ["secrets", 1, "environment_variable"],
+                reason: "missing_argument",
+                expected: {
+                  secret_id: "required",
+                  environment_variable: "REQUIRED_SECRET",
+                },
+              },
+            ],
+          },
+        });
+        expect(projected.message).toContain(
+          "Set environment variable REQUIRED_SECRET",
+        );
+        expect(JSON.stringify(projected)).not.toContain(
+          environment.AVAILABLE_SECRET,
+        );
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(mocks.openBrowser).not.toHaveBeenCalled();
+      }
+    } finally {
+      await provider.close();
+    }
+  },
+);

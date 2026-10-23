@@ -243,17 +243,18 @@ const evaluateClosureHistory = (
       newlyVerifiedIds.size !==
         observation.newly_verified_obligation_ids.length ||
       [...newlyVerifiedIds].some((id) => previouslyVerifiedIds.has(id)) ||
-      (previous !== undefined &&
-        (observation.required_open > previous.required_open ||
+      (previous === undefined
+        ? newlyVerifiedIds.size !== 0
+        : observation.required_open > previous.required_open ||
           newlyVerifiedIds.size !==
-            previous.required_open - observation.required_open))
+            previous.required_open - observation.required_open)
     )
       findings.push(
         finding(
           "invalid-obligation-closure-transition",
           "verify-reconstruction-closure",
           "fail",
-          `Closure observation ${String(observation.sequence)} must report zero required obligations open when ready, a positive open count when open or failed, and count only distinct, previously uncounted required obligations within the ledger's required count.`,
+          `Closure observation ${String(observation.sequence)} must establish the starting count without claiming a transition, report zero required obligations open when ready, a positive open count when open or failed, and count only distinct, previously uncounted required obligations within the ledger's required count.`,
           observation.evidence_ids,
         ),
       );

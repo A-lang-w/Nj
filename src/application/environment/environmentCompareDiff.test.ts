@@ -34,8 +34,27 @@ describe("early-year clock formats", () => {
   );
 });
 
-describe("compareAnswers", () => {
-  it("agrees on mapped ids, clocks and confirmed generated values, and counts each", () => {
+const registerGeneratedValueComparisonCases = () => {
+  it.each([
+    {
+      name: "normalizes mapped ids and clocks while comparing unproven generated-looking values literally",
+      rules: [],
+      generated: 0,
+      differences: [
+        ["value", "/token"],
+        ["value", "/uuid"],
+      ],
+    },
+    {
+      name: "agrees on mapped ids, clocks and confirmed generated values, and counts each",
+      rules: [
+        { field: "token", rule: "identity", generator: "token" },
+        { field: "uuid", rule: "unique" },
+      ],
+      generated: 2,
+      differences: [],
+    },
+  ] as const)("$name", ({ rules, generated, differences }) => {
     const map = new IdMap();
     map.learn(101, 1);
     const result = compare(
@@ -53,20 +72,42 @@ describe("compareAnswers", () => {
       },
       map,
       [200, 200],
-      [
-        { field: "token", rule: "identity", generator: "token" },
-        { field: "uuid", rule: "unique" },
-      ],
+      rules,
     );
-    expect(result.differences).toEqual([]);
+    expect(
+      result.differences.map(({ category, pointer }) => [category, pointer]),
+    ).toEqual(differences);
     expect(result.normalised).toEqual({
       ids: 1,
       clocks: 1,
-      generated: 2,
+      generated,
       large_bodies: 0,
       unobserved_bodies: 0,
     });
   });
+
+  it("normalizes string generation only at fields identified by an executed write plan", () => {
+    const result = compareAnswers(
+      {
+        status: 201,
+        body: { kind: "json", value: { token: "token00001", sku: "product2" } },
+      },
+      {
+        status: 201,
+        body: { kind: "json", value: { token: "token00002", sku: "product1" } },
+      },
+      new IdMap(),
+      { rules: [{ field: "token", rule: "identity", generator: "token" }] },
+    );
+    expect(result.differences).toMatchObject([
+      { category: "value", pointer: "/sku" },
+    ]);
+    expect(result.normalised.generated).toBe(1);
+  });
+};
+
+describe("compareAnswers", () => {
+  registerGeneratedValueComparisonCases();
 
   it("categorises status, missing and extra fields, values and clock formats", () => {
     const result = compare(
