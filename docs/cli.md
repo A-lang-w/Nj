@@ -39,6 +39,11 @@ pass an absolute path. REA reads and authenticates the file, then projects it
 like retained Evidence, so a large file is bounded by the file reader rather
 than charged as inline input.
 
+Local file inspection commands reject empty paths and NUL bytes before resolving
+relative inputs, auxiliary files or output destinations. An empty string never
+selects the working directory; use an explicit `.` when selecting that directory
+is supported by the command.
+
 For example, a 334 MB Obsidian application Evidence file yields a summary view
 of about 10 KB. Replace the view with
 `{"kind": "page", "collection": "modules", "offset": 0, "limit": 32}` for a
@@ -431,10 +436,19 @@ cached result. `close_binary` accepts `snapshot_path` and optional
 `overwrite: true` to save before releasing provider resources. A failed save
 leaves the session open so the caller can resolve the output failure.
 
+If a selected snapshot's file descriptor cannot close, `open_binary` reports
+`cleanup_incomplete`. `binary_session` reports `cleanup_pending` even when no
+target opened. Retry `close_binary` to release the retained descriptor before
+opening another target.
+
 If a snapshot switch fails after the previous target was retired, restoration
 keeps that target's analysis commitments with the replacement client. This
 includes the native dispatch workflow profile on a profileless route, so its
 existing snapshot and fresh observations retain the same provenance.
+
+For native dispatch, the snapshot binding retains the reader profile; workflow
+Evidence and `workflow_entries` retain the composed profile, which commits that
+reader and the workflow's analysis caveats. Restoration preserves both profiles.
 
 The MCP save receipt reports `primitive_entries`, `workflow_entries`, and
 `evidence_records` separately. Zero primitive bindings can still accompany retained workflow

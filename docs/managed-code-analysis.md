@@ -206,6 +206,25 @@ reports `resource-limit` with unavailable or partial coverage; omitted facts do
 not become empty observations. Ambiguous PE section mappings are rejected
 rather than interpreted according to section order.
 
+Minimal Edit-and-Continue metadata marked by `#JTD` is not a standalone
+assembly inventory. The pinned [.NET 9 reader](https://github.com/dotnet/runtime/blob/v9.0.0/src/libraries/System.Reflection.Metadata/src/System/Reflection/Metadata/MetadataReader.cs)
+uses different reference widths for this mode, and delta handles require the
+baseline and prior generations. The released
+[metadata serializer](https://github.com/dotnet/runtime/blob/v9.0.0/src/libraries/System.Reflection.Metadata/src/System/Reflection/Metadata/Ecma335/MetadataBuilder.cs)
+emits this marker with `#-`; the
+[PE writer](https://github.com/dotnet/runtime/blob/v9.0.0/src/libraries/System.Reflection.Metadata/src/System/Reflection/PortableExecutable/ManagedPEBuilder.cs)
+can embed that metadata root. REA reports `unsupported-metadata` at the marker
+header before interpreting table rows, preserving the selected path, artifact
+digest, parsed metadata version and stream names, and admitted PE/CLI facts.
+Metadata status is partial; member and native
+declaration inventories are unavailable. Empty collections do not establish
+absence, and a requested type name is not declared unmatched. Ordinary
+standalone `#~` and `#-` metadata keep their existing interpretation. This does
+not add raw `.dmeta` input, baseline attachment or delta reconstruction.
+Regression coverage uses authored metadata in a generated PE shell; it does
+not establish naturally emitted application PEs, CLR loadability or a real
+Edit-and-Continue execution.
+
 ### Selected member inspection
 
 Member inspection admits type names, tokens, list ranges/counts, nesting facts,
@@ -254,7 +273,22 @@ Coverage describes the selected members. Comparisons leave members outside the
 opposite observation's selection unknown, and application graphs report their
 selected scope as partial. Neither makes an absence claim about the whole
 assembly. Older member Evidence without `selection` remains readable. The
-`method_rows` interval records the examined zero-based MethodDef offset, row
+comparison resolves a member's declaring TypeDef token in its own source, then
+checks that nominal `name_sha256` against the opposite selected type set.
+Pairing, absence and aggregate selected-scope agreement share these retained
+facts, including enclosing names, rather than requested spellings or display
+labels. Equivalent requests can cover the same types, while the same display
+name can select different nested owners. Such disjoint selected owners cannot
+establish a member pair or added/removed status even when both inventories are
+complete. Missing nominal identities cannot establish selected membership,
+including historical selected Evidence that retains only display names;
+the explicitly limited historical whole-inventory comparison remains available.
+Incomplete selected inventories or missing identities leave aggregate agreement
+unknown and coverage partial; known observed member pairs remain available.
+Complete empty selected inventories agree even if their unmatched request names
+differ. Whole-assembly and selected
+inventories remain distinct scopes, and each source retains its exact request.
+The `method_rows` interval records the examined zero-based MethodDef offset, row
 count and full table total before type selection. A complete observation can
 cover only that interval. Comparison keeps omissions from a method page unknown:
 build-local row positions cannot prove member absence across builds. Historical
