@@ -191,6 +191,7 @@ export const finalizeInspectorCapture = async ({
     scripts: {
       items,
       observed_total: state.scriptsObserved,
+      parse_failed_total: state.parseFailedScripts,
       excluded: {
         ...exclusions,
         invalid_protocol_value: state.invalidScripts,
@@ -218,6 +219,7 @@ export const finalizeInspectorCapture = async ({
         : [
             `${String(unresolvedScripts)} observed script location${unresolvedScripts === 1 ? " remains" : "s remain"} unverified; raw URLs and script metadata are retained.`,
           ]),
+      ...invalidContextUnknowns(state.invalidContexts),
       "Scripts collected before attachment may have been garbage-collected and therefore omitted.",
       "A bounded observation window cannot establish that an unobserved script or behavior never occurs.",
       "The declared Node/Electron process role is not authenticated by the Inspector protocol.",
@@ -226,12 +228,21 @@ export const finalizeInspectorCapture = async ({
   };
 };
 
+/** Report lifecycle events whose context identity could not be parsed. */
+const invalidContextUnknowns = (count: number): string[] =>
+  count === 0
+    ? []
+    : [
+        `${String(count)} execution-context lifecycle ${count === 1 ? "event with a missing or malformed execution-context ID was" : "events with a missing or malformed execution-context ID were"} excluded; the affected contexts' lifecycle state is unknown.`,
+      ];
+
 const scriptFromDraft = (
   draft: ScriptDraft,
   location: JavaScriptRuntimeTargetLocation,
 ): JavaScriptRuntimeObservation["scripts"]["items"][number] => {
   const stable = JSON.stringify({
     location,
+    ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
     cdp_hash: draft.cdpHash,
     length: draft.length,
@@ -240,6 +251,7 @@ const scriptFromDraft = (
   return {
     script_key: `v8_script_${createHash("sha256").update(stable).digest("hex")}`,
     location,
+    ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
     cdp_hash: draft.cdpHash,
     length: draft.length,

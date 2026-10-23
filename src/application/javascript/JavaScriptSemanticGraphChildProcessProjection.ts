@@ -1,4 +1,3 @@
-import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type {
   JavaScriptSemanticChildProcessInteraction,
@@ -10,7 +9,10 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
-import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import {
+  projectSemanticResultBindings,
+  type SemanticFlowProjectionContext,
+} from "./JavaScriptSemanticGraphFlowProjection.js";
 
 interface ChildUnknownInput {
   readonly context: SemanticFlowProjectionContext;
@@ -81,18 +83,7 @@ const projectSpawn = (
     relation: "spawns",
     resolution: spawn.resolution === "complete" ? "resolved" : "candidate",
   });
-  for (const projected of spawn.projectedResultBindings)
-    addSemanticGraphRelation(context.state, {
-      source: child,
-      target: context.bindingNodes.get(projected.bindingId),
-      relation: "destructures",
-      resolution:
-        projected.resolution === "complete" ? "resolved" : "candidate",
-      properties: {
-        projection_path: [...projected.projectionPath],
-        projection_resolution: projected.resolution,
-      },
-    });
+  projectSemanticResultBindings(context, child, spawn.projectedResultBindings);
   if (spawn.argvCount !== null)
     addSemanticGraphRelation(context.state, {
       source: callSite,
@@ -233,19 +224,13 @@ const addSignalNode = (
 const addChildUnknown = (input: ChildUnknownInput): void => {
   const { context, node, location, relationKinds, detail, candidateNodeIds } =
     input;
-  addSemanticGraphUnknown(
-    context.state,
-    createJavaScriptSemanticGraphUnknown(
-      {
-        node_id: node?.node_id ?? null,
-        family: "child-process",
-        relation_kinds: relationKinds,
-        reason: input.reason ?? "ambiguous-target",
-        detail,
-        candidate_node_ids: candidateNodeIds,
-        evidence: unknownSemanticEvidence(context.file, location),
-      },
-      context.state.evidenceContexts,
-    ),
-  );
+  addSemanticGraphUnknown(context.state, {
+    node_id: node?.node_id ?? null,
+    family: "child-process",
+    relation_kinds: relationKinds,
+    reason: input.reason ?? "ambiguous-target",
+    detail,
+    candidate_node_ids: candidateNodeIds,
+    evidence: unknownSemanticEvidence(context.file, location),
+  });
 };

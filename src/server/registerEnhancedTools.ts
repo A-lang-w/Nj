@@ -11,6 +11,7 @@ import type {
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { EnhancedTools } from "../application/EnhancedTools.js";
 import type { ValidatedEnhancedCall } from "../application/EnhancedToolTypes.js";
 import {
@@ -30,6 +31,10 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysisEvidence.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import {
+  reportOperationStart,
+  reportOperationEnd,
+} from "./operationProgress.js";
 
 /** Optional session services used by enhanced tool registration. */
 export interface EnhancedToolRegistration {
@@ -37,7 +42,9 @@ export interface EnhancedToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
   readonly analysisProfile:
-    | (() => AnalysisProfileCommitment | undefined)
+    | ((
+        operation: ValidatedEnhancedCall["name"],
+      ) => AnalysisProfileCommitment | undefined)
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
@@ -219,18 +226,14 @@ const executeEnhancedTool = async (
       const { validatedCall, context } = request;
       const name = validatedCall.name;
       const progress = mcpProgressReporter(context);
-      await progress.report({
-        phase: name,
-        completed: 0,
-        total: 1,
-        message: "started",
-      });
+      await reportOperationStart(progress, name);
       const parsedInput = validatedCall.input;
       const parameters = jsonParameters(parsedInput);
       if (name === "analyze_function")
         return executeFunctionTool(admittedAnalysis, registration, contract, {
           context,
           parameters,
+          progress,
         });
       const analysis: AnalysisOperationPort = {
         execute: (operation, operationParameters, executionOptions) =>
@@ -247,20 +250,14 @@ const executeEnhancedTool = async (
           ),
         ),
       );
-      await progress.report({
-        phase: name,
-        completed: 1,
-        total: 1,
-        message: result.ok ? "completed" : "failed",
-        terminal: true,
-      });
+      await reportOperationEnd(progress, name, result.ok);
       if (result.ok) {
         const evidence = createWorkflowEvidence({
           target: registration.activeTarget?.(),
           operation: name,
           parameters,
           result: result.value.result,
-          upstreamProfile: registration.analysisProfile?.(),
+          upstreamProfile: registration.analysisProfile?.(name),
           upstreamLimitations: result.value.limitations,
         });
         const recorded = registration.recordEvidence?.(evidence);
@@ -270,7 +267,12 @@ const executeEnhancedTool = async (
           name !== "trace_native_ui_action" &&
           registration.allowsSnapshotReplay?.(name) === true
         ) {
-          const workflowRecord = workflowSnapshotRecord(evidence, name);
+          const workflowRecord = workflowSnapshotRecord(
+            evidence,
+            name,
+            registration.analysisProfile?.(name),
+            result.value.cachePolicy,
+          );
           if (workflowRecord !== undefined) {
             const snapshot =
               registration.recordWorkflowSnapshot?.(workflowRecord);
@@ -309,10 +311,12 @@ const executeFunctionTool = async (
   request: {
     readonly context: ServerContext;
     readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly progress: ProgressReporter;
   },
 ): Promise<CallToolResult> => {
-  const { context, parameters } = request;
-  const progress = mcpProgressReporter(context);
+  // Reuse the request reporter that already sent "started"; a second reporter
+  // would restart the notification sequence at 1.
+  const { context, parameters, progress } = request;
   const result = await logToolExecution(
     registration.logger,
     "analyze_function",
@@ -327,13 +331,7 @@ const executeFunctionTool = async (
         },
       ),
   );
-  await progress.report({
-    phase: "analyze_function",
-    completed: 1,
-    total: 1,
-    message: result.ok ? "completed" : "failed",
-    terminal: true,
-  });
+  await reportOperationEnd(progress, "analyze_function", result.ok);
   if (!result.ok)
     return registration.delivery.toCallToolResult(result, contract);
   return registration.delivery.toEvidenceToolResult(

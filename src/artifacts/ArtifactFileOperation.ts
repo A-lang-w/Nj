@@ -7,11 +7,13 @@ import {
   RegularFileCancelled,
   RegularFileCleanupFailure,
 } from "../filesystem/OwnedRegularFile.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
-  ArtifactResourceRetryFailure,
-  type ArtifactResourceOwner,
-  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+  artifactPrimaryCleanupLeases,
+} from "./ArtifactReader.js";
+import type {
+  ArtifactResourceOwner,
+  ArtifactResourceScope,
 } from "./ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
@@ -23,7 +25,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 export class ArtifactFileCleanupFailure<
   Value = unknown,
 > extends ArtifactReaderFailure {
-  readonly cleanupLeases: readonly AnalysisCleanupLease[] | undefined;
+  override readonly cleanupLeases: readonly AnalysisCleanupLease[] | undefined;
   readonly fileCleanupFailure: RegularFileCleanupFailure<Value>;
   constructor(
     fileCleanupFailure: RegularFileCleanupFailure<Value>,
@@ -78,19 +80,41 @@ export class ArtifactFileCleanupFailure<
     );
     this.fileCleanupFailure = fileCleanupFailure;
     const inherited =
-      primary instanceof ArtifactFileCleanupFailure ||
-      primary instanceof ArtifactResourceRetryFailure
-        ? primary.cleanupLeases
-        : primary instanceof ArtifactReaderFailure &&
-            primary.cleanup !== undefined
-          ? undefined
-          : [];
+      fileCleanupFailure.outcome.kind === "failed"
+        ? artifactPrimaryCleanupLeases(fileCleanupFailure.outcome.cause)
+        : [];
     this.cleanupLeases =
       inherited === undefined
         ? undefined
         : [...new Set([cleanupLease, ...inherited])];
   }
 }
+
+/** Errnos raised while the caller-selected artifact path is being resolved. */
+export type ArtifactSelectedPathErrno =
+  | "ENOENT"
+  | "ENOTDIR"
+  | "ELOOP"
+  | "ENAMETOOLONG";
+
+/** Return only known path-resolution errnos; permissions and I/O remain distinct. */
+export const artifactSelectedPathErrno = (
+  cause: unknown,
+): ArtifactSelectedPathErrno | undefined => {
+  if (!(cause instanceof Error) || !("code" in cause)) return undefined;
+  switch (String(cause.code)) {
+    case "ENOENT":
+      return "ENOENT";
+    case "ENOTDIR":
+      return "ENOTDIR";
+    case "ELOOP":
+      return "ELOOP";
+    case "ENAMETOOLONG":
+      return "ENAMETOOLONG";
+    default:
+      return undefined;
+  }
+};
 
 /** Normalize the physical primary failure without replacing its exact cleanup owner. */
 export const mapArtifactFileFailure = (
@@ -144,17 +168,39 @@ export class ArtifactFileCancelled<
   }
 }
 
+/** Completion facts recorded by the file owner, independent of later caller state. */
+export const artifactFileCompletion = (
+  cause: unknown,
+):
+  | {
+      readonly kind: "completed";
+      readonly value: unknown;
+      readonly cancellation: { readonly reason: unknown } | undefined;
+    }
+  | undefined => {
+  if (cause instanceof ArtifactFileCancelled)
+    return {
+      ...cause.fileCancellation.outcome,
+      cancellation: { reason: cause.fileCancellation.reason },
+    };
+  if (
+    cause instanceof ArtifactFileCleanupFailure &&
+    cause.fileCleanupFailure.outcome.kind === "completed"
+  )
+    return {
+      ...cause.fileCleanupFailure.outcome,
+      cancellation: cause.fileCleanupFailure.completionCancellation,
+    };
+  return undefined;
+};
+
 /** Bind a translated failure to its exact descriptor leases, including failed retries. */
 export const bindArtifactFileCleanup = (
   cause: unknown,
   error: AnalysisError,
 ): void => {
   const leases =
-    cause instanceof ArtifactFileCleanupFailure
-      ? cause.cleanupLeases
-      : cause instanceof ArtifactResourceRetryFailure
-        ? cause.cleanupLeases
-        : undefined;
+    cause instanceof ArtifactReaderFailure ? cause.cleanupLeases : undefined;
   if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
 };
 

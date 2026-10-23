@@ -121,8 +121,8 @@ const registerDoctorCommand = (
         .describe("Require the installed REA skill identity to be aligned"),
     }),
     run: ({ options }) =>
-      logCliCommand(logger, "doctor", () =>
-        withCommandCancellation(async (signal) => {
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "doctor", async () => {
           const [{ runDoctorOwned }, { createSystemDoctorHost }] =
             await Promise.all([
               import("../application/Doctor.js"),
@@ -255,7 +255,6 @@ const setupRunOptions = (
     options.skillClient.length > 0;
   const hasSelectedClients =
     hasExplicitScope &&
-    !options.allDetected &&
     (options.client.length > 0 || options.skillClient.length > 0);
   return {
     approved: options.yes && !options.dryRun,
@@ -272,7 +271,7 @@ const setupRunOptions = (
       ? { installSkill: options.skill ?? agentIntegrationSelected }
       : {}),
     ...(interactive ? { onProgress: renderSetupProgress } : {}),
-    ...(hasSelectedClients
+    ...(hasSelectedClients && !options.allDetected
       ? {
           readinessScope: {
             clients: options.client,

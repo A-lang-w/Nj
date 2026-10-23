@@ -44,6 +44,149 @@ const engine = {
   heap_limit_mib: null,
 };
 
+it("pages filtered matches independently of the examined inventory and preserves cross-page duplicates", async () => {
+  const names = Array.from({ length: 5000 }, (_, i) => `fixture.Target${i}`);
+  names[0] = "fixture.TargetDuplicate";
+  names[4096] = "fixture.TargetDuplicate";
+  const calls: Record<string, unknown>[] = [];
+  const tools: JadxToolPort = {
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: (input) => {
+      calls.push({ ...input });
+      const offset = Number(input.offset);
+      return Promise.resolve({
+        scope: "top_level" as const,
+        total_classes: 10000,
+        next_offset: offset === 0 ? 8191 : 10000,
+        offset,
+        limit: 4096,
+        items: offset === 0 ? names.slice(0, 4096) : names.slice(4096),
+      });
+    },
+    text: () => Promise.reject(new Error("unexpected text call")),
+  };
+  const result = await analyzeJadxRequest(
+    tools,
+    {
+      operation: "search_android_classes",
+      input: { path: "/fixture.apk", query: "Target" },
+    },
+    {
+      state: "LOADED",
+      apk_path: "/snapshot.apk",
+      class_count: 10000,
+      resource_count: 0,
+      threads: 1,
+      resources: "full",
+    },
+    engine,
+  );
+  expect(calls).toEqual([
+    { query: "Target", offset: 0, limit: 4096 },
+    { query: "Target", offset: 8191, limit: 4096 },
+  ]);
+  expect(result).toMatchObject({
+    total_classes: 10000,
+    matches: names,
+    duplicate_names: [{ name: "fixture.TargetDuplicate", occurrences: 2 }],
+    coverage: "complete",
+  });
+});
+
+it.each([
+  { name: "inventory total", query: "Target", page: { total_classes: 9 } },
+  { name: "out-of-range cursor", query: "Target", page: { next_offset: 11 } },
+  {
+    name: "impossible examined row count",
+    query: "Target",
+    page: { next_offset: 1, items: ["TargetA", "TargetB"] },
+  },
+  { name: "offset identity", query: "Target", page: { offset: 1 } },
+  { name: "requested page size", query: "Target", page: { limit: 1 } },
+  { name: "nonmatching row", query: "Target", page: { items: ["Other"] } },
+  {
+    name: "non-progressing page",
+    query: "Target",
+    page: { next_offset: 0, items: [] },
+  },
+  { name: "premature page end", query: "Target", page: { next_offset: 9 } },
+  { name: "empty-query completeness", query: "", page: {} },
+])(
+  "refuses changed $name instead of reporting complete search coverage",
+  async ({ query, page }) => {
+    const tools: JadxToolPort = {
+      json: () => Promise.reject(new Error("unexpected JSON call")),
+      listClasses: () =>
+        Promise.resolve({
+          scope: "top_level" as const,
+          total_classes: 10,
+          next_offset: 10,
+          offset: 0,
+          limit: 4096,
+          items: ["fixture.Target"],
+          ...page,
+        }),
+      text: () => Promise.reject(new Error("unexpected text call")),
+    };
+    await expect(
+      analyzeJadxRequest(
+        tools,
+        {
+          operation: "search_android_classes",
+          input: { path: "/fixture.apk", query },
+        },
+        {
+          state: "LOADED",
+          apk_path: "/snapshot.apk",
+          class_count: 10,
+          resource_count: 0,
+          threads: 1,
+          resources: "full",
+        },
+        engine,
+      ),
+    ).rejects.toThrow();
+  },
+);
+
+it("accepts an examined empty inventory without requiring cursor progress", async () => {
+  const tools: JadxToolPort = {
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: () =>
+      Promise.resolve({
+        scope: "top_level" as const,
+        total_classes: 0,
+        offset: 0,
+        next_offset: 0,
+        limit: 4096,
+        items: [],
+      }),
+    text: () => Promise.reject(new Error("unexpected text call")),
+  };
+  const result = await analyzeJadxRequest(
+    tools,
+    {
+      operation: "search_android_classes",
+      input: { path: "/fixture.apk", query: "Target" },
+    },
+    {
+      state: "LOADED",
+      apk_path: "/snapshot.apk",
+      class_count: 0,
+      resource_count: 0,
+      threads: 1,
+      resources: "full",
+    },
+    engine,
+  );
+  expect(result).toMatchObject({
+    total_classes: 0,
+    matches: [],
+    duplicate_names: [],
+    coverage: "complete",
+  });
+});
+
 it("requires explicit direct invoke coverage state in result evidence", () => {
   const result = {
     engine,
@@ -83,6 +226,8 @@ it("requires explicit direct invoke coverage state in result evidence", () => {
 
 it("publishes exact DEX prototypes instead of discarding bridge metadata", async () => {
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: () => Promise.resolve(summary),
     text: () => Promise.reject(new Error("unexpected text call")),
   };
@@ -109,6 +254,8 @@ it("publishes exact DEX prototypes instead of discarding bridge metadata", async
 it("traces only the selected overloaded method and checks the producer identity", async () => {
   const calls: Record<string, unknown>[] = [];
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: (name, input) => {
       calls.push({ name, ...input });
       if (name === "get_class_summary") return Promise.resolve(summary);
@@ -192,6 +339,8 @@ it("rejects an ambiguous method and a producer response for a different overload
     items: [],
   };
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: (name) =>
       Promise.resolve(name === "get_class_summary" ? summary : xrefs),
     text: () => Promise.reject(new Error("unexpected text call")),
@@ -239,6 +388,8 @@ const invokeSite = {
 const traceWithReference = (fields: Record<string, unknown>) =>
   analyzeJadxRequest(
     {
+      listClasses: () =>
+        Promise.reject(new Error("unexpected class inventory call")),
       json: (name) =>
         Promise.resolve(
           name === "get_class_summary"
@@ -340,6 +491,8 @@ it.each([
     await expect(
       analyzeJadxRequest(
         {
+          listClasses: () =>
+            Promise.reject(new Error("unexpected class inventory call")),
           json: () => Promise.resolve(invalidSummary),
           text: () => Promise.reject(new Error("unexpected text call")),
         },

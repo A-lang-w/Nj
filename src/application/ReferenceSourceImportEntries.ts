@@ -107,12 +107,18 @@ type PackageMain =
  */
 const readPackageMains = (
   read: ReferenceSourceRead,
+  exclusions: HistoricalSourceGraphInput["exclusions"],
 ): {
   readonly mains: ReadonlyMap<string, PackageMain>;
   readonly pathLookup: ReferenceSourcePathLookup;
 } => {
   const mains = new Map<string, PackageMain>();
   const manifestPaths: string[] = [];
+  for (const exclusion of exclusions) {
+    if (posix.basename(exclusion.path) !== "package.json") continue;
+    manifestPaths.push(exclusion.path);
+    mains.set(posix.dirname(exclusion.path), { state: "unknown" });
+  }
   for (const entry of read.entries) {
     if (posix.basename(entry.path) !== "package.json") continue;
     manifestPaths.push(entry.path);
@@ -130,7 +136,9 @@ const readPackageMains = (
         new TextDecoder("utf-8", { fatal: true }).decode(entry.bytes),
       );
       const main =
-        typeof manifest === "object" && manifest !== null
+        typeof manifest === "object" &&
+        manifest !== null &&
+        Object.hasOwn(manifest, "main")
           ? Reflect.get(manifest, "main")
           : undefined;
       mains.set(
@@ -393,8 +401,10 @@ const appendFile = (
     limitations: [...(parsed?.limitations ?? [])],
   });
   if (parsed === undefined) return;
+  output.limitations.push(...parsed.limitations);
   for (const relationship of parsed.relationships) {
-    const { resolutionStrategy, ...graphRelationship } = relationship;
+    const { resolutionStrategy, resolutionBasePath, ...graphRelationship } =
+      relationship;
     if (graphRelationship.resolution !== "internal") {
       output.relationships.push(graphRelationship);
       continue;
@@ -406,7 +416,7 @@ const appendFile = (
           ? "source-require"
           : "source-import";
     const resolved = resolveImportSpecifier(
-      graphRelationship.from_path,
+      resolutionBasePath ?? graphRelationship.from_path,
       graphRelationship.to,
       context,
       mode,
@@ -461,6 +471,7 @@ const appendReadEntry = (
 export const parseReferenceSourceEntries = (
   read: ReferenceSourceRead,
   filePaths: ReadonlySet<string>,
+  exclusions: HistoricalSourceGraphInput["exclusions"],
   signal?: AbortSignal,
 ): ParsedReferenceSourceEntries => {
   const output: ParsedReferenceSourceEntries = {
@@ -469,7 +480,11 @@ export const parseReferenceSourceEntries = (
     parseFailures: [],
     limitations: [...read.limitations],
   };
-  const packageMainInventory = readPackageMains(read);
+  if (read.rootFailure !== undefined)
+    output.limitations.push(
+      `Reference root enumeration is incomplete: ${read.rootFailure.message}`,
+    );
+  const packageMainInventory = readPackageMains(read, exclusions);
   const context: SpecifierContext = {
     lookupPath: createReferenceSourcePathLookup(filePaths),
     packageMains: packageMainInventory.mains,
