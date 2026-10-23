@@ -161,6 +161,10 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
       _tag: "AnalysisResourceConstraintError",
       resource: "file-size",
       retryable: false,
+      fixedAllowance: {
+        name: expect.stringContaining("installation-properties"),
+        kind: "input",
+      },
       reportedLimits: {
         maximum_bytes: MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
         observed_bytes: String(MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES + 1),

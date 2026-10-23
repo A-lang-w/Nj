@@ -7,6 +7,7 @@ import {
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { fixedProducerInputAllowance } from "../domain/fixedAllowanceRemediation.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
 import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
@@ -91,6 +92,14 @@ export const readGhidraInstallationProperties = async (
             },
           }),
     };
-    throw ghidraFileFailure(cause, "ghidra:installation", diagnostics);
+    throw ghidraFileFailure(
+      cause,
+      "ghidra:installation",
+      diagnostics,
+      fixedProducerInputAllowance(
+        MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
+        "Ghidra installation-properties metadata read budget",
+      ),
+    );
   }
 };

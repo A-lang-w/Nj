@@ -20,6 +20,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
+  type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -62,6 +63,7 @@ export const ghidraFileFailure = (
   cause: unknown,
   operation: string,
   diagnostics: Readonly<Record<string, JsonValue>> = {},
+  capacityRecovery: ResourceConstraintRecovery = { retryable: false },
 ): AnalysisError => {
   cause = mapArtifactFileFailure(cause, (primary) => {
     if (primary instanceof RegularFileCapacityError)
@@ -73,7 +75,7 @@ export const ghidraFileFailure = (
           maximum_bytes: primary.maximumBytes,
           observed_bytes: primary.observedBytes.toString(),
         },
-        { cause: primary, diagnostics, retryable: false },
+        { cause: primary, diagnostics, ...capacityRecovery },
       );
     if (primary instanceof RegularFileChangedError)
       return new AnalysisArtifactChangedError(
