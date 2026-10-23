@@ -6,6 +6,9 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { createEvidence } from "../domain/evidence.js";
 import { parseFunctionEvidence } from "../domain/functionDossierEvidence.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { readEvidence } from "../domain/evidenceValidation.js";
+import { err } from "../domain/result.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
@@ -41,6 +44,34 @@ export const registerFunctionComparisonTool = (
           );
           if (!resolved.ok)
             return server.delivery.toCallToolResult(resolved, contract);
+          const leftRead = readEvidence(resolved.value.left);
+          if (!leftRead.ok)
+            return server.delivery.toCallToolResult(leftRead, contract);
+          const rightRead = readEvidence(resolved.value.right);
+          if (!rightRead.ok)
+            return server.delivery.toCallToolResult(rightRead, contract);
+          const wrongKinds = (
+            [
+              ["left", leftRead.value],
+              ["right", rightRead.value],
+            ] as const
+          ).flatMap(([side, record]) =>
+            record.operation === "analyze_function" &&
+            record.predicate_type === "rea.analysis"
+              ? []
+              : [
+                  {
+                    path: [side],
+                    reason: "invalid_value" as const,
+                    message: `Expected analyze_function Evidence (predicate rea.analysis); the ${side} Evidence has operation ${record.operation} and predicate ${record.predicate_type}.`,
+                  },
+                ],
+          );
+          if (wrongKinds.length > 0)
+            return server.delivery.toCallToolResult(
+              err(new AnalysisInputError(contract.name, undefined, wrongKinds)),
+              contract,
+            );
           const computed = await runDerivedOperation(
             context,
             contract.name,

@@ -339,6 +339,7 @@ const runAnalysis = async (
     const prepared = await prepareSnapshot({
       session,
       path,
+      operation: tool,
       snapshotPath,
       signal,
       ...(options.formatHint === undefined
@@ -655,6 +656,7 @@ const prepareSnapshot = async (options: {
     "readAnalysisSnapshot" | "resolveTarget"
   >;
   readonly path: string;
+  readonly operation: string;
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
@@ -672,6 +674,7 @@ const prepareSnapshot = async (options: {
   const loaded = await session.readAnalysisSnapshot(
     snapshotPath,
     options.signal,
+    options.operation,
   );
   if (!loaded.ok) return loaded;
   const target = await session.resolveTarget(path, {

@@ -22,6 +22,7 @@ import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
   at,
   identityCandidates,
+  renderStateList,
   replaceAt,
   type JsonObject,
 } from "./environmentStateRules.js";
@@ -267,6 +268,38 @@ it("leaves a type recorded when a value changed across a write already in flight
     tool: "get_search",
     shape: "recorded",
     reason: "fields-differ",
+  });
+});
+
+it("counts a digit-string total that equals the number listed", () => {
+  const state = stateOf(
+    captureOf([["GET", "/api/items", { total: "1", items: [{ id: 1 }] }]]),
+  );
+  expect(viewOf(state, "get_items")).toMatchObject({
+    shape: "list",
+    membership: "all",
+    counters: ["total"],
+  });
+});
+
+it("keeps a padded digit-string total's spelling and still lists the whole collection", () => {
+  const state = stateOf(
+    captureOf([["GET", "/api/items", { total: "01", items: [{ id: 1 }] }]]),
+  );
+  expect(viewOf(state, "get_items")).toMatchObject({
+    shape: "list",
+    membership: "all",
+    counters: ["total"],
+  });
+  const view = { pointer: "/items", counters: ["total"] };
+  const base = { total: "01", items: [{ id: 1 }] };
+  expect(renderStateList(view, base, [{ id: 1 }])).toEqual({
+    total: "01",
+    items: [{ id: 1 }],
+  });
+  expect(renderStateList(view, base, [{ id: 1 }, { id: 2 }])).toEqual({
+    total: "2",
+    items: [{ id: 1 }, { id: 2 }],
   });
 });
 
