@@ -3,6 +3,7 @@ import { z } from "zod";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import {
   SQLITE_ROW_LIMIT_DEFAULT,
+  sqliteSchemaHasObjectDeclaration,
   sqliteSchemaScope,
   type InspectSqliteDatabaseInput,
   type SqliteDatabase,
@@ -11,6 +12,7 @@ import {
 import {
   SQLITE_DATABASE_LIMITS,
   SqliteColumnEvaluationFailure,
+  SqliteColumnLimitFailure,
   SqliteInspectionFailure,
   sqlitePrimaryResultCode,
 } from "./SqliteDatabaseLimits.js";
@@ -311,6 +313,25 @@ const readSchema = (
     selectedName === undefined || selected === undefined
       ? undefined
       : shadowParentOf(selectedName, selected);
+  // sqlite_schema is a queryable ordinary table in PRAGMA inventory, but has
+  // no self-row in its stored declaration table. Keep these row-source facts
+  // separate from schema.tables rather than manufacturing a declaration.
+  const selectedRowSource =
+    input.table === undefined ? undefined : metadata.get(input.table);
+  if (
+    input.table !== undefined &&
+    !sqliteSchemaHasObjectDeclaration(input.table) &&
+    selectedRowSource?.type === "table"
+  )
+    selectedTable = {
+      name: selectedRowSource.name,
+      kind: selectedRowSource.type,
+      columns: readColumns(db, selectedRowSource.name, {
+        budget: new OutputBudget(),
+        encoding,
+        selectedColumns: input.columns,
+      }),
+    };
   // NOCASE folds only ASCII letters, as SQLite does when it resolves the
   // table named by an index or trigger. Fold only for an ordinary table whose
   // rows can be selected; a selection refused later keeps the exact filter,
@@ -463,6 +484,34 @@ const storedColumnNames = (
 };
 
 /**
+ * SQLite counts every projected expression, including repeated selections,
+ * against this connection's result-column capacity and reports exhaustion as a
+ * generic SQL error. The engine's own limit distinguishes that capacity refusal
+ * from malformed or unreadable data.
+ */
+const resultColumnLimitFailure = (
+  db: DatabaseSync,
+  cause: unknown,
+  selectedColumns: number,
+): SqliteColumnLimitFailure | undefined => {
+  if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return undefined;
+  const engineColumnLimit = db.limits.column;
+  if (
+    !Number.isSafeInteger(engineColumnLimit) ||
+    engineColumnLimit <= 0 ||
+    selectedColumns <= engineColumnLimit
+  )
+    return undefined;
+  return new SqliteColumnLimitFailure(
+    `SQLite cannot return ${String(selectedColumns)} selected result columns; this connection permits at most ${String(engineColumnLimit)}: ${
+      cause instanceof Error ? cause.message : String(cause)
+    }`,
+    selectedColumns,
+    engineColumnLimit,
+  );
+};
+
+/**
  * Attribute an SQL error from selected cells to the virtual generated columns
  * that raise it on this connection. Each column is probed alone over the same
  * sampled rows, so only columns whose probe succeeds are recommended; any
@@ -479,8 +528,10 @@ const columnEvaluationFailure = (
     readonly encoding: DatabaseEncoding;
   },
 ): unknown => {
-  if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
   const { table, columns, source, limit, encoding } = selection;
+  const columnLimit = resultColumnLimitFailure(db, cause, columns.length);
+  if (columnLimit !== undefined) return columnLimit;
+  if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
   // The aggregate evaluates exactly the sampled cells, as the length pass does.
   const probe = (name: string): { readonly failure: unknown } | undefined => {
     try {
