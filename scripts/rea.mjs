@@ -81,11 +81,8 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   writeStdout(result.output);
   process.exitCode = result.exitCode;
 } else {
-  const { cliConfigurationError, closeCliJavaScriptResources, createCli } =
-    await import("../dist/cli-runtime/cli.js");
-  const { createCliResultOutput } =
-    await import("../dist/cli-runtime/cliResultOutput.js");
   const {
+    cliConfigurationError,
     normalizeCliArguments,
     renderCliOutputArgumentError,
     renderEmptyFilteredCliOutput,
@@ -110,6 +107,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   );
   const configurationError = cliConfigurationError(process.env);
   let dispatchFailure;
+  let closeCliJavaScriptResources;
   // Incur can exit from the callback below before this function returns.
   // That callback owns the status, including a closed-pipe exit of 141.
   let exiting = false;
@@ -125,6 +123,11 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     } else if (versionOutput !== undefined) {
       writeStdout(versionOutput);
     } else {
+      const cliRuntime = await import("../dist/cli-runtime/cli.js");
+      closeCliJavaScriptResources = cliRuntime.closeCliJavaScriptResources;
+      const { createCli } = cliRuntime;
+      const { createCliResultOutput } =
+        await import("../dist/cli-runtime/cliResultOutput.js");
       let wroteOutput = false;
       const resultOutput = createCliResultOutput(cliArgs, process.stdout);
       try {
@@ -187,7 +190,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     // Serve and output rendering can throw after a worker is parked. Stop it
     // on that path too, and keep the dispatch failure when both fail.
     try {
-      await closeCliJavaScriptResources();
+      await closeCliJavaScriptResources?.();
     } catch (cleanup) {
       // The exit callback reports this same shared failure and then exits.
       if (!exiting) {

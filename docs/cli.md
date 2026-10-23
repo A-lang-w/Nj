@@ -579,6 +579,9 @@ rea environment-compare manifest.json --evidence capture.json --probe probe.json
 `rea --version` prints the package version. Add an output format to get the
 version with the runtime and platform context that a support request needs:
 
+Version reports do not initialize analysis providers. Invalid global settings
+or output options still report their usual errors.
+
 ```bash
 rea --version --json
 ```
