@@ -149,9 +149,23 @@ export const importReferenceSource = async (
     vcsResult.ok ? vcsResult.value.ignoreCase : null,
     canonicalRoot.value,
   );
-  if (!prepared.ok) return prepared;
+  if (!prepared.ok)
+    return vcsResult.ok
+      ? prepared
+      : err(
+          combineImportFailures(
+            vcsResult.error,
+            prepared.error,
+            prepared.error.partial,
+          ),
+        );
   const { root, policy } = prepared.value;
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal))
+    return err(
+      vcsResult.ok
+        ? cancelled()
+        : combineImportFailures(vcsResult.error, cancelled(), undefined),
+    );
 
   const readResult = await readReferenceSource(root, resources, {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -160,7 +174,7 @@ export const importReferenceSource = async (
 
   if (!readResult.ok)
     return err(
-      combineReadFailures(
+      combineImportFailures(
         readResult.error,
         vcsResult.ok ? undefined : vcsResult.error,
         withImportExclusions(
@@ -172,7 +186,7 @@ export const importReferenceSource = async (
     );
   if (!vcsResult.ok)
     return err(
-      combineReadFailures(
+      combineImportFailures(
         vcsResult.error,
         undefined,
         withImportExclusions(
@@ -266,22 +280,26 @@ export const importReferenceSource = async (
   }
 };
 
-const combineReadFailures = (
-  primary: ReferenceSourceReaderError,
-  other: ReferenceSourceReaderError | undefined,
+type ImportStageFailure =
+  | ReferenceSourceReaderError
+  | ReferenceSourceImportError;
+
+const combineImportFailures = (
+  primary: ImportStageFailure,
+  other: ImportStageFailure | undefined,
   partial: ReferenceSourceImportError["partial"],
 ): ReferenceSourceImportError => {
   const cleanup = mergeCleanup(primary.cleanup, other?.cleanup);
   const message =
     other === undefined
       ? primary.message
-      : `${primary.message}; additional reference metadata failure: ${other.message}`;
+      : `${primary.message}; additional reference source failure: ${other.message}`;
   const cause =
     other === undefined
       ? primary.cause
       : new AggregateError(
           [primary, other],
-          "Reference source inventory and metadata both failed",
+          "Reference source import failed at multiple stages",
           { cause: primary },
         );
   return {
