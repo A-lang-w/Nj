@@ -874,7 +874,10 @@ when a configured deadline is shorter than the known provider allowance. An
 explicit JEB upstream deadline (`REA_JEB_MCP_TIMEOUT_MS`, shared by catalog
 discovery and each tools/call) also contributes to that allowance.
 An explicit `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` is added to the Ghidra startup
-allowance, so a cold import followed by a bounded decompile fits one call.
+allowance as a single-decompile estimate. A multi-function call needs a client
+deadline covering every attempted decompile plus other work; the static
+registration value does not bound an arbitrary batch. Existing caller deadlines
+remain unchanged.
 
 For an already connected client using the pinned SDK, request options are the
 **second** argument of `callTool`:

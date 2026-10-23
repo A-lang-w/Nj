@@ -24,7 +24,7 @@ export const mcpDoctorDeadlineRecovery = (budget: McpPhaseBudget): string =>
 export interface McpToolTimeoutInputs {
   readonly analysisProvider: AnalysisProviderSelector;
   readonly ghidraStartupTimeoutMs: number;
-  /** Optional per-procedure Ghidra decompile limit; one cold call can need startup plus this. */
+  /** One configured Ghidra decompile allowance; bulk cardinality is unknown here. */
   readonly ghidraDecompileTimeoutMs?: number;
   readonly hopperStartupTimeoutMs: number;
   readonly jebMcpTimeoutMs?: number;
@@ -52,7 +52,7 @@ export const mcpProviderDeadlineAllowanceMs = (
   );
 };
 
-/** Add operation headroom to the parsed provider deadline allowance. */
+/** Add headroom to the single-request estimate; this is not a bulk-workflow bound. */
 export const recommendedMcpToolTimeoutMs = (
   inputs: McpToolTimeoutInputs,
 ): number =>
