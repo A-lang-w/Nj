@@ -27,6 +27,93 @@ const resources: Array<{ close(): Promise<unknown> }> = [];
 const browsers: FakeCdpBrowser[] = [];
 const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 
+it(
+  "preserves full document URL identity through CLI and MCP",
+  async () => {
+    const source =
+      'document.modelContext.registerTool({name:"catalog",[``]:0,inputSchema:{properties:{"":{},ordinary:{}}}});';
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }, origin) =>
+        method === "Debugger.getScriptSource"
+          ? { scriptSource: source }
+          : method === "Page.getFrameTree"
+            ? {
+                frameTree: {
+                  frame: {
+                    id: "frame-main",
+                    loaderId: "loader-main",
+                    url: `${origin}/app?token=frame-secret`,
+                    urlFragment: "#details",
+                  },
+                },
+              }
+            : undefined,
+      commandEvents: ({ method, sessionId }, origin) =>
+        method === "Page.captureScreenshot"
+          ? [
+              {
+                method: "Page.frameRequestedNavigation",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: {
+                  frameId: "frame-main",
+                  url: `${origin}/not-committed`,
+                  reason: "scriptInitiated",
+                  disposition: "currentTab",
+                },
+              },
+            ]
+          : undefined,
+    });
+    browsers.push(browser);
+    const { client, session } = await connectBrowser();
+    const args = {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+    };
+    const cli = await runCliJson([
+      "analyze-web-bundle",
+      browser.endpoint,
+      "allowed-page",
+      "--allowed-origins",
+      browser.allowedOrigin,
+      "--observation-ms",
+      "0",
+      "--json",
+    ]);
+    const mcp = await client.callTool({
+      name: "analyze_web_bundle",
+      arguments: { ...args, observation_ms: 0 },
+    });
+    for (const result of [cli, mcp.structuredContent])
+      expect(result).toMatchObject({
+        normalized_result: {
+          capture: {
+            target_url: `${browser.allowedOrigin}/app?token=frame-secret#details`,
+          },
+        },
+      });
+    expect(
+      session.evidenceById(parseEvidence(mcp.structuredContent).evidence_id),
+    ).toEqual(parseEvidence(mcp.structuredContent));
+    const screenshot = await client.callTool({
+      name: "capture_web_screenshot",
+      arguments: args,
+    });
+    expect(screenshot).toMatchObject({
+      structuredContent: {
+        normalized_result: {
+          target: {
+            url: `${browser.allowedOrigin}/app?token=frame-secret#details`,
+          },
+          artifact: { media_type: "image/png" },
+        },
+      },
+    });
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
+
 afterEach(async () => {
   await Promise.all(
     resources.splice(0).map(async (resource) => resource.close()),
@@ -608,3 +695,37 @@ const artifactOf = (value: unknown): unknown => {
     throw new TypeError("Missing screenshot artifact");
   return normalized.artifact;
 };
+
+it.each([24, 32, "crc"])(
+  "rejects corrupt captured PNG through MCP: %s",
+  async (kind) => {
+    const bytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4sAAAAASUVORK5CYII=",
+      "base64",
+    );
+    if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+    const data = (
+      typeof kind === "number" ? bytes.subarray(0, kind) : bytes
+    ).toString("base64");
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }) =>
+        method === "Page.captureScreenshot" ? { data } : undefined,
+    });
+    browsers.push(browser);
+    const { client } = await connectBrowser();
+    const result = await client.callTool({
+      name: "capture_web_screenshot",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+      },
+    });
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "unreadable_output",
+        details: { reason: "protocol_error" },
+      },
+    });
+  },
+);
