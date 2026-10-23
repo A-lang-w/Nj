@@ -332,14 +332,16 @@ const resolveInternalSpecifier = (
  * Interpret an ESM specifier's URL components once, as Node's file URL
  * resolution does: a raw `?` or `#` ends the pathname, and percent-escapes in
  * the pathname decode to literal filename bytes (`%3F` names a `?`). Returns
- * undefined where Node rejects the pathname: an encoded separator (`%2F`,
- * `%5C`) or a malformed escape.
+ * undefined for an encoded separator (`%2F`, `%5C`) or a malformed escape.
  */
 const esmSpecifierPathname = (specifier: string): string | undefined => {
   const componentStart = specifier.search(/[?#]/u);
   const pathname =
     componentStart === -1 ? specifier : specifier.slice(0, componentStart);
   if (!pathname.includes("%")) return pathname;
+  // `%5C` is deliberately stricter than Node. Node 24 on Linux decodes it to
+  // a file literally named `a\b.mjs` and rejects only `%2F`. Rejecting both
+  // encoded separators avoids Windows separator confusion.
   if (/%2f|%5c/iu.test(pathname)) return undefined;
   try {
     return decodeURIComponent(pathname);

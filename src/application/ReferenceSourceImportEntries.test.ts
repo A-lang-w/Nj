@@ -494,6 +494,25 @@ it("leaves ESM pathnames Node rejects unresolved with their source spelling", ()
     );
 });
 
+it("leaves ./a%5Cb.mjs unresolved, stricter than Node's backslash decode", () => {
+  // Node 24 on Linux decodes `%5C` to a file literally named `a\b.mjs` and
+  // rejects only `%2F`. This inventory rejects the encoded separator instead.
+  const relationships = relationshipsOf([
+    ["main.mjs", 'import "./a%5Cb.mjs";\n'],
+    ["a\\b.mjs", "export const value = 1;\n"],
+  ]);
+  expect(relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "a%5Cb.mjs",
+      resolution: "unresolved",
+    }),
+  );
+  expect(relationships).not.toContainEqual(
+    expect.objectContaining({ to: "a\\b.mjs", resolution: "internal" }),
+  );
+});
+
 it("keeps an unmatched query-bearing ESM request unresolved", () => {
   expect(
     relationshipsOf([["main.mjs", 'import "./missing.mjs?v=1";\n']]),
