@@ -130,6 +130,20 @@ it("qualifies projected names with exact encoding facts and normalizes historica
   }
 });
 
+it("does not fill historical name defaults into a projection that omits names", () => {
+  expect(
+    project(elf(), {
+      kind: "native-exports",
+      collection: "exports",
+      names: ["same"],
+      fields: ["value"],
+    }),
+  ).toHaveProperty("items", [
+    { source_index: 0, value: "0x1234" },
+    { source_index: 2, value: "0x1234" },
+  ]);
+});
+
 it("preserves PE ordinal-only, forwarder, alias and same-address distinctions", () => {
   const report = parseNativeExports(
     peExportImage({

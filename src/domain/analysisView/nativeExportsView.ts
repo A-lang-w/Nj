@@ -57,7 +57,18 @@ export const nativeExportsViewRequestSchema = z.discriminatedUnion(
 
 export const nativeExportsViewItemsSchema = z.union([
   z.array(peRow.partial().extend(sourceIndex)),
-  z.array(elfRow.partial().extend(sourceIndex)),
+  z.array(
+    elfRow.partial().extend({
+      ...sourceIndex,
+      // Historical defaults normalize complete source rows, never omitted columns.
+      name_bytes_base64: elfRow.shape.name_bytes_base64
+        .removeDefault()
+        .optional(),
+      name_utf8_decodable: elfRow.shape.name_utf8_decodable
+        .removeDefault()
+        .optional(),
+    }),
+  ),
   z.array(issue.extend(sourceIndex)),
 ]);
 

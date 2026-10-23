@@ -120,6 +120,25 @@ cliTest.for(["pe", "elf"] as const)(
     });
     expect(offline.exitCode, offline.stderr).toBe(0);
     expect(viewContract.outputSchema.parse(offline.json)).toEqual(page);
+    const projected = await call("inspect_analysis_view", {
+      ...request,
+      view: {
+        ...request.view,
+        fields: [format === "elf" ? "value" : "ordinal"],
+      },
+    });
+    expect(projected.isError).not.toBe(true);
+    expect(
+      viewContract.outputSchema.parse(projected.structuredContent)
+        .normalized_result,
+    ).toHaveProperty("items", [
+      {
+        source_index: 1,
+        ...(format === "elf"
+          ? { value: expect.any(String) }
+          : { ordinal: expect.any(Number) }),
+      },
+    ]);
   },
 );
 
