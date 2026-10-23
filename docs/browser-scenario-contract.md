@@ -24,7 +24,10 @@ future-document scripts, restores live frame methods, then disconnects.
 Add secret declarations, storage seeds, and additional artifact or event
 capture only when needed. Action, secret, and storage counts are not capped.
 Duration, action, and navigation timeouts remain separate from CDP command
-deadlines. `command_timeout_ms` (default 20000; omit it to keep that default
+deadlines. The initial navigation to `start_url` carries a fixed 60-second
+deadline: if it does not settle in time, the open fails with a typed timeout
+error and the session is closed.
+`command_timeout_ms` (default 20000; omit it to keep that default
 and leave it out of Evidence) bounds launch startup, the connect-over-CDP
 handshake, target lookup, environment commands, and storage CDP commands,
 including replies from attached child targets. Set it in the scenario JSON.
