@@ -12,8 +12,6 @@ interface ShutdownCleanupOwner {
   attempted: boolean;
   /** Left out of shutdown attempts while its operation is in progress. */
   deferred: boolean;
-  /** Advanced on re-arm, so a close that began earlier cannot mark it closed. */
-  generation: number;
 }
 
 /**
@@ -72,6 +70,10 @@ export const createShutdown = (input: {
   const shutdown = async (): Promise<void> => {
     if (shutdownAttempt !== undefined) return shutdownAttempt;
     requested.abort();
+    // Seal before the drain and owner closes. A tool call admitted before
+    // shutdown can reach session.open() after that close and would otherwise
+    // start a provider the completed shutdown never retires.
+    session.beginShutdown();
     const pending = cleanupOwners.filter(
       ({ closed, deferred }) => !closed && !deferred,
     );
@@ -124,10 +126,6 @@ export const createShutdown = (input: {
       if (!requested.signal.aborted) startupSettled = true;
       prepareShutdown = owners.handle?.prepareShutdown;
       cleanupOwners.unshift(...transportCleanupOwners(owners));
-      // A server that started before this attachment can reopen the session
-      // during or after an earlier attempt's close, so the next attempt closes
-      // it again even if that close is still in flight.
-      rearm(sessionOwner);
     },
     shutdown,
     request: requestShutdown,
@@ -171,13 +169,7 @@ const cleanupOwner = (close: () => Promise<void>): ShutdownCleanupOwner => ({
   closed: false,
   attempted: false,
   deferred: false,
-  generation: 0,
 });
-
-const rearm = (owner: ShutdownCleanupOwner): void => {
-  owner.generation += 1;
-  owner.closed = false;
-};
 
 const transportCleanupOwners = ({
   handle,
@@ -228,9 +220,8 @@ const closeOwners = async (
   for (const owner of owners) owner.attempted = true;
   const results = await Promise.allSettled(
     owners.map(async (owner) => {
-      const { generation } = owner;
       await owner.close();
-      owner.closed = owner.generation === generation;
+      owner.closed = true;
     }),
   );
   const failures = results.flatMap((result) =>
