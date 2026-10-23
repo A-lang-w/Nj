@@ -729,7 +729,7 @@ it("preserves primitive cancellation before publication commit and rolls back th
   const fixture = await publication(controller.signal);
   const create = SafeOutputTree.create;
   vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
-    const tree = await create(...args);
+    const tree = await create.apply(SafeOutputTree, args);
     controller.abort(null);
     return tree;
   });
@@ -766,7 +766,7 @@ it.each(["caller", "deadline"])(
     );
     const create = SafeOutputTree.create;
     vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
-      const tree = await create(...args);
+      const tree = await create.apply(SafeOutputTree, args);
       fault.selected = tree.outputRoot;
       fault.onSync = () => controller.abort(reason);
       return tree;

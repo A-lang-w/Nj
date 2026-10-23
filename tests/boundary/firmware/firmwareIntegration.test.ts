@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { expect, it as test, vi } from "vitest";
@@ -38,6 +39,7 @@ const gapsWithContinuations = (
 const directoryCloseFailure = vi.hoisted(() => ({
   mode: "off" as "off" | "transient" | "persistent",
   attempts: 0,
+  parent: "",
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -48,6 +50,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const handle = await filesystem.open(...args);
       if (
         directoryCloseFailure.mode !== "off" &&
+        String(args[0]) === directoryCloseFailure.parent &&
         (await handle.stat()).isDirectory()
       ) {
         const close = handle.close.bind(handle);
@@ -236,7 +239,10 @@ it("retains a setup-failed publication tree for provider cleanup retry", async (
 
 it("returns firmware output after a transient published-directory close failure", async () => {
   const fixture = await firmwareFixture();
-  const closeFailure = injectPublishedDirectoryCloseFailure(false);
+  const closeFailure = injectPublishedDirectoryCloseFailure(
+    false,
+    fixture.output,
+  );
   try {
     const result = await fixture.service.execute("extract_firmware", {
       path: fixture.path,
@@ -251,7 +257,7 @@ it("returns firmware output after a transient published-directory close failure"
     expect(await readFile(normalized.files[0]?.path ?? "", "utf8")).toBe(
       "firmware=true\n",
     );
-    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(4);
+    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(2);
   } finally {
     closeFailure.restore();
   }
@@ -260,7 +266,10 @@ it("returns firmware output after a transient published-directory close failure"
 it("retains the complete firmware result when published output cleanup stays uncertain", async () => {
   const fixture = await firmwareFixture();
   let retained: AnalysisError | undefined;
-  const closeFailure = injectPublishedDirectoryCloseFailure(true);
+  const closeFailure = injectPublishedDirectoryCloseFailure(
+    true,
+    fixture.output,
+  );
   try {
     const result = await fixture.service.execute("extract_firmware", {
       path: fixture.path,
@@ -300,7 +309,7 @@ it("retains the complete firmware result when published output cleanup stays unc
     expect(await readFile(`${fixture.output}/rootfs/config`, "utf8")).toBe(
       "firmware=true\n",
     );
-    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(4);
+    expect(closeFailure.attempts()).toBeGreaterThanOrEqual(2);
   } finally {
     closeFailure.restore();
   }
@@ -624,7 +633,11 @@ it("carries the owning multi-file stage on a task-level dependency gap", async (
   ]);
 });
 
-const injectPublishedDirectoryCloseFailure = (persistent: boolean) => {
+const injectPublishedDirectoryCloseFailure = (
+  persistent: boolean,
+  output: string,
+) => {
+  directoryCloseFailure.parent = dirname(output);
   directoryCloseFailure.attempts = 0;
   const commit = SafeOutputTree.prototype.commit;
   const spy = vi

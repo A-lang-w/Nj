@@ -21,7 +21,23 @@ it.each(["utf8", "utf8-bom", "utf16le", "utf16be", "binary"] as const)(
         : encoding === "utf8-bom"
           ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(xml)])
           : encoding === "binary"
-            ? Buffer.from(buildBinary(parse(xml)))
+            ? Buffer.from(
+                buildBinary(
+                  JSON.parse(
+                    JSON.stringify(parse(xml)),
+                    (_key, value: unknown) => {
+                      if (
+                        value !== null &&
+                        typeof value === "object" &&
+                        Object.keys(value).length === 1 &&
+                        "CF$UID" in value
+                      )
+                        return { UID: value["CF$UID"] };
+                      return value;
+                    },
+                  ),
+                ),
+              )
             : Buffer.concat([
                 Buffer.from(
                   encoding === "utf16le" ? [0xff, 0xfe] : [0xfe, 0xff],

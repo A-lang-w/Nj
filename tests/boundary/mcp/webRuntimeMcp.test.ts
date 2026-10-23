@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
@@ -5,7 +6,7 @@ import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js
 import { recordingWebRuntimePort } from "../../../src/application/WebRuntimeService.fixture.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { evidenceSchema, parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -158,8 +159,13 @@ it("preserves the same reconstructed runtime identity through compiled CLI and M
       "--allowed-origins",
       browser.allowedOrigin,
       "--json",
+      "--full-output",
     ]);
-    expect(parseEvidence(cli).normalized_result).toMatchObject({
+    expect(cli, JSON.stringify(cli)).toHaveProperty("ok", true);
+    expect(
+      z.object({ ok: z.literal(true), data: evidenceSchema }).parse(cli).data
+        .normalized_result,
+    ).toMatchObject({
       target: {
         initial_url: `${browser.allowedOrigin}/app?caller=retained#details`,
       },

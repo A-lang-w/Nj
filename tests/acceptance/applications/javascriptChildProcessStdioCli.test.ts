@@ -277,6 +277,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expected.set("import-equals-argv", ["inherit", null]);
     expected.set("import-equals-callback", ["default", null]);
     expected.set("export-assignment-argv", ["inherit", null]);
+    expected.set("export-assignment-annex", ["inherit", null]);
     for (const [command, count] of [
       ["Function-global", 0],
       ["frames-global", 0],
@@ -290,7 +291,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["cjs-wrapper-callback", null],
       ["annex-b-argv", null],
       ["annex-b-local", null],
-      ["export-assignment-annex", null],
     ] as const)
       expected.set(command, ["dynamic", count]);
     const children = graph.nodes.filter(

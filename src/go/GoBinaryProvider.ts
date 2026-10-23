@@ -1,11 +1,10 @@
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   readStableArtifact,
-  type StableArtifactSnapshot,
+  completedStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFailure,
-  artifactFileCompletion,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -136,11 +135,8 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFailure(cause), path);
-  const completed = artifactFileCompletion(cause);
-  if (completed !== undefined) {
-    // This inspect boundary acquires exactly one StableArtifactSnapshot before
-    // metadata decoding. Completion describes that read, not a decoded report.
-    const snapshot = completed.value as StableArtifactSnapshot;
+  const snapshot = completedStableArtifact(cause);
+  if (snapshot !== undefined) {
     primary.retainPartialObservation(
       fileSnapshotPartialObservationSchema.parse({
         kind: "file-snapshot-hash",

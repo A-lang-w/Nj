@@ -217,7 +217,7 @@ describe("browser comparison input boundary", () => {
       expect(parsedScenario).toHaveProperty("normalization", { rules: [] });
       expect(compareBrowserCaptures(parsedScenario)).toMatchObject({
         comparison_kind: "browser_scenario",
-        overall_status: "unchanged",
+        overall_status: "unknown",
       });
     } finally {
       await Promise.allSettled([

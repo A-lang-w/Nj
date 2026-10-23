@@ -156,8 +156,9 @@ it("routes observe_native_calls through MCP with schema-checked input and output
       details: {
         issues: [
           expect.objectContaining({
-            path: ["environment", "__proto__"],
-            reason: "invalid_type",
+            path: [],
+            reason: "invalid_value",
+            message: expect.stringContaining("environment.__proto__"),
           }),
         ],
       },

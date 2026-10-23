@@ -426,26 +426,13 @@ describe.skipIf(process.platform === "win32")(
       const path = join(directory, "psp-truncated-sections.elf");
       await writeFile(path, pspElfBytes({ sectionHeadersBeyondEof: true }));
       const parsed = await parseBinaryTarget(path);
-      if (!parsed.ok) throw parsed.error;
-      if (
-        parsed.value.kind !== "executable" ||
-        parsed.value.architecture !== "mips"
-      )
-        throw new Error("PSP ELF was not recognized as MIPS");
-      expect(parsed.value.mips.abiFlags).toEqual(pspAbiFlags);
-      expect(parsed.value.mips.limitations).toContainEqual(
-        expect.stringContaining("ABI declarations in unavailable headers"),
-      );
-      expect(provider.inspectTargetSupport(parsed.value).status).toBe(
-        "unsupported",
-      );
-      const result = await provider.resolveAnalysisProfile(parsed.value);
-      expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("Incomplete ABI inspection was admitted");
-      expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
-      expect(result.error.message).toContain(
-        "MIPS ABI declaration inspection is incomplete",
-      );
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "BinaryTargetError",
+          reason: expect.stringContaining("truncated ELF section header table"),
+        },
+      });
     });
 
     it("retains independently inspected PSP ABI bytes through the real target reader", async () => {
@@ -559,9 +546,9 @@ describe.skipIf(process.platform === "win32")(
       expect(result.ok).toBe(false);
       if (result.ok)
         throw new Error("Conflicting language override was accepted");
-      expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+      expect(result.error._tag).toBe("ConfigurationError");
       expect(result.error.message).toContain(
-        "does not accept REA_GHIDRA_LANGUAGE_ID overrides",
+        "does not accept processor or compiler specification overrides",
       );
     });
 

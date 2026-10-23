@@ -1,3 +1,4 @@
+import { cliIntegerArgument } from "./options.js";
 import { Cli, z } from "incur";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
 import { browserCliError } from "./browserCliError.js";
@@ -36,10 +37,10 @@ export const registerWebRuntimeCommands = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs:
-        observeWebExecutionInputSchema.shape.observation_ms.describe(
-          "Observation duration in milliseconds",
-        ),
+      observationMs: cliIntegerArgument(0)
+        .optional()
+        .pipe(observeWebExecutionInputSchema.shape.observation_ms)
+        .describe("Observation duration in milliseconds"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

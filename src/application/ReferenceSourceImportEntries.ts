@@ -322,12 +322,17 @@ const importLookupPath = (
     );
   if (!target.pathname.startsWith("/rea-reference/"))
     return err("The module URL escapes the selected source inventory.");
-  const decoded = decodeJavaScriptModuleUrlPath(
-    target.pathname.slice("/rea-reference/".length),
-  );
-  return decoded.ok
-    ? ok({ path: decoded.value, directory: target.pathname.endsWith("/") })
-    : decoded;
+  // Validate separators introduced by the specifier independently of the
+  // encoded owning directory, whose literal backslashes are source identity.
+  const specifierUrl = URL.parse(specifier, "file:///rea-reference/");
+  if (specifierUrl === null)
+    return err("The module specifier is not a URL path.");
+  const decodedSpecifier = decodeJavaScriptModuleUrlPath(specifierUrl.pathname);
+  if (!decodedSpecifier.ok) return decodedSpecifier;
+  return ok({
+    path: decodeURIComponent(target.pathname.slice("/rea-reference/".length)),
+    directory: target.pathname.endsWith("/"),
+  });
 };
 
 const resolveInternalSpecifier = (
