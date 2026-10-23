@@ -5,6 +5,7 @@ import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
 import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
+import * as evidenceInputResolver from "../../src/application/EvidenceInputResolver.js";
 import { WasmArtifactService } from "../../src/application/wasm/WasmArtifactService.js";
 import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands.js";
 import { registerWasmCommands } from "../../src/cli/wasmCommands.js";
@@ -213,14 +214,23 @@ it.each([
         });
       });
     };
-    const originalProject = analysisViewService.inspectAnalysisViewValidated;
-    let projected: ReturnType<typeof originalProject> | undefined;
-    const project = vi
-      .spyOn(analysisViewService, "inspectAnalysisViewValidated")
+    const projected = analysisViewService.inspectAnalysisViewValidated(
+      {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "summary" },
+      },
+      () => parent,
+    );
+    // Source resolution is an imported boundary used by both successful and
+    // failed projections. A spy on the service's own export cannot intercept
+    // its internal calls after request/source ownership moved into that module.
+    const originalResolve = evidenceInputResolver.resolveEvidenceInput;
+    const resolveSource = vi
+      .spyOn(evidenceInputResolver, "resolveEvidenceInput")
       .mockImplementation((...args) => {
-        projected = originalProject(...args);
+        const resolved = originalResolve(...args);
         if (phase.startsWith("projection")) queueInterrupt();
-        return projected;
+        return resolved;
       });
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
@@ -269,9 +279,11 @@ it.each([
       );
       if (signal !== "control") expect(interruptHandled).toBe(true);
       if (phase.startsWith("authentication"))
-        expect(project).not.toHaveBeenCalled();
+        expect(resolveSource).not.toHaveBeenCalled();
+      if (phase.startsWith("projection"))
+        expect(resolveSource).toHaveBeenCalledOnce();
       if (phase === "projection") {
-        if (!projected?.ok) throw new Error("Expected a completed page");
+        if (!projected.ok) throw new Error("Expected a completed page");
         expect(result.details.partial_observation).toEqual(projected.value);
       }
     } finally {
