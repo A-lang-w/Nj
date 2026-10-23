@@ -58,6 +58,8 @@ it.each([
   "var FLAG=INDEX,INDEX=true;createBrowserRouter([{index:FLAG,children:[{path:'child'}]}]);",
   "var INDEX=true;createBrowserRouter([{index:FLAG,children:[{path:'child'}]}]);var FLAG=INDEX;",
   "const routes=[{index:INDEX,children:[{path:'child'}]}];var INDEX=true;createBrowserRouter(routes);",
+  "function make(){createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);var INDEX=true;}make();",
+  "function make(){if(x){createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);}var INDEX=true;}make();",
 ])("does not read a later initializer through an index alias: %s", (source) => {
   const facts = analyze(source);
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/child"]);

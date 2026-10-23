@@ -32,10 +32,7 @@ import {
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
-import {
-  semanticBindingAtRead,
-  semanticTopLevelEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -227,6 +224,33 @@ const isNavigationDataEdge = (node: t.Node, parent: t.Node | null): boolean => {
   return true;
 };
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
+/**
+ * Report whether an initializer provably runs after an alias read.
+ *
+ * Only a later declaration in the same function or program activation is
+ * provably uninitialized at the read; a read inside an enclosing block or
+ * function still observes an earlier declaration.
+ */
+const initializerFollowsRead = (
+  read: t.Node,
+  initializer: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const activation = (node: t.Node): t.Node => {
+    let current = node;
+    for (;;) {
+      const parent = parents.get(current);
+      if (parent === undefined) return current;
+      if (t.isFunction(parent)) return parent;
+      current = parent;
+    }
+  };
+  return (
+    activation(read) === activation(initializer) &&
+    (read.start ?? 0) < (initializer.start ?? 0)
+  );
+};
+
 export class JavaScriptRouteScan {
   readonly #result: JavaScriptRouteSourceFacts = {
     candidates: [],
@@ -994,10 +1018,11 @@ export class JavaScriptRouteScan {
         initializer.projection.length !== 0 ||
         (site !== undefined && index.referenceMayHaveChangedAt(site, node)) ||
         (selection === "at-read" &&
-          // A boolean flag is only the literal this alias claims when the
-          // initializer has run. Nested blocks and function bodies keep the
-          // lexical value; a provably later initializer does not.
-          semanticTopLevelEffectFollowsCapture(
+          // A boolean flag is only the literal this alias claims when its
+          // initializer has run in this activation. Declarations from an
+          // enclosing function still apply; a later one in the same
+          // activation does not.
+          initializerFollowsRead(
             node,
             initializer.node,
             index.bindings.parentsByNode,
