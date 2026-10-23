@@ -8,13 +8,13 @@ import {
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import {
+  jsonLineParts,
   jsonLinesErrorRecord,
   jsonLinesParts,
   jsonLinesRecords,
   prepareJsonLines,
 } from "./jsonLines.js";
 import {
-  jsonOutputParts,
   writeJsonOutput,
   writeOutputParts,
   writeOutputText,
@@ -73,8 +73,7 @@ export const writeCliJsonLines = async (
       let count = 0;
       for (const record of jsonLinesRecords(plan.value)) {
         let characters = 0;
-        for (const part of jsonOutputParts(record, "jsonl"))
-          characters += part.length;
+        for (const part of jsonLineParts(record)) characters += part.length;
         if (characters > constants.MAX_STRING_LENGTH) {
           error = projectAnalysisError(
             new AnalysisResourceConstraintError(
@@ -95,9 +94,7 @@ export const writeCliJsonLines = async (
         }
         // Newlines split tokenx segments, so summing complete lines is
         // identical to estimating the emitted stream, with one-line memory.
-        count += estimateTokenCount(
-          [...jsonOutputParts(record, "jsonl")].join(""),
-        );
+        count += estimateTokenCount([...jsonLineParts(record)].join(""));
       }
       if (error !== undefined)
         await writeJsonOutput(

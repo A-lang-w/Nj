@@ -196,9 +196,14 @@ export const jsonLinesErrorRecord = (
 
 export function* jsonLinesParts(plan: JsonLinesPlan): Generator<string> {
   for (const record of jsonLinesRecords(plan)) {
-    yield* jsonParts(record);
-    yield "\n";
+    yield* jsonLineParts(record);
   }
+}
+
+/** One record stays one line even when the record itself is an array. */
+export function* jsonLineParts(record: unknown): Generator<string> {
+  yield* jsonParts(record);
+  yield "\n";
 }
 
 /** Newline-separated records also bound the token estimator's working set. */

@@ -10,7 +10,7 @@ const {
   normalizeCliArguments,
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
-  validateCliOutputArguments,
+  parseCliOutputArguments,
 } = await import("../../../dist/cli-runtime/cliOutput.js");
 
 const MAX_STDOUT_CHARS = 16 * 1024 * 1024;
@@ -38,7 +38,10 @@ const destination = new Writable({
   },
 });
 Object.defineProperty(destination, "isTTY", { value: false });
-const resultOutput = createCliResultOutput(["--json"], destination);
+const resultOutput = createCliResultOutput(
+  parseCliOutputArguments(["--json"]),
+  destination,
+);
 const cli = createCli(process.env, resultOutput);
 
 const resetOutput = () => {
@@ -52,7 +55,8 @@ const runCommand = async (args) => {
   resetOutput();
   try {
     const cliArgs = normalizeCliArguments(args);
-    const outputArguments = validateCliOutputArguments(cliArgs);
+    const outputOptions = parseCliOutputArguments(cliArgs);
+    const outputArguments = outputOptions.validation;
     if (!outputArguments.ok)
       return {
         exitCode: 1,
@@ -64,7 +68,7 @@ const runCommand = async (args) => {
 
     let wroteOutput = false;
     let explicitExit;
-    resultOutput?.begin(cliArgs);
+    resultOutput?.begin(outputOptions);
     try {
       await cli.serve(cliArgs, {
         stdout: (output) => {
@@ -89,7 +93,7 @@ const runCommand = async (args) => {
       };
     }
     if (!wroteOutput && !resultOutput?.handled) {
-      const empty = renderEmptyFilteredCliOutput(cliArgs);
+      const empty = renderEmptyFilteredCliOutput(outputOptions);
       if (empty !== undefined) destination.write(empty);
     }
     await resultOutput?.finishSdkOutput(

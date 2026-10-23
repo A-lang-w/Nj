@@ -17,7 +17,8 @@ The artifact digest was
 The saved Evidence file SHA-256 was
 `b34627bc12894d4c749e5b24c60731dd5a7eaaf90c98954f0e585eb442d484c3`.
 
-The exact retained parent was reused by both variants:
+Preparation ran on main `169512a35`; the exact retained parent was reused by
+both refreshed export variants:
 
 ```json
 {
@@ -47,7 +48,7 @@ Before emitted one document; after emitted 202 rows and one metadata record.
 
 ## Performance
 
-Baseline: main `169512a35bb015ff209168fb8bc1c9b31a2c678b`.
+Baseline: refreshed main `2443b949a48c3b2eba687e7381682e49e909d5b9`.
 Both variants used Node 24.22.1 and the same locked dependency installation.
 Three alternating pairs ran sequentially, with fresh processes and warm
 filesystem/build artifacts. Node compile caching was not configured. Cold host
@@ -55,18 +56,20 @@ filesystem caches and repeated analysis were not measured.
 
 | Completed export, median of three |    Before |     After |
 | --------------------------------- | --------: | --------: |
-| Elapsed time                      |   4.603 s |   4.557 s |
-| Wait-accounted child CPU          |   5.914 s |   5.927 s |
-| Sampled peak process-family RSS   | 496.0 MiB | 495.1 MiB |
+| Elapsed time                      |   4.510 s |   4.576 s |
+| Wait-accounted child CPU          |   5.876 s |   5.987 s |
+| Sampled peak process-family RSS   | 496.3 MiB | 495.1 MiB |
 | Emitted UTF-8 bytes               |   365,494 |   365,608 |
 | `tokenx` token estimate           |    99,004 |    99,041 |
 | CLI calls                         |         1 |         1 |
 
-The small timing/memory differences do not establish an analysis speedup.
+The small observed overhead does not establish an analysis speedup.
 The 114-byte / 37-estimated-token increase is framing overhead, with the same
-facts and no additional tool/schema round trips. These are heuristic `tokenx`
-estimates, not model-specific BPE counts. Actual agent context consumption
-also depends on which rows the consumer reads. No token reduction is claimed.
+facts and no additional tool/schema round trips. The identical request file
+contributes another 74 estimated tokens to each case. These are heuristic `tokenx` estimates, not model-specific BPE counts;
+orchestration prompts, agent reasoning and tool-definition tokens were not
+measured. Actual agent context consumption also depends on which rows the
+consumer reads. No token reduction is claimed.
 
 Rows and metadata share the existing bounded JSON encoder and awaited writes.
 Token counting reuses that exact record plan, including context, and estimates
@@ -83,20 +86,49 @@ the V8 limit is per process and the sampler is not a kernel memory limit.
 
 ## Validation
 
-Initial exact CLI tests: 150 passed across five files. Expanded validation:
-236 passed across 14 CLI/MCP/acceptance files, including actual production MCP
-catalogs, authenticated view reconstruction, invalid SDK option values, ordinary
-and sentinel failures, generator streaming, formatter recovery, empty and partial
-views, multi-megabyte/engine-limit output, pipe closure and asynchronous final
-writes after cleanup success/failure. That run took 164.070 s elapsed, 194.868 s
-child CPU and 1486.9 MiB sampled peak process-family RSS, without a resource stop.
+`npm run check` passed on the refreshed integration, including type checking,
+lint, formatting, dependency/metadata checks and architecture guards. The parsed
+output-control contract from current main is retained; handlers, launcher and
+reusable test drivers consume those same facts.
 
-The full repository `npm run check` passed after separating JSONL projection and
-rendering from general format handling. After naming the transport contracts and tightening own-property admission,
-`npm run check` and 28 focused JSONL/acceptance tests passed. The actual
-`rea mcp doctor --format jsonl` reported healthy in one JSON line. No real
-native provider behavior is claimed by these CLI tests.
+- 241 tests passed across 14 CLI/MCP/acceptance files: actual production MCP
+  catalogs, authenticated Evidence reconstruction, invalid SDK values, ordinary
+  and sentinel failures, generator streaming, formatter recovery, empty/partial
+  views, large output, pipe closure and asynchronous final writes after cleanup
+  success/failure. The run took 171.097 s elapsed, 203.968 s child CPU and
+  1589.3 MiB sampled peak family RSS.
+- Another 60 tests passed across four consumer files, including ordinary graph
+  reports and scalar selections refusing JSONL, malformed JSON input retaining
+  diagnostics, managed CLI output and the direct SDK update-alias contract.
+  These took 223.152 s elapsed, 262.538 s child CPU and 1079.2 MiB peak family RSS.
+- A new negative control showed that calling a collection encoder for a single
+  array-valued row undercounted tokens (15 instead of 21, 57 instead of 63).
+  Emission and counting now share `jsonLineParts`; both cases and all 29 JSONL
+  tests pass after the fix. The 241-test run includes these regressions.
+- A real `rea mcp doctor --format jsonl` run reported healthy in one JSON line.
+  Startup/validation failures, full-output framing and advertised help are
+  exercised separately.
 
-Raw stdout/stderr, commands, per-run resource samples, equivalence assertions and
-summaries are retained locally under
+The opt-in verifier used shared 64 KiB leaves and independently checked complete
+output bytes and SHA-256, without retaining the complete encoded document:
+
+| Synthetic serialization fixture                 |             JSON |             JSONL |
+| ----------------------------------------------- | ---------------: | ----------------: |
+| Output bytes (engine string limit: 536,870,888) |      536,961,655 |       536,961,779 |
+| Elapsed / child CPU                             | 9.811 / 10.197 s | 13.940 / 14.451 s |
+| Sampled peak family RSS                         |        171.6 MiB |         186.0 MiB |
+
+The JSONL run also checked its token count against the actual file line by line:
+89,492,357 heuristic tokens matched. JSONL timing includes this extra counting
+verification, so the two fixture timings are not equivalent-workflow performance
+comparisons. Shared leaves keep input memory small; this verifies serialization
+expansion and counting capacity, not a 512 MiB application's analysis footprint.
+Both temporary output files were removed by the verifier's cleanup.
+
+No resource stop occurred. Native provider behavior is outside this CLI change.
+`npm run docs:check` passed, including nine README consistency tests.
+
+The refreshed measurements are in the `refreshed/` subdirectory; earlier
+measurements against `169512a35` remain separate. Raw stdout/stderr, commands,
+per-run resource samples, equivalence assertions and summaries are retained under
 `/tmp/rea-maintenance-20261023/5629/`; they are not committed artifacts.

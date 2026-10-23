@@ -4,10 +4,7 @@ import type { Writable } from "node:stream";
 import { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
-import {
-  parseCliOutputArguments,
-  validateCliOutputArguments,
-} from "../cliOutput.js";
+import type { ParsedCliOutputArguments } from "../cliOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
@@ -46,7 +43,7 @@ export interface CliResultOutput {
   readonly failed: boolean;
   readonly error: AnalysisErrorProjection | undefined;
   /** Start another completed invocation on a reusable command registry. */
-  begin(arguments_: readonly string[]): void;
+  begin(options: ParsedCliOutputArguments): void;
   /** SDK generators retain their own streaming event protocol. */
   delegateStreaming(): void;
   /** Retain one-shot SDK output until the SDK supplies its authoritative status. */
@@ -114,13 +111,13 @@ const wrapCommand = (
 
 /** Preserve Incur output controls and stream JSON while framing failures. */
 export const createCliResultOutput = (
-  arguments_: readonly string[],
+  initialOptions: ParsedCliOutputArguments,
   destination: Writable,
 ): CliResultOutput | undefined => {
-  let options = parseCliOutputArguments(arguments_);
+  let options = initialOptions;
   if (
     (options.parseError && options.format !== "jsonl") ||
-    !validateCliOutputArguments(arguments_).ok
+    !options.validation.ok
   )
     return undefined;
   let format = options.format as "json" | "jsonl" | "yaml" | "toon" | "md";
@@ -218,8 +215,8 @@ export const createCliResultOutput = (
     get error() {
       return error;
     },
-    begin(arguments_) {
-      options = parseCliOutputArguments(arguments_);
+    begin(nextOptions) {
+      options = nextOptions;
       format = options.format as typeof format;
       handled = false;
       failed = false;

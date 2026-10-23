@@ -18,6 +18,7 @@ import {
   readManagedMetadataInventory,
   readManagedModuleIdentity,
 } from "./ManagedMetadataInventory.js";
+import { managedMetadataTypeNames } from "./ManagedMetadataInventoryRows.js";
 import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
 import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
@@ -27,7 +28,7 @@ import {
 } from "./ManagedReaderFailure.js";
 import {
   parseTypes,
-  typeRanges,
+  readTypeDefinitions,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import { edgeTargets } from "./ManagedMethodSpecs.js";
@@ -189,7 +190,7 @@ export const inspectManagedMembersBytes = (
     const { layout, memberLists } = readMemberLayout(bytes, pe);
     const identity = readManagedModuleIdentity(bytes, layout);
     appendManagedParseIssues(issues, identity.issues);
-    const ranges = typeRanges(bytes, layout, issues, memberLists);
+    const ranges = readTypeDefinitions(bytes, layout, issues, memberLists);
     const {
       tokens: selected,
       selection,
@@ -262,6 +263,13 @@ export const inspectManagedMembersBytes = (
       readManagedResourceDirectory(pe, issues),
       memberLists,
       identity,
+      managedMetadataTypeNames(
+        bytes,
+        layout,
+        issues,
+        parsedTypes,
+        typeReferences,
+      ),
     );
     appendManagedParseIssues(issues, inventory.issues);
     const exportedTypes = parseExportedTypes(bytes, layout);

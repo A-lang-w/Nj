@@ -9,6 +9,7 @@ import {
   streamCliCommandResults,
 } from "../../../src/cli/cliResultOutput.js";
 import { jsonLinesErrorRecord } from "../../../src/cli/jsonLines.js";
+import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 
@@ -20,7 +21,10 @@ const capture = (args: readonly string[]) => {
       callback();
     },
   });
-  const output = createCliResultOutput(args, destination);
+  const output = createCliResultOutput(
+    parseCliOutputArguments(args),
+    destination,
+  );
   if (output === undefined) throw new Error("Missing output owner");
   return {
     output,
@@ -83,12 +87,12 @@ describe("row-oriented CLI JSON Lines", () => {
   );
 
   it.each([[], [{ id: "row" }]].map((rows) => ({ rows })))(
-    "preserves nested page facts and full-output metadata (%j)",
+    "preserves nested pagination without a coverage object (%j)",
     async ({ rows }) => {
       const stream = capture(["--format", "jsonl", "--full-output"]);
       const value = {
         page: { rows, offset: 12, total: 31, next_offset: 14 },
-        coverage: { complete: false },
+        limitations: ["more pages"],
       };
       await stream.output.write(value, metadata);
       expect(lines(stream.text())).toEqual([
@@ -105,7 +109,7 @@ describe("row-oriented CLI JSON Lines", () => {
             ok: true,
             data: {
               page: { offset: 12, total: 31, next_offset: 14 },
-              coverage: value.coverage,
+              limitations: value.limitations,
             },
             meta: { command: "fixture", duration: "1ms" },
           },
@@ -262,6 +266,20 @@ describe("JSON Lines counting and transport", () => {
     },
   );
 
+  it.each([false, true])(
+    "counts array-valued rows as single records (object collection: %s)",
+    async (wrapped) => {
+      const rows = [[false, null], [0], [], [{ nested: ["雪", "a\nb"] }]];
+      const value = wrapped ? { rows, coverage: { complete: false } } : rows;
+      const args = ["--format", "jsonl"];
+      const stream = capture(args);
+      await stream.output.write(value, metadata);
+      const counter = capture([...args, "--token-count"]);
+      await counter.output.write(value, metadata);
+      expect(counter.text()).toBe(`${estimateTokenCount(stream.text())}\n`);
+    },
+  );
+
   it("counts exactly the emitted representation, including escaped multiline text and final context", async () => {
     const value = {
       rows: [{ text: "雪𝟠\nline".repeat(4096) }, { text: 'escaped"\\\t' }],
@@ -288,7 +306,10 @@ describe("JSON Lines counting and transport", () => {
         }, 1);
       },
     });
-    const output = createCliResultOutput(["--format", "jsonl"], destination)!;
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["--format", "jsonl"]),
+      destination,
+    )!;
     const rows = [{ id: "large", text: "\u0000雪𝟠".repeat(32 * 1024) }];
     await output.write({ rows, coverage: { complete: false } }, metadata);
     expect(maxBytes).toBeLessThan(128 * 1024);
@@ -339,7 +360,7 @@ describe("SDK-owned JSON Lines outcomes", () => {
     streamCliCommandResults(cli, stream.output);
     const serve = async (args: string[]) => {
       let status = 0;
-      stream.output.begin(args);
+      stream.output.begin(parseCliOutputArguments(args));
       await cli.serve(args, {
         stdout: (text) => {
           if (!stream.output.handled && !stream.output.captureSdkOutput(text))

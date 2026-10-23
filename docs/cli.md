@@ -60,6 +60,11 @@ rea inspect-analysis-view observations-view.json --format jsonl > observations.j
 This request selects up to 32 observation identities and their provenance,
 without observation property values.
 
+This changes JSONL object-collection framing. Scripts that need one complete
+report or a scalar field should use `--format json`. For a full application
+graph, first project a supported analysis view rather than selecting an
+arbitrary nested graph array.
+
 A top-level array emits its elements in source order. An object must have one
 clear `rows`, `items`, `records`, or `occurrences` array, directly or under
 `page`. Evidence uses the same boundaries inside `normalized_result`.
@@ -511,7 +516,10 @@ top-level limitation. That partial inventory does not establish absence among
 unexamined children. POSIX directory-entry bytes that are not valid UTF-8 cannot
 be represented as graph paths; the containing directory (or root) is marked
 unsupported, and REA does not access the entry through a replacement-character
-name. Readable siblings remain inventoried.
+name. Symlink targets are read as bytes too: a target that is not valid UTF-8
+is retained as an unreadable symlink with its bytes reported in the limitation,
+and is never resolved through a replacement-character path. Readable siblings
+remain inventoried.
 
 JavaScript and TypeScript import parsing requires valid UTF-8. Malformed source
 bytes retain their original hashes and sizes with a decoding diagnostic; REA

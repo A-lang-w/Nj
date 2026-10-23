@@ -277,6 +277,13 @@ distinct pair that would collapse if representation tags or scope were lost.
 For learned identifiers, cover conflicting pairs and reused values in different
 collections; mappings must remain one-to-one within their declared scope.
 
+For coverage propagation, compare the same returned rows under complete and
+incomplete examination. If a row exists on the left but is missing from a fully
+examined compatible right inventory, removal can be established. If the right
+side examined only eight of ten applicable records, or returns only one page,
+the same missing row remains unknown unless separate evidence proves absence.
+Assert the structured coverage and comparison status as well as the explanation.
+
 For format compatibility, identify the producer revision that establishes each
 rule. Include an accepted boundary case beside the rejected case so a stricter
 parser cannot pass by refusing both. Keep source-derived behavior, synthetic
@@ -1752,8 +1759,10 @@ the running Node engine's single-string limit. Shared input leaves keep the
 fixture's graph small; the verifier writes one temporary output file, checks its
 complete byte count and an independent digest, then removes it. It requires only
 Node and the built REA runtime, with space for the output plus a 1 GiB reserve.
-Run `npm run verify:javascript:output -- jsonl` for compact JSONL coverage. This
-opt-in lane is separate from routine tests and the canonical hash check
+Run `npm run verify:javascript:output -- jsonl` for compact JSONL coverage. Its
+row collection must match independent row and final-metadata byte/digest goldens;
+its token count is checked against the actual file one line at a time, even when
+the complete export exceeds the engine string limit. This opt-in lane is separate from routine tests and the canonical hash check
 `npm run verify:javascript:digests`. It verifies serialization rather than an
 arbitrary third-party application's parsing cost or MCP client capacity.
 
