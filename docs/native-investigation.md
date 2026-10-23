@@ -184,17 +184,21 @@ body ranges when `procedure_info` supplies them, and the `procedure_info` and
 pseudocode limitations for that function. Header values are abbreviated to
 2,000 characters per value and the joined limitation line to 4,000 characters;
 the index retains the complete selected names, addresses, provider facts and
-caveats.
+caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
+UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
+index retains every failure and its complete observed name.
 Each function's `decompile-index.json` record, whatever its status, keeps the
 complete limitations of the observations it used. The returned Evidence keeps
-at most eight first-observed distinct per-function provider limitations within an 8,000-character text budget and counts omitted observations. Repeated omitted text is counted per observation, not as a distinct caveat. This summary does not retain every omitted string in memory. A fresh output directory must not already exist. `--resume`
+at most eight first-observed distinct per-function provider limitations within an 8,000-byte JSON-encoded UTF-8 text budget and counts omitted observations. Repeated omitted text is counted per observation, not as a distinct caveat. This summary does not retain every omitted string in memory. A fresh output directory must not already exist. `--resume`
 continues an export for the same target SHA-256, provider, analysis profile,
 and layout; it requires the directory to exist, and an export without a known
 target or profile digest cannot be resumed. Resume skips files whose bytes still match the last write the journal
 recorded, even after a later read failure, tries
 functions it has not attempted before retrying recorded failures, ignores a
 journal line torn by an interrupted write, and never overwrites a conflicting
-file. One function's decompiler error or deadline is counted and does not stop
+file. File reservations compare ASCII paths without case, so distinct address
+spaces remain distinct on case-insensitive filesystems. A resumed journal with
+conflicting reservations is refused. One function's decompiler error or deadline is counted and does not stop
 the others. A function that `procedure_info` classifies as external, such as an
 import, is counted as `external` and recorded with that status and the body
 fact as observed. It gets no file, no pseudocode is requested, and a resume

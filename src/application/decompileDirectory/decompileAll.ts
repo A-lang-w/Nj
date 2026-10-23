@@ -4,10 +4,13 @@ import { z } from "zod";
 import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
   DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT,
+  DECOMPILE_DIRECTORY_INLINE_FAILURE_BYTES,
   decompileDirectoryManifestSchema,
   type DecompileDirectoryFunctionRecord,
   type DecompileDirectoryInput,
+  type DecompileDirectoryInlineFailure,
 } from "../../contracts/decompileDirectory.js";
+import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
 import { digestSchema } from "../../domain/digests.js";
 import type {
   AnalysisExecution,
@@ -63,6 +66,9 @@ interface FailureReason {
   readonly message: string;
 }
 
+type InlineFailure = DecompileDirectoryInlineFailure;
+type NamedFailure = Extract<InlineFailure, { readonly name: string | null }>;
+
 interface PublishState {
   /** Functions this call took on after skipping verified files; bounded by limit. */
   attempted: number;
@@ -71,12 +77,8 @@ interface PublishState {
   /** Functions procedure_info classifies as external: not decompiled, no file. */
   external: number;
   skipped: number;
-  readonly failures: {
-    readonly address: string;
-    readonly name: string | null;
-    readonly code: string;
-    readonly message: string;
-  }[];
+  readonly failures: InlineFailure[];
+  inlineFailureBytes: number;
   readonly recentFailures: PublishState["failures"];
   bodyUnavailable: boolean;
   /** Failure code of the function being attempted, if it failed. */
@@ -128,6 +130,7 @@ export const decompileAll = async (
     external: 0,
     skipped: 0,
     failures: [],
+    inlineFailureBytes: 2,
     recentFailures: [],
     bodyUnavailable: false,
     lastFailureCode: undefined,
@@ -783,6 +786,9 @@ const outputStoppedAccepting = (state: PublishState): AnalysisOutputError =>
         skipped: state.skipped,
         consecutive_output_io: state.outputIoStreak,
         last_failures: state.recentFailures.map((failure) => ({ ...failure })),
+        last_failures_omitted:
+          Math.min(state.failed, OUTPUT_IO_STREAK_LIMIT) -
+          state.recentFailures.length,
       },
     },
   );
@@ -800,11 +806,48 @@ const recordFailure = (
     code: reason.code,
     message: reason.message,
   };
-  if (state.failures.length < DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT)
-    state.failures.push(failure);
-  state.recentFailures.push(failure);
-  if (state.recentFailures.length > OUTPUT_IO_STREAK_LIMIT)
+  if (state.failures.length < DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT) {
+    const comma = state.failures.length === 0 ? 0 : 1;
+    const fitted = fitInlineFailure(
+      failure,
+      DECOMPILE_DIRECTORY_INLINE_FAILURE_BYTES -
+        state.inlineFailureBytes -
+        comma,
+    );
+    if (fitted !== undefined) {
+      state.failures.push(fitted.row);
+      state.inlineFailureBytes += comma + fitted.bytes;
+    }
+  }
+  const recent = fitInlineFailure(
+    failure,
+    DECOMPILE_DIRECTORY_INLINE_FAILURE_BYTES - 2,
+  );
+  // An oversized latest row cannot leave an older example labelled as recent.
+  if (recent === undefined) state.recentFailures.length = 0;
+  else state.recentFailures.push(recent.row);
+  while (
+    state.recentFailures.length > OUTPUT_IO_STREAK_LIMIT ||
+    jsonValueByteLength(
+      state.recentFailures,
+      DECOMPILE_DIRECTORY_INLINE_FAILURE_BYTES,
+    ) > DECOMPILE_DIRECTORY_INLINE_FAILURE_BYTES
+  )
     state.recentFailures.shift();
+};
+
+const fitInlineFailure = (
+  failure: NamedFailure,
+  budget: number,
+): { readonly row: InlineFailure; readonly bytes: number } | undefined => {
+  const bytes = jsonValueByteLength(failure, budget);
+  if (bytes <= budget) return { row: failure, bytes };
+  // Name is display context; address remains the complete lookup identity.
+  const { name: _name, ...withoutName } = failure;
+  const compactBytes = jsonValueByteLength(withoutName, budget);
+  return compactBytes <= budget
+    ? { row: withoutName, bytes: compactBytes }
+    : undefined;
 };
 
 const failureRecord = (

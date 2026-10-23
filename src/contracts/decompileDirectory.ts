@@ -18,6 +18,9 @@ export const DECOMPILE_DIRECTORY_VERSION = 1;
 /** Failure reasons returned inline. The index keeps every reason. */
 export const DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT = 32;
 
+/** JSON-encoded UTF-8 bytes for one inline failure-detail array. */
+export const DECOMPILE_DIRECTORY_INLINE_FAILURE_BYTES = 2_048;
+
 const layoutSchema = z.enum(["address", "dwarf"]);
 
 const exportProviderSchema = z.strictObject({
@@ -53,12 +56,28 @@ const bodySchema = z.discriminatedUnion("available", [
  */
 const functionStatusSchema = z.enum(["written", "failed", "external"]);
 
-const failureSchema = z.strictObject({
+const failureFields = {
   address: z.string().min(1),
-  name: z.string().nullable(),
   code: z.string().min(1),
   message: z.string().min(1),
-});
+};
+
+const failureSchema = z.union([
+  z.strictObject({
+    ...failureFields,
+    name: z
+      .string()
+      .nullable()
+      .describe("Observed name, or null when unknown."),
+  }),
+  z
+    .strictObject(failureFields)
+    .describe(
+      "Name omitted to fit the inline text budget; the index retains the full observed name.",
+    ),
+]);
+
+export type DecompileDirectoryInlineFailure = z.infer<typeof failureSchema>;
 
 const countSchema = (description: string) =>
   z.number().int().min(0).describe(description);
@@ -163,10 +182,10 @@ export const decompileDirectoryManifestSchema = z
       .array(failureSchema)
       .max(DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT)
       .describe(
-        "Failure reasons for this call. Further reasons are counted by failures_omitted and stored in the index.",
+        "At most 32 failure details within 2,048 JSON-encoded UTF-8 bytes. Names may be omitted to preserve addresses and reasons; the index retains complete records.",
       ),
     failures_omitted: countSchema(
-      "Failure records omitted from failures because of the inline cap.",
+      "Failure records omitted from failures because of the inline count or encoded-text budget.",
     ),
     provider: exportProviderSchema.describe(
       "Provider that produced the pseudocode.",

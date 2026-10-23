@@ -1,3 +1,4 @@
+import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
 import type {
@@ -41,8 +42,8 @@ export interface ComposedLimitationBudget {
    * Kept lines are rendered in the usual sorted order.
    */
   readonly maxDistinct: number;
-  /** Total retained caveat text in UTF-16 code units; defaults to 8,000. */
-  readonly maxCharacters?: number;
+  /** Retained caveat text as JSON-encoded UTF-8 bytes; defaults to 8,000. */
+  readonly maxBytes?: number;
   /** Where the omitted per-item caveats remain, as a clause. */
   readonly retainedIn: string;
 }
@@ -79,7 +80,7 @@ export const executeComposedWorkflow = async (
 > => {
   const limitations = new Map<string, SourceLimitation>();
   const perItemGroups = new Set<string>();
-  let perItemCharacters = 0;
+  let perItemBytes = 0;
   let omittedObservations = 0;
   let cachePolicy: "live" | undefined;
   const result = await execute({
@@ -98,8 +99,9 @@ export const executeComposedWorkflow = async (
           if (budget?.perItemOperations.has(operation) === true) {
             // Reject oversized text before allocating a grouping key. Complete
             // caveats are already retained by the export's per-function owner.
-            const maxCharacters = budget.maxCharacters ?? 8_000;
-            if (limitation.length > maxCharacters) {
+            const maxBytes = budget.maxBytes ?? 8_000;
+            const bytes = jsonStringByteLength(limitation, maxBytes);
+            if (bytes > maxBytes) {
               omittedObservations += 1;
               continue;
             }
@@ -112,13 +114,13 @@ export const executeComposedWorkflow = async (
             if (!perItemGroups.has(group)) {
               if (
                 perItemGroups.size >= budget.maxDistinct ||
-                perItemCharacters + limitation.length > maxCharacters
+                perItemBytes + bytes > maxBytes
               ) {
                 omittedObservations += 1;
                 continue;
               }
               perItemGroups.add(group);
-              perItemCharacters += limitation.length;
+              perItemBytes += bytes;
             }
           }
           limitations.set(sourceLimitationKey(fact), fact);

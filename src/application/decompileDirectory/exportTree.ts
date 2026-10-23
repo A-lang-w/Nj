@@ -148,7 +148,10 @@ export class DecompileExport {
   pathFor(address: string): string {
     const owned = this.paths.byAddress.get(address);
     if (owned !== undefined) return owned;
-    const relativePath = allocateFunctionPath(address, this.paths.byPath);
+    const relativePath = allocateFunctionPath(
+      address,
+      this.paths.byPortablePath,
+    );
     reservePath(this.paths, relativePath, address);
     return relativePath;
   }
@@ -269,7 +272,7 @@ export class DecompileExport {
         opened.value,
         new Map(),
         new Map(),
-        { byPath: new Map(), byAddress: new Map() },
+        { byPortablePath: new Map(), byAddress: new Map() },
         identity,
         resources,
       ),
@@ -667,7 +670,10 @@ const parseJournal = (
   const written = new Map<string, DecompileDirectoryFunctionRecord>();
   // A path stays reserved by the first address that used it, even when that
   // address's latest record no longer names it.
-  const paths: PathReservations = { byPath: new Map(), byAddress: new Map() };
+  const paths: PathReservations = {
+    byPortablePath: new Map(),
+    byAddress: new Map(),
+  };
   for (const line of lines.slice(1)) {
     const parsed = decompileJournalLineSchema.safeParse(parseJson(line));
     if (!parsed.success || parsed.data.kind !== "function")
@@ -675,7 +681,7 @@ const parseJournal = (
     const { kind: _kind, ...record } = parsed.data;
     const path = record.relative_path;
     if (path !== undefined) {
-      const owner = paths.byPath.get(path);
+      const owner = paths.byPortablePath.get(portablePathKey(path));
       if (owner !== undefined && owner !== record.address)
         return err(incompatibleJournal());
       reservePath(paths, path, record.address);
@@ -742,16 +748,20 @@ const parseJson = (line: string | undefined): unknown => {
 
 /** Function file paths: each path has one owning address, each address keeps its first path. */
 interface PathReservations {
-  readonly byPath: Map<string, string>;
+  readonly byPortablePath: Map<string, string>;
   readonly byAddress: Map<string, string>;
 }
+
+/** Generated and admitted function paths are ASCII; fold only their lookup key. */
+const portablePathKey = (path: string): string => path.toLowerCase();
 
 const reservePath = (
   paths: PathReservations,
   path: string,
   address: string,
 ): void => {
-  if (!paths.byPath.has(path)) paths.byPath.set(path, address);
+  const key = portablePathKey(path);
+  if (!paths.byPortablePath.has(key)) paths.byPortablePath.set(key, address);
   if (!paths.byAddress.has(address)) paths.byAddress.set(address, path);
 };
 
@@ -762,12 +772,12 @@ const allocateFunctionPath = (
   const base = sanitizeAddress(address);
   const directory = DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY;
   const plain = `${directory}/${base}.c`;
-  if (!used.has(plain)) return plain;
+  if (!used.has(portablePathKey(plain))) return plain;
   const suffix = createHash("sha256").update(address).digest("hex").slice(0, 8);
   let candidate = `${directory}/${base}-${suffix}.c`;
   let discriminator = 0;
   // Terminates: `used` is finite.
-  while (used.has(candidate)) {
+  while (used.has(portablePathKey(candidate))) {
     discriminator += 1;
     candidate = `${directory}/${base}-${suffix}-${discriminator.toString(16)}.c`;
   }

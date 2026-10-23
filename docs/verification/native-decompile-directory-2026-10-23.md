@@ -132,13 +132,21 @@ Journal descriptors, verified staging areas and the directory lease have one
 cleanup owner. Failed close/removal retains that owner under the session; the
 lease is released after child cleanup and initialization cleanup finish.
 Initialization removes verified owned entries rather than recursively deleting
-unexpected files. A failed lease acquisition preserves even an empty directory
+unexpected files. Function path reservations use case-folded ASCII lookup
+keys while preserving the original address identity and chosen filename;
+collisions receive a stable address digest suffix. Resume refuses conflicting
+legacy reservations. These cases are exercised with the real filesystem on
+Linux; a real Windows/macOS filesystem was not exercised.
+A failed lease acquisition preserves even an empty directory
 and reports its created path, because another holder may be preparing it.
 
-Only the first 32 failure summaries and the latest five failures remain in the
-inline accumulator. The index retains all function records. Per-item caveat
-collection retains at most eight provider/text groups within an 8,000 UTF-16
-code-unit text budget, instead of retaining all distinct caveats to rank them.
+The inline failure accumulator retains at most 32 rows within 2,048
+JSON-encoded UTF-8 bytes. It omits display names before omitting complete
+address/code/reason rows. Recent output-I/O diagnostics retain at most five
+rows within the same byte budget. The index retains all complete function
+records. Per-item caveat collection retains at most eight first-observed
+provider/text groups within an 8,000-byte JSON-encoded UTF-8 text budget,
+instead of retaining all distinct caveats to rank them.
 Omitted observations are counted without retaining their text; this count is
 not a distinct-caveat count. Complete caveats remain in the owning index.
 
@@ -165,6 +173,14 @@ are not counted as new cases.
   affected files: 48 export cases, 20 workflow-Evidence cases, six filesystem
   ownership cases and one MCP caveat case. This adds five distinct cases to
   the earlier integration coverage; overlapping executions are not summed.
+- Follow-up review coverage passed 72 tests across the workflow and MCP
+  files, plus 22 filesystem/CLI/schema cases. This includes portable filename
+  reservations, conflicting legacy
+  journals, encoded caveat budgets and long failure names. Against the
+  published pre-fix implementation, all three new regression cases failed;
+  the complete SDK result for the long-name case was 485,937 bytes, above
+  the 51,200-byte tool window. The repaired case retains useful failures
+  inline and verifies complete names and caveats in the index.
 - Original-PR controls reproduce the uppercase-input refusal, valid-journal
   initialization cleanup race, lost failed-close ownership, unexpected-file
   deletion, and the empty-root lease-acquisition race. These controls use the
@@ -186,3 +202,22 @@ full MCP exchanges, all function outputs and equivalence checks. They are local
 verification artifacts, not shipped provider projects or committed binaries.
 Real-provider coverage here is Linux x86-64 Ghidra only. Hopper, IDA, Windows and macOS
 were not exercised with real providers by this verification.
+
+## CI attribution
+
+The first maintenance CI run used synthetic merge
+`798091d99f5c9f434d832981e0c8d28a5ec4aabc` and exact base
+`9fd78a74f84a8e924bd58e7deaf5934bfb24f53c`. All 54 observed failing
+assertions reproduced on both revisions with identical failure diagnostics
+after normalizing only their checkout paths: 11 source cases and 43 built
+cases. Forty built failures came from cancelled-shard logs and were absent
+from the aggregate report; cancelled coverage is not claimed as executed.
+
+The real-browser job also failed its stable-capture checkpoint. A bounded
+checkpoint-only execution of the production verifier reproduced the same
+`dom_structure: unchanged`, `scripts: unknown` result on exact base and
+merge, with cleanup retained. Local Chromium was 155.0.8059.79 on Debian 12;
+the CI Chrome version was not measured. This does not establish a passing
+complete browser workflow. [The public CI attribution](https://github.com/morluto/rea/pull/6170#issuecomment-6373669748)
+records the controls and separates these baseline failures from the three
+actionable feature review findings fixed above.

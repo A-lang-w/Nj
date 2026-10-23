@@ -350,7 +350,7 @@ it("bounds retained caveat text while preserving smaller later observations", as
     {
       perItemOperations: new Set(["procedure_pseudo_code"]),
       maxDistinct: 8,
-      maxCharacters: 10,
+      maxBytes: 12,
       retainedIn: "the index keeps them",
     },
   );

@@ -8,7 +8,12 @@ import {
 } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { ok } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  decompileDirectoryIndexSchema,
+  decompileDirectoryManifestSchema,
+} from "../../../src/contracts/decompileDirectory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
 
@@ -80,4 +85,62 @@ describe("decompile_all MCP caveats", () => {
     );
     expect(index.functions.at(-1).limitations).toContain(longCaveat);
   });
+});
+
+it("keeps long-name failures inside the tool window and complete in the index", async () => {
+  const parent = await createTestTempDirectory("rea-decompile-long-failures-");
+  const output = join(parent, "out");
+  const names = Array.from(
+    { length: 32 },
+    (_, index) => `${'a"\\\0😀'.repeat(400)}-${index}`,
+  );
+  const caveat = "\0".repeat(2_000);
+  const port: AnalysisOperationPort = {
+    execute: async (operation) =>
+      operation === "procedure_pseudo_code"
+        ? err(new AnalysisInputError(operation))
+        : ok(
+            createAnalysisExecution(
+              operation === "list_procedures"
+                ? names.map((name, index) => ({
+                    address: `0x${(0x1000 + index).toString(16)}`,
+                    value: name,
+                  }))
+                : null,
+              provider,
+              {
+                analysisProfile: profile,
+                ...(operation === "procedure_info"
+                  ? { limitations: [caveat] }
+                  : {}),
+              },
+            ),
+          ),
+  };
+  const client = await connect(port);
+  const result = await client.callTool({
+    name: "decompile_all",
+    arguments: { output_directory: output },
+  });
+  expect(result.isError).not.toBe(true);
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(50 * 1_024);
+  const evidence = parseEvidence(result.structuredContent);
+  const manifest = decompileDirectoryManifestSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(manifest.counts.failed).toBe(32);
+  expect(manifest.failures.length).toBeGreaterThan(0);
+  expect(manifest.failures_omitted + manifest.failures.length).toBe(32);
+  expect(manifest.failures.every((failure) => !("name" in failure))).toBe(true);
+  expect(manifest.failures.every((failure) => failure.code.length > 0)).toBe(
+    true,
+  );
+  expect(JSON.stringify(result)).not.toContain(caveat);
+  const index = decompileDirectoryIndexSchema.parse(
+    JSON.parse(await readFile(join(output, "decompile-index.json"), "utf8")),
+  );
+  expect(index.functions.map((record) => record.name)).toEqual(names);
+  expect(
+    index.functions.every((record) => record.limitations?.includes(caveat)),
+  ).toBe(true);
 });

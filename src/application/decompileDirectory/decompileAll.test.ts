@@ -770,9 +770,11 @@ describe("decompile_all partial results", () => {
     if (!result.ok) return;
     expect(result.value).toMatchObject({
       counts: { failed: 33, written: 0 },
-      failures_omitted: 1,
     });
-    expect((result.value as { failures: unknown[] }).failures).toHaveLength(32);
+    const shown = (result.value as { failures: unknown[] }).failures;
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThanOrEqual(32);
+    expect(result.value).toMatchObject({ failures_omitted: 33 - shown.length });
     const index = decompileDirectoryIndexSchema.parse(
       JSON.parse(
         await readFile(
@@ -927,6 +929,62 @@ describe("decompile_all duplicate-address labels", () => {
     expect(
       await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).toContain("// name: Chosen::alias\n");
+  });
+});
+
+describe("decompile_all portable function paths", () => {
+  const directory = useOutputDirectory();
+  const procedures = [
+    { address: "RAM%3Aoverlay:0xabcd", name: "upper_space" },
+    { address: "ram%3Aoverlay:0xabcd", name: "lower_space" },
+  ];
+  it("exports distinct case-sensitive address spaces using case-insensitive-unique filenames", async () => {
+    const { tools } = harness({ procedures, info: "unavailable" });
+    const result = await run(tools, directory());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      counts: { selected: 2, written: 2, failed: 0 },
+    });
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    const names = index.functions.map((record) =>
+      record.relative_path!.toLowerCase(),
+    );
+    expect(new Set(names).size).toBe(2);
+    expect(index.functions.map((record) => record.address)).toEqual(
+      procedures.map((row) => row.address),
+    );
+    const resumed = await run(tools, directory(), { resume: true });
+    expect(resumed.ok).toBe(true);
+    if (resumed.ok)
+      expect(resumed.value).toMatchObject({
+        counts: { skipped: 2, written: 0, failed: 0 },
+      });
+  });
+  it("refuses legacy journal paths that alias under portable filename rules", async () => {
+    const { tools } = harness({ procedures, info: "unavailable" });
+    expect((await run(tools, directory())).ok).toBe(true);
+    const journalPath = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+    const lines = (await readFile(journalPath, "utf8"))
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    lines[2].relative_path = lines[1].relative_path.toLowerCase();
+    await writeFile(
+      journalPath,
+      lines.map((line) => JSON.stringify(line)).join("\n") + "\n",
+    );
+    const refused = await run(tools, directory(), { resume: true });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(refused.error.userMessage).toContain("compatible export");
   });
 });
 
@@ -1573,7 +1631,7 @@ describe("decompile_all repeated output failures", () => {
 
   const procedures = Array.from({ length: 8 }, (_, index) => ({
     address: `0x${(0x1000 + index * 0x10).toString(16)}`,
-    name: `fn_${index.toString()}`,
+    name: `${"long-name".repeat(400)}_${index.toString()}`,
   }));
 
   /** Put a directory where each listed function's file was, so reading it fails. */
@@ -1603,6 +1661,9 @@ describe("decompile_all repeated output failures", () => {
       failed: 5,
       consecutive_output_io: 5,
     });
+    expect(
+      Buffer.byteLength(JSON.stringify(stopped.error.diagnostics)),
+    ).toBeLessThan(4_096);
     // The index was still written and records the five failures; the sixth
     // and seventh blocked functions were not attempted.
     const index = decompileDirectoryIndexSchema.parse(
