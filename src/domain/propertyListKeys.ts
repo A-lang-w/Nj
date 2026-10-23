@@ -7,7 +7,10 @@ import {
 } from "./apple/plistNumbers.js";
 import { UnknownPlistScalar } from "./apple/unknownPlistScalar.js";
 
-import { MAX_PLIST_DEPTH } from "./apple/plistValue.js";
+import {
+  MAX_PLIST_DEPTH,
+  plistNestingLimitMessage,
+} from "./apple/plistValue.js";
 
 /** The dictionary key REA results cannot carry: validation strips it. */
 const PROTOTYPE_KEY = "__proto__";
@@ -63,7 +66,7 @@ export const omitPrototypeKeys = (
 export const parseXmlPropertyList = (text: string): ParsedPropertyList => {
   // Preserve the pinned decoder's existing OpenStep autodetection, also used
   // by app Info.plist resolution.
-  const first = text.trimStart()[0];
+  const first = text[skipOpenStepTrivia(text, 0)];
   if (first === "{" || first === "(") {
     // The pinned decoder assigns a `__proto__` key to the object prototype, so
     // the entry is gone before the decoded value can be counted. Count keys in
@@ -132,9 +135,7 @@ const scanOpenStep = (text: string): number => {
   };
   const assertDepth = (): void => {
     if (containers.length > MAX_PLIST_DEPTH)
-      throw new RangeError(
-        `Plist exceeds ${String(MAX_PLIST_DEPTH)} nesting levels`,
-      );
+      throw new RangeError(plistNestingLimitMessage());
   };
   let cursor = 0;
   while (cursor < text.length) {
@@ -209,12 +210,17 @@ const isOpenStepPrototypeKey = (token: string): boolean => {
 
 /** Skip grammar trivia without interpreting delimiter examples inside comments. */
 const skipOpenStepTrivia = (text: string, cursor: number): number => {
-  if (/\s/u.test(text[cursor] ?? "")) return cursor + 1;
-  if (!text.startsWith("//", cursor) && !text.startsWith("/*", cursor))
-    return cursor;
-  const line = text[cursor + 1] === "/";
-  const end = text.indexOf(line ? "\n" : "*/", cursor + 2);
-  return end === -1 ? text.length : end + (line ? 1 : 2);
+  while (cursor < text.length) {
+    if (/\s/u.test(text[cursor] ?? "")) {
+      cursor += 1;
+      continue;
+    }
+    if (!text.startsWith("//", cursor) && !text.startsWith("/*", cursor)) break;
+    const line = text[cursor + 1] === "/";
+    const end = text.indexOf(line ? "\n" : "*/", cursor + 2);
+    cursor = end === -1 ? text.length : end + (line ? 1 : 2);
+  }
+  return cursor;
 };
 
 /** Read the extent of one opaque scalar; the pinned decoder still owns its value. */

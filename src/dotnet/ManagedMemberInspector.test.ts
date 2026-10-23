@@ -41,6 +41,55 @@ const ldstrBody = (tokens: readonly string[]): Buffer => {
   return Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]);
 };
 
+describe("managed method body anchors", () => {
+  it("keeps operand-free instructions in anchors so branch comparison constants stay recoverable", () => {
+    // ldloc.s 4; ldc.i4.4; bne.un.s +0; ret. The constant this branch compares
+    // against is carried by the operand-free ldc.i4.4 opcode itself, so the
+    // anchors must retain the instruction rather than only its operand.
+    const il = Buffer.from([0x11, 0x04, 0x1a, 0x33, 0x00, 0x2a]);
+    const bytes = buildManagedPeFixture({
+      ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.methods[0]?.body.opcode_counts).toEqual({
+      "ldloc.s": 1,
+      "ldc.i4.4": 1,
+      "bne.un.s": 1,
+      ret: 1,
+    });
+    expect(result.methods[0]?.body.anchors).toEqual([
+      {
+        il_offset: 0,
+        opcode: "ldloc.s",
+        operand_kind: "variable",
+        operand: "4",
+      },
+      {
+        il_offset: 2,
+        opcode: "ldc.i4.4",
+        operand_kind: "none",
+        operand: null,
+      },
+      {
+        il_offset: 3,
+        opcode: "bne.un.s",
+        operand_kind: "branch",
+        operand: "5",
+      },
+      {
+        il_offset: 5,
+        opcode: "ret",
+        operand_kind: "none",
+        operand: null,
+      },
+    ]);
+  });
+});
+
 describe("managed member inspection", () => {
   it("keeps metadata handles distinct from calls and field accesses", () => {
     const il = Buffer.from([
@@ -56,7 +105,7 @@ describe("managed member inspection", () => {
     );
 
     expect(result.methods[0]?.body.anchors.map(({ opcode }) => opcode)).toEqual(
-      ["ldtoken", "ldtoken", "call", "ldfld"],
+      ["ldtoken", "pop", "ldtoken", "pop", "call", "ldfld", "pop", "ret"],
     );
     expect(result.call_edges.map(({ opcode }) => opcode)).toEqual(["call"]);
     expect(result.field_accesses.map(({ opcode }) => opcode)).toEqual([
@@ -119,6 +168,12 @@ describe("managed member inspection", () => {
           opcode_counts: { "ldarg.0": 1, ldfld: 1, call: 1, ret: 1 },
           anchors: [
             {
+              il_offset: 0,
+              opcode: "ldarg.0",
+              operand_kind: "none",
+              operand: null,
+            },
+            {
               il_offset: 1,
               opcode: "ldfld",
               operand_kind: "field",
@@ -129,6 +184,12 @@ describe("managed member inspection", () => {
               opcode: "call",
               operand_kind: "method",
               operand: "0x0a000001",
+            },
+            {
+              il_offset: 11,
+              opcode: "ret",
+              operand_kind: "none",
+              operand: null,
             },
           ],
         }),
@@ -699,7 +760,7 @@ describe("managed exported types", () => {
 
     expect(parsed.exported_types).toBeNull();
     expect(comparisonLimitations(parsed, parsed)).toContain(
-      "At least one managed member observation predates ExportedType inspection; its exported and forwarded types are unknown.",
+      "At least one managed member observation did not examine ExportedType rows; its exported and forwarded types are unknown.",
     );
   });
 
@@ -768,12 +829,20 @@ describe("managed user strings", () => {
       issues: [],
     });
     const body = result.methods[0]?.body;
+    // Each ldstr is followed by an operand-free pop, and ret ends the body;
+    // anchors keep those null-operand instructions too.
     expect(body?.anchors.map(({ operand }) => operand)).toEqual([
       unicode,
+      null,
       path,
+      null,
       lone,
+      null,
       path,
+      null,
       empty,
+      null,
+      null,
     ]);
     expect(body?.normalized_il_sha256).toBe(
       inspect({ ilBody }).methods[0]?.body.normalized_il_sha256,
@@ -1195,7 +1264,7 @@ describe("managed member decoding budget", () => {
     });
   });
 
-  it("still rejects dense one-byte instructions before exceeding capacity", () => {
+  it("rejects dense one-byte instructions while retaining admitted types", () => {
     // All NOPs: unlike wide instructions, each IL byte adds a decoded record.
     // A true oversized transient must remain an actionable resource limit.
     const il = Buffer.alloc(270_001);
@@ -1213,12 +1282,12 @@ describe("managed member decoding budget", () => {
     );
 
     expect(result.coverage).toMatchObject({
-      state: "unavailable",
+      state: "partial",
       issues: [{ code: "resource-limit", scope: "metadata.representation" }],
     });
     // Report the originating IL coordinate, not a generic decoding error.
     expect(result.coverage.issues[0]?.offset).toBeGreaterThan(0);
-    expect(result.types).toEqual([]);
+    expect(result.types).toHaveLength(1);
     expect(result.methods).toEqual([]);
   });
 
@@ -1269,9 +1338,11 @@ describe("managed member decoding budget", () => {
     );
 
     expect(result.coverage).toMatchObject({
-      state: "unavailable",
+      state: "partial",
       issues: [{ code: "resource-limit" }],
     });
+    expect(result.methods).toEqual([]);
+    expect(result.types).toHaveLength(1);
   });
 });
 
