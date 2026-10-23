@@ -253,17 +253,17 @@ export const slugOf = (text: string): string =>
     .replace(/[^a-z0-9]+/gu, "-")
     .replace(/^-+|-+$/gu, "");
 
-const isAlphanumeric = (character: string | undefined): boolean =>
-  character !== undefined && /[\p{L}\p{N}]/u.test(character);
-
-/** Start offsets of `token` in `text` where neither neighbour is a letter or digit. */
+/** UTF-16 start offsets of `token` where neither neighbouring code point is a letter or digit. */
 export const delimitedOffsets = (text: string, token: string): number[] => {
   const offsets: number[] = [];
   if (token.length === 0) return offsets;
   let at = text.indexOf(token);
   while (at >= 0) {
+    // A complete neighbour takes at most two UTF-16 units; keep offsets suitable for slice.
+    const before = text.slice(Math.max(0, at - 2), at);
+    const after = text.slice(at + token.length, at + token.length + 2);
     const delimited =
-      !isAlphanumeric(text[at - 1]) && !isAlphanumeric(text[at + token.length]);
+      !/[\p{L}\p{N}]$/u.test(before) && !/^[\p{L}\p{N}]/u.test(after);
     if (delimited) offsets.push(at);
     // A rejected match may overlap a delimited one, so the search moves on by one character.
     at = text.indexOf(token, at + (delimited ? token.length : 1));
