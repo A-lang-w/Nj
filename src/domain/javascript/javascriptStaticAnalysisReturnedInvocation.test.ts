@@ -183,4 +183,5 @@ it("retains a finite shared callable alias graph", () => {
     },
   ]);
   expect(result.precision).toBe("exact");
+  expect(result.unresolvedInvocation).toBeUndefined();
 });
