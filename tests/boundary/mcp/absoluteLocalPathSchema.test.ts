@@ -78,7 +78,6 @@ const standaloneAnalysisCases = (
     { name: "inspect_evm_interface", input: { encoding: "hex" } },
     { name: "inspect_sqlite_database", input: {} },
     { name: "inspect_pe_resources", input: {} },
-    { name: "inspect_pe_imports", input: {} },
     { name: "inspect_native_exports", input: {} },
     { name: "inspect_electron_fuses", input: {} },
     { name: "inspect_packet_capture", input: { fields: ["ip.addr"] } },
