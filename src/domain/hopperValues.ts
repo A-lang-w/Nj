@@ -1,3 +1,4 @@
+import { nativeSymbolMetadataSchema } from "./native/nativeSymbol.js";
 import { z } from "zod";
 import { fixedTupleSchema } from "./fixedTupleSchema.js";
 import { addressCoordinate } from "./native/addressCoordinate.js";
@@ -204,6 +205,7 @@ export const procedureIdentitySchema = z
   .object({
     address: z.string(),
     name: z.string(),
+    symbol: nativeSymbolMetadataSchema.nullable().exactOptional(),
     classification: procedureClassificationSchema.nullable(),
     body: functionBodySchema,
   })
@@ -216,6 +218,24 @@ export const procedureIdentitySchema = z
           "Function body entry membership disagrees with procedure identity",
       });
   });
+/** Exact containing-procedure outcome; valid absence is distinct from unreadable output. */
+export const containingProcedureResolutionSchema = z.discriminatedUnion(
+  "found",
+  [
+    z.object({
+      query_address: z.string(),
+      found: z.literal(true),
+      procedure: procedureIdentitySchema,
+    }),
+    z.object({
+      query_address: z.string(),
+      found: z.literal(false),
+      procedure: z.null(),
+      reason: z.enum(["outside_segments", "not_in_procedure"]),
+    }),
+  ],
+);
+
 export const localVariableSchema = z
   .object({
     description: z.string(),

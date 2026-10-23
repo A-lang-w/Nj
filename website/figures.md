@@ -52,11 +52,16 @@ preparation. Check the rendered image for readable text and spacing before
 publishing. The build uses DejaVu Sans for consistent typography; only the SVG
 source is committed. Metadata and build instructions are in the website README.
 
+The card and `public/assets/favicon.svg` each carry a dark
+`prefers-color-scheme` block for people who open the SVG directly or use a dark
+browser tab strip. CairoSVG ignores it, so the PNG that link previews fetch
+stays light.
+
 ## Beginner homepage and dinosaur reconstruction
 
 The manual/agent comparison and Calculator percentage controls are semantic
-HTML. Calculator’s assembly comes from a real installed model DLL; the named
-calculation is a readable summary crosschecked against Microsoft’s public source. See
+HTML. Calculator's assembly comes from a real installed model DLL; the named
+calculation is a readable summary crosschecked against Microsoft's public source. See
 [evidence/calculator-and-dino.md](evidence/calculator-and-dino.md).
 
 The introduction pairs selected Calculator instructions with three selectable
@@ -64,14 +69,14 @@ analyst thoughts: decode operator branches, trace arithmetic calls, then name
 the percentage rule. The small analyst illustration is authored SVG; the
 thought bubbles, findings and labels are selectable HTML. The thoughts
 illustrate the analysis rather than reproduce a recorded conversation. The
-agent side asks the same question and separates REA’s evidence from the
-agent’s explanation. Keep those roles and the instruction highlights aligned
+agent side asks the same question and separates REA's evidence from the
+agent's explanation. Keep those roles and the instruction highlights aligned
 when changing a step.
 
 The homepage explains reverse engineering before the worked examples. Each
 example opens with its goal and reason for inspecting the program. A selected
 highlight marks the intended result; the “REA returned” block identifies the
-evidence. The flows label REA’s inspection and the agent’s interpretation or
+evidence. The flows label REA's inspection and the agent's interpretation or
 reconstruction explicitly. Preserve this context when moving a demo.
 
 The dinosaur sequence uses an HTML flow: inspect the loaded script, rebuild the

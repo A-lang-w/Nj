@@ -6,6 +6,16 @@ MCP. They read archive bytes without launching the application. Bytecode
 source decompilation, encrypted PYZ recovery, zipapp and PEX analysis are outside
 this capability.
 
+`extract_artifact.coverage` preserves the inventory producer's source traversal
+scope and certainty. Successful publication proves that the selected inventoried
+regular files were written and verified; it does not prove that every source
+entry was representable or every embedded payload was decoded. For example, a
+directory containing an invalid UTF-8 filename can publish its representable
+files successfully while coverage remains `unknown`. Extraction retains the
+inventory's command provenance and limitations, plus the selected occurrences'
+path-qualified derivation notices. A reconstructed `.pyc` header therefore stays
+identified as derived bytes in the extraction result.
+
 ## Facts and focused queries
 
 The root occurrence's `format_metadata` records the CArchive layout (2.0 or
@@ -34,6 +44,9 @@ they do not claim a destination directory. Their `relative_offset` and
 `compressed_size` preserve any payload declared by older producers, while
 `declared_size` is zero because no bytecode is materialized for a namespace.
 Every declared span must end before the PYZ table of contents.
+Malformed CArchive TOC rows identify their zero-based table index and byte offset
+within the TOC, including truncated headers, invalid names, compression flags,
+and type codes. The failure retains its original format reason.
 PYZ `compression_flag` is derived from storage: nonempty payloads are compressed,
 including legacy namespaces; an empty namespace has no compressed payload.
 
@@ -107,6 +120,10 @@ Outer-compressed PYZ images have a separate per-reader capacity of 128 private
 files, bounding retained inodes and image identities. The complete image count
 is admitted before any temporary file is created; excess images return a
 capacity failure. This is a resource policy, not a PyInstaller format limit.
+Artifact errors retain this distinction as `details.boundary: "capacity"`, with
+the actual allowance in the diagnosis and `details.detail`. Changing output
+detail does not reduce that allowance's input scope; these operations do not
+select a narrower member path during inventory.
 Only a zero-byte read establishes EOF; short successful descriptor reads fill
 the bounded range. Compressed members must consume their complete declared
 input span; trailing junk and concatenated streams are refused.

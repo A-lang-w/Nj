@@ -54,6 +54,10 @@ import { profilelessNativeDispatchProfile } from "./ProfilelessNativeWorkflowSna
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { AnalysisSnapshotMismatchError } from "../../domain/evidenceErrors.js";
 import {
+  parseBinaryTarget,
+  type BinaryTargetResolverOptions,
+} from "../BinaryTargetResolver.js";
+import {
   resolveAppBundleResourceRoot,
   type ResolvedAppBundleResourceRoot,
 } from "../AppBundleExecutable.js";
@@ -384,6 +388,7 @@ export class BinarySession
 
   /** External live state cannot be replayed by a direct or composed CLI workflow. */
   allowsSnapshotReplay(operation: AnalysisOperation): boolean {
+    if (operation === "decompile_all") return false;
     if (this.#activeBundleResources !== undefined) return false;
     const capabilities = this.#active?.route.capabilities;
     const descriptor = capabilities?.get(operation);
@@ -420,6 +425,17 @@ export class BinarySession
   onAvailabilityChanged(listener: () => void | Promise<void>): () => void {
     this.#availabilityListeners.add(listener);
     return () => this.#availabilityListeners.delete(listener);
+  }
+
+  /** Resolve target identity under this session's file cleanup owner. */
+  resolveTarget(
+    path: string,
+    options: Omit<BinaryTargetResolverOptions, "resources"> = {},
+  ) {
+    return parseBinaryTarget(path, {
+      ...options,
+      resources: this.fileResources,
+    });
   }
 
   /** Resolve a target and provider profile without creating a provider client. */
@@ -464,6 +480,7 @@ export class BinarySession
     return this.#open(
       (admitted) =>
         resolveSessionOpen({
+          resources: this.fileResources,
           router: this.#providerRouter,
           current: this.#active,
           path,
@@ -850,7 +867,7 @@ export class BinarySession
           });
     if (clearRecords) this.clearSessionRecords();
     this.#clearRuntimeAvailability();
-    const fileResources = await this.closeWriteResources();
+    const fileResources = await this.closeFileResources();
     if (!fileResources.ok) onCleanupFailure?.(fileResources.error);
     const candidateResources = await this.#providerRouter.closeOwnedResources();
     if (!candidateResources.ok) onCleanupFailure?.(candidateResources.error);
@@ -865,20 +882,24 @@ export class BinarySession
     ];
     let resourceFailure = resourceFailures[0];
     for (const next of resourceFailures.slice(1))
-      if (resourceFailure !== undefined)
+      if (resourceFailure !== undefined) {
+        const previous = resourceFailure;
         resourceFailure = analysisErrorWithCleanupFailure(
-          resourceFailure,
+          previous,
           next,
           "close_binary",
         );
-    if (!closed.ok && resourceFailure !== undefined)
-      return err(
-        analysisErrorWithCleanupFailure(
-          closed.error,
-          resourceFailure,
-          "close_binary",
-        ),
+        resourceFailure.bindCleanupDependencies([previous, next]);
+      }
+    if (!closed.ok && resourceFailure !== undefined) {
+      const combined = analysisErrorWithCleanupFailure(
+        closed.error,
+        resourceFailure,
+        "close_binary",
       );
+      combined.bindCleanupDependencies([closed.error, resourceFailure]);
+      return err(combined);
+    }
     if (!closed.ok) return closed;
     return resourceFailure === undefined ? ok(null) : err(resourceFailure);
   }
@@ -1013,6 +1034,7 @@ export class BinarySession
       requestActivitySnapshots: client?.requestActivitySnapshots?.() ?? [],
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
       cleanupPending:
+        this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#pendingCleanup !== undefined ||
         this.#pendingBundleResourceCleanup.length > 0 ||
         this.hasPendingFileResources ||
@@ -1121,6 +1143,7 @@ export class BinarySession
       if (!admission.ok) return admission;
       return ok(
         await operation({
+          resourceScope: this.resourceScope,
           execute: (name, arguments_, options) =>
             this.#execute(name, arguments_, options, Promise.resolve()),
         }),
@@ -1402,8 +1425,7 @@ export class BinarySession
     const started = await client.execute("health", {});
     if (started.ok) {
       this.#active = {
-        target: previous.target,
-        profile: previous.profile,
+        ...previous,
         ...run,
         nativeSourceAdmitted: false,
       };
