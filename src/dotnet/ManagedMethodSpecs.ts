@@ -1,14 +1,15 @@
+import { createHash } from "node:crypto";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   methodGenericArity,
-  specSignature,
+  specSignatureFacts,
+  type SignatureTypeName,
   type ManagedMethod,
   type MemberCore,
 } from "./ManagedMemberInspectorCore.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
-  metadataCodedToken,
-  metadataCodedTokenInvalidReason,
+  decodeMetadataCodedIndex,
   metadataRowCursor,
   readMetadataBlob,
 } from "./ManagedMetadataHeaps.js";
@@ -24,6 +25,7 @@ export const edgeTargets = (
   layout: ManagedMetadataLayout,
   methods: readonly ManagedMethod[],
   cores: readonly ReadonlyMap<string, MemberCore>[],
+  signatureTypeName: SignatureTypeName,
 ): {
   readonly members: ReadonlyMap<string, MemberCore>;
   readonly issues: readonly ManagedParseIssue[];
@@ -39,7 +41,10 @@ export const edgeTargets = (
       seen.add(operand);
       readManagedValue(
         () =>
-          readMethodSpec({ bytes, layout, members, issues, arities }, operand),
+          readMethodSpec(
+            { bytes, layout, members, issues, arities, signatureTypeName },
+            operand,
+          ),
         issues,
       );
     }
@@ -58,12 +63,14 @@ const readMethodSpec = (
     members,
     issues,
     arities,
+    signatureTypeName,
   }: {
     readonly bytes: Buffer;
     readonly layout: ManagedMetadataLayout;
     readonly members: Map<string, MemberCore>;
     readonly issues: ManagedParseIssue[];
     readonly arities: Map<string, number | null>;
+    readonly signatureTypeName: SignatureTypeName;
   },
   token: string,
 ): void => {
@@ -76,33 +83,35 @@ const readMethodSpec = (
   );
   const methodRaw = cursor.readIndex(layout.codedIndexSize("MethodDefOrRef"));
   const instantiation = cursor.readIndex(layout.blobIndexSize);
-  const methodReason = metadataCodedTokenInvalidReason(
+  const method = decodeMetadataCodedIndex(
     methodRaw,
     1,
     [6, 10],
     layout.rowCounts,
   );
-  if (methodReason !== null || methodRaw === 0)
+  if (method.kind !== "valid")
     issues.push({
       code: "invalid-row",
       scope,
       offset: cursor.start,
       detail:
-        methodReason === null
+        method.kind === "null"
           ? "MethodSpec method coded index 0x0 is null, but the Method column must reference a row"
-          : `MethodSpec method coded index 0x${methodRaw.toString(16)} is invalid: ${methodReason}`,
+          : `MethodSpec method coded index 0x${methodRaw.toString(16)} is invalid: ${method.reason}`,
     });
-  const generic = metadataCodedToken(methodRaw, 1, [6, 10], layout.rowCounts);
+  const generic = method.kind === "valid" ? method.token : null;
   const target = generic === null ? undefined : members.get(generic);
   // A MethodSpec instantiates a method, so a field target never lends it a
   // name, even to a field operand.
   if (target !== undefined && target.kind !== "field")
-    members.set(token, { ...target, token });
-  const types = specSignature(
+    members.set(token, { ...target, token, identitySha256: null });
+  const instantiationFacts = specSignatureFacts(
     layout,
     readMetadataBlob(bytes, layout, instantiation, layout.blob?.size ?? 0),
     { form: "instantiation", scope, offset: cursor.start },
+    signatureTypeName,
   );
+  const { types } = instantiationFacts;
   if (generic === null) return;
   // Prefer the arity the target's owner decoded; read the raw signature only
   // for a target nothing decoded, such as a MethodDef outside the selection.
@@ -124,6 +133,21 @@ const readMethodSpec = (
         : `MethodSpec supplies ${String(types.length)} type argument(s), but its method declares ${String(arity)} generic parameter(s)`,
       cursor.start,
     );
+  if (
+    target !== undefined &&
+    target.kind === "method" &&
+    target.identitySha256 != null &&
+    instantiationFacts.resolvedSha256 !== null
+  )
+    members.set(token, {
+      ...target,
+      token,
+      identitySha256: createHash("sha256")
+        .update("managed-method-instantiation-v1\0")
+        .update(Buffer.from(target.identitySha256, "hex"))
+        .update(Buffer.from(instantiationFacts.resolvedSha256, "hex"))
+        .digest("hex"),
+    });
 };
 
 /** The Signature column of a MethodDef or MemberRef row. */
