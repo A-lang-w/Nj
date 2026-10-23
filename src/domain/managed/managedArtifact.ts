@@ -177,7 +177,26 @@ const managedExceptionRegionSchema = z.object({
   try_length: z.int().min(0),
   handler_offset: z.int().min(0),
   handler_length: z.int().min(0),
-  class_token: managedMetadataTokenSchema.nullable(),
+  class_token: managedMetadataTokenSchema
+    .nullable()
+    .describe(
+      "Raw build-local catch type token; not a cross-artifact identity",
+    ),
+  /** Resolved from this artifact's own metadata; raw token remains build-local. */
+  class_type: z.string().nullable().default(null),
+  class_type_name_sha256: digestSchema
+    .nullable()
+    .default(null)
+    .describe(
+      "Nested nominal TypeDef/TypeRef name digest; assembly scope is compared separately and local tokens are not cross-artifact identities",
+    ),
+  class_type_identity_resolved: z
+    .boolean()
+    .nullable()
+    .default(null)
+    .describe(
+      "Whether this artifact's local token identifies the reported catch type; null when unexamined",
+    ),
   filter_offset: z.int().min(0).nullable(),
 });
 
@@ -478,6 +497,7 @@ export const managedMemberInspectionSchema = z.object({
     ),
   artifact: managedArtifactReferenceSchema,
   module: moduleIdentitySchema.nullable(),
+  assembly: assemblyIdentitySchema.nullable().default(null),
   metadata: managedMetadataSummarySchema,
   identity_scope: managedTokenIdentityScopeSchema,
   types: z.array(managedTypeSchema),

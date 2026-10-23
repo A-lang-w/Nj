@@ -82,6 +82,12 @@ runtime dependency coverage. A missing section remains unknown rather than an
 empty dependency set. Retained views describe the captured artifact digest;
 they do not assert that the current file or running application is unchanged.
 
+ELF section names are resolved through the section-header string table.
+Zlib-compressed name tables are decoded within the native structural budget.
+If a name table uses unsupported compression, the result reports that
+limitation and leaves `.dep-v0` presence unknown rather than reporting the
+section absent.
+
 The inline Evidence result contains the artifact path, SHA-256, byte length,
 container format, architecture, word size, and byte order. When a `.dep-v0`
 section is present, `auditable_metadata` contains:
@@ -91,19 +97,29 @@ section is present, `auditable_metadata` contains:
 - `compressed_bytes` and `uncompressed_bytes`;
 - `format_version`, the embedded integer, or `null` when the field is omitted;
 - `packages`, in the section's original order, with `name`, `version`, `source`,
-  `kind`, `dependencies`, and `root`;
+  `kind`, `dependencies`, `features`, and `root`;
 - `root_package_index`, the single package marked `root`, or `null` when none is marked;
 - `dependency_edges`, pairs of package indices in package-then-dependency order;
 - `cyclic_dependency_indices`, sorted unique indices that participate in a cycle.
 
 An omitted `kind` stays `null`. The embedded format treats that omission as
 runtime, and that default is not stored in the section. An omitted dependency
-list is an empty array. An omitted `root` flag is false.
+list is an empty array. An omitted `features` field is `null`, because it does
+not establish whether features were empty or the producer did not record them;
+an explicit empty array establishes an empty list. An omitted `root` flag is
+false.
+Historical [cargo-auditable 0.4 package records](https://github.com/rust-secure-code/cargo-auditable/blob/v0.4.0/auditable-serde/src/lib.rs)
+may include the package `features` list; REA preserves those strings. That
+version omitted empty feature lists during serialization, while version 0.5
+removed the field entirely, as recorded in its
+[changelog](https://github.com/rust-secure-code/cargo-auditable/blob/v0.5.0/CHANGELOG.md).
 
 `rustc_commit` is present only when a `/rustc/<40-hex>/` path is found in
-read-only data. Its `evidence_kind` is `inferred`. The hash is not a claim that
-that compiler produced the binary. Several distinct hashes leave a single
-commit unknown.
+read-only data. For ELF, read-only non-executable `PT_LOAD` file ranges are
+searched alongside read-only sections, so an optional missing section-header
+table does not remove this search source. Its `evidence_kind` is `inferred`.
+The hash is not a claim that that compiler produced the binary. Several
+distinct hashes leave a single commit unknown.
 
 ## Limits and failures
 

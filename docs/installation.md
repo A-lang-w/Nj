@@ -743,7 +743,9 @@ and skips directories.
 On Linux, it prefers executable `/opt/hopper/bin/Hopper`, then executable
 `~/.local/share/rea/hopper/bin/Hopper`, followed by `/opt/hopper-v4/bin/hopper`
 and `/usr/bin/hopper`; if none exists, the former remains the diagnostic
-fallback. `HOPPER_LAUNCHER_PATH` overrides those choices:
+fallback. `rea doctor` checks only the current platform's candidates, in the
+same order; other platforms have no automatic candidates.
+`HOPPER_LAUNCHER_PATH` overrides those choices:
 
 ```bash
 export HOPPER_LAUNCHER_PATH=/absolute/path/to/Hopper
@@ -1376,7 +1378,7 @@ equivalent entry point. Setup run through `npx` registers
 `cmd.exe /d /c` so clients can start the runner's command shim. Neither
 registration points into the runner's temporary package cache.
 
-REA supports Node.js 22.x (>=22.19), 24.x (>=24.11), and 26+. Node.js 23, 25, and prereleases are unsupported. It uses the npm already paired with that runtime and never upgrades Node.js, npm, or Homebrew.
+REA supports Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), and 26.12.1+. Node.js 23, 25, earlier 26.x releases, and prereleases are unsupported. It uses the npm already paired with that runtime and never upgrades Node.js, npm, or Homebrew.
 
 When REA runs on Bun, the `rea doctor` `node` check reports the Bun version and
 the Node.js compatibility version Bun declares, and passes when that

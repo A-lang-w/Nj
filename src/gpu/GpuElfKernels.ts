@@ -1,4 +1,5 @@
 import { readCudaTarget } from "./CudaTarget.js";
+import { readAmdGpuNoteTargetKey } from "./AmdGpuTarget.js";
 import type { GpuPayloadTarget } from "./GpuObject.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -266,6 +267,8 @@ const cudaKernels = async (
       rejectGpu("CUBIN symbol string table is invalid");
     const names = await sectionBytes(source, namesSection!, index.budget);
     const bytes = await sectionBytes(source, section, index.budget);
+    const symbolCount = bytes.length / width;
+    let extendedIndices: Buffer | null = null;
     for (let offset = 0; offset < bytes.length; offset += width) {
       index.budget.visit();
       const symbol = readElfSymbol(
@@ -275,7 +278,31 @@ const cudaKernels = async (
       );
       // STO_CUDA_ENTRY distinguishes launchable kernels from ordinary device functions.
       if (symbol.type !== 2 || (symbol.other & 0x10) === 0) continue;
-      const text = directory.sections[symbol.section_index];
+      let sectionIndex = symbol.section_index;
+      if (sectionIndex === 0xffff) {
+        if (extendedIndices === null) {
+          const matches = directory.sections.filter(
+            (row) => row.type === 18 && row.link === section.index,
+          );
+          if (matches.length !== 1)
+            rejectGpu(
+              "CUBIN extended symbol section-index table is unavailable",
+            );
+          const extended = matches[0]!;
+          if (
+            extended.entry_size !== 4n ||
+            extended.size !== BigInt(symbolCount) * 4n
+          )
+            rejectGpu(
+              "CUBIN extended symbol section-index table has an invalid extent",
+            );
+          extendedIndices = await sectionBytes(source, extended, index.budget);
+        }
+        sectionIndex = new BinaryReader(extendedIndices, directory.little).u32(
+          (offset / width) * 4,
+        );
+      }
+      const text = directory.sections[sectionIndex];
       if (text === undefined || text.type !== 1 || (text.flags & 4n) === 0n)
         rejectGpu("CUBIN kernel symbol has no executable section");
       const kernel = blankKernel(
@@ -351,12 +378,8 @@ export const readAmdElfMetadata = async (
   let retainedBytes = 0;
   const observed = (): AmdElfMetadata => {
     const target = targets.size === 1 ? [...targets][0]! : null;
-    const target_key =
-      target === null
-        ? null
-        : (/^amdgcn-amd-amdhsa--(gfx[a-zA-Z0-9]+(?::[^\s]+)?)$/u.exec(
-            target,
-          )?.[1] ?? null);
+    // LLVM notes use both the empty and explicit `unknown` environment forms.
+    const target_key = target === null ? null : readAmdGpuNoteTargetKey(target);
     return { target, target_key, limitations, notes };
   };
   try {

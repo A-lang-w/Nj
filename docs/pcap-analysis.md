@@ -86,6 +86,9 @@ not process identity or proof of the destination's authenticity.
 All examined inventories are retained within the resource budget; no fixed
 200/100/50-item truncation is applied. HTTP transport credentials are excluded
 without rewriting other URI bytes; ambiguous credential spans cause omission.
+The URI inventory includes absolute-form HTTP request targets when TShark cannot
+construct `http.request.full_uri` because no Host header was reported; relative
+request targets are not promoted to absolute URIs.
 Counts preserve distinct observed source URIs before omission or coalescing.
 `coverage: "partial"` records unresolved DNS attribution or URI item loss;
 component credential exclusion is also counted explicitly. Diagnostics retain
@@ -109,9 +112,12 @@ wall deadlines are 300 s for dissection, 60 s for metadata and 20 s for probes.
 Native ownership preparation has its own bounded lifecycle.
 
 Malformed/oversized output returns no partial success. Unvalidated partial JSON
-is not returned as facts. Cancellation reaches probes, acquisition, commands and
-projection. Cleanup failure returns a typed error, retains completed Evidence
-when available, and retains owned resources for retry on close.
+is not returned as facts. Invalid UTF-8 in either `capinfos` or TShark stdout or
+stderr is an unreadable-output error; replacement-decoded text is not parsed as
+producer evidence. A literal U+FFFD character in valid UTF-8 remains text.
+Cancellation reaches probes, acquisition, commands and projection. Cleanup
+failure returns a typed error, retains completed Evidence when available, and
+retains owned resources for retry on close.
 
 ## Verification scope
 
