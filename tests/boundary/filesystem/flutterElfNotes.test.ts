@@ -51,6 +51,52 @@ it.each([32, 64] as const)(
   },
 );
 
+it.each(
+  ([32, 64] as const).flatMap((bits) => [
+    { bits, program: 8, section: 4, reads: 5 },
+    { bits, program: 1, section: 4, reads: 4 },
+  ]),
+)(
+  "keys shared $bits-bit note ranges by effective alignment (p_align $program, sh_addralign $section)",
+  async ({ bits, program, section, reads }) => {
+    // 24-byte IDs pad identically at four and eight bytes, so only the range
+    // key decides whether the second declaration is read.
+    const ids = ["11".repeat(24), "22".repeat(24)];
+    const image = elfNoteFixture({
+      bits,
+      alignment: 4,
+      ownership: "both",
+      notes: Buffer.concat(
+        ids.map((id) => elfNote("GNU", 3, Buffer.from(id, "hex"))),
+      ),
+    });
+    const header = bits === 64 ? 64 : 52;
+    const noteSection =
+      header + (bits === 64 ? 56 : 32) + (bits === 64 ? 64 : 40);
+    const writeAlignment = (offset: number, value: number) => {
+      if (bits === 64) image.writeBigUInt64LE(BigInt(value), offset);
+      else image.writeUInt32LE(value, offset);
+    };
+    writeAlignment(header + (bits === 64 ? 48 : 28), program);
+    writeAlignment(noteSection + (bits === 64 ? 48 : 32), section);
+    const root = await createTestTempDirectory("rea-flutter-alignment-");
+    const path = join(root, "engine.so");
+    await writeFile(path, image);
+    const file = await open(path, "r");
+    const read = vi.spyOn(file, "read");
+    try {
+      expect(await readElfBuildIds(file, image.length, undefined)).toEqual({
+        candidates: ids,
+        failures: [],
+      });
+      // Header prefix, both tables, then one read per distinct note range.
+      expect(read.mock.calls.length).toBe(reads);
+    } finally {
+      await file.close();
+    }
+  },
+);
+
 it.each([
   { bits: 32, table: "program" },
   { bits: 64, table: "section" },
