@@ -86,3 +86,24 @@ it("reports one file selected under two letter cases as an input error", async (
     }),
   ]);
 });
+
+it("reports one file selected twice as an input error", async () => {
+  const root = await createTestTempDirectory("rea-recovery-twice-");
+  const selected = join(root, "bundle.js");
+  await writeFile(selected, "module.exports = 1;\n");
+  const snapshots = join(root, "snapshots");
+  await mkdir(snapshots);
+
+  const failure = await snapshotRecoveryInputs(
+    [selected, selected],
+    snapshots,
+  ).catch((cause: unknown) => cause);
+
+  expect(failure).toBeInstanceOf(AnalysisInputError);
+  expect((failure as AnalysisInputError).issues).toEqual([
+    expect.objectContaining({
+      path: ["additional_paths"],
+      message: expect.stringContaining("collides with another selected input"),
+    }),
+  ]);
+});
