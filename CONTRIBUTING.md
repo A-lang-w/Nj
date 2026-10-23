@@ -26,6 +26,8 @@ to locate provider and shared-workflow bottlenecks, preserve Evidence, and
 compare equivalent real tasks before claiming an improvement.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
+When adding or changing an admission ceiling, budget, or deadline, follow
+[admission limits and recovery](docs/design/limits-and-recovery.md).
 
 ## Reporting issues
 
@@ -246,6 +248,11 @@ On a Windows checkout, some source tests fail because fixtures use POSIX paths,
 base revision, or run the suite on Linux or WSL, before attributing them to a
 change. See [testing](docs/testing.md#developer-commands) for command scopes
 and lane selection.
+
+`git submodule update --init --recursive` fails at the pinned Unblob submodule
+on Windows and can leave later submodules unchecked out. Apply the
+[Unblob checkout workaround](docs/firmware-analysis.md#windows-submodule-checkout),
+then rerun the command.
 
 ## Documentation website
 

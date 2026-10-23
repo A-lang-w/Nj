@@ -78,6 +78,10 @@ export const TSHARK_PROVIDER_IDENTITY = {
 } as const;
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
+/** Packet inspection runs only on Linux; discovery and execution share this check. */
+export const tsharkHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
+
 /** Inspect selected capture files only, retaining cleanup ownership across failures. */
 export class TsharkCaptureProvider implements PacketCapturePort {
   readonly #resources: ArtifactAnalysisResources;
@@ -149,7 +153,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           cause: options.signal.reason,
         });
       await this.#resources.release();
-      if (this.platform !== "linux")
+      if (!tsharkHostSupported(this.platform))
         throw new Error(
           "Packet inspection requires Linux with util-linux prlimit and TShark 4.x (on PATH or through absolute REA_TSHARK_COMMAND) so expanded captures are processed under an enforced address-space limit.",
         );
@@ -358,10 +362,9 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           );
         phase = "producer";
         resourcePath = "path" in input ? input.path : command;
-        const matchingPackets = parsePacketOutput(
-          output.stdout.text,
-          input.fields,
-        );
+        // TShark resolves `-e` aliases before emitting canonical field names;
+        // the command arguments, not output names, own field selection.
+        const matchingPackets = parsePacketOutput(output.stdout.text);
         const start = Math.min(input.match_offset, matchingPackets.length);
         const end =
           input.match_limit === null

@@ -398,11 +398,30 @@ Entries that change during an import retain an unavailable-entry diagnostic
 alongside readable siblings. If enumeration of an already admitted root fails,
 the graph keeps its observed children and records the root failure as a
 top-level limitation. That partial inventory does not establish absence among
-unexamined children.
+unexamined children. POSIX directory-entry bytes that are not valid UTF-8 cannot
+be represented as graph paths; the containing directory (or root) is marked
+unsupported, and REA does not access the entry through a replacement-character
+name. Readable siblings remain inventoried.
 
 JavaScript and TypeScript import parsing requires valid UTF-8. Malformed source
 bytes retain their original hashes and sizes with a decoding diagnostic; REA
-does not infer module targets from replacement characters.
+does not infer module targets from replacement characters. Exact dynamic-import
+strings, expression-free templates and runtime-transparent TypeScript wrappers
+retain their targets; computed imports remain unknown. TypeScript import-equals
+dependencies remain `requires` relationships whether or not they are exported.
+
+REA derives historical CommonJS paths only when the selected loader and its
+base are proven: this includes the exact
+`createRequire(new URL("./file.cjs", import.meta.url))` form and
+`require.resolve` with `{ paths: [__dirname] }`. Other custom bases and search
+options remain partial with unknown resolution and the literal requested
+specifier. Overwritten resolver methods retain that uncertainty; they are not
+attributed to Node. `require.main` is a module object, so calling it does not
+establish a loader reference. These relationships do not establish execution;
+Node's [`require.resolve`](https://nodejs.org/docs/v24.22.1/api/modules.html#requireresolverequest-options)
+performs lookup without loading the target. An excluded `package.json`
+also leaves package-directory selection unknown rather than treating the
+manifest as absent and applying an `index` fallback.
 
 Historical-source import requires safe no-follow file opens on Linux or
 macOS. Native Windows returns `unsupported_host`; use Linux REA inside WSL
@@ -552,6 +571,13 @@ operation status.
 retain their complete typed diagnostic projection even when the selector matches
 a field such as `code` or `message`, or names a missing field. `--full-output`
 controls whether the outer `{ok, error, meta}` envelope is included.
+
+Sibling array slices that select different fields are combined by original row
+index and emitted in source order, regardless of selector order. Selecting a
+whole parent row keeps that row intact and takes precedence over narrower fields
+selected from the same row. For example, `rows[0,2].name,rows[1,3].version`
+combines both fields for overlapping rows, while `rows[0,2],rows[1,3].version`
+retains rows 0 and 1 whole.
 
 For `cutter-command`, `--json-output` requests command-specific JSON from
 Cutter when available. This is separate from `--format json`, which selects the

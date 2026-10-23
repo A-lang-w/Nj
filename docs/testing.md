@@ -236,7 +236,13 @@ instrumentation remains equivalent.
 
 ## Choose verification for the change
 
-| Change or claim                           | First check                                                   | Additional coverage                                         |
+`test:local` is fast source-level feedback. For the strongest practical
+regression, prefer a real public CLI/MCP workflow, then production-boundary
+integration, then a producer golden; use the table to select quick feedback and
+claim-specific additional evidence. Provider-behavior claims require the
+matching real-provider lane.
+
+| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                     |
 | ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
 | Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port    |
 | CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope |
@@ -265,6 +271,20 @@ cases. Share setup without hiding inputs or expected evidence. For successful
 `Result` values, throw the typed error before asserting the value; a preceding
 `.ok` assertion adds no coverage. Protocol fixtures must reject unmodeled
 commands and preserve actual producer reply shapes.
+
+For comparison normalization, include a legitimate equivalent pair and a
+distinct pair that would collapse if representation tags or scope were lost.
+For learned identifiers, cover conflicting pairs and reused values in different
+collections; mappings must remain one-to-one within their declared scope.
+
+For format compatibility, identify the producer revision that establishes each
+rule. Include an accepted boundary case beside the rejected case so a stricter
+parser cannot pass by refusing both. Keep source-derived behavior, synthetic
+fixtures, and executed producer or runtime oracles distinct in validation
+reports. A fixture accepted by REA proves its reader behavior; it does not prove
+that a real loader accepts the artifact. If multiple producer revisions share a
+format identifier but differ in behavior, record that ambiguity rather than
+using one installed version as an oracle for all of them.
 
 Packed bridge validation uses Python's standard-library AST and tar readers
 with `-I -S`: caller-local modules, `PYTHONPATH`, and site startup hooks must
@@ -946,7 +966,7 @@ analyzed as native code (75k methods on arm64) and decompiled through both
 CLI and MCP with explicit unit selection, plus the thin Java wrapper and
 decoded manifest. The dedicated Dart snapshot processor and `run_script`
 remained GUI-only surfaces in that headless build.
-The separate [Linux CE native audit](../experiments/analysis-efficiency/jeb-linux-native.md)
+The separate [Linux CE native audit](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/jeb-linux-native.md)
 uses the official CE `5.48.0.202610071539` direct CLI launcher and real
 CLI/stdio MCP ELF workflows. That audit does not qualify CE Java/Android
 decompilation or GUI project opening, and it does not replace the licensed
