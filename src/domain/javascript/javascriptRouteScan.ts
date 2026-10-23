@@ -32,7 +32,10 @@ import {
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -983,24 +986,22 @@ export class JavaScriptRouteScan {
       if (!t.isIdentifier(node)) return node;
       if (seen.has(node) || !this.#queue(node)) return;
       seen.add(node);
-      let binding = index.bindingForReferenceAt(node);
+      const binding = index.bindingForReferenceAt(node);
       if (binding === undefined) return;
-      if (selection === "at-read") {
-        // Ownership discovery retains possible sources; boolean values need
-        // initialization proof at every alias read, not at the later route call.
-        const read = semanticBindingAtRead(
-          binding,
-          node,
-          index.bindings.parentsByNode,
-        );
-        if (read.status !== "ordered" || !read.hasDefiniteInitializer) return;
-        binding = read.binding;
-      }
       const initializer = semanticStableInitializer(binding, index.bindings);
       if (
         initializer === undefined ||
         initializer.projection.length !== 0 ||
-        (site !== undefined && index.referenceMayHaveChangedAt(site, node))
+        (site !== undefined && index.referenceMayHaveChangedAt(site, node)) ||
+        (selection === "at-read" &&
+          // A boolean flag is only the literal this alias claims when the
+          // initializer has run. Nested blocks and function bodies keep the
+          // lexical value; a provably later initializer does not.
+          semanticTopLevelEffectFollowsCapture(
+            node,
+            initializer.node,
+            index.bindings.parentsByNode,
+          ))
       )
         return;
       node = initializer.node;

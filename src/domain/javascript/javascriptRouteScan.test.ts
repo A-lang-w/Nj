@@ -66,6 +66,17 @@ it.each([
   ]);
 });
 it.each([
+  "const INDEX=true; { createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]); }",
+  "const INDEX=true; function make(){ return createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]); }",
+])(
+  "resolves an index alias read from an enclosing block or function: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/", "/child"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+it.each([
   ["", "false"],
   ["const INDEX=false;", "INDEX"],
   ["", "(false as const)"],
