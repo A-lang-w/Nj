@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 import * as t from "@babel/types";
 
@@ -249,5 +250,44 @@ it.each([
       },
     });
     expect(accumulator.pendingNetworkCalls).toHaveLength(pending);
+  },
+);
+
+it.each([
+  [
+    'const box = {}; [box.p, box.__proto__] = [Map.prototype, { set p(value) { value.get = fetch; } }]; new Map().get("/accounts")',
+    0,
+  ],
+  [
+    'const box = {}; ({a: box.p, b: box.__proto__} = {a: Map.prototype, b: { set p(value) { value.get = fetch; } }}); new Map().get("/accounts")',
+    0,
+  ],
+  [
+    'const box = {}; [box.__proto__, box.p] = [{ set p(value) { value.get = fetch; } }, Map.prototype]; new Map().get("/accounts")',
+    1,
+  ],
+  [
+    'const box = {}; ({a: box.__proto__, b: box.p} = {a: { set p(value) { value.get = fetch; } }, b: Map.prototype}); new Map().get("/accounts")',
+    1,
+  ],
+  [
+    'const box = {}; [{a: box.__proto__}, box.p] = [{a: { set p(value) { value.get = fetch; } }}, Map.prototype]; new Map().get("/accounts")',
+    1,
+  ],
+] as const)(
+  "orders pattern stores like the runtime: %s",
+  (source, expected) => {
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (url: unknown) => calls.push(url) });
+    expect(calls).toEqual(expected === 0 ? [] : ["/accounts"]);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (expected === 0) expect(endpoints).toEqual([]);
+    else
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
   },
 );

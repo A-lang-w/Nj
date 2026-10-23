@@ -7,7 +7,10 @@ import {
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  semanticWriteTargets,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -30,6 +33,12 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
+
+/** A pattern store is applied after RHS evaluation and preceding sibling stores. */
+export interface SemanticBeforeStore {
+  readonly mutation: t.Node;
+  readonly target: t.MemberExpression | t.OptionalMemberExpression;
+}
 
 export interface SemanticCapturedSelection {
   readonly at: t.Node;
@@ -193,7 +202,7 @@ const projectedSourceFactsAtRead = (
   capturedSelections: readonly SemanticCapturedSelection[] = [],
   context: {
     readonly retainEligibility?: boolean;
-    readonly beforeMutation?: t.Node | undefined;
+    readonly beforeStore?: SemanticBeforeStore | undefined;
   } = {},
 ):
   | {
@@ -204,7 +213,21 @@ const projectedSourceFactsAtRead = (
       readonly hasDescendantEffects: boolean;
     }
   | undefined => {
-  const { retainEligibility = false, beforeMutation } = context;
+  const { retainEligibility = false, beforeStore } = context;
+  const pendingStoreTargets =
+    beforeStore === undefined
+      ? undefined
+      : new Set<t.Node>([beforeStore.target]);
+  if (
+    beforeStore !== undefined &&
+    t.isAssignmentExpression(beforeStore.mutation)
+  ) {
+    let pending = false;
+    for (const target of semanticWriteTargets(beforeStore.mutation.left)) {
+      pending ||= target === beforeStore.target;
+      if (pending) pendingStoreTargets?.add(target);
+    }
+  }
   const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
   const captured = [
     ...read.binding.initializers,
@@ -265,7 +288,15 @@ const projectedSourceFactsAtRead = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
     includeDescendants = false,
   ) =>
-    (beforeMutation === undefined || effect.node !== beforeMutation) &&
+    (beforeStore === undefined ||
+      effect.node !== beforeStore.mutation ||
+      effect.assignedSources === undefined ||
+      effect.assignedSources.length === 0 ||
+      !effect.assignedSources.every(
+        (source) =>
+          source.target !== undefined &&
+          pendingStoreTargets?.has(source.target) === true,
+      )) &&
     (effect.receiverInitializers === undefined ||
       effect.receiverInitializers.length === 0 ||
       captured.length === 0 ||

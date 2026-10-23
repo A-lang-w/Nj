@@ -56,6 +56,7 @@ import {
   semanticNormalizeCapturedSelections,
   semanticCapturedSelectionsAfterPropertyRead,
   type SemanticCapturedSelection,
+  type SemanticBeforeStore,
 } from "./javascriptSemanticProjectedSources.js";
 import { semanticGetterReceiverReferences } from "./javascriptSemanticGetterResults.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
@@ -137,7 +138,7 @@ const localAccessorMethods = (
       kind: "get" | "set",
     ) => boolean;
     readonly requireLocalProof?: boolean;
-    readonly effectsAt?: t.Node;
+    readonly beforeStore?: SemanticBeforeStore;
     readonly lookup?: "prototype" | "own";
   },
 ): readonly (t.ObjectMethod | t.ClassMethod)[] | undefined => {
@@ -195,9 +196,9 @@ const localAccessorMethods = (
             path,
             state,
             true,
-            selection.effectsAt ?? root,
+            selection.beforeStore?.mutation ?? root,
             current.capturedSelections,
-            { beforeMutation: selection.effectsAt },
+            { beforeStore: selection.beforeStore },
           );
           if (
             facts === undefined ||
@@ -1417,7 +1418,7 @@ export function* collectSemanticMemberMutationsSteps(
       return true;
     const setters = localAccessorMethods(target.object, [key], "set", state, {
       ...completeSetterSelection,
-      effectsAt: source.mutation,
+      beforeStore: { mutation: source.mutation, target },
     });
     return setters === undefined || setters.length > 0;
   };
