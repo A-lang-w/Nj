@@ -23,6 +23,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
@@ -260,6 +261,14 @@ export const nativePlistFailure = (
       cause,
       capturedOutput,
     });
+  if (code === "ELOOP" || code === "ENAMETOOLONG")
+    return unreadablePlist(
+      selection,
+      code === "ELOOP"
+        ? "symbolic-link traversal looped or exceeded the host limit (ELOOP)"
+        : "the path exceeds the host path or component length limit (ENAMETOOLONG)",
+      { cause, capturedOutput },
+    );
   if (code === "EACCES" || code === "EPERM")
     return new BinaryTargetError(
       path,
@@ -333,12 +342,7 @@ export const readNativePlistBytes = (
         { boundary: "file-size" },
       );
     if (
-      !after.isFile() ||
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeNs !== after.mtimeNs ||
-      before.ctimeNs !== after.ctimeNs ||
+      !sameRegularFileState(before, after) ||
       BigInt(position) !== before.size
     )
       throw new ArtifactReaderFailure(

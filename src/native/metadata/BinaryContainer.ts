@@ -9,6 +9,16 @@ export class BinaryFormatFailure extends Error {
   }
 }
 
+/** A missing file span is a candidate miss; conflicting owners are malformed. */
+export class BinaryMappingFailure extends BinaryFormatFailure {
+  constructor(
+    readonly reason: "unmapped" | "ambiguous",
+    message: string,
+  ) {
+    super("malformed", message);
+  }
+}
+
 /** Resource boundary exceeded while decoding metadata or native container structure. */
 export class BinaryResourceFailure extends Error {
   constructor(
@@ -50,7 +60,6 @@ export interface LoadRegion {
 
 /** Parsed section facts; consumer metadata validity is separate from native structure. */
 export type ImageSection = {
-  readonly name: string;
   readonly offset: number;
   readonly size: number;
   readonly file_backed: boolean;
@@ -59,6 +68,8 @@ export type ImageSection = {
 } & (
   | {
       readonly format: "elf";
+      /** Null when the ELF name table is unavailable or this name is unreadable. */
+      readonly name: string | null;
       readonly type: number;
       readonly address: bigint;
       readonly declared_range: {
@@ -68,13 +79,16 @@ export type ImageSection = {
     }
   | {
       readonly format: "pe";
+      readonly name: string;
       readonly virtual_address: number;
       readonly virtual_size: number;
       readonly raw_size: number;
+      readonly file_alignment: number;
       readonly characteristics: number;
     }
   | {
       readonly format: "macho";
+      readonly name: string;
       readonly section_name: string;
       readonly type: number;
       readonly address: bigint;
@@ -107,6 +121,8 @@ export interface BinaryContainer {
   }[];
   /** Mach-O load-command observation, when available. */
   readonly macho_chained_fixups?: boolean;
+  /** Section-name lookup was incomplete; absence by name is not established. */
+  readonly section_names_limitation?: string;
   readonly mappings: readonly FileMapping[];
   readonly load_regions?: readonly LoadRegion[];
   /** File-backed ranges the native loader marks executable. */
@@ -114,6 +130,14 @@ export interface BinaryContainer {
   readonly zero_fills: readonly ZeroFillMapping[];
   readonly sections: readonly ImageSection[];
 }
+
+/** All declared file-backed image memory, including PE headers at the image base. */
+export const imageFileMappings = (
+  container: BinaryContainer,
+): readonly FileMapping[] =>
+  container.pe_header_mapping === undefined
+    ? container.mappings
+    : [container.pe_header_mapping, ...container.mappings];
 
 /** Reader that checks every structural range before decoding numeric fields. */
 export class BinaryReader {
@@ -206,7 +230,7 @@ export const declaredFileRange = (
   };
 };
 
-/** Map a virtual span without losing precision or selecting an ambiguous alias. */
+/** Map a contiguous file span without gaps or conflicting loader mappings. */
 export const mappedFileOffset = (
   mappings: readonly FileMapping[],
   address: bigint,
@@ -224,21 +248,52 @@ export const mappedFileOffset = (
       continue;
     const offset = mapping.offset + Number(delta);
     if (found !== undefined && found !== offset)
-      throw new BinaryFormatFailure(
-        "malformed",
+      throw new BinaryMappingFailure(
+        "ambiguous",
         "Virtual address has ambiguous file mappings",
       );
     found = offset;
   }
+  if (found === undefined && size > 0) {
+    // Keep the common single-mapping path allocation-free. A split span needs
+    // ordered intervals to prove that every byte is backed, even when native
+    // mappings arrive out of address order.
+    const end = address + BigInt(size);
+    const spans = mappings
+      .filter((mapping) =>
+        spansOverlap(
+          address,
+          BigInt(size),
+          mapping.address,
+          BigInt(mapping.size),
+        ),
+      )
+      .sort((left, right) =>
+        left.address < right.address
+          ? -1
+          : left.address > right.address
+            ? 1
+            : 0,
+      );
+    let covered = address;
+    for (const mapping of spans) {
+      if (mapping.address > covered) break;
+      const mappingEnd = mapping.address + BigInt(mapping.size);
+      if (mappingEnd > covered) covered = mappingEnd;
+    }
+    const first = spans[0];
+    if (covered >= end && first !== undefined)
+      found = first.offset + Number(address - first.address);
+  }
   if (found === undefined)
-    throw new BinaryFormatFailure(
-      "malformed",
+    throw new BinaryMappingFailure(
+      "unmapped",
       "Virtual address or string range is not file mapped",
     );
   for (const zeroFill of zeroFills) {
     if (spansOverlap(address, BigInt(size), zeroFill.address, zeroFill.size))
-      throw new BinaryFormatFailure(
-        "malformed",
+      throw new BinaryMappingFailure(
+        "ambiguous",
         "Virtual address has ambiguous file and zero-fill mappings",
       );
   }
@@ -252,8 +307,8 @@ export const mappedFileOffset = (
       BigInt(found) + start - address !==
       BigInt(mapping.offset) + start - mapping.address
     )
-      throw new BinaryFormatFailure(
-        "malformed",
+      throw new BinaryMappingFailure(
+        "ambiguous",
         "Virtual address has ambiguous file mappings",
       );
   }
@@ -278,8 +333,8 @@ export const isZeroFilledSpan = (
     return false;
   for (const mapping of mappings) {
     if (spansOverlap(address, bytes, mapping.address, BigInt(mapping.size)))
-      throw new BinaryFormatFailure(
-        "malformed",
+      throw new BinaryMappingFailure(
+        "ambiguous",
         "Virtual address has ambiguous file and zero-fill mappings",
       );
   }

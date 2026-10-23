@@ -1,4 +1,5 @@
 import { DEFAULT_CALL_RELATIONSHIP_DIRECTION } from "../contracts/enhancedInputs.js";
+import { FIRMWARE_TOOL_REQUIREMENTS } from "../contracts/firmware/firmwareToolRequirements.js";
 import { CALL_RELATIONSHIP_TRAVERSALS } from "./CallRelationshipTraversal.js";
 import { NATIVE_DISPATCH_METADATA_SOURCES } from "./native/NativeDispatchMetadataInspection.js";
 import { NATIVE_UI_ACTION_OPERATIONS } from "./native/NativeUiActionTrace.js";
@@ -189,6 +190,7 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
     get_objc_classes: ["list_names"],
     get_objc_protocols: ["list_names"],
     batch_decompile: ["procedure_pseudo_code"],
+    decompile_all: ["list_procedures", "procedure_pseudo_code"],
     get_call_graph: CALL_RELATIONSHIP_COMPOSITION,
     trace_call_path: CALL_RELATIONSHIP_COMPOSITION,
     analyze_swift_types: ["list_procedures"],
@@ -541,6 +543,7 @@ const workflowAvailabilityFor = ({
       "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
     );
   if (kind === "firmware-provider") {
+    const { binwalk, unblob } = FIRMWARE_TOOL_REQUIREMENTS;
     const inspection = name === "inspect_firmware_regions";
     return hostRestrictedAvailability(
       policy,
@@ -548,7 +551,7 @@ const workflowAvailabilityFor = ({
       inspection
         ? policy.firmwareInspectionEnabled
         : policy.firmwareExtractionEnabled,
-      "On Linux, provide an absolute REA_BINWALK_COMMAND (Binwalk 3.1.x, verified with 3.1.0) or REA_UNBLOB_COMMAND (Unblob 26.6.x, verified with 26.6.4) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.",
+      `On Linux, provide an absolute ${binwalk.commandEnvironment} (${binwalk.name} ${binwalk.line}, verified with ${binwalk.version}) or ${unblob.commandEnvironment} (${unblob.name} ${unblob.line}, verified with ${unblob.version}) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.`,
     );
   }
   if (kind === "android-provider")

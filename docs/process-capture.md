@@ -241,7 +241,12 @@ A missing entry proves creation or deletion only when the corresponding
 observation root's path enumeration was exhausted. Otherwise its effect has
 `status: "unknown"`, the available before/after state, and a reason; a null
 state in this variant means unobserved. Paths below symlinks that REA did not
-follow also remain unknown. Partial enumeration of one root does not erase
+follow also remain unknown. Each observed symlink records a
+`symlink_not_followed` enumeration omission with a null system code, including
+a stable selected root. The link's own metadata can remain unchanged while
+descendant coverage and filesystem comparison remain unknown. Physical
+parent-directory enumeration still proves unrelated sibling absence.
+Partial enumeration of one root does not erase
 known effects in another, and unavailable content hashes do not by themselves
 make path absence unknown.
 
@@ -261,6 +266,12 @@ denied or otherwise unavailable lookup records an `entry_unavailable` omission
 for that path instead, and its root stays incomplete. Cancellation and
 unexpected I/O failures still stop capture.
 
+An initial selected-root permission denial returns `access_denied` with the
+selected path, native `EACCES` or `EPERM`, and filesystem-read recovery. Capture
+does not launch the target. Earlier snapshot facts and the denied root's
+omission remain in the partial observation; unresolved read cleanup retains its
+own classification until its exact resources are released.
+
 Terminal frame `data` is the comparison text after the selected normalization.
 New captures also preserve `raw_data` when normalization changes a PTY chunk;
 otherwise `data` is already the original text. Older captures may lack the
@@ -268,6 +279,13 @@ original text for changed chunks. Both values participate in Evidence identity,
 while comparisons and trace assertions use the normalized text. Retaining the
 original adds at most `limits.output_bytes` of text, because it comes from the
 same admitted PTY chunks rather than a second unbounded stream.
+
+When path normalization is enabled, aliases apply to selected path identities
+at clear text delimiters. A selected executable path does not alias a longer
+sibling filename such as `tool-helper`; selected parent directories still
+normalize within descendant paths. The comparison contract records these rules as
+`path-component-boundaries-v2`, so captures made with the earlier prefix rules
+cannot be compared as if the text had the same meaning.
 
 Rendered frame `lines` hold the visible rows after normalization, with trailing
 U+0020 spaces removed. Blank rows and internal spaces remain. `columns` records

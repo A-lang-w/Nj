@@ -70,7 +70,10 @@ DOM node indices retain their snapshot positions. Invalid rows are omitted with
 completeness diagnostics, so `total_nodes` can exceed the retained node count
 and a parent index can refer to an omitted source node.
 
-Script metadata retains its execution-context frame ID when CDP supplies one. The capture also
+Script metadata retains its execution-context frame ID when CDP supplies one and
+the observed frame generation is authorized. Frames describe the current inventory;
+script observations can retain earlier authorized frames that have since detached.
+The capture also
 inventories worker, service-worker, and shared-worker targets with
 validated opener-target and parent-frame IDs. Worker discovery uses passive
 target metadata; REA does not attach to or execute code in those targets.
@@ -84,6 +87,11 @@ target, frame, script, and resource, a worker URL must resolve to a local
 file before it is retained. Relationship IDs improve
 attribution but do not prove which static module started a worker or that its
 work completed.
+Missing opener and parent relationships leave worker ownership unknown. Such
+targets are withheld with an `unattributed_target` exclusion and unavailable
+`workers` coverage, even when their URL names a local file. Explicit foreign
+relationships remain `out_of_target_scope`; malformed supplied relationship IDs
+are `invalid_protocol_value`.
 
 Inspection does not retain DOM values, execute renderer code, navigate, click,
 invoke Electron IPC, close a target, or terminate the application.

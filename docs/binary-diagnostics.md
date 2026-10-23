@@ -193,6 +193,14 @@ reported. Directory headers, entries, data entries and payloads retain original
 file offsets and lengths. Each opaque payload has its own SHA-256; code page and
 reserved data-entry fields are preserved.
 
+Every `directories[]` row retains its identity `path` and the matching incoming
+`entry_locations`: both are empty for the root, then contain the type and
+optionally the name. Empty branches keep these identities even when they have
+no payload leaves. Shared directory bytes produce a row for each incoming path,
+with the original directory range and each path's own entry locations. These
+rows are included in the metadata budget. A present empty root remains distinct
+from an absent resource data directory (`directory: null`, `directories: []`).
+
 RT_GROUP_ICON records expose original image descriptors and RT_ICON candidates.
 A reference resolves only when an icon with the same numeric ID and language
 exists. Missing references, other-language candidates and declared-size mismatch
@@ -318,29 +326,91 @@ rea inspect-native-exports ./runtimes/linux-x64/native/libexample.so --json
 ```
 
 The complete Evidence identifies the stable artifact snapshot by path, byte
-count and SHA-256.
+count and SHA-256. Complete delivery remains the default. For a small initial
+MCP reply, select `detail: "summary"`; this retains the complete Evidence and
+returns artifact identity, table coverage and row counts. Use its
+`normalized_result.parent_evidence_id` with `inspect_analysis_view`:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<parent digest>"
+  },
+  "view": {
+    "kind": "native-exports",
+    "collection": "exports",
+    "names": ["selected_name"],
+    "fields": ["name"],
+    "offset": 0,
+    "limit": 32
+  }
+}
+```
+
+Names match exactly and preserve every same-name version or alias. Optional
+`indices` selects original row positions, intersecting a name filter when both
+are supplied; empty filters select nothing. `source_index` always remains and,
+with the parent ID, identifies the original export or issue row. Fields default
+to the complete row; an empty field list returns only its identity. ELF `name`
+selection also returns raw-byte and encoding qualifications. Fields from the
+other format are rejected. `collection: "issues"` pages the complete diagnostic
+records, with optional original indices. Offset and limit default to 0 and 64
+and apply to matching rows in original order.
+
+View `coverage` describes the selected page; `summary.coverage` or
+`exports.coverage` preserves source-table coverage. An exhausted or empty page
+does not make a partial source complete. Retained views never reopen the file.
+The CLI uses the same projector and requires a durable bundle for a summary:
+
+```sh
+rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./exports.bundle.json --json
+# Pass the summary's parent ID and the same view as JSON to inspect-analysis-view,
+# together with --evidence-bundle ./exports.bundle.json.
+```
 
 - PE rows reproduce the export directory: each used export-address-table slot
-  with its `ordinal`, one row per name (aliases share an ordinal), `address`
+  with its biased `ordinal` (`OrdinalBase` plus the slot index), one row per
+  name (aliases share an ordinal), `address`
   as the preferred-base virtual address, or `forwarder` text when the slot
-  forwards to another DLL. Ordinal-only exports have a null `name`. The
+  forwards to another DLL. Unused zero-address slots are omitted;
+  ordinal-only exports have a null `name`. The name-ordinal table stores an
+  unbiased 16-bit EAT index; reported biased ordinals may exceed 16 bits. The
   directory's DLL name, ordinal base and timestamp are reported, and an image
   without an export directory is a complete empty inventory.
 - ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
   (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`
-  and `binding`. `version` is null for an unversioned symbol, the
-  `.gnu.version_d` index, name and `hidden` flag for a versioned one, or
-  `"unknown"` when the version table cannot be read. A hidden version is not
+  and `binding`. ELF string tables do not declare a text encoding. Names that
+  contain non-ASCII bytes are decoded as UTF-8 when those bytes form valid
+  UTF-8; `name_utf8_decodable` records whether the non-ASCII name bytes are
+  valid UTF-8 and `name_bytes_base64` retains those exact bytes (`null` for
+  ASCII names). When they are not valid UTF-8, `name` uses a byte-preserving
+  Latin-1 mapping and the raw bytes remain available. Older retained results
+  report null for the newly added encoding fields. `version` is null for an
+  unversioned symbol. A versioned
+  symbol reports its GNU index, a name resolved from `.gnu.version_d` or
+  `.gnu.version_r`, the corresponding `name_bytes_base64` and
+  `name_utf8_decodable` facts, and the `hidden` flag from `.gnu.version`.
+  Version names use the same UTF-8-when-valid, otherwise byte-preserving
+  Latin-1 display mapping as symbol names; ELF does not declare either
+  string's text encoding. Older retained results report null for the added
+  version-name encoding fields. `"unknown"`
+  means the symbol-version table could not be read. A hidden version is not
   the default version that a by-name `dlsym` lookup selects.
+  Definition names take precedence when both tables name the same index.
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
-Unresolved symbol versions keep their rows: the version name is null for an
-index no definition names, and `version` is `"unknown"` when the version table
-cannot be read; coverage is likewise `partial`. A dynamic symbol table without
-its null entry is malformed. An ELF without section headers is `unsupported`:
-enumerating dynamic symbols from the dynamic segment is not
+PE export names are bounded null-terminated byte strings and may continue
+across adjacent file-backed section mappings when the virtual bytes are
+unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
+Unresolved symbol versions keep their rows: the version name is null when no
+definition or requirement names the index, and `version` is
+`"unknown"` when the version table cannot be read; coverage is likewise
+`partial`. A dynamic symbol table without its null entry is malformed. An ELF
+without section headers, or with a dynamic segment but no dynamic-symbol
+section, is `unsupported`: enumerating dynamic symbols from the dynamic segment is not
 implemented. Mach-O exports are reported by `inspect_macho`.
 
 `max_file_bytes` defaults to 256 MiB (maximum 512 MiB; CLI `--max-file-bytes`).
