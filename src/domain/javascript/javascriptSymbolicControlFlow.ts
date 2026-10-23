@@ -1070,6 +1070,8 @@ export const syntaxOperandAlwaysThrows = (
 
 /** Definite abrupt expression completion, not merely a possibly throwing read. */
 export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
+  const cached = throwingEvaluations.get(raw);
+  if (cached !== undefined) return cached;
   const root = unwrapJavaScriptExpression(raw).node;
   const pending: { node: t.Node; exit?: true }[] = [{ node: root }];
   while (pending.length > 0) {

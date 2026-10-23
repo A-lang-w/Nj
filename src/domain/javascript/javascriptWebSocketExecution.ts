@@ -13,6 +13,7 @@ import {
   semanticIteratorAcquisitionAlwaysFails,
   semanticPatternCompletion,
   semanticPatternCompletionBeforeTarget,
+  semanticEvaluationMayBeReached,
   semanticGeneratorBindingPhase,
 } from "./javascriptGeneratorConsumerPhases.js";
 
@@ -2622,6 +2623,18 @@ const webSocketExecutionContextsForCalls = (
               : resume;
       }
       if (invocation === undefined) return contexts;
+      if (
+        generatorBody &&
+        (!semanticEvaluationMayBeReached(
+          generatorInvocation ?? invocation,
+          state,
+        ) ||
+          !semanticEvaluationMayBeReached(
+            storedConsumerRead ?? invocation,
+            state,
+          ))
+      )
+        return [];
       const decoratedClass = t.isDecorator(invocation)
         ? webSocketDecoratedClass(invocation, state)
         : undefined;

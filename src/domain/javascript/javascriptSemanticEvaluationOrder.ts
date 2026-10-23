@@ -38,6 +38,8 @@ export const semanticInitializerPrecedesRead = ({
     read: SemanticExecutionFrame,
   ) => boolean;
 }): boolean | undefined => {
+  // No compatible activation is unreachable, not an unknown source order.
+  if (readContexts.length === 0) return false;
   let current: t.Node | undefined = initializer;
   while (
     current !== undefined &&

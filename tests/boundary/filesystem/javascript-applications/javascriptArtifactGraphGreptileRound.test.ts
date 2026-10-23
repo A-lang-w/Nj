@@ -12,6 +12,177 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "reachability-28.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){if(globalThis.flag){throw 0}else{throw 1}};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-29.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){const ignored=0;throw ignored};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-30.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){try{throw 0}catch{};return {next(){return {done:true}}}};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-24.mjs",
+    source:
+      'Array.prototype[Symbol.iterator] = function(){ throw 0; }; (async()=>{ try { const [] = []; const [y = await 0] = (function*(){ try { yield undefined; } finally { new Socket("wss://example.test/empty"); } })(); } catch {} })(); const Socket = globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-25.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;(async()=>{try{throw 0;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();',
+  },
+  {
+    file: "reachability-26.mjs",
+    source:
+      'const produce=function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}};(async()=>{try{throw 0;const [x=await 0]=produce()}catch{};const[y=await 0]=produce()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-27.mjs",
+    source:
+      '(async()=>{try{globalThis.stop();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-0.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-1.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const [x]=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-2.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{let x;([]=[]);const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-3.mjs",
+    source:
+      '(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-4.mjs",
+    source:
+      '(async()=>{try{throw 0;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-5.mjs",
+    source:
+      '(async()=>{try{const []=null;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-6.mjs",
+    source:
+      '(async()=>{try{null.x;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-7.mjs",
+    source:
+      '(async()=>{try{try{throw 0}catch{};const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-8.mjs",
+    source:
+      '(async()=>{try{globalThis.inert();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-9.mjs",
+    source:
+      'if(false){Array.prototype[Symbol.iterator]=function(){throw 0};}(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-10.mjs",
+    source:
+      'Array.prototype.unrelated=0;(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-11.mjs",
+    source:
+      'const original=Array.prototype[Symbol.iterator];Array.prototype[Symbol.iterator]=function(){throw 0};Array.prototype[Symbol.iterator]=original;(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-12.mjs",
+    source:
+      '{const Array={prototype:{}};Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;}',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-13.mjs",
+    source:
+      '{const Symbol={iterator:"different"};Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;}',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-14.mjs",
+    source:
+      'const Symbol={iterator:"different"};Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-15.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=()=>{throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-16.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=async function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-17.mjs",
+    source:
+      '(async()=>{try{if(globalThis.flag){throw 0};const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-18.mjs",
+    source:
+      '(async()=>{try{if(globalThis.flag){throw 0}else{throw 1};const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-19.mjs",
+    source:
+      '(async()=>{try{const values=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();throw 0;const [y=await 0]=values;}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-20.mjs",
+    source:
+      '(async()=>{try{throw 0;const values=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();const [y=await 0]=values;}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-21.mjs",
+    source:
+      '(async()=>{try{const []=null,y=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();const [x=await 0]=y;}catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "reachability-22.mjs",
+    source:
+      'Array.prototype[Symbol.iterator]=function(){throw 0};async function run(){try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}}run();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
+    file: "reachability-23.mjs",
+    source:
+      'run();Array.prototype[Symbol.iterator]=function(){throw 0};async function run(){try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}}const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reachability",
+  },
+  {
     file: "review37-0.mjs",
     source:
       'const {...rest}={get x(){new Socket("wss://example.test/review-copy-rest");}};const Socket=globalThis.WebSocket;',

@@ -4,6 +4,161 @@ import { analyzeCapturedWebBundle } from "../webBundleAnalyzer.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
+  [
+    "iterator abrupt branches",
+    'Array.prototype[Symbol.iterator]=function(){if(globalThis.flag){throw 0}else{throw 1}};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "iterator prior declaration",
+    'Array.prototype[Symbol.iterator]=function(){const ignored=0;throw ignored};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "iterator caught throw",
+    'Array.prototype[Symbol.iterator]=function(){try{throw 0}catch{};return {next(){return {done:true}}}};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "raw review",
+    'Array.prototype[Symbol.iterator] = function(){ throw 0; }; (async()=>{ try { const [] = []; const [y = await 0] = (function*(){ try { yield undefined; } finally { new Socket("wss://example.test/empty"); } })(); } catch {} })(); const Socket = globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "initialized but unreachable",
+    'const Socket=globalThis.WebSocket;(async()=>{try{throw 0;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();',
+    [],
+  ],
+  [
+    "multiple stored activations",
+    'const produce=function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}};(async()=>{try{throw 0;const [x=await 0]=produce()}catch{};const[y=await 0]=produce()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "controlled throwing unknown",
+    '(async()=>{try{globalThis.stop();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "throwing empty",
+    'Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "throwing nonempty",
+    'Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const [x]=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "throwing assignment",
+    'Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{let x;([]=[]);const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "normal empty",
+    '(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "literal throw",
+    '(async()=>{try{throw 0;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "null empty",
+    '(async()=>{try{const []=null;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "null property",
+    '(async()=>{try{null.x;const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "caught prior throw",
+    '(async()=>{try{try{throw 0}catch{};const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "maybe prior call",
+    '(async()=>{try{globalThis.inert();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "conditional false write",
+    'if(false){Array.prototype[Symbol.iterator]=function(){throw 0};}(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "unrelated write",
+    'Array.prototype.unrelated=0;(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "restored iterator",
+    'const original=Array.prototype[Symbol.iterator];Array.prototype[Symbol.iterator]=function(){throw 0};Array.prototype[Symbol.iterator]=original;(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "shadowed Array",
+    '{const Array={prototype:{}};Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;}',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "shadowed Symbol",
+    '{const Symbol={iterator:"different"};Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;}',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "changed Symbol",
+    'const Symbol={iterator:"different"};Array.prototype[Symbol.iterator]=function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "arrow iterator",
+    'Array.prototype[Symbol.iterator]=()=>{throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "async iterator",
+    'Array.prototype[Symbol.iterator]=async function(){throw 0};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "conditional throw",
+    '(async()=>{try{if(globalThis.flag){throw 0};const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "both branches throw",
+    '(async()=>{try{if(globalThis.flag){throw 0}else{throw 1};const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "stored consumer never reached",
+    '(async()=>{try{const values=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();throw 0;const [y=await 0]=values;}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "stored creator never reached",
+    '(async()=>{try{throw 0;const values=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();const [y=await 0]=values;}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "same declaration",
+    '(async()=>{try{const []=null,y=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();const [x=await 0]=y;}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "delayed hoisted declaration",
+    'Array.prototype[Symbol.iterator]=function(){throw 0};async function run(){try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}}run();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
+  [
+    "hoisted called before write",
+    'run();Array.prototype[Symbol.iterator]=function(){throw 0};async function run(){try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}}const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reachability"],
+  ],
   // Later Array iterator writes remain conservative metadata, not native absence.
   [
     "copy rest",

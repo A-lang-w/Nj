@@ -13,7 +13,11 @@ import {
   syntaxEvaluationCannotThrow,
   syntaxEvaluationAlwaysThrows,
   syntaxBeforeDefiniteThrow,
+  syntaxEvaluationOperands,
+  syntaxMayCompleteNormally,
+  syntaxAlwaysThrows,
 } from "./javascriptSymbolicControlFlow.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import {
   resolveSemanticBindingState,
   isUnshadowedGlobal,
@@ -327,6 +331,8 @@ const noniterablePatternValue = (
   if (nullishPatternValue(value, state, executionFrames)) return true;
   if (!value.known || value.node === undefined) return false;
   const node = patternValueNode(value.node);
+  if (t.isArrayExpression(node) && freshArrayIteratorAlwaysThrows(node, state))
+    return true;
   const literal = readExactJavaScriptLiteral(node);
   const bigint =
     t.isBigIntLiteral(node) ||
@@ -385,6 +391,174 @@ const noniterablePatternValue = (
         : t.isObjectProperty(prototype) && t.isNullLiteral(prototype.value);
     })()
   );
+};
+
+/** Acquire a fresh literal after one explicit global iterator replacement.
+ * Other uses, writes, escapes, dynamic scope and delayed declarations stay unknown. */
+const freshArrayIteratorAlwaysThrows = (
+  capture: t.ArrayExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  state.memberMutationFactsPhase ??= "requested";
+  const acquisition = state.parentsByNode.get(capture);
+  if (
+    !(
+      (t.isVariableDeclarator(acquisition) &&
+        acquisition.init === capture &&
+        t.isArrayPattern(acquisition.id)) ||
+      (t.isAssignmentExpression(acquisition, { operator: "=" }) &&
+        acquisition.right === capture &&
+        t.isArrayPattern(acquisition.left))
+    )
+  )
+    return false;
+  if (
+    state.memberMutationFactsPhase !== "indexed" ||
+    state.literalMemberEffects
+      ?.get(capture)
+      ?.some(
+        (effect) =>
+          effect.kind !== "escape" ||
+          effect.path.length !== 0 ||
+          effect.node !== acquisition,
+      ) ||
+    state.opaqueEffects.byScope.size !== 0 ||
+    state.opaqueEffects.globalSites.length !== 0 ||
+    state.ambientEscapes.covers(["global", "Array", "prototype", null]) ||
+    state.ambientEscapes.covers(["global", "Symbol", "iterator"])
+  )
+    return false;
+  const prefix = ["global", "Array", "prototype"];
+  const effects = state.ambientReferenceEffects.filter(({ path }) =>
+    path.every(
+      (key, index) =>
+        index >= prefix.length ||
+        semanticPropertyPathKeyMatches(key, prefix[index] ?? ""),
+    ),
+  );
+  const effect = effects.length === 1 ? effects[0] : undefined;
+  const write = effect?.node;
+  if (
+    effect?.kind !== "write" ||
+    !t.isAssignmentExpression(write, { operator: "=" }) ||
+    !t.isMemberExpression(write.left) ||
+    !write.left.computed ||
+    !isUnmodifiedGlobalReference(write.left.object, state, [
+      "Array",
+      "prototype",
+    ]) ||
+    !isUnmodifiedGlobalReference(write.left.property, state, [
+      "Symbol",
+      "iterator",
+    ])
+  )
+    return false;
+  const callback = unwrapJavaScriptExpression(write.right).node;
+  if (
+    (!t.isFunctionExpression(callback) &&
+      !t.isArrowFunctionExpression(callback)) ||
+    callback.async ||
+    (t.isFunctionExpression(callback) && callback.generator) ||
+    !t.isBlockStatement(callback.body) ||
+    !syntaxAlwaysThrows(callback.body)
+  )
+    return false;
+  const statement = state.parentsByNode.get(write);
+  if (
+    !t.isExpressionStatement(statement) ||
+    state.parentsByNode.get(statement) !== state.program
+  )
+    return false;
+  let owner: t.Node = capture;
+  for (;;) {
+    const parent = state.parentsByNode.get(owner);
+    if (parent === undefined || t.isFunctionDeclaration(parent)) return false;
+    if (parent === state.program) break;
+    owner = parent;
+  }
+  return (statement.end ?? Infinity) <= (owner.start ?? -1);
+};
+
+/** A proven abrupt sibling prevents creation or resumption of this activation.
+ * Possible throws do not erase the waits required if the producer is reached. */
+export const semanticEvaluationMayBeReached = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const bindingFails = (operand: t.Node): boolean => {
+    if (t.isExpressionStatement(operand))
+      return bindingFails(operand.expression);
+    if (t.isVariableDeclaration(operand))
+      return operand.declarations.some(bindingFails);
+    const pattern = t.isVariableDeclarator(operand)
+      ? operand.id
+      : t.isAssignmentExpression(operand, { operator: "=" })
+        ? operand.left
+        : undefined;
+    const value = t.isVariableDeclarator(operand)
+      ? operand.init
+      : t.isAssignmentExpression(operand, { operator: "=" })
+        ? operand.right
+        : undefined;
+    if (!t.isArrayPattern(pattern) || value == null) return false;
+    // An unresolved alias or call cannot prove abrupt acquisition. Do not
+    // repeatedly send ordinary stored-generator reads through literal proofs.
+    if (
+      (t.isIdentifier(value) && value.name !== "undefined") ||
+      t.isCallExpression(value) ||
+      t.isOptionalCallExpression(value) ||
+      t.isNewExpression(value)
+    )
+      return false;
+    const selected = patternValueNode(value);
+    if (
+      (t.isIdentifier(selected) && selected.name !== "undefined") ||
+      t.isCallExpression(selected) ||
+      t.isOptionalCallExpression(selected) ||
+      t.isNewExpression(selected)
+    )
+      return false;
+    return semanticIteratorAcquisitionAlwaysFails(value, state);
+  };
+  const cannotContinue = (operand: t.Node): boolean => {
+    if (t.isVariableDeclaration(operand))
+      return operand.declarations.some(cannotContinue);
+    if (t.isExpressionStatement(operand))
+      return cannotContinue(operand.expression);
+    if (t.isVariableDeclarator(operand))
+      return (
+        (operand.init != null && syntaxEvaluationAlwaysThrows(operand.init)) ||
+        bindingFails(operand)
+      );
+    if (t.isExpression(operand))
+      return syntaxEvaluationAlwaysThrows(operand) || bindingFails(operand);
+    return !syntaxMayCompleteNormally(operand);
+  };
+  let child = node;
+  for (;;) {
+    const parent = state.parentsByNode.get(child);
+    if (parent === undefined || t.isFunction(parent)) return true;
+    if (
+      t.isProgram(parent) ||
+      t.isBlockStatement(parent) ||
+      t.isStaticBlock(parent) ||
+      t.isVariableDeclaration(parent) ||
+      t.isSequenceExpression(parent)
+    ) {
+      const siblings = t.isProgram(parent)
+        ? parent.body
+        : (syntaxEvaluationOperands(parent) ?? []);
+      let blocked = false;
+      for (const operand of siblings) {
+        if (operand === child) {
+          if (blocked) return false;
+          break;
+        }
+        blocked ||= cannotContinue(operand);
+      }
+    }
+    child = parent;
+  }
 };
 
 /** Shared iterator acquisition failure for nested patterns and loop consumers. */
