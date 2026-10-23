@@ -92,6 +92,14 @@ export type ClientConfigurationInspection =
       readonly status: "invalid";
       readonly remediation: string;
     };
+/** Why a setup host's close was incomplete and what it still owns. */
+export interface SetupCloseReport {
+  /** Projected as the cleanup reason; names each source that did not release. */
+  readonly reason: string;
+  /** Resources the host still owns, carried to the typed cleanup report. */
+  readonly resources: readonly string[];
+}
+
 /** Effects required by the idempotent, non-blocking setup workflow. */
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
@@ -107,7 +115,7 @@ export interface SetupHost {
   initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
   installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
   /** Retry and report any cleanup resources still owned by this setup host. */
-  close?(): Promise<string | undefined>;
+  close?(): Promise<SetupCloseReport | undefined>;
   detectedClients(): Promise<readonly SetupClient[]>;
   supportedClients(): Promise<readonly SetupClient[]>;
   configureClient(

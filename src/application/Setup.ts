@@ -2,6 +2,7 @@ import type {
   ClientConfigurationResult,
   SetupAction,
   SetupClientState,
+  SetupCloseReport,
   SetupConfirmation,
   SetupConfirmationDecision,
   SetupDoctorSummary,
@@ -49,12 +50,20 @@ export const runSetup = async (
     primaryFailure = cause;
   }
 
-  let cleanupFailure: string | undefined;
+  let cleanup: SetupCloseReport | undefined;
   try {
-    cleanupFailure = await host.close?.();
+    cleanup = await host.close?.();
   } catch (cause: unknown) {
-    cleanupFailure = `Setup resource cleanup failed: ${failureMessage(cause)}`;
+    cleanup = {
+      reason: `Setup resource cleanup failed: ${failureMessage(cause)}`,
+      resources: [],
+    };
   }
+  const cleanupFailure = cleanup?.reason;
+  // Resources the host still owns join the primary's, so the typed report
+  // lists everything a caller must review rather than only what the primary
+  // failure already knew about.
+  const cleanupResources = cleanup?.resources ?? [];
 
   if (threw) {
     if (cleanupFailure !== undefined && primaryFailure instanceof AnalysisError)
@@ -62,7 +71,12 @@ export const runSetup = async (
         primaryFailure,
         new ProviderCleanupError(
           "setup",
-          primaryFailure.cleanupResources,
+          [
+            ...new Set([
+              ...primaryFailure.cleanupResources,
+              ...cleanupResources,
+            ]),
+          ],
           { reason: cleanupFailure },
           { operation: "setup" },
         ),

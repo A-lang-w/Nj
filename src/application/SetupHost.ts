@@ -57,6 +57,7 @@ import {
   packagePrivateLauncherBlocker,
 } from "./MsixPackageStorage.js";
 import type {
+  SetupCloseReport,
   SetupHost,
   SetupInitialState,
   SetupProviderEnvironment,
@@ -365,7 +366,7 @@ const closeSetupResources = async (
   macHopperHost: ReturnType<typeof systemMacHopperInstallHost> | undefined,
   doctorHost: DoctorHost,
   retryLinuxHopperCleanup: () => Promise<string | undefined>,
-): Promise<string | undefined> => {
+): Promise<SetupCloseReport | undefined> => {
   const [resourceCleanup, hopperCleanup, doctorCleanup, linuxCleanup] =
     await Promise.allSettled([
       resources.close(),
@@ -374,26 +375,42 @@ const closeSetupResources = async (
       retryLinuxHopperCleanup(),
     ]);
   const failures: string[] = [];
-  if (hopperCleanup.status === "rejected")
+  const owned = new Set<string>();
+  // Only causes that report their own resources contribute to the set; an
+  // opaque failure keeps its message and invents no resource name.
+  const absorb = (cause: unknown): void => {
+    for (const resource of ArtifactReaderFailure.cleanupObservation(cause, [])
+      .resources)
+      owned.add(resource);
+  };
+  if (hopperCleanup.status === "rejected") {
     failures.push(
       `Hopper host cleanup failed: ${errorMessage(hopperCleanup.reason)}`,
     );
-  else if (hopperCleanup.value !== undefined)
+    absorb(hopperCleanup.reason);
+  } else if (hopperCleanup.value !== undefined)
     failures.push(hopperCleanup.value);
-  if (doctorCleanup.status === "rejected")
+  if (doctorCleanup.status === "rejected") {
     failures.push(
       `Doctor host cleanup failed: ${errorMessage(doctorCleanup.reason)}`,
     );
-  else if (doctorCleanup.value !== undefined)
+    absorb(doctorCleanup.reason);
+  } else if (doctorCleanup.value !== undefined)
     failures.push(doctorCleanup.value);
-  if (linuxCleanup.status === "rejected")
+  if (linuxCleanup.status === "rejected") {
     failures.push(
       `Linux Hopper cleanup retry failed: ${errorMessage(linuxCleanup.reason)}`,
     );
-  else if (linuxCleanup.value !== undefined) failures.push(linuxCleanup.value);
-  if (resourceCleanup.status === "rejected")
+    absorb(linuxCleanup.reason);
+  } else if (linuxCleanup.value !== undefined)
+    failures.push(linuxCleanup.value);
+  if (resourceCleanup.status === "rejected") {
     failures.push(errorMessage(resourceCleanup.reason));
-  return failures.length === 0 ? undefined : failures.join("; ");
+    absorb(resourceCleanup.reason);
+  }
+  return failures.length === 0
+    ? undefined
+    : { reason: failures.join("; "), resources: [...owned] };
 };
 
 const runClientConfigurationOperation = async <Value>(

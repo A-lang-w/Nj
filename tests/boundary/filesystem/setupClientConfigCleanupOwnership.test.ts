@@ -89,7 +89,7 @@ const preparedVsCodeSetupHost = async (prefix: string) => {
 
 /** Release the held read handle and verify host cleanup retries that same owner. */
 const expectCloseReclaimsHandle = async (
-  host: { close?: () => Promise<string | undefined> },
+  host: { close?: () => Promise<unknown> },
   closeAttempts: readonly object[],
   release: () => void,
 ) => {
@@ -102,7 +102,7 @@ const expectCloseReclaimsHandle = async (
 
 /** Give up on the assertion path: release the handle and let cleanup close it. */
 const cleanupHeldHandle = async (
-  host: { close?: () => Promise<string | undefined> },
+  host: { close?: () => Promise<unknown> },
   release: () => void,
 ) => {
   release();

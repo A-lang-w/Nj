@@ -10,7 +10,7 @@ import {
   parseLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
-import type { SetupProgressEvent } from "./SetupTypes.js";
+import type { SetupCloseReport, SetupProgressEvent } from "./SetupTypes.js";
 
 describe("setup workflow", () => {
   it("rejects Node 25 before applying setup actions", async () => {
@@ -178,8 +178,10 @@ describe("setup failure cleanup projection", () => {
       },
     });
     class SetupHostWithCleanupFailure extends FakeSetupHost {
-      close = async (): Promise<string> =>
-        "Setup could not release its client configuration resources.";
+      close = async (): Promise<SetupCloseReport> => ({
+        reason: "Setup could not release its client configuration resources.",
+        resources: [],
+      });
     }
     const host = new SetupHostWithCleanupFailure();
     host.clients = [{ name: "codex", configPath }];
@@ -229,6 +231,52 @@ describe("setup failure cleanup projection", () => {
         },
       },
     });
+  });
+
+  it("reports host-owned cleanup resources alongside the primary's", async () => {
+    const configPath = "/fixture/home/vscode/settings.json";
+    const retainedPath = "/fixture/home/retained/handle.bin";
+    const primary = new ConfigurationError("Client config could not be read", {
+      settings: [
+        {
+          setting: configPath,
+          constraint: "The selected config could not be read.",
+        },
+      ],
+      cleanup: {
+        reason: "The admitted config handle remains open.",
+        resources: [configPath],
+      },
+    });
+    class HostWithRetainedResource extends FakeSetupHost {
+      close = async () => ({
+        reason: `Artifact cleanup remains incomplete: ${retainedPath}`,
+        resources: [retainedPath],
+      });
+    }
+    const host = new HostWithRetainedResource();
+    host.clients = [{ name: "codex", configPath }];
+    host.inspectClientConfiguration = async () => {
+      throw primary;
+    };
+
+    const failure = await runSetup(
+      { ...options(true), clientIds: ["codex"] },
+      host,
+    ).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(AnalysisError);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected setup to preserve a typed analysis failure");
+
+    const projected = projectAnalysisError(failure);
+    // The host still owns a resource the primary failure never saw; the
+    // projection must list it, not bury it in a free-text reason.
+    expect(projected.details?.resources).toEqual(
+      expect.arrayContaining([configPath, retainedPath]),
+    );
   });
 });
 

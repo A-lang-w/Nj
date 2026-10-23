@@ -106,7 +106,7 @@ describe("skill regular-file cleanup ownership", () => {
         expect(openMock).toHaveBeenCalledTimes(opensBeforeAdmission);
         expect(new Set(close.attempts).size).toBe(1);
         expect(await actualFs.readFile(manifest, "utf8")).toBe(original);
-        expect(await host.close?.()).toContain(backup);
+        expect((await host.close?.())?.reason).toContain(backup);
         const attemptsBeforeClose = close.attempts.length;
         close.release();
         expect(await host.close?.()).toBeUndefined();
