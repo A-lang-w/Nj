@@ -109,6 +109,8 @@ export const SCOPES = {
     ".github/workflows/release-recovery.yml",
     "scripts/ci/release-recovery.mjs",
     "scripts/ci/verified-package.mjs",
+    "scripts/ci/qualified-package-envelope.mjs",
+    "scripts/ci/prepare-npm-publication.mjs",
     "scripts/ci/npm-release.*",
     "scripts/verify-release-artifact.mjs",
     "scripts/lib/release-package-canary.mjs",

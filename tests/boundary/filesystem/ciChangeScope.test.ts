@@ -758,6 +758,14 @@ it.each([
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "scripts/ci/qualified-package-envelope.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "scripts/ci/prepare-npm-publication.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "tests/boundary/filesystem/windowsNpxRegistration.test.ts",
     { code: true, package: true, runtime: true, apple: false },
   ],

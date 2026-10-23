@@ -5,7 +5,7 @@ import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
 import { prerelease, valid } from "semver";
 import { releaseNpmTag } from "../release-npm-tag.mjs";
-import { verifyPublishedPackageIntegrity } from "./verified-package.mjs";
+import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mjs";
 
 /** Parse one npm metadata snapshot; errors and malformed records are never absence. */
 export async function readNpmRelease(version, request = fetch) {
