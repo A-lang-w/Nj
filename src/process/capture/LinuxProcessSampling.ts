@@ -1,4 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
+import { parseLinuxProcessStat } from "../LinuxProcessStat.js";
 import {
   mergeSamplingDiagnostics,
   readProcSamplingSource,
@@ -23,50 +24,6 @@ export interface SampledProcessNode extends SampledProcessRow {
   readonly children: readonly number[] | undefined;
 }
 
-const parseProcStat = (
-  pid: number,
-  stat: string,
-): SampledProcessRow | undefined => {
-  const commandStart = stat.indexOf("(");
-  const commandEnd = stat.lastIndexOf(")");
-  if (
-    commandStart < 0 ||
-    commandEnd <= commandStart ||
-    !/^\d+$/u.test(stat.slice(0, commandStart).trim()) ||
-    Number(stat.slice(0, commandStart).trim()) !== pid
-  )
-    return undefined;
-  const fields = stat
-    .slice(commandEnd + 2)
-    .trim()
-    .split(/\s+/u);
-  const parentPid = Number(fields[1]);
-  const processGroupId = Number(fields[2]);
-  const sessionId = Number(fields[3]);
-  const startTime = fields[19];
-  if (
-    !Number.isSafeInteger(pid) ||
-    pid <= 0 ||
-    !Number.isSafeInteger(parentPid) ||
-    parentPid < 0 ||
-    !Number.isSafeInteger(processGroupId) ||
-    processGroupId <= 0 ||
-    !Number.isSafeInteger(sessionId) ||
-    sessionId <= 0 ||
-    startTime === undefined ||
-    !/^\d+$/u.test(startTime)
-  )
-    return undefined;
-  return {
-    pid,
-    parent_pid: parentPid,
-    process_group_id: processGroupId,
-    session_id: sessionId,
-    command: "",
-    startTime,
-  };
-};
-
 export const readLinuxProcessStat = async (
   pid: number,
   signal: AbortSignal,
@@ -77,13 +34,27 @@ export const readLinuxProcessStat = async (
   );
   if (read.value === undefined)
     return samplingObservation(undefined, read.diagnostics);
-  const row = parseProcStat(pid, read.value);
+  const parsed = parseLinuxProcessStat(read.value);
+  if (parsed === undefined || parsed.pid !== pid)
+    return samplingObservation(
+      undefined,
+      read.diagnostics,
+      samplingFailure(`${path}: malformed process identity`),
+    );
+  // A valid stat record can outlive its group/session relation during teardown.
+  // It cannot supply an attributable sample, but is not a parser failure.
+  if (parsed.processGroupId <= 0 || parsed.sessionId <= 0)
+    return samplingObservation(undefined, read.diagnostics);
   return samplingObservation(
-    row,
+    {
+      pid: parsed.pid,
+      parent_pid: parsed.parentPid,
+      process_group_id: parsed.processGroupId,
+      session_id: parsed.sessionId,
+      command: "",
+      startTime: parsed.startTime,
+    },
     read.diagnostics,
-    ...(row === undefined
-      ? [samplingFailure(`${path}: malformed process identity`)]
-      : []),
   );
 };
 

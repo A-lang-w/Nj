@@ -12,7 +12,7 @@ import type {
   Script,
   Session,
 } from "frida";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { FridaScriptLoadCancelledError } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import type {
@@ -26,6 +26,7 @@ import type { AnalysisPartialObservation } from "../../../src/domain/analysisErr
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
+import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { nativeCallPartialObservationSchema } from "../../../src/domain/native/nativeCallPartialObservation.js";
@@ -35,7 +36,10 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerFridaTools } from "../../../src/server/registerFridaTools.js";
-import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import {
+  createToolResultDelivery,
+  ToolResultDelivery,
+} from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
@@ -68,6 +72,8 @@ const nativeFixture = () => {
     attach: async () => {},
     create: async () => {},
     load: async () => {},
+    resume: async () => {},
+    detach: async () => {},
     afterLoad: () => {},
     discover: async () => {},
     unloadFailures: 0,
@@ -79,17 +85,30 @@ const nativeFixture = () => {
     message: undefined as FridaMessage | undefined,
   };
   let detached = false;
+  let onDetached: (() => void) | undefined;
+  const markDetached = () => {
+    detached = true;
+    onDetached?.();
+  };
   const nativeSession: Session = {
     pid: 512,
-    detached: { connect() {}, disconnect() {} },
+    detached: {
+      connect(listener) {
+        onDetached = listener;
+      },
+      disconnect() {
+        onDetached = undefined;
+      },
+    },
     isDetached: () => detached,
     async detach() {
       controls.detachCalls += 1;
+      await controls.detach();
       if (controls.detachFailures > 0) {
         controls.detachFailures -= 1;
         throw new Error("transient detach failure");
       }
-      detached = true;
+      markDetached();
     },
     async createScript(source) {
       created.push(source);
@@ -151,6 +170,7 @@ const nativeFixture = () => {
         created.filter((_, index) => scripts[index]?.isDestroyed === false),
       );
       controls.resumes += 1;
+      await controls.resume();
     },
     async attach() {
       await controls.attach();
@@ -183,6 +203,7 @@ const nativeFixture = () => {
     scripts,
     scriptsAtResume,
     deviceManager,
+    markDetached,
   };
 };
 
@@ -235,6 +256,211 @@ const connectedFixture = async () => {
   return { ...native, manager, session, server, client, start, load };
 };
 
+it.each(["attached", "during-resume", "after-resume"] as const)(
+  "preserves observed detachment through resume settlement: %s",
+  async (timing) => {
+    const fixture = await connectedFixture();
+    const held = gate();
+    onTestFinished(held.release);
+    fixture.controls.resume = held.wait;
+    const id = await fixture.start();
+    const state = async () => {
+      const result = await fixture.client.callTool({
+        name: "frida_session_status",
+        arguments: { session_id: id },
+      });
+      return fridaSessionStatusSchema.parse(
+        toolContract("frida_session_status").outputSchema.parse(
+          result.structuredContent,
+        ).normalized_result,
+      ).state;
+    };
+    const resuming = fixture.client.callTool({
+      name: "resume_frida_session",
+      arguments: { session_id: id },
+    });
+    await held.entered;
+    if (timing === "during-resume") fixture.markDetached();
+    expect(await state()).toBe(
+      timing === "during-resume" ? "detached" : "paused",
+    );
+    held.release();
+    const resumed = await resuming;
+    expect(resumed.isError).not.toBe(true);
+    expect(resumed.structuredContent).toEqual({ state: "running" });
+    if (timing === "after-resume") fixture.markDetached();
+    const expected = timing === "attached" ? "running" : "detached";
+    expect(await state()).toBe(expected);
+    expect(await state()).toBe(expected);
+    expect(fixture.manager.status(id)?.targetResumeObserved).toBe(true);
+  },
+);
+
+it("retains detached state and resume evidence when remote cleanup needs retry", async () => {
+  const fixture = await connectedFixture();
+  const started = await fixture.client.callTool({
+    name: "start_frida_session",
+    arguments: {
+      mode: "spawn",
+      program: "/fixture",
+      remote: { address: "127.0.0.1:27042" },
+    },
+  });
+  const id = toolContract("start_frida_session").outputSchema.parse(
+    started.structuredContent,
+  ).session_id;
+  fixture.controls.removalFailures = 1;
+  const close = () =>
+    fixture.client.callTool({
+      name: "close_frida_session",
+      arguments: { session_id: id },
+    });
+  expect((await close()).isError).toBe(true);
+  const result = await fixture.client.callTool({
+    name: "frida_session_status",
+    arguments: { session_id: id },
+  });
+  expect(
+    fridaSessionStatusSchema.parse(
+      toolContract("frida_session_status").outputSchema.parse(
+        result.structuredContent,
+      ).normalized_result,
+    ).state,
+  ).toBe("detached");
+  expect(fixture.manager.status(id)?.targetResumeObserved).toBe(true);
+  expect(fixture.controls.detachCalls).toBe(1);
+  expect(fixture.controls.resumes).toBe(1);
+  expect((await close()).isError).not.toBe(true);
+  expect(fixture.manager.status(id)).toBeUndefined();
+  expect(fixture.controls.detachCalls).toBe(1);
+  expect(fixture.controls.resumes).toBe(1);
+  expect(fixture.controls.remoteRemovals).toBe(2);
+});
+
+it.each([
+  { cancel: false, detachFails: false },
+  { cancel: true, detachFails: false },
+  { cancel: false, detachFails: true },
+  { cancel: true, detachFails: true },
+])(
+  "classifies server completion after final detach (cancel=$cancel, detachFails=$detachFails)",
+  async ({ cancel, detachFails }) => {
+    const fixture = await connectedFixture();
+    const held = gate();
+    onTestFinished(held.release);
+    fixture.controls.detach = held.wait;
+    fixture.controls.detachFailures = detachFails ? 1 : 0;
+    let serverSignal: AbortSignal | undefined;
+    const load = fixture.manager.loadScript.bind(fixture.manager);
+    const loadSpy = vi
+      .spyOn(fixture.manager, "loadScript")
+      .mockImplementation((id, source, signal) => {
+        serverSignal = signal;
+        return load(id, source, signal);
+      });
+    const success = vi.spyOn(
+      ToolResultDelivery.prototype,
+      "toEvidenceToolResult",
+    );
+    const partial = vi.spyOn(
+      ToolResultDelivery.prototype,
+      "toRecordedPartialErrorToolResult",
+    );
+    onTestFinished(() => {
+      loadSpy.mockRestore();
+      success.mockRestore();
+      partial.mockRestore();
+    });
+    const controller = new AbortController();
+    const pending = fixture.client
+      .callTool(
+        {
+          name: "instrument_with_frida",
+          arguments: {
+            mode: "attach",
+            pid: 512,
+            device_id: "local",
+            source_kind: "inline",
+            source: "completed-before-detach",
+            duration_ms: 0,
+          },
+        },
+        { signal: controller.signal },
+      )
+      .then(
+        (value) => ({ kind: "result" as const, value }),
+        (cause: unknown) => ({ kind: "rejected" as const, cause }),
+      );
+    await held.entered;
+    expect(fixture.unloaded).toEqual(["completed-before-detach"]);
+    if (cancel) {
+      controller.abort(new Error("cancel during final detach"));
+      await fixture.client.ping();
+    }
+    expect(serverSignal?.aborted).toBe(cancel);
+    const serverReason: unknown = serverSignal?.reason;
+    held.release();
+    const result = await pending;
+    await vi.waitFor(() =>
+      expect(success.mock.calls.length + partial.mock.calls.length).toBe(1),
+    );
+    expect(fixture.controls.detachCalls).toBe(1);
+    expect(fixture.controls.resumes).toBe(0);
+    const records = fixture.session
+      .exportEvidenceBundle()
+      .records.filter((record) => record.operation === "instrument_with_frida");
+    expect(records).toHaveLength(1);
+    const evidence = records[0];
+    expect(evidence).toMatchObject({
+      normalized_result: {
+        messages: [{ type: "send", payload: "completed-before-detach" }],
+        cleanup_error: detachFails
+          ? expect.stringContaining("transient detach failure")
+          : null,
+      },
+    });
+    const sessionId = String(evidence?.parameters.session_id);
+    expect(fixture.manager.status(sessionId) !== undefined).toBe(detachFails);
+    if (cancel) {
+      expect(result.kind).toBe("rejected");
+      expect(success).not.toHaveBeenCalled();
+      const error = partial.mock.calls[0]?.[0];
+      expect(error).toBeInstanceOf(AnalysisCancelledError);
+      expect(error?.cause).toBe(serverReason);
+      if (detachFails)
+        expect(error?.cleanup).toMatchObject({ resources: [sessionId] });
+      else expect(error?.cleanup).toBeUndefined();
+      expect(error?.partialObservation).toEqual(evidence);
+      expect(evidence).toMatchObject({
+        normalized_result: {
+          instrumentation_cleanup: detachFails
+            ? "incomplete_or_unknown"
+            : "released",
+          target_state_before_cleanup: "running",
+          target_resume_observed: false,
+          target_liveness_after_cleanup: "unknown",
+        },
+      });
+    } else {
+      expect(result.kind).toBe("result");
+      if (result.kind !== "result") throw result.cause;
+      expect(result.value.isError).not.toBe(true);
+      expect(partial).not.toHaveBeenCalled();
+      expect(success).toHaveBeenCalledOnce();
+    }
+    if (detachFails) {
+      const retried = await fixture.client.callTool({
+        name: "close_frida_session",
+        arguments: { session_id: sessionId },
+      });
+      expect(retried.isError).not.toBe(true);
+      expect(fixture.controls.detachCalls).toBe(2);
+      expect(fixture.manager.status(sessionId)).toBeUndefined();
+      expect(fixture.unloaded).toEqual(["completed-before-detach"]);
+    }
+  },
+);
+
 it.each([
   ["a trailing high surrogate", "x".repeat(32_765) + "\ud800"],
   ["repeated high surrogates", "\ud800".repeat(10_922)],
@@ -250,7 +476,7 @@ it.each([
       response.structuredContent,
     );
     const result = evidence.normalized_result;
-    expect(result.messages_truncated).toBe(true);
+    expect(result.messages_truncated).toBe(false);
     const retained = jsonObjectSchema.parse(result.messages[0]);
     expect(retained.description_truncated).toBe(true);
     expect(
@@ -266,10 +492,71 @@ it.each([
         status.structuredContent,
       ),
     ).toMatchObject({
-      normalized_result: { messages: [retained], messages_truncated: true },
+      normalized_result: { messages: [retained], messages_truncated: false },
     });
   },
 );
+
+it("preserves the native resume failure after MCP cancellation reaches the server", async () => {
+  const fixture = await connectedFixture();
+  const held = gate();
+  onTestFinished(held.release);
+  fixture.controls.resume = async () => {
+    await held.wait();
+    fixture.controls.resume = async () => {};
+    throw new Error("native resume rejected");
+  };
+  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  onTestFinished(() => delivery.mockRestore());
+  let serverSignal: AbortSignal | undefined;
+  const resume = fixture.manager.resumeSession.bind(fixture.manager);
+  const resumeSpy = vi
+    .spyOn(fixture.manager, "resumeSession")
+    .mockImplementation((id, signal) => {
+      serverSignal = signal;
+      return resume(id, signal);
+    });
+  onTestFinished(() => resumeSpy.mockRestore());
+  const controller = new AbortController();
+  const pending = fixture.client
+    .callTool(
+      {
+        name: "instrument_with_frida",
+        arguments: {
+          mode: "spawn",
+          program: "/fixture",
+          device_id: "local",
+          source_kind: "inline",
+          source: "resume-failure",
+          duration_ms: 0,
+        },
+      },
+      { signal: controller.signal },
+    )
+    .catch((cause: unknown) => cause);
+  await held.entered;
+  controller.abort(new Error("cancel pending resume"));
+  await fixture.client.ping();
+  expect(serverSignal?.aborted).toBe(true);
+  held.release();
+  await pending;
+  await vi.waitFor(() => expect(delivery).toHaveBeenCalledOnce());
+  expect(delivery.mock.calls[0]?.[0]).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      operation: "resume_frida_session",
+      message: expect.stringContaining("native resume rejected"),
+    },
+  });
+  expect(fixture.controls.detachCalls).toBe(1);
+  expect(fixture.unloaded).toEqual(["resume-failure"]);
+  expect(
+    fixture.session
+      .exportEvidenceBundle()
+      .records.filter((record) => record.operation === "instrument_with_frida"),
+  ).toEqual([]);
+});
 
 it("declares non-destructive session mutation when status retains Evidence", async () => {
   const { client, start } = await connectedFixture();

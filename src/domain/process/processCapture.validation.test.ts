@@ -1,7 +1,12 @@
-import { expect, it } from "vitest";
+import { expect, expectTypeOf, it } from "vitest";
+import { z } from "zod";
 
 import { digestProcessCommitment } from "./processScenario.js";
-import { parseProcessCapture } from "./processCaptureParsing.js";
+import {
+  parseProcessCapture,
+  type ProcessCapture,
+} from "./processCaptureParsing.js";
+import type { UnverifiedProcessCapture } from "./processCapture.js";
 import { partialProcessCaptureObservationSchema } from "./processCapture.js";
 import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
 import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
@@ -11,6 +16,20 @@ import {
   emptyUnverifiedProcessCapture as emptyCapture,
   processCaptureIssues,
 } from "./processCapture.fixture.js";
+
+expectTypeOf<UnverifiedProcessCapture>().not.toExtend<ProcessCapture>();
+
+/** Name every rejected field reported by the production parser. */
+const rejectedPaths = (input: unknown): readonly string[] => {
+  try {
+    parseProcessCapture(input);
+  } catch (cause: unknown) {
+    if (cause instanceof z.ZodError)
+      return cause.issues.map(({ path }) => path.join("."));
+    throw cause;
+  }
+  throw new Error("Process capture was accepted");
+};
 
 const captureWithEnumerationOmission = (
   omission: FilesystemCoverage["enumeration_omissions"][number],
@@ -71,8 +90,8 @@ it("requires interrupted sampling diagnostics to agree with partial and aggregat
       truncated: false,
     }),
   ).toThrow("truncation_details");
-  expect(() =>
-    parseProcessCapture({
+  expect(
+    rejectedPaths({
       ...interrupted,
       truncation_details: {
         ...interrupted.truncation_details,
@@ -82,9 +101,9 @@ it("requires interrupted sampling diagnostics to agree with partial and aggregat
         },
       },
     }),
-  ).toThrow("truncation_details.process");
-  expect(() =>
-    parseProcessCapture({
+  ).toContain("truncation_details.process");
+  expect(
+    rejectedPaths({
       ...interrupted,
       truncation_details: {
         ...interrupted.truncation_details,
@@ -94,7 +113,7 @@ it("requires interrupted sampling diagnostics to agree with partial and aggregat
         },
       },
     }),
-  ).toThrow("truncation_details.process");
+  ).toContain("truncation_details.process");
 });
 
 it("limits interruption impact to process comparison", () => {
@@ -220,8 +239,8 @@ it("does not infer normalized retention budget from missing scenario defaults", 
       filesystem_depth: 16,
     },
   };
-  expect(() =>
-    parseProcessCapture({
+  expect(
+    rejectedPaths({
       ...capture,
       manifest: {
         ...capture.manifest,
@@ -237,7 +256,7 @@ it("does not infer normalized retention budget from missing scenario defaults", 
         },
       },
     }),
-  ).toThrow("manifest.scenario.limits.output_bytes");
+  ).toContain("manifest.scenario.limits.output_bytes");
 });
 
 it("rejects settlement and cleanup combinations that cannot occur", () => {
