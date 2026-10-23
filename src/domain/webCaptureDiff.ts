@@ -4,6 +4,7 @@ import {
   compositeKey,
 } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
+import { webResourceComparisonIdentity } from "./webInventory.js";
 import {
   webCaptureDiffSchema,
   type CompareWebCapturesInput,
@@ -41,9 +42,9 @@ export const compareWebCaptures = (
     },
     dimensions,
     limitations: [
-      "A changed status proves an observed difference; an unknown status means absence could not be established from capture completeness.",
+      "A changed status proves an observed difference; an unknown status means necessary comparison facts or coverage were unavailable.",
       "Network comparison covers only activity observed after each CDP attachment. WebSocket connections with the same URL are compared as an unordered collection of ordered frame streams, retaining connection counts; their individual identities are not stable across captures.",
-      "Accessibility roles, ignored state, text, and hierarchy are compared only when the accessibility tree was fully captured and text capture was selected and not truncated.",
+      "Accessibility roles, ignored state, text, and hierarchy are compared only when the accessibility tree was fully captured and text capture was selected and not truncated. A missing role leaves that node's role comparison unknown; independently observed differences can still establish a change.",
       "Storage key inventories are compared only when selected and complete; usage and quota are compared only when reported. Redacted content is compared through complete SHA-256 fingerprints.",
     ],
   });
@@ -114,8 +115,11 @@ const accessibilityDimension = (
   const afterAccess = accessibilityComparable(after);
   const textComparable = beforeAccess.text && afterAccess.text;
   const nodesComparable = beforeAccess.nodes && afterAccess.nodes;
+  const rolesComplete =
+    before.accessibility.nodes.every((node) => node.role !== null) &&
+    after.accessibility.nodes.every((node) => node.role !== null);
   const reason =
-    "Accessibility tree or text capture was incomplete in at least one observation.";
+    "Accessibility tree, role, or text capture was incomplete in at least one observation.";
   if (!nodesComparable)
     return {
       status: "unknown",
@@ -127,16 +131,24 @@ const accessibilityDimension = (
     singleton(
       "accessibility_tree",
       digestCanonicalValue(
-        accessibilityProjection(before.accessibility, textComparable),
+        accessibilityProjection(
+          before.accessibility,
+          after.accessibility,
+          textComparable,
+        ),
       ),
     ),
     singleton(
       "accessibility_tree",
       digestCanonicalValue(
-        accessibilityProjection(after.accessibility, textComparable),
+        accessibilityProjection(
+          after.accessibility,
+          before.accessibility,
+          textComparable,
+        ),
       ),
     ),
-    beforeAccess.complete && afterAccess.complete,
+    beforeAccess.complete && afterAccess.complete && rolesComplete,
     reason,
   );
 };
@@ -195,12 +207,12 @@ const compareWebCaptureDimensions = (
         sectionsComplete(after, ["scripts"]),
       "Script inventory was incomplete in at least one observation.",
     ),
-    resources: compareDimension(
-      keyed(before.resources, (item) => item.resource_key),
-      keyed(after.resources, (item) => item.resource_key),
+    resources: compareResources(
+      before.resources,
+      after.resources,
       sectionsComplete(before, ["resources"]) &&
         sectionsComplete(after, ["resources"]),
-      "Resource inventory was incomplete in at least one observation.",
+      "Resource inventory or content-size evidence was incomplete in at least one observation.",
     ),
     network: networkDimension(before, after),
     metadata: compareAggregate(
@@ -216,6 +228,72 @@ const compareWebCaptureDimensions = (
     storage: storageDimension(before, after),
   };
 };
+
+const compareResources = (
+  before: WebPageInspection["resources"],
+  after: WebPageInspection["resources"],
+  complete: boolean,
+  reason: string,
+): Dimension => {
+  const left = resourceGroups(before);
+  const right = resourceGroups(after);
+  const changes: Change[] = [];
+  let unresolved = false;
+  for (const identity of new Set([...left.keys(), ...right.keys()])) {
+    const leftSizes = left.get(identity);
+    const rightSizes = right.get(identity);
+    if (leftSizes === undefined || rightSizes === undefined) {
+      if (!complete) unresolved = true;
+      else
+        changes.push({
+          identity,
+          change: leftSizes === undefined ? "added" : "removed",
+        });
+      continue;
+    }
+    // Stable inventories deduplicate identical observations. A null size also
+    // loses multiplicity, so do not infer modifications from the remaining
+    // known sizes in a group that contains unknown size evidence.
+    if (leftSizes.has(null) || rightSizes.has(null)) {
+      unresolved = true;
+      continue;
+    }
+    if (!sameResourceSizes(leftSizes, rightSizes))
+      changes.push({ identity, change: "modified" });
+  }
+  if (changes.length > 0)
+    return {
+      status: "changed",
+      total_changes: changes.length,
+      changes: changes.sort((leftChange, rightChange) =>
+        compareUnicodeCodePoints(leftChange.identity, rightChange.identity),
+      ),
+      reason: null,
+    };
+  if (!complete || unresolved)
+    return { status: "unknown", total_changes: 0, changes: [], reason };
+  return { status: "unchanged", total_changes: 0, changes: [], reason: null };
+};
+
+const resourceGroups = (
+  resources: WebPageInspection["resources"],
+): Map<string, Set<number | null>> => {
+  const groups = new Map<string, Set<number | null>>();
+  for (const resource of resources) {
+    const identity = webResourceComparisonIdentity(resource);
+    const sizes = groups.get(identity);
+    if (sizes === undefined)
+      groups.set(identity, new Set([resource.content_size]));
+    else sizes.add(resource.content_size);
+  }
+  return groups;
+};
+
+const sameResourceSizes = (
+  left: ReadonlySet<number | null>,
+  right: ReadonlySet<number | null>,
+): boolean =>
+  left.size === right.size && [...left].every((size) => right.has(size));
 
 const keyed = <T>(
   values: readonly T[],
@@ -367,6 +445,26 @@ const networkInventoryComplete = (
     (section) => inspection.completeness.dropped_events[section] === 0,
   );
 
+type WebSocketEvent =
+  WebPageInspection["network"]["websocket_connections"][number]["events"][number];
+
+const webSocketEventHasOpcode = (
+  event: WebSocketEvent | undefined,
+): event is WebSocketEvent => event !== undefined && event.opcode !== null;
+
+const webSocketEventHasPayloadBytes = (
+  event: WebSocketEvent | undefined,
+): boolean => webSocketEventHasOpcode(event) && event.payload_bytes !== null;
+
+const webSocketEventHasPayloadShape = (
+  event: WebSocketEvent | undefined,
+): boolean => webSocketEventHasOpcode(event) && event.payload_shape !== null;
+
+const webSocketOpcodesKnown = (inspection: WebPageInspection): boolean =>
+  inspection.network.websocket_connections.every((connection) =>
+    connection.events.every(webSocketEventHasOpcode),
+  );
+
 const networkDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
@@ -374,11 +472,12 @@ const networkDimension = (
   const requestsComplete = [before, after].every((inspection) =>
     networkInventoryComplete(inspection, ["network_requests"]),
   );
-  const webSocketInventoryComplete = [before, after].every((inspection) =>
-    networkInventoryComplete(inspection, [
-      "websocket_connections",
-      "websocket_frames",
-    ]),
+  const webSocketInventoryComplete = [before, after].every(
+    (inspection) =>
+      networkInventoryComplete(inspection, [
+        "websocket_connections",
+        "websocket_frames",
+      ]) && webSocketOpcodesKnown(inspection),
   );
   const requestIdentities = networkIdentityCoverage(before, after);
   const metadata = sharedNetworkMetadata(before, after);
@@ -432,12 +531,12 @@ const networkDimension = (
       (inspection) =>
         sectionsComplete(inspection, ["websocket_shapes"]) &&
         inspection.network.websocket_connections.every((connection) =>
-          connection.events.every((event) => event.payload_shape !== null),
+          connection.events.every(webSocketEventHasPayloadShape),
         ),
     );
   const webSocketPayloadBytesComplete = [before, after].every((inspection) =>
     inspection.network.websocket_connections.every((connection) =>
-      connection.events.every((event) => event.payload_bytes !== null),
+      connection.events.every(webSocketEventHasPayloadBytes),
     ),
   );
   const beforeWebSockets = webSocketGroups(before);
@@ -633,11 +732,11 @@ const webSocketPayloadMaps = (
     const comparableShapes = new Set<number>();
     for (let index = 0; index < eventCount; index += 1) {
       if (
-        beforeGroup.connections.every(
-          (connection) => connection.events[index]?.payload_bytes !== null,
+        beforeGroup.connections.every((connection) =>
+          webSocketEventHasPayloadBytes(connection.events[index]),
         ) &&
-        afterGroup.connections.every(
-          (connection) => connection.events[index]?.payload_bytes !== null,
+        afterGroup.connections.every((connection) =>
+          webSocketEventHasPayloadBytes(connection.events[index]),
         )
       )
         comparableBytes.add(index);
@@ -645,11 +744,11 @@ const webSocketPayloadMaps = (
       // on both sides; this avoids assigning an unknown shape to a known one.
       if (
         selected &&
-        beforeGroup.connections.every(
-          (connection) => connection.events[index]?.payload_shape !== null,
+        beforeGroup.connections.every((connection) =>
+          webSocketEventHasPayloadShape(connection.events[index]),
         ) &&
-        afterGroup.connections.every(
-          (connection) => connection.events[index]?.payload_shape !== null,
+        afterGroup.connections.every((connection) =>
+          webSocketEventHasPayloadShape(connection.events[index]),
         )
       )
         comparableShapes.add(index);
@@ -875,6 +974,7 @@ const accessibilityComparable = (
 
 const accessibilityProjection = (
   accessibility: WebPageInspection["accessibility"],
+  other: WebPageInspection["accessibility"],
   includeText: boolean,
 ): unknown => {
   const nodeIndexes = new Map(
@@ -882,12 +982,15 @@ const accessibilityProjection = (
   );
   return {
     total_nodes: accessibility.total_nodes,
-    nodes: accessibility.nodes.map((node) => ({
+    nodes: accessibility.nodes.map((node, index) => ({
       parent_index:
         node.parent_id === null
           ? null
           : (nodeIndexes.get(node.parent_id) ?? -1),
-      role: node.role,
+      role:
+        node.role === null || other.nodes[index]?.role === null
+          ? null
+          : node.role,
       ignored: node.ignored,
       states: node.states,
       ...(includeText

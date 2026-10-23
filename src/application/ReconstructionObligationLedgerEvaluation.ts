@@ -1,8 +1,5 @@
 import type { Evidence } from "../domain/evidence.js";
-import {
-  parseEvidenceBundle,
-  type EvidenceBundle,
-} from "../domain/evidenceBundle.js";
+import type { ReconstructionObligationSources } from "./ReconstructionObligationLedgerRequest.js";
 import {
   reconstructionObligationLedgerSchema,
   type ReconstructionObligation,
@@ -47,27 +44,26 @@ interface EvaluationContext {
   readonly candidates: ReadonlyMap<string, ReconstructionObligationCandidate>;
   readonly evidence: ReadonlyMap<string, Evidence>;
   readonly bindings: ReadonlyMap<string, readonly Binding[]>;
-  readonly contradictions: ReadonlyMap<string, readonly string[]>;
+  readonly contradictions: ReturnType<typeof groupManifestContradictions>;
 }
 
 export const evaluateReconstructionObligationLedger = ({
   candidates: candidatesInput,
-  bundle: bundleInput,
+  sources,
   manifest,
   generationLimitations,
 }: {
   readonly candidates: readonly ReconstructionObligationCandidate[];
-  readonly bundle: EvidenceBundle;
+  readonly sources: ReconstructionObligationSources;
   readonly manifest: ReconstructionObligationManifest;
   readonly generationLimitations: readonly string[];
 }): ReconstructionObligationLedger => {
-  const bundle = parseEvidenceBundle(bundleInput);
-  const allCandidates = [...candidatesInput].sort((left, right) =>
+  const { bundle, records } = sources;
+  const candidates = [...candidatesInput].sort((left, right) =>
     compareUnicodeCodePoints(left.obligation_id, right.obligation_id),
   );
-  const orphanManifestIds = findOrphanManifestIds(allCandidates, manifest);
-  const candidates = allCandidates;
-  const context = createEvaluationContext(candidates, bundle, manifest);
+  const orphanManifestIds = findOrphanManifestIds(candidates, manifest);
+  const context = createEvaluationContext(candidates, records, manifest);
   const obligations = applyDependencyDiagnostics(
     candidates.map((candidate) => evaluateObligation(candidate, context)),
     context,
@@ -77,7 +73,7 @@ export const evaluateReconstructionObligationLedger = ({
   const evidenceLinks = obligationLedgerEvidenceLinks(obligations, manifest);
   const limitations = ledgerLimitations(
     generationLimitations,
-    allCandidates.length,
+    candidates.length,
     orphanManifestIds,
   );
   const coverage = reconstructionObligationCoverage(limitations);
@@ -115,15 +111,13 @@ export const evaluateReconstructionObligationLedger = ({
 
 const createEvaluationContext = (
   candidates: readonly ReconstructionObligationCandidate[],
-  bundle: EvidenceBundle,
+  evidence: ReadonlyMap<string, Evidence>,
   manifest: ReconstructionObligationManifest,
 ): EvaluationContext => ({
   candidates: new Map(
     candidates.map((candidate) => [candidate.obligation_id, candidate]),
   ),
-  evidence: new Map(
-    bundle.records.map((evidence) => [evidence.evidence_id, evidence]),
-  ),
+  evidence,
   bindings: groupManifestBindings(manifest),
   contradictions: groupManifestContradictions(manifest),
 });
@@ -256,6 +250,16 @@ const evaluateBinding = (
       "missing-parser-type",
       "This boundary requires an explicit parser, schema, and domain type.",
     );
+  // Optional fixture kinds are retained and linked too, so their Evidence
+  // references must resolve even though only required kinds close the claim.
+  for (const fixture of binding.fixtures)
+    for (const evidenceId of fixture.evidence_ids)
+      if (!context.evidence.has(evidenceId))
+        addDiagnostic(
+          diagnostics,
+          "missing-case",
+          `${fixture.case_kind} fixture ${fixture.fixture_id} references Evidence ${evidenceId}, which is absent from the bundle.`,
+        );
   for (const caseKind of candidate.required_case_kinds) {
     const fixtures = binding.fixtures.filter(
       ({ case_kind: fixtureCase }) => fixtureCase === caseKind,
@@ -268,14 +272,6 @@ const evaluateBinding = (
       );
       continue;
     }
-    for (const fixture of fixtures)
-      for (const evidenceId of fixture.evidence_ids)
-        if (!context.evidence.has(evidenceId))
-          addDiagnostic(
-            diagnostics,
-            "missing-case",
-            `${caseKind} fixture ${fixture.fixture_id} references Evidence ${evidenceId}, which is absent from the bundle.`,
-          );
     if (
       !fixtures.some(
         (fixture) =>

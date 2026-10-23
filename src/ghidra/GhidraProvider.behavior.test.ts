@@ -7,6 +7,7 @@ import { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js
 import { ok as javaProbeOk } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import type { GhidraSeedReport } from "./GhidraAnalysisSeeds.js";
+import type { GhidraDisabledAnalyzerReport } from "./GhidraDisabledAnalyzers.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 // Fake-backed provider coverage; real Ghidra verification lives in
@@ -36,7 +37,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
-import { elf } from "../domain/binaryTarget.fixture.js";
+import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
@@ -511,6 +512,24 @@ describe("Ghidra raw-binary profile", () => {
 });
 
 describe("Ghidra Mach-O slice support", () => {
+  it("declines parsed thin arm64_32 Mach-O targets", () => {
+    const parsed = parseExecutableHeader(
+      thinMach(0xcefaedfe, 0x0200000c),
+      "arm64",
+    );
+    if (!parsed.ok) throw new Error("Expected valid arm64_32 Mach-O target");
+    expect(
+      provider().inspectTargetSupport({
+        path: "/tmp/watch.o",
+        sha256: "a".repeat(64),
+        kind: "executable",
+        ...parsed.value,
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+    });
+  });
   it("refuses universal targets whose selected slice cannot be enforced", () => {
     const ghidra = provider();
     const universal: BinaryTarget = {
@@ -1142,7 +1161,7 @@ describe("Ghidra client projection", () => {
         },
         analysisProfile: resolved.value.profile,
         result: [{ address: "0x1000", value: "fixture_main" }],
-        rawResult: [{ procedure: { external: false, thunk: false } }],
+        rawResult: null,
       },
     });
     expect(startCount).toBe(0);
@@ -1181,10 +1200,7 @@ describe("Ghidra result projection", () => {
     if (!execution.ok) throw execution.error;
     expect(execution.value.result).toBe("void main() {}");
     expect(execution.value.limitations).toContain(limitation);
-    expect(execution.value.rawResult).toEqual({
-      value: "void main() {}",
-      limitations: [limitation],
-    });
+    expect(execution.value.rawResult).toBeNull();
     await client.close();
   });
 
@@ -1298,6 +1314,52 @@ describe("Ghidra result projection", () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
     });
+  });
+});
+
+describe("Ghidra decompiler failure projection", () => {
+  it("reports a procedure decompiler failure without blaming the environment", async () => {
+    const code = "decompile_failed";
+    const message =
+      "Ghidra decompilation failed: Low-level Error: Fixture decompiler failure";
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              message,
+              { remote_code: code },
+              { remoteCode: code },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError" },
+    });
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "execution_failure",
+        retryable: false,
+        message: `${message}. Only the decompiler failed for this procedure; the Ghidra session remains usable.`,
+        details: { diagnostics: { remote_code: code } },
+      });
+      expect(projected.message).not.toContain("rea doctor");
+      expect(projected.remediation.action).toContain("analyze_function");
+      expect(projected.remediation.action).toContain(
+        "facet_availability.pseudocode",
+      );
+      expect(projected.remediation.action).not.toContain("rea doctor");
+    }
   });
 });
 
@@ -1416,10 +1478,13 @@ describe("Ghidra measured raw load-image projection", () => {
     "mapping-mismatch",
     "changed-snapshot",
     "cancelled",
+    "malformed-coordinate",
   ] as const)(
     "streams raw snapshot identity and preserves %s outcomes",
     async (state) => {
       const fixture = fixtureRawBinaryLoadImage();
+      if (state === "malformed-coordinate")
+        fixture.observation.image_base = "not-an-address";
       if (state === "mapping-mismatch") {
         const mapping = fixture.observation.mappings[0];
         if (mapping === undefined)
@@ -1480,7 +1545,9 @@ describe("Ghidra measured raw load-image projection", () => {
           {},
           { signal: controller.signal },
         );
-        expect(signals).toEqual([controller.signal]);
+        expect(signals).toEqual(
+          state === "malformed-coordinate" ? [] : [controller.signal],
+        );
         if (state === "verified" || state === "mapping-mismatch") {
           if (!result.ok) throw result.error;
           expect(result.value.result).toMatchObject({
@@ -1505,7 +1572,9 @@ describe("Ghidra measured raw load-image projection", () => {
               _tag:
                 state === "cancelled"
                   ? "AnalysisCancelledError"
-                  : "ProviderAdapterError",
+                  : state === "malformed-coordinate"
+                    ? "AnalysisOutputError"
+                    : "ProviderAdapterError",
             },
           });
         }
@@ -1672,6 +1741,7 @@ it("returns read-only NativeAOT metadata inline and drills down by derived Metho
     expect(detail).toMatchObject({
       ok: true,
       value: {
+        rawResult: unavailableNativeAotDatabaseType("0x140002280"),
         result: {
           status: "unavailable",
           source: "analysis-database",
@@ -2933,6 +3003,12 @@ describe("Ghidra deadline guidance", () => {
     expect(projected.remediation.action).toContain(
       "REA_GHIDRA_DISABLED_ANALYZERS",
     );
+    expect(projected.remediation.action).toContain("restart REA");
+    expect(projected.remediation.action).toContain("reconnect the MCP client");
+    expect(projected.remediation.action).toContain("export useful Evidence");
+    expect(projected.remediation.action).toContain(
+      "Reopening alone keeps the current server settings",
+    );
     expect(projected.remediation.action).not.toContain("rea doctor");
   });
 
@@ -3100,22 +3176,32 @@ describe("Ghidra analysis seeds and configured language", () => {
   });
 });
 
-describe("Ghidra disabled analyzer options", () => {
-  const configuredProvider = (
-    environment: Record<string, string>,
-    clientFactory?: GhidraProviderClientFactory,
-  ) => {
-    const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL, ...environment });
-    if (!config.ok) throw config.error;
-    return new GhidraProvider(
-      config.value,
-      silentLogger,
-      {},
-      installationHost(),
-      clientFactory,
-    );
-  };
+const configuredProvider = (
+  environment: Record<string, string>,
+  clientFactory?: GhidraProviderClientFactory,
+) => {
+  const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL, ...environment });
+  if (!config.ok) throw config.error;
+  return new GhidraProvider(
+    config.value,
+    silentLogger,
+    {},
+    installationHost(),
+    clientFactory,
+  );
+};
 
+const analyzerReport = (
+  ...analyzers: readonly (readonly [
+    name: string,
+    status: GhidraDisabledAnalyzerReport["analyzers"][number]["status"],
+  ])[]
+): GhidraDisabledAnalyzerReport => ({
+  format: "rea-ghidra-disabled-analyzers-v1",
+  analyzers: analyzers.map(([name, status]) => ({ name, status })),
+});
+
+describe("Ghidra disabled analyzer options", () => {
   it("records the configured analyzer options in the analysis profile", async () => {
     const ghidra = configuredProvider({
       REA_GHIDRA_DISABLED_ANALYZERS:
@@ -3145,7 +3231,16 @@ describe("Ghidra disabled analyzer options", () => {
       (options) => {
         launchers.push(options.launcher as GhidraHeadlessLauncher);
         return {
-          start: () => Promise.resolve(ok(sessionInfo())),
+          start: () =>
+            Promise.resolve(
+              ok({
+                ...sessionInfo(),
+                disabled_analyzers: analyzerReport([
+                  "Objective-C Message Analyzer",
+                  "not_applicable",
+                ]),
+              }),
+            ),
           callTool: () => Promise.resolve(ok(null)),
           close: () => Promise.resolve(ok(null)),
         };
@@ -3171,7 +3266,16 @@ describe("Ghidra disabled analyzer options", () => {
       (options) => {
         launchers.push(options.launcher as GhidraHeadlessLauncher);
         return {
-          start: () => Promise.resolve(ok(sessionInfo())),
+          start: () =>
+            Promise.resolve(
+              ok({
+                ...sessionInfo(),
+                disabled_analyzers: analyzerReport([
+                  "Decompiler Switch Analysis",
+                  "disabled",
+                ]),
+              }),
+            ),
           callTool: () => Promise.resolve(ok(null)),
           close: () => Promise.resolve(ok(null)),
         };
@@ -3248,6 +3352,134 @@ describe("Ghidra disabled analyzer options", () => {
       if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
       expect(starts).toBe(0);
     }
+  });
+});
+
+describe("Ghidra disabled analyzer applicability per program", () => {
+  const analyzerSession = async (
+    setting: string | undefined,
+    report: GhidraDisabledAnalyzerReport | undefined,
+  ) => {
+    const counts = { starts: 0, calls: 0, closes: 0 };
+    const ghidra = configuredProvider(
+      setting === undefined ? {} : { REA_GHIDRA_DISABLED_ANALYZERS: setting },
+      () => ({
+        start: () => {
+          counts.starts++;
+          return Promise.resolve(
+            ok({
+              ...sessionInfo(),
+              ...(report === undefined ? {} : { disabled_analyzers: report }),
+            }),
+          );
+        },
+        callTool: () => {
+          counts.calls++;
+          return Promise.resolve(
+            ok([
+              {
+                address: "0x1000",
+                value: "fixture_main",
+                procedure: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                },
+              },
+            ]),
+          );
+        },
+        close: () => {
+          counts.closes++;
+          return Promise.resolve(ok(null));
+        },
+      }),
+    );
+    const target = executableTarget("elf", "x86_64");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected a bound Ghidra profile");
+    return {
+      counts,
+      profile: resolved.value.profile,
+      client: ghidra.createClient(target, resolved.value.profile),
+    };
+  };
+
+  it("adds no limitation when every configured analyzer was disabled", async () => {
+    const { client } = await analyzerSession(
+      "Decompiler Switch Analysis",
+      analyzerReport(["Decompiler Switch Analysis", "disabled"]),
+    );
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("(n/a)")]),
+    );
+    await client.close();
+  });
+
+  it("opens a program for which a configured analyzer is not applicable", async () => {
+    const { counts, profile, client } = await analyzerSession(
+      "Decompiler Switch Analysis,Objective-C Message Analyzer",
+      analyzerReport(
+        ["Decompiler Switch Analysis", "disabled"],
+        ["Objective-C Message Analyzer", "not_applicable"],
+      ),
+    );
+    const procedures = await client.execute("list_procedures", {});
+    expect(counts.calls).toBe(1);
+    if (!procedures.ok) throw procedures.error;
+    expect(procedures.value.analysisProfile?.parameters).toMatchObject({
+      analyzer_preset:
+        "ghidra-default+disabled:Decompiler Switch Analysis,Objective-C Message Analyzer",
+    });
+    expect(procedures.value.analysisProfile?.digest).toBe(profile.digest);
+    expect(procedures.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Applied analyzer preset: ghidra-default+disabled:Decompiler Switch Analysis,Objective-C Message Analyzer(n/a).",
+        ),
+      ]),
+    );
+    await client.close();
+  });
+
+  it.each([
+    ["no analyzer report", undefined],
+    [
+      "a report for other analyzers",
+      analyzerReport(["Decompiler Switch Analysis", "not_applicable"]),
+    ],
+    [
+      "a report missing a configured analyzer",
+      analyzerReport(["Objective-C Message Analyzer", "not_applicable"]),
+    ],
+  ])("fails closed on %s before any analysis call", async (_label, report) => {
+    const { counts, client } = await analyzerSession(
+      "Objective-C Message Analyzer,Demangler Swift",
+      report,
+    );
+    const failed = await client.execute("list_procedures", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) {
+      expect(failed.error._tag).toBe("ProviderAdapterError");
+      expect(failed.error.diagnostics?.reason).toEqual(
+        expect.stringContaining("REA_GHIDRA_DISABLED_ANALYZERS"),
+      );
+    }
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+  });
+
+  it("fails closed on an analyzer report the profile did not commit", async () => {
+    const { counts, client } = await analyzerSession(
+      undefined,
+      analyzerReport(["Objective-C Message Analyzer", "not_applicable"]),
+    );
+    const failed = await client.execute("health", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
 });
 
