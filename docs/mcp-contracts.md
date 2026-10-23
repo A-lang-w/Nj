@@ -517,7 +517,9 @@ a five-second deadline and a 16 KiB metadata ceiling; a refusal or failed lookup
 silently backs off for 24 hours and never changes the analysis result.
 
 The cache is in memory per connection (including failures), refreshed on the
-next tool request after 24 hours. Reconnecting starts a fresh cache. Once ready,
+next tool request after 24 hours. Reconnecting starts a fresh cache. During
+revalidation, an unannounced release observation remains available with its
+original observation time; it does not establish the registry's current state. Once ready,
 a newer release is announced as an independent MCP `notifications/message`
 with level `notice` and logger `rea.update`, alongside the next successful tool
 response. Its complete notification must fit the configured receive budget.

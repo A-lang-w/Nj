@@ -451,3 +451,41 @@ it("retains a disconnected lookup through a new connection and joins both at shu
     await server.close();
   }
 });
+
+it("delivers a timestamped unannounced observation while a daily call revalidates", async () => {
+  let now = 0;
+  let release!: (result: ReturnType<typeof ok<string>>) => void;
+  const lookup = vi.fn(
+    () =>
+      new Promise<ReturnType<typeof ok<string>>>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const notices = new UpdateNotices("1.0.0", lookup, () => now);
+  const client = await connect(notices);
+  try {
+    await client.callTool({ name: "fixture", arguments: {} });
+    release(ok("1.1.0"));
+    await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+    now += 24 * 60 * 60 * 1000;
+    await client.callTool({ name: "fixture", arguments: {} });
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(receivedNotices.get(client)).toEqual([
+      {
+        level: "notice",
+        logger: "rea.update",
+        data: expect.stringContaining(
+          "latest published 1.1.0 as observed at 1970-01-01T00:00:00.000Z",
+        ),
+      },
+    ]);
+    release(ok("1.2.0"));
+    await vi.waitFor(() => expect(notices.peek()?.version).toBe("1.2.0"));
+    await client.callTool({ name: "fixture", arguments: {} });
+    expect(receivedNotices.get(client)).toHaveLength(2);
+    await client.callTool({ name: "fixture", arguments: {} });
+    expect(receivedNotices.get(client)).toHaveLength(2);
+  } finally {
+    release?.(ok("1.2.0"));
+  }
+});

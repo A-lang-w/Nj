@@ -60,7 +60,9 @@ export class UpdateNotices {
   private pending: Promise<void> | undefined;
   private controller: AbortController | undefined;
   private checkedAt: number | undefined;
-  private latest: string | undefined;
+  private latest:
+    | { readonly version: string; readonly observedAt: number }
+    | undefined;
   private readonly announced = new Set<string>();
   private closed = false;
 
@@ -80,7 +82,6 @@ export class UpdateNotices {
     )
       return;
     this.checkedAt = now;
-    this.latest = undefined;
     const controller = new AbortController();
     this.controller = controller;
     const timeout = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
@@ -93,7 +94,7 @@ export class UpdateNotices {
           result.ok &&
           valid(result.value) !== null &&
           gt(result.value, this.current)
-            ? result.value
+            ? { version: result.value, observedAt: this.now() }
             : undefined;
       })
       .catch(() => {
@@ -107,12 +108,17 @@ export class UpdateNotices {
   }
 
   peek(): { readonly version: string; readonly text: string } | undefined {
-    const version = this.latest;
-    if (this.closed || version === undefined || this.announced.has(version))
+    const observation = this.latest;
+    if (
+      this.closed ||
+      observation === undefined ||
+      this.announced.has(observation.version)
+    )
       return undefined;
+    const { version, observedAt } = observation;
     return {
       version,
-      text: `REA update available: running ${this.current}; latest published ${version}. Tell the user. To update a global installation, run rea update; update source checkouts or pinned package-runner registrations through their owning mechanism. After updating, restart/reconnect the MCP client to load the new version. This notice does not establish the version currently installed on disk. Do not install automatically.`,
+      text: `REA update available: running ${this.current}; latest published ${version} as observed at ${new Date(observedAt).toISOString()} (the registry may have changed). Tell the user. To update a global installation, run rea update; update source checkouts or pinned package-runner registrations through their owning mechanism. After updating, restart/reconnect the MCP client to load the new version. This notice does not establish the version currently installed on disk. Do not install automatically.`,
     };
   }
 
