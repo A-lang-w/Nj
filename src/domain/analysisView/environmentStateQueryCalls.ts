@@ -160,18 +160,29 @@ export const readOnlyTools = (
   const position = new Map(
     records.map((record, index) => [record.ordinal, index]),
   );
-  /** The timeline indexes of the nearest state writes either side of `at`, the skipped calls aside: -1 and the length when none. */
-  const nearestWrites =
-    (skip: ReadonlySet<number>) =>
-    (at: number): { readonly before: number; readonly after: number } => {
-      const writes = (index: number): boolean =>
-        !skip.has(records[index]!.ordinal) && isStateWrite(records[index]!);
-      let before = at - 1;
-      while (before >= 0 && !writes(before)) before -= 1;
-      let after = at + 1;
-      while (after < records.length && !writes(after)) after += 1;
-      return { before, after };
-    };
+  /** The timeline indexes of the nearest state writes either side of an index, the skipped calls aside: -1 and the length when none, found in one pass each way. */
+  const nearestWrites = (
+    skip: ReadonlySet<number>,
+  ): ((at: number) => { readonly before: number; readonly after: number }) => {
+    const writes = records.map(
+      (record) => !skip.has(record.ordinal) && isStateWrite(record),
+    );
+    const before: number[] = [];
+    const after: number[] = Array.from({ length: records.length });
+    for (let index = 0, last = -1; index < records.length; index += 1) {
+      before.push(last);
+      if (writes[index]) last = index;
+    }
+    for (
+      let index = records.length - 1, next = records.length;
+      index >= 0;
+      index -= 1
+    ) {
+      after[index] = next;
+      if (writes[index]) next = index;
+    }
+    return (at) => ({ before: before[at]!, after: after[at]! });
+  };
   const candidates = new Map<string, readonly StateRecordFacts[]>();
   for (const tool of tools) {
     if (
@@ -289,48 +300,101 @@ const lastMeaningfulWord = (segment: string): string | undefined =>
  * A GET line whose path a call's path relates to reads differently, or finds its entity present on one
  * side only, just before and just after it, with no other write between: the read that finished last
  * before it began and the first begun after it ended, since one overlapping it may show either state.
- * One pass over the reads between the nearest other writes serves every line.
+ * Calls in one write-free stretch under one path share a pass over it, and only lines whose reads
+ * there disagree can change across a call.
  */
 const changesReadsAcross = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
   { position, writes, io }: Timeline,
-): boolean =>
-  calls.filter(succeeded).some((call) => {
+): boolean => {
+  const stretches = new Map<
+    string,
+    { from: number; to: number; path: string; calls: StateRecordFacts[] }
+  >();
+  for (const call of calls.filter(succeeded)) {
+    const { before, after } = writes(position.get(call.ordinal)!);
+    const key = JSON.stringify([before, after, call.path]);
+    const stretch = stretches.get(key);
+    if (stretch === undefined)
+      stretches.set(key, {
+        from: before,
+        to: after,
+        path: call.path,
+        calls: [call],
+      });
+    else stretch.calls.push(call);
+  }
+  for (const stretch of stretches.values())
+    if (changesInStretch(stretch, records, { position, io })) return true;
+  return false;
+};
+
+/** Whether a related line changes across one of these calls, all between the same two writes under one path. */
+const changesInStretch = (
+  stretch: {
+    readonly from: number;
+    readonly to: number;
+    readonly path: string;
+    readonly calls: readonly StateRecordFacts[];
+  },
+  records: readonly StateRecordFacts[],
+  { position, io }: Pick<Timeline, "position" | "io">,
+): boolean => {
+  const shown = (record: StateRecordFacts): JsonValue | symbol => {
+    if (!succeeded(record)) return ABSENT;
+    const body = io.response(record.ordinal);
+    return body === undefined ? UNKNOWN : body;
+  };
+  const lines = new Map<string, StateRecordFacts[]>();
+  for (let index = stretch.from + 1; index < stretch.to; index += 1) {
+    const record = records[index]!;
+    if (
+      record.method !== "GET" ||
+      !(succeeded(record) || isAbsence(record.status)) ||
+      !prefixRelated(stretch.path, record.path)
+    )
+      continue;
+    const line = `${record.path}${record.query ?? ""}`;
+    const reads = lines.get(line);
+    if (reads === undefined) lines.set(line, [record]);
+    else reads.push(record);
+  }
+  // A line whose reads all show one thing cannot change across any call.
+  const changing = [...lines.values()].filter((reads) => {
+    const first = shown(reads[0]!);
+    return reads.some((read) => !sameShown(first, shown(read)));
+  });
+  return stretch.calls.some((call) => {
     const at = position.get(call.ordinal)!;
-    const { before: lastWrite, after: nextWrite } = writes(at);
-    const before = new Map<string, StateRecordFacts>();
-    const after = new Map<string, StateRecordFacts>();
-    for (let index = lastWrite + 1; index < nextWrite; index += 1) {
-      const record = records[index]!;
-      if (
-        index === at ||
-        record.method !== "GET" ||
-        !(succeeded(record) || isAbsence(record.status)) ||
-        !prefixRelated(call.path, record.path)
-      )
-        continue;
-      const line = `${record.path}${record.query ?? ""}`;
-      const latest = before.get(line);
-      if (index < at) {
-        if (
-          record.end <= call.start &&
-          (latest === undefined || record.end >= latest.end)
-        )
-          before.set(line, record);
-      } else if (record.start >= call.end && !after.has(line))
-        after.set(line, record);
-    }
-    return [...after].some(([line, later]) => {
-      const earlier = before.get(line);
-      if (earlier === undefined) return false;
-      if (succeeded(earlier) !== succeeded(later)) return true;
-      if (!succeeded(earlier)) return false;
-      const was = io.response(earlier.ordinal);
-      const now = io.response(later.ordinal);
-      return was !== undefined && now !== undefined && !same(was, now);
+    return changing.some((reads) => {
+      const earlier = lastFinishedBefore(
+        reads.filter((read) => position.get(read.ordinal)! < at),
+        call,
+      );
+      const later = reads.find(
+        (read) => position.get(read.ordinal)! > at && read.start >= call.end,
+      );
+      if (earlier === undefined || later === undefined) return false;
+      const [was, now] = [shown(earlier), shown(later)];
+      // Presence on one side only is a change even when a body is unusable.
+      if ((was === ABSENT) !== (now === ABSENT)) return true;
+      return was !== UNKNOWN && now !== UNKNOWN && !sameShown(was, now);
     });
   });
+};
+
+/** A read that found its entity gone, and one whose body is unusable. */
+const ABSENT = Symbol("absent");
+const UNKNOWN = Symbol("unknown");
+
+const sameShown = (
+  left: JsonValue | symbol,
+  right: JsonValue | symbol,
+): boolean =>
+  typeof left === "symbol" || typeof right === "symbol"
+    ? left === right
+    : same(left, right);
 
 /** The timeline's state writes, less the calls of tools whose calls only read, and those tools. */
 export const stateWritesOf = (

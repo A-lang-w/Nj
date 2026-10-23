@@ -482,6 +482,33 @@ describe("items only a replayed line showed", () => {
   });
 });
 
+describe("items a served write made and removed", () => {
+  it("finds an item a served create made and a served delete removed missing, though a variant line recorded it", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", created],
+      ["GET", "/api/books/3?expand=shelf", expandedBook(created)],
+      ["DELETE", "/api/books/3", "", 204],
+      ["GET", "/api/books/3", BOOK_NOT_FOUND, 404],
+    ]);
+    expect(books.state.writes.get("post_books")).toMatchObject({
+      served: true,
+    });
+    expect(books.state.writes.get("delete_books_by_id")).toMatchObject({
+      served: true,
+    });
+    books.answer("post_books", { body: { name: "Third Book" } });
+    books.answer("delete_books_by_id", { id: "3" });
+    const read = books.call("get_books_by_id", { id: "3", expand: "shelf" });
+    expect(read.ok && read.value.status === 200).toBe(false);
+  });
+});
+
 describe("field selections beside replayed reads", () => {
   it("replays a field selection no checked line gave, and answers a selection of every field from the state", () => {
     const books = servedFrom([

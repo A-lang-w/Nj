@@ -88,9 +88,9 @@ const requestLine = (record: StateRecordFacts): string =>
   record.path + (record.query ?? "");
 
 /** The member names of the object at a pointer, none when it holds no object. */
-const membersAt = (body: JsonValue, pointer: string): Set<string> => {
+const memberNames = (body: JsonValue, pointer: string): string[] => {
   const object = at(body, pointer);
-  return new Set(isObject(object) ? Object.keys(object) : []);
+  return isObject(object) ? Object.keys(object) : [];
 };
 
 /** Derive the init state and render plans from manifest tools and timeline-ordered records. */
@@ -452,9 +452,13 @@ export class EnvironmentStateExtraction {
         const located = locateItem(body, lastSegmentValue(record.path));
         if (located === undefined) return projecting ? null : undefined;
         if (!selecting && !shaping) return undefined;
-        const members = membersAt(body, located.pointer);
-        this.#retain(ENTRY_BYTES * (2 + members.size));
-        return { record, members, projecting: selecting };
+        const names = memberNames(body, located.pointer);
+        // The kept set holds the names, which the body's own reservation no longer covers.
+        this.#retain(
+          ENTRY_BYTES * (2 + names.length) +
+            names.reduce((bytes, name) => bytes + textBytes(name.length), 0),
+        );
+        return { record, members: new Set(names), projecting: selecting };
       });
       if (line === null) {
         this.#retain(ENTRY_BYTES);

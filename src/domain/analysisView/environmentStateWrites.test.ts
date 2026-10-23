@@ -1724,6 +1724,25 @@ describe("reads overlapping a linked create", () => {
   });
 });
 
+describe("earlier reads of the returned id under other types", () => {
+  it("links a create whose id an earlier read of another type named", () => {
+    const user = { id: 1003, login: "gamma" };
+    const state = stateOf([
+      ["GET", "/api/users/1003", user],
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+  });
+});
+
 describe("what a linked create observes", () => {
   it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
     const D = note(1004, "Delta");
