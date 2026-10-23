@@ -44,6 +44,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   replayAnswer,
   selectReplayExchange,
+  type ObservedQuery,
   type ReplayArguments,
 } from "./environmentReplay.js";
 import type { EnvironmentManifestTool } from "./environmentSource.js";
@@ -65,7 +66,10 @@ import {
   unloadableMember,
   type HeldDocument,
 } from "./environmentStateDocument.js";
-import { environmentToolArguments } from "./environmentTools.js";
+import {
+  environmentToolArguments,
+  hasRepeatedQueryArgument,
+} from "./environmentTools.js";
 
 /** Attempts at a generated UUID or token before a collision with held values is refused. */
 const GENERATION_ATTEMPTS = 64;
@@ -75,6 +79,7 @@ interface WriteRequest {
   readonly tool: EnvironmentManifestTool;
   readonly plan: StateWritePlan;
   readonly args: ReplayArguments;
+  readonly observedQuery?: ObservedQuery;
 }
 
 /** The path values a call supplies, keyed by template segment as write plans name them. */
@@ -270,8 +275,12 @@ const writeAnswer = (
   if (plan.response === null || exchange === undefined)
     return err(refused(tool, `Tool ${tool.name} has no recorded response.`));
   const exact =
-    selectReplayExchange(tool, new Map([[exchange.ordinal, exchange]]), args)
-      ?.exact === true;
+    selectReplayExchange(
+      tool,
+      new Map([[exchange.ordinal, exchange]]),
+      args,
+      request.observedQuery,
+    )?.exact === true;
   if (plan.response.shape === "recorded")
     return ok({ ...replayAnswer(serving.source, exchange, exact), state });
   const body = writtenResponse(plan.response, recordedJson(exchange), rendered);
@@ -562,6 +571,13 @@ export const answerWrite = (
   serving: StateServing,
   request: WriteRequest,
 ): Result<StateAnswer, AnalysisError> => {
+  if (hasRepeatedQueryArgument(request.tool, request.args))
+    return err(
+      refused(
+        request.tool,
+        "The state write model cannot apply repeated query parameters; the state is unchanged.",
+      ),
+    );
   const body = callBody(request);
   if (!body.ok) return body;
   const call: WriteCall = {
