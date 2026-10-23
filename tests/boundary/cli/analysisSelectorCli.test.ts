@@ -44,10 +44,10 @@ describe("CLI analysis selector boundaries", () => {
       });
     },
   );
-  cliTest(
-    "rejects missing and conflicting selectors before opening a target",
-    async ({ cli }) => {
-      for (const [command, option, operation] of selectors) {
+  for (const [command, option, operation] of selectors) {
+    cliTest(
+      `rejects missing and conflicting ${command} selectors before opening a target`,
+      async ({ cli }) => {
         for (const [selection, reason] of [
           [[], "missing_argument"],
           [["first", `--${option}=-second`], "invalid_value"],
@@ -68,9 +68,9 @@ describe("CLI analysis selector boundaries", () => {
             details: { operation, issues: [{ path: [option], reason }] },
           });
         }
-      }
-    },
-  );
+      },
+    );
+  }
 
   cliTest(
     "admits positional, named, and identical selectors before opening a missing target",
