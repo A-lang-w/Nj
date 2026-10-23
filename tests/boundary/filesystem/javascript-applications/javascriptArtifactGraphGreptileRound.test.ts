@@ -12,6 +12,96 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "function-capture-0.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-1.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};(()=>{const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")})();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-2.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const {WebSocket:Socket}=globalThis;replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-3.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const client={connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}};client.connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-4.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};class Client{connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}}new Client().connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-5.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;{replace(globalThis);new Socket("wss://example.test/function-capture")}}connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-6.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){replace(globalThis);const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();',
+  },
+  {
+    file: "function-capture-7.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const root=globalThis;replace(globalThis);new root.WebSocket("wss://example.test/function-capture")}connect();',
+  },
+  {
+    file: "function-capture-8.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket,ignored=replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-9.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const ignored=replace(globalThis),Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();',
+  },
+  {
+    file: "function-capture-10.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}replace(globalThis);connect();',
+  },
+  {
+    file: "function-capture-11.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();replace(globalThis);',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-12.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function escape(){replace(globalThis)}function connect(){const Socket=globalThis.WebSocket;escape();new Socket("wss://example.test/function-capture")}connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-13.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function escape(){replace(globalThis)}function connect(){escape();const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();',
+  },
+  {
+    file: "function-capture-14.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};async function connect(){const Socket=globalThis.WebSocket;await 0;replace(globalThis);new Socket("wss://example.test/function-capture")}await connect();',
+    endpoint: "wss://example.test/function-capture",
+  },
+  {
+    file: "function-capture-15.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function connect(){for(let i=0;i<2;i++){if(i===0){replace(globalThis);continue}const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}}connect();',
+  },
+  {
     file: "global-escape-0.mjs",
     source:
       'function replace(root){root.WebSocket=class{}};replace(globalThis);new globalThis.WebSocket("wss://example.test/global-escape");',

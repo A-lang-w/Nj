@@ -25,6 +25,8 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import { semanticInitializerPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
+import { webSocketExecutionContexts } from "./javascriptWebSocketExecution.js";
 import {
   semanticIterationSources,
   type SemanticIterationSource,
@@ -742,7 +744,17 @@ export const isUnmodifiedGlobalReference = (
               t.isNewExpression(node)) &&
             unwrapJavaScriptExpression(node.callee).node === capture
           ) &&
-          !semanticEffectFollowsReference(capture, node, state.parentsByNode),
+          !semanticEffectFollowsReference(capture, node, state.parentsByNode) &&
+          !(
+            node !== undefined &&
+            semanticInitializerPrecedesRead({
+              initializer: capture,
+              read: node,
+              parents: state.parentsByNode,
+              initializerContexts: webSocketExecutionContexts(capture, state),
+              readContexts: webSocketExecutionContexts(node, state),
+            }) === true
+          ),
       ));
   if (modified(["global", ...path])) return false;
   const { root, members } = electronMemberPath(callee);

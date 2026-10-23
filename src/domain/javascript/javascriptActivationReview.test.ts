@@ -5,6 +5,86 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "saved constructor in function",
+    'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "saved constructor in arrow",
+    'function replace(root){root.WebSocket=class{}};(()=>{const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")})();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "saved destructured constructor in function",
+    'function replace(root){root.WebSocket=class{}};function connect(){const {WebSocket:Socket}=globalThis;replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "saved constructor in object method",
+    'function replace(root){root.WebSocket=class{}};const client={connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}};client.connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "saved constructor in class method",
+    'function replace(root){root.WebSocket=class{}};class Client{connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}}new Client().connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "saved constructor through nested block",
+    'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;{replace(globalThis);new Socket("wss://example.test/function-capture")}}connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "late saved constructor in function",
+    'function replace(root){root.WebSocket=class{}};function connect(){replace(globalThis);const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();',
+    [],
+  ],
+  [
+    "function namespace alias is not a capture",
+    'function replace(root){root.WebSocket=class{}};function connect(){const root=globalThis;replace(globalThis);new root.WebSocket("wss://example.test/function-capture")}connect();',
+    [],
+  ],
+  [
+    "same function earlier declarator",
+    'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket,ignored=replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "same function later declarator",
+    'function replace(root){root.WebSocket=class{}};function connect(){const ignored=replace(globalThis),Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();',
+    [],
+  ],
+  [
+    "outer earlier escape precedes function capture",
+    'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}replace(globalThis);connect();',
+    [],
+  ],
+  [
+    "outer later escape follows function capture",
+    'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();replace(globalThis);',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "saved constructor survives nested callback",
+    'function replace(root){root.WebSocket=class{}};function escape(){replace(globalThis)}function connect(){const Socket=globalThis.WebSocket;escape();new Socket("wss://example.test/function-capture")}connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "nested callback precedes constructor capture",
+    'function replace(root){root.WebSocket=class{}};function escape(){replace(globalThis)}function connect(){escape();const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}connect();',
+    [],
+  ],
+  [
+    "saved constructor across await",
+    'function replace(root){root.WebSocket=class{}};async function connect(){const Socket=globalThis.WebSocket;await 0;replace(globalThis);new Socket("wss://example.test/function-capture")}await connect();',
+    ["wss://example.test/function-capture"],
+  ],
+  [
+    "loop escape before later iteration capture",
+    'function replace(root){root.WebSocket=class{}};function connect(){for(let i=0;i<2;i++){if(i===0){replace(globalThis);continue}const Socket=globalThis.WebSocket;new Socket("wss://example.test/function-capture")}}connect();',
+    [],
+  ],
+  [
     "passed global replacement",
     'function replace(root){root.WebSocket=class{}};replace(globalThis);new globalThis.WebSocket("wss://example.test/global-escape");',
     [],
