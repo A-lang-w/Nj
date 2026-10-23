@@ -11,8 +11,9 @@ serving, reading records with REA's own capture parser, and compares the reads; 
 
 - `npm run -s check:fast`, `npm run -s format:check`, `npx knip`, `npm run -s scan:todos`, `npm run -s docs:check`,
   `npm run -s verify:test-discovery` and `npm run -s mcp-catalog:check`: passed.
-- `npm run jscpd`: 3.57% duplicated lines over 4174 files (3.58% on the base).
-- `npx vitest run --project domain --project services`: 9289 passed, 6 pre-existing skips.
+- `npm run jscpd`: 3.57% duplicated lines over 4235 files.
+- `npx vitest run --project domain --project services`: 9545 passed, 6 pre-existing skips. The 10 failures (JavaScript
+  Map endpoints, a returned invocation's alias graph, Frida cleanup) fail the same way on main.
 - `npm run -s test:prepare`, then `npm run -s test:focused --` the environment serve and export CLI boundaries, the
   serve and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary
   and tool schema validity: 8 files, 91 passed.
@@ -31,8 +32,15 @@ serving, reading records with REA's own capture parser, and compares the reads; 
 | created nested clocks        | 71     | 46              | 1,153                   | 2,087 of 2,162           | 2,766 of 3,031 |
 | unshown writes refused       | 69     | 46              | 1,153                   | 2,087 of 2,162           | 2,766 of 3,031 |
 | catalog values, atomic bulk  | 69     | 46              | 1,153                   | 2,087 of 2,162           | 2,766 of 3,031 |
+| review fixes                 | 69     | 46              | 1,153                   | 2,087 of 2,162           | 2,766 of 3,031 |
 
 All 187 write tools are counted at every step, and the served smoke applies every served write tool.
+
+- **Review fixes:** literal bulk ids, per-entity bulk values, pinned bulk delete members, comparison ids per
+  collection, echoed creation clocks, required held clocks, nested clocks checked against every call, learned sorts
+  kept open to contrary reads and limited to the read's own entities, one query check per recorded call, guards
+  relaxed only by successful calls with the exemplar's query, and slash-named counters. No tool's verdict and no
+  session read changed; each fix has a test that fails without it.
 
 - **Newly served:** Ghost's post create and update, Metabase's card create and update, n8n's workflow update,
   Navidrome's playlist create, and the NocoDB and Mailpit bulk deletes.
