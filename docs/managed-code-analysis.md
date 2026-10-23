@@ -51,6 +51,11 @@ This keeps the complete source in the session and returns a distinct linked
 evidence, metadata status, module/MVID, assembly, frameworks, returned-row counts,
 coverage/issues and limitations. No assembly is loaded or executed.
 
+ECMA-335 permits empty metadata streams to be omitted. An absent `#Blob`
+stream therefore does not prevent module or assembly identity from being read
+when all blob indexes are zero; a nonzero reference to that missing heap is
+reported as a missing-stream issue.
+
 Use `normalized_result.parent_evidence_id` to page original rows:
 
 ```json
@@ -177,6 +182,9 @@ declares API compatibility across multiple .NET implementations. REA preserves
 that target in `target_frameworks` and leaves `runtime_family` as `unknown`
 unless independent markers identify a runtime family, such as a ReadyToRun
 signature.
+When ReadyToRun is observed, `runtime_family` remains `modern-dotnet` even if
+Unity or target-framework hints are also present; the separate hint evidence
+is retained in the classification evidence list.
 
 ### Resource admission
 
@@ -386,12 +394,23 @@ constants, and bounded shape context. It reports all candidates at the winning
 score and remains ambiguous when the evidence does not distinguish them. The
 digest does not itself remap metadata tokens.
 
-Matched methods also compare aligned call sites. `call-shape` reports opcode and
-operand-kind differences; `call-target` reports differences in the observed
-target declaring-type or method name from `call_edges`. Target tokens remain
-build-local and are not compared across artifacts. Missing or unaligned call
-edges and missing target names leave that facet unknown; equal names do not
-establish overload identity or runtime dispatch.
+Matched methods also compare aligned references. `call-shape` and
+`field-shape` report opcode and operand-kind differences; `call-target` and
+`field-target` report differences in the observed target declaring type or
+name from `call_edges` and `field_accesses`. Target tokens remain build-local
+and are not compared across artifacts. Missing or unaligned edges and missing
+target names leave that facet unknown; equal names do not establish overload
+identity or runtime dispatch. `exception-shape` compares clause flags and
+ranges. `exception-target` compares the nested nominal catch-type name digest;
+for resolved TypeDefs it also compares the enclosing assembly identity. A
+different known name or assembly scope establishes a change. Equal TypeRef
+names remain unknown because their resolution scope is not resolved here.
+Exception tokens remain in the source facts but are not cross-build identity;
+an unresolved catch type leaves that facet unknown. The method body retains the
+display `class_type`, nested `class_type_name_sha256`, and whether its local
+token identifies a TypeDef. A TypeDef digest alone does not prove identity
+without matching assembly identity. Missing assembly identity and equal TypeRef
+names leave the comparison unknown.
 
 Tokens are always remapped through observed structure. A caller cannot carry
 `0x06001234` into a new MVID and assume it names the same method.
@@ -447,6 +466,16 @@ only when both identities are available and their format-specific comparison
 establishes a difference. ELF module names retain case, PE module names compare
 case-insensitively, and a case-only match for Mach-O or an unknown format stays
 unresolved because the available Evidence does not establish case behavior.
+For PE imports, `.dll`, `.exe`, a trailing period, and absolute paths suppress
+appending `.dll`; other names may also be tried with `.dll`. Unix loaders use
+the platform suffix (`.so` or `.dylib`) and `lib` prefix variations. A suffix
+already present at the end of the name or before a period still gets an
+appended-suffix variation, so Linux can match `nativedep.so.6` with
+`libnativedep.so.6`. The `lib` prefix is omitted when the name contains `/`, and
+absolute paths are used as supplied. POSIX paths keep backslashes as literal
+characters. These candidates follow [Microsoft's native library loading rules](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/native-library-loading).
+These filename rules compare declared and observed identities; they do not
+establish which library the runtime loaded.
 
 Metadata tokens are not native addresses. Native body mapping for C++/CLI,
 ReadyToRun, NativeAOT, and IL2CPP requires separately verified format and provider
@@ -515,6 +544,10 @@ ambiguous pointers leave affected owners unknown with partial coverage while
 preserving readable member and attribute facts.
 The retained inverse indexes are admitted against the existing representation
 budget before allocation.
+
+Custom-attribute `type_name` uses `Outer+Nested` when its local TypeDef or
+TypeRef enclosing chain is readable. It remains `null` when the constructor's
+type or required enclosing facts cannot be resolved.
 
 `exported_types` reports ExportedType rows as declared. Facade assemblies such
 as .NET `System.Runtime.dll` provide their types this way: `forwarder: true`

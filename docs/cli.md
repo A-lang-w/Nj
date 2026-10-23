@@ -3,6 +3,8 @@
 Use the CLI for a direct inspection or a script. It uses the same application
 workflows and evidence contracts as REA's MCP server. Each CLI invocation is a
 separate process; save results when you want to use them in a later command.
+For a pinned, noninteractive workflow with retained reports, see
+[static analysis in GitHub Actions](ci-analysis.md).
 
 ## Run a command
 
@@ -43,6 +45,29 @@ of about 10 KB. Replace the view with
 module page. See
 [JavaScript application workflows](javascript-application-workflows.md) for
 views, feature traces and comparisons that take the same saved Evidence.
+
+## Shell completion
+
+The CLI includes optional shell completion. Run `rea completions --help` to
+see the available shells and their setup commands. For Bash, load the hook
+into the current shell:
+
+```bash
+eval "$(rea completions bash)"
+```
+
+The current Bash hook requires support for `complete -o nosort`; macOS's
+system Bash 3.2 cannot load it. Use a newer Bash for this hook.
+
+For future interactive non-login Bash sessions, add the command to
+`~/.bashrc`. Interactive login Bash sessions read the first available file in
+`~/.bash_profile`, `~/.bash_login`, and `~/.profile`; add the command to the
+file your shell reads, or have that file source `~/.bashrc`. Remove the command
+from the startup file to stop loading completion, and run `complete -r rea` to
+remove the registration from the current shell. These are manual, opt-in
+steps.
+Completion is a discovery aid; use `rea COMMAND --help` to confirm the
+available options and subcommands.
 
 ## Managed assemblies (.NET)
 
@@ -401,7 +426,10 @@ top-level limitation. That partial inventory does not establish absence among
 unexamined children. POSIX directory-entry bytes that are not valid UTF-8 cannot
 be represented as graph paths; the containing directory (or root) is marked
 unsupported, and REA does not access the entry through a replacement-character
-name. Readable siblings remain inventoried.
+name. Symlink targets are read as bytes too: a target that is not valid UTF-8
+is retained as an unreadable symlink with its bytes reported in the limitation,
+and is never resolved through a replacement-character path. Readable siblings
+remain inventoried.
 
 JavaScript and TypeScript import parsing requires valid UTF-8. Malformed source
 bytes retain their original hashes and sizes with a decoding diagnostic; REA
@@ -409,6 +437,19 @@ does not infer module targets from replacement characters. Exact dynamic-import
 strings, expression-free templates and runtime-transparent TypeScript wrappers
 retain their targets; computed imports remain unknown. TypeScript import-equals
 dependencies remain `requires` relationships whether or not they are exported.
+
+REA derives historical CommonJS paths only when the selected loader and its
+base are proven: this includes the exact
+`createRequire(new URL("./file.cjs", import.meta.url))` form and
+`require.resolve` with `{ paths: [__dirname] }`. Other custom bases and search
+options remain partial with unknown resolution and the literal requested
+specifier. Overwritten resolver methods retain that uncertainty; they are not
+attributed to Node. `require.main` is a module object, so calling it does not
+establish a loader reference. These relationships do not establish execution;
+Node's [`require.resolve`](https://nodejs.org/docs/v24.22.1/api/modules.html#requireresolverequest-options)
+performs lookup without loading the target. An excluded `package.json`
+also leaves package-directory selection unknown rather than treating the
+manifest as absent and applying an `index` fallback.
 
 Historical-source import requires safe no-follow file opens on Linux or
 macOS. Native Windows returns `unsupported_host`; use Linux REA inside WSL
@@ -536,6 +577,52 @@ without response bodies, or without the request bodies its writes need. See
 rea environment-compare manifest.json --evidence capture.json --probe probe.json --json
 ```
 
+## Report version and runtime
+
+`rea --version` prints the package version. Add an output format to get the
+version with the runtime and platform context that a support request needs:
+
+Version reports do not initialize analysis providers. Invalid global settings
+or output options still report their usual errors.
+
+```bash
+rea --version --json
+```
+
+```json
+{
+  "name": "rea-agents",
+  "version": "6.7.0",
+  "runtime": { "id": "node", "version": "24.22.1" },
+  "platform": "linux",
+  "architecture": "x64",
+  "supported_runtime": {
+    "range": "^22.23.4 || ^24.22.1 || >=26.12.1",
+    "satisfied": true
+  }
+}
+```
+
+| Field                                | Meaning                                                                                                        |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `name`, `version`                    | Published package name and version; `version` matches plain `--version`.                                       |
+| `runtime.id`                         | `node` or `bun`.                                                                                               |
+| `runtime.version`                    | Version of that runtime.                                                                                       |
+| `runtime.node_compatibility_version` | Bun only: the Node.js version it reports compatibility with.                                                   |
+| `platform`, `architecture`           | Node.js `process.platform` and `process.arch`, such as `linux` and `x64`.                                      |
+| `supported_runtime.range`            | Supported Node.js range.                                                                                       |
+| `supported_runtime.satisfied`        | Whether this runtime is supported, judged as `rea doctor` judges it; Bun by its Node.js compatibility version. |
+
+The field names are stable. The report contains no paths, environment values,
+user or host names, and it starts no provider and reads no target. `--format`
+selects any CLI output format, such as `--format yaml`. JSON follows the usual
+rule: indented on a terminal, compact when piped or redirected. `--help` still
+takes precedence. With other output controls, `--version` keeps its existing
+behavior: valid controls such as `--filter-output` or `--full-output` print the
+plain version, and invalid combinations report the usual output-flag error,
+such as `UNSUPPORTED_OUTPUT_COMBINATION` for `--json` with `--token-limit`. Use
+`rea doctor` for provider and host readiness.
+
 ## Output and exit status
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
@@ -554,10 +641,17 @@ redirected, which keeps large results smaller for agents and scripts; pipe
 through `jq .` for indented files. Output selection and formatting do not change
 operation status.
 
+`--format md` escapes backslashes and pipes in table headers and cells, and
+renders cell line breaks as `<br>`. These are presentation changes; retained
+Evidence and JSON output keep the original values. Table widths are measured
+iteratively, so an admitted row page is not limited by the JavaScript function
+argument count.
+
 `--filter-output` selects fields from successful command data. Classified failures
 retain their complete typed diagnostic projection even when the selector matches
 a field such as `code` or `message`, or names a missing field. `--full-output`
 controls whether the outer `{ok, error, meta}` envelope is included.
+Selected own JSON members, including `__proto__`, remain ordinary output data.
 
 Sibling array slices that select different fields are combined by original row
 index and emitted in source order, regardless of selector order. Selecting a

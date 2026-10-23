@@ -198,10 +198,14 @@ const visitArtifactEntries = async (
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      context.registry.add(
-        logicalPath,
-        expandableAsar ? "directory" : entry.kind,
-      );
+      // PyInstaller TOC rows are source-distinct even when their logical
+      // destinations collide. Inventory retains those observations; the
+      // extraction path registry remains the authority for materialization.
+      if (frame.reader.format !== "pyinstaller")
+        context.registry.add(
+          logicalPath,
+          expandableAsar ? "directory" : entry.kind,
+        );
       const duplicateOrdinal =
         context.occurrenceCountByPath.get(logicalPath) ?? 0;
       context.occurrenceCountByPath.set(logicalPath, duplicateOrdinal + 1);
@@ -340,13 +344,17 @@ const digestArtifactEntry = async (
   }
   const classified =
     entry.kind === "slice"
-      ? ({ kind: "universal-slice", format: "mach-o" } as const)
+      ? {
+          kind: "universal-slice" as const,
+          format: "mach-o" as const,
+          contentFormat: classifyArtifactBytes(digest, digest.bytes),
+        }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
   return {
     node: createArtifactNode({
       sha256: digest.sha256,
       size: digest.bytes,
-      format: classifyArtifactBytes(digest.prefix, digest.bytes),
+      format: classified.contentFormat,
       contentState: "embedded",
     }),
     mismatched,

@@ -98,6 +98,10 @@ export const verifyAndroidMetadata = async ({
       result.stdout,
       /RESOURCE_REFERENCE_REGRESSION_PASS title_sites=3 switch=packed,sparse r_field=dex/u,
     );
+    assert.match(
+      result.stdout,
+      /MANIFEST_REGRESSION_PASS root=true namespaces=true entities=true reload=true missing=true bounded=true/u,
+    );
     console.log(
       "PASS real cold metadata, full generic types and stable overloaded method selection",
     );
@@ -115,6 +119,9 @@ export const verifyAndroidMetadata = async ({
     );
     console.log(
       "PASS real resource-id constant, switch and R-field scan through the bridge",
+    );
+    console.log(
+      "PASS root manifest selection, namespace/entity values and session cache identity",
     );
     await verifyAndroidMethodBodies({
       apk: resolve(classes, "initializers.apk"),

@@ -44,12 +44,18 @@ root deltas. Missing graph members yield `truncated`; unknown traversal coverage
 or unavailable occurrence hashes retain uncertainty. Integrity mismatches remain
 contradictions. Static artifact equality does not establish unchanged runtime
 behavior.
+Source-map relation deltas include the content identity of the mapped source,
+so an unchanged map file is reported when its target source bytes change.
 
 Exhausted traversals with deliberately omitted filesystem entries retain
 `unknown` coverage and identify each omitted path/type in `limitations`; FIFO,
 socket and device entries are not opened. Case-distinct archive members remain
 separate observations. Their case-insensitive materialization diagnostic does
 not reduce traversal coverage when both spellings were read.
+PyInstaller inventory also preserves distinct table rows that share a logical
+path, including decoded children beneath a colliding file/directory path.
+Inventory coverage describes observed archive facts; extraction still refuses
+destinations where those paths cannot coexist.
 
 Current inventory Evidence requires scoped `coverage` with a `complete` or
 `unknown` status. Consumers use this producer-owned fact and reject records
@@ -80,6 +86,12 @@ can observe backend recovery; healthy dossiers keep their existing cache policy.
 `procedure_pseudo_code` still fails for that function. Hopper's unavailable reference-kind metadata and reported unresolved
 calls still prevent equality conclusions for those dimensions. Analysis profiles
 version these declarations so older snapshots are not reused as current results.
+For `strings_names`, a string marked with `decoding.available: false` keeps its
+provider display text in the source Evidence, but that text is not compared as
+decoded content. If no independently known string, name, or literal fact differs,
+the dimension remains `unknown` with the decoding reason. Known content and typed
+string-object differences can establish a change; missing typed metadata remains
+unknown, and `encoding_status` describes provenance rather than content.
 IDA declares the facets its selected adapter cannot provide; an empty
 unsupported array does not prove observed absence.
 Evidence and bundle imports reject unsupported fields in their envelopes,
@@ -1153,19 +1165,34 @@ block sizes and successor relationships. Text from different provider
 identities remains unknown.
 
 The `references` dimension preserves each edge's direction, endpoint identity
-and available kind facts. Within one artifact it compares exact raw endpoint
-coordinates, including the address space; hexadecimal case and zero padding
-do not change identity. Resolving an endpoint to a containing procedure does
-not replace the raw coordinate. Unparseable coordinates stay unknown.
+and available kind facts. When the subject digests match, the current comparator
+uses exact raw endpoint coordinates, including the address space; hexadecimal
+case and zero padding do not change identity. Resolving an endpoint to a
+containing procedure does not replace the raw coordinate. Unparseable
+coordinates stay unknown.
 
-Across artifacts, reference endpoints use stable procedure names. Missing or
-address-generated names remain unknown. A name observed at multiple procedure
+When the subject digests differ, reference endpoints use stable procedure names.
+Missing or address-generated names remain unknown. A name observed at multiple procedure
 entries retains its label constraint but cannot establish equal endpoints.
 Pairing preserves duplicate counts and considers alternative compatible
 pairings; array order never identifies an edge. Compatible records with
 unknown endpoint identity or kind facts remain `unknown`. Independent known
 facts that contradict every possible pairing still establish `changed`.
 Source Evidence retains the original addresses, names and unavailable facts.
+
+Coordinate identity requires a common executable context: artifact identity,
+selected image or architecture slice, address space, and applicable load mapping.
+Equal coordinates in different slices of one container do not establish equal
+endpoints. The current digest-only selection does not enforce that context and
+can report references unchanged across distinct slices
+([#6502](https://github.com/morluto/rea/issues/6502)).
+
+The `calls` dimension separately compares direction and procedure names without
+retaining endpoint addresses. Distinct same-named procedures can therefore
+compare unchanged ([#6853](https://github.com/morluto/rea/issues/6853)). Check
+the source dossiers' endpoint identities before using either affected dimension
+as a reconstruction proof; another dimension reporting a change does not repair
+the selected dimension's false equality.
 
 ### Comparison input shapes
 

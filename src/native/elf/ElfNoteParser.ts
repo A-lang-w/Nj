@@ -13,6 +13,8 @@ import {
   elfObjectTypeName,
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -20,12 +22,27 @@ const SHT_STRTAB = 3;
 const HEX_DESCRIPTOR_LIMIT = 64;
 
 interface TextBudget {
-  readonly limit: number;
+  limit: number;
   used: number;
   hashed: number;
   scanned: number;
   readonly hashes: Map<string, string>;
   readonly scans: Map<string, number>;
+}
+
+/** Caller can raise max_file_bytes to admit the decoded section-name table. */
+export class ElfNoteSectionNameBudgetFailure extends Error {
+  readonly _tag = "ElfNoteSectionNameBudgetFailure";
+
+  constructor(
+    readonly minimumMaxFileBytes: bigint,
+    readonly selectedMaxFileBytes: number,
+  ) {
+    super(
+      `ELF source and decoded section names require ${String(minimumMaxFileBytes)} bytes, above the selected max_file_bytes (${String(selectedMaxFileBytes)}).`,
+    );
+    this.name = "ElfNoteSectionNameBudgetFailure";
+  }
 }
 
 const fail = (message: string): never => {
@@ -303,7 +320,10 @@ export const parseElfNotes = (
     shstrndx === 0xffff ||
     (shoff !== 0 && shnum === 0)
   )
-    return fail("ELF extended numbering is unsupported.");
+    throw new BinaryFormatFailure(
+      "unsupported",
+      "ELF extended numbering is unsupported.",
+    );
   if (phnum !== 0) {
     if (phentsize < (wide ? 56 : 32))
       return fail("ELF program header width is invalid.");
@@ -323,6 +343,7 @@ export const parseElfNotes = (
     scans: new Map(),
   };
   let shstrtab: Buffer | null = null;
+  let sectionNameLimitation: string | undefined;
   if (shnum !== 0 && shstrndx !== 0) {
     if (shstrndx >= shnum)
       return fail("ELF section name index is out of range.");
@@ -331,7 +352,31 @@ export const parseElfNotes = (
       return fail("ELF section name table is not a string table.");
     const strOff = reader.word(namesHeader + (wide ? 24 : 16));
     const strSize = reader.word(namesHeader + (wide ? 32 : 20));
-    shstrtab = reader.slice(strOff, strSize);
+    const rawNames = reader.slice(strOff, strSize);
+    const flags = reader.word(namesHeader + 8);
+    const decoded = decodeElfSectionNameTable(
+      rawNames,
+      BigInt(flags),
+      header.elfClass,
+      reader.little,
+      input.max_file_bytes - bytes.length,
+    );
+    if (decoded.state === "malformed") return fail(decoded.message);
+    if (decoded.state === "limit")
+      throw new ElfNoteSectionNameBudgetFailure(
+        BigInt(bytes.length) + decoded.requiredBytes,
+        input.max_file_bytes,
+      );
+    if (decoded.state === "unsupported") {
+      shstrtab = null;
+      sectionNameLimitation = `ELF section names are unavailable because compression type ${String(decoded.compressionType)} is unsupported.`;
+    } else {
+      shstrtab = decoded.bytes;
+      if (decoded.compressed) text.limit = bytes.length + shstrtab.length;
+    }
+  } else if (shnum !== 0) {
+    sectionNameLimitation =
+      "ELF section names are unavailable because no section-name string table is declared.";
   }
   const tables: ElfNotes["tables"] = [];
   const parsed: ReturnType<typeof toEntry>[] = [];
@@ -409,7 +454,10 @@ export const parseElfNotes = (
       examined_tables: tables.length,
       examined_entries: examined.count,
     },
-    limitations: [...(absent ? ABSENT_LIMITATIONS : LIMITATIONS)],
+    limitations: [
+      ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
+      ...(sectionNameLimitation === undefined ? [] : [sectionNameLimitation]),
+    ],
   };
 };
 

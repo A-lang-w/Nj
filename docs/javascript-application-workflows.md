@@ -40,6 +40,12 @@ combine its fields with the fact's location. Semantic trace results include the
 canonical context subset referenced by their returned facts, so those facts
 remain self-contained in the response.
 
+Content-deduplicated module references match every retained observation path.
+A path-filtered reference reports the caller-selected path while keeping its
+shared node identity. Item selection also accepts any retained path when it
+identifies one module; if several module kinds share that path, select the
+reported `node_id`. Node-ID selection uses the stable representative path.
+
 ## Retained module facts
 
 For canonical identities and retained source-range counts, query the existing
@@ -406,8 +412,13 @@ when the object is an array element, nested inside mixed object/array
 containers, or assigned to a previously declared identifier. Saving the getter
 result in an alias does not make its old field values immutable. Known array
 indices include holes; an element after a spread has only a minimum possible
-index. Unrelated properties and known array prefixes remain precise, and a
-getter read without a write does not invalidate the receiver's fields.
+index. For these returned-reference writes, unrelated properties and known
+array prefixes remain precise. Getter invocation has separate effects: a
+property read can invoke a getter that mutates its receiver without any write
+through the returned value. Current analysis can miss these invocation effects
+and retain a stale receiver-field literal
+([#6669](https://github.com/morluto/rea/issues/6669)); absence of a later write
+does not establish getter purity.
 Nested callable returns are not assigned to their parent callable. Projected
 graph observations carry source ranges but never source text.
 
