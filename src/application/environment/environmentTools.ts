@@ -27,7 +27,7 @@ export const REPLAY_CATALOG_INSTRUCTIONS =
 /** JSON Schema advertised for one tool argument. */
 export interface EnvironmentToolProperty {
   readonly type?: "string" | "object" | "array";
-  readonly items?: { readonly type: "string" };
+  readonly items?: { readonly type: "string" | "number" | "object" };
   readonly oneOf?: readonly (
     | { readonly type: "string" }
     | { readonly type: "array"; readonly items: { readonly type: "string" } }
@@ -280,6 +280,7 @@ const freeName = (
 /** Path parameters keep their names; a query name or the write body that would collide is renamed, so every input stays addressable. */
 export const environmentToolArguments = (
   tool: EnvironmentManifestTool,
+  body = WRITE_METHODS.has(tool.method),
 ): EnvironmentToolArguments => {
   const taken = new Set<string>();
   const path = new Map<string, string>();
@@ -305,9 +306,7 @@ export const environmentToolArguments = (
   return {
     path,
     query,
-    body: WRITE_METHODS.has(tool.method)
-      ? freeName(taken, "body", "request_")
-      : undefined,
+    body: body ? freeName(taken, "body", "request_") : undefined,
   };
 };
 
@@ -327,6 +326,10 @@ export const hasRepeatedQueryArgument = (
 function* environmentToolProperties(
   tool: EnvironmentManifestTool,
   args: EnvironmentToolArguments,
+  body: EnvironmentToolProperty = {
+    type: "object",
+    description: bodyDescription(tool),
+  },
 ): IterableIterator<readonly [string, EnvironmentToolProperty, boolean]> {
   for (const param of tool.params)
     yield [
@@ -349,12 +352,7 @@ function* environmentToolProperties(
       },
       false,
     ];
-  if (args.body !== undefined)
-    yield [
-      args.body,
-      { type: "object", description: bodyDescription(tool) },
-      false,
-    ];
+  if (args.body !== undefined) yield [args.body, body, false];
 }
 
 /** Serialization reservation calibrated with 1500 fields and eight concurrent SDK discovery requests. */
@@ -381,7 +379,26 @@ export interface EnvironmentCatalogOptions {
   readonly dataPlane?: EnvironmentDataPlane;
   /** What a served tool does, in place of how it answers; undefined keeps the answering sentence. */
   readonly describe?: (tool: EnvironmentManifestTool) => string | undefined;
+  /** The body a served tool takes in place of the method's, as a bulk write names its entities in it. */
+  readonly body?: (
+    tool: EnvironmentManifestTool,
+  ) => EnvironmentToolProperty | undefined;
 }
+
+/** The body a tool takes in a catalog: a served plan's, else the method's. */
+const catalogBody = (
+  tool: EnvironmentManifestTool,
+  body: EnvironmentCatalogOptions["body"],
+): {
+  readonly property: EnvironmentToolProperty | undefined;
+  readonly withBody: boolean;
+} => {
+  const property = body?.(tool);
+  return {
+    property,
+    withBody: WRITE_METHODS.has(tool.method) || property !== undefined,
+  };
+};
 
 /** Admit complete discovery before binding; six bytes per UTF-16 unit covers JSON escaping and UTF-8 expansion. */
 export const environmentToolDefinitions = (
@@ -391,6 +408,7 @@ export const environmentToolDefinitions = (
     operation = ENVIRONMENT_SERVE_OPERATION,
     dataPlane = "none",
     describe,
+    body,
   }: EnvironmentCatalogOptions = {},
 ): Result<
   readonly EnvironmentToolDefinition[],
@@ -439,21 +457,21 @@ export const environmentToolDefinitions = (
       !text(tool.name)
     )
       return refused();
+    const { property: taken, withBody } = catalogBody(tool, body);
     const count =
-      tool.params.length +
-      tool.query_parameter_names.length +
-      (WRITE_METHODS.has(tool.method) ? 1 : 0);
+      tool.params.length + tool.query_parameter_names.length + Number(withBody);
     // A lower bound rejects enormous argument lists before constructing their alias map.
     if (!reserve(count * EMPTY_PROPERTY_BYTES)) return refused();
     // The response summary is bounded by its samples and charged with the whole description.
     const description = toolDescription(source, tool, describe, answers);
     if (!text(description)) return refused();
-    const args = environmentToolArguments(tool);
+    const args = environmentToolArguments(tool, withBody);
     const properties = new Map<string, EnvironmentToolProperty>();
     const required: string[] = [];
     for (const [argument, property, mandatory] of environmentToolProperties(
       tool,
       args,
+      taken,
     )) {
       if (
         !text(argument) ||

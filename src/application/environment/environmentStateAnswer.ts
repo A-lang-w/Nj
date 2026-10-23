@@ -99,6 +99,8 @@ export type StateProvenance =
       readonly type: string;
       readonly collection: string;
       readonly id: string;
+      /** Every entity a bulk call wrote, in body order; `id` is the first. */
+      readonly ids?: readonly string[];
     };
 
 /** A replay answer that also says whether the state or a recording produced it. */
@@ -206,12 +208,14 @@ export interface ItemCall {
   readonly id: string;
 }
 
-/** What an item call names, or undefined when a path argument is missing. */
+/** What an item call names, or undefined when a path argument is missing; an item action's id comes before its action segment. */
 export const itemCall = (
   tool: EnvironmentManifestTool,
   args: ReplayArguments,
+  action = false,
 ): ItemCall | undefined => {
   const segments = callSegments(tool, args);
+  if (action && segments?.pop()?.supplied !== false) return undefined;
   const last = segments?.pop();
   return segments !== undefined && last?.supplied === true
     ? { segments, id: last.text }

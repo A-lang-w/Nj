@@ -25,7 +25,10 @@ import {
 } from "./environmentSource.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
 import { initialStateBytes } from "./environmentStateStore.js";
-import { describeWrite } from "./environmentStateWriteDescription.js";
+import {
+  describeWrite,
+  writeBody,
+} from "./environmentStateWriteDescription.js";
 import {
   environmentToolDefinitions,
   type EnvironmentDataPlane,
@@ -101,7 +104,10 @@ export const servedCatalog = (
       dataPlane,
       ...(state === undefined
         ? {}
-        : { describe: (tool) => describeWrite(state.writes.get(tool.name)) }),
+        : {
+            describe: (tool) => describeWrite(state.writes.get(tool.name)),
+            body: (tool) => writeBody(state.writes.get(tool.name)),
+          }),
     },
   );
   return tools.ok ? ok({ tools: tools.value, dataPlane }) : tools;

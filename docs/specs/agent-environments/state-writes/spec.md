@@ -84,6 +84,43 @@ same root regenerates values on every read.
 | `document` | `PUT`, `PATCH` or `POST` to a document view's path                    | that document             |
 | `none`     | anything else                                                         | reason `no-state-target`  |
 
+**Item actions.** A `POST`, `PUT` or `PATCH` to an item path plus one literal
+segment (`/{type}/{id}/archive`) is an `update` of the entity the item path
+names, recorded as `address: {by: "action", segment}`, when the segment names
+no collection (no state type ends in it, and it is not `delete`, `remove` or
+`destroy`) and every successful call answered nothing or that entity: never a
+201, and an object holding the id at the type's id field where an item read of
+the type shows its entity, with every field that read always shows. A call
+answering anything else made a sub-resource, as a comment `POST` does, and
+stays `none`. An action's unsent change of a scalar that no other rule
+explains takes the value its observation showed, a `set` rule applied on every
+call (`archived: true`); a changed object, list or instant has no rule, so the
+plan is `unexplained-change`. An action is served only when it sets something
+and a recorded call found every field it sets already at that value, since one
+change cannot tell a set from a toggle; otherwise it stays `unconfirmed`. Its
+call may send no body. An action is observed in its own response, or in a
+later item read only while no other tool's modelled write to the entity awaits
+a check: that read then checks the other write, and the action's call is one
+the gate does not model.
+
+**Bulk writes.** A `DELETE`, `PUT` or `PATCH` at a type's
+`collection_template`, or a `POST` to it plus `delete`, `remove` or `destroy`,
+names its entities in its body: an array of ids of one JSON kind, or of
+objects carrying the type's `id_field`, at the root or as the body's one array
+member (`{"IDs": […], "Read": true}`, `[{"Id": 9}]`). Every successful call
+must name them the same way, recorded as `address: {by: "ids", member, kind}`
+or `{by: "elements", member}`. A path whose last segment is the type's
+singular or plural (`/messages` for `/message`) writes that type. An `ids`
+member applies the body's other members to every id, an element its own
+members; a root id array updates nothing. Each named entity gets the effect as
+an item call would, checked by the same reads; one the state does not hold
+leaves the call unmodelled there. A bulk update's observation must show the
+members the call sent. Serving answers any ids only when the exemplar's
+response fits: no body, a body naming none of the recorded ids and holding no
+number equal to how many it named (a count), or an array with one element per
+id, each showing it as the first does; otherwise the reason is
+`body-unusable`.
+
 A `POST` whose path gives it no target is a `create` into the type its returned
 id is read under: its exemplar's response names an id (an identity member of the
 body or of an object member, or a scalar body or sole member of four characters
@@ -583,7 +620,17 @@ covers its arguments; otherwise it keeps the recorded page members.
 
 **Provenance.** Write answers carry `state: {source: "state", view: "create" |
 "update" | "delete", type, collection, id}`, or `{source: "state", view:
-"document-write", path}`.
+"document-write", path}`. A bulk answer adds `ids`, every entity it wrote in
+body order, `id` naming the first.
+
+**Bulk and action calls.** A served bulk tool takes its body as recorded (an
+array of objects or of ids of the recorded kind, or an object), a `DELETE`
+included, and `environment-compare` sends a probe's body to it; every id must
+name an entity the state holds, else the call is refused and the state is
+unchanged. A bulk
+update with a `unique` or `renewed` rule writes one entity per call, since one
+call draws those values once. A served item action's path names its entity
+before the action segment.
 
 **Data plane and export.**
 

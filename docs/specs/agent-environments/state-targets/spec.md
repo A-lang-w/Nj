@@ -51,6 +51,12 @@ its cause in the recordings and the code. The five largest shared causes:
   after the initial window is a variant too when it names a new shaping parameter and its object carries or lacks
   members the planned lines' do not, and an item only a replayed line showed, which the state never started with,
   answers with its own recording.
+- **Item actions.** A write to an item path plus a literal segment that names no collection, whose calls answer nothing
+  or the entity (never a 201, and with every field its item read always shows), updates that entity; a scalar it
+  changes without sending is set on every call. It is served only once a call found every field it sets already at
+  that value, so a toggle is never served. An action never takes a read another write to the entity still needs.
+- **Bulk writes.** A write at a type's collection whose body names entities by id, as an id array or objects carrying
+  the id field, deletes or updates each one; serving takes the body as recorded, a `DELETE` included.
 
 ## Acceptance
 

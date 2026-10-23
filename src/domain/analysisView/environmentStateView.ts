@@ -264,6 +264,7 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     from: jsonValueSchema,
     member: z.string(),
   }),
+  z.strictObject({ ...ruled, rule: z.literal("set"), value: jsonValueSchema }),
 ]);
 const insertRuleSchema = z.union([
   z.strictObject({ rule: z.enum(["first", "last"]) }),
@@ -349,6 +350,23 @@ const writePlanSchema = z.strictObject({
     .array(ordinalSchema)
     .describe("Later reads that reproduced from the state after this write."),
   contradicted_by: ordinalSchema.nullable(),
+  address: z
+    .discriminatedUnion("by", [
+      z.strictObject({ by: z.literal("action"), segment: z.string() }),
+      z.strictObject({
+        by: z.literal("ids"),
+        member: z.string().nullable(),
+        kind: z.enum(["number", "string"]),
+      }),
+      z.strictObject({
+        by: z.literal("elements"),
+        member: z.string().nullable(),
+      }),
+    ])
+    .optional()
+    .describe(
+      "How a call names its entities when its path does not end in one: the action segment after the item's id, or the body's ids as an array of one JSON `kind` or as objects carrying the id field, at the root or under `member`.",
+    ),
 });
 
 export const environmentStateFields = {

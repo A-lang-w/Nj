@@ -1,3 +1,4 @@
+import { jsonTextCodeUnits } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import { same, type JsonObject } from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
@@ -14,7 +15,8 @@ export const unsentChange = (rule: FieldRule): boolean =>
   rule.rule === "increment" ||
   rule.rule === "slug" ||
   rule.rule === "stamp" ||
-  rule.rule === "derived";
+  rule.rule === "derived" ||
+  rule.rule === "set";
 
 /** Whether serving gives a rule's field a new value on every call, so no call may have kept it. */
 export const regenerates = (rule: FieldRule): boolean =>
@@ -42,6 +44,20 @@ export const disagreesWithCall = (
         Object.hasOwn(call.after, rule.field) &&
         !same(call.written[rule.field], call.after[rule.field])) ||
       (regenerates(rule) && call.kept.includes(rule.field)),
+  );
+
+/** The fields a call found already at the value a set rule gives them: the action sets them rather than toggling them. */
+export const steadyFields = (
+  rules: readonly FieldRule[],
+  before: JsonObject,
+  after: JsonObject,
+): string[] =>
+  rules.flatMap((rule) =>
+    rule.rule === "set" &&
+    same(before[rule.field], rule.value) &&
+    same(after[rule.field], rule.value)
+      ? [rule.field]
+      : [],
   );
 
 /** A call's scalar members by name, as much of it as later rules are checked against. */
@@ -81,6 +97,7 @@ export const contradictsEarlierCalls = (
         const value = shown.get(rule.field);
         if (value === undefined) return false;
         if (rule.rule === "increment") return integerOf(value) !== undefined;
+        if (rule.rule === "set") return !same(value, rule.value);
         // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
         if (rule.rule === "clock") return true;
         if (rule.rule === "stamp") return !same(value, rule.value);
@@ -143,4 +160,64 @@ export const conflictsWithPlan = (
       return held !== undefined && !same(held, rule);
     })
   );
+};
+
+/** A modelled update's result: a later read that also shows an unmodelled change checks only the members it sent. */
+export const appliedUpdate = (
+  plan: Pick<StateWritePlan, "body" | "rules">,
+  at: {
+    readonly targets: string[];
+    readonly target: {
+      readonly type: string;
+      readonly collection: string;
+      readonly id: string;
+    };
+  },
+  before: JsonObject,
+  call: { readonly written: JsonObject; readonly body: JsonObject },
+) => {
+  const { written, body } = call;
+  const sent = Object.keys(body).filter(
+    (member) => member !== plan.body?.identity,
+  );
+  const derived = Object.keys(written).filter(
+    (field) =>
+      !Object.hasOwn(before, field) || !same(written[field], before[field]),
+  );
+  const changed = {
+    fields: [...new Set([...sent, ...derived])],
+    accumulated: plan.rules.flatMap((rule) =>
+      rule.rule === "increment" ? [rule.field] : [],
+    ),
+  };
+  return {
+    kind: "applied" as const,
+    targets: at.targets,
+    entity: at.target,
+    fields: sent,
+    changed,
+  };
+};
+
+/** Keep what a modelled update call showed, which later calls' rules must reproduce, and the fields it found already set. */
+export const rememberCall = (
+  retain: (bytes: number) => void,
+  draft: {
+    readonly plan: { readonly rules: readonly FieldRule[] };
+    readonly updates: UpdateCall[];
+    readonly steady: Set<string>;
+  },
+  call: {
+    readonly before: JsonObject;
+    readonly after: JsonObject;
+    readonly sent: JsonObject;
+    readonly kept: readonly string[];
+  },
+): void => {
+  const { kept } = call;
+  const facts = { shown: scalars(call.after), sent: scalars(call.sent), kept };
+  retain(64 + jsonTextCodeUnits([...facts.shown, ...facts.sent, kept]) * 2);
+  draft.updates.push(facts);
+  for (const field of steadyFields(draft.plan.rules, call.before, call.after))
+    draft.steady.add(field);
 };

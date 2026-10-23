@@ -5,7 +5,6 @@ import {
   isObject,
   locateItem,
   at,
-  same,
   type JsonObject,
   type StateDocument,
   type StateEntity,
@@ -30,7 +29,8 @@ import {
   contradictsEarlierCalls,
   disagreesWithCall,
   keptFields,
-  scalars,
+  rememberCall,
+  appliedUpdate,
   type UpdateCall,
   conflictsWithPlan,
   refinedBody,
@@ -47,6 +47,10 @@ import {
   restampedFields,
 } from "./environmentStateWriteStamps.js";
 import { readClock } from "./environmentStateWriteValues.js";
+import {
+  actionItemPath,
+  observationNeeds,
+} from "./environmentStateWriteAddress.js";
 import {
   pathValuesOf,
   type FieldRule,
@@ -74,6 +78,8 @@ export interface WriteDraft {
   readonly sequences: Map<string, number>;
   /** The collection a create writes into when its own path names no state type: the one its returned id was read under. */
   readonly linked?: string | undefined;
+  /** Fields an item action's call found already at the value it sets them to. */
+  readonly steady: Set<string>;
 }
 
 /** A write observation plus the fields its selected read view actually covers, if any. */
@@ -126,6 +132,8 @@ export interface EffectContext {
   readonly initialDocument: (tool: string) => StateDocument | undefined;
   /** The entities of a type the initial state held, whose values a sequence never reuses. */
   readonly startedWith: (type: string) => readonly StateEntity[];
+  /** Whether another tool's modelled write to the target awaits a check, which a later read must still make. */
+  readonly pending: (target: string) => boolean;
 }
 
 /** One recorded write: the record, its timeline index, its tool, and whether its plan only takes the recorded outcome. */
@@ -266,8 +274,12 @@ const updatedObservation = (
     readonly collection: string;
     readonly id: string;
   },
-  required: readonly string[],
+  observing: {
+    readonly required: readonly string[];
+    readonly borrow: boolean;
+  },
 ): UpdateObservation | undefined => {
+  const { required, borrow } = observing;
   const own = context.io.withBody(
     step.record.ordinal,
     (body): Observed | undefined => {
@@ -290,6 +302,7 @@ const updatedObservation = (
     required.every((field) => Object.hasOwn(own.object, field))
   )
     return own;
+  if (!borrow) return undefined;
   const later = laterObservation(searchFrom(context, step), {
     ...itemReads(context, entity),
     // With an answer or without one, only a read whose view shows every learned clock shows what this call stamped.
@@ -341,6 +354,25 @@ export const retainFixed = (
   if (fixed.length > 0) context.io.retain(64 + jsonTextCodeUnits(fixed) * 2);
 };
 
+/** An update's targets, and its recorded outcome: the entity takes what its observation shows, attributed to no tool. */
+const outcomes = (
+  context: EffectContext,
+  entity: StateEntity,
+  shown: JsonObject,
+) => {
+  const { type, collection, id } = entity;
+  const targets = [
+    entityTarget(type, collection, id),
+    collectionTarget(type, collection),
+  ];
+  const target = { type, collection, id };
+  const recorded = (): EffectResult => {
+    context.state.put(updatedEntity(entity, { ...entity.fields, ...shown }));
+    return { kind: "observed", targets, entity: target };
+  };
+  return { targets, target, recorded };
+};
+
 /** Build an update plan from its exemplar, or add what a later call showed. */
 const buildUpdate = (
   context: EffectContext,
@@ -389,10 +421,38 @@ export const applyUpdate = (
   draft: WriteDraft,
   step: WriteStep,
 ): EffectResult => {
+  const action = draft.plan.address?.by === "action";
+  // The entity as serving names it.
+  const named = itemTarget(context.state, draft.plan.target!, {
+    path: action ? actionItemPath(step.record.path) : step.record.path,
+  });
+  // An item action names its change in its path, so it may send no body.
+  const body =
+    action && context.io.requestBody(step.record.ordinal) === undefined
+      ? {}
+      : requestObject(context, step.record, draft);
+  return updateEntity(context, draft, step, { ...named, body });
+};
+
+/** Apply a recorded update to the held entity a call names, with the members it wrote to that entity. */
+export const updateEntity = (
+  context: EffectContext,
+  draft: WriteDraft,
+  step: WriteStep,
+  named: {
+    readonly collection: string;
+    readonly id: string;
+    readonly body: JsonObject | undefined;
+  },
+): EffectResult => {
   const type = draft.plan.target!;
   const idField = context.idField(type);
-  // The entity as serving names it.
-  const { collection, id } = itemTarget(context.state, type, step.record);
+  const { collection, id, body } = named;
+  const needs = observationNeeds(
+    draft.plan,
+    { ...named, type, idField },
+    context.pending,
+  );
   const entity = context.state.entity(type, collection, id);
   const after =
     entity === undefined
@@ -401,26 +461,13 @@ export const applyUpdate = (
           context,
           step,
           { type, idField, collection, id },
-          draft.plan.rules.flatMap((rule) =>
-            rule.rule === "clock" ? [rule.field] : [],
-          ),
+          needs,
         );
   if (entity === undefined || after === undefined) {
     fail(draft, step, "no-observation");
     return UNKNOWN;
   }
-  const targets = [
-    entityTarget(type, collection, id),
-    collectionTarget(type, collection),
-  ];
-  const target = { type, collection, id };
-  const recorded = (): EffectResult => {
-    context.state.put(
-      updatedEntity(entity, { ...entity.fields, ...after.object }),
-    );
-    return { kind: "observed", targets, entity: target };
-  };
-  const body = requestObject(context, step.record, draft);
+  const { targets, target, recorded } = outcomes(context, entity, after.object);
   if (step.observeOnly || body === undefined) {
     fail(draft, step, "body-unusable");
     return recorded();
@@ -438,6 +485,7 @@ export const applyUpdate = (
     ...(after.readFields === undefined ? {} : { readFields: after.readFields }),
     others: otherFields(context.state.ofType(type), { collection, id }),
     shown: shownBefore(context.viewOf, entity, after.ordinal),
+    action: needs.action,
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");
@@ -476,29 +524,18 @@ export const applyUpdate = (
   if (!written.ok || (disagrees && !unknown))
     refuse(draft, step, "unexplained-change");
   if (!written.ok || disagrees || unknown) return recorded();
-  const facts = { shown: scalars(after.object), sent: scalars(body), kept };
-  context.io.retain(
-    64 + jsonTextCodeUnits([...facts.shown, ...facts.sent, kept]) * 2,
-  );
-  draft.updates.push(facts);
+  rememberCall(context.io.retain, draft, {
+    before: entity.fields,
+    after: after.object,
+    sent: body,
+    kept,
+  });
   context.io.retain(64 + jsonTextCodeUnits(written.value) * 2);
   context.state.put(updatedEntity(entity, written.value));
-  // A later read that also shows an unmodelled change checks only the members this call sent.
-  const sent = Object.keys(body).filter(
-    (member) => member !== draft.plan.body?.identity,
-  );
-  const derived = Object.keys(written.value).filter(
-    (field) =>
-      !Object.hasOwn(entity.fields, field) ||
-      !same(written.value[field], entity.fields[field]),
-  );
-  const changed = {
-    fields: [...new Set([...sent, ...derived])],
-    accumulated: draft.plan.rules.flatMap((rule) =>
-      rule.rule === "increment" ? [rule.field] : [],
-    ),
-  };
-  return { kind: "applied", targets, entity: target, fields: sent, changed };
+  return appliedUpdate(draft.plan, { targets, target }, entity.fields, {
+    written: written.value,
+    body,
+  });
 };
 
 /** Serving regenerates a learned clock on every update, so recorded calls must advance it. */
@@ -534,39 +571,3 @@ const contradictsPlan = (
   contradictsEarlierCalls(draft, explained.rules) ||
   contradictsGeneratedClock(before, after, draft.plan.rules, explained.rules) ||
   conflictsWithPlan(draft.plan, explained);
-
-/** Apply a recorded delete: the held entity leaves its collection. */
-export const applyDelete = (
-  context: EffectContext,
-  draft: WriteDraft,
-  step: WriteStep,
-): EffectResult => {
-  const type = draft.plan.target!;
-  const { collection, id } = itemTarget(context.state, type, step.record);
-  const entity = context.state.entity(type, collection, id);
-  if (entity === undefined) {
-    fail(draft, step, "no-observation");
-    return UNKNOWN;
-  }
-  const { ordinal } = step.record;
-  if (!built(draft) && !step.observeOnly)
-    Object.assign(draft.plan, {
-      exemplar_ordinal: ordinal,
-      response: context.io.withBody(ordinal, (body) =>
-        responseShapeOf(ordinal, body, context.io.emptyResponse(ordinal), {
-          idField: context.idField(type),
-          id,
-        }),
-      ),
-    });
-  context.state.remove(entity);
-  const targets = [
-    entityTarget(type, collection, id),
-    collectionTarget(type, collection),
-  ];
-  return {
-    kind: step.observeOnly ? "observed" : "applied",
-    targets,
-    entity: { type, collection, id },
-  };
-};

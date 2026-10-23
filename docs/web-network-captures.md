@@ -665,8 +665,10 @@ recorded lines; a line they do not reproduce keeps its recorded members.
 `writes` lists one plan per tool whose request may change state, in tool
 order. Its `effect` is `create` for a `POST` to a type's
 `collection_template`, `update` for a `PUT`, `PATCH` or `POST` to that template
-plus one trailing parameter, `delete` for a `DELETE` to it, `document` for a
-`PUT`, `PATCH` or `POST` to a document's path, and otherwise `none` with reason
+plus one trailing parameter, or to that item path plus one action segment,
+`delete` for a `DELETE` to it, `document` for a `PUT`, `PATCH` or `POST` to a
+document's path, an `update` or `delete` of each entity a write at the
+collection names by id in its body, and otherwise `none` with reason
 `no-state-target`. A plan is built from the tool's first successful call: its
 request body must be a usable JSON object (as response bodies are usable), and
 the written entity must show in that call's response or in a later read before
@@ -684,9 +686,11 @@ echo when stored as sent; a member stored differently is accepted only with its
 recorded value (`body.fixed`) and stores the value the call that showed it
 recorded (the `value` of its `constant` rule), and a field it changed without
 sending must be a clock, a nested clock, an increment, a slug, a fresh `unique`
-value, a `stamp` of the acting user or a value `derived` from the one member it
-stores nowhere, or the plan is `unexplained-change`; an increment, slug, stamp
-or derived value must hold for every call of the tool. A write is served only
+value, a `stamp` of the acting user, a value `derived` from the one member it
+stores nowhere, or for an item action a `set` of a scalar to the value it
+showed, or the plan is `unexplained-change`; an increment, slug, stamp, derived
+value or set must hold for every call of the tool, and an action is served
+only once a call found what it sets already set. A write is served only
 with the query its first call sent. Every member the first call sent is required, except by `PATCH` and
 `POST` updates.
 

@@ -14,6 +14,13 @@ import {
   booleanLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { servedCatalog } from "../../../src/application/environment/environmentState.js";
+import { servedFrom } from "../../fixtures/environmentStateServing.js";
+import {
+  BOOK_INIT_ROWS,
+  BOOK_NOT_FOUND,
+  FIRST_BOOK,
+} from "../../fixtures/environmentStateWrites.js";
 
 interface ToolSchemas {
   readonly name: string;
@@ -433,6 +440,28 @@ const advertiseAndEnforceProcessEnvironmentKeyConstraint =
   };
 
 describe("MCP JSON Schema validity", () => {
+  it("advertises served environment catalogs, bulk bodies included, in schemas clients accept", () => {
+    const served = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["DELETE", "/api/books", [{ id: 2 }], 200, [{ id: 2 }]],
+      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", [FIRST_BOOK]],
+    ]);
+    const catalog = servedCatalog(served.source, served.state, "books");
+    if (!catalog.ok) throw catalog.error;
+    expect(
+      catalog.value.tools.some((tool) => tool.name === "delete_books"),
+    ).toBe(true);
+    expect(
+      schemaErrors(
+        catalog.value.tools.map((tool) => ({
+          name: tool.name,
+          inputSchema: tool.inputSchema as unknown as Record<string, unknown>,
+        })),
+      ),
+    ).toEqual([]);
+  });
+
   it("preserves empty-array validation in the advertised representation", () => {
     const schema = z.toJSONSchema(emptyArraySchema);
     const ajv = new Ajv2020({ strict: false, validateFormats: false });

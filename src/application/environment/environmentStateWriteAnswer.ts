@@ -79,7 +79,7 @@ import {
 const GENERATION_ATTEMPTS = 64;
 
 /** One served write call: the tool, its plan and its arguments. */
-interface WriteRequest {
+export interface WriteRequest {
   readonly tool: EnvironmentManifestTool;
   readonly plan: StateWritePlan;
   readonly args: ReplayArguments;
@@ -87,7 +87,7 @@ interface WriteRequest {
 }
 
 /** The path values a call supplies, keyed by template segment as write plans name them. */
-const pathValues = (
+export const pathValues = (
   tool: EnvironmentManifestTool,
   args: ReplayArguments,
 ): Map<string, string> => {
@@ -105,7 +105,7 @@ const pathValues = (
 };
 
 /** A refusal for a value `data/add` would refuse, so `data/get` always reports a state that loads back. */
-const unloadable = (
+export const unloadable = (
   tool: EnvironmentManifestTool,
   holder: string,
 ): AnalysisError =>
@@ -141,7 +141,7 @@ const callBody = ({
 };
 
 /** The entity a recorded observation shows: the values a create keeps and an update's constants. */
-const observedEntity = (
+export const observedEntity = (
   serving: StateServing,
   plan: StateWritePlan,
 ): JsonObject | undefined => {
@@ -170,7 +170,7 @@ const nextHeld = (
  * value, and UUIDs and tokens seeded by the state Evidence, tool, field and write count,
  * skipping values the type already holds.
  */
-const generator = (
+export const generator = (
   serving: StateServing,
   request: WriteRequest,
   target: {
@@ -280,10 +280,14 @@ const generator = (
 };
 
 /** A write's answer on its recorded response's status and content type: a rendered body, none, or the recorded one. */
-const writeAnswer = (
+export const writeAnswer = (
   serving: StateServing,
   request: WriteRequest,
-  rendered: { readonly fields: JsonObject | undefined; readonly id: string },
+  rendered:
+    | { readonly fields: JsonObject | undefined; readonly id: string }
+    | ((
+        recorded: JsonValue | undefined,
+      ) => Result<JsonValue | undefined, string>),
   state: StateProvenance,
 ): Result<StateAnswer, AnalysisError> => {
   const { plan, tool, args } = request;
@@ -302,7 +306,11 @@ const writeAnswer = (
     )?.exact === true;
   if (plan.response.shape === "recorded")
     return ok({ ...replayAnswer(serving.source, exchange, exact), state });
-  const body = writtenResponse(plan.response, recordedJson(exchange), rendered);
+  const recorded = recordedJson(exchange);
+  const body =
+    typeof rendered === "function"
+      ? rendered(recorded)
+      : writtenResponse(plan.response, recorded, rendered);
   if (!body.ok) return err(refused(tool, body.error));
   return stateAnswer(serving, { exchange, exact }, body.value ?? null, state);
 };
@@ -477,7 +485,7 @@ const targetEntity = (
   request: WriteRequest,
 ): Result<StateEntity, Result<StateAnswer, AnalysisError>> => {
   const { tool, plan, args } = request;
-  const call = itemCall(tool, args);
+  const call = itemCall(tool, args, plan.address?.by === "action");
   if (call === undefined)
     return err(
       err(refused(tool, `Tool ${tool.name} needs every path argument.`)),

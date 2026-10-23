@@ -297,6 +297,8 @@ export interface UpdateEvidence {
   readonly others: readonly JsonObject[];
   /** The fields of the observing read's view when that view showed the entity before, so one the entity lacked was added. */
   readonly shown?: readonly string[];
+  /** An item action, whose unsent changes take the values it showed. */
+  readonly action?: boolean;
 }
 
 /** The rule a field the update changed without sending follows, if any; `slugs` maps each echoed member's slug to the first such member. */
@@ -325,7 +327,24 @@ const changeRule = (
   const was = integerOf(before);
   if (was !== undefined && integerOf(after) === was + 1)
     return { field, rule: "increment" };
-  return stampRule(evidence, field) ?? derivedRule(evidence, field);
+  return (
+    stampRule(evidence, field) ??
+    derivedRule(evidence, field) ??
+    actionRule(evidence, field)
+  );
+};
+
+/** An item action sets a scalar it names; a changed object, list or instant is another write's doing or a regenerated value. */
+const actionRule = (
+  evidence: UpdateEvidence,
+  field: string,
+): FieldRule | undefined => {
+  const after = evidence.after[field]!;
+  return evidence.action === true &&
+    (after === null || typeof after !== "object") &&
+    readClock(after) === undefined
+    ? { field, rule: "set", value: after }
+    : undefined;
 };
 
 /** A sent clock the call left as it was, stored in whole seconds and naming the second the call ran in: the application stamps it anew, and the client sent back the one it read. */

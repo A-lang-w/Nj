@@ -297,9 +297,20 @@ const regenerated = (
   { rule: "clock" | "nested-clock" | "held-clock" | "unique" }
 > => REGENERATED.has(rule.rule);
 
+/** The value an echo or constant rule writes for a sent member, or a set rule on every call; undefined when it writes none. */
+const statedValue = (
+  rule: FieldRule,
+  sent: JsonObject,
+): JsonValue | undefined => {
+  if (rule.rule === "set") return rule.value;
+  if (rule.rule !== "echo" && rule.rule !== "constant") return undefined;
+  if (!Object.hasOwn(sent, rule.field)) return undefined;
+  return rule.rule === "echo" ? sent[rule.field] : rule.value;
+};
+
 /** The fields of an updated entity: sent echoed members, the constants the plan recorded, generated and derived changes. */
 export const updatedFields = (
-  plan: Pick<StateWritePlan, "rules" | "body">,
+  plan: Pick<StateWritePlan, "rules" | "body" | "address">,
   entity: { readonly before: JsonObject; readonly observed: JsonObject },
   call: WriteCall & { readonly id: string },
   generate: GenerateValue,
@@ -316,17 +327,16 @@ export const updatedFields = (
   const members = Object.keys(sent).filter(
     (member) => member !== plan.body?.identity,
   );
-  if (members.length === 0)
+  // An item action names its change in its path, so it may send nothing.
+  if (members.length === 0 && plan.address?.by !== "action")
     return err(
       `The call sends none of the members an update applies (${bodyContract(plan.body)}).`,
     );
   const written: JsonObject = { ...before };
   for (const rule of plan.rules) {
-    if (rule.rule === "echo" || rule.rule === "constant") {
-      if (!Object.hasOwn(sent, rule.field)) continue;
-      written[rule.field] =
-        rule.rule === "echo" ? sent[rule.field]! : rule.value;
-    } else if (rule.rule === "increment") {
+    const stated = statedValue(rule, sent);
+    if (stated !== undefined) written[rule.field] = stated;
+    else if (rule.rule === "increment") {
       const was = integerOf(before[rule.field]);
       if (was !== undefined)
         written[rule.field] = spelledLike(before[rule.field]!, was + 1);

@@ -14,6 +14,7 @@ import {
 } from "./environmentStateRules.js";
 import { UnseenEntities } from "./environmentStateWriteAdoption.js";
 import { FailedReadBlame } from "./environmentStateWriteBlame.js";
+import { addressedWrite } from "./environmentStateWriteAddress.js";
 import { linkedTarget } from "./environmentStateWriteLinks.js";
 import { updatedEntity } from "./environmentStateWriteApply.js";
 import { projectedRead } from "./environmentStateWriteObserve.js";
@@ -53,10 +54,11 @@ import {
   type TouchedTargets,
   writtenFieldChecks,
 } from "./environmentStateWriteAttribution.js";
+import { applyBulk } from "./environmentStateWriteBulk.js";
 import { applyCreate } from "./environmentStateWriteCreate.js";
 import { applyDocument } from "./environmentStateWriteDocument.js";
+import { applyDelete } from "./environmentStateWriteDelete.js";
 import {
-  applyDelete,
   applyUpdate,
   built,
   type EffectContext,
@@ -186,12 +188,22 @@ export class EnvironmentStateWriteSimulation {
         viewOf: (ordinal) =>
           this.#input.views.get(this.#toolOf.get(ordinal)?.name ?? ""),
       });
-      const { effect, target } = link;
+      const addressed =
+        link.effect === "none"
+          ? addressedWrite(tool, {
+              ...this.#input,
+              types,
+              idField: (type) => this.#types.get(type)?.id_field,
+              views: this.#input.views.values(),
+            })
+          : undefined;
+      const { effect, target } = addressed ?? link;
       this.#input.io.retain(512);
       this.#drafts.set(tool.name, {
         plan: {
           ...unservedPlan(tool.name, effect, target, "no-state-target"),
           reason: effect === "none" ? "no-state-target" : null,
+          ...(addressed === undefined ? {} : { address: addressed.address }),
         },
         observed: undefined,
         candidates: [],
@@ -201,6 +213,7 @@ export class EnvironmentStateWriteSimulation {
         calls: 0,
         updates: [],
         sequences: new Map(),
+        steady: new Set(),
         linked: link.collection,
       });
     }
@@ -253,6 +266,10 @@ export class EnvironmentStateWriteSimulation {
         this.#input.documents.find((document) => document.tool === tool),
       startedWith: (type) =>
         this.#input.entities.filter((entity) => entity.type === type),
+      pending: (target) =>
+        [...(this.#touched.get(target)?.keys() ?? [])].some(
+          (name) => name !== writer,
+        ),
     };
   }
 
@@ -276,19 +293,25 @@ export class EnvironmentStateWriteSimulation {
     const observeOnly = draft.plan.reason !== null;
     if (!observeOnly) draft.calls += 1;
     const step: WriteStep = { record, index, tool, observeOnly };
-    const result = APPLY[effect](this.#context(tool.name), draft, step);
+    const context = this.#context(tool.name);
+    const { address } = draft.plan;
+    const results =
+      address !== undefined && address.by !== "action"
+        ? applyBulk(context, draft, step)
+        : [APPLY[effect](context, draft, step)];
     // A call of a tool whose plan was never built, or one a linked plan does not place, is no more modelled than one of a tool without a plan.
     if (
-      result.kind === "unknown" &&
+      results.some((result) => result.kind === "unknown") &&
       (!built(draft) || draft.linked !== undefined)
     )
       this.#unseen.unplanned(index);
-    this.#settle(result, {
-      index,
-      tool: tool.name,
-      path: record.path,
-      end: record.end,
-    });
+    for (const result of results)
+      this.#settle(result, {
+        index,
+        tool: tool.name,
+        path: record.path,
+        end: record.end,
+      });
   }
 
   /** Attribute an applied effect to its tool; a recorded outcome is the state's new baseline; an unknown one taints. */

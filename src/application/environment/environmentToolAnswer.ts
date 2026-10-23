@@ -10,6 +10,7 @@ import type {
   EnvironmentSource,
 } from "./environmentSource.js";
 import { answerFromState } from "./environmentStateAnswer.js";
+import { answerBulk } from "./environmentStateBulkAnswer.js";
 import type { EnvironmentStateStore } from "./environmentStateStore.js";
 import { answerWrite } from "./environmentStateWriteAnswer.js";
 
@@ -30,8 +31,10 @@ export const environmentToolAnswer = (
         replayEnvironmentTool(source, tool, args, observedQuery)
     : (tool, args, observedQuery) => {
         const plan = store.state.writes.get(tool.name);
+        const bulk =
+          plan?.address !== undefined && plan.address.by !== "action";
         return plan?.served === true
-          ? answerWrite(
+          ? (bulk ? answerBulk : answerWrite)(
               { source, store },
               {
                 tool,
