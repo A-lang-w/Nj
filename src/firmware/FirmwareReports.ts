@@ -61,6 +61,12 @@ const missingDependency = z.object({
   __typename__: z.literal("ExtractorDependencyNotFoundReport"),
   dependencies: z.array(z.string()),
 });
+/** Unblob's task-level exception report; it establishes no stage or byte range. */
+const taskException = z.object({
+  __typename__: z.literal("UnknownError"),
+  severity: z.literal("ERROR"),
+  exception: z.string(),
+});
 const region = z.object({
   id: z.string(),
   start_offset: integer,
@@ -359,7 +365,8 @@ export const normalizeUnblobReport = (
         );
       noteMissingDependencies(path, [item]);
       if (
-        item.__typename__ === "ExtractorExecutionErrorReport" &&
+        (item.__typename__ === "ExtractorExecutionErrorReport" ||
+          taskException.safeParse(item).success) &&
         !taskFailures.has(path)
       ) {
         taskFailures.add(path);
