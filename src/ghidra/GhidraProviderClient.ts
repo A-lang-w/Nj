@@ -1016,6 +1016,11 @@ const projectPrimarySessionError = (
       ? "Ghidra's output for this operation is incomplete. No OutOfMemoryError was confirmed; a memory cause cannot be ruled out."
       : undefined;
   if (memoryFailure !== undefined) return memoryFailure;
+  const killed = projectExternalSigkill(operation, failure, context, {
+    restart: exitedProviderMessage(operation, failure, health),
+    uncertainty,
+  });
+  if (killed !== undefined) return killed;
   if (failure.kind === "timeout") {
     const timeoutMs = failure.timeoutMs ?? startupTimeoutMs;
     const guidance =
@@ -1167,6 +1172,74 @@ const ghidraSessionContinuationMessage = (
   return failure.cleanupFailure === undefined
     ? "The request was also cancelled before the failure settled, so REA closed the Ghidra session; the next request starts a new session and repeats import and analysis."
     : "The request was also cancelled, and Ghidra session shutdown left cleanup unconfirmed. Close the target to retry retained cleanup before starting another Ghidra session.";
+};
+
+const memoryCgroupSchema = z.object({
+  path: z.string(),
+  oom_kill_before: z.number().int().nonnegative(),
+  oom_kill_after: z.number().int().nonnegative(),
+  memory_max: z
+    .union([z.number().int().nonnegative(), z.literal("max")])
+    .nullable(),
+});
+
+const GHIDRA_PROCESS_TREE_MEMORY_ACTION =
+  "A memory limit covers Ghidra's native decompiler processes as well as its Java heap, and their number follows the available CPUs, so a larger GHIDRA_HEADLESS_MAXMEM does not help. Raise the container or host memory limit, or allow fewer CPUs with a longer REA_GHIDRA_STARTUP_TIMEOUT_MS.";
+
+/**
+ * A SIGKILL observed before the process supervisor began stopping Ghidra did
+ * not come from REA. Kernel and container OOM killers send it without any
+ * OutOfMemoryError text, so a rise in the oom_kill count of REA's cgroup is
+ * the memory evidence when available. That count covers every process in the
+ * cgroup and its child groups, not only REA's process tree.
+ */
+const projectExternalSigkill = (
+  operation: AnalysisOperation,
+  failure: GhidraSessionError,
+  context: {
+    readonly cause: GhidraSessionError;
+    readonly diagnostics: Readonly<Record<string, JsonValue>>;
+  },
+  guidance: {
+    readonly restart: string | undefined;
+    readonly uncertainty: string | undefined;
+  },
+): AnalysisError | undefined => {
+  if (
+    (failure.kind !== "process" && failure.kind !== "protocol") ||
+    failure.diagnostics.exit_signal !== "SIGKILL" ||
+    failure.diagnostics.stop_requested === true
+  )
+    return undefined;
+  const retry = guidance.restart ?? "Then retry.";
+  const cgroup = memoryCgroupSchema.safeParse(
+    failure.diagnostics.memory_cgroup,
+  );
+  if (
+    cgroup.success &&
+    cgroup.data.oom_kill_after > cgroup.data.oom_kill_before
+  ) {
+    const configuredHeap = failure.diagnostics.configured_jvm_max_heap;
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      `Ghidra was killed by SIGKILL while the oom_kill count of REA's cgroup ${cgroup.data.path} rose from ${String(cgroup.data.oom_kill_before)} to ${String(cgroup.data.oom_kill_after)}, so the kernel OOM killer ended a process in that cgroup or one of its child groups. The Java heap need not have been full.`,
+      {
+        cgroup_memory_max: cgroup.data.memory_max,
+        configured_jvm_max_heap:
+          typeof configuredHeap === "string" ? configuredHeap : null,
+      },
+      {
+        ...context,
+        remediationAction: `${GHIDRA_PROCESS_TREE_MEMORY_ACTION} ${retry}`,
+      },
+    );
+  }
+  return new ProviderAdapterError("ghidra", operation, {
+    ...context,
+    userMessage: `Ghidra was killed by SIGKILL before REA stopped it. REA could not confirm the sender; a kernel or container out of memory killer is a common one and leaves no Java OutOfMemoryError in the output.${guidance.uncertainty === undefined ? "" : ` ${guidance.uncertainty}`}`,
+    remediationAction: `Check the host or container for an out-of-memory kill, for example in the kernel log or as OOMKilled in docker inspect. ${GHIDRA_PROCESS_TREE_MEMORY_ACTION} ${retry}`,
+  });
 };
 
 /** Name the settings that change Ghidra's import-and-analysis startup deadline. */
