@@ -956,7 +956,7 @@ const projectPrimarySessionError = (
           "Only this procedure's decompilation was stopped; the Ghidra session remains usable.",
         )}`,
         remediationAction:
-          "Use analyze_function (CLI: `rea function`) for listing facts. Raise REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS and restart REA to allow a longer decompile. The MCP tool-call deadline must cover Ghidra startup plus that limit; an earlier cancellation closes the session. `rea setup` derives matching Codex/Kimi deadlines.",
+          "Use analyze_function (CLI: `rea function`) for listing facts. Raise REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS and restart REA. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
       },
     );
   if (failure.kind === "analysis_timeout")
@@ -972,14 +972,15 @@ const projectPrimarySessionError = (
     return new AnalysisResourceConstraintError(
       operation,
       "memory",
-      failure.message,
+      `${failure.message.trim().replace(/\.$/u, "")}. ${ghidraSessionContinuationMessage(
+        failure,
+        "The active analysis session and annotations remain available.",
+      )}`,
       null,
       {
         ...context,
-        remediationAction: `Retry this search in literal mode or simplify the regex. ${ghidraSessionContinuationMessage(
-          failure,
-          "The active analysis session and annotations remain available.",
-        )}`,
+        remediationAction:
+          "Retry this search in literal mode or simplify the regex.",
       },
     );
   if (

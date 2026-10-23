@@ -155,6 +155,41 @@ notices, JavaScript artifact graph findings, reconstruction journey findings,
 IDA doctor source/CLI tests, and native UI MCP tests. Blob identities are
 retained in the raw receipt. This full gate is not reported as passing.
 
+## Review follow-up verification
+
+The Java regex error factory now reports the engine failure, stage and caller
+pattern without promising a session lifetime or prescribing recovery. The
+provider's existing queue-aware continuation owner adds session state for
+healthy, concurrently cancelled and cleanup-incomplete outcomes. The boundary
+matrix now uses actual producer wording for all three failure families and
+covers nine state combinations.
+
+The timeout remediation distinguishes new Codex/Kimi registrations from
+existing positive client deadlines, which setup preserves. It directs callers
+to edit an existing deadline explicitly.
+
+- Updated source/boundary tests: 235 passed; two unchanged main SIGKILL wording
+  assertions still fail as reproduced on the exact base.
+- Full `npm run check` passed on the review follow-up integrated with main
+  `ba9c5bc6867272d02d2fcc9d5c7c2ea83f234067`.
+- The real Ghidra producer probe passed 41 checks with complete cleanup,
+  including the real regex factory's selector/stage and fact-only wording.
+  This invokes the actual factory and is not a natural regex stack-overflow
+  reproduction. The whole probe took 42.416 s elapsed, 55.326 s waited CPU and
+  788.5 MiB sampled family RSS.
+- Negative controls retained old production source at
+  `b4e105a48c381f1f1f86e277f771edf98e37ea6a` with updated verification inputs.
+  The deadline assertion fails on the old hint, and the corrected real Java
+  control fails specifically at
+  `regex_failure_leaves_lifecycle_to_provider`.
+  The initial producer-control harness did not compile and is excluded from
+  regression proof; the final control's assertion and complete diagnostics
+  are retained separately.
+
+The completed-task timing/context pair above was not repeated after these
+wording changes or subsequent main integration. Those later costs are
+unmeasured; the earlier estimates remain tied to their pinned source.
+
 ## Validation and limits
 
 - The initial selected source/boundary run passed 310 tests with 10 platform

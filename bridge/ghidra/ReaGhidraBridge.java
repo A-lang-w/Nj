@@ -4730,10 +4730,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         };
     }
 
+    // The host queue owns session lifetime, including concurrent cancellation.
     private static RequestFailure regexStackExhausted(String expression, String stage) {
         return new RequestFailure("regex_stack_exhausted",
             "Ghidra's Java regex engine exhausted its stack while " + stage +
-            " pattern " + expression + ". Use literal mode or simplify the regex; the session remains usable.");
+            " pattern " + expression + ".");
     }
 
     private static SessionDescriptor readDescriptor(Path path) throws IOException {
