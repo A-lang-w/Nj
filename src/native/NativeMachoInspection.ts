@@ -149,21 +149,6 @@ export const inspectNativeMacho = async (
   else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
-  const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
-  const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
-  if (nmIndex < 0 || dyldExports === undefined)
-    throw new TypeError("Missing nm or dyld_info export capture");
-  // A stripped symbol table (strip -T) can omit names the export trie keeps.
-  // Only then does llvm-nm's dyld-info pass add names, and its exact names
-  // disambiguate dyld_info rows, so rerun it rather than lose them.
-  if (
-    !isMissingUuidDyldFailure(dyldExports) &&
-    !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
-  ) {
-    const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
-    if (!withDyldInfo.ok) return err(withDyldInfo.error);
-    captures[nmIndex] = withDyldInfo.value;
-  }
   const otool = captures.find(({ tool }) => tool === "otool");
   if (otool === undefined) throw new TypeError("Missing otool capture");
   let load: ReturnType<typeof parseOtoolLoadCommands>;
@@ -194,14 +179,7 @@ export const inspectNativeMacho = async (
   );
   if (layoutRefusal !== undefined) {
     const diagnosedType = targetLayoutDyldRefusal(layoutRefusal);
-    // otool -h -l prints numeric MH_* file types; captured fixtures may use
-    // its verbose symbolic spelling. Both must confirm the diagnostic.
-    const fileTypeNumbers = { DSYM: "10", CORE: "4", FVMLIB: "3" } as const;
-    if (
-      diagnosedType === null ||
-      (load.fileType !== diagnosedType &&
-        load.fileType !== fileTypeNumbers[diagnosedType])
-    )
+    if (diagnosedType === null || load.fileTypeKind !== diagnosedType)
       return err(unusableNativeCommandOutput(layoutRefusal));
     const diagnostic =
       withoutEchoedPathHeader(
@@ -246,6 +224,21 @@ export const inspectNativeMacho = async (
     load.commands.some(({ kind }) => kind === "LC_UUID")
   )
     return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
+  const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
+  const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
+  if (nmIndex < 0 || dyldExports === undefined)
+    throw new TypeError("Missing nm or dyld_info export capture");
+  // A stripped symbol table (strip -T) can omit names the export trie keeps.
+  // Only then does llvm-nm's dyld-info pass add names, and its exact names
+  // disambiguate dyld_info rows, so rerun it rather than lose them.
+  if (
+    !isMissingUuidDyldFailure(dyldExports) &&
+    !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
+  ) {
+    const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
+    if (!withDyldInfo.ok) return err(withDyldInfo.error);
+    captures[nmIndex] = withDyldInfo.value;
+  }
   const selectedArchitectureName =
     selectedArchitecture ??
     (architectures.length === 1 ? (architectures[0]?.name ?? null) : null);

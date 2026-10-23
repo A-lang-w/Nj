@@ -14,7 +14,8 @@ export const targetLayoutDyldRefusal = (
     capture.tool !== "dyld_info" ||
     capture.exitCode === null ||
     capture.exitCode === 0 ||
-    capture.signal !== null
+    capture.signal !== null ||
+    capture.stderr.trim().length !== 0
   )
     return null;
   const lines = withoutEchoedPathHeader(
@@ -22,10 +23,12 @@ export const targetLayoutDyldRefusal = (
     capture.arguments.at(-1),
   )
     .split(/\r?\n/u)
-    .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""));
-  if (lines.includes(DSYM_SECTION_DIAGNOSTIC)) return "DSYM";
-  if (lines.includes("unknown mh.filetype 4")) return "CORE";
-  if (lines.includes("unknown mh.filetype 3")) return "FVMLIB";
+    .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
+    .filter(Boolean);
+  if (lines.length !== 1) return null;
+  if (lines[0] === DSYM_SECTION_DIAGNOSTIC) return "DSYM";
+  if (lines[0] === "unknown mh.filetype 4") return "CORE";
+  if (lines[0] === "unknown mh.filetype 3") return "FVMLIB";
   return null;
 };
 

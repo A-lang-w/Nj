@@ -409,11 +409,16 @@ describe("Mach-O target-layout refusals", () => {
     fileType: string,
     diagnostic: string,
     exitCode = 1,
+    options: { stderr?: string; refusedMode?: string } = {},
   ) => {
     const fixture = new NativeFixtureRunner();
     const result = await inspectNativeMacho({
       target: nativeMachoTarget("/fixture/debug"),
       run: async (tool, args, _signal, acceptNonZeroIf) => {
+        if (tool === "nm" && !args.includes("--no-dyldinfo"))
+          return err(
+            new AnalysisOutputError("inspect_macho", "unexpected nm fallback"),
+          );
         const base = await fixture.run(tool, args);
         if (!base.ok) return base;
         if (tool === "otool")
@@ -422,11 +427,18 @@ describe("Mach-O target-layout refusals", () => {
             stdout: base.value.stdout.replace("EXECUTE", fileType),
           });
         if (tool === "dyld_info") {
+          if (
+            options.refusedMode !== undefined &&
+            !args.includes(options.refusedMode)
+          )
+            return base;
           const failed = {
             ...base.value,
             stdout: `/fixture/debug:\n${diagnostic}\n`,
             stdoutBytes: Buffer.byteLength(diagnostic) + 17,
             exitCode,
+            stderr: options.stderr ?? "",
+            stderrBytes: Buffer.byteLength(options.stderr ?? ""),
           };
           return acceptNonZeroIf?.(failed)
             ? ok(failed)
@@ -468,6 +480,38 @@ describe("Mach-O target-layout refusals", () => {
         capturedOutput: { exit_code: 1, truncated: false },
       });
       expect(result.error.capturedOutput?.stdout).toContain(diagnostic);
+    },
+  );
+
+  it.each(["-imports", "-exports"])(
+    "confirms a refusal from %s without invoking the export fallback",
+    async (refusedMode) => {
+      const result = await inspectRefusal(
+        "DSYM",
+        "dyld_info: section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
+        1,
+        { refusedMode },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    },
+  );
+
+  it.each([
+    ["unknown mh.filetype 4\nunrelated loader error", ""],
+    ["unknown mh.filetype 4\nunknown mh.filetype 3", ""],
+    ["unknown mh.filetype 4", "unrelated stderr error"],
+  ])(
+    "preserves mixed errors as output failures: %s / %s",
+    async (diagnostic, stderr) => {
+      const result = await inspectRefusal("CORE", diagnostic, 1, { stderr });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisOutputError",
+        reason: "dyld_info failed",
+      });
     },
   );
 
