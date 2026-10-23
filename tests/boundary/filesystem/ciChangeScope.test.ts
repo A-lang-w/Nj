@@ -945,7 +945,32 @@ it.each([
   ],
   [
     "src/artifacts/SafeOutputTree.ts",
-    { code: true, agentenv: true, runtime: true },
+    {
+      code: true,
+      agentenv: true,
+      runtime: true,
+      javascript_recovery: true,
+    },
+  ],
+  [
+    "src/artifacts/readStableArtifact.ts",
+    { code: true, javascript_recovery: true },
+  ],
+  [
+    "src/artifacts/ArtifactResourceScope.ts",
+    { code: true, javascript_recovery: true },
+  ],
+  [
+    "src/artifacts/ArtifactFileOperation.ts",
+    { code: true, javascript_recovery: true },
+  ],
+  [
+    "src/artifacts/AnalysisCleanupLease.ts",
+    { code: true, javascript_recovery: true },
+  ],
+  [
+    "src/cli/finishAnalysisCommand.ts",
+    { code: true, javascript_recovery: true },
   ],
   [
     "src/cliJsonInput.ts",
