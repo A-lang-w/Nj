@@ -24,13 +24,12 @@ import type { CliInstance } from "./types.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 
 const supportedClientIds = SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name);
-const supportedClientSchema = z
-  .string()
-  .refine(
-    (candidate) => supportedClientIds.some((name) => name === candidate),
-    "Unsupported agent integration",
-  );
-const skillClientSchema = z.union([z.literal("shared"), supportedClientSchema]);
+const supportedClientSchema = z.enum(supportedClientIds, {
+  error: "Unsupported agent integration",
+});
+const skillClientSchema = z.enum(["shared", ...supportedClientIds], {
+  error: "Unsupported agent integration",
+});
 
 /** Register setup, doctor, uninstall, and update CLI commands. */
 export const registerSetupCommands = (

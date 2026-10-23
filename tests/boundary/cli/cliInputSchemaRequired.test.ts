@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
+import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
 import {
   apktoolInputSchemas,
   MAX_SELECTED_LOCALES,
@@ -50,6 +51,10 @@ const advertisedSchema = async (cli: CliInstance, command: string) => {
   expect(result.exitCode, command).toBe(0);
   return advertisedInputSchema.parse(JSON.parse(result.stdout));
 };
+
+const advertisedArrayItemEnum = (schema: unknown): readonly string[] =>
+  z.object({ items: z.object({ enum: z.array(z.string()) }) }).parse(schema)
+    .items.enum;
 
 const parserSchema = (
   cli: CliInstance,
@@ -307,6 +312,74 @@ describe("reference-source outline-depth input schema", () => {
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 0 })).toBe(true);
     expect(validate({ outlineDepth: 2 })).toBe(true);
+  });
+});
+
+describe("setup and doctor client selection input schema", () => {
+  it("advertises the integration IDs that the parser accepts", async () => {
+    const cli = createCli({});
+    const supportedClients = SUPPORTED_CLIENT_DEFINITIONS.map(
+      ({ name }) => name,
+    );
+    const setup = await advertisedSchema(cli, "setup");
+    const doctor = await advertisedSchema(cli, "doctor");
+
+    expect(
+      advertisedArrayItemEnum(setup.options?.properties?.["client"]),
+    ).toEqual(supportedClients);
+    expect(
+      advertisedArrayItemEnum(setup.options?.properties?.["skillClient"]),
+    ).toEqual(["shared", ...supportedClients]);
+    expect(
+      advertisedArrayItemEnum(doctor.options?.properties?.["client"]),
+    ).toEqual(supportedClients);
+
+    const setupOptions = parserSchema(cli, "setup", "options");
+    const doctorOptions = parserSchema(cli, "doctor", "options");
+    const ajv = new Ajv2020({ strict: false });
+    const validateSetup = ajv.compile({
+      ...setup.options,
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+    });
+    const validateDoctor = ajv.compile({
+      ...doctor.options,
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+    });
+
+    for (const client of supportedClients) {
+      expect(
+        setupOptions?.safeParse({ client: [client] }).success,
+        client,
+      ).toBe(true);
+      expect(
+        doctorOptions?.safeParse({ client: [client] }).success,
+        client,
+      ).toBe(true);
+      expect(validateSetup({ client: [client] }), client).toBe(true);
+      expect(validateDoctor({ client: [client] }), client).toBe(true);
+    }
+    expect(
+      setupOptions?.safeParse({ client: ["unknown-client"] }).success,
+    ).toBe(false);
+    expect(
+      doctorOptions?.safeParse({ client: ["unknown-client"] }).success,
+    ).toBe(false);
+    expect(validateSetup({ client: ["unknown-client"] })).toBe(false);
+    expect(validateDoctor({ client: ["unknown-client"] })).toBe(false);
+
+    for (const skillClient of ["shared", ...supportedClients]) {
+      expect(
+        setupOptions?.safeParse({ skillClient: [skillClient] }).success,
+        skillClient,
+      ).toBe(true);
+      expect(validateSetup({ skillClient: [skillClient] }), skillClient).toBe(
+        true,
+      );
+    }
+    expect(
+      setupOptions?.safeParse({ skillClient: ["unknown-client"] }).success,
+    ).toBe(false);
+    expect(validateSetup({ skillClient: ["unknown-client"] })).toBe(false);
   });
 });
 import { resolve } from "node:path";
