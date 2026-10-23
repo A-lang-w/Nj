@@ -182,4 +182,20 @@ describe("PythonBytecode - header building and parsing", () => {
     expect(parsePythonBytecodeHeader(checkSourceWithoutHash)).toBeNull();
     expect(isPythonBytecode(checkSourceWithoutHash)).toBe(false);
   });
+
+  it("recognizes all magics from PYTHON_PYC_MAGIC_TABLE including pre-release and 12-byte 3.7 magics", () => {
+    const py312Pre = buildPythonBytecodeHeader(3530, { sourceSize: 256 });
+    expect(py312Pre.length).toBe(16);
+    expect(isPythonBytecode(py312Pre)).toBe(true);
+    expect(parsePythonBytecodeHeader(py312Pre)?.version).toBe("3.12");
+
+    const py37Early = buildPythonBytecodeHeader(3390, { sourceSize: 128 });
+    expect(py37Early.length).toBe(12);
+    expect(isPythonBytecode(py37Early)).toBe(true);
+    expect(parsePythonBytecodeHeader(py37Early)).toMatchObject({
+      version: "3.7",
+      magicNumber: 3390,
+      codeObjectOffset: 12,
+    });
+  });
 });

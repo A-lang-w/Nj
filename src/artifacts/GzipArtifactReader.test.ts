@@ -96,36 +96,38 @@ describe("GzipArtifactReader", () => {
 
   it("records a limitation and partial coverage when FNAME is unsafe or unterminated", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "rea-gzip-unsafe-fname-"));
-    const gzipPath = join(tempDir, "archive.gz");
-    const baseCompressed = gzipSync(Buffer.from("inner payload"));
-    const header = Buffer.from(baseCompressed.subarray(0, 10));
-    header[3] = 0x08; // FNAME
-    const unsafeFname = Buffer.from("../evil.bin\0", "latin1");
-    await writeFile(
-      gzipPath,
-      Buffer.concat([header, unsafeFname, baseCompressed.subarray(10)]),
-    );
+    for (const badName of ["../evil.bin\0", "C:payload.bin\0"]) {
+      const gzipPath = join(tempDir, "archive.gz");
+      const baseCompressed = gzipSync(Buffer.from("inner payload"));
+      const header = Buffer.from(baseCompressed.subarray(0, 10));
+      header[3] = 0x08; // FNAME
+      const unsafeFname = Buffer.from(badName, "latin1");
+      await writeFile(
+        gzipPath,
+        Buffer.concat([header, unsafeFname, baseCompressed.subarray(10)]),
+      );
 
-    const reader = new GzipArtifactReader(gzipPath);
-    const coverages: unknown[] = [];
-    const entries = [];
-    for await (const entry of reader.entries(undefined, {
-      onCoverage: (cov) => coverages.push(cov),
-    })) {
-      entries.push(entry);
+      const reader = new GzipArtifactReader(gzipPath);
+      const coverages: unknown[] = [];
+      const entries = [];
+      for await (const entry of reader.entries(undefined, {
+        onCoverage: (cov) => coverages.push(cov),
+      })) {
+        entries.push(entry);
+      }
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0]!.path).toBe("archive");
+      expect(entries[0]!.limitations[0]).toMatch(/unsafe or empty path/);
+      expect(coverages).toEqual([
+        {
+          status: "complete",
+          limitations: entries[0]!.limitations,
+        },
+      ]);
+
+      await reader.close();
     }
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0]!.path).toBe("archive");
-    expect(entries[0]!.limitations[0]).toMatch(/unsafe or empty path/);
-    expect(coverages).toEqual([
-      {
-        status: "complete",
-        limitations: entries[0]!.limitations,
-      },
-    ]);
-
-    await reader.close();
     await rm(tempDir, { recursive: true, force: true });
   });
 });

@@ -176,5 +176,9 @@ describe("PeFormatInspector", () => {
     const optOffset = 128 + 4 + 20; // 152 (peOffset is 128 in createMockPeBinary)
     invalidMagicBuf.writeUInt16LE(0x9999, optOffset);
     expect(inspectPeFormat(invalidMagicBuf)).toBeNull();
+
+    // Truncated section table (declares 2 sections at offset 392, but buffer ends after 1 section at 432)
+    const truncatedSectionsBuf = createMockPeBinary().subarray(0, 432);
+    expect(inspectPeFormat(truncatedSectionsBuf)).toBeNull();
   });
 });

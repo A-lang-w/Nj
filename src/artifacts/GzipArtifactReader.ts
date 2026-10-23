@@ -12,6 +12,7 @@ import {
   type ArtifactReader,
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
+import { normalizeArtifactPath } from "./ArtifactPaths.js";
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
@@ -35,12 +36,16 @@ const deriveFallbackFilename = (fallbackPath: string): string => {
     : "decompressed_payload";
 };
 
-const isSafeGzipFilename = (name: string): boolean =>
-  name.length > 0 &&
-  name !== "." &&
-  name !== ".." &&
-  !name.includes("/") &&
-  !name.includes("\\");
+const normalizeSafeGzipFilename = (name: string): string | null => {
+  if (name.includes("/") || name.includes("\\")) {
+    return null;
+  }
+  try {
+    return normalizeArtifactPath(name);
+  } catch {
+    return null;
+  }
+};
 
 /** Extract original filename from GZIP header flags (RFC 1952) if present. */
 const resolveGzipOriginalFilename = async (
@@ -114,7 +119,8 @@ const resolveGzipOriginalFilename = async (
   }
 
   const name = fnameSlice.subarray(0, nullByte).toString("latin1");
-  if (!isSafeGzipFilename(name)) {
+  const normalizedName = normalizeSafeGzipFilename(name);
+  if (normalizedName === null) {
     return {
       path: fallback,
       limitations: [
@@ -123,7 +129,7 @@ const resolveGzipOriginalFilename = async (
     };
   }
 
-  return { path: name, limitations: [] };
+  return { path: normalizedName, limitations: [] };
 };
 
 /** Single-stream decompression reader for GZIP archives. */

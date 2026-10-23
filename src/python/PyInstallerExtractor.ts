@@ -59,6 +59,7 @@ export interface PyzArchive {
   readonly pythonVersion: string;
   readonly tocOffset: number;
   readonly modules: readonly PyzModuleEntry[];
+  readonly limitations?: readonly string[] | undefined;
 }
 
 export interface PyInstallerArchive {
@@ -245,8 +246,13 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
   if (tocOffset < 12 || tocOffset > pyzBuffer.length) return null;
 
   const modules: PyzModuleEntry[] = [];
+  const limitations: string[] = [];
   const table = pyzBuffer.subarray(tocOffset);
-  if (table.length <= MAX_PYZ_TABLE_BYTES) {
+  if (table.length > MAX_PYZ_TABLE_BYTES) {
+    limitations.push(
+      `PYZ table size (${table.length} bytes) exceeds maximum in-memory table budget of ${MAX_PYZ_TABLE_BYTES} bytes; module list omitted.`,
+    );
+  } else {
     const marshalled = readMarshalSubset(table);
     if (marshalled.ok && Array.isArray(marshalled.value)) {
       let nameBytes = 0;
@@ -299,6 +305,7 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
     pythonVersion,
     tocOffset,
     modules,
+    ...(limitations.length > 0 ? { limitations } : {}),
   };
 };
 
@@ -581,25 +588,28 @@ export const extractPyInstallerEntries = (
     }
 
     if (entry.typeFlag === "z" || entry.name.toLowerCase().endsWith(".pyz")) {
+      const pyz =
+        remainingBudget > 0 && inflated.decompressed
+          ? parsePyzArchive(inflated.data)
+          : null;
+      const pyzLimitations = [...limitations, ...(pyz?.limitations ?? [])];
       results.push({
         name: entry.name,
         kind: "pyz",
         data: inflated.data,
         decompressed: inflated.decompressed,
-        pythonVersion: archive.embeddedPyz?.pythonVersion,
-        limitations,
+        pythonVersion: pyz?.pythonVersion ?? archive.embeddedPyz?.pythonVersion,
+        limitations: pyzLimitations,
       });
 
-      if (remainingBudget > 0 && inflated.decompressed) {
-        const pyz = parsePyzArchive(inflated.data);
-        const modules = pyz?.modules ?? [];
-        for (const mod of modules) {
+      if (pyz && remainingBudget > 0) {
+        for (const mod of pyz.modules) {
           if (remainingBudget <= 0) break;
           const modBudget = Math.min(MAX_PER_ENTRY_BYTES, remainingBudget);
           const extractedMod = extractPyzModule(
             inflated.data,
-            pyz!.pycMagic,
-            pyz!.pythonVersion,
+            pyz.pycMagic,
+            pyz.pythonVersion,
             mod,
             modBudget,
           );

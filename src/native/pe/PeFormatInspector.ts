@@ -141,6 +141,7 @@ const parseDataDirectories = (
 };
 
 export const MAX_TOTAL_SECTION_SCAN_BYTES = 64 * 1024 * 1024; // 64 MiB budget
+const MAX_PE_SECTIONS = 1024;
 
 const parseSections = (
   buffer: Buffer,
@@ -150,12 +151,9 @@ const parseSections = (
   const sections: PeSectionInfo[] = [];
   const entropyCache = new Map<string, number>();
   let totalScannedBytes = 0;
-  const safeSectionCount = Math.min(numberOfSections, 1024);
 
-  for (let i = 0; i < safeSectionCount; i += 1) {
+  for (let i = 0; i < numberOfSections; i += 1) {
     const secOffset = sectionsOffset + i * 40;
-    if (secOffset + 40 > buffer.length) break;
-
     const secBuf = buffer.subarray(secOffset, secOffset + 40);
     const name = readSectionName(secBuf);
     const virtualSize = secBuf.readUInt32LE(8);
@@ -266,6 +264,12 @@ export const inspectPeFormat = (buffer: Buffer): PeFormatReport | null => {
   );
 
   const sectionsOffset = optionalHeaderOffset + sizeOfOptionalHeader;
+  if (
+    numberOfSections > MAX_PE_SECTIONS ||
+    sectionsOffset + numberOfSections * 40 > buffer.length
+  ) {
+    return null;
+  }
   const { sections, scannedBytes } = parseSections(
     buffer,
     sectionsOffset,

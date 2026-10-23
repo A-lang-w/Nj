@@ -66,16 +66,24 @@ export const isMinidump = (buffer: Buffer): boolean => {
   );
 };
 
-const MAX_MINIDUMP_STRING_BYTES = 64 * 1024; // 64 KiB per string
+export const MAX_MINIDUMP_STRING_BYTES = 64 * 1024; // 64 KiB per string
 const MAX_TOTAL_MODULE_NAME_BYTES = 1024 * 1024; // 1 MiB total for all module names
 export const MAX_MINIDUMP_STREAMS = 1_024; // Stream directory cap
 
-const readMinidumpString = (buffer: Buffer, rva: number): string => {
-  if (rva < 0 || rva + 4 > buffer.length) return "";
+const readMinidumpString = (
+  buffer: Buffer,
+  rva: number,
+):
+  | { readonly state: "ok"; readonly value: string }
+  | { readonly state: "limit" | "malformed" } => {
+  if (rva < 0 || rva + 4 > buffer.length) return { state: "malformed" };
   const declaredLen = buffer.readUInt32LE(rva);
-  const byteLen = Math.min(declaredLen, MAX_MINIDUMP_STRING_BYTES);
-  if (rva + 4 + byteLen > buffer.length) return "";
-  return buffer.toString("utf16le", rva + 4, rva + 4 + byteLen);
+  if (rva + 4 + declaredLen > buffer.length) return { state: "malformed" };
+  if (declaredLen > MAX_MINIDUMP_STRING_BYTES) return { state: "limit" };
+  return {
+    state: "ok",
+    value: buffer.toString("utf16le", rva + 4, rva + 4 + declaredLen),
+  };
 };
 
 const parseSystemInfoStream = (
@@ -90,8 +98,11 @@ const parseSystemInfoStream = (
   const minorVersion = buffer.readUInt32LE(rva + 12);
   const buildNumber = buffer.readUInt32LE(rva + 16);
   const csdRva = size >= 28 ? buffer.readUInt32LE(rva + 24) : 0;
+  const parsedCsd = csdRva > 0 ? readMinidumpString(buffer, csdRva) : undefined;
   const csdVersion =
-    csdRva > 0 ? readMinidumpString(buffer, csdRva) : undefined;
+    parsedCsd?.state === "ok" && parsedCsd.value.length > 0
+      ? parsedCsd.value
+      : undefined;
 
   return {
     architecture: ARCH_NAMES[archCode] ?? `Arch-0x${archCode.toString(16)}`,
@@ -99,7 +110,7 @@ const parseSystemInfoStream = (
     majorVersion,
     minorVersion,
     buildNumber,
-    csdVersion: csdVersion || undefined,
+    csdVersion,
   };
 };
 
@@ -152,9 +163,10 @@ const parseModuleListStream = (
       `ModuleListStream declared ${count} modules; only ${safeCount} entries were inspected.`,
     );
   }
-  const nameCache = new Map<number, string>();
+  const nameCache = new Map<number, string | null>();
   let totalNameBytes = 0;
   let omittedNames = 0;
+  let truncatedOrMalformedNames = 0;
 
   for (let i = 0; i < safeCount; i += 1) {
     const offset = rva + 4 + i * entrySize;
@@ -166,17 +178,23 @@ const parseModuleListStream = (
     const timeDateStamp = buffer.readUInt32LE(offset + 16);
     const nameRva = buffer.readUInt32LE(offset + 20);
 
-    let name: string | null | undefined = nameCache.get(nameRva);
-    if (name === undefined) {
-      if (totalNameBytes < MAX_TOTAL_MODULE_NAME_BYTES) {
-        const parsedName = readMinidumpString(buffer, nameRva);
-        totalNameBytes += parsedName.length * 2;
-        nameCache.set(nameRva, parsedName);
-        name = parsedName;
+    let name: string | null;
+    if (nameCache.has(nameRva)) {
+      name = nameCache.get(nameRva) ?? null;
+    } else if (totalNameBytes < MAX_TOTAL_MODULE_NAME_BYTES) {
+      const parsedName = readMinidumpString(buffer, nameRva);
+      if (parsedName.state === "ok") {
+        totalNameBytes += parsedName.value.length * 2;
+        nameCache.set(nameRva, parsedName.value);
+        name = parsedName.value;
       } else {
+        nameCache.set(nameRva, null);
         name = null;
-        omittedNames += 1;
+        truncatedOrMalformedNames += 1;
       }
+    } else {
+      name = null;
+      omittedNames += 1;
     }
 
     modules.push({
@@ -187,6 +205,11 @@ const parseModuleListStream = (
     });
   }
 
+  if (truncatedOrMalformedNames > 0) {
+    limitations.push(
+      `ModuleListStream contained ${truncatedOrMalformedNames} module name(s) that exceeded the ${MAX_MINIDUMP_STRING_BYTES}-byte string cap or had out-of-bounds extents; those names were omitted.`,
+    );
+  }
   if (omittedNames > 0) {
     limitations.push(
       `Module name budget (${MAX_TOTAL_MODULE_NAME_BYTES} bytes) exceeded; ${omittedNames} module name(s) were omitted.`,

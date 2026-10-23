@@ -3,6 +3,8 @@
  * Supports Python 2.7 through Python 3.13 (including PEP 552 hash-based pycs).
  */
 
+import { PYTHON_PYC_MAGIC_TABLE } from "../domain/python/pythonPyc.js";
+
 export interface PythonBytecodeMetadata {
   readonly version: string;
   readonly magicNumber: number;
@@ -13,15 +15,15 @@ export interface PythonBytecodeMetadata {
   readonly codeObjectOffset: number;
 }
 
-/** Python magic numbers mapped to human-readable version identifiers. */
-const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
+/** Legacy and extended Python magic numbers mapped to version identifiers. */
+const LEGACY_AND_EXTENDED_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
   // Python 2.x
   62211: "2.7",
   62161: "2.6",
   62061: "2.5",
   62011: "2.4",
 
-  // Python 3.x
+  // Python 3.0 to 3.6 and 3.14
   3000: "3.0",
   3131: "3.0",
   3141: "3.1",
@@ -32,21 +34,30 @@ const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
   3350: "3.5",
   3351: "3.5",
   3379: "3.6",
-  3394: "3.7",
-  3413: "3.8",
-  3425: "3.9",
-  3439: "3.10",
-  3495: "3.11",
-  3531: "3.12",
-  3571: "3.13",
   3627: "3.14",
+};
+
+/** Python magic numbers mapped to human-readable version identifiers. */
+const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
+  ...Object.fromEntries(
+    Array.from(PYTHON_PYC_MAGIC_TABLE.entries(), ([magic, entry]) => [
+      magic,
+      entry.python_version,
+    ]),
+  ),
+  ...LEGACY_AND_EXTENDED_MAGIC_VERSIONS,
 };
 
 const isEightByteHeader = (major: number, minor: number): boolean =>
   major === 2 || (major === 3 && minor < 3);
 
-const isTwelveByteHeader = (major: number, minor: number): boolean =>
-  major === 3 && minor >= 3 && minor < 7;
+const isTwelveByteHeader = (
+  magic: number,
+  major: number,
+  minor: number,
+): boolean =>
+  PYTHON_PYC_MAGIC_TABLE.get(magic)?.header_bytes === 12 ||
+  (major === 3 && minor >= 3 && minor < 7);
 
 const hasPythonMagicFraming = (bytes: Uint8Array): boolean => {
   if (bytes.length < 4) return false;
@@ -94,8 +105,8 @@ export const parsePythonBytecodeHeader = (
     };
   }
 
-  // Python 3.3 to 3.6: 4-byte magic + 4-byte timestamp + 4-byte size = 12 bytes
-  if (isTwelveByteHeader(major, minor)) {
+  // Python 3.3 to 3.6 (and early 3.7 12-byte magics): 4-byte magic + 4-byte timestamp + 4-byte size = 12 bytes
+  if (isTwelveByteHeader(magic, major, minor)) {
     if (bytes.length < 12) return null;
     const timestampSec = bytes.readUInt32LE(4);
     const sourceSize = bytes.readUInt32LE(8);
@@ -208,8 +219,8 @@ export const buildPythonBytecodeHeader = (
     return header;
   }
 
-  // Python 3.3 to 3.6: 12 bytes
-  if (isTwelveByteHeader(major, minor)) {
+  // Python 3.3 to 3.6 (and early 3.7 12-byte magics): 12 bytes
+  if (isTwelveByteHeader(magic, major, minor)) {
     const header = Buffer.alloc(12);
     header.writeUInt16LE(magic, 0);
     header[2] = 0x0d;

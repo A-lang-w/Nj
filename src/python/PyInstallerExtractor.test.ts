@@ -458,13 +458,44 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
     );
   });
 
-  it("rejects CArchive cookies whose declared tocLength exceeds MAX_TOC_BYTES", () => {
-    const cookie = Buffer.alloc(88);
-    PYINSTALLER_MAGIC.copy(cookie, 0);
-    cookie.writeUInt32BE(88, 8);
-    cookie.writeUInt32BE(0, 12);
-    cookie.writeUInt32BE(32 * 1024 * 1024 + 1, 16); // > MAX_TOC_BYTES
-    cookie.writeInt32BE(310, 20);
-    expect(parsePyInstallerArchive(cookie)).toBeNull();
+  it("rejects in-bounds CArchive tables that exceed MAX_TOC_BYTES or MAX_TOC_ENTRIES", () => {
+    const overBytesLen = 32 * 1024 * 1024 + 1;
+    const overBytesBuf = Buffer.alloc(overBytesLen + 88);
+    const cookieOffset = overBytesLen;
+    PYINSTALLER_MAGIC.copy(overBytesBuf, cookieOffset);
+    overBytesBuf.writeUInt32BE(overBytesBuf.length, cookieOffset + 8); // pkgLength fits in buffer
+    overBytesBuf.writeUInt32BE(0, cookieOffset + 12); // tocOffset = 0
+    overBytesBuf.writeUInt32BE(overBytesLen, cookieOffset + 16); // tocLength > MAX_TOC_BYTES
+    overBytesBuf.writeInt32BE(310, cookieOffset + 20);
+    expect(parsePyInstallerArchive(overBytesBuf)).toBeNull();
+
+    // 100,001 records of 18 bytes each (fits well within MAX_TOC_BYTES and buffer)
+    const entryCount = 100_001;
+    const tocLen = entryCount * 18;
+    const overEntriesBuf = Buffer.alloc(tocLen + 88);
+    for (let i = 0; i < entryCount; i += 1) {
+      overEntriesBuf.writeUInt32BE(18, i * 18);
+      overEntriesBuf.writeUInt8("o".charCodeAt(0), i * 18 + 17);
+    }
+    PYINSTALLER_MAGIC.copy(overEntriesBuf, tocLen);
+    overEntriesBuf.writeUInt32BE(overEntriesBuf.length, tocLen + 8);
+    overEntriesBuf.writeUInt32BE(0, tocLen + 12);
+    overEntriesBuf.writeUInt32BE(tocLen, tocLen + 16);
+    overEntriesBuf.writeInt32BE(310, tocLen + 20);
+    expect(parsePyInstallerArchive(overEntriesBuf)).toBeNull();
+  });
+
+  it("reports a limitation when a PYZ table exceeds MAX_PYZ_TABLE_BYTES", () => {
+    const oversizedTableLen = 16 * 1024 * 1024 + 1;
+    const pyzBuf = Buffer.alloc(12 + oversizedTableLen);
+    PYZ_MAGIC.copy(pyzBuf, 0);
+    Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]).copy(pyzBuf, 4);
+    pyzBuf.writeUInt32BE(12, 8);
+    const parsed = parsePyzArchive(pyzBuf);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.modules).toEqual([]);
+    expect(parsed?.limitations?.[0]).toMatch(
+      /exceeds maximum in-memory table budget/,
+    );
   });
 });

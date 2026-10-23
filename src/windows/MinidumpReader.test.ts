@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isMinidump,
   MAX_MINIDUMP_STREAMS,
+  MAX_MINIDUMP_STRING_BYTES,
   parseMinidump,
 } from "./MinidumpReader.js";
 
@@ -142,6 +143,21 @@ describe("MinidumpReader", () => {
     expect(report?.streamTypes).toHaveLength(MAX_MINIDUMP_STREAMS);
     expect(report?.limitations[0]).toMatch(
       /only 1024 stream directory entries/,
+    );
+  });
+
+  it("omits and reports module names that exceed MAX_MINIDUMP_STRING_BYTES instead of truncating them", () => {
+    const base = createMockMinidump();
+    const oversizedStrLen = MAX_MINIDUMP_STRING_BYTES + 2;
+    const buf = Buffer.alloc(354 + oversizedStrLen, 0);
+    base.copy(buf, 0, 0, 350);
+    buf.writeUInt32LE(oversizedStrLen, 350);
+
+    const report = parseMinidump(buf);
+    expect(report).not.toBeNull();
+    expect(report?.modules[0]?.name).toBeNull();
+    expect(report?.limitations[0]).toMatch(
+      /exceeded the 65536-byte string cap/,
     );
   });
 });
