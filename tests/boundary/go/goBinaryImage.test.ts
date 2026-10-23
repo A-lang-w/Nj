@@ -363,7 +363,7 @@ it("distinguishes unsupported containers from malformed recognized images", () =
   );
   pe.bytes.writeUInt32LE(0xfffffff0, 60);
   expect(() => readGoBinaryImage(pe.bytes)).toThrowError(
-    "MZ Windows new-header candidate is unresolved",
+    /MZ Windows new-header candidate is unresolved/i,
   );
 });
 

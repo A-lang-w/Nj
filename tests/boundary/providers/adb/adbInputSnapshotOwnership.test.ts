@@ -72,14 +72,18 @@ const fixture = async () => {
       if (args[4] === "-e")
         return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     }
-    if (args[2] === "push") {
+    if (args[2] === "push" && args[4] === devicePath) {
       snapshotPath = args[3]!;
       consumedBytes = await readFile(snapshotPath);
       if (consumedBytes.byteLength === 0)
         throw new Error("adb received an empty local snapshot");
       return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     }
-    if (args[3] === "sha256sum") {
+    if (
+      args[2] === "shell" &&
+      args[3] === "sha256sum" &&
+      args[4] === devicePath
+    ) {
       if (consumedBytes === undefined)
         throw new Error("checksum requested before a push was consumed");
       const consumedDigest = createHash("sha256")
