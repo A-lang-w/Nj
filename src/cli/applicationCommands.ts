@@ -6,18 +6,11 @@ import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { androidApplicationProjectionInputSchema } from "../domain/android/androidApplication.js";
-import { appleApplicationProjectionInputSchema } from "../domain/apple/appleApplication.js";
-import { harmonyApplicationProjectionInputSchema } from "../domain/harmony/harmonyApplication.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { traceApplicationFeatureInputSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { traceJavaScriptSemanticsInputSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
-import { compareApplicationVersionsInputSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
-import { compareJavaScriptExportShapesInputSchema } from "../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { reconstructionObligationLedgerInputSchema } from "../domain/reconstructionObligationLedgerSchemas.js";
 
 type CliInstance = ReturnType<typeof Cli.create>;
 
@@ -32,11 +25,12 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.traceApplicationFeature,
     description:
       "Trace a typed seed through authenticated application Evidence JSON",
-    inputSchema: traceApplicationFeatureInputSchema,
+    inputSchema: z.unknown(),
     workflow: async (input) => {
-      const { traceApplicationFeatureEvidenceValidated } =
+      const { traceApplicationFeatureEvidence } =
         await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
-      return traceApplicationFeatureEvidenceValidated(input);
+      const result = traceApplicationFeatureEvidence(input);
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
   registerJsonCommand({
@@ -58,11 +52,12 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.compareApplicationVersions,
     description:
       "Compare two authenticated JavaScript Application Graph versions",
-    inputSchema: compareApplicationVersionsInputSchema,
+    inputSchema: z.unknown(),
     workflow: async (input) => {
-      const { compareApplicationVersionsEvidenceValidated } =
+      const { compareApplicationVersionsEvidence } =
         await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
-      return compareApplicationVersionsEvidenceValidated(input);
+      const result = compareApplicationVersionsEvidence(input);
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
   registerSourceToBundleCommand(cli, logger);
@@ -72,11 +67,12 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.compareJavaScriptExportShapes,
     description:
       "Compare exact static JavaScript export return shapes without execution",
-    inputSchema: compareJavaScriptExportShapesInputSchema,
+    inputSchema: z.unknown(),
     workflow: async (input) => {
-      const { compareJavaScriptExportShapesEvidenceValidated } =
+      const { compareJavaScriptExportShapesEvidence } =
         await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
-      return compareJavaScriptExportShapesEvidenceValidated(input);
+      const result = compareJavaScriptExportShapesEvidence(input);
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
   registerObligationLedgerCommand(cli, logger);
@@ -87,14 +83,12 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.projectAndroidApplicationGraph,
     description:
       "Project authenticated APK inventory Evidence into an Android application graph",
-    inputSchema: androidApplicationProjectionInputSchema,
+    inputSchema: z.unknown(),
     workflow: async (input) => {
       const { projectAndroidApplicationEvidence } =
         await import("../application/android/AndroidApplicationService.js");
       const result = projectAndroidApplicationEvidence(input);
-      return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value.evidence) }
-        : result;
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
   registerJsonCommand({
@@ -103,14 +97,12 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.projectAppleApplicationGraph,
     description:
       "Project authenticated IPA or macOS app inventory Evidence into an Apple application graph",
-    inputSchema: appleApplicationProjectionInputSchema,
+    inputSchema: z.unknown(),
     workflow: async (input) => {
       const { projectAppleApplicationEvidence } =
         await import("../application/apple/AppleApplicationService.js");
       const result = projectAppleApplicationEvidence(input);
-      return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value.evidence) }
-        : result;
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
   registerJsonCommand({
@@ -119,14 +111,12 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.projectHarmonyApplicationGraph,
     description:
       "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an application graph",
-    inputSchema: harmonyApplicationProjectionInputSchema,
+    inputSchema: z.unknown(),
     workflow: async (input) => {
       const { projectHarmonyApplicationEvidence } =
         await import("../application/harmony/HarmonyApplicationService.js");
       const result = projectHarmonyApplicationEvidence(input);
-      return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value.evidence) }
-        : result;
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
 };
@@ -141,15 +131,11 @@ const registerObligationLedgerCommand = (
     name: CLI_COMMANDS.buildReconstructionObligationLedger,
     description:
       "Generate a deterministic Evidence-backed reconstruction obligation ledger page",
-    inputSchema: reconstructionObligationLedgerInputSchema,
+    inputSchema: z.unknown(),
     workflow: async (input) => {
-      const { buildReconstructionObligationLedgerEvidenceValidated } =
+      const { buildReconstructionObligationLedgerEvidence } =
         await import("../application/ReconstructionObligationLedgerService.js");
-      const result =
-        buildReconstructionObligationLedgerEvidenceValidated(input);
-      return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value) }
-        : result;
+      return buildReconstructionObligationLedgerEvidence(input);
     },
   });
 
@@ -163,10 +149,7 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     workflow: async (input) => {
       const { evaluateReconstructionCoverage } =
         await import("../application/ReconstructionCoverageService.js");
-      const result = evaluateReconstructionCoverage(input);
-      return result.ok
-        ? { ok: true, value: jsonValueSchema.parse(result.value) }
-        : result;
+      return evaluateReconstructionCoverage(input);
     },
   });
 
