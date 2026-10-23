@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { access, readFile, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -16,6 +17,8 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+
+const prlimit = existsSync("/usr/bin/prlimit") ? "/usr/bin/prlimit" : undefined;
 
 const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
 const requestSchema = z.strictObject({
@@ -58,8 +61,10 @@ it.runIf(!unsupportedHost).each(["SIGXCPU", "SIGXFSZ", "EFBIG"])(
         await writeFile(join(ownedPath, "resource.failure"), "F");
       return spawnOwnedProviderProcess({
         ...spawn,
-        command: process.execPath,
+        // RLIMIT_CORE=1 keeps systemd-coredump from recording the deliberate signal.
+        command: prlimit ?? process.execPath,
         arguments: [
+          ...(prlimit === undefined ? [] : ["--core=1:1", process.execPath]),
           "-e",
           failure === "EFBIG"
             ? 'process.stdout.write("resource diagnostic", () => { process.exitCode = 76; })'

@@ -3,6 +3,7 @@ import {
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
 import { access, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { expect, it, onTestFinished } from "vitest";
@@ -14,6 +15,8 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+
+const prlimit = existsSync("/usr/bin/prlimit") ? "/usr/bin/prlimit" : undefined;
 
 const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
 const requestSchema = z.strictObject({
@@ -53,8 +56,10 @@ it.runIf(!unsupportedHost).each([
           );
         return spawnOwnedProviderProcess({
           ...spawn,
-          command: process.execPath,
+          // RLIMIT_CORE=1 keeps systemd-coredump from recording the deliberate signal.
+          command: prlimit ?? process.execPath,
           arguments: [
+            ...(prlimit === undefined ? [] : ["--core=1:1", process.execPath]),
             "-e",
             failure === "EFBIG"
               ? 'process.stdout.write("resource diagnostic", () => { process.exitCode = 76; })'
