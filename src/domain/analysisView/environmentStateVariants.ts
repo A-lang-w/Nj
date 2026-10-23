@@ -1,6 +1,6 @@
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
-import type { StatePlan } from "./environmentStateGate.js";
+import type { LateLine, StatePlan } from "./environmentStateGate.js";
 import type { ObservedEntity } from "./environmentStateMerge.js";
 import {
   isProjectionParameter,
@@ -51,6 +51,11 @@ export const queryValues = (
   return values;
 };
 
+/** Whether a query names a parameter that may change how a line shows its entities, paging and field selections aside. */
+export const shapesOtherwise = (query: string | null | undefined): boolean =>
+  shapingNames(query).some((name) => !isProjectionParameter(name));
+
+/** The query names that may change how a line shows its entities: all but paging. */
 const shapingNames = (query: string | null | undefined): string[] =>
   [...queryValues(query).keys()].filter(
     (name) => !PAGING.has(name.toLowerCase()),
@@ -116,21 +121,21 @@ const conflicts = (left: LineShape, right: LineShape): boolean =>
   );
 
 /** What lines compared later are compared with: the shaping parameter names they named, the members their objects carried, and those every one carried. */
-export interface LineTotals {
+interface LineTotals {
   readonly names: Set<string>;
   readonly carried: Set<string>;
   common: Set<string> | undefined;
 }
 
 /** Totals over no lines yet. */
-export const noLines = (): LineTotals => ({
+const noLines = (): LineTotals => ({
   names: new Set(),
   carried: new Set(),
   common: undefined,
 });
 
 /** Count one more line into the totals. */
-export const addLine = (
+const addLine = (
   totals: LineTotals,
   query: string | null | undefined,
   shape: Pick<LineShape, "carried" | "common">,
@@ -146,13 +151,13 @@ export const addLine = (
 };
 
 /** Whether a query names a shaping parameter, paging aside, that none of the counted lines named. */
-export const namesNewParameter = (
+const namesNewParameter = (
   query: string | null | undefined,
   totals: LineTotals,
 ): boolean => shapingNames(query).some((name) => !totals.names.has(name));
 
 /** Whether a line's objects carry a member the counted lines' never did, or lack one theirs always carried. */
-export const showsOtherMembers = (
+const showsOtherMembers = (
   shape: Pick<LineShape, "carried" | "common">,
   totals: LineTotals,
 ): boolean => {
@@ -242,6 +247,7 @@ const isVariant = (
 export const replayKeys = (
   base: readonly (string | null | undefined)[],
   replayed: readonly (string | null | undefined)[],
+  retain: (bytes: number) => void = () => undefined,
 ): ReplayKey[] => {
   const baseValues = base.map(queryValues);
   const named = new Set(baseValues.flatMap((values) => [...values.keys()]));
@@ -252,10 +258,15 @@ export const replayKeys = (
   );
   const keys = new Map<string, ReplayKey>();
   const add = (key: ReplayKey): void => {
-    keys.set(
-      JSON.stringify([key.name, key.value ?? null, key.absent ?? false]),
-      key,
-    );
+    const id = JSON.stringify([
+      key.name,
+      key.value ?? null,
+      key.absent ?? false,
+    ]);
+    if (keys.has(id)) return;
+    // Each key is kept with its text, so it is charged before it is.
+    retain(ENTRY_BYTES * 2 + textBytes(id.length));
+    keys.set(id, key);
   };
   for (const query of replayed) {
     const values = queryValues(query);
@@ -357,6 +368,7 @@ export const withoutVariants = (
     readonly shapeOf: (record: StateRecordFacts) => LineShape | undefined;
     readonly queryOf: (ordinal: number) => string | null | undefined;
     readonly position: (ordinal: number) => number;
+    readonly retain: (bytes: number) => void;
   },
 ):
   | { readonly plan: StatePlan; readonly dropped: ReadonlySet<number> }
@@ -370,12 +382,15 @@ export const withoutVariants = (
         [record.query],
       ).length > 0,
   );
-  const projected = plan.projected ?? [];
-  if (variants.length === 0 && projected.length === 0) return undefined;
   const lines = new Set(variants.map(requestLine));
   const latest = plan.latest.filter(
     (record) => !lines.has(requestLine(record)),
   );
+  const projected = [
+    ...(plan.projected ?? []),
+    ...lateReplays(plan.late ?? [], latest, facts.shapeOf),
+  ];
+  if (variants.length === 0 && projected.length === 0) return undefined;
   const replayed = [
     ...projected,
     ...variants.map((record) => record.ordinal),
@@ -396,10 +411,36 @@ export const withoutVariants = (
       projectedKeys: replayKeys(
         latest.map((record) => record.query),
         replayed.map(facts.queryOf),
+        facts.retain,
       ),
     },
     dropped,
   };
+};
+
+/**
+ * The later item lines serving replays, decided against the lines left: a selection of some fields
+ * that leaves out members they always show, or a line naming a shaping parameter none of them names
+ * while its object carries or lacks members theirs do not.
+ */
+const lateReplays = (
+  late: readonly LateLine[],
+  base: readonly StateRecordFacts[],
+  shapeOf: (record: StateRecordFacts) => LineShape | undefined,
+): number[] => {
+  if (late.length === 0) return [];
+  const totals = noLines();
+  for (const record of base)
+    addLine(totals, record.query, shapeOf(record) ?? EMPTY);
+  return late.flatMap(({ record, members, projecting }) =>
+    (projecting ||
+      shapingNames(record.query).some(
+        (name) => !isProjectionParameter(name) && !totals.names.has(name),
+      )) &&
+    showsOtherMembers({ carried: members, common: members }, totals)
+      ? [record.ordinal]
+      : [],
+  );
 };
 
 /** Forget the observations of dropped recordings, and entities only they showed; an entity is first sighted where its kept observations show it first. */

@@ -46,9 +46,11 @@ later increments.
   Beside a line showing whole entities, a list line asking for some fields only
   (a projection value other than `*`, which asks for all) is listed there too,
   and proves no identity or membership. So is an item line first recorded after
-  the type's initial reads that names a shaping parameter none of the planned
-  lines named while its object carries or lacks members theirs do not, such as a
-  later `?expand=shelf` read. On a view with
+  the type's initial reads, judged against the lines left once variants are
+  dropped: one that names a shaping parameter none of them named while its
+  object carries or lacks members theirs do not, such as a later
+  `?expand=shelf` read, or one that selects some fields and leaves out members
+  they always show, such as a later `?fields=id,name` read. On a view with
   such replayed reads, serving replays a call naming a projection parameter for
   an entity the state holds unless every value it gives is `*` or one a checked
   line gave, and no replayed read gave it. The write gate leaves out exactly

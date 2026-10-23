@@ -1662,6 +1662,48 @@ describe("item lines first recorded after a write", () => {
   });
 });
 
+describe("item lines first recorded after a write, against the lines left", () => {
+  const created = book(3, "Third Book", bookClock(4));
+  const lines = (late: TimedCaptureRow): TimedCaptureRow[] => [
+    ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ["GET", "/api/books/1", FIRST_BOOK],
+    ["GET", "/api/books/2", SECOND_BOOK],
+    ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+    ["POST", "/api/books", created, 201, { name: "Third Book" }],
+    ["GET", "/api/books/3", created],
+    late,
+  ];
+  const itemView = (rows: TimedCaptureRow[]) =>
+    stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
+
+  it("compares a later line with the lines left after variants are dropped, not the dropped ones", () => {
+    // The early `expand` line is dropped as a variant, so `include` shows a shelf the lines left never show.
+    expect(
+      itemView(
+        lines(["GET", "/api/books/2?include=shelf", expandedBook(SECOND_BOOK)]),
+      ),
+    ).toMatchObject({
+      projected_record_ordinals: [3, 6],
+      projected_query_keys: expect.arrayContaining([{ name: "include" }]),
+    });
+  });
+
+  it("replays a later selection of some fields that keeps the identity but leaves members out", () => {
+    expect(
+      itemView(
+        lines([
+          "GET",
+          "/api/books/2?fields=id,name",
+          { id: 2, name: "Second Book" },
+        ]),
+      ),
+    ).toMatchObject({
+      projected_record_ordinals: [3, 6],
+      projected_query_keys: expect.arrayContaining([{ name: "fields" }]),
+    });
+  });
+});
+
 describe("what a linked create observes", () => {
   it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
     const D = note(1004, "Delta");
