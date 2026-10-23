@@ -827,25 +827,31 @@ describe("managed call and field-access relations", () => {
   it("links in-module calls and field accesses once per source and target", () => {
     const { members, memberEvidence, result, graph } =
       memberGraph(relationsFixture());
-    // This single-module fixture has distinct method tokens with identical labels.
-    const tokens = new Map(
+    expect(members.call_edges).toHaveLength(10);
+    expect(members.field_accesses).toHaveLength(6);
+    const memberTokens = new Map(
       graph.nodes.map((node) => [
         node.node_id,
         node.observations[0]?.properties.token,
       ]),
     );
-    expect(members.call_edges).toHaveLength(10);
-    expect(members.field_accesses).toHaveLength(6);
     const relation = (name: string) =>
       graph.edges
         .filter((edge) => edge.relation === name)
         .map((edge) => ({
-          source: tokens.get(edge.source_node_id),
-          target: tokens.get(edge.target_node_id),
+          source: memberTokens.get(edge.source_node_id),
+          target: memberTokens.get(edge.target_node_id),
           properties: edge.properties,
           evidence_ids: edge.evidence.evidence_ids,
         }));
+    // These distinct metadata methods intentionally have the same display name.
+    expect(
+      members.methods.map(
+        ({ declaring_type, name }) => `${declaring_type}.${name}`,
+      ),
+    ).toEqual(["Fixture.Program.Main", "Fixture.Program.Main"]);
     const [first, second] = members.methods.map(({ token }) => token);
+    expect(first).not.toBe(second);
     const field = members.fields[0]?.token;
     const evidence_ids = [memberEvidence.evidence_id];
 
@@ -875,8 +881,10 @@ describe("managed call and field-access relations", () => {
         },
       ]),
     );
+    const accesses = relation("accesses");
+    expect(accesses).toHaveLength(2);
     for (const source of [first, second])
-      expect(relation("accesses")).toContainEqual({
+      expect(accesses).toContainEqual({
         source,
         target: field,
         properties: {
