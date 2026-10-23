@@ -60,13 +60,19 @@ export const clientRegistrationEnvironmentDetails = (
   platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
-    const environment = dshDocument(parsed.document).environment(
+    const document = dshDocument(parsed.document);
+    const environment = document.environment(
       overrides,
       validation,
       platform,
     );
     if (!environment.ok) return environment;
-    return validatedDetails(environment.value, validation, platform);
+    return validatedDetails(
+      environment.value,
+      validation,
+      platform,
+      document.unresolvedEnvironmentSettings(overrides),
+    );
   }
   const key =
     parsed?.dialect === "opencode" || parsed?.dialect === "opencode_v2"
@@ -127,12 +133,13 @@ const validatedDetails = (
   environment: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   platform: NodeJS.Platform = process.platform,
+  unresolvedSettings: ReadonlySet<string> = new Set(),
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   const runtimeEnvironment = snapshotEnvironment(environment, platform);
   const validated =
     validation === "fragment"
       ? parseEnvironmentValues(runtimeEnvironment)
-      : parseEnvironment(runtimeEnvironment);
+      : parseEnvironment(runtimeEnvironment, unresolvedSettings);
   if (!validated.ok) return validated;
   return ok({
     values: Object.fromEntries(
