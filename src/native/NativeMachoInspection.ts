@@ -174,6 +174,12 @@ export const inspectNativeMacho = async (
       ),
     );
   }
+  const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
+  if (
+    uuidlessDyldFailure !== undefined &&
+    load.commands.some(({ kind }) => kind === "LC_UUID")
+  )
+    return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
   const layoutRefusals = captures.filter(
     (capture) => targetLayoutDyldRefusal(capture) !== null,
   );
@@ -224,12 +230,6 @@ export const inspectNativeMacho = async (
       ),
     );
   }
-  const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
-  if (
-    uuidlessDyldFailure !== undefined &&
-    load.commands.some(({ kind }) => kind === "LC_UUID")
-  )
-    return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
   const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
   const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
   if (nmIndex < 0 || dyldExports === undefined)
