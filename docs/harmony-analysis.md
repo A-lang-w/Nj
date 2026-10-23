@@ -36,14 +36,21 @@ The MCP tool `project_harmony_application_graph` takes the same
 
 - exact component paths, artifact IDs, and hashes (manifests, Ark bytecode,
   resources, native libraries, JavaScript, signing)
-- a packaging-model hint: Stage is claimed only from a `module.json` entry,
-  FA only from `config.json`, otherwise `unknown`
+- a packaging-model hint: Stage is claimed only from a `module.json` entry
+  outside a classified resource path, FA only from `config.json` outside a
+  classified resource path, otherwise `unknown`
 - FA resources under `assets/<module>/resources/` as well as Stage `resources/`
 - unavailable component paths with unknown IDs and hashes, including encrypted entries; these make projection coverage partial
 - App Pack child package paths without recursive inventory
 - runtime-family hints (`ark`, `native`, `javascript`) from paths and formats
 - path-based N-API bridge hypotheses between bytecode and `libs/<abi>` native
   libraries
+
+File and slice occurrences supply component and child-package paths; directory
+trees and symlinks retain their identities in the source inventory without
+being classified as code files. Ark and JavaScript runtime hints summarize the
+classified bytecode and JavaScript lists; supported source extensions share the
+same classification rule as their component rows.
 
 Every claim is path-presence only. Manifest semantics (module identity,
 abilities, entry points, permissions, dependencies), Ark bytecode contents and

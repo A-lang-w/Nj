@@ -50,6 +50,12 @@ The equivalent MCP input is:
 `input_path` must be absolute. `format` accepts `auto`, `asar`, or `directory`.
 `integrity_policy` accepts `fail` or `record-and-continue`; both CLI routes and
 the MCP tool default to `fail`.
+Evidence parameters retain the caller-selected `input_path`, including a
+symlink alias. Both CLI routes anchor relative inputs to their working
+directory without resolving symlinks. The subject and normalized result use
+the resolved path for artifact identity; the selected path remains a separate
+request fact. Older Evidence can omit this parameter; retained records are
+validated without resolving their paths against the live filesystem.
 The result retains the canonical local path, root artifact digest, artifact
 manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
@@ -99,6 +105,18 @@ claim whole-application completeness or change integrity policy. Summary detail
 only reduces delivery; source selection reduces text acquisition and analysis.
 Explicit native provider or snapshot routing rejects `--source-path` rather
 than ignoring it.
+
+ASAR header/index admission defaults to 16 MiB / 16777216 bytes. Set
+`REA_ASAR_MAX_HEADER_BYTES` in the environment that starts REA to a decimal
+byte count of at most 268435456 (256 MiB) to raise or lower it; restart REA
+after changing it. Invalid values are configuration errors, never a silent
+fallback. The archive index is read before any member can be selected, so
+`source_paths`, `--source-path`, `detail: "summary"`, `max_heap_mb`, and
+available host memory do not bypass or raise it. When the header exceeds the
+effective allowance, the failure names it, whether it came from the default or
+the setting, and the setting's limits. Alternatively, analyze an extracted
+application directory, which does not admit an ASAR header. Repeating the unchanged
+request fails the same way.
 
 ## Read the analysis
 
@@ -166,7 +184,8 @@ for the tool-result contract.
 
 Use MCP `detail: "summary"` for a large application, then read selected views of
 the retained analysis. Summary changes delivery only. To reduce source parsing,
-select exact [source paths](#select-sources-before-analysis).
+select exact [source paths](#select-sources-before-analysis). Source selection
+does not bypass ASAR header/index admission.
 
 If a complete response exceeds the transport budget, use its retained Evidence
 ID for a summary, module page, or item, or export the bundle. See
@@ -233,7 +252,8 @@ Selected bounded text is then parsed as inert data to recover:
 - Electron preload paths and renderer files visible in static syntax;
 - local HTML script entrypoints;
 - Webpack and Rspack chunk registrations and module factories represented as
-  AST literals;
+  AST literals, plus esbuild `__commonJS` module tables; recovered esbuild
+  CommonJS exports use its factory's `exports`-then-`module` parameter order;
 - static imports, dynamic imports, CommonJS `require` calls, workers, and
   service workers (only `new Worker(new URL(path, import.meta.url))` resolves
   relative to the calling module; string worker and service-worker paths use
@@ -365,7 +385,20 @@ Recognized literal module-table bootstraps also support bounded lexical
 substitution through module exports, import helper bodies, local wrapper calls,
 returned closures, object spreads, and callback parameters. Recovered Electron
 paths retain source ranges, module identities, literal channels and branch
-conditions as static candidates. Unknown spreads, reassigned bindings, accessors,
+conditions as static candidates. A channel the IPC call site itself
+determines, such as a local constant, resolves that call's observation rather
+than adding a second one. A channel or registration handler supplied through
+a wrapper argument is a candidate beside the call's own unresolved
+observation, because callers outside the traced paths may pass other values.
+A wrapper call that is both its own entry and reached through another entry
+is recorded once when both paths find the same facts; calls that supply
+different handlers or channels stay distinct.
+A contextBridge exposure reached through wrapper calls records one API per key
+those invocations supply, each with its own bounded member paths. Invocations
+that supply the same key to one exposure call describe one API covering each
+alternative object. A traced invocation whose key, API object or world stays
+unresolved or guarded keeps the call's own unresolved observation.
+Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
 This pass neither executes the bundle nor proves that runtime guards pass.
 An ambiguous or unresolved handler retains its channel registration but does
@@ -481,6 +514,11 @@ inventory digest before parsing, and malformed ASAR operations return typed
 format diagnostics that retain the local container path. Native add-ons are
 represented by metadata only.
 
+POSIX directory names are read as raw bytes and admitted as logical paths only
+when they round-trip through UTF-8. Invalid names are left untouched, retained
+siblings remain inventoried, and traversal coverage is marked unknown with the
+first rejected basename bytes identified in hexadecimal.
+
 ## Bounds and coverage
 
 The reconstruction keeps internal resource safeguards for artifact entries,
@@ -583,20 +621,68 @@ The default semantic capacities are 100000 nodes across the application and
 `--max-semantic-nodes-per-file`), each from 1 to 1000000. The per-file offer is
 also bounded by the remaining application capacity. Raising these controls does
 not bypass worker heap, execution deadline or parent result admission. Truncated
-coverage reports both effective node ceilings; omitted relationships remain
-unknown.
+coverage lists both effective ceilings, `max_semantic_nodes` and
+`max_semantic_nodes_per_file`. The limitation names only the ceiling that
+stopped retention. Omitted relationships remain unknown.
+
+Unknown records have independent defaults of 100000 across the application and
+20000 per source. Select `max_semantic_unknowns` and
+`max_semantic_unknowns_per_file` (CLI: `--max-semantic-unknowns` and
+`--max-semantic-unknowns-per-file`), each from 1 to 1000000. The parent offers the
+remaining capacity to the worker, and rejects excess records before adoption.
+Unknown admission happens before canonical identity and provenance construction.
+When capacity is exhausted, coverage is partial and truncated. Coverage lists
+both effective unknown ceilings, `max_semantic_unknowns` and
+`max_semantic_unknowns_per_file`. The limitation names only the ceiling that
+stopped retention. `coverage.omitted_unknown_occurrences` counts examined
+emission occurrences by family and reason, including repeated emissions. It does
+not claim distinct discarded identities or count frontiers in unexamined source.
+Omitted unknown provenance and IDs are not retained. Existing source, node,
+execution and memory limits continue to determine examined coverage. Raising only
+a node capacity does not raise the unknown capacity. Graphs without unknown
+omissions omit this optional coverage field, preserving their existing identities.
+
+These node and unknown capacities bound retained graph projection. Parsing,
+static analysis and semantic fact construction precede that projection for an
+admitted source. Lowering the capacities can reduce projection and retention
+work, but does not bound upstream semantic-analysis time or memory. Select fewer
+`source_paths` to reduce the sources analyzed; heap and deadline controls set
+separate resource failure boundaries with the runtime-specific limits above.
 
 While sources remain, the sequential worker reserves one next compact static
 checkpoint at its 8 MiB bound with the same 6x retention expansion used at
 admission. Earlier checkpoints are already charged to retained bytes; the
 remaining inventory does not multiply the reserve. Streamed file transfers keep the default 512 MiB
 allowance, and can grow with the parent's offered retention budget (8x byte
-expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The parent
+expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The 8 MiB
+record ceiling and the 2 GiB file maximum have no runtime override, and raising
+`max_heap_mb` does not raise them. The effective file ceiling follows the
+parent's offered result budget. On Node, a larger CLI/MCP process heap
+(`NODE_OPTIONS`, for example `--max-old-space-size=<MiB>`, after restarting that
+process) can raise it up to 2 GiB. Selecting fewer `source_paths` can also
+raise that effective allowance, because the reserve for remaining sources and
+earlier retained results reduce the offered budget. Neither change raises the
+record ceiling or the 2 GiB maximum. The parent
 still independently checks actual bytes, record overhead, digests and source
 identities before adopting results.
 
 A source that exhausts the analyzer heap does not terminate the CLI/MCP
-process. Completed static facts are retained, other files can still be analyzed,
+process. On Node, the failure names `max_heap_mb` (CLI `--max-heap-mb`), the
+effective mebibytes, the inclusive range 128 to 16384, and the 1024 MiB
+default. A changed value applies on the next analysis, which starts a new
+worker. It does not change a worker that is already running and does not
+require restarting the REA server. On Bun, the same heap-exhaustion diagnostic
+is not attributed to that V8 old-space limit, because Bun ignores the flag.
+Raising `max_heap_mb` does not raise the parent result budget,
+the transfer record ceiling, the 2 GiB transfer file maximum, the CLI/MCP
+process heap, or fixed parser limits. The parent result budget follows that
+process heap. On Node, set `NODE_OPTIONS` (for example `--max-old-space-size=<MiB>`)
+in the environment that starts the CLI or MCP server, then restart that
+process, to raise the parent heap and the result budget. A completed static
+checkpoint that does not fit the parent's remaining heap names that parent
+process heap. Increasing `max_heap_mb` does not raise it. On Node, the same
+`NODE_OPTIONS` restart can raise the parent heap and admit the checkpoint.
+Completed static facts are retained, other files can still be analyzed,
 and unexamined semantic relationships remain explicit unknowns. The parent
 also checks transfer expansion and accumulated results against its remaining
 heap before accepting semantic facts. A resource-limited result has partial
@@ -682,6 +768,24 @@ in `/` are invalid. Imports arrays skip invalid parent-relative, absolute, and
 URL targets before selecting a later package-local file; an unsupported bare
 package or recursive alias keeps its unresolved outcome rather than selecting
 a later fallback.
+
+For a proven `createRequire(new URL(relativeFile, import.meta.url))` call,
+relative `require()` edges use the selected filename's directory and retain the
+source-relative `resolution_base_path` on the graph edge. This follows Node's
+`createRequire(filename)` contract; the path is a loader-resolution fact and
+does not change the source file or call-site Evidence identity. If the filename
+cannot be proven, REA keeps the require target unresolved rather than silently
+resolving it from the caller's directory.
+
+Module-reference graph edges, including native-addon `loads` edges, retain
+`properties.operation`: `load` identifies
+an import or loader invocation that may execute the target; `resolve` identifies
+a proven `require.resolve()` lookup that discovers a target without executing it.
+Both retain the exact specifier, resolution mode, selected resolution base, and
+call-site Evidence. Resolve-only edges do not propagate application ownership or
+create executable-import gaps when their targets are missing. A modified
+`.resolve` member remains an uncertain `load`, because its replacement may execute
+code. These static facts do not establish that a call runs at runtime.
 
 ESM relative module paths, legacy package subpaths without exports, and selected
 package exports targets use URL suffix handling and one percent-decoding pass.

@@ -1,20 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "plist";
 
+import { plistNestingLimitMessage } from "./apple/plistValue.js";
 import {
-  decodeXmlText,
   omitPrototypeKeys,
-  parseXmlPropertyList,
+  parseXmlPropertyList as parseWithNumbers,
 } from "./propertyListKeys.js";
 
-it("preserves unknown named entities that collide with object prototype properties", () => {
-  expect(
-    decodeXmlText("&constructor; &toString; &valueOf; &hasOwnProperty;"),
-  ).toBe("&constructor; &toString; &valueOf; &hasOwnProperty;");
-  expect(decodeXmlText("&amp;&lt;&gt;&quot;&apos;&#65;&#x42;")).toBe(
-    "&<>\"'AB",
-  );
-});
+// Existing key/omission controls assert those facts exactly; numeric facts
+// have separate source-type and ambiguity controls below.
+const parseXmlPropertyList = (text: string) => {
+  const { numberLiterals: _numbers, ...parsed } = parseWithNumbers(text);
+  return parsed;
+};
 
 const plist = (body: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${body}</plist>`;
@@ -53,9 +51,9 @@ it("keeps __proto__ text in strings, comments, and similar keys", () => {
   });
 });
 
-it("keeps an entity-encoded key that decodes to the placeholder", () => {
+it("keeps a segmented entity-encoded key that decodes to the placeholder", () => {
   const text = plist(
-    "<dict><key>&#95;&#95;rea_prototype_key__</key><string>kept</string><key>__proto__</key><string>x</string></dict>",
+    "<dict><key>&#95;&#95;rea<![CDATA[_prototype_key__]]></key><string>kept</string><key>__proto__</key><string>x</string></dict>",
   );
   expect(parseXmlPropertyList(text)).toEqual({
     value: { __rea_prototype_key__: "kept" },
@@ -83,13 +81,72 @@ it("omits own __proto__ entries that JSON decoding creates", () => {
   });
 });
 
-it("preserves the pinned decoder's first-child key semantics", () => {
+it("omits complete prototype keys split across character-data nodes", () => {
   const text = plist(
     "<dict><key>__pro<![CDATA[to__]]></key><string>kept</string><key>__proto__</key><string>omitted</string></dict>",
   );
   expect(parseXmlPropertyList(text)).toEqual({
-    value: { __pro: "kept" },
+    value: {},
     omittedPrototypeKeys: 1,
+  });
+});
+
+it("preserves literal key text, XML characters and encoded line endings across segments", () => {
+  const text = plist(
+    '<dict><key note="&gt;">pre<![CDATA[&amp;</key>]]><!-- ignored -->&#13;&#x85;&#x2028;]]&gt;post</key><string>a&#13;b</string></dict>',
+  );
+  expect(parseXmlPropertyList(text)).toEqual({
+    value: { "pre&amp;</key>\r\u0085\u2028]]>post": "a\rb" },
+    omittedPrototypeKeys: 0,
+  });
+});
+
+it("does not infer key identity from nested elements", () => {
+  expect(
+    parseXmlPropertyList(
+      plist(
+        "<dict><key>pre<string>nested</string></key><string>kept</string><key>__proto__<string>nested</string></key><string>omitted</string></dict>",
+      ),
+    ),
+  ).toEqual({ value: { pre: "kept" }, omittedPrototypeKeys: 1 });
+});
+
+it.each([
+  ["ab", "a<![CDATA[b]]>", "ab"],
+  ["a<![CDATA[b]]>", "ab", "a<![CDATA[b]]>"],
+  ["ab", "a<!-- comment -->b", "ab"],
+])("retains last-value-wins for mixed spellings %j", (...keys) => {
+  const entries = keys
+    .map(
+      (key, index) =>
+        `<key>${key}</key><integer>${String(index + 1)}</integer>`,
+    )
+    .join("");
+  expect(parseXmlPropertyList(plist(`<dict>${entries}</dict>`))).toEqual({
+    value: { ab: 3 },
+    omittedPrototypeKeys: 0,
+  });
+});
+
+it("keeps empty keys and alias-looking source keys distinct", () => {
+  const entries =
+    "<key/><integer>1</integer><key><!-- ignored --></key><integer>2</integer>" +
+    "<key></key><integer>3</integer><key>__rea_plist_key_0__</key><string>literal</string>" +
+    "<key>ma<?ignored value?><![CDATA[in]]></key><integer>42</integer>";
+  expect(parseXmlPropertyList(plist(`<dict>${entries}</dict>`))).toEqual({
+    value: { "": 3, __rea_plist_key_0__: "literal", main: 42 },
+    omittedPrototypeKeys: 0,
+  });
+});
+
+it.each([
+  "<key>ma<![CDATA[in]]></key>",
+  "<array><key>ma<![CDATA[in]]></key><string>__rea_plist_key_0__</string></array>",
+])("does not alias key elements used as scalar values in %s", (body) => {
+  const text = plist(body);
+  expect(parseXmlPropertyList(text)).toEqual({
+    value: parse(text),
+    omittedPrototypeKeys: 0,
   });
 });
 
@@ -183,7 +240,7 @@ it("rejects XML nesting beyond the projection limit with the limit diagnostic", 
   // `plist` and the prototype-key traversal recurse once per level, so the
   // depth check must report the same bounded-resource error as the projection
   // instead of letting those recursive passes exhaust the call stack.
-  const limit = new RangeError("Plist exceeds 128 nesting levels");
+  const limit = new RangeError(plistNestingLimitMessage());
   expect(() => parseXmlPropertyList(nestedDictionaries(129))).toThrow(limit);
   expect(() => parseXmlPropertyList(nestedArrays(129))).toThrow(limit);
   expect(() => parseXmlPropertyList(nestedDictionaries(3000))).toThrow(limit);
@@ -224,7 +281,7 @@ it.each(['"', "'"])(
       opening.repeat(3000) + "<string>x</string>" + "</dict>".repeat(3000),
     );
     expect(() => parseXmlPropertyList(text)).toThrow(
-      new RangeError("Plist exceeds 128 nesting levels"),
+      new RangeError(plistNestingLimitMessage()),
     );
     expect(
       parseXmlPropertyList(
@@ -252,14 +309,14 @@ it("bounds nested plist wrappers before recursive decoding", () => {
   const text =
     "<plist>".repeat(3000) + "<string>x</string>" + "</plist>".repeat(3000);
   expect(() => parseXmlPropertyList(text)).toThrow(
-    new RangeError("Plist exceeds 128 nesting levels"),
+    new RangeError(plistNestingLimitMessage()),
   );
   expect(
     parseXmlPropertyList(plist("<plist><string>x</string></plist>")).value,
   ).toEqual(["x"]);
 });
 
-it.each(["\n", "\r\n", "\r", "\u0085", "\u2028", "\u2029"])(
+it.each(["\n", "\r\n", "\r"])(
   "preserves unrelated source values around %j line endings",
   (newline) => {
     const text = plist(
@@ -291,7 +348,7 @@ describe("OpenStep plist nesting preflight", () => {
     "rejects %s nested OpenStep values with the shared depth limit",
     (depth) => {
       expect(() => parseXmlPropertyList(arrays(depth))).toThrow(
-        "Plist exceeds 128 nesting levels",
+        plistNestingLimitMessage(),
       );
     },
   );
@@ -334,3 +391,18 @@ describe("OpenStep plist nesting preflight", () => {
     });
   });
 });
+
+it.each(["\u0085", "\u2028", "\u2029"])(
+  "preserves key identity and omission around inter-element separator %j",
+  (separator) => {
+    const parsed = parseXmlPropertyList(
+      plist(
+        `<dict>${separator}<key>kept${separator}key</key><string>a${separator}b</string>${separator}<key>__proto__</key><string>omitted</string></dict>`,
+      ),
+    );
+    expect(parsed).toEqual({
+      value: { [`kept${separator}key`]: `a${separator}b` },
+      omittedPrototypeKeys: 1,
+    });
+  },
+);

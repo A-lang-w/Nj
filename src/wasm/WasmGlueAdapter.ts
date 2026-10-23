@@ -3,6 +3,15 @@ import * as t from "@babel/types";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTraversal.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+
+/**
+ * Query/fragment content may contain line terminators. With dotAll, the first
+ * `.wasm?` or `.wasm#` consumes the rest without retrying overlapping suffixes;
+ * absent that qualifier, each candidate requires only a fixed suffix check.
+ */
+const endsWithWasmReference = (value: string): boolean =>
+  /\.wasm(?:[?#].*)?$/isu.test(value);
+
 /** Associate visible literals with selected candidates without asserting data flow or URL identity. */
 export const associateWasmGlue = (
   source: string,
@@ -11,8 +20,11 @@ export const associateWasmGlue = (
 ) => {
   // Babel requires a hashbang at offset zero. Removing only its preceding BOM
   // leaves reference coordinates intact: all code starts on a later line.
+  // The selected filename selects the JavaScript grammar for .js glue; the
+  // unnamed-source fallback would misread valid JavaScript conditionals.
   const file = parseJavaScriptSource(
     source.startsWith("\uFEFF#!") ? source.slice(1) : source,
+    path,
   );
   const references: {
     value: string;
@@ -40,7 +52,7 @@ export const associateWasmGlue = (
       if (
         value === undefined ||
         value === null ||
-        !/\.wasm(?:[?#].*)?$/iu.test(value) ||
+        !endsWithWasmReference(value) ||
         node.loc == null
       )
         return;

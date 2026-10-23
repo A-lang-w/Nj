@@ -3,7 +3,6 @@ import type {
   ElfFamilyMetadata,
   HeaderArchitecture,
   MipsElfMetadata,
-  RawOnlyArchitecture,
   PeCodeViewRecord,
   RiscvElfMetadata,
   PowerPcElfMetadata,
@@ -11,11 +10,21 @@ import type {
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import { readElfFixedHeader } from "./elfFixedHeader.js";
-import { observeMzWindowsHeader, parseDosMzHeader } from "./dosMz.js";
-import { decodePeMachine } from "./peMachine.js";
+import {
+  parseMzHeaderEvidence,
+  type MzWindowsHeaderSignatureEvidence,
+} from "./dosMz.js";
+import {
+  decodePeMachine,
+  peOptionalHeaderMagic,
+  type PeArchitecture,
+} from "./peMachine.js";
 import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
+  readMachoHeaderPrefixFacts,
+  validateFatSliceIdentity,
+  type FatSliceHeaderEvidence,
 } from "./apple/machoContainer.js";
 
 /** Format and architecture facts recovered from an executable header. */
@@ -37,6 +46,17 @@ export type ExecutableMetadata =
       readonly architecture: "powerpc";
       readonly availableArchitectures: readonly "powerpc"[];
       readonly powerpc: PowerPcElfMetadata;
+    }
+  | {
+      readonly format: "elf";
+      readonly architecture: "hexagon";
+      readonly availableArchitectures: readonly "hexagon"[];
+    }
+  | {
+      readonly format: "mach-o";
+      readonly architecture: "arm64_32";
+      readonly availableArchitectures: readonly "arm64_32"[];
+      readonly universalSlice?: never;
     }
   | {
       readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
@@ -65,14 +85,32 @@ export type ExecutableMetadata =
     };
 
 /**
+ * Whether leading bytes begin an executable header family that
+ * `parseExecutableHeader` interprets, whether or not that header is valid.
+ */
+export const claimsExecutableHeader = (
+  bytes: Buffer,
+  fileSize = bytes.length,
+): boolean =>
+  (bytes.length >= 4 &&
+    (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+      [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(
+        bytes.readUInt32BE(0),
+      ))) ||
+  (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) ||
+  readFatContainerHeader(bytes, fileSize).state !== "not-fat";
+
+/**
  * Parse supported executable headers without I/O. The caller supplies the host
- * architecture used for deterministic FAT Mach-O slice selection.
+ * architecture that FAT Mach-O slice selection prefers; a container without a
+ * host slice selects its first declared supported slice.
  */
 export const parseExecutableHeader = (
   bytes: Buffer,
   hostArchitecture: NodeJS.Architecture,
   fileSize = bytes.length,
-  mzWindowsHeaderSignature?: Buffer,
+  mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence,
+  fatEvidence?: FatSliceHeaderEvidence,
 ): Result<ExecutableMetadata, string> => {
   if (
     bytes.length >= 4 &&
@@ -85,11 +123,15 @@ export const parseExecutableHeader = (
   const magic = bytes.readUInt32BE(0);
   if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
     return parseThinMachO(bytes, magic, fileSize);
-  const fatHeader = readFatContainerHeader(bytes, fileSize);
+  const fatHeader =
+    fatEvidence?.header ?? readFatContainerHeader(bytes, fileSize);
   if (fatHeader.state !== "not-fat")
-    return parseFatMachO(bytes, hostArchitecture, fatHeader);
+    return parseFatMachO(bytes, hostArchitecture, fatHeader, fatEvidence);
   return err("unsupported binary format");
 };
+
+/** CPU_TYPE_ARM64_32: AArch64 instructions with 32-bit pointers (watchOS). */
+const CPU_TYPE_ARM64_32 = 0x0200000c;
 
 const parseThinMachO = (
   bytes: Buffer,
@@ -102,21 +144,102 @@ const parseThinMachO = (
     return err(
       `truncated Mach-O header: a ${is64 ? 64 : 32}-bit header needs ${headerSize} bytes; the file has ${fileSize}`,
     );
+  const identity = readMachoHeaderPrefixFacts(bytes.subarray(0, 12)).identity;
+  if (identity === null) return err("unsupported Mach-O architecture");
   const little = magic === 0xcefaedfe || magic === 0xcffaedfe;
   const read = (offset: number): number =>
     little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
-  const architecture = machArchitecture(read(4));
+  const architecture =
+    identity.cpuType === CPU_TYPE_ARM64_32
+      ? "arm64_32"
+      : machArchitecture(identity.cpuType);
   if (architecture === undefined) return err("unsupported Mach-O architecture");
   const commandBytes = read(20);
   if (headerSize + commandBytes > fileSize)
     return err(
       `truncated Mach-O load commands: the header declares ${commandBytes} bytes after its ${headerSize}-byte header; the file has ${fileSize}`,
     );
+  if (architecture === "arm64_32")
+    return ok({
+      format: "mach-o",
+      architecture,
+      availableArchitectures: [architecture],
+    });
   return ok({
     format: "mach-o",
     architecture,
     availableArchitectures: [architecture],
   });
+};
+
+/** One FAT declaration whose CPU type is a supported Mach-O family. */
+interface FatDeclaration {
+  readonly architecture: HeaderArchitecture;
+  readonly offset: number;
+  readonly size: number;
+}
+
+/** Validate a FAT table and its slice identities without selecting a slice. */
+const validatedFatDeclarations = (
+  bytes: Buffer,
+  header: Exclude<
+    ReturnType<typeof readFatContainerHeader>,
+    { state: "not-fat" }
+  >,
+  fatEvidence?: FatSliceHeaderEvidence,
+): Result<readonly FatDeclaration[], string> => {
+  if (header.state === "needs-data")
+    return err("truncated or invalid FAT architecture table");
+  if (header.state === "malformed") return err(header.reason);
+  const identityError = fatIdentityError(
+    bytes,
+    header,
+    fatEvidence?.sliceHeadersByOffset,
+  );
+  if (identityError !== null) return err(identityError);
+  const sliceIdentityError = fatSliceIdentityError(
+    bytes,
+    header,
+    fatEvidence?.sliceHeadersByOffset,
+  );
+  if (sliceIdentityError !== null) return err(sliceIdentityError);
+  return ok(
+    header.slices.flatMap((declaration) => {
+      const architecture = machArchitecture(declaration.cpuType);
+      return architecture === undefined
+        ? []
+        : [
+            {
+              architecture,
+              offset: declaration.offset,
+              size: declaration.size,
+            },
+          ];
+    }),
+  );
+};
+
+const declaredFamilies = (
+  declarations: readonly FatDeclaration[],
+): HeaderArchitecture[] => [
+  ...new Set(declarations.map(({ architecture }) => architecture)),
+];
+
+/**
+ * The supported CPU families a validated FAT Mach-O table declares, or null for
+ * a non-FAT input. Unlike header parsing, it selects no slice, so it can show
+ * that a table excludes a host even when no slice is selectable.
+ */
+export const readFatArchitectureFamilies = (
+  bytes: Buffer,
+  fileSize = bytes.length,
+): Result<readonly HeaderArchitecture[], string> | null => {
+  const header = readFatContainerHeader(bytes, fileSize);
+  if (header.state === "not-fat") return null;
+  const declarations = validatedFatDeclarations(bytes, header);
+  return declarations.ok
+    ? ok(declaredFamilies(declarations.value))
+    : declarations;
 };
 
 const parseFatMachO = (
@@ -126,41 +249,83 @@ const parseFatMachO = (
     ReturnType<typeof readFatContainerHeader>,
     { state: "not-fat" }
   >,
+  fatEvidence?: FatSliceHeaderEvidence,
 ): Result<ExecutableMetadata, string> => {
-  if (header.state === "needs-data")
-    return err("truncated or invalid FAT architecture table");
-  if (header.state === "malformed") return err(header.reason);
-  const identityError = fatIdentityError(bytes, header);
-  if (identityError !== null) return err(identityError);
-  const architectures: HeaderArchitecture[] = [];
-  const slices = new Map<
-    HeaderArchitecture,
-    { readonly offset: number; readonly size: number }
-  >();
-  for (const declaration of header.slices) {
-    const architecture = machArchitecture(declaration.cpuType);
-    if (architecture === undefined || architectures.includes(architecture))
-      continue;
-    architectures.push(architecture);
-    slices.set(architecture, {
-      offset: declaration.offset,
-      size: declaration.size,
-    });
-  }
+  const validated = validatedFatDeclarations(bytes, header, fatEvidence);
+  if (!validated.ok) return validated;
+  const declarations = validated.value;
+  // Prefer the slice the host would load; a malformed host slice is an error.
+  // A container without one still declares its images, so select the first
+  // that can hold its Mach-O header, as a thin foreign image would be. A
+  // family declared more than once, such as arm64 and arm64e, has no
+  // provider-neutral choice and is not selected.
   const preferred = fatHostArchitecture(host);
-  const slice = preferred === undefined ? undefined : slices.get(preferred);
-  if (preferred === undefined || slice === undefined)
-    return err(`FAT binary has no host-compatible ${host} architecture`);
-  const minimumHeaderSize =
-    preferred === "arm64" || preferred === "x86_64" ? 32 : 28;
-  if (slice.size < minimumHeaderSize)
-    return err(`FAT slice for ${preferred} is shorter than its Mach-O header`);
+  const hostSlice = declarations.find(
+    ({ architecture }) => architecture === preferred,
+  );
+  const unambiguous = declarations.filter(
+    ({ architecture }) =>
+      declarations.filter((other) => other.architecture === architecture)
+        .length === 1,
+  );
+  const candidates = hostSlice === undefined ? unambiguous : [hostSlice];
+  const selected = candidates.find(
+    ({ architecture, size }) =>
+      size >= (architecture === "arm64" || architecture === "x86_64" ? 32 : 28),
+  );
+  if (selected === undefined) {
+    const first = candidates[0];
+    if (first !== undefined)
+      return err(
+        `FAT slice for ${first.architecture} is shorter than its Mach-O header`,
+      );
+    return err(
+      declarations.length === 0
+        ? "FAT binary declares no supported Mach-O architecture"
+        : `FAT binary has no ${host} slice and no foreign architecture declared exactly once`,
+    );
+  }
   return ok({
     format: "mach-o-universal",
-    architecture: preferred,
-    availableArchitectures: architectures,
-    universalSlice: { offset: slice.offset, size: slice.size },
+    architecture: selected.architecture,
+    availableArchitectures: declaredFamilies(declarations),
+    universalSlice: { offset: selected.offset, size: selected.size },
   });
+};
+
+const fatSliceIdentityError = (
+  bytes: Buffer,
+  header: Extract<
+    ReturnType<typeof readFatContainerHeader>,
+    { state: "parsed" }
+  >,
+  sliceHeadersByOffset?: ReadonlyMap<
+    number,
+    ReturnType<typeof readMachoHeaderPrefixFacts>
+  >,
+): string | null => {
+  for (let index = 0; index < header.slices.length; index += 1) {
+    const declaration = header.slices[index];
+    if (declaration === undefined || header.rangeIssues[index] !== null)
+      continue;
+    let facts: ReturnType<typeof readMachoHeaderPrefixFacts> | undefined;
+    if (sliceHeadersByOffset?.has(declaration.offset)) {
+      facts = sliceHeadersByOffset.get(declaration.offset);
+    } else if (
+      declaration.size >= 12 &&
+      declaration.offset <= bytes.length - 12
+    ) {
+      facts = readMachoHeaderPrefixFacts(
+        bytes.subarray(declaration.offset, declaration.offset + 12),
+      );
+    }
+    const identity = facts?.identity;
+    if (identity === null || identity === undefined)
+      return `FAT architecture ${declaration.index} thin Mach-O CPU identity is outside the bounded header`;
+    const identityError = validateFatSliceIdentity(declaration, identity);
+    if (identityError !== null) return identityError;
+  }
+  return null;
 };
 
 const fatHostArchitecture = (
@@ -186,11 +351,25 @@ const fatIdentityError = (
     ReturnType<typeof readFatContainerHeader>,
     { state: "parsed" }
   >,
+  sliceHeadersByOffset?: ReadonlyMap<
+    number,
+    ReturnType<typeof readMachoHeaderPrefixFacts>
+  >,
 ): string | null => {
   const identity = classifyFatContainerIdentity(header, (offset) => {
-    if (offset >= bytes.length) return undefined;
-    if (offset + 4 > bytes.length) return null;
-    return bytes.readUInt32BE(offset);
+    if (sliceHeadersByOffset?.has(offset))
+      return sliceHeadersByOffset.get(offset)?.magic;
+    const slice = header.slices.find(
+      (candidate) => candidate.offset === offset,
+    );
+    if (slice === undefined || offset >= bytes.length) return undefined;
+    const available = Math.max(
+      0,
+      Math.min(slice.size, bytes.length - offset, 12),
+    );
+    return readMachoHeaderPrefixFacts(
+      bytes.subarray(offset, offset + available),
+    ).magic;
   });
   if (identity.state === "needs-slice-header")
     return "FAT slice identity is outside the bounded prefix";
@@ -206,11 +385,9 @@ const parseElf = (
 ): Result<ExecutableMetadata, string> => {
   const fixedHeader = readElfFixedHeader(bytes, fileSize);
   if (!fixedHeader.ok) return fixedHeader;
-  const { elfClass, byteOrder } = fixedHeader.value;
+  const { elfClass, byteOrder, architecture } = fixedHeader.value;
   const little = byteOrder === "little";
-  const machine = little ? bytes.readUInt16LE(18) : bytes.readUInt16BE(18);
-  const architecture = elfArchitecture(machine);
-  if (architecture === undefined) return err("unsupported ELF architecture");
+  if (architecture === null) return err("unsupported ELF architecture");
   if (
     architecture === "mips" ||
     architecture === "riscv" ||
@@ -246,6 +423,12 @@ const parseElf = (
           riscv: metadata,
         });
   }
+  if (architecture === "hexagon")
+    return ok({
+      format: "elf",
+      architecture,
+      availableArchitectures: [architecture],
+    });
   return ok({
     format: "elf",
     architecture,
@@ -256,13 +439,10 @@ const parseElf = (
 const parseMz = (
   bytes: Buffer,
   fileSize: number,
-  signatureAtOffset?: Buffer,
+  signatureAtOffset?: MzWindowsHeaderSignatureEvidence,
 ): Result<ExecutableMetadata, string> => {
-  const windowsHeader = observeMzWindowsHeader(
-    bytes,
-    fileSize,
-    signatureAtOffset,
-  );
+  const evidence = parseMzHeaderEvidence(bytes, fileSize, signatureAtOffset);
+  const { windowsHeader } = evidence;
   if (
     windowsHeader.state === "header-needed" ||
     windowsHeader.state === "signature-needed"
@@ -270,6 +450,8 @@ const parseMz = (
     return err(
       "Windows new-header pointer or signature is outside the bounded prefix",
     );
+  if (windowsHeader.state === "candidate")
+    return err("MZ Windows new-header candidate is unresolved");
   if (windowsHeader.state === "declared") {
     const { offset } = windowsHeader;
     if (offset < 64 || offset > bytes.length - 24)
@@ -283,7 +465,7 @@ const parseMz = (
     const codeView = parsePeCodeViewFromBuffer(bytes, offset);
     return parsePeRecord(bytes.subarray(offset), codeView);
   }
-  const parsed = parseDosMzHeader(bytes, fileSize, signatureAtOffset);
+  const parsed = evidence.dos;
   return parsed.ok
     ? ok({
         format: "dos-mz",
@@ -503,13 +685,11 @@ export const parsePeCodeViewFromBuffer = (
 
 const peManagedStatus = (
   optionalHeader: Buffer,
-  architecture: BinaryArchitecture,
+  architecture: PeArchitecture,
 ): Result<boolean, string> => {
   if (optionalHeader.length < 2) return err("truncated PE optional header");
   const magic = optionalHeader.readUInt16LE(0);
-  const expectedMagic =
-    architecture === "x86_64" || architecture === "arm64" ? 0x20b : 0x10b;
-  if (magic !== expectedMagic)
+  if (magic !== peOptionalHeaderMagic(architecture))
     return err("PE optional-header magic does not match its architecture");
   const directoryOffset = magic === 0x20b ? 112 : 96;
   const directoryCountOffset = directoryOffset - 4;
@@ -540,28 +720,6 @@ const machArchitecture = (cpu: number): HeaderArchitecture | undefined => {
       return "arm";
     case 0x0100000c:
       return "arm64";
-  }
-  return undefined;
-};
-
-const elfArchitecture = (
-  machine: number,
-): Exclude<BinaryArchitecture, RawOnlyArchitecture> | undefined => {
-  switch (machine) {
-    case 3:
-      return "x86";
-    case 62:
-      return "x86_64";
-    case 8: // EM_MIPS: ISA, ABI and byte order remain separate ELF facts.
-      return "mips";
-    case 20: // EM_PPC; byte order and processor variant remain ELF declarations.
-      return "powerpc";
-    case 40:
-      return "arm";
-    case 183:
-      return "arm64";
-    case 243: // EM_RISCV: XLEN, byte order and e_flags remain separate ELF facts.
-      return "riscv";
   }
   return undefined;
 };

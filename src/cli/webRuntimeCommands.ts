@@ -1,9 +1,10 @@
 import { Cli, z } from "incur";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
-import { browserCliError } from "../cliBrowserContext.js";
+import { browserCliError } from "./browserCliError.js";
 import {
   browserScopeOptions,
   observationDuration,
+  selectedCommandTimeout,
 } from "../cliObservationOptions.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -49,6 +50,7 @@ export const registerWebRuntimeCommands = (
                   target_id: args.targetId,
                   allowed_origins: options.allowedOrigins,
                   observation_ms: options.observationMs,
+                  ...selectedCommandTimeout(options.commandTimeoutMs),
                 },
                 { progress: runtimeProgress, signal },
               ),
@@ -59,7 +61,6 @@ export const registerWebRuntimeCommands = (
             },
             service.provider.identity().id,
             "observe_web_execution",
-            undefined,
             signal,
           );
         }),
@@ -90,6 +91,7 @@ export const registerWebRuntimeCommands = (
                   target_id: args.targetId,
                   selector: args.selector,
                   allowed_origins: options.allowedOrigins,
+                  ...selectedCommandTimeout(options.commandTimeoutMs),
                 },
                 { signal },
               ),
@@ -100,7 +102,6 @@ export const registerWebRuntimeCommands = (
             },
             service.provider.identity().id,
             "inspect_web_event_listeners",
-            undefined,
             signal,
           );
         }),

@@ -1,3 +1,7 @@
+import {
+  semanticOpaqueBindingReadMayHaveChanged,
+  semanticOpaqueNameMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
 
 import {
@@ -9,7 +13,6 @@ import {
   isUnmodeledJavaScriptRuntimeScope,
 } from "./javascriptModuleDeclaration.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import type { JavaScriptSemanticReference } from "./javascriptSemanticIr.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   isUnshadowedGlobal,
@@ -21,6 +24,11 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
 type Shape = "array" | "callback" | "unknown";
+
+/** Bounded argument-shape queries shared by call-signature owners. */
+export type JavaScriptExpressionShapeResolver = ReturnType<
+  typeof createSemanticExpressionShapeResolver
+>;
 const commonJsWrapperParameterNames = new Set([
   "exports",
   "require",
@@ -32,7 +40,6 @@ const commonJsWrapperParameterNames = new Set([
 /** Bounded child-argument identity only; never recover named object contents. */
 export const createSemanticExpressionShapeResolver = (
   state: JavaScriptSemanticAnalysisState,
-  references: readonly JavaScriptSemanticReference[],
 ) => {
   const hoistedFunction = (node: t.Node): boolean => {
     const parent = state.parentsByNode.get(node);
@@ -49,22 +56,21 @@ export const createSemanticExpressionShapeResolver = (
   const blockFunctionNames = new Set<string>();
   const namedProofBlocked = (): boolean => {
     if (blocked !== undefined) return blocked;
-    blocked = references.some(({ name }) => name === "eval");
-    if (!blocked)
-      traverseJavaScriptAst(state.program, {
-        enter(node) {
-          blocked ||=
-            isErasedJavaScriptDeclaration(node) ||
-            isUnmodeledJavaScriptRuntimeScope(node);
-          if (
-            javaScriptRuntimeContext(state.program) !== "module" &&
-            t.isFunctionDeclaration(node) &&
-            node.id != null &&
-            !hoistedFunction(node)
-          )
-            blockFunctionNames.add(node.id.name);
-        },
-      });
+    blocked = false;
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        blocked ||=
+          isErasedJavaScriptDeclaration(node) ||
+          isUnmodeledJavaScriptRuntimeScope(node);
+        if (
+          javaScriptRuntimeContext(state.program) !== "module" &&
+          t.isFunctionDeclaration(node) &&
+          node.id != null &&
+          !hoistedFunction(node)
+        )
+          blockFunctionNames.add(node.id.name);
+      },
+    });
     return blocked;
   };
   const shape = (input: t.Node): Shape => {
@@ -103,6 +109,7 @@ export const createSemanticExpressionShapeResolver = (
       // assignment. Keep same-named vars unknown rather than model that copy.
       if (
         namedProofBlocked() ||
+        semanticOpaqueBindingReadMayHaveChanged(binding, node, state) ||
         (binding.declarationKinds.has("var") &&
           blockFunctionNames.has(binding.name))
       )
@@ -128,8 +135,33 @@ export const createSemanticExpressionShapeResolver = (
       const { node } = unwrapJavaScriptExpression(input);
       return (
         isNullishJavaScriptSyntax(node) ||
-        (isUnshadowedGlobal(node, state, "undefined") && !namedProofBlocked())
+        (isUnshadowedGlobal(node, state, "undefined") &&
+          !namedProofBlocked() &&
+          !semanticOpaqueNameMayHaveChanged(node, state))
       );
     },
   };
+};
+
+/**
+ * Select the options argument of a `(target[, argv][, options])` signature,
+ * such as Node child_process spawn/execFile/fork or Electron
+ * utilityProcess.fork. Only a proven argv array or nullish placeholder admits
+ * third-slot options; any other second argument may itself be the options
+ * object, which makes the runtime ignore the third. Spread arguments are
+ * returned unchanged so callers keep their unknown positions unknown. The
+ * returned node is unwrapped; `undefined` means no options were supplied.
+ */
+export const optionsAfterOptionalArgv = (
+  args: readonly t.CallExpression["arguments"][number][],
+  shapes: JavaScriptExpressionShapeResolver,
+): t.Node | undefined => {
+  const [first, second, third] = args;
+  if (t.isSpreadElement(first)) return first;
+  if (second === undefined) return undefined;
+  const options =
+    shapes.isArray(second) || shapes.isNullish(second) ? third : second;
+  return options === undefined
+    ? undefined
+    : unwrapJavaScriptExpression(options).node;
 };
