@@ -293,6 +293,33 @@ export const addJavaScriptArtifactFiles = (
         asset: target,
         ...javascriptArtifactAnalysisScopes["source-map"],
         limitation: sourceMap.limitation,
+        ...(sourceMap.external_sections === undefined &&
+        sourceMap.invalid_sections === undefined
+          ? {}
+          : {
+              details: {
+                ...(sourceMap.external_sections === undefined
+                  ? {}
+                  : {
+                      external_sections: sourceMap.external_sections.map(
+                        ({ section_path, url }) => ({
+                          section_path: [...section_path],
+                          url,
+                        }),
+                      ),
+                    }),
+                ...(sourceMap.invalid_sections === undefined
+                  ? {}
+                  : {
+                      invalid_sections: sourceMap.invalid_sections.map(
+                        ({ section_path, reason }) => ({
+                          section_path: [...section_path],
+                          reason,
+                        }),
+                      ),
+                    }),
+              },
+            }),
       });
     const inlineScripts = inlineScriptsByPath.get(file.path);
     if (inlineScripts !== undefined)
@@ -585,7 +612,12 @@ const createFileTarget = (
             javascript?.parse_status ?? (skipped ? "skipped" : null),
           json_parse_status: json?.status ?? null,
           json_top_level_keys: json?.top_level_keys ?? [],
-          omitted_json_top_level_keys: json?.omitted_top_level_keys ?? 0,
+          omitted_json_top_level_keys:
+            json === undefined
+              ? file.kind === "json" || file.kind === "package-json"
+                ? null
+                : 0
+              : json.omitted_top_level_keys,
           vendor_markers: javascript?.vendors ?? [],
         },
         evidence: artifactObservationEvidence({

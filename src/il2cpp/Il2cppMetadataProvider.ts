@@ -11,6 +11,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFilePrimaryFailure,
   ArtifactFileCancelled,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -27,6 +28,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -37,6 +39,7 @@ import {
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -65,7 +68,6 @@ const OUTPUT_BYTES = 64 * 1024 * 1024;
 const failureForPrimary = (
   cause: unknown,
   path: string,
-  signal?: AbortSignal,
   field: "path" | "binary_path" = "path",
   maximum = INPUT_BYTES,
 ): AnalysisError => {
@@ -76,7 +78,13 @@ const failureForPrimary = (
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
       cause.message,
       {},
-      { cause },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          "The IL2CPP native-link allowance",
+          cause.reason === "native-type-text-capacity" ? "parser" : "count",
+        ),
+      },
     );
   if (
     cause instanceof Il2cppBinaryFormatFailure ||
@@ -112,7 +120,10 @@ const failureForPrimary = (
         "file-size",
         cause.message,
         { maximum_input_bytes: maximum },
-        { cause },
+        {
+          cause,
+          ...fixedAllowanceOptions("the fixed IL2CPP input allowance", "input"),
+        },
       );
     if (cause.reason === "path")
       return new AnalysisInputError(OPERATION, { cause }, [
@@ -153,23 +164,15 @@ const failureForPrimary = (
 const failureFor = (
   cause: unknown,
   path: string,
-  signal?: AbortSignal,
   field: "path" | "binary_path" = "path",
   maximum = INPUT_BYTES,
 ): AnalysisError => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? failureForPrimary(
-          cause.fileCleanupFailure.outcome.cause,
-          path,
-          signal,
-          field,
-          maximum,
-        )
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path, signal, field, maximum);
+  const primary = failureForPrimary(
+    artifactFilePrimaryFailure(cause),
+    path,
+    field,
+    maximum,
+  );
   if (
     cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
@@ -220,12 +223,20 @@ const binaryReport = (
   method_addresses: link.method_addresses,
 });
 
+/**
+ * Source facts stay on the refusal. The shared report sentence would deny an
+ * Evidence record that this reader attaches and MCP retains.
+ */
+const completeReportRecovery =
+  "The IL2CPP complete-report allowance is a fixed report allowance. No complete metadata inventory is retained. Source facts already observed stay with this refusal, and complete CLI JSON does not raise the allowance. Repeating the unchanged request fails the same way.";
+
 const reportLimit = (path: string, maximumBytes: number) =>
   new AnalysisResourceConstraintError(
     OPERATION,
     "memory",
     `Complete IL2CPP metadata for ${path} exceeds the retained report budget; no complete inventory is retained.`,
     { maximum_report_bytes: maximumBytes },
+    { retryable: false, remediationAction: completeReportRecovery },
   );
 
 const sourceArtifact = (path: string, snapshot: StableArtifactSnapshot) => ({
@@ -316,6 +327,8 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
   readonly identity = IL2CPP_METADATA_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
   #inspecting = false;
+  /** `close()` stops admission permanently, including while an inspection is active. */
+  #admissionStopped = false;
 
   /** `outputBytes` exists so tests can reach the guard with small files. */
   constructor(
@@ -324,6 +337,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
   ) {}
 
   async close(): Promise<void> {
+    this.#admissionStopped = true;
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
@@ -352,13 +366,29 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
       return err(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
       );
+    if (this.#admissionStopped)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IL2CPP_METADATA_PROVIDER_IDENTITY.id,
+          OPERATION,
+          "IL2CPP metadata reader is closed",
+          {
+            remediationAction:
+              "This reader has stopped admitting inspections. Create a new IL2CPP metadata reader to inspect again. Repeating the request on this reader fails the same way.",
+          },
+        ),
+      );
     if (this.#inspecting)
       return err(
         new AnalysisResourceConstraintError(
           OPERATION,
-          "memory",
+          "capacity",
           "Only one IL2CPP metadata inspection is admitted per reader.",
           { maximum_concurrent_inspections: 1 },
+          {
+            remediationAction:
+              "Retry after the active IL2CPP metadata inspection on this reader completes.",
+          },
         ),
       );
     this.#inspecting = true;
@@ -473,7 +503,6 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             const failure = failureFor(
               cause,
               binaryPath,
-              options?.signal,
               "binary_path",
               BINARY_BYTES,
             );

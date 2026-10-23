@@ -4,6 +4,7 @@ import {
 } from "../domain/runtimeVersion.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import {
+  LINUX_HOPPER_SETUP_HOSTS,
   linuxHopperLauncherCandidates,
   systemLinuxHopperLauncherCandidates,
   supportsReaHost,
@@ -37,6 +38,7 @@ export const collectDoctorDiagnostics = async (
   checks.push(hopperCheck(host, hopperPath));
   const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
   if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
+  checks.push(...runtimeConfigurationChecks(host));
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
@@ -146,8 +148,7 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
       ? `${host.platform} ${host.architecture}`
       : `${linuxDistribution.id} ${linuxDistribution.versionId ?? "unknown"}`);
   return check("host", supported, detail, {
-    remediation:
-      "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup additionally requires Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy.",
+    remediation: `REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires ${LINUX_HOPPER_SETUP_HOSTS}.`,
     classification: "unsupported_host",
   });
 };
@@ -228,6 +229,44 @@ const optionalHopperStartupTimeoutCheck = (
         "Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to 2147483647 milliseconds.",
     },
   );
+};
+
+/**
+ * Project every native-analysis admission failure except the Hopper timeout,
+ * which already has its own check. Provider scopes include engine settings.
+ * Settings that block process start are marked for every doctor scope.
+ */
+const runtimeConfigurationChecks = (
+  host: DoctorHost,
+): readonly DoctorCheck[] => {
+  const issues = host.configurationIssues;
+  if (issues === undefined || issues.length === 0) return [];
+  const grouped: { setting: string; constraints: string[] }[] = [];
+  for (const issue of issues) {
+    if (issue.setting === "REA_HOPPER_STARTUP_TIMEOUT_MS") continue;
+    const existing = grouped.find((item) => item.setting === issue.setting);
+    if (existing === undefined)
+      grouped.push({ setting: issue.setting, constraints: [issue.constraint] });
+    else existing.constraints.push(issue.constraint);
+  }
+  return grouped.map(({ setting, constraints }) => ({
+    ...check(
+      `runtime-configuration:${setting}`,
+      false,
+      constraints
+        .map((constraint) =>
+          constraint.includes(setting)
+            ? constraint.replace(/\.$/u, "")
+            : `${setting}: ${constraint}`,
+        )
+        .join("; "),
+      {
+        classification: "config_drift",
+        remediation: `Correct ${setting} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`,
+      },
+    ),
+    details: { setting },
+  }));
 };
 
 const optionalHopperVersionCheck = async (

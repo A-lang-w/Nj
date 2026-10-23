@@ -26,6 +26,34 @@ import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
 
 describe("agent recovery metadata", () => {
+  it("does not mark deterministic input validation as retryable", () => {
+    const projected = projectAnalysisError(
+      new AnalysisInputError("extract_firmware", undefined, [
+        { path: ["range", "length"], reason: "missing_argument" },
+      ]),
+    );
+
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining("Do not repeat the unchanged call."),
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("keeps retryability for transient conflicts and provider timeouts", () => {
+    expect(
+      projectAnalysisError(new UnknownRegistryError("revision-conflict")),
+    ).toMatchObject({ code: "revision_conflict", retryable: true });
+    expect(
+      projectAnalysisError(
+        new AnalysisTimeoutError("inspect_binary_layout", 2500),
+      ),
+    ).toMatchObject({ code: "provider_timeout", retryable: true });
+  });
+
   it("names the input contract for malformed analysis arguments", () => {
     const projected = projectAnalysisError(
       new AnalysisInputError("inspect_analysis_view", undefined, [
@@ -64,9 +92,16 @@ describe("agent recovery metadata", () => {
       },
       message: expect.stringContaining("server/provider deadline"),
       remediation: {
-        action: expect.stringContaining("MCP client"),
+        action: expect.stringContaining("provider diagnostics"),
       },
     });
+    expect(projected.message).toContain("not a client-side timeout");
+    expect(projected.remediation.action).not.toContain(
+      "raise its tool deadline",
+    );
+    expect(projected.remediation.action).not.toMatch(
+      /declared timeout controls|larger server\/provider budget|without assuming adjustable limits|do not assume adjustable/u,
+    );
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 });
@@ -245,6 +280,32 @@ it("distinguishes unsupported target formats from unavailable provider capabilit
   expect(projected.remediation.action).toContain("target format");
   expect(projected.remediation.action).not.toContain("doctor");
   expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
+});
+
+it("keeps a refusing provider's recovery on a target selection failure", () => {
+  const selection = {
+    reason: "target_unsupported" as const,
+    requestedProviderId: "ghidra",
+    candidateIds: ["ghidra"],
+    userMessage: "Unsupported target: the configured extension is x86-64 only.",
+  };
+  expect(
+    projectAnalysisError(
+      new ProviderSelectionError({
+        ...selection,
+        remediationAction: "Omit the extension setting for this target.",
+      }),
+    ),
+  ).toMatchObject({
+    code: "capability_unavailable",
+    message: selection.userMessage,
+    remediation: { action: "Omit the extension setting for this target." },
+    details: { selection_reason: "target_unsupported" },
+  });
+  expect(
+    projectAnalysisError(new ProviderSelectionError(selection)).remediation
+      .action,
+  ).toBe(selection.userMessage);
 });
 
 it.each([false, true])(
@@ -488,6 +549,83 @@ describe("analysis error projection: browser provider failures", () => {
         resources: ["browser_transport"],
         primary_reason: "target_changed",
       },
+    });
+  });
+
+  it("keeps producer facts when a browser failure is attributed to another operation", () => {
+    const partial = { kind: "browser-test-partial" } as never;
+    const original = new BrowserObservationError(
+      "inspect_web_page",
+      "cleanup_failed",
+      {
+        detail: "Target page-1 closed while REA released its session.",
+        remediationAction: "Release session page-1, then retry.",
+        cleanup: { reason: "socket close failed", resources: ["page-1"] },
+        diagnostics: { endpoint: "loopback" },
+        partialObservation: partial,
+        cause: new AggregateError([
+          new BrowserObservationError("inspect_web_page", "target_changed"),
+          new Error("socket close failed"),
+        ]),
+      },
+    );
+    const relabelled = original.forOperation("capture_web_screenshot");
+
+    expect(relabelled).toMatchObject({
+      operation: "capture_web_screenshot",
+      reason: "cleanup_failed",
+      cause: original.cause,
+      diagnostics: { endpoint: "loopback" },
+      partialObservation: partial,
+    });
+    const { details, ...projected } = projectAnalysisError(relabelled);
+    const { details: originalDetails, ...originalProjected } =
+      projectAnalysisError(original);
+    expect(projected).toEqual(originalProjected);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      message: "Target page-1 closed while REA released its session.",
+      remediation: { action: "Release session page-1, then retry." },
+    });
+    expect(details).toEqual({
+      ...originalDetails,
+      operation: "capture_web_screenshot",
+    });
+    expect(details).toMatchObject({
+      resources: ["page-1"],
+      primary_reason: "target_changed",
+    });
+  });
+
+  it("derives default browser guidance for the attributed operation", () => {
+    const original = new BrowserObservationError(
+      "inspect_web_page",
+      "target_not_found",
+    );
+    expect(original.forOperation("inspect_web_page")).toBe(original);
+
+    const relabelled = original.forOperation("discover_webmcp_tools");
+    const projected = projectAnalysisError(relabelled);
+    expect(projected).toMatchObject({
+      code: "target_unavailable",
+      message: expect.stringMatching(/^discover_webmcp_tools could not find/),
+      details: {
+        operation: "discover_webmcp_tools",
+        reason: "target_not_found",
+      },
+    });
+    expect(projected.message).not.toContain("inspect_web_page");
+    expect(
+      projectAnalysisError(
+        new BrowserObservationError("inspect_web_page", "timeout").forOperation(
+          "observe_web_session",
+        ),
+      ),
+    ).toMatchObject({
+      code: projectAnalysisError(
+        new BrowserObservationError("observe_web_session", "timeout"),
+      ).code,
+      details: { operation: "observe_web_session", reason: "timeout" },
     });
   });
 });
