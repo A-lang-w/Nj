@@ -190,6 +190,39 @@ The completed-task timing/context pair above was not repeated after these
 wording changes or subsequent main integration. Those later costs are
 unmeasured; the earlier estimates remain tied to their pinned source.
 
+## Capability and traversal guidance follow-up
+
+The static `analyze_function` capability previously described only completion
+or caller cancellation. Its producing descriptor now names the optional
+per-function setting and describes closure requests, leaving observed session
+state to the queue-aware error owner. Every function response receives this
+same capability; consumers do not reinterpret the setting.
+
+The deadline advisory now covers multi-function workflows in general,
+including `trace_native_values`. The trace's tool description and client,
+installation and MCP guides explain that serial decompiles and other work need
+a whole-call allowance; reducing `max_functions` selects less work without
+changing existing positive client deadlines.
+
+At source `7caac1fbc5833f145d9cc0f87efcb6ebf8c2efd6`, including main
+`0785223582e5ecef4150e8bb736b9c6857703699`:
+
+- The full `npm run check` passed after correcting one formatter mismatch in
+  the advisory. The first attempt stopped at that mismatch and is retained.
+- All 42 deadline/registration tests passed. Old production with updated test
+  inputs fails both Ghidra traversal-advice cases; the Hopper control passes.
+  Its built capability also fails the new setting-advertisement assertion.
+- With the setting explicitly selected as one second, the real producer lane
+  passed its 41 Java checks and verified that the real healthy provider's
+  function limitations carry the new control policy. Cleanup completed.
+  The complete lane took 32.263 s elapsed, 48.337 s waited CPU and 785.3 MiB
+  sampled family RSS. Degraded behavior in this lane uses failure injection;
+  this is not a fresh natural large-function timeout run.
+- `npm run docs:check` passed.
+
+The completed-task performance pair remains tied to its earlier pinned source;
+these later capability/catalog wording costs were not measured by that pair.
+
 ## Verifier fixture budget
 
 The optional branch-count override is bounded before source allocation by a

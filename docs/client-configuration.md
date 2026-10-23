@@ -188,8 +188,10 @@ The derived value is a single-decompile estimate, not a deadline for an
 unbounded batch. For example, startup 330 seconds plus two 600-second
 decompiles and 120 seconds of headroom needs an estimated 1650 seconds,
 before any additional listing or output work. Select the client tool deadline
-for the intended workload, split `batch_decompile`, or use `decompile_all`
-limit/resume. Existing positive caller deadlines are preserved.
+for the intended workload, split `batch_decompile`, use `decompile_all`
+limit/resume, or reduce `trace_native_values` `max_functions`. The trace can
+decompile several functions serially; its depth and graph budgets do not
+make the single-decompile allowance a whole-traversal deadline. Existing positive caller deadlines are preserved.
 Setup forwards these explicitly selected REA deadlines and the input schema
 profile into the registration; unrelated process values are omitted. An
 explicit `REA_JADX_OPERATION_TIMEOUT_MS` is forwarded with the JADX
