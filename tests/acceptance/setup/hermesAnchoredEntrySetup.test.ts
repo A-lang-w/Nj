@@ -41,7 +41,7 @@ for (const version of ["1.1", "1.2"] as const) {
           directive +
           "# Keep this user setting\nmodel: custom\n" +
           (hasDefaults ? "defaults: &settings {KEEP: 'off'}\n" : "") +
-          `mcp_servers:\n  ${style === "key" ? "&server_name " : ""}rea:${style === "child" || style === "key" ? "" : " &server"}\n` +
+          `mcp_servers:\n  ${style === "key" ? "&server_name " : ""}rea:${style === "child" || style === "key" ? "" : " &server"}${style === "entry" ? " # Keep anchor definition comment" : ""}\n` +
           entry +
           (style === "child"
             ? "  other:\n    command: other-server\n    env: *settings # Shared environment\n"
@@ -96,6 +96,8 @@ for (const version of ["1.1", "1.2"] as const) {
             configuredValues.defaults,
           );
         expect(configured).toContain("# Keep this user setting");
+        if (style === "entry")
+          expect(configured).toContain("# Keep anchor definition comment");
         expect(configured).toContain(
           style === "child"
             ? "# Shared environment"
@@ -142,6 +144,8 @@ for (const version of ["1.1", "1.2"] as const) {
           );
         expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
         const remaining = await readFile(config, "utf8");
+        if (style === "entry")
+          expect(remaining).toContain("# Keep anchor definition comment");
         if (hasDefaults)
           expect(remaining).toContain("# Keep nested reference comment");
         expect((await run(["uninstall", "--json"])).exitCode).toBe(0);

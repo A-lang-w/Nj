@@ -54,6 +54,52 @@ describe("Hermes surviving anchor definitions", () => {
   );
 });
 
+describe("Hermes copied anchor comments", () => {
+  it("retains the removed anchor definition comment at its surviving consumer", () => {
+    const source =
+      "mcp_servers:\n  rea: &server {command: old} # Keep definition explanation\n  other: *server\n";
+    const updated = editHermesConfigurationYaml(
+      source,
+      ["mcp_servers", "rea"],
+      undefined,
+    );
+    expect(parseHermesConfigurationYaml(updated)).toEqual({
+      mcp_servers: { other: { command: "old" } },
+    });
+    expect(updated).toContain("# Keep definition explanation");
+  });
+
+  it.each([undefined, { command: "rea" }])(
+    "combines definition and consumer comments without copying shared definitions twice when writing %j",
+    (entry) => {
+      const source =
+        "mcp_servers:\n  rea:\n    # Definition leading note\n    &server {command: old} # Definition trailing note\n  other:\n    # Consumer leading note\n    *server # Consumer trailing note\nobserver: *server # Later consumer note\n";
+      const updated = editHermesConfigurationYaml(
+        source,
+        ["mcp_servers", "rea"],
+        entry,
+      );
+      const result = parse(updated);
+      expect(result).toEqual({
+        mcp_servers: {
+          ...(entry === undefined ? {} : { rea: entry }),
+          other: { command: "old" },
+        },
+        observer: { command: "old" },
+      });
+      expect(result.observer).toBe(result.mcp_servers.other);
+      for (const comment of [
+        "Definition leading note",
+        "Definition trailing note",
+        "Consumer leading note",
+        "Consumer trailing note",
+        "Later consumer note",
+      ])
+        expect(updated.split(comment)).toHaveLength(2);
+    },
+  );
+});
+
 describe("Hermes anchored-entry consumers", () => {
   it.each([undefined, { command: "rea" }])(
     "preserves an anchored registration key when writing %j",

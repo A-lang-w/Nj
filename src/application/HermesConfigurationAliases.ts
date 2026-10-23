@@ -21,11 +21,11 @@ interface AliasCopies {
 }
 
 const copyAliasComments = (source: Alias, copy: Node): Node => {
-  delete copy.commentBefore;
-  delete copy.comment;
-  if (source.commentBefore !== undefined)
-    copy.commentBefore = source.commentBefore;
-  if (source.comment !== undefined) copy.comment = source.comment;
+  for (const key of ["commentBefore", "comment"] as const) {
+    const comment = source[key];
+    if (comment === undefined) continue;
+    copy[key] = copy[key] === undefined ? comment : `${copy[key]}\n${comment}`;
+  }
   return copy;
 };
 
