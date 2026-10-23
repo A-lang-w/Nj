@@ -55,6 +55,8 @@ const PROFILE_UNAVAILABLE =
   "The provider did not commit an analysis profile, so this export cannot be resumed.";
 const DUPLICATE_ADDRESSES =
   "Duplicate procedure addresses were collapsed to the first inventory row.";
+/** Consecutive output_io failures after which an export stops. */
+export const OUTPUT_IO_STREAK_LIMIT = 5;
 const unaddressedRows = (count: number): string =>
   `${count.toString()} inventory row(s) had no address and were not exported.`;
 
@@ -78,6 +80,13 @@ interface PublishState {
     readonly message: string;
   }[];
   bodyUnavailable: boolean;
+  /** Failure code of the function being attempted, if it failed. */
+  lastFailureCode: string | undefined;
+  /**
+   * Consecutive output_io failures. A verified file, a write, or any other
+   * outcome ends the run of failures; a recorded external function does not.
+   */
+  outputIoStreak: number;
 }
 
 /**
@@ -120,6 +129,8 @@ export const decompileAll = async (
     skipped: 0,
     failures: [],
     bodyUnavailable: false,
+    lastFailureCode: undefined,
+    outputIoStreak: 0,
   };
   let published: Result<void, AnalysisError> | undefined;
   let indexed: Result<void, AnalysisError> | undefined;
@@ -292,7 +303,7 @@ const identityFrom = (
   });
 };
 
-const publishSelected = async (input: {
+interface PublishInput {
   readonly analysis: AnalysisOperationPort;
   readonly session: DecompileExport;
   readonly procedures: readonly SelectedProcedure[];
@@ -300,13 +311,19 @@ const publishSelected = async (input: {
   readonly signal: AbortSignal | undefined;
   readonly limit: number | undefined;
   readonly state: PublishState;
-}): Promise<Result<void, AnalysisError>> => {
+}
+
+const publishSelected = async (
+  input: PublishInput,
+): Promise<Result<void, AnalysisError>> => {
   let bodySupport: "unknown" | "unavailable" = "unknown";
   for (const procedure of input.procedures) {
     if (isAborted(input.signal)) return err(cancelled(input.signal));
     const existing = await existingFile(input.session, procedure.address);
     if (existing === "skip") {
       input.state.skipped += 1;
+      // A file that reads back and verifies shows the directory works.
+      input.state.outputIoStreak = 0;
       // The file verified again after a later failure, so the journal and
       // index report it as written instead of keeping the stale failure.
       const written = input.session.lastWritten(procedure.address);
@@ -335,50 +352,71 @@ const publishSelected = async (input: {
     if (input.limit !== undefined && input.state.attempted >= input.limit)
       continue;
     input.state.attempted += 1;
-    if (existing === "conflict") {
-      const reason = {
-        code: "output_exists",
-        message:
-          "The function file already exists and does not match this export.",
-      };
-      recordFailure(input.state, procedure, reason);
-      const appended = await input.session.append(
-        failureRecord(
-          procedure,
-          retainedBody(input.session, procedure.address),
-          reason,
-          { relativePath: input.session.pathFor(procedure.address) },
-        ),
-      );
-      if (!appended.ok) return appended;
-      continue;
-    }
-    if (existing === "io") {
-      const reason = {
-        code: "output_io",
-        message: "The existing function file could not be read.",
-      };
-      recordFailure(input.state, procedure, reason);
-      const appended = await input.session.append(
-        failureRecord(
-          procedure,
-          retainedBody(input.session, procedure.address),
-          reason,
-          { relativePath: input.session.pathFor(procedure.address) },
-        ),
-      );
-      if (!appended.ok) return appended;
-      continue;
-    }
-    const outcome = await publishOne({
-      ...input,
-      procedure,
-      bodySupport,
-    });
+    input.state.lastFailureCode = undefined;
+    const outcome = await attemptOne(input, procedure, existing, bodySupport);
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
+    input.state.outputIoStreak =
+      input.state.lastFailureCode === "output_io"
+        ? input.state.outputIoStreak + 1
+        : 0;
+    // Repeated write failures mean the directory has stopped accepting files,
+    // for example a full disk. Stop instead of decompiling every remaining
+    // function only to fail its write. Committed files and records are kept.
+    if (input.state.outputIoStreak >= OUTPUT_IO_STREAK_LIMIT)
+      return err(outputStoppedAccepting(input.state));
   }
   return ok(undefined);
+};
+
+/** One function this call takes on: report a file problem or decompile it. */
+const attemptOne = async (
+  input: PublishInput,
+  procedure: SelectedProcedure,
+  existing: "write" | "conflict" | "io",
+  bodySupport: "unknown" | "unavailable",
+): Promise<{
+  readonly result: Result<void, AnalysisError>;
+  readonly bodySupport: "unknown" | "unavailable";
+}> => {
+  if (existing === "conflict") {
+    const reason = {
+      code: "output_exists",
+      message:
+        "The function file already exists and does not match this export.",
+    };
+    recordFailure(input.state, procedure, reason);
+    const appended = await input.session.append(
+      failureRecord(
+        procedure,
+        retainedBody(input.session, procedure.address),
+        reason,
+        { relativePath: input.session.pathFor(procedure.address) },
+      ),
+    );
+    return { result: appended, bodySupport };
+  }
+  if (existing === "io") {
+    const reason = {
+      code: "output_io",
+      message: "The existing function file could not be read.",
+    };
+    recordFailure(input.state, procedure, reason);
+    const appended = await input.session.append(
+      failureRecord(
+        procedure,
+        retainedBody(input.session, procedure.address),
+        reason,
+        { relativePath: input.session.pathFor(procedure.address) },
+      ),
+    );
+    return { result: appended, bodySupport };
+  }
+  return publishOne({
+    ...input,
+    procedure,
+    bodySupport,
+  });
 };
 
 const publishOne = async (input: {
@@ -708,12 +746,35 @@ const failureReason = (error: AnalysisError): FailureReason => {
   };
 };
 
+const outputStoppedAccepting = (state: PublishState): AnalysisOutputError =>
+  new AnalysisOutputError(
+    "decompile_all",
+    "output directory stopped accepting function files",
+    {
+      userMessage: `Stopped after ${OUTPUT_IO_STREAK_LIMIT.toString()} function files in a row could not be written or read, for example because the disk is full or permissions changed. Files already written are kept and recorded in ${DECOMPILE_DIRECTORY_INDEX_NAME}. Fix the output directory, then resume.`,
+      remediationAction:
+        "Free space or restore write access in the output directory, then rerun with resume.",
+      diagnostics: {
+        attempted: state.attempted,
+        written: state.written,
+        failed: state.failed,
+        external: state.external,
+        skipped: state.skipped,
+        consecutive_output_io: state.outputIoStreak,
+        last_failures: state.failures
+          .slice(-OUTPUT_IO_STREAK_LIMIT)
+          .map((failure) => ({ ...failure })),
+      },
+    },
+  );
+
 const recordFailure = (
   state: PublishState,
   procedure: SelectedProcedure,
   reason: FailureReason,
 ): void => {
   state.failed += 1;
+  state.lastFailureCode = reason.code;
   state.failures.push({
     address: procedure.address,
     name: procedure.name,

@@ -201,7 +201,13 @@ a provider that returns null pseudocode for it is reported as `no_pseudocode`. I
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range, and a count limit. Cancellation leaves
-files already written in place.
+files already written in place. One run at a time holds an output directory,
+identified by its device and inode, for as long as that process runs; another
+run on the same directory is refused with the holder's process ID, and a
+crashed run leaves no lock behind. After five consecutive functions whose files
+could not be written or read, for example on a full disk, the export stops with
+an error instead of decompiling the rest. Files and records already committed
+stay, `decompile-index.json` is still written, and a later resume continues.
 
 Type inspection selects one exact database pathname or typed data address.
 Struct/union fields, enums, pointers, arrays, typedefs, size, alignment, packing

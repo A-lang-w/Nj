@@ -72,7 +72,7 @@ const countSchema = (description: string) =>
  */
 export const decompileDirectoryInputSchema = z.strictObject({
   output_directory: absoluteLocalPathStringSchema.describe(
-    "Absolute output directory. The parent must exist. The directory itself must be absent unless resume is true.",
+    "Absolute output directory. The parent must exist. The directory itself must be absent unless resume is true. One run at a time may use a directory; a second run is refused while the first holds it.",
   ),
   layout: layoutSchema
     .default("address")

@@ -29,6 +29,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -1424,5 +1425,172 @@ describe("decompile_all cancelled publish loop", () => {
       new AbortController().signal,
     );
     expect(result).toEqual(err(providerCancelled));
+  });
+});
+
+describe("decompile_all output directory lease", () => {
+  const directory = useOutputDirectory();
+
+  /** A port that holds the first decompile until the test lets it finish. */
+  const heldAtFirstDecompile = () => {
+    const { port } = harness();
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached = (): void => undefined;
+    const reachedFirst = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let held = false;
+    const holding: AnalysisOperationPort = {
+      execute: async (operation, parameters, execution) => {
+        if (operation === "procedure_pseudo_code" && !held) {
+          held = true;
+          reached();
+          await released;
+        }
+        return port.execute(operation, parameters, execution);
+      },
+    };
+    return { tools: new EnhancedTools(holding), reachedFirst, release };
+  };
+
+  it("refuses a second run on a directory another run is exporting, then resumes after it", async () => {
+    const first = heldAtFirstDecompile();
+    const exporting = run(first.tools, directory());
+    await first.reachedFirst;
+
+    const competing = harness();
+    const refused = await run(competing.tools, directory(), { resume: true });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    // Busy is retryable once the holder finishes, unlike invalid input.
+    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(refused.error).toMatchObject({
+      resource: "capacity",
+      retryable: true,
+      reportedLimits: { holder_process_id: process.pid },
+    });
+    // The refused run neither decompiled nor appended to the journal.
+    expect(of(competing.calls, "procedure_pseudo_code")).toHaveLength(0);
+
+    first.release();
+    const exported = await exporting;
+    expect(exported.ok).toBe(true);
+    const journal = (
+      await readFile(
+        join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+        "utf8",
+      )
+    )
+      .trimEnd()
+      .split("\n");
+    expect(journal).toHaveLength(4);
+
+    // The lease ends with the run, and the next run sees every record.
+    const next = harness();
+    const resumed = await run(next.tools, directory(), { resume: true });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value).toMatchObject({ counts: { skipped: 3, written: 0 } });
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    expect(index.functions.map((record) => record.status)).toEqual([
+      "written",
+      "written",
+      "written",
+    ]);
+  });
+
+  it("releases the lease when a resume is refused before any work", async () => {
+    expect((await run(harness().tools, directory())).ok).toBe(true);
+    const foreign = harness({ subject: false });
+    const refused = await run(foreign.tools, directory(), { resume: true });
+    expect(refused.ok).toBe(false);
+    const resumed = await run(harness().tools, directory(), { resume: true });
+    expect(resumed.ok).toBe(true);
+  });
+});
+
+describe("decompile_all repeated output failures", () => {
+  const directory = useOutputDirectory();
+
+  const procedures = Array.from({ length: 8 }, (_, index) => ({
+    address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+    name: `fn_${index.toString()}`,
+  }));
+
+  /** Put a directory where each listed function's file was, so reading it fails. */
+  const blockFiles = async (addresses: readonly string[]) => {
+    for (const address of addresses) {
+      const file = join(directory(), `functions/${address}.c`);
+      await rm(file);
+      await mkdir(file);
+    }
+  };
+
+  it("stops after five consecutive output_io failures and keeps what it recorded", async () => {
+    expect((await run(harness({ procedures }).tools, directory())).ok).toBe(
+      true,
+    );
+    await blockFiles(procedures.slice(0, 7).map(({ address }) => address));
+    const next = harness({ procedures });
+    const stopped = await run(next.tools, directory(), { resume: true });
+    expect(stopped.ok).toBe(false);
+    if (stopped.ok) return;
+    expect(stopped.error).toBeInstanceOf(AnalysisOutputError);
+    expect(stopped.error.userMessage).toContain(
+      "Stopped after 5 function files in a row could not be written or read",
+    );
+    expect(stopped.error.diagnostics).toMatchObject({
+      attempted: 5,
+      failed: 5,
+      consecutive_output_io: 5,
+    });
+    // The index was still written and records the five failures; the sixth
+    // and seventh blocked functions were not attempted.
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    expect(
+      index.functions
+        .filter((record) => record.failure?.code === "output_io")
+        .map((record) => record.address),
+    ).toEqual(procedures.slice(0, 5).map(({ address }) => address));
+    expect(
+      index.functions.find(
+        (record) => record.address === procedures[5]?.address,
+      )?.status,
+    ).toBe("written");
+  });
+
+  it("does not stop when a verified file interrupts the failures", async () => {
+    expect((await run(harness({ procedures }).tools, directory())).ok).toBe(
+      true,
+    );
+    // Four failures, one verified file, then three more failures.
+    await blockFiles(
+      [0, 1, 2, 3, 5, 6, 7].map((index) => procedures[index]?.address ?? ""),
+    );
+    const resumed = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value).toMatchObject({
+      counts: { failed: 7, skipped: 1, remaining: 0 },
+    });
   });
 });

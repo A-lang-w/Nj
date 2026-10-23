@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
@@ -30,11 +30,17 @@ import {
 } from "../../contracts/decompileDirectory.js";
 import {
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   type AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import {
+  acquireOwnedLease,
+  type LeaseFailure,
+  type OwnedLease,
+} from "../../process/OwnedLease.js";
 import { decompileInputError } from "./inputError.js";
 import { compareProcedureAddresses } from "./selection.js";
 
@@ -104,6 +110,7 @@ export class DecompileExport {
     private readonly written: Map<string, DecompileDirectoryFunctionRecord>,
     private readonly paths: PathReservations,
     private readonly identity: ExportIdentity,
+    private readonly lease: OwnedLease,
   ) {}
 
   static open(input: {
@@ -179,8 +186,8 @@ export class DecompileExport {
     readonly layoutStatus: "address" | "debug_layout_unavailable";
     readonly limitations: readonly string[];
   }): Promise<Result<void, AnalysisError>> {
-    // The journal owns the outcomes. Rebuild from disk so a concurrent run's
-    // appended records are not dropped by this run's in-memory view.
+    // The journal owns the outcomes, so the index is derived from it on disk
+    // rather than from this run's in-memory view.
     const journal = await readJournalBytes(this.root);
     const parsed =
       journal instanceof Buffer ? parseJournal(journal) : undefined;
@@ -216,19 +223,21 @@ export class DecompileExport {
     );
   }
 
+  /** Close the journal, then end this run's hold on the directory. */
   async close(): Promise<Result<void, AnalysisError>> {
     const closed = await this.journal.close().then(
       () => true,
       () => false,
     );
-    return closed
-      ? ok(undefined)
-      : err(
-          new AnalysisOutputError(
-            "decompile_all",
-            "decompile journal could not be closed",
-          ),
-        );
+    const released = await releaseLease(this.lease);
+    if (!closed)
+      return err(
+        new AnalysisOutputError(
+          "decompile_all",
+          "decompile journal could not be closed",
+        ),
+      );
+    return released;
   }
 
   static async #create(
@@ -237,10 +246,22 @@ export class DecompileExport {
   ): Promise<Result<DecompileExport, AnalysisError>> {
     const created = await createPrivateDirectory(root);
     if (!created.ok) return created;
+    // The directory exists before its journal, so a resume that starts in
+    // between takes the same lease and cannot write alongside this export.
+    const lease = await acquireExportLease(root);
+    if (!lease.ok) return removeCreatedRoot(root, lease);
     const functions = await prepareFunctionsDirectory(root);
-    if (!functions.ok) return removeCreatedRoot(root, functions);
+    if (!functions.ok)
+      return removeCreatedRoot(
+        root,
+        await withLeaseReleased(lease.value, functions),
+      );
     const opened = await seedJournal(root, identity);
-    if (!opened.ok) return removeCreatedRoot(root, opened);
+    if (!opened.ok)
+      return removeCreatedRoot(
+        root,
+        await withLeaseReleased(lease.value, opened),
+      );
     return ok(
       new DecompileExport(
         root,
@@ -249,6 +270,7 @@ export class DecompileExport {
         new Map(),
         { byPath: new Map(), byAddress: new Map() },
         identity,
+        lease.value,
       ),
     );
   }
@@ -257,41 +279,59 @@ export class DecompileExport {
     root: string,
     identity: ExportIdentity,
   ): Promise<Result<DecompileExport, AnalysisError>> {
-    const opened = await readJournal(root, identity);
-    if (!opened.ok) return opened;
-    const functions = await prepareFunctionsDirectory(root);
-    if (!functions.ok) return functions;
-    const handle = await openJournal(root, "a");
-    if (!handle.ok) return handle;
-    // Drop a torn final line left by a crash so the next append starts a line.
-    // An intact journal is not truncated, so a concurrent append is kept.
-    const repaired =
-      opened.value.committedBytes === opened.value.journalBytes ||
-      (await handle.value.truncate(opened.value.committedBytes).then(
-        () => true,
-        () => false,
-      ));
-    if (!repaired) {
-      await handle.value.close().catch(() => undefined);
-      return err(
-        decompileInputError(
-          "output_directory",
-          "The decompile journal could not be repaired after an interrupted write.",
-        ),
-      );
-    }
+    // The lease is held before the journal is read, so no other run appends
+    // between this read and this run's own appends, repair or index.
+    const lease = await acquireExportLease(root);
+    if (!lease.ok) return lease;
+    const opened = await openResumedJournal(root, identity);
+    if (!opened.ok) return withLeaseReleased(lease.value, opened);
     return ok(
       new DecompileExport(
         root,
-        handle.value,
-        opened.value.records,
-        opened.value.written,
-        opened.value.paths,
+        opened.value.handle,
+        opened.value.journal.records,
+        opened.value.journal.written,
+        opened.value.journal.paths,
         identity,
+        lease.value,
       ),
     );
   }
 }
+
+const openResumedJournal = async (
+  root: string,
+  identity: ExportIdentity,
+): Promise<
+  Result<
+    { readonly handle: FileHandle; readonly journal: OpenedJournal },
+    AnalysisError
+  >
+> => {
+  const opened = await readJournal(root, identity);
+  if (!opened.ok) return opened;
+  const functions = await prepareFunctionsDirectory(root);
+  if (!functions.ok) return functions;
+  const handle = await openJournal(root, "a");
+  if (!handle.ok) return handle;
+  // Drop a torn final line left by a crash so the next append starts a line.
+  const repaired =
+    opened.value.committedBytes === opened.value.journalBytes ||
+    (await handle.value.truncate(opened.value.committedBytes).then(
+      () => true,
+      () => false,
+    ));
+  if (!repaired) {
+    await handle.value.close().catch(() => undefined);
+    return err(
+      decompileInputError(
+        "output_directory",
+        "The decompile journal could not be repaired after an interrupted write.",
+      ),
+    );
+  }
+  return ok({ handle: handle.value, journal: opened.value });
+};
 
 export type FileCommit =
   | { readonly status: "written"; readonly sha256: string }
@@ -762,6 +802,143 @@ const sanitizeAddress = (address: string): string => {
     .slice(0, 120);
   return cleaned.length === 0 ? "function" : cleaned;
 };
+
+/** Private per-user parent of export lease sockets; it outlives individual runs. */
+const DECOMPILE_EXPORT_LEASE_DIRECTORY = join(
+  "/tmp",
+  `rea-decompile-${(process.getuid?.() ?? 0).toString()}`,
+);
+
+/**
+ * Hold the output directory for this run. The lease names the directory by
+ * device and inode, so two spellings of one directory share it, and it ends
+ * when this process exits, so a crashed run leaves no lock behind.
+ */
+const acquireExportLease = async (
+  root: string,
+): Promise<Result<OwnedLease, AnalysisError>> => {
+  const stat = await lstat(root, { bigint: true }).catch(
+    (cause: unknown) => cause,
+  );
+  if (!isDirectoryStat(stat) || !hasFileIdentity(stat))
+    return err(
+      decompileInputError(
+        "output_directory",
+        "The output directory could not be inspected.",
+      ),
+    );
+  try {
+    const acquisition = await acquireOwnedLease({
+      identity: {
+        operation: "decompile_all",
+        device: stat.dev.toString(),
+        inode: stat.ino.toString(),
+      },
+      runId: randomUUID(),
+      directory: DECOMPILE_EXPORT_LEASE_DIRECTORY,
+      failure: exportLeaseFailure,
+    });
+    return acquisition.acquired
+      ? ok(acquisition.lease)
+      : err(
+          new AnalysisResourceConstraintError(
+            "decompile_all",
+            "capacity",
+            `another decompile_all run (process ${acquisition.owner.processId.toString()}) is using this output directory`,
+            { holder_process_id: acquisition.owner.processId },
+            {
+              retryable: true,
+              remediationAction:
+                "Wait for the other decompile_all run on this output directory to finish, then retry with resume.",
+            },
+          ),
+        );
+  } catch (cause: unknown) {
+    return err(
+      cause instanceof AnalysisError
+        ? cause
+        : new AnalysisOutputError(
+            "decompile_all",
+            "output directory lease could not be acquired",
+            { cause },
+          ),
+    );
+  }
+};
+
+const exportLeaseFailure = (
+  failure: LeaseFailure,
+  cause?: unknown,
+): AnalysisOutputError =>
+  new AnalysisOutputError(
+    "decompile_all",
+    "output directory lease could not be acquired",
+    {
+      ...(cause === undefined ? {} : { cause }),
+      userMessage: exportLeaseMessage(failure),
+    },
+  );
+
+const exportLeaseMessage = (failure: LeaseFailure): string => {
+  switch (failure.kind) {
+    case "owner_unverified":
+      return `Another process holds this output directory's lease but did not identify itself (${failure.reason}). Retry after it finishes.`;
+    case "recovery_busy":
+      return `Another run is recovering this output directory's lease at ${JSON.stringify(failure.path)}. Retry shortly. If no REA process is running, remove that directory.`;
+    case "recovery_remove":
+      return `REA could not remove its lease recovery directory at ${JSON.stringify(failure.path)}. Check its write access before retrying.`;
+    case "unrecoverable":
+      return "REA could not take this output directory's lease. Retry after other decompile_all runs finish.";
+    case "directory_access_denied":
+      return `REA could not access its lease directory at ${JSON.stringify(failure.directory)}. Restore owner-only permissions (0700) on a directory you own, then retry.`;
+    case "directory_create":
+    case "directory_not_private":
+    case "directory_permissions":
+    case "directory_inspect":
+    case "recovery_create":
+      return `REA could not use its private lease directory ${JSON.stringify(DECOMPILE_EXPORT_LEASE_DIRECTORY)}. Check that it is a directory owned by this user with permissions 0700.`;
+  }
+};
+
+/** End a lease. A failed release is reported; the process still owns it until exit. */
+const releaseLease = async (
+  lease: OwnedLease,
+): Promise<Result<void, AnalysisError>> => {
+  const released = await lease.release().then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  return released === undefined
+    ? ok(undefined)
+    : err(
+        new AnalysisOutputError(
+          "decompile_all",
+          "output directory lease could not be released",
+          { cause: released },
+        ),
+      );
+};
+
+/** Release a lease while keeping the earlier failure primary. */
+const withLeaseReleased = async <T>(
+  lease: OwnedLease,
+  failure: Result<T, AnalysisError>,
+): Promise<Result<T, AnalysisError>> => {
+  const released = await releaseLease(lease);
+  if (!released.ok && !failure.ok)
+    failure.error.retainSecondaryFailure(released.error);
+  return failure;
+};
+
+const hasFileIdentity = (
+  value: unknown,
+): value is { readonly dev: bigint; readonly ino: bigint } =>
+  typeof value === "object" &&
+  value !== null &&
+  "dev" in value &&
+  "ino" in value &&
+  typeof value.dev === "bigint" &&
+  typeof value.ino === "bigint";
 
 /** Remove a root this call created. A failed removal is reported, not hidden. */
 const removeCreatedRoot = async <T>(
