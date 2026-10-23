@@ -29,7 +29,14 @@ import {
   environmentManifestCaptureFixture,
   environmentStateCaptureFixture,
 } from "../../fixtures/analysisView.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
+import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import { z } from "zod";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
@@ -65,7 +72,7 @@ cliTest(
       ],
     });
     expect(result.exitCode).toBe(0);
-    const expected = inspectAnalysisView({
+    const expected = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view,
     });
@@ -184,7 +191,7 @@ cliTest(
         limit: 1,
       },
     };
-    const expected = inspectAnalysisView(input);
+    const expected = await inspectAnalysisView(input);
     if (!expected.ok) throw expected.error;
     await writeFile(request, JSON.stringify(input));
     const response = await cli.run({
@@ -289,6 +296,141 @@ cliTest(
         artifact: { path: archive, sha256: parent.subject?.digest.sha256 },
         items: [expect.objectContaining({ logical_path: "main.js" })],
         coverage: { total: 1, exhausted: true, next_offset: null },
+      },
+    });
+  },
+);
+
+cliTest(
+  "preserves artifact parent schema diagnostics through the application and CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-inventory-diagnostics-cli-",
+    );
+    const archive = join(root, "fixture.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("main.js", new TextReader("console.log(1);\n"));
+    await writeFile(archive, await writer.close());
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", archive, "--json"],
+    });
+    expect(inspected.exitCode).toBe(0);
+    const inspection = parseEvidence(inspected.json);
+    const inventory = artifactInspectionResultSchema.parse(
+      inspection.normalized_result,
+    ).substeps[0]!.evidence;
+    const path = join(root, "view.json");
+    const reseal = (carrier: Evidence, result: JsonValue) => {
+      const subject = carrier.subject!;
+      return createEvidence(
+        {
+          path: subject.local_path,
+          sha256: subject.digest.sha256,
+          format: subject.format,
+        },
+        carrier.provider,
+        { operation: carrier.operation, parameters: {}, result },
+      );
+    };
+    for (const [carrier, group, field] of [
+      [inventory, "manifest", "node_count"],
+      [inspection, "coverage", "substeps_completed"],
+    ] as const) {
+      for (const variant of ["valid", "type", "missing"] as const) {
+        const payload = structuredClone(carrier.normalized_result) as Record<
+          string,
+          Record<string, JsonValue>
+        >;
+        if (variant === "type") payload[group]![field] = "bad";
+        if (variant === "missing") delete payload[group]![field];
+        const evidence = reseal(carrier, payload);
+        const request = {
+          source: { kind: "inline" as const, evidence },
+          view: { kind: "summary" as const },
+        };
+        const application = await inspectAnalysisView(request);
+        await writeFile(path, JSON.stringify(request));
+        const reply = await cli.run({
+          arguments: ["inspect-analysis-view", path, "--json"],
+        });
+        expect(reply.stderr).toBe("");
+        if (variant === "valid") {
+          expect(application.ok).toBe(true);
+          expect(reply.exitCode).toBe(0);
+          expect(parseEvidence(reply.json).normalized_result).toMatchObject({
+            kind: "summary",
+          });
+          continue;
+        }
+        expect(application.ok).toBe(false);
+        if (application.ok) throw new Error("Expected an invalid parent");
+        expect(application.error.cause).toBeInstanceOf(z.ZodError);
+        expect(reply.exitCode).toBe(1);
+        expect(reply.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          retryable: false,
+          recovery: {
+            kind: "inspect_input_contract",
+            operation: "inspect_analysis_view",
+          },
+          details: {
+            issues: [
+              {
+                path: ["source", "normalized_result", group, field],
+                reason:
+                  variant === "type" ? "invalid_type" : "missing_argument",
+                expected: "number",
+              },
+            ],
+          },
+        });
+      }
+    }
+    const nested = artifactInspectionResultSchema.parse(
+      inspection.normalized_result,
+    );
+    nested.substeps.push(structuredClone(nested.substeps[0]!));
+    nested.coverage.substeps_completed = nested.substeps.length;
+    nested.substeps[1]!.evidence.evidence_id = `ev_${"f".repeat(64)}`;
+    const request = {
+      source: { kind: "inline" as const, evidence: reseal(inspection, nested) },
+      view: { kind: "summary" as const },
+    };
+    const application = await inspectAnalysisView(request);
+    expect(application.ok).toBe(false);
+    if (application.ok) throw new Error("Expected invalid nested Evidence");
+    expect(application.error.cause).toMatchObject({
+      cause: expect.any(z.ZodError),
+      issues: [
+        expect.objectContaining({
+          path: ["substeps", 1, "evidence", "evidence_id"],
+        }),
+      ],
+    });
+    await writeFile(path, JSON.stringify(request));
+    const refused = await cli.run({
+      arguments: ["inspect-analysis-view", path, "--json"],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toBe("");
+    expect(refused.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: [
+              "source",
+              "normalized_result",
+              "substeps",
+              1,
+              "evidence",
+              "evidence_id",
+            ],
+            reason: "invalid_value",
+            message: "Evidence semantic identifier does not match its record",
+          },
+        ],
       },
     });
   },
@@ -522,7 +664,7 @@ cliTest("rejects a request that omits source", async ({ cli }) => {
   expect(result.json).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
-    details: { operation: "inspect-analysis-view" },
+    details: { operation: "inspect_analysis_view" },
   });
 });
 
@@ -678,7 +820,7 @@ cliTest(
       parent_evidence_id: parent.evidence_id,
     });
     // The file source projects exactly what the same Evidence projects inline.
-    const inline = inspectAnalysisView({
+    const inline = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view,
     });

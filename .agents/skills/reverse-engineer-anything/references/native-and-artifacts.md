@@ -121,6 +121,16 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## CPython pyc files
+
+Use `inspect_python_pyc` for an explicit local CPython 3.7–3.13 `.pyc` when the
+question concerns the header magic, PEP 552 source hash or timestamp, nested
+code-object names, or bytecode identity. No `open_binary`, Python installation,
+or target execution is required. The CLI equivalent is `inspect-python-pyc PATH`.
+Preserve artifact SHA-256, the 16-byte header fields, nested code names, and
+bytecode SHA-256. Bytecode is not decompiled. A decoded header does not prove
+the matching `.py` is present. See [CPython pyc inspection](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
+
 ## Erlang BEAM files
 
 Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
@@ -184,6 +194,30 @@ Facets also include sections, imports, candidates, glue, WAT, headers, details
 and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
 The complete source remains retained after an oversized MCP reply. No target
 execution or network acquisition is implied, and WAT is decoded representation.
+
+## Offline APK signatures
+
+Use `inspect_apk_signature` for a selected local APK/ZIP/AAB. Default MCP summaries
+retain complete Evidence. Select `view.collection: signers/digests/lineage`,
+with scheme or ID batches, fields and paging; use `inspect_analysis_view` kind
+`apk-signature` for retained reads after deletion. IDs retain artifact/scheme
+scope and signer links; `fields: []` keeps identity links. Empty pages preserve
+partial decoding reasons and unknown authenticity. CLI compact delivery needs
+`--evidence_output` to preserve the complete parent.
+It reads the APK
+Signing Block (v2/v3/v3.1) and v1 `META-INF` signing without executing anything,
+and reports each signer's certificate facts (for v1, the certificate the PKCS#7
+block's SignerInfo names), the declared v3 rotation lineage,
+the declared source-stamp certificate and, for SHA-256/SHA-512 digests, whether
+the declared content digest matches the current bytes. That match is not a
+signature verification: anyone who changes the bytes can recompute the digest.
+`posture` summarises v1-only signing (which cannot tell a v1-only APK from one
+whose v2/v3 block was removed), observed signer agreement across schemes,
+whether the v1 signer equals the block-scheme signer (`false` is notable),
+whether every differing signer appears in a declared (unverified) rotation
+lineage, and the strongest scheme.
+It never claims authenticity: no signature or lineage is cryptographically
+verified.
 
 ## Native targets
 
@@ -261,6 +295,35 @@ their missing coverage is acceptable and retain the resulting limitations.
 Exported C and embedded resources remain useful independent evidence, but a
 timeout does not establish complete analysis or absence of code. See the
 [deadline and client guide](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
+
+## Bridge request ceiling
+
+Hopper and Cutter share `REA_BRIDGE_MAX_REQUEST_BYTES`. Unset, both sides use
+16777216 bytes. The payload budget excludes the terminating LF. A decimal
+integer from 7464 to 536870887 raises or lowers that ceiling. The floor fits
+the largest bounded symbol-name command. A tight Cutter status still returns
+its session id and up to 64 completion receipts. Its path is included when it
+fits, and is unknown when it does not, so an older descriptor path is not
+paired with the new generation. The maximum is the encoded payload, one byte under Node's string ceiling so
+the framing LF still fits. Cutter measures, signs, and writes a fitting
+response in bounded chunks. The bridge searches only the newly read bytes
+for the framing LF. The client unescapes each socket chunk into one response
+string before parsing it, so this ceiling does not keep the paged wire frame
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
+and start Hopper or Cutter from that same environment. An out-of-band bridge
+without the setting stays at 16777216 bytes. The client reports that mismatch
+during discovery only after the hello proves a live authenticated bridge, and
+does not send a status request or the command. A stale descriptor is ignored.
+Discovery fails if any such live ceiling differs, even when another live
+session matches. A command response discarded for that ceiling stays an
+unknown execution with `output_truncated`. A hello
+that never sends its authenticated frame does not hold the accept loop.
+At most 8 connection threads run; a further accept is closed, and a failure
+to start a thread does not stop the listener. `completed_connection` is the
+longest prefix of connections that have terminated. Dense scalar replies are
+encoded in bounded batches.
+The 25000 ms Cutter request deadline and the 256-candidate discovery budget
+still have no runtime override.
 
 ## Static memory and original file bytes
 

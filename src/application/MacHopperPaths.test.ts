@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -37,19 +37,32 @@ describe("macOS Hopper launcher paths", () => {
   });
 
   it("finds the same renamed user bundles through runtime and doctor scans", async () => {
-    const temporary = await mkdtemp(join(tmpdir(), "rea-hopper-paths-"));
+    // Keep native ownership for all I/O, including UNC temporary directories.
+    // On Windows, a checkout-relative home models POSIX separators without
+    // discarding the drive/share or normalizing a UNC prefix through posix.join.
+    const root =
+      process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
+    await mkdir(root, { recursive: true });
+    const temporary = await mkdtemp(join(root, "rea-hopper-paths-"));
+    const home =
+      process.platform === "win32"
+        ? relative(process.cwd(), temporary).replaceAll("\\", "/")
+        : temporary;
     const applications = join(temporary, "Applications");
-    const appDirectory = join(applications, "Hopper Preview.app");
     try {
-      await mkdir(appDirectory, { recursive: true });
+      await mkdir(join(applications, "Hopper Preview.app"), {
+        recursive: true,
+      });
       await mkdir(join(applications, "Hopper Disassembler.app"));
       await writeFile(join(applications, "Hopper File.app"), "");
-      const runtime = [...localMacHopperRenamedLauncherCandidates(temporary)];
-      expect(runtime).toContain(join(appDirectory, "Contents/MacOS/hopper"));
-      expect(runtime.filter((path) => path.startsWith(temporary))).toEqual([
-        join(appDirectory, "Contents/MacOS/hopper"),
+      const runtime = [...localMacHopperRenamedLauncherCandidates(home)];
+      expect(runtime.filter((path) => path.startsWith(home))).toEqual([
+        posix.join(
+          home,
+          "Applications/Hopper Preview.app/Contents/MacOS/hopper",
+        ),
       ]);
-      expect(await readMacHopperRenamedLauncherCandidates(temporary)).toEqual(
+      expect(await readMacHopperRenamedLauncherCandidates(home)).toEqual(
         runtime,
       );
     } finally {

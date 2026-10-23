@@ -5,24 +5,42 @@ import {
   type Served,
 } from "../../../tests/fixtures/environmentStateServing.js";
 import {
+  ASSET_ROWS,
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
   BOOK_ROWS,
   DELETE_NOT_FOUND,
+  DETAILED_LIST_ROWS,
   FIRST_BOOK,
+  OMITTED_FIELD_ROWS,
+  PROJECTED_ROWS,
+  AUTHORED_ROWS,
+  CHAPTER_AUTHOR,
+  CONTENTS_ROWS,
+  HANDLE_ROWS,
   LIST_LINE_ROWS,
+  QUERY_ROWS,
+  OFFSET_LIST_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
+  assetBook,
   book,
   bookClock,
+  detailedBook,
+  UNCHAPTERED_ROWS,
+  VERSIONED_ROWS,
+  numberedUuid,
   bookPage,
+  offsetListed,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import { seededUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
+import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
+import { describeWrite } from "./environmentStateWriteDescription.js";
 import {
   environmentToolArguments,
   environmentToolDefinitions,
@@ -251,6 +269,203 @@ describe("served updates and deletes", () => {
   });
 });
 
+describe("wider write coverage", () => {
+  it("serves a created book without the field the application leaves out of it, and keeps it on the seeded ones", () => {
+    const books = servedFrom(OMITTED_FIELD_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(created).not.toHaveProperty("detail");
+    expect(books.answer("get_books_by_id", { id: "3" }).body).toEqual(created);
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
+      detailedBook(FIRST_BOOK),
+    );
+  });
+
+  it("replays a call that asks for some fields only, and answers the rest from the state", () => {
+    const books = servedFrom(PROJECTED_ROWS);
+    expect(
+      books.answer("get_books_by_id", { id: "2", fields: "name" }),
+    ).toMatchObject({
+      body: { name: "Second Book" },
+      state: { source: "recording", reason: "projection" },
+    });
+    expect(books.answer("get_books_by_id", { id: "2" })).toMatchObject({
+      body: SECOND_BOOK,
+      state: { source: "state", view: "item" },
+    });
+  });
+
+  it("numbers created books after the largest held asset number, in its digit groups", () => {
+    const books = servedFrom(ASSET_ROWS);
+    const create = (name: string) =>
+      books.answer("post_books", { body: { name } }).body as Book;
+    expect(create("Fifth Book")).toMatchObject({ asset: "000-003" });
+    expect(create("Sixth Book")).toMatchObject({ asset: "000-004" });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
+      assetBook(FIRST_BOOK, "000-001"),
+    );
+  });
+});
+
+describe("write coverage limits", () => {
+  it("numbers past a mask's width again after the state is saved and loaded", () => {
+    const books = servedFrom([
+      [
+        "GET",
+        "/api/books",
+        [assetBook(FIRST_BOOK, "99-97"), assetBook(SECOND_BOOK, "99-98")],
+      ],
+      ["GET", "/api/books/1", assetBook(FIRST_BOOK, "99-97")],
+      ["GET", "/api/books/2", assetBook(SECOND_BOOK, "99-98")],
+      [
+        "POST",
+        "/api/books",
+        assetBook(THIRD_BOOK, "99-99"),
+        201,
+        { name: "Third Book" },
+      ],
+      ["GET", "/api/books/3", assetBook(THIRD_BOOK, "99-99")],
+    ]);
+    const create = (name: string) =>
+      books.answer("post_books", { body: { name } }).body;
+    expect(create("Fifth Book")).toMatchObject({ asset: "99-99" });
+    expect(create("Sixth Book")).toMatchObject({ asset: "100-00" });
+    // Loading what data/get wrote clears the sequence counter, so the held numbers alone carry it on.
+    const { rea_state } = books.store.snapshot();
+    expect(books.store.replace({ rea_state }).ok).toBe(true);
+    expect(create("Seventh Book")).toMatchObject({ asset: "100-01" });
+  });
+
+  it("replays a call naming a projection parameter, even an empty one", () => {
+    expect(
+      servedFrom(PROJECTED_ROWS).answer("get_books_by_id", {
+        id: "2",
+        fields: "",
+      }),
+    ).toMatchObject({ state: { source: "recording", reason: "projection" } });
+  });
+
+  it("answers a projection of a book the state no longer holds as a missing one", () => {
+    const books = servedFrom([
+      ...PROJECTED_ROWS,
+      ...BOOK_ROWS.slice(BOOK_INIT_ROWS.length),
+    ]);
+    books.answer("delete_books_by_id", { id: "2" });
+    expect(
+      books.answer("get_books_by_id", { id: "2", fields: "name" }),
+    ).toMatchObject({
+      status: 404,
+      body: BOOK_NOT_FOUND,
+      state: { source: "state", view: "missing", id: "2" },
+    });
+  });
+
+  it("lists a created book without the field an item read showed the application leaves out", () => {
+    const books = servedFrom(DETAILED_LIST_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(created).not.toHaveProperty("detail");
+    expect(books.answer("get_books").body).toEqual([
+      detailedBook(FIRST_BOOK),
+      detailedBook(SECOND_BOOK),
+      created,
+    ]);
+  });
+});
+
+describe("values the application assigns", () => {
+  it("gives each update a fresh version and new chapter ids, keeping the chapters' other values", () => {
+    const books = servedFrom(VERSIONED_ROWS);
+    const rename = (name: string) =>
+      books.answer("patch_books_by_id", {
+        id: "2",
+        body: { name, version_id: "any version" },
+      }).body as Book;
+    const first = rename("Second Edition");
+    const second = rename("Third Edition");
+    const held = [1, 2, 3, 4, 5, 6, 7, 8].map(numberedUuid);
+    for (const answer of [first, second]) {
+      expect(held).not.toContain(answer.version_id);
+      expect(answer.chapters).toEqual([
+        { id: expect.not.stringMatching(numberedUuid(4)), title: "Opening" },
+      ]);
+    }
+    expect(second.version_id).not.toBe(first.version_id);
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toEqual(second);
+  });
+
+  it("renews chapter ids alone, keeping the author each chapter names", () => {
+    const answer = servedFrom(AUTHORED_ROWS).answer("patch_books_by_id", {
+      id: "2",
+      body: { name: "Second Edition", version_id: "any version" },
+    }).body as Book;
+    expect(answer.chapters).toEqual([
+      {
+        id: expect.not.stringMatching(numberedUuid(4)),
+        title: "Opening",
+        author_id: CHAPTER_AUTHOR,
+      },
+    ]);
+  });
+
+  it("renews a chapter id alike wherever an update renews it", () => {
+    const answer = servedFrom(CONTENTS_ROWS).answer("patch_books_by_id", {
+      id: "2",
+      body: { name: "Second Edition", version_id: "any version" },
+    }).body as {
+      chapters: [{ id: string }];
+      contents: [{ chapter_id: string }];
+    };
+    expect(answer.chapters[0].id).not.toBe(numberedUuid(4));
+    expect(answer.contents[0].chapter_id).toBe(answer.chapters[0].id);
+  });
+
+  it("gives no chapter rows to a book the state holds without them", () => {
+    const books = servedFrom(UNCHAPTERED_ROWS);
+    const before = books.snapshot();
+    expect(
+      books.refusal("patch_books_by_id", {
+        id: "2",
+        body: { name: "Second Edition", version_id: "any version" },
+      }).message,
+    ).toContain("lacks chapters");
+    expect(books.snapshot()).toBe(before);
+  });
+
+  it("refuses a handle of another JSON type than the code it is stored as", () => {
+    const books = servedFrom(HANDLE_ROWS);
+    for (const handle of [{ not: "a string" }, null])
+      expect(
+        books.refusal("post_books", { body: { name: "Fifth Book", handle } })
+          .message,
+      ).toContain("Member handle must be a JSON string");
+  });
+
+  it("stores a sent handle as the code and rebuilds the link around it", () => {
+    const books = servedFrom(HANDLE_ROWS);
+    expect(
+      books.answer("post_books", {
+        body: { name: "Fifth Book", handle: "fifth-handle" },
+      }).body,
+    ).toMatchObject({
+      id: 3,
+      code: "fifth-handle",
+      link: "https://books.example.test/b/fifth-handle",
+    });
+  });
+});
+
+describe("clock spellings per view", () => {
+  it("lists a created book with the list's clock spelling and reads it back with the item's", () => {
+    const books = servedFrom(OFFSET_LIST_ROWS);
+    // The served clock starts after the sixth recorded exchange.
+    const created = book(3, "New Book", bookClock(7));
+    books.answer("post_books", CREATE_NEW_BOOK);
+    expect(books.answer("get_books").body).toEqual(
+      [FIRST_BOOK, SECOND_BOOK, created].map(offsetListed),
+    );
+    expect(books.answer("get_books_by_id", { id: "3" }).body).toEqual(created);
+  });
+});
+
 describe("refusals", () => {
   it("refuses a body the capture does not support and leaves the state unchanged", () => {
     const books = servedFrom();
@@ -473,6 +688,41 @@ describe("served catalog", () => {
     );
   });
 
+  it("quotes body member names and omits one that exceeds the sample budget", () => {
+    const plan: StateWritePlan = {
+      tool: "post_books",
+      effect: "create",
+      target: "/api/books",
+      served: true,
+      reason: null,
+      exemplar_ordinal: null,
+      observation: null,
+      response: null,
+      body: {
+        accepted: ["name, title", "note\nline"],
+        fixed: [],
+        required: [],
+        identity: null,
+        kinds: [],
+      },
+      rules: [],
+      collection: null,
+      insert: null,
+      merge: null,
+      checked_record_ordinals: [],
+      contradicted_by: null,
+    };
+    expect(describeWrite(plan)).toContain(
+      'body members "name, title", "note\\nline"',
+    );
+    const long = describeWrite({
+      ...plan,
+      body: { ...plan.body!, accepted: ["m".repeat(2000)] },
+    });
+    expect(long).not.toContain("m".repeat(2000));
+    expect(Buffer.byteLength(long ?? "", "utf8")).toBeLessThan(1200);
+  });
+
   it("quotes the member names a write's description lists and samples a long one", () => {
     const long = "n".repeat(90_000);
     const item = (id: number, name: string) => ({
@@ -581,24 +831,26 @@ describe("list lines", () => {
         },
       });
       if (!loaded.ok) throw loaded.error;
-      expect(
-        books.answer("get_orgs_books_by_id", {
-          id: "2",
-          ...Object.fromEntries(new URLSearchParams(query)),
-          limit: "50",
-        }),
-      ).toMatchObject({
-        body: whole ? [beta] : [],
-        state: {
-          source: "state",
-          membership: whole ? "all" : "recorded",
-          listed: whole ? 1 : 0,
-        },
+      const answer = books.answer("get_orgs_books_by_id", {
+        id: "2",
+        ...Object.fromEntries(new URLSearchParams(query)),
+        limit: "50",
       });
+      expect(answer.body, query).toEqual(whole ? [beta] : []);
+      if (whole)
+        expect(answer).toMatchObject({
+          state: { source: "state", membership: "all", listed: 1 },
+        });
+      else {
+        expect(answer).toMatchObject({
+          state: { source: expect.stringMatching(/^(state|recording)$/u) },
+        });
+        expect(answer).not.toMatchObject({ state: { membership: "all" } });
+      }
     }
   });
 
-  it("lists a created book on the line that lists every book, while a filtered line keeps its recorded members", () => {
+  it("lists a created book on the line that lists every book, and a filtered line by its filter", () => {
     const books = servedFrom(LIST_LINE_ROWS);
     const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
     expect(books.answer("get_books")).toMatchObject({
@@ -607,11 +859,134 @@ describe("list lines", () => {
     });
     expect(books.answer("get_books", { name: "First Book" })).toMatchObject({
       body: bookPage([FIRST_BOOK]),
-      state: { source: "state", membership: "recorded", listed: 1 },
+      state: { source: "state", membership: "query", listed: 1 },
+    });
+  });
+});
+
+describe("list queries", () => {
+  it.each([3, "3"])(
+    "preserves query total %j across omission, retaining its type and rejecting contradictions",
+    (initialTotal) => {
+      const alpha = { id: 1, name: "Alpha" },
+        beta = { id: 2, name: "Beta" },
+        gamma = { id: 3, name: "Gamma" };
+      for (const contradicts of [false, true]) {
+        const books = servedFrom([
+          ["GET", "/api/books", { items: [alpha, beta, gamma] }],
+          [
+            "GET",
+            "/api/books?limit=1",
+            { items: [alpha], total: initialTotal },
+          ],
+          [
+            "GET",
+            "/api/books?limit=2",
+            { items: [alpha, beta], ...(contradicts ? { total: 20 } : {}) },
+          ],
+        ]);
+        expect(books.state.views.get("get_books")).toMatchObject({
+          query: { totals: contradicts ? [] : ["total"] },
+        });
+        const snapshot = books.store.snapshot();
+        const loaded = books.store.replace({
+          ...snapshot,
+          rea_state: {
+            ...snapshot.rea_state,
+            entities: snapshot.rea_state.entities.filter(
+              (entity) => entity.id !== "3",
+            ),
+          },
+        });
+        if (!loaded.ok) throw loaded.error;
+        expect(books.answer("get_books", { limit: "1" })).toMatchObject({
+          body: {
+            items: [alpha],
+            total: contradicts
+              ? initialTotal
+              : typeof initialTotal === "string"
+                ? "2"
+                : 2,
+          },
+          state: { source: "state", membership: "query" },
+        });
+        if (!contradicts)
+          expect(
+            books.answer("get_books", { limit: "2" }).body,
+          ).not.toHaveProperty("total");
+      }
+    },
+  );
+
+  it("replays unsupported search syntax instead of inventing an empty state-backed result", () => {
+    const books = servedFrom(QUERY_ROWS);
+    for (const q of ["title:Gamma", "#sea", '"First Book"']) {
+      expect(books.answer("get_books", { q }), q).toMatchObject({
+        state: { source: "recording", reason: "unrecorded-request" },
+      });
+    }
+    expect(books.answer("get_books", { q: "SECOND" })).toMatchObject({
+      state: { source: "state", membership: "query", listed: 1 },
     });
   });
 
-  it("updates on each line only the counters its recording counted, so a partial page keeps its total", () => {
+  it("updates a query-only page counter without adding it to an envelope that never recorded it", () => {
+    const alpha = { id: 1, name: "Alpha", shelf: "a" };
+    const beta = { id: 2, name: "Beta", shelf: "b" };
+    const gamma = { id: 3, name: "Gamma", shelf: "a" };
+    const books = servedFrom([
+      ["GET", "/api/books", { items: [alpha, beta], total: 2 }],
+      [
+        "GET",
+        "/api/books?shelf=a",
+        { items: [alpha], total: 1, numberOfElements: 1 },
+      ],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/2", beta],
+      ["POST", "/api/books", gamma, 201, { name: "Gamma", shelf: "a" }],
+      ["GET", "/api/books/3", gamma],
+      ["GET", "/api/books", { items: [alpha, beta, gamma], total: 3 }],
+    ]);
+    const created = books.answer("post_books", {
+      body: { name: "Delta", shelf: "a" },
+    }).body;
+    expect(books.answer("get_books", { shelf: "a" })).toMatchObject({
+      body: { items: [alpha, created], total: 2, numberOfElements: 2 },
+      state: { source: "state", membership: "query", listed: 2 },
+    });
+    expect(books.answer("get_books").body).toEqual({
+      items: [alpha, beta, created],
+      total: 3,
+    });
+  });
+
+  it("filters, searches and sorts the state for values no line recorded, created books included", () => {
+    const books = servedFrom(QUERY_ROWS);
+    const created = books.answer("post_books", {
+      body: { name: "New Book", shelf: "b" },
+    }).body as Book;
+    const listed = (args: Record<string, string>) => {
+      const answer = books.answer("get_books", args);
+      return {
+        ids: (answer.body as Book[]).map((entry) => entry["id"]),
+        state: (answer as { readonly state?: unknown }).state,
+      };
+    };
+    expect(listed({ shelf: "b" })).toMatchObject({
+      ids: [2, created["id"]],
+      state: { source: "state", membership: "query", listed: 2 },
+    });
+    expect(listed({ q: "NEW" }).ids).toEqual([created["id"]]);
+    expect(listed({ sort: "-id" }).ids).toEqual([created["id"], 2, 1]);
+    expect(listed({ sort: "-id", shelf: "a" }).ids).toEqual([1]);
+    // A value the flag never recorded, or a parameter the query has no role for, replays as before.
+    expect(listed({ include: "none" }).state).toMatchObject({
+      source: "recording",
+      reason: "unrecorded-request",
+    });
+  });
+
+  it("keeps a whole line's total following the state beside a partial page, which its query now answers", () => {
     const partial = {
       content: [FIRST_BOOK],
       totalElements: 2,
@@ -626,8 +1001,10 @@ describe("list lines", () => {
     expect(books.answer("get_books")).toMatchObject({
       body: bookPage([FIRST_BOOK, SECOND_BOOK, created]),
     });
+    // The partial page is a query line here: its page and total come from the state, which now holds three books.
     expect(books.answer("get_books", { page: "1", size: "1" })).toMatchObject({
-      body: partial,
+      body: { ...partial, totalElements: 3 },
+      state: { membership: "query" },
     });
   });
 });
@@ -977,6 +1354,67 @@ describe("paged lines", () => {
     });
   });
 
+  it("does not list an entity a confirmed create adds on an empty ?page=2&per_page=1 page", () => {
+    const alpha = { id: 1, name: "Alpha", org: "1" };
+    const beta = { id: 2, name: "Beta", org: "2" };
+    const books = servedFrom([
+      ["GET", "/api/orgs/1/books", [alpha]],
+      ["GET", "/api/orgs/1/books/1", alpha],
+      ["GET", "/api/orgs/2/books?page=2&per_page=1", []],
+      ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+      ["GET", "/api/orgs/2/books/2", beta],
+    ]);
+    const created = books.answer("post_orgs_books_by_id", {
+      id: "2",
+      body: { name: "Gamma" },
+    }).body as Book;
+    expect(created).toMatchObject({ name: "Gamma" });
+    expect(books.answer("get_orgs_books_by_id", { id: "2" })).toMatchObject({
+      body: [],
+      state: { source: "recording", reason: "unrecorded-request" },
+    });
+    expect(
+      books.answer("get_orgs_books_by_id", {
+        id: "2",
+        page: "2",
+        per_page: "1",
+      }),
+    ).toMatchObject({
+      body: [],
+      state: { source: "state", membership: "recorded", listed: 0 },
+    });
+  });
+
+  it.each(["offset", "start", "_start"])(
+    "does not list an entity a confirmed create adds on an empty ?%s=1 page",
+    (name) => {
+      const alpha = { id: 1, name: "Alpha", org: "1" };
+      const beta = { id: 2, name: "Beta", org: "2" };
+      const books = servedFrom([
+        ["GET", "/api/orgs/1/books", [alpha]],
+        ["GET", "/api/orgs/1/books/1", alpha],
+        ["GET", `/api/orgs/2/books?${name}=1`, []],
+        ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+        ["GET", "/api/orgs/2/books/2", beta],
+      ]);
+      const created = books.answer("post_orgs_books_by_id", {
+        id: "2",
+        body: { name: "Gamma" },
+      }).body as Book;
+      expect(created).toMatchObject({ name: "Gamma" });
+      expect(books.answer("get_orgs_books_by_id", { id: "2" })).toMatchObject({
+        body: [],
+        state: { source: "state", membership: "recorded", listed: 0 },
+      });
+      expect(
+        books.answer("get_orgs_books_by_id", { id: "2", [name]: "1" }),
+      ).toMatchObject({
+        body: [],
+        state: { source: "state", membership: "query", listed: 0 },
+      });
+    },
+  );
+
   it("answers a zero limit a whole line recorded empty from that recording once a create fills its collection", () => {
     const alpha = { id: 1, name: "Alpha", org: "1" };
     const beta = { id: 2, name: "Beta", org: "2" };
@@ -1030,5 +1468,84 @@ describe("paged lines", () => {
         state: { source: "recording", reason: "page-exceeded" },
       },
     );
+  });
+});
+
+describe("omissions on query-backed read-backs", () => {
+  it("confirms a create through a filtered list and serves later omissions in that query", () => {
+    const alpha = { id: 1, name: "Alpha", detail: "x" };
+    const beta = { id: 2, name: "Beta", detail: "x" };
+    const gamma = { id: 3, name: "Gamma" };
+    const books = servedFrom([
+      ["GET", "/api/books", [alpha, beta]],
+      ["GET", "/api/books?name=Alpha", [alpha]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/2", beta],
+      ["POST", "/api/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/books?name=Gamma", [gamma]],
+    ]);
+    const created = books.answer("post_books", {
+      body: { name: "Delta" },
+    }).body;
+    expect(created).toMatchObject({ id: 3, name: "Delta" });
+    expect(created).not.toHaveProperty("detail");
+    expect(books.answer("get_books", { name: "Delta" })).toMatchObject({
+      body: [created],
+      state: { source: "state", membership: "query", listed: 1 },
+    });
+    expect(books.answer("get_books", { name: "Alpha" }).body).toEqual([alpha]);
+  });
+});
+
+describe("own JSON members in update bodies", () => {
+  it("accepts constructor added by a later recorded update without inheriting a function kind", () => {
+    const alpha = { id: 1, name: "Alpha" };
+    const beta = { id: 2, name: "Beta", constructor: "known" };
+    const renamed = { ...alpha, name: "Renamed" };
+    const extended = { ...renamed, constructor: "stored" };
+    const books = servedFrom([
+      ["GET", "/api/books", [alpha, beta]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/2", beta],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed" }],
+      ["GET", "/api/books/1", renamed],
+      ["PATCH", "/api/books/1", extended, 200, { constructor: "stored" }],
+      ["GET", "/api/books/1", extended],
+    ]);
+    expect(
+      books.answer("patch_books_by_id", {
+        id: "1",
+        body: { constructor: "value" },
+      }).body,
+    ).toMatchObject({
+      id: 1,
+      name: "Alpha",
+    });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toMatchObject({
+      constructor: "value",
+    });
+  });
+});
+
+describe("asset sequence inference", () => {
+  it("answers the recorded first create consistently when a held asset has outgrown its mask", () => {
+    const alpha = { id: 1, name: "Alpha", asset: "99-98" };
+    const beta = { id: 2, name: "Beta", asset: "100-00" };
+    const gamma = { id: 3, name: "Gamma", asset: "99-99" };
+    const books = servedFrom([
+      ["GET", "/api/books", [alpha, beta]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/2", beta],
+      ["POST", "/api/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/books/3", gamma],
+    ]);
+    expect(books.state.writes.get("post_books")?.rules).not.toContainEqual({
+      field: "asset",
+      rule: "sequence",
+      scope: "collection",
+    });
+    expect(
+      books.answer("post_books", { body: { name: "Gamma" } }).body,
+    ).toEqual(gamma);
   });
 });
