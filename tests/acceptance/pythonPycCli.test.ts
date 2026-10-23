@@ -2,7 +2,11 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { pythonPycFixture } from "../../src/python/PythonPyc.fixture.js";
+import {
+  marshalCode,
+  pythonPycFixture,
+  pythonPycHeader,
+} from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -21,6 +25,95 @@ cliTest(
     );
     expect(evidence.normalized_result.header.python_version).toBe("3.12");
     expect(evidence.normalized_result.code_objects[1]?.name).toBe("inner");
+  },
+);
+
+cliTest(
+  "preserves negative CPython first line numbers through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-lines-");
+    const path = join(root, "sample.pyc");
+    const nested = marshalCode("py311", {
+      name: "inner",
+      firstlineno: -7,
+    });
+    const bytes = Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", {
+        firstlineno: -1,
+        consts: [nested],
+      }),
+    ]);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
+    expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual({
+      kind: "code",
+      name: "inner",
+      firstlineno: -7,
+    });
+  },
+);
+
+cliTest(
+  "counts code keys using the selected CPython equality rules",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-equality-");
+    const cases = [
+      { magic: 3413, layout: "py38" as const, lengths: [1, 1] },
+      { magic: 3439, layout: "py38" as const, lengths: [1, 1] },
+      { magic: 3531, layout: "py311" as const, lengths: [2, 2] },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const code = (linetable: Buffer) =>
+        marshalCode(testCase.layout, {
+          name: "f",
+          filename: "fixture.py",
+          firstlineno: 1,
+          linetable,
+        });
+      const frozenSet = Buffer.concat([
+        Buffer.from([0x3e]),
+        Buffer.from([2, 0, 0, 0]),
+        code(Buffer.from([2, 1])),
+        code(Buffer.from([2, 2])),
+      ]);
+      const dict = Buffer.concat([
+        Buffer.from([0x7b]),
+        code(Buffer.from([2, 1])),
+        Buffer.from([0x4e]),
+        code(Buffer.from([2, 2])),
+        Buffer.from([0x54, 0x30]),
+      ]);
+      const path = join(root, `case-${index}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([
+          pythonPycHeader(testCase.magic),
+          marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
+        ]),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        result.json,
+      );
+      expect(
+        evidence.normalized_result.code_objects[0]?.consts.map((value) =>
+          value.kind === "frozenset" || value.kind === "dict"
+            ? value.length
+            : null,
+        ),
+      ).toEqual(testCase.lengths);
+    }
   },
 );
 
