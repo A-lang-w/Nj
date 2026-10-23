@@ -608,3 +608,101 @@ describe("reconstruction coverage reference constraints", () => {
     },
   );
 });
+
+describe("coverage boundary dependency closure", () => {
+  const evaluate = (workspace: ReconstructionCoverageData) =>
+    assertReconstructionCoverageEvaluation(
+      workspace,
+      "replacement.cli",
+      RECONSTRUCTION_COVERAGE_NOW,
+    );
+  it("requires owners for inventoried dependencies outside the explicit boundary", () => {
+    const workspace = completeReconstructionCoverageData();
+    const surface = workspace.surfaces[0]!;
+    workspace.surfaces = [
+      { ...surface, dependency_surface_ids: ["dep.first"] },
+      {
+        ...surface,
+        surface_id: "dep.first",
+        dependency_surface_ids: ["dep.second"],
+      },
+      { ...surface, surface_id: "dep.second", dependency_surface_ids: [] },
+    ];
+    const result = evaluate(workspace);
+    expect(result.status).toBe("partial");
+    expect(result.summary.required_surfaces).toBe(3);
+    expect(result.reasons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "owner-missing",
+          subject_id: "dep.first",
+        }),
+        expect.objectContaining({
+          code: "owner-missing",
+          subject_id: "dep.second",
+        }),
+      ]),
+    );
+  });
+  it("visits cycles and repeated dependencies once without changing finite claim selection", () => {
+    const workspace = completeReconstructionCoverageData();
+    const surface = workspace.surfaces[0]!;
+    workspace.surfaces = [
+      { ...surface, dependency_surface_ids: ["dep.first", "dep.first"] },
+      {
+        ...surface,
+        surface_id: "dep.first",
+        dependency_surface_ids: [surface.surface_id],
+      },
+    ];
+    workspace.owners.push({ ...workspace.owners[0]!, surface_id: "dep.first" });
+    expect(evaluate(workspace)).toMatchObject({
+      status: "ready",
+      summary: { required_surfaces: 2, required_claims: 1 },
+    });
+  });
+  it("reports missing transitive dependencies at the surface that references them", () => {
+    const workspace = completeReconstructionCoverageData();
+    const surface = workspace.surfaces[0]!;
+    workspace.surfaces = [
+      { ...surface, dependency_surface_ids: ["dep.first"] },
+      {
+        ...surface,
+        surface_id: "dep.first",
+        dependency_surface_ids: ["dep.absent"],
+      },
+    ];
+    workspace.owners.push({ ...workspace.owners[0]!, surface_id: "dep.first" });
+    expect(evaluate(workspace).reasons).toEqual([
+      expect.objectContaining({
+        code: "dependency-surface-missing",
+        subject_id: "dep.first",
+      }),
+    ]);
+  });
+  it("applies contradiction checks to transitive dependency surfaces", () => {
+    const workspace = completeReconstructionCoverageData();
+    const surface = workspace.surfaces[0]!;
+    workspace.surfaces = [
+      { ...surface, dependency_surface_ids: ["dep.first"] },
+      { ...surface, surface_id: "dep.first", dependency_surface_ids: [] },
+    ];
+    workspace.owners.push({ ...workspace.owners[0]!, surface_id: "dep.first" });
+    workspace.contradictions.push({
+      contradiction_id: "conflict.dependency",
+      status: "active",
+      surface_ids: ["dep.first"],
+      claim_ids: [],
+      evidence_ids: [
+        reconstructionCoverageEvidenceId("1"),
+        reconstructionCoverageEvidenceId("2"),
+      ],
+    });
+    expect(evaluate(workspace).reasons).toEqual([
+      expect.objectContaining({
+        code: "active-contradiction",
+        subject_id: "conflict.dependency",
+      }),
+    ]);
+  });
+});

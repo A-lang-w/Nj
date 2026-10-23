@@ -342,9 +342,18 @@ export const evaluateParsedReconstructionClosure = (
       ),
     );
   const nowInstant = offsetDateTimeInstantFromEpochMilliseconds(nowEpochMs);
+  // Existing dependency surfaces are part of the same completion boundary.
+  // Missing edges retain their attributed dependency-surface-missing diagnostic.
+  const requiredSurfaceIds = new Set(boundary.required_surface_ids);
+  for (const surfaceId of requiredSurfaceIds) {
+    const surface = parsed.surfaces.get(surfaceId);
+    for (const dependencyId of surface?.dependency_surface_ids ?? [])
+      if (parsed.surfaces.has(dependencyId))
+        requiredSurfaceIds.add(dependencyId);
+  }
   const context: ReconstructionEvaluationContext = {
     ...parsed,
-    boundary,
+    boundary: { ...boundary, required_surface_ids: [...requiredSurfaceIds] },
     nowEpochMs,
     nowInstant,
     reasons: [],
@@ -360,7 +369,7 @@ export const evaluateParsedReconstructionClosure = (
       boundary_id: boundary.boundary_id,
       status: closureStatus(reasons),
       summary: {
-        required_surfaces: boundary.required_surface_ids.length,
+        required_surfaces: context.boundary.required_surface_ids.length,
         required_claims: boundary.required_claim_ids.length,
         reasons: reasons.length,
       },

@@ -6,6 +6,13 @@ through `evaluate_reconstruction_coverage`. Results contain a status, reasons,
 recommended probes and Evidence references; the supplied bundle retains the
 complete records.
 
+Required surfaces include the transitive dependency closure of the selected
+boundary. Inventoried dependencies must satisfy the same ownership, disposition,
+contradiction and package-proof checks as explicitly selected surfaces. Cycles
+and repeated edges are visited once; missing dependencies remain attributed to
+the surface that references them. `summary.required_surfaces` counts this
+expanded set. Required finite claims remain explicitly selected by the boundary.
+
 Evidence IDs and bundle manifests must authenticate before evaluation. A valid
 record can still be insufficient proof: a passing verifier summary cannot
 promote inferred Evidence into a replay observation. That case returns
