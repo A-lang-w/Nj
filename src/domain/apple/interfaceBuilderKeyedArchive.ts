@@ -34,6 +34,12 @@ const connection = z.strictObject({
 type InterfaceBuilderObject = z.infer<typeof objectNode>;
 type InterfaceBuilderConnection = z.infer<typeof connection>;
 
+const APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS = new Set([
+  "NSIBHelpConnector",
+  "NSNibAXAttributeConnector",
+  "NSIBUserDefinedRuntimeAttributesConnector",
+]);
+
 /** UIKit runtime connection classes store their endpoints and labels under UI-prefixed keys. */
 export const isUIKitRuntimeConnectionClass = (className: string): boolean =>
   /^UIRuntime\w*Connection$/u.test(className);
@@ -41,9 +47,17 @@ export const isUIKitRuntimeConnectionClass = (className: string): boolean =>
 /** AppKit NIB connector classes and UIKit runtime connection records. */
 export const isInterfaceBuilderConnectionClass = (className: string): boolean =>
   isUIKitRuntimeConnectionClass(className) ||
-  /^NSNib(?:Connector|BindingConnector|ControlConnector|OutletConnector)$/u.test(
-    className,
-  );
+  // Keep unfamiliar AppKit connector records so projection can report their
+  // missing owner as unresolved instead of silently dropping their identity.
+  (className.startsWith("NS") && className.endsWith("Connector"));
+
+/** These AppKit records annotate one object and only mean a connection if a source key is encoded. */
+export const isSourceLessAppKitAnnotationConnector = (
+  className: string,
+  values: Readonly<Record<string, unknown>>,
+): boolean =>
+  APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS.has(className) &&
+  !Object.hasOwn(values, "NSSource");
 
 /** The connection class selects the source archive field namespace. */
 export const interfaceBuilderConnectionFieldNames = (className: string) =>
@@ -219,6 +233,9 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
     classFactsOfObject(value)?.name ?? null;
   const hasClassSuperclass = (value: unknown, superclass: string): boolean =>
     classFactsOfObject(value)?.superclasses.includes(superclass) ?? false;
+  /** The class and superclass names an object's descriptor declares in `$classes`. */
+  const classChainOf = (value: unknown): readonly string[] =>
+    classFactsOfObject(value)?.superclasses ?? [];
   /** The string an archived string object holds, if it is one. */
   const archivedString = (target: unknown): string | undefined => {
     if (typeof target === "string") return target;
@@ -355,7 +372,7 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
           : [[facts.name, { superclasses: facts.rawSuperclasses }]];
       }),
     );
-  return { resolve, hierarchy, hasClassSuperclass, classTable };
+  return { resolve, hierarchy, hasClassSuperclass, classChainOf, classTable };
 };
 
 /** Project class and connection objects from an NSKeyedArchiver object table. */
@@ -369,6 +386,7 @@ const parseKeyedArchive = (
     resolve,
     hierarchy: toHierarchy,
     hasClassSuperclass,
+    classChainOf,
     classTable,
   } = keyedArchiveTable(objectTable);
   const objects: InterfaceBuilderObject[] = [];
@@ -391,12 +409,11 @@ const parseKeyedArchive = (
     // Keep the unresolvable class reference itself, e.g. a dangling UID.
     if (className === null) fields.$class = record(raw).$class;
     const authoredId = firstString(fields.objectID, fields["object-id"]);
-    const objectId =
-      authoredId ??
-      (typeof fields.archiveUID === "number"
-        ? String(fields.archiveUID)
-        : String(index));
-    const kind = classifyObject(className);
+    // Object identity comes from the archive table. `archiveUID` is ordinary
+    // application data when it appears on an archived object; only UID
+    // reference stubs select object-table entries.
+    const objectId = authoredId ?? String(index);
+    const kind = classifyObject(className, classChainOf(raw));
     if (objects.length < 20_000)
       objects.push(
         objectNode.parse({
@@ -424,6 +441,7 @@ const parseKeyedArchive = (
       // AppKit and UIKit archive the same endpoint roles under their own
       // class-specific field namespaces; the source is the outlet owner.
       const connectionFields = interfaceBuilderConnectionFieldNames(className);
+      if (isSourceLessAppKitAnnotationConnector(className, fields)) continue;
       const source = uiKit
         ? archivedObjectReference(fields[connectionFields.source])
         : firstObjectReference(
@@ -523,9 +541,33 @@ const firstObjectReference = (...values: unknown[]): string | null => {
   return null;
 };
 
+/**
+ * Framework base classes whose presence in an archived `$classes` chain settles
+ * an object's kind, most specific first: UIControl and NSControl are views.
+ */
+const archivedKindBases: readonly (readonly [
+  InterfaceBuilderObject["kind"],
+  readonly string[],
+])[] = [
+  [
+    "view_controller",
+    ["UIViewController", "NSViewController", "NSWindowController"],
+  ],
+  ["control", ["UIControl", "NSControl"]],
+  ["view", ["UIView", "NSView", "UIWindow", "NSWindow"]],
+];
+
+/**
+ * Classify an object by its declared superclass chain when the archive records
+ * one, otherwise by its class name alone. Names are only a heuristic:
+ * `UINavigationController` names no view controller and contains "control".
+ */
 const classifyObject = (
   className: string | null,
+  classChain: readonly string[] = [],
 ): InterfaceBuilderObject["kind"] => {
+  for (const [kind, bases] of archivedKindBases)
+    if (bases.some((base) => classChain.includes(base))) return kind;
   const value = className?.toLowerCase() ?? "";
   if (value.includes("constraint")) return "constraint";
   if (value.includes("layoutguide")) return "layout_guide";

@@ -230,6 +230,46 @@ it("discovers standalone AMD targets before exact selection", async () => {
   expect(skipped.value.kernels).toEqual([]);
   expect(skipped.value.coverage.payloads).toBe("partial");
 });
+it.each(["match", "conflict", "feature-unknown"] as const)(
+  "compares AMDGPU targets with an explicit unknown environment (%s)",
+  async (comparison) => {
+    const payloadTarget =
+      comparison === "feature-unknown"
+        ? "amdgcn-amd-amdhsa-unknown-gfx900:xnack+"
+        : "amdgcn-amd-amdhsa-unknown-gfx900";
+    const inventoryTarget = comparison === "conflict" ? "gfx1100" : "gfx900";
+    const bytes = hipFixture(
+      amdFixture(false, undefined, payloadTarget),
+      `hipv4-amdgcn-amd-amdhsa--${inventoryTarget}`,
+    );
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    const row = result.value.objects.find((value) => value.kind === "amdgpu")!;
+    expect(row.payload_target).toBe(payloadTarget);
+    expect(result.value.kernels).toHaveLength(1);
+    if (comparison === "conflict") {
+      expect(row).toMatchObject({
+        target: "gfx1100",
+        target_consistency: "conflict",
+        inspection: "partial",
+      });
+      expect(result.value.coverage.payloads).toBe("partial");
+      expect(result.value.kernels[0]!.limitations.join(" ")).toContain(
+        "Conflicting target declarations",
+      );
+    } else {
+      expect(row).toMatchObject({
+        target: "gfx900",
+        target_consistency: comparison === "match" ? "consistent" : "unknown",
+        inspection: "complete",
+      });
+      expect(result.value.coverage.payloads).toBe("complete");
+      expect(result.value.kernels[0]!.limitations.join(" ")).not.toContain(
+        "Conflicting target declarations",
+      );
+    }
+  },
+);
 it.each([
   "hipv4-amdgcn-amd-amdhsa--gfx900",
   "hipv4-amdgcn-amd-amdhsa-gfx900",
@@ -314,8 +354,82 @@ it("retains unknown PTX virtual counts and partial payload coverage", async () =
     count: null,
   });
 });
+it.each([64, 65])(
+  "counts all %d scalar names in one PTX register list",
+  async (count) => {
+    const names = Array.from(
+      { length: count },
+      (_, index) => `%r${index}`,
+    ).join(", ");
+    const result = await inspect(
+      Buffer.from(
+        `.version 8.8\n.target sm_80\n.address_size 64\n.entry k() { .reg .b32 ${names}; ret; }\n`,
+      ),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.objects[0]!.inspection).toBe("complete");
+    expect(result.value.coverage.payloads).toBe("complete");
+    expect(result.value.kernels[0]!.registers.virtual).toEqual([
+      { type: ".b32", count },
+    ]);
+  },
+);
+it("retains PTX kernels before and after a long scalar register list", async () => {
+  const names = Array.from({ length: 65 }, (_, index) => `%r${index}`).join(
+    ", ",
+  );
+  const result = await inspect(
+    Buffer.from(
+      `.version 8.8\n.target sm_80\n.address_size 64\n.entry before() { ret; }\n.entry affected() { .reg .b32 ${names}; ret; }\n.entry after() { ret; }\n`,
+    ),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("complete");
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.kernels.map((kernel) => kernel.name)).toEqual([
+    "before",
+    "affected",
+    "after",
+  ]);
+  expect(result.value.kernels[1]!.registers.virtual).toEqual([
+    { type: ".b32", count: 65 },
+  ]);
+});
+it("retains later PTX kernels when a virtual register total overflows", async () => {
+  const result = await inspect(
+    Buffer.from(
+      ".version 8.8\n.target sm_80\n.address_size 64\n.entry before() { ret; }\n.entry affected() { .reg .b32 %r<9007199254740991>, %s; ret; }\n.entry after() { ret; }\n",
+    ),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("partial");
+  expect(result.value.coverage.payloads).toBe("partial");
+  expect(result.value.kernels.map((kernel) => kernel.name)).toEqual([
+    "before",
+    "affected",
+    "after",
+  ]);
+  expect(result.value.kernels[1]!.registers.virtual).toEqual([
+    { type: ".b32", count: null },
+  ]);
+});
 it.each([
-  ["parameter", ".u64 output", ".u64 .ptr .global output"],
+  ".entry k { ret; }",
+  ".entry k() { ret; }",
+  ".entry k .maxntid 1 { ret; }",
+])("inspects PTX entry with optional parameters: %s", async (entry) => {
+  const result = await inspect(
+    Buffer.from(`.version 7.0\n.target sm_80\n.address_size 64\n${entry}`),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("complete");
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.kernels).toMatchObject([
+    { name: "k", parameter_count: 0, parameter_bytes: 0, parameters: [] },
+  ]);
+});
+it.each([
+  ["parameter", ".u64 output", ".u64 .vendor_specific output"],
   ["shared", "scratch[32]", "scratch[]"],
 ] as const)(
   "marks unknown PTX %s declarations partial while retaining known facts",
@@ -345,6 +459,24 @@ it.each([
     }
   },
 );
+it("keeps supported PTX pointer qualifiers complete through the provider", async () => {
+  const bytes = Buffer.from(
+    ptxFixture.replace(".u64 output", ".u64 .ptr .global output"),
+  );
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("complete");
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.ptx_artifacts[0]!.text).toBe(bytes.toString());
+  expect(result.value.kernels[0]).toMatchObject({
+    parameter_count: 2,
+    parameter_bytes: 12,
+    parameters: [
+      { name: "output", offset: 0, size: 8 },
+      { name: "value", offset: 8, size: 4 },
+    ],
+  });
+});
 it.each(["whitespace", "comment"] as const)(
   "recognizes standalone PTX after more than 64 KiB of leading %s",
   async (kind) => {
@@ -364,6 +496,17 @@ it.each(["whitespace", "comment"] as const)(
     );
   },
 );
+it("uses a later module target when selecting standalone PTX", async () => {
+  const bytes = Buffer.from(
+    ".version 8.8\n.target sm_80\n.entry first() { ret; }\n.target sm_90\n",
+  );
+  const inventory = await inspect(bytes, { analysis: "inventory" });
+  const selected = await inspect(bytes, { targets: ["sm_90"] });
+  if (!inventory.ok) throw inventory.error;
+  if (!selected.ok) throw selected.error;
+  expect(inventory.value.objects[0]!.target).toBe("sm_90");
+  expect(selected.value.kernels.map(({ name }) => name)).toEqual(["first"]);
+});
 it.each(["truncated", "invalid", "extension"] as const)(
   "retains earlier AMD kernel declarations after a later %s note",
   async (kind) => {

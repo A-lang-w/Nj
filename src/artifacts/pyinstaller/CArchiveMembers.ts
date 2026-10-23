@@ -96,6 +96,7 @@ export const projectStoredMember = (
       kind: symlink ? "symlink" : "file",
       declaredSize,
       compressedSize: entry.compressedSize,
+      executable: entry.typeCode === "b",
       byteOffset: sourceByteOffset(entry, archiveStart),
       limitations,
       adapterKey: `carchive:${String(entry.index)}:${entry.name}`,
@@ -211,7 +212,7 @@ export const projectPyzMember = (
     return {
       entry: {
         path: path,
-        kind: "directory",
+        kind: "metadata",
         declaredSize: 0,
         compressedSize: item.length,
         executable: false,
@@ -316,6 +317,7 @@ const fileEntry = (input: {
   readonly limitations: readonly string[];
   readonly adapterKey: string;
   readonly formatMetadata: PyInstallerEntryMetadata;
+  readonly executable?: boolean;
   readonly encrypted?: boolean;
   readonly kind?: "file" | "symlink" | "metadata";
 }): ArtifactEntry => ({
@@ -323,7 +325,7 @@ const fileEntry = (input: {
   kind: input.kind ?? "file",
   declaredSize: input.declaredSize,
   compressedSize: input.compressedSize,
-  executable: false,
+  executable: input.executable === true,
   encrypted: input.encrypted === true,
   byteOffset: input.byteOffset,
   declaredIntegrity: null,
