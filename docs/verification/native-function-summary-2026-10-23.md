@@ -124,10 +124,12 @@ cross-process cache. Complete evidence remains available at the caller's file.
 
 ## Validation and limits
 
-- Full `npm run check` passed after integration with the reviewed timeout work.
-- The final focused contract/progress/selected-snapshot run passed 136 tests;
-  an earlier broader CLI-selector/contract run passed 169. Overlaps are not
-  summed. The earlier domain/Evidence run had 87 passes and one legacy
+- Full `npm run check` passed after integration with main
+  `a062529bb2aa064be37e82df39c59c4fa798fe50` at source `b7c3f0cd79c4a02b135da56fff06de08dd456ff7`.
+  `docs:check` also passed.
+- The latest focused contract/progress/snapshot/local-path run passed 139 tests;
+  the measured integration's selected run passed 136 and an earlier broader
+  CLI-selector/contract run passed 169. Overlaps are not summed. The earlier domain/Evidence run had 87 passes and one legacy
   progress-fixture failure. The explicit-complete fixture and new summary's
   increasing notifications subsequently passed in a separate eight-case MCP
   run.
