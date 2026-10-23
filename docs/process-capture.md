@@ -252,7 +252,14 @@ Successfully observed identity replacements use `identity_changed` with a null
 system code. Unstable symlink targets are omitted; already observed directory
 metadata remains available. The affected root stays incomplete, so omitted
 entries do not prove deletion. A path missing at its initial lookup remains an
-observed absence. Cancellation and unexpected I/O failures still stop capture.
+observed absence.
+
+Before launch, a selected root below a non-directory, or one whose lookup is
+denied or otherwise unavailable, fails capture. After admission, a root or descendant lookup that
+reports a missing path or a non-directory ancestor is an observed absence. A
+denied or otherwise unavailable lookup records an `entry_unavailable` omission
+for that path instead, and its root stays incomplete. Cancellation and
+unexpected I/O failures still stop capture.
 
 Terminal frame `data` is the comparison text after the selected normalization.
 New captures also preserve `raw_data` when normalization changes a PTY chunk;
@@ -327,6 +334,10 @@ to a bare PID kill for either finalization signal; failed identity or ownership
 validation is recorded as `unverified` with its reason. Cancellation before any
 deadline keeps the existing terminal kill. Descendants are not signalled during
 finalization; owned-process cleanup handles them afterwards.
+
+For an `exited` capture, `exit.code` is the target's normal exit code. It is
+`null` when the target ended on a signal, such as one sent by a scenario
+`signal` event, and the observed signal stays in `exit.signal`.
 
 `exit.reason` keeps the initiating deadline (`timeout` or `idle_timeout`).
 `exit.code` is `null` for every deadline exit; the code of an exit observed
