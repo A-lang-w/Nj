@@ -20,6 +20,8 @@ export const MAX_INSPECT_APPLE_IPS_THREADS = 4096;
 export const MAX_INSPECT_APPLE_IPS_FRAMES = 65536;
 /** Hard ceiling on usedImages rows. */
 export const MAX_INSPECT_APPLE_IPS_IMAGES = 4096;
+/** Hard ceiling on threadState register slots across every thread. */
+export const MAX_INSPECT_APPLE_IPS_REGISTERS = 262144;
 
 export const APPLE_IPS_IMAGE_SOURCES = [
   "P",
@@ -84,6 +86,15 @@ export const inspectAppleIpsInputSchema = z.strictObject({
     .describe(
       "Maximum usedImages rows to examine; exceeding the budget fails without partial success",
     ),
+  max_registers: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_INSPECT_APPLE_IPS_REGISTERS)
+    .default(16384)
+    .describe(
+      "Maximum threadState register slots across every thread; exceeding the budget fails without partial success",
+    ),
 });
 export type InspectAppleIpsInput = z.infer<typeof inspectAppleIpsInputSchema>;
 
@@ -136,7 +147,13 @@ const frameSchema = z.strictObject({
   arch: z.string().min(1).nullable(),
   image_offset: recordedIntegerSchema.nullable(),
   runtime_address: recordedIntegerSchema.nullable(),
-  role: z.enum(["faulting_instruction", "return_address", "unknown"]),
+  role: z.enum([
+    "faulting_instruction",
+    "current_instruction",
+    "return_address",
+    "unknown",
+  ]),
+  inline: z.boolean().nullable(),
   recorded_symbol: z.string().min(1).nullable(),
 });
 
@@ -147,6 +164,7 @@ const threadSchema = z.strictObject({
   name: z.string().min(1).nullable(),
   queue: z.string().min(1).nullable(),
   frames: z.array(frameSchema),
+  state_flavor: z.string().min(1).nullable(),
   registers: z.array(registerSchema),
 });
 
@@ -180,13 +198,35 @@ const classificationMatchSchema = z.strictObject({
   ),
 });
 
+const typeMismatchSchema = z.strictObject({
+  path: z.string().min(1),
+  expected: z.string().min(1),
+  observed: z.string().min(1),
+});
+
 const coverageSchema = z.strictObject({
   status: z.enum(["complete", "partial"]),
   reason: z.string().min(1).nullable(),
   threads: uint,
   frames: uint,
   images: uint,
+  registers: uint,
+  type_mismatches: z.array(typeMismatchSchema),
 });
+
+const osVersionSchema = z
+  .discriminatedUnion("form", [
+    z.strictObject({ form: z.literal("text"), text: z.string().min(1) }),
+    z.strictObject({
+      form: z.literal("structured"),
+      train: z.string().min(1).nullable(),
+      build: z.string().min(1).nullable(),
+      release_type: z.string().min(1).nullable(),
+      is_embedded: z.boolean().nullable(),
+      unlisted_keys: z.array(z.string().min(1)),
+    }),
+  ])
+  .nullable();
 
 /** Static Apple .ips crash-report inventory, read without execution. */
 export const appleIpsSchema = z.strictObject({
@@ -203,7 +243,7 @@ export const appleIpsSchema = z.strictObject({
     parent: z.string().min(1).nullable(),
     cpu_type: z.string().min(1).nullable(),
     translated: z.boolean().nullable(),
-    os_version: z.string().min(1).nullable(),
+    os_version: osVersionSchema,
   }),
   exception: exceptionSchema,
   termination: terminationSchema,
@@ -222,4 +262,5 @@ export type AppleIps = z.infer<typeof appleIpsSchema>;
 export type AppleIpsThread = z.infer<typeof threadSchema>;
 export type AppleIpsImage = z.infer<typeof imageSchema>;
 export type AppleIpsFrame = z.infer<typeof frameSchema>;
+export type AppleIpsTypeMismatch = z.infer<typeof typeMismatchSchema>;
 export type RecordedInteger = z.infer<typeof recordedIntegerSchema>;

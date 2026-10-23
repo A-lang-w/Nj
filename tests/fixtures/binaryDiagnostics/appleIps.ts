@@ -13,24 +13,45 @@ export interface AppleIpsFixtureOptions {
   readonly terminationIndicator?: string;
   readonly terminationReasons?: readonly string[];
   readonly registerValue?: string;
+  /** Emit the older string `osVersion` form instead of the producer dictionary. */
+  readonly osVersionText?: string;
   readonly extraBody?: string;
   readonly truncateBody?: boolean;
 }
 
 const defaultUuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
-/** Two-object Apple .ips crash report with a 309 metadata line. */
-export const appleIpsReport = (
-  options: AppleIpsFixtureOptions = {},
-): string => {
-  const metadata = JSON.stringify({
-    bug_type: options.bugType ?? "309",
+/** First-line metadata object as macOS ReportCrash writes it. */
+export const appleIpsMetadataLine = (
+  options: Pick<AppleIpsFixtureOptions, "bugType" | "procName"> = {},
+): string =>
+  JSON.stringify({
+    app_name: options.procName ?? "rea-crash-fixture",
     timestamp: "2026-01-01 00:00:00.000 +0000",
+    app_version: "",
+    slice_uuid: defaultUuid,
+    build_version: "",
+    platform: 1,
+    share_with_app_devs: 0,
+    is_first_party: 1,
+    bug_type: options.bugType ?? "309",
     os_version: "macOS 15.0 (24A335)",
+    roots_installed: 0,
     bundleID: "test.rea.fixture",
     incident_id: "AAAA-BBBB",
     name: options.procName ?? "rea-crash-fixture",
   });
+
+/**
+ * Two-object Apple .ips crash report with a 309 metadata line, shaped like
+ * ReportCrash output: dictionary `osVersion`, `threadState.flavor`, register
+ * descriptions, a non-faulting thread with an inlined top frame, and unlisted
+ * producer keys.
+ */
+export const appleIpsReport = (
+  options: AppleIpsFixtureOptions = {},
+): string => {
+  const metadata = appleIpsMetadataLine(options);
   const uuid = options.uuid ?? defaultUuid;
   const arch = options.arch === undefined ? "arm64" : options.arch;
   const base = options.base ?? 4294967296;
@@ -42,40 +63,76 @@ export const appleIpsReport = (
       : `,"reasons":${JSON.stringify([...options.terminationReasons])}`;
   const extra = options.extraBody ?? "";
   const archJson = arch === null ? "null" : JSON.stringify(arch);
+  const osVersion =
+    options.osVersionText === undefined
+      ? `{ "train": "macOS 15.0", "build": "24A335", "releaseType": "User" }`
+      : JSON.stringify(options.osVersionText);
   const body = `{
+  "uptime": 1000,
+  "procRole": "Foreground",
+  "version": 2,
+  "userID": 501,
+  "deployVersion": 210,
+  "modelCode": "Mac14,2",
+  "osVersion": ${osVersion},
+  "captureTime": "2026-01-01 00:00:00.0000 +0000",
+  "incident": "AAAA-BBBB",
+  "pid": 4242,
+  "translated": false,
+  "cpuType": "ARM-64",
   "procName": ${JSON.stringify(options.procName ?? "rea-crash-fixture")},
   "procPath": "/tmp/rea-crash-fixture",
-  "pid": 4242,
   "parentProc": "zsh",
-  "cpuType": "ARM-64",
-  "translated": false,
-  "osVersion": "Version 15.0 (Build 24A335)",
-  "faultingThread": 0,
+  "parentPid": 100,
+  "coalitionName": "com.apple.Terminal",
+  "instructionByteStream": { "beforePC": "AAAA", "atPC": "AAAA" },
+  "sip": "enabled",
+  "vmRegionInfo": "0x10 is not in any region.",
   "exception": {
+    "codes": "0x0000000000000001, 0x0000000000000010",
+    "rawCodes": [1, 16],
     "type": ${JSON.stringify(options.exceptionType ?? "EXC_BAD_ACCESS")},
     "signal": ${JSON.stringify(options.signal ?? "SIGSEGV")},
-    "subtype": ${JSON.stringify(options.subtype ?? "KERN_INVALID_ADDRESS at 0x0000000000000010")},
-    "codes": "0x0000000000000001, 0x0000000000000010"
+    "subtype": ${JSON.stringify(options.subtype ?? "KERN_INVALID_ADDRESS at 0x0000000000000010")}
   },
   "termination": {
-    "namespace": ${JSON.stringify(options.terminationNamespace ?? "SIGNAL")},
+    "flags": 0,
     "code": ${options.terminationCode ?? "11"},
-    "indicator": ${JSON.stringify(options.terminationIndicator ?? "Segmentation fault: 11")}${reasons}
+    "namespace": ${JSON.stringify(options.terminationNamespace ?? "SIGNAL")},
+    "indicator": ${JSON.stringify(options.terminationIndicator ?? "Segmentation fault: 11")},
+    "byProc": "exc handler",
+    "byPid": 4242${reasons}
   },
+  "extMods": { "caller": { "thread_create": 0 }, "warnings": 0 },
+  "faultingThread": 0,
   "threads": [
     {
       "triggered": true,
       "id": 1,
-      "queue": "com.apple.main-thread",
       "threadState": {
         "x": [
-          { "value": ${register} }
+          { "value": ${register} },
+          { "value": 16 }
         ],
-        "pc": { "value": ${String(base + imageOffset)} }
+        "flavor": "ARM_THREAD_STATE64",
+        "lr": { "value": ${String(base + 900)} },
+        "esr": { "value": 2449473606, "description": "(Data Abort) byte read Translation fault" },
+        "pc": { "value": ${String(base + imageOffset)}, "matchesCrashFrame": 1 },
+        "far": { "value": 16 }
       },
+      "queue": "com.apple.main-thread",
       "frames": [
-        { "imageIndex": 0, "imageOffset": ${String(imageOffset)}, "symbol": "rea_fixture_fault" },
-        { "imageIndex": 0, "imageOffset": 900, "symbol": "main" }
+        { "imageOffset": ${String(imageOffset)}, "symbol": "rea_fixture_fault", "symbolLocation": 12, "imageIndex": 0 },
+        { "imageOffset": 900, "symbol": "main", "symbolLocation": 40, "imageIndex": 0 }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "worker",
+      "frames": [
+        { "imageOffset": 1000, "symbol": "rea_fixture_inlined", "symbolLocation": 0, "imageIndex": 0, "inline": true },
+        { "imageOffset": 1000, "symbol": "rea_fixture_wait", "symbolLocation": 8, "imageIndex": 0 },
+        { "imageOffset": 1100, "symbol": "rea_fixture_worker", "symbolLocation": 20, "imageIndex": 0 }
       ]
     }
   ],
@@ -86,7 +143,8 @@ export const appleIpsReport = (
       "base": ${String(base)},
       "size": 16384,
       "uuid": ${JSON.stringify(uuid)},
-      "path": "/tmp/rea-crash-fixture"
+      "path": "/tmp/rea-crash-fixture",
+      "name": "rea-crash-fixture"
     },
     {
       "source": "A",
@@ -96,7 +154,11 @@ export const appleIpsReport = (
       "uuid": "00000000-0000-0000-0000-000000000000",
       "path": ""
     }
-  ]${extra}
+  ],
+  "sharedCache": { "base": 6442450944, "size": 4294967296, "uuid": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+  "vmSummary": "ReadOnly portion of Libraries: Total=1.0G",
+  "legacyInfo": { "threadTriggered": { "queue": "com.apple.main-thread" } },
+  "trialInfo": { "rollouts": [], "experiments": [] }${extra}
 }`;
   if (options.truncateBody === true) return `${metadata}\n${body.slice(0, 40)}`;
   return `${metadata}\n${body}`;

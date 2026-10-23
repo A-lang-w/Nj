@@ -9,96 +9,36 @@ import {
   type InspectAppleIpsInput,
   type RecordedInteger,
 } from "../../domain/native/appleIps.js";
+import { AppleIpsFormatFailure } from "./AppleIps.errors.js";
+import { classify } from "./AppleIpsClassification.js";
+import { FieldReader, recordedInteger } from "./AppleIpsFieldReader.js";
 import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
-} from "./AppleIps.errors.js";
-import {
-  asArray,
-  asBoolean,
-  asInteger,
-  asObject,
-  asString,
-  objectKeys,
-  parseLosslessJson,
-  LosslessJsonFailure,
-  type LosslessJson,
-} from "./losslessJson.js";
-
-const nonemptyString = (value: LosslessJson | undefined): string | null => {
-  const text = asString(value);
-  return text === null || text.length === 0 ? null : text;
-};
+  consumeJson,
+  ipsBodyShape,
+  IPS_METADATA_SHAPE,
+} from "./AppleIpsJsonShape.js";
+import type { LosslessJson } from "./losslessJson.js";
 
 type Artifact = AppleIps["artifact"];
 
 const ZERO_UUID = "00000000000000000000000000000000";
-const DOCUMENTED_METADATA = new Set([
-  "bug_type",
-  "timestamp",
-  "os_version",
-  "bundleID",
-  "incident_id",
-  "name",
-]);
-const DOCUMENTED_BODY = new Set([
-  "procName",
-  "procPath",
-  "pid",
-  "parentProc",
-  "cpuType",
-  "translated",
-  "osVersion",
-  "exception",
-  "termination",
-  "faultingThread",
-  "threads",
-  "usedImages",
-]);
-const DOCUMENTED_EXCEPTION = new Set([
-  "type",
-  "signal",
-  "subtype",
-  "codes",
-  "message",
-]);
-const DOCUMENTED_TERMINATION = new Set([
-  "namespace",
-  "code",
-  "indicator",
-  "reasons",
-]);
-
 const IPS_LIMITATIONS = [
   "Rows reproduce the selected .ips JSON; they do not establish that the process still exists or that a live kernel agrees with the recorded state.",
   "Opened Mach-O and dSYM UUID joins remain unobserved.",
   "Symbol names printed inside the report are recorded claims and are not verified.",
 ];
 
-const recordedInteger = (decimal: string): RecordedInteger => {
-  try {
-    const value = BigInt(decimal);
-    return value < 0n
-      ? { decimal, hex: null }
-      : { decimal, hex: `0x${value.toString(16)}` };
-  } catch {
-    return { decimal, hex: null };
-  }
-};
+const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 const add = (
   left: RecordedInteger | null,
   right: RecordedInteger | null,
-): RecordedInteger | null => {
-  if (left === null || right === null) return null;
-  try {
-    return recordedInteger(
-      (BigInt(left.decimal) + BigInt(right.decimal)).toString(),
-    );
-  } catch {
-    return null;
-  }
-};
+): RecordedInteger | null =>
+  left === null || right === null
+    ? null
+    : recordedInteger(
+        (BigInt(left.decimal) + BigInt(right.decimal)).toString(),
+      );
 
 const canonicalUuid = (
   raw: string | null,
@@ -120,265 +60,200 @@ const sourceMeaning = (source: string | null): string | null => {
     : null;
 };
 
-const unlistedKeys = (
-  members: Readonly<Record<string, LosslessJson>>,
-  documented: ReadonlySet<string>,
-): string[] => objectKeys(members).filter((key) => !documented.has(key));
-
-const integerField = (
-  value: LosslessJson | undefined,
-): RecordedInteger | null => {
-  const decimal = asInteger(value);
-  return decimal === null ? null : recordedInteger(decimal);
-};
-
-const stringList = (value: LosslessJson | undefined): string[] | null => {
-  const items = asArray(value);
-  if (items === null) return null;
-  const strings = items
-    .map((item) => asString(item))
-    .filter((item): item is string => item !== null && item.length > 0);
-  return strings;
-};
-
-const consumeJson = (text: string, label: string): LosslessJson => {
-  try {
-    const parsed = parseLosslessJson(text, 0);
-    const trailing = text.slice(parsed.end).trim();
-    if (trailing.length > 0)
-      throw new AppleIpsFormatFailure(
-        "malformed",
-        `${label} has trailing JSON text after the first complete value`,
-      );
-    return parsed.value;
-  } catch (cause) {
-    if (cause instanceof AppleIpsFormatFailure) throw cause;
-    const message =
-      cause instanceof LosslessJsonFailure ? cause.message : String(cause);
-    throw new AppleIpsFormatFailure("malformed", `${label}: ${message}`);
-  }
-};
-
 const exceptionOf = (
   value: LosslessJson | undefined,
+  read: FieldReader,
 ): AppleIps["exception"] => {
-  const members = asObject(value);
-  if (members === null) return null;
+  const object = read.object(value, "body.exception");
+  if (object === null) return null;
+  const { members } = object;
   return {
-    type: nonemptyString(members.type),
-    signal: nonemptyString(members.signal),
-    subtype: nonemptyString(members.subtype),
-    codes: nonemptyString(members.codes),
-    message: nonemptyString(members.message),
-    unlisted_keys: unlistedKeys(members, DOCUMENTED_EXCEPTION),
+    type: read.text(members.type, "body.exception.type"),
+    signal: read.text(members.signal, "body.exception.signal"),
+    subtype: read.text(members.subtype, "body.exception.subtype"),
+    codes: read.text(members.codes, "body.exception.codes"),
+    message: read.text(members.message, "body.exception.message"),
+    unlisted_keys: [...object.unlisted],
   };
 };
 
 const terminationOf = (
   value: LosslessJson | undefined,
+  read: FieldReader,
 ): AppleIps["termination"] => {
-  const members = asObject(value);
-  if (members === null) return null;
+  const object = read.object(value, "body.termination");
+  if (object === null) return null;
+  const { members } = object;
+  const reasonItems = read.array(
+    members.reasons,
+    "body.termination.reasons",
+    false,
+  );
   return {
-    namespace: nonemptyString(members.namespace),
-    code: integerField(members.code),
-    indicator: nonemptyString(members.indicator),
-    reasons: stringList(members.reasons),
-    unlisted_keys: unlistedKeys(members, DOCUMENTED_TERMINATION),
+    namespace: read.text(members.namespace, "body.termination.namespace"),
+    code: read.integer(members.code, "body.termination.code"),
+    indicator: read.text(members.indicator, "body.termination.indicator"),
+    reasons:
+      reasonItems === null
+        ? null
+        : reasonItems.flatMap((item, index) => {
+            const reason = read.text(
+              item,
+              `body.termination.reasons[${String(index)}]`,
+            );
+            return reason === null ? [] : [reason];
+          }),
+    unlisted_keys: [...object.unlisted],
+  };
+};
+
+const osVersionOf = (
+  value: LosslessJson | undefined,
+  read: FieldReader,
+): AppleIps["process"]["os_version"] => {
+  if (value === undefined || value.kind === "null") return null;
+  if (value.kind === "string")
+    return value.value.length === 0
+      ? null
+      : { form: "text", text: value.value };
+  if (value.kind !== "object") {
+    read.mismatch("body.osVersion", "string or object", value);
+    return null;
+  }
+  const { members } = value;
+  return {
+    form: "structured",
+    train: read.text(members.train, "body.osVersion.train"),
+    build: read.text(members.build, "body.osVersion.build"),
+    release_type: read.text(members.releaseType, "body.osVersion.releaseType"),
+    is_embedded: read.boolean(members.isEmbedded, "body.osVersion.isEmbedded"),
+    unlisted_keys: [...value.unlisted],
   };
 };
 
 const registerValue = (
   name: string,
   value: LosslessJson,
+  path: string,
+  read: FieldReader,
 ): AppleIpsThread["registers"][number] | null => {
+  if (value.kind === "null") return null;
   if (value.kind === "integer")
     return { name, value: recordedInteger(value.decimal), description: null };
-  const members = asObject(value);
-  if (members === null) return null;
-  const integer = integerField(members.value);
-  if (integer === null) return null;
+  if (value.kind !== "object") {
+    read.mismatch(path, "integer or object with integer value", value);
+    return null;
+  }
+  const integer = read.integer(value.members.value, `${path}.value`);
+  if (integer === null) {
+    if (value.members.value === undefined)
+      read.mismatch(`${path}.value`, "integer", undefined);
+    return null;
+  }
   return {
     name,
     value: integer,
-    description: nonemptyString(members.description),
+    description: read.text(value.members.description, `${path}.description`),
   };
 };
 
-const registersOf = (
+const threadStateOf = (
   value: LosslessJson | undefined,
-): AppleIpsThread["registers"] => {
-  const members = asObject(value);
-  if (members === null) return [];
+  path: string,
+  read: FieldReader,
+): Pick<AppleIpsThread, "state_flavor" | "registers"> => {
+  const object = read.object(value, path);
+  if (object === null) return { state_flavor: null, registers: [] };
+  const { members } = object;
   const registers: AppleIpsThread["registers"] = [];
-  const vector = asArray(members.x);
-  if (vector !== null) {
-    vector.forEach((entry, index) => {
-      const register = registerValue(`x${String(index)}`, entry);
-      if (register !== null) registers.push(register);
-    });
-  }
-  for (const key of objectKeys(members)) {
-    if (key === "x") continue;
-    const register = registerValue(key, members[key]!);
+  const vector = read.array(members.x, `${path}.x`, false);
+  vector?.forEach((entry, index) => {
+    const register = registerValue(
+      `x${String(index)}`,
+      entry,
+      `${path}.x[${String(index)}]`,
+      read,
+    );
+    if (register !== null) registers.push(register);
+  });
+  for (const [key, entry] of Object.entries(members)) {
+    if (key === "x" || key === "flavor") continue;
+    const register = registerValue(key, entry, `${path}.${key}`, read);
     if (register !== null) registers.push(register);
   }
-  return registers;
+  return {
+    state_flavor: read.text(members.flavor, `${path}.flavor`),
+    registers,
+  };
 };
 
 const imagesOf = (
   value: LosslessJson | undefined,
-  maxImages: number,
-): AppleIpsImage[] => {
-  const rows = asArray(value) ?? [];
-  if (rows.length > maxImages)
-    throw new AppleIpsResourceFailure(
-      "images",
-      maxImages,
-      `Crash report declares ${String(rows.length)} usedImages rows, above the ${String(maxImages)}-entry image allowance`,
-    );
-  return rows.map((row, index) => {
-    const members = asObject(row) ?? {};
-    const source = nonemptyString(members.source);
-    const uuid = canonicalUuid(nonemptyString(members.uuid));
-    const arch = nonemptyString(members.arch);
+  read: FieldReader,
+): AppleIpsImage[] =>
+  (read.array(value, "body.usedImages", true) ?? []).map((row, index) => {
+    const path = `body.usedImages[${String(index)}]`;
+    const members = read.row(row, path);
+    const source = read.text(members.source, `${path}.source`);
+    const uuid = canonicalUuid(read.text(members.uuid, `${path}.uuid`));
+    const arch = read.text(members.arch, `${path}.arch`);
     return {
       index,
       source,
       source_meaning: sourceMeaning(source),
       arch,
-      base: integerField(members.base),
-      size: integerField(members.size),
+      base: read.integer(members.base, `${path}.base`),
+      size: read.integer(members.size, `${path}.size`),
       uuid: uuid.uuid,
       uuid_unknown: uuid.unknown || arch === null,
-      path: nonemptyString(members.path),
+      path: read.text(members.path, `${path}.path`),
     };
   });
+
+/**
+ * Frame 0 is the thread's sampled program counter; later frames are unwound
+ * return addresses. Inlined frames share the address of the frame after them,
+ * so depth counts physical frames rather than rows.
+ */
+const frameRole = (
+  physicalDepth: number,
+  threadIndex: number,
+  faultingThread: number | null,
+): AppleIpsFrame["role"] => {
+  if (physicalDepth > 0) return "return_address";
+  if (faultingThread === null) return "unknown";
+  return threadIndex === faultingThread
+    ? "faulting_instruction"
+    : "current_instruction";
 };
 
-const classify = (
-  exception: AppleIps["exception"],
-  termination: AppleIps["termination"],
-): AppleIps["classification"] => {
-  const matches: AppleIps["classification"]["matches"] = [];
-  const code = termination?.code;
-  if (code?.decimal === "2343432205" || code?.hex === "0x8badf00d")
-    matches.push({
-      rule: "watchdog",
-      fields: [
-        { name: "termination.code", value: code.decimal },
-        { name: "termination.code_hex", value: "0x8badf00d" },
-      ],
-    });
-  if (code?.decimal === "3735933132" || code?.hex === "0xdead10cc")
-    matches.push({
-      rule: "dead10cc",
-      fields: [
-        { name: "termination.code", value: code.decimal },
-        { name: "termination.code_hex", value: "0xdead10cc" },
-      ],
-    });
-  if (code?.decimal === "3221229823" || code?.hex === "0xc00010ff")
-    matches.push({
-      rule: "thermal",
-      fields: [
-        { name: "termination.code", value: code.decimal },
-        { name: "termination.code_hex", value: "0xc00010ff" },
-      ],
-    });
-  const type = exception?.type;
-  const subtype = exception?.subtype ?? "";
-  if (type === "EXC_GUARD" && subtype.includes("GUARD_TYPE_FD"))
-    matches.push({
-      rule: "guarded_file_descriptor",
-      fields: [
-        { name: "exception.type", value: type },
-        { name: "exception.subtype", value: subtype },
-      ],
-    });
-  if (type === "EXC_GUARD" && subtype.includes("GUARD_TYPE_MACH_PORT"))
-    matches.push({
-      rule: "guarded_mach_port",
-      fields: [
-        { name: "exception.type", value: type },
-        { name: "exception.subtype", value: subtype },
-      ],
-    });
-  if (subtype.endsWith("(possible pointer authentication failure)"))
-    matches.push({
-      rule: "possible_pointer_authentication_failure",
-      fields: [
-        ...(exception?.type === null || exception?.type === undefined
-          ? []
-          : [{ name: "exception.type", value: exception.type }]),
-        { name: "exception.subtype", value: subtype },
-      ],
-    });
-  const namespace = termination?.namespace;
-  const indicator = termination?.indicator;
-  const reasons = termination?.reasons ?? [];
-  const missingLibrary = reasons.find((reason) =>
-    reason.includes("Library not loaded"),
-  );
-  if (
-    namespace === "DYLD" &&
-    (indicator === "Library missing" || missingLibrary !== undefined)
-  )
-    matches.push({
-      rule: "dyld_missing_library",
-      fields: [
-        { name: "termination.namespace", value: namespace },
-        ...(indicator === null || indicator === undefined
-          ? []
-          : [{ name: "termination.indicator", value: indicator }]),
-        ...(missingLibrary === undefined
-          ? []
-          : [{ name: "termination.reasons", value: missingLibrary }]),
-      ],
-    });
-  return {
-    status: matches.length === 0 ? "unclassified" : "classified",
-    matches,
-  };
-};
-
-const parseThreads = (
+const threadsOf = (
   value: LosslessJson | undefined,
   images: readonly AppleIpsImage[],
   faultingThread: number | null,
-  maxThreads: number,
-  maxFrames: number,
-): AppleIpsThread[] => {
-  const rows = asArray(value) ?? [];
-  if (rows.length > maxThreads)
-    throw new AppleIpsResourceFailure(
-      "threads",
-      maxThreads,
-      `Crash report declares ${String(rows.length)} threads, above the ${String(maxThreads)}-entry thread allowance`,
-    );
-  let framesSeen = 0;
-  return rows.map((row, threadIndex) => {
-    const members = asObject(row) ?? {};
-    const frameValues = asArray(members.frames) ?? [];
-    framesSeen += frameValues.length;
-    if (framesSeen > maxFrames)
-      throw new AppleIpsResourceFailure(
-        "frames",
-        maxFrames,
-        `Crash report declares ${String(framesSeen)} frames, above the ${String(maxFrames)}-entry frame allowance`,
+  read: FieldReader,
+): AppleIpsThread[] =>
+  (read.array(value, "body.threads", true) ?? []).map((row, threadIndex) => {
+    const path = `body.threads[${String(threadIndex)}]`;
+    const members = read.row(row, path);
+    let physicalDepth = 0;
+    const frames = (
+      read.array(members.frames, `${path}.frames`, false) ?? []
+    ).map((frame, frameIndex): AppleIpsFrame => {
+      const framePath = `${path}.frames[${String(frameIndex)}]`;
+      const frameMembers = read.row(frame, framePath);
+      const imageIndex = read.index(
+        frameMembers.imageIndex,
+        `${framePath}.imageIndex`,
       );
-    const frames: AppleIpsFrame[] = frameValues.map((frame, frameIndex) => {
-      const frameMembers = asObject(frame) ?? {};
-      const imageIndexDecimal = asInteger(frameMembers.imageIndex);
-      const imageIndex =
-        imageIndexDecimal === null
-          ? null
-          : Number.parseInt(imageIndexDecimal, 10);
-      const image =
-        imageIndex === null || Number.isNaN(imageIndex)
-          ? undefined
-          : images[imageIndex];
-      const imageOffset = integerField(frameMembers.imageOffset);
+      const image = imageIndex === null ? undefined : images[imageIndex];
+      const imageOffset = read.integer(
+        frameMembers.imageOffset,
+        `${framePath}.imageOffset`,
+      );
+      const inline = read.boolean(frameMembers.inline, `${framePath}.inline`);
+      const role = frameRole(physicalDepth, threadIndex, faultingThread);
+      if (inline !== true) physicalDepth += 1;
       return {
         thread_index: threadIndex,
         frame_index: frameIndex,
@@ -387,34 +262,33 @@ const parseThreads = (
         arch: image?.arch ?? null,
         image_offset: imageOffset,
         runtime_address: add(image?.base ?? null, imageOffset),
-        role:
-          faultingThread === null
-            ? "unknown"
-            : threadIndex === faultingThread && frameIndex === 0
-              ? "faulting_instruction"
-              : "return_address",
-        recorded_symbol: nonemptyString(frameMembers.symbol),
+        role,
+        inline,
+        recorded_symbol: read.text(frameMembers.symbol, `${framePath}.symbol`),
       };
     });
     return {
       index: threadIndex,
-      id: integerField(members.id),
-      triggered: asBoolean(members.triggered),
-      name: nonemptyString(members.name),
-      queue: nonemptyString(members.queue),
+      id: read.integer(members.id, `${path}.id`),
+      triggered: read.boolean(members.triggered, `${path}.triggered`),
+      name: read.text(members.name, `${path}.name`),
+      queue: read.text(members.queue, `${path}.queue`),
       frames,
-      registers: registersOf(members.threadState),
+      ...threadStateOf(members.threadState, `${path}.threadState`, read),
     };
   });
-};
 
-/** Read one Apple .ips crash report without executing a target. */
-export const parseAppleIps = (
-  bytes: Buffer,
-  artifact: Artifact,
-  input: InspectAppleIpsInput,
-): AppleIps => {
-  const text = bytes.toString("utf8");
+/** Split the UTF-8 text into the first-line metadata object and the crash body. */
+const crashText = (bytes: Buffer): { metadata: string; body: string } => {
+  let text: string;
+  try {
+    text = utf8.decode(bytes);
+  } catch {
+    throw new AppleIpsFormatFailure(
+      "malformed",
+      "IPS crash reports are UTF-8 JSON text; the selected bytes are not valid UTF-8",
+    );
+  }
   if (text.includes("\u0000"))
     throw new AppleIpsFormatFailure(
       "malformed",
@@ -427,93 +301,114 @@ export const parseAppleIps = (
       "IPS crash report must start with a metadata JSON object on the first line",
     );
   const lineEnd = text.startsWith("\r\n", newline) ? newline + 2 : newline + 1;
-  const metadataJson = consumeJson(text.slice(0, newline), "IPS metadata");
-  const metadataMembers = asObject(metadataJson);
-  if (metadataMembers === null)
+  return { metadata: text.slice(0, newline), body: text.slice(lineEnd).trim() };
+};
+
+const metadataOf = (text: string, read: FieldReader): AppleIps["metadata"] => {
+  const json = consumeJson(text, "IPS metadata", IPS_METADATA_SHAPE);
+  if (json.kind !== "object")
     throw new AppleIpsFormatFailure(
       "malformed",
       "IPS metadata is not a JSON object",
     );
-  const bugType = nonemptyString(metadataMembers.bug_type);
-  if (bugType === null)
+  const { members } = json;
+  const bugType = members.bug_type;
+  if (bugType?.kind !== "string" || bugType.value.length === 0)
     throw new AppleIpsFormatFailure(
       "malformed",
       "IPS metadata bug_type is missing or not a string",
     );
-  if (bugType !== "309")
+  if (bugType.value !== "309")
     throw new AppleIpsFormatFailure(
       "unsupported",
-      `IPS bug_type ${JSON.stringify(bugType)} is not a crash report (309); this operation does not decode other DiagnosticReports types`,
+      `IPS bug_type ${JSON.stringify(bugType.value)} is not a crash report (309); this operation does not decode other DiagnosticReports types`,
     );
-  const remainder = text.slice(lineEnd).trim();
-  if (remainder.length === 0)
+  return {
+    bug_type: bugType.value,
+    timestamp: read.text(members.timestamp, "metadata.timestamp"),
+    os_version: read.text(members.os_version, "metadata.os_version"),
+    bundle_id: read.text(members.bundleID, "metadata.bundleID"),
+    incident_id: read.text(members.incident_id, "metadata.incident_id"),
+    name: read.text(members.name, "metadata.name"),
+    unlisted_keys: [...json.unlisted],
+  };
+};
+
+const coverageOf = (
+  threads: readonly AppleIpsThread[],
+  images: readonly AppleIpsImage[],
+  mismatches: AppleIps["coverage"]["type_mismatches"],
+): AppleIps["coverage"] => {
+  let frames = 0;
+  let registers = 0;
+  for (const thread of threads) {
+    frames += thread.frames.length;
+    registers += thread.registers.length;
+  }
+  return {
+    status: mismatches.length === 0 ? "complete" : "partial",
+    reason:
+      mismatches.length === 0
+        ? null
+        : `${String(mismatches.length)} recorded value(s) did not have the documented JSON type and were not interpreted; see type_mismatches`,
+    threads: threads.length,
+    frames,
+    images: images.length,
+    registers,
+    type_mismatches: mismatches,
+  };
+};
+
+/** Read one Apple .ips crash report without executing a target. */
+export const parseAppleIps = (
+  bytes: Buffer,
+  artifact: Artifact,
+  input: InspectAppleIpsInput,
+): AppleIps => {
+  const text = crashText(bytes);
+  const read = new FieldReader();
+  const metadata = metadataOf(text.metadata, read);
+  if (text.body.length === 0)
     throw new AppleIpsFormatFailure(
       "malformed",
       "IPS crash report body is missing after metadata line",
     );
-  const bodyJson = consumeJson(remainder, "IPS crash body");
-  const body = asObject(bodyJson);
-  if (body === null)
+  const bodyJson = consumeJson(
+    text.body,
+    "IPS crash body",
+    ipsBodyShape(input),
+  );
+  if (bodyJson.kind !== "object")
     throw new AppleIpsFormatFailure(
       "malformed",
       "IPS crash body is not a JSON object",
     );
-  const images = imagesOf(body.usedImages, input.max_images);
-  const faultingDecimal = asInteger(body.faultingThread);
-  const faultingThread =
-    faultingDecimal === null ? null : Number.parseInt(faultingDecimal, 10);
-  const threads = parseThreads(
-    body.threads,
-    images,
-    faultingThread === null || Number.isNaN(faultingThread)
-      ? null
-      : faultingThread,
-    input.max_threads,
-    input.max_frames,
-  );
-  const exception = exceptionOf(body.exception);
-  const termination = terminationOf(body.termination);
-  const frames = threads.reduce(
-    (count, thread) => count + thread.frames.length,
-    0,
-  );
+  const body = bodyJson.members;
+  const images = imagesOf(body.usedImages, read);
+  const faultingThread = read.index(body.faultingThread, "body.faultingThread");
+  const threads = threadsOf(body.threads, images, faultingThread, read);
+  const exception = exceptionOf(body.exception, read);
+  const termination = terminationOf(body.termination, read);
   return {
     artifact,
-    metadata: {
-      bug_type: bugType,
-      timestamp: nonemptyString(metadataMembers.timestamp),
-      os_version: nonemptyString(metadataMembers.os_version),
-      bundle_id: nonemptyString(metadataMembers.bundleID),
-      incident_id: nonemptyString(metadataMembers.incident_id),
-      name: nonemptyString(metadataMembers.name),
-      unlisted_keys: unlistedKeys(metadataMembers, DOCUMENTED_METADATA),
-    },
+    metadata,
     process: {
-      name: nonemptyString(body.procName),
-      path: nonemptyString(body.procPath),
-      pid: integerField(body.pid),
-      parent: nonemptyString(body.parentProc),
-      cpu_type: nonemptyString(body.cpuType),
-      translated: asBoolean(body.translated),
-      os_version: nonemptyString(body.osVersion),
+      name: read.text(body.procName, "body.procName"),
+      path: read.text(body.procPath, "body.procPath"),
+      pid: read.integer(body.pid, "body.pid"),
+      parent: read.text(body.parentProc, "body.parentProc"),
+      cpu_type: read.text(body.cpuType, "body.cpuType"),
+      translated: read.boolean(body.translated, "body.translated"),
+      os_version: osVersionOf(body.osVersion, read),
     },
     exception,
     termination,
-    faulting_thread:
-      faultingThread === null || Number.isNaN(faultingThread)
-        ? null
-        : faultingThread,
+    faulting_thread: faultingThread,
     threads,
     images,
     classification: classify(exception, termination),
-    coverage: {
-      status: "complete",
-      reason: null,
-      threads: threads.length,
-      frames,
-      images: images.length,
-    },
-    unlisted_body_keys: unlistedKeys(body, DOCUMENTED_BODY),
+    coverage: coverageOf(threads, images, read.mismatches),
+    unlisted_body_keys: [...bodyJson.unlisted],
     limitations: IPS_LIMITATIONS,
   };
 };

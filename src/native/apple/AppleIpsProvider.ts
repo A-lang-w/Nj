@@ -23,9 +23,11 @@ import {
   MAX_INSPECT_APPLE_IPS_FILE_BYTES,
   MAX_INSPECT_APPLE_IPS_FRAMES,
   MAX_INSPECT_APPLE_IPS_IMAGES,
+  MAX_INSPECT_APPLE_IPS_REGISTERS,
   MAX_INSPECT_APPLE_IPS_THREADS,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
@@ -33,6 +35,7 @@ import { APPLE_IPS_PROVIDER } from "../../application/InvestigationProviders.js"
 import {
   AppleIpsFormatFailure,
   AppleIpsResourceFailure,
+  type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 
@@ -97,25 +100,53 @@ const fileSizeRemediation = (input: InspectAppleIpsInput): string =>
     ? `The report exceeds the ${String(MAX_INSPECT_APPLE_IPS_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
+const SELECTED_BUDGETS = {
+  threads: (input) => input.max_threads,
+  frames: (input) => input.max_frames,
+  images: (input) => input.max_images,
+  registers: (input) => input.max_registers,
+} as const satisfies Record<
+  AppleIpsSelectedBoundary,
+  (input: InspectAppleIpsInput) => number
+>;
+
+const SELECTED_CEILINGS: Readonly<Record<AppleIpsSelectedBoundary, number>> = {
+  threads: MAX_INSPECT_APPLE_IPS_THREADS,
+  frames: MAX_INSPECT_APPLE_IPS_FRAMES,
+  images: MAX_INSPECT_APPLE_IPS_IMAGES,
+  registers: MAX_INSPECT_APPLE_IPS_REGISTERS,
+};
+
+const isSelectedBoundary = (
+  boundary: AppleIpsResourceFailure["boundary"],
+): boundary is AppleIpsSelectedBoundary =>
+  Object.hasOwn(SELECTED_CEILINGS, boundary);
+
 const budgetRemediation = (
   input: InspectAppleIpsInput,
-  boundary: AppleIpsResourceFailure["boundary"],
+  boundary: AppleIpsSelectedBoundary,
 ): string => {
-  const selected =
-    boundary === "threads"
-      ? input.max_threads
-      : boundary === "frames"
-        ? input.max_frames
-        : input.max_images;
-  const ceiling =
-    boundary === "threads"
-      ? MAX_INSPECT_APPLE_IPS_THREADS
-      : boundary === "frames"
-        ? MAX_INSPECT_APPLE_IPS_FRAMES
-        : MAX_INSPECT_APPLE_IPS_IMAGES;
+  const selected = SELECTED_BUDGETS[boundary](input);
+  const ceiling = SELECTED_CEILINGS[boundary];
   return selected >= ceiling
     ? `The report exceeds the ${String(ceiling)}-entry ${boundary} ceiling this operation accepts; select a smaller artifact.`
     : `Raise max_${boundary} above ${String(selected)} or select a smaller artifact; the limit is the caller-selected ${boundary} budget.`;
+};
+
+const resourceRecovery = (
+  input: InspectAppleIpsInput,
+  cause: AppleIpsResourceFailure,
+) => {
+  const { boundary } = cause;
+  return isSelectedBoundary(boundary)
+    ? {
+        retryable: false,
+        remediationAction: budgetRemediation(input, boundary),
+      }
+    : fixedAllowanceOptions(
+        `The IPS ${boundary.replaceAll("_", " ")} allowance of ${String(cause.maximum)}`,
+        "parser",
+      );
 };
 
 const appleIpsFailurePrimary = (
@@ -140,11 +171,7 @@ const appleIpsFailurePrimary = (
       "capacity",
       `Selected artifact ${input.path}: ${cause.message}`,
       { boundary: cause.boundary, maximum: cause.maximum },
-      {
-        cause,
-        retryable: false,
-        remediationAction: budgetRemediation(input, cause.boundary),
-      },
+      { cause, ...resourceRecovery(input, cause) },
     );
   if (cause instanceof AppleIpsFormatFailure)
     return cause.kind === "unsupported"

@@ -44,6 +44,8 @@ it("rejects extra caller arguments and admits an empty crash inventory", () => {
       threads: 0,
       frames: 0,
       images: 0,
+      registers: 0,
+      type_mismatches: [],
     },
     unlisted_body_keys: [],
     limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],

@@ -1,3 +1,6 @@
+/** JSON container type a projection declined to materialize. */
+export type JsonContainerType = "array" | "object";
+
 /** A JSON value that keeps integer literals as decimal text. */
 export type LosslessJson =
   | { readonly kind: "null" }
@@ -9,33 +12,75 @@ export type LosslessJson =
   | {
       readonly kind: "object";
       readonly members: Readonly<Record<string, LosslessJson>>;
+      /** Names of members the projection did not select, in source order. */
+      readonly unlisted: readonly string[];
+    }
+  /** A container whose type did not match the projection; syntax was checked, content was not kept. */
+  | { readonly kind: "omitted"; readonly type: JsonContainerType };
+
+/**
+ * Projection that selects which parts of a JSON value are materialized.
+ *
+ * Values outside the projection are syntax-checked without being retained, so
+ * callers can bound allocation by the facts they actually consume. Budget
+ * callbacks run before the corresponding item is parsed and may throw.
+ */
+export type JsonShape =
+  | { readonly kind: "any" }
+  | { readonly kind: "scalar" }
+  | {
+      readonly kind: "array";
+      readonly items: JsonShape;
+      readonly beforeItem?: () => void;
+    }
+  | {
+      readonly kind: "object";
+      readonly members: Readonly<Record<string, JsonShape>>;
+      /** Shape for members not listed in `members`; absent means they are skipped. */
+      readonly rest?: JsonShape;
+      readonly beforeRest?: () => void;
+      /** When present, names of skipped members are kept; called with the new count first. */
+      readonly beforeUnlisted?: (count: number) => void;
     };
 
 /** JSON text could not be parsed as a single complete value. */
 export class LosslessJsonFailure extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly reason: "syntax" | "depth" = "syntax",
+    readonly maximum: number | null = null,
+  ) {
     super(message);
     this.name = "LosslessJsonFailure";
   }
 }
 
+const ANY: JsonShape = { kind: "any" };
+const OMITTED_ARRAY: LosslessJson = Object.freeze({
+  kind: "omitted",
+  type: "array",
+});
+const OMITTED_OBJECT: LosslessJson = Object.freeze({
+  kind: "omitted",
+  type: "object",
+});
+const DEFAULT_MAX_DEPTH = 512;
+
+const QUOTE = 0x22;
+const BACKSLASH = 0x5c;
 const isDigit = (code: number): boolean => code >= 48 && code <= 57;
 
 /** Parse one JSON value, preserving integer literals that exceed IEEE-754 range. */
 export const parseLosslessJson = (
   text: string,
   start = 0,
+  shape: JsonShape = ANY,
+  options: { readonly maxDepth?: number } = {},
 ): { readonly value: LosslessJson; readonly end: number } => {
-  const parser = new Parser(text, start);
-  const value = parser.parseValue();
+  const parser = new Parser(text, start, options.maxDepth ?? DEFAULT_MAX_DEPTH);
+  const value = parser.parseValue(shape, 0);
   return { value, end: parser.position };
 };
-
-export const objectMember = (
-  value: LosslessJson,
-  key: string,
-): LosslessJson | undefined =>
-  value.kind === "object" ? value.members[key] : undefined;
 
 export const asString = (value: LosslessJson | undefined): string | null =>
   value?.kind === "string" ? value.value : null;
@@ -56,49 +101,83 @@ export const asArray = (
 ): readonly LosslessJson[] | null =>
   value?.kind === "array" ? value.items : null;
 
-export const objectKeys = (
-  members: Readonly<Record<string, LosslessJson>>,
-): readonly string[] => Object.keys(members);
-
 class Parser {
   position: number;
 
   constructor(
     readonly text: string,
     start: number,
+    readonly maxDepth: number,
   ) {
     this.position = start;
   }
 
-  parseValue(): LosslessJson {
+  parseValue(shape: JsonShape, depth: number): LosslessJson {
     this.skipWhitespace();
+    const ch = this.text[this.position];
+    if (ch === "{") {
+      if (shape.kind === "object" || shape.kind === "any")
+        return this.parseObject(shape, depth + 1);
+      this.skipValue(depth);
+      return OMITTED_OBJECT;
+    }
+    if (ch === "[") {
+      if (shape.kind === "array" || shape.kind === "any")
+        return this.parseArray(shape, depth + 1);
+      this.skipValue(depth);
+      return OMITTED_ARRAY;
+    }
+    return this.parseScalar();
+  }
+
+  private enter(depth: number): void {
+    if (depth > this.maxDepth)
+      throw new LosslessJsonFailure(
+        `JSON nesting exceeds ${String(this.maxDepth)} levels at offset ${String(this.position)}`,
+        "depth",
+        this.maxDepth,
+      );
+  }
+
+  private parseScalar(): LosslessJson {
     const ch = this.text[this.position];
     if (ch === undefined)
       throw new LosslessJsonFailure("Unexpected end of JSON input");
-    if (ch === "{") return this.parseObject();
-    if (ch === "[") return this.parseArray();
     if (ch === '"') return { kind: "string", value: this.parseString() };
     if (ch === "t")
       return this.literal("true", { kind: "boolean", value: true });
     if (ch === "f")
       return this.literal("false", { kind: "boolean", value: false });
     if (ch === "n") return this.literal("null", { kind: "null" });
-    if (ch === "-" || isDigit(ch.charCodeAt(0))) return this.parseNumber();
+    if (ch === "-" || isDigit(ch.charCodeAt(0))) {
+      const start = this.position;
+      const fractional = this.scanNumber();
+      const recorded = this.text.slice(start, this.position);
+      return fractional
+        ? { kind: "number", recorded }
+        : { kind: "integer", decimal: recorded };
+    }
     throw new LosslessJsonFailure(
       `Unexpected ${JSON.stringify(ch)} at JSON offset ${String(this.position)}`,
     );
   }
 
-  private parseObject(): LosslessJson {
+  private parseObject(
+    shape: Extract<JsonShape, { kind: "object" | "any" }>,
+    depth: number,
+  ): LosslessJson {
+    this.enter(depth);
     this.position += 1;
     const members: Record<string, LosslessJson> = Object.create(null) as Record<
       string,
       LosslessJson
     >;
+    const unlisted: string[] = [];
+    const unlistedSeen = new Set<string>();
     this.skipWhitespace();
     if (this.text[this.position] === "}") {
       this.position += 1;
-      return { kind: "object", members };
+      return { kind: "object", members, unlisted };
     }
     for (;;) {
       this.skipWhitespace();
@@ -107,18 +186,35 @@ class Parser {
           `Expected a JSON object key at offset ${String(this.position)}`,
         );
       const key = this.parseString();
-      if (Object.hasOwn(members, key))
-        throw new LosslessJsonFailure(
-          `Duplicate JSON object key ${JSON.stringify(key)}`,
-        );
       this.skipWhitespace();
       this.expect(":");
-      members[key] = this.parseValue();
+      const listed = shape.kind === "any" || Object.hasOwn(shape.members, key);
+      const memberShape =
+        shape.kind === "any" ? ANY : listed ? shape.members[key] : shape.rest;
+      if (memberShape === undefined) {
+        if (shape.kind === "object" && shape.beforeUnlisted !== undefined) {
+          if (unlistedSeen.has(key))
+            throw new LosslessJsonFailure(
+              `Duplicate JSON object key ${JSON.stringify(key)}`,
+            );
+          shape.beforeUnlisted(unlisted.length + 1);
+          unlistedSeen.add(key);
+          unlisted.push(key);
+        }
+        this.skipValue(depth);
+      } else {
+        if (Object.hasOwn(members, key))
+          throw new LosslessJsonFailure(
+            `Duplicate JSON object key ${JSON.stringify(key)}`,
+          );
+        if (!listed && shape.kind === "object") shape.beforeRest?.();
+        members[key] = this.parseValue(memberShape, depth);
+      }
       this.skipWhitespace();
       const next = this.text[this.position];
       if (next === "}") {
         this.position += 1;
-        return { kind: "object", members };
+        return { kind: "object", members, unlisted };
       }
       if (next !== ",")
         throw new LosslessJsonFailure(
@@ -128,16 +224,23 @@ class Parser {
     }
   }
 
-  private parseArray(): LosslessJson {
+  private parseArray(
+    shape: Extract<JsonShape, { kind: "array" | "any" }>,
+    depth: number,
+  ): LosslessJson {
+    this.enter(depth);
     this.position += 1;
     const items: LosslessJson[] = [];
+    const itemShape = shape.kind === "any" ? ANY : shape.items;
+    const beforeItem = shape.kind === "array" ? shape.beforeItem : undefined;
     this.skipWhitespace();
     if (this.text[this.position] === "]") {
       this.position += 1;
       return { kind: "array", items };
     }
     for (;;) {
-      items.push(this.parseValue());
+      beforeItem?.();
+      items.push(this.parseValue(itemShape, depth));
       this.skipWhitespace();
       const next = this.text[this.position];
       if (next === "]") {
@@ -152,25 +255,125 @@ class Parser {
     }
   }
 
-  private parseString(): string {
-    this.position += 1;
-    let result = "";
-    while (this.position < this.text.length) {
-      const ch = this.text[this.position]!;
-      if (ch === '"') {
+  /** Validate one value's syntax without retaining it. */
+  private skipValue(depth: number): void {
+    this.skipWhitespace();
+    const ch = this.text[this.position];
+    if (ch === "{") {
+      this.enter(depth + 1);
+      this.position += 1;
+      this.skipWhitespace();
+      if (this.text[this.position] === "}") {
         this.position += 1;
-        return result;
+        return;
       }
-      if (ch === "\\") {
+      for (;;) {
+        this.skipWhitespace();
+        if (this.text[this.position] !== '"')
+          throw new LosslessJsonFailure(
+            `Expected a JSON object key at offset ${String(this.position)}`,
+          );
+        this.skipString();
+        this.skipWhitespace();
+        this.expect(":");
+        this.skipValue(depth + 1);
+        this.skipWhitespace();
+        const next = this.text[this.position];
+        if (next === "}") {
+          this.position += 1;
+          return;
+        }
+        if (next !== ",")
+          throw new LosslessJsonFailure(
+            `Expected ',' or '}' in JSON object at offset ${String(this.position)}`,
+          );
         this.position += 1;
-        result += this.escape();
+      }
+    }
+    if (ch === "[") {
+      this.enter(depth + 1);
+      this.position += 1;
+      this.skipWhitespace();
+      if (this.text[this.position] === "]") {
+        this.position += 1;
+        return;
+      }
+      for (;;) {
+        this.skipValue(depth + 1);
+        this.skipWhitespace();
+        const next = this.text[this.position];
+        if (next === "]") {
+          this.position += 1;
+          return;
+        }
+        if (next !== ",")
+          throw new LosslessJsonFailure(
+            `Expected ',' or ']' in JSON array at offset ${String(this.position)}`,
+          );
+        this.position += 1;
+      }
+    }
+    if (ch === '"') {
+      this.skipString();
+      return;
+    }
+    if (ch === "-" || (ch !== undefined && isDigit(ch.charCodeAt(0)))) {
+      this.scanNumber();
+      return;
+    }
+    this.parseScalar();
+  }
+
+  /** Decode a string by copying unescaped spans rather than single characters. */
+  private parseString(): string {
+    const text = this.text;
+    this.position += 1;
+    let spanStart = this.position;
+    let parts: string[] | null = null;
+    while (this.position < text.length) {
+      const code = text.charCodeAt(this.position);
+      if (code === QUOTE) {
+        const tail = text.slice(spanStart, this.position);
+        this.position += 1;
+        if (parts === null) return tail;
+        parts.push(tail);
+        return parts.join("");
+      }
+      if (code === BACKSLASH) {
+        parts ??= [];
+        parts.push(text.slice(spanStart, this.position));
+        this.position += 1;
+        parts.push(this.escape());
+        spanStart = this.position;
         continue;
       }
-      if (ch.charCodeAt(0) < 0x20)
+      if (code < 0x20)
         throw new LosslessJsonFailure(
           "Unescaped control character in JSON string",
         );
-      result += ch;
+      this.position += 1;
+    }
+    throw new LosslessJsonFailure("Unterminated JSON string");
+  }
+
+  private skipString(): void {
+    const text = this.text;
+    this.position += 1;
+    while (this.position < text.length) {
+      const code = text.charCodeAt(this.position);
+      if (code === QUOTE) {
+        this.position += 1;
+        return;
+      }
+      if (code === BACKSLASH) {
+        this.position += 1;
+        this.escape();
+        continue;
+      }
+      if (code < 0x20)
+        throw new LosslessJsonFailure(
+          "Unescaped control character in JSON string",
+        );
       this.position += 1;
     }
     throw new LosslessJsonFailure("Unterminated JSON string");
@@ -206,8 +409,8 @@ class Parser {
     }
   }
 
-  private parseNumber(): LosslessJson {
-    const start = this.position;
+  /** Advance over one number; returns whether it has a fraction or exponent. */
+  private scanNumber(): boolean {
     if (this.text[this.position] === "-") this.position += 1;
     if (this.text[this.position] === "0") this.position += 1;
     else {
@@ -232,21 +435,18 @@ class Parser {
         throw new LosslessJsonFailure("Invalid JSON number exponent");
       while (isDigit(this.text.charCodeAt(this.position))) this.position += 1;
     }
-    const recorded = this.text.slice(start, this.position);
-    return fractional
-      ? { kind: "number", recorded }
-      : { kind: "integer", decimal: recorded };
+    return fractional;
   }
 
   private literal<T extends LosslessJson>(token: string, value: T): T {
-    if (this.text.slice(this.position, this.position + token.length) !== token)
+    if (!this.text.startsWith(token, this.position))
       throw new LosslessJsonFailure(`Expected ${token} in JSON`);
     this.position += token.length;
     return value;
   }
 
   private expect(token: string): void {
-    if (this.text.slice(this.position, this.position + token.length) !== token)
+    if (!this.text.startsWith(token, this.position))
       throw new LosslessJsonFailure(
         `Expected ${JSON.stringify(token)} at JSON offset ${String(this.position)}`,
       );

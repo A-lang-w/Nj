@@ -2,7 +2,10 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics.js";
-import { appleIpsBytes } from "../../fixtures/binaryDiagnostics/appleIps.js";
+import {
+  appleIpsBytes,
+  appleIpsMetadataLine,
+} from "../../fixtures/binaryDiagnostics/appleIps.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("Apple IPS stable filesystem boundary", () => {
@@ -52,5 +55,59 @@ describe("Apple IPS stable filesystem boundary", () => {
     );
     if (cancelled.ok) throw new Error("Expected cancellation");
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+  });
+
+  it("maps register, fixed structural and UTF-8 refusals to typed errors", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-shape-");
+    const report = join(root, "report.ips");
+    const deep = join(root, "deep.ips");
+    const corrupt = join(root, "corrupt.ips");
+    await writeFile(report, appleIpsBytes());
+    await writeFile(
+      deep,
+      `${appleIpsMetadataLine()}\n{"vmSummary":${"[".repeat(100)}${"]".repeat(100)}}`,
+    );
+    const bytes = appleIpsBytes();
+    bytes[bytes.indexOf(Buffer.from("rea-crash-fixture"))] = 0xc3;
+    await writeFile(corrupt, bytes);
+    const service = createAppleIpsService();
+
+    const registers = await service.inspect({ path: report, max_registers: 2 });
+    if (registers.ok) throw new Error("Expected register budget failure");
+    expect(registers.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+      reportedLimits: { boundary: "registers", maximum: 2 },
+      retryable: false,
+      remediationAction: expect.stringContaining("max_registers"),
+    });
+
+    const nesting = await service.inspect({ path: deep });
+    if (nesting.ok) throw new Error("Expected nesting allowance failure");
+    expect(nesting.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      reportedLimits: { boundary: "nesting", maximum: 64 },
+      retryable: false,
+      fixedAllowance: { kind: "parser" },
+    });
+
+    const invalid = await service.inspect({ path: corrupt });
+    if (invalid.ok) throw new Error("Expected invalid UTF-8 failure");
+    expect(invalid.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: expect.stringContaining("UTF-8"),
+        },
+      ],
+    });
+
+    const complete = await service.inspect({ path: report });
+    if (!complete.ok) throw complete.error;
+    expect(complete.value.normalized_result).toMatchObject({
+      coverage: { status: "complete", registers: 6, type_mismatches: [] },
+    });
   });
 });

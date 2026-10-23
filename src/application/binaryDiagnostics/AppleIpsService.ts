@@ -96,15 +96,23 @@ const validReport = (
     report.coverage.threads > input.max_threads ||
     report.coverage.frames > input.max_frames ||
     report.coverage.images > input.max_images ||
+    report.coverage.registers > input.max_registers ||
     report.threads.length > input.max_threads ||
     report.images.length > input.max_images
   )
     return false;
-  const frames = report.threads.reduce(
-    (count, thread) => count + thread.frames.length,
-    0,
+  let frames = 0;
+  let registers = 0;
+  for (const thread of report.threads) {
+    frames += thread.frames.length;
+    registers += thread.registers.length;
+  }
+  return (
+    frames === report.coverage.frames &&
+    registers === report.coverage.registers &&
+    (report.coverage.status === "complete") ===
+      (report.coverage.type_mismatches.length === 0)
   );
-  return frames <= input.max_frames && frames === report.coverage.frames;
 };
 
 type InspectAppleIpsInputLike = {
@@ -112,4 +120,5 @@ type InspectAppleIpsInputLike = {
   readonly max_threads: number;
   readonly max_frames: number;
   readonly max_images: number;
+  readonly max_registers: number;
 };
