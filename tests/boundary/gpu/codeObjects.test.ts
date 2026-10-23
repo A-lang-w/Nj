@@ -1,6 +1,7 @@
 import { expect, it, onTestFinished } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
@@ -65,6 +66,26 @@ it.each(["none", "zstd"] as const)(
     ]);
   },
 );
+it("retains the unsupported legacy CUDA compression declaration and extents", async () => {
+  const result = await inspect(
+    cudaFixture("legacy", [
+      { kind: 1, target: 80, bytes: Buffer.from(ptxFixture), flags: 4 },
+    ]),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    compression: "unsupported",
+    compression_id: expect.stringContaining("cuda-flags:0x1015"),
+    encoded_size: deflateSync(Buffer.from(ptxFixture)).length,
+    decoded_size: Buffer.byteLength(ptxFixture),
+    inspection: "unsupported",
+  });
+  expect(result.value.ptx_artifacts).toEqual([]);
+  expect(result.value.kernels).toEqual([]);
+  expect(result.value.objects[0]!.limitations.join(" ")).toContain(
+    "compression/version is not supported",
+  );
+});
 it.each([1, 2, 3] as const)(
   "reads CCOB v%d zlib/Zstd and retains exact decoded provenance",
   async (version) => {
@@ -230,10 +251,51 @@ it("discovers standalone AMD targets before exact selection", async () => {
   expect(skipped.value.kernels).toEqual([]);
   expect(skipped.value.coverage.payloads).toBe("partial");
 });
+it.each(["match", "conflict", "feature-unknown"] as const)(
+  "compares AMDGPU targets with an explicit unknown environment (%s)",
+  async (comparison) => {
+    const payloadTarget =
+      comparison === "feature-unknown"
+        ? "amdgcn-amd-amdhsa-unknown-gfx900:xnack+"
+        : "amdgcn-amd-amdhsa-unknown-gfx900";
+    const inventoryTarget = comparison === "conflict" ? "gfx1100" : "gfx900";
+    const bytes = hipFixture(
+      amdFixture(false, undefined, payloadTarget),
+      `hipv4-amdgcn-amd-amdhsa--${inventoryTarget}`,
+    );
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    const row = result.value.objects.find((value) => value.kind === "amdgpu")!;
+    expect(row.payload_target).toBe(payloadTarget);
+    expect(result.value.kernels).toHaveLength(1);
+    if (comparison === "conflict") {
+      expect(row).toMatchObject({
+        target: "gfx1100",
+        target_consistency: "conflict",
+        inspection: "partial",
+      });
+      expect(result.value.coverage.payloads).toBe("partial");
+      expect(result.value.kernels[0]!.limitations.join(" ")).toContain(
+        "Conflicting target declarations",
+      );
+    } else {
+      expect(row).toMatchObject({
+        target: "gfx900",
+        target_consistency: comparison === "match" ? "consistent" : "unknown",
+        inspection: "complete",
+      });
+      expect(result.value.coverage.payloads).toBe("complete");
+      expect(result.value.kernels[0]!.limitations.join(" ")).not.toContain(
+        "Conflicting target declarations",
+      );
+    }
+  },
+);
 it.each([
   "hipv4-amdgcn-amd-amdhsa--gfx900",
   "hipv4-amdgcn-amd-amdhsa-gfx900",
   "hipv4-amdgcn-amd-amdhsa-opaque",
+  "hipv4-amdgpu9.00-amd-amdhsa--gfx900",
 ])("keeps discovered HIP targets selectable for %s", async (targetId) => {
   const bytes = hipFixture(amdFixture(), targetId);
   const inventory = await inspect(bytes, { analysis: "inventory" });
@@ -253,6 +315,44 @@ it.each([
       : "consistent",
     inspection: "complete",
   });
+});
+it.each(["gfx11-generic", "gfx9-4-generic"] as const)(
+  "preserves and exactly selects the generic AMDGPU processor %s",
+  async (processor) => {
+    const noteTarget = `amdgcn-amd-amdhsa--${processor}`;
+    const bytes = hipFixture(
+      amdFixture(false, undefined, noteTarget),
+      `hipv4-amdgcn-amd-amdhsa--${processor}`,
+    );
+    const result = await inspect(bytes, { targets: [processor] });
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.objects.find(({ kind }) => kind === "amdgpu"),
+    ).toMatchObject({
+      kind: "amdgpu",
+      target: processor,
+      payload_target: noteTarget,
+      target_consistency: "consistent",
+      inspection: "complete",
+    });
+    expect(result.value.kernels).toHaveLength(1);
+  },
+);
+it("recognizes a modern AMDGPU triple inside compressed CCOB v3", async () => {
+  const targetId = "hipv4-amdgpu9.00-amd-amdhsa--gfx900";
+  const bytes = ccobFixture(3, "zstd", hipFixture(amdFixture(), targetId));
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.objects.find(({ bundle_id }) => bundle_id === targetId),
+  ).toMatchObject({
+    kind: "amdgpu",
+    target: "gfx900",
+    payload_target: "amdgcn-amd-amdhsa--gfx900",
+    target_consistency: "consistent",
+    inspection: "complete",
+  });
+  expect(result.value.kernels).toHaveLength(1);
 });
 it("bounds standalone AMD note discovery before retaining metadata", async () => {
   const result = await inspect(
@@ -314,8 +414,82 @@ it("retains unknown PTX virtual counts and partial payload coverage", async () =
     count: null,
   });
 });
+it.each([64, 65])(
+  "counts all %d scalar names in one PTX register list",
+  async (count) => {
+    const names = Array.from(
+      { length: count },
+      (_, index) => `%r${index}`,
+    ).join(", ");
+    const result = await inspect(
+      Buffer.from(
+        `.version 8.8\n.target sm_80\n.address_size 64\n.entry k() { .reg .b32 ${names}; ret; }\n`,
+      ),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.objects[0]!.inspection).toBe("complete");
+    expect(result.value.coverage.payloads).toBe("complete");
+    expect(result.value.kernels[0]!.registers.virtual).toEqual([
+      { type: ".b32", count },
+    ]);
+  },
+);
+it("retains PTX kernels before and after a long scalar register list", async () => {
+  const names = Array.from({ length: 65 }, (_, index) => `%r${index}`).join(
+    ", ",
+  );
+  const result = await inspect(
+    Buffer.from(
+      `.version 8.8\n.target sm_80\n.address_size 64\n.entry before() { ret; }\n.entry affected() { .reg .b32 ${names}; ret; }\n.entry after() { ret; }\n`,
+    ),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("complete");
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.kernels.map((kernel) => kernel.name)).toEqual([
+    "before",
+    "affected",
+    "after",
+  ]);
+  expect(result.value.kernels[1]!.registers.virtual).toEqual([
+    { type: ".b32", count: 65 },
+  ]);
+});
+it("retains later PTX kernels when a virtual register total overflows", async () => {
+  const result = await inspect(
+    Buffer.from(
+      ".version 8.8\n.target sm_80\n.address_size 64\n.entry before() { ret; }\n.entry affected() { .reg .b32 %r<9007199254740991>, %s; ret; }\n.entry after() { ret; }\n",
+    ),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("partial");
+  expect(result.value.coverage.payloads).toBe("partial");
+  expect(result.value.kernels.map((kernel) => kernel.name)).toEqual([
+    "before",
+    "affected",
+    "after",
+  ]);
+  expect(result.value.kernels[1]!.registers.virtual).toEqual([
+    { type: ".b32", count: null },
+  ]);
+});
 it.each([
-  ["parameter", ".u64 output", ".u64 .ptr .global output"],
+  ".entry k { ret; }",
+  ".entry k() { ret; }",
+  ".entry k .maxntid 1 { ret; }",
+])("inspects PTX entry with optional parameters: %s", async (entry) => {
+  const result = await inspect(
+    Buffer.from(`.version 7.0\n.target sm_80\n.address_size 64\n${entry}`),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("complete");
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.kernels).toMatchObject([
+    { name: "k", parameter_count: 0, parameter_bytes: 0, parameters: [] },
+  ]);
+});
+it.each([
+  ["parameter", ".u64 output", ".u64 .vendor_specific output"],
   ["shared", "scratch[32]", "scratch[]"],
 ] as const)(
   "marks unknown PTX %s declarations partial while retaining known facts",
@@ -345,6 +519,24 @@ it.each([
     }
   },
 );
+it("keeps supported PTX pointer qualifiers complete through the provider", async () => {
+  const bytes = Buffer.from(
+    ptxFixture.replace(".u64 output", ".u64 .ptr .global output"),
+  );
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]!.inspection).toBe("complete");
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.ptx_artifacts[0]!.text).toBe(bytes.toString());
+  expect(result.value.kernels[0]).toMatchObject({
+    parameter_count: 2,
+    parameter_bytes: 12,
+    parameters: [
+      { name: "output", offset: 0, size: 8 },
+      { name: "value", offset: 8, size: 4 },
+    ],
+  });
+});
 it.each(["whitespace", "comment"] as const)(
   "recognizes standalone PTX after more than 64 KiB of leading %s",
   async (kind) => {
@@ -364,6 +556,17 @@ it.each(["whitespace", "comment"] as const)(
     );
   },
 );
+it("uses a later module target when selecting standalone PTX", async () => {
+  const bytes = Buffer.from(
+    ".version 8.8\n.target sm_80\n.entry first() { ret; }\n.target sm_90\n",
+  );
+  const inventory = await inspect(bytes, { analysis: "inventory" });
+  const selected = await inspect(bytes, { targets: ["sm_90"] });
+  if (!inventory.ok) throw inventory.error;
+  if (!selected.ok) throw selected.error;
+  expect(inventory.value.objects[0]!.target).toBe("sm_90");
+  expect(selected.value.kernels.map(({ name }) => name)).toEqual(["first"]);
+});
 it.each(["truncated", "invalid", "extension"] as const)(
   "retains earlier AMD kernel declarations after a later %s note",
   async (kind) => {
@@ -502,6 +705,42 @@ it("iterates mixed plain/CCOB bundles without counting flat records as nesting",
   if (!result.ok) throw result.error;
   expect(result.value.kernels).toHaveLength(20);
   expect(result.value.coverage.discovery).toBe("complete");
+});
+it("uses each legacy CCOB v1 stream boundary across alignment padding", async () => {
+  const first = ccobFixture(1, "zlib"),
+    second = ccobFixture(2, "zlib"),
+    padding = Buffer.alloc((8 - (first.length % 8)) % 8);
+  const result = await inspect(Buffer.concat([first, padding, second]));
+  if (!result.ok) throw result.error;
+  const bundles = result.value.objects.filter(
+    ({ kind }) => kind === "hip-bundle",
+  );
+  expect(bundles).toHaveLength(2);
+  expect(
+    bundles.map(({ inspection, decoded_size }) => [inspection, decoded_size]),
+  ).toEqual([
+    ["complete", expect.any(Number)],
+    ["complete", expect.any(Number)],
+  ]);
+  expect(bundles[0]!.sha256).toBe(bundles[1]!.sha256);
+  expect(result.value.kernels).toHaveLength(2);
+  expect(result.value.coverage.discovery).toBe("complete");
+});
+it("keeps a later CCOB bundle after a truncated legacy v1 stream", async () => {
+  const truncated = ccobFixture(1, "zlib").subarray(0, -1),
+    later = ccobFixture(2, "zlib");
+  const result = await inspect(Buffer.concat([truncated, later]));
+  if (!result.ok) throw result.error;
+  const bundles = result.value.objects.filter(
+    ({ kind }) => kind === "hip-bundle",
+  );
+  expect(bundles).toHaveLength(2);
+  expect(bundles.map(({ inspection }) => inspection)).toEqual([
+    "malformed",
+    "complete",
+  ]);
+  expect(result.value.kernels).toHaveLength(1);
+  expect(result.value.coverage.discovery).toBe("partial");
 });
 it("continues at the declared CCOB boundary after an unsupported codec", async () => {
   const unknown = ccobFixture();

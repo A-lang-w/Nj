@@ -112,8 +112,9 @@ module record and no dependency records has an observed empty dependency list.
 The built-in TypeScript reader supports ELF, PE and thin Mach-O images, and one
 selected slice of a universal Mach-O, with Go's inline or historical pointer
 build-info encoding. Source ranges refer to the original stable file snapshot,
-including pointer-backed strings. It does not scan arbitrary byte strings as
-compiler metadata.
+including pointer-backed strings. Legacy pointer-backed fields are decoded at
+the width declared by Go's build-info record, independently of the image's ELF
+class. It does not scan arbitrary byte strings as compiler metadata.
 
 A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
 or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
@@ -130,6 +131,11 @@ nonempty writable, non-executable load segment in program-header order. This
 includes sectionless PIE images with metadata in a later data segment. Named
 sections retain priority, and alignment, file mapping and record validation
 remain required.
+
+A named ELF build-info section selects the record's discovery range. For inline
+encoding, the following version and module strings may continue past that
+section into its file-backed load mapping; their bytes are still checked
+against the mapping and the existing aggregate string limit.
 
 Historical moduleless Go binaries can store their empty module-string header in
 declared zero-initialized virtual memory rather than file-backed bytes. The reader
