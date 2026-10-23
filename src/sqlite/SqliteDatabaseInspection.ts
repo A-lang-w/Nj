@@ -250,12 +250,20 @@ const readColumns = (
   const selection =
     selectedColumns === undefined
       ? ""
-      : ` WHERE CAST(name AS BLOB) IN (${selectedColumns.map(() => "CAST(? AS BLOB)").join(", ")})`;
+      : " WHERE CAST(name AS BLOB) IN (SELECT CAST(value AS BLOB) FROM temp.json_each(?))";
+  // One bound data value keeps metadata selection independent of SQL-variable
+  // capacity. SQLite owns conversion into the database encoding, and filters
+  // before projecting unrelated column definitions. Row projections still keep
+  // the caller's order/repetitions and enforce the native result-column limit.
+  const parameters =
+    selectedColumns === undefined
+      ? [name]
+      : [name, JSON.stringify([...new Set(selectedColumns)])];
   for (const raw of db
     .prepare(
       `SELECT cid, CAST(name AS BLOB) AS name, CAST(type AS BLOB) AS type, "notnull", CAST(dflt_value AS BLOB) AS dflt_value, pk, hidden FROM temp.pragma_table_xinfo(?, 'main')${selection}`,
     )
-    .iterate(name, ...(selectedColumns ?? []))) {
+    .iterate(...parameters)) {
     const value = columnRow.parse(raw);
     const column = {
       cid: value.cid,
@@ -316,7 +324,7 @@ const readSchema = (
   // Names bound eventual output only when the whole catalog is requested.
   // Selected scope retains one table and at most one possible shadow parent;
   // unrelated names are examined without retaining them or charging the reply.
-  const metadataBudget = new OutputBudget();
+  const catalogNameBudget = new OutputBudget();
   for (const raw of db
     .prepare(
       "SELECT schema, name AS display_name, CAST(name AS BLOB) AS name, type, ncol, wr, strict FROM temp.pragma_table_list WHERE schema = 'main'",
@@ -325,7 +333,11 @@ const readSchema = (
     const value = tableRow.parse(raw);
     const nameKey = sqliteNameBytesKey(value.name);
     if (selectedName === undefined) {
-      metadataBudget.retain(nameKey);
+      // The private hex key grows with the database encoding, but is never
+      // returned. Admit catalog names by their decoded JSON representation;
+      // display text is used only for this lower bound, never for identity.
+      // Stored schema bytes still undergo strict decoding below.
+      catalogNameBudget.retain(value.display_name);
       metadata.set(nameKey, value);
     } else if (nameKey === selectedKey) {
       metadata.set(nameKey, value);
@@ -599,12 +611,11 @@ const resultColumnLimitFailure = (
 };
 
 /**
- * Attribute an SQL error from selected cells to the virtual generated columns
- * that raise it on this connection. Each column is probed alone over the same
- * sampled rows, so only columns whose probe succeeds are recommended; any
- * other cause keeps its original classification.
+ * Attribute SQL failures to the row source before blaming selected generated
+ * expressions. A generic SQL error alone does not establish file corruption.
+ * Only columns whose sampled probes succeed are recommended for recovery.
  */
-const columnEvaluationFailure = (
+const rowEvaluationFailure = (
   db: DatabaseSync,
   cause: unknown,
   selection: {
@@ -619,6 +630,28 @@ const columnEvaluationFailure = (
   const columnLimit = resultColumnLimitFailure(db, cause, columns.length);
   if (columnLimit !== undefined) return columnLimit;
   if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
+  const unavailable = new SqliteInspectionFailure(
+    "row-evaluation",
+    `SQLite cannot prepare or evaluate rows of table ${JSON.stringify(table.name)} on REA's read-only connection: ${cause instanceof Error ? cause.message : String(cause)}`,
+  );
+  const generated = new Set(
+    table.columns
+      .filter((column) => column.hidden === 2)
+      .map((column) => column.name),
+  );
+  if (!columns.some((name) => generated.has(name))) return unavailable;
+  try {
+    // A WITHOUT ROWID source may require an unavailable application collation
+    // even for a constant projection. Do not attribute that failure to every
+    // generated column or recommend other columns from the same unreadable source.
+    db.prepare(`SELECT count(*) FROM (SELECT 1 FROM ${source} LIMIT ?)`).get(
+      limit,
+    );
+  } catch (failure: unknown) {
+    return sqlitePrimaryResultCode(failure) === SQLITE_ERROR
+      ? unavailable
+      : failure;
+  }
   // The aggregate evaluates exactly the sampled cells, as the length pass does.
   const probe = (name: string): { readonly failure: unknown } | undefined => {
     try {
@@ -635,11 +668,6 @@ const columnEvaluationFailure = (
     const failed = probe(name);
     if (failed !== undefined) failures.set(name, failed.failure);
   }
-  const generated = new Set(
-    table.columns
-      .filter((column) => column.hidden === 2)
-      .map((column) => column.name),
-  );
   if (
     ![...failures].some(
       ([name, failure]) =>
@@ -647,7 +675,7 @@ const columnEvaluationFailure = (
         sqlitePrimaryResultCode(failure) === SQLITE_ERROR,
     )
   )
-    return cause;
+    return unavailable;
   const remaining = columns.filter((name) => !failures.has(name));
   const readableStoredColumns = (): string[] => {
     try {
@@ -722,8 +750,7 @@ const readRows = (
     truncated: false,
     order: "unspecified",
   };
-  // SQLite compiles and evaluates only selected cells, so an SQL error here is
-  // attributed to the selected generated expressions rather than the file.
+  // Keep query-source, expression, capacity and malformed-data failures distinct.
   try {
     const lengths = db.prepare(
       `SELECT ${columns.map(cellByteLength).join(", ")} FROM ${source} LIMIT ?`,
@@ -741,8 +768,11 @@ const readRows = (
       budget.retain(values);
       rows.values.push(values);
     }
+    rows.truncated =
+      db.prepare(`SELECT 1 FROM ${source} LIMIT 1 OFFSET ?`).get(limit) !==
+      undefined;
   } catch (cause: unknown) {
-    throw columnEvaluationFailure(db, cause, {
+    throw rowEvaluationFailure(db, cause, {
       table,
       columns,
       source,
@@ -751,9 +781,6 @@ const readRows = (
     });
   }
   rows.returned_rows = rows.values.length;
-  rows.truncated =
-    db.prepare(`SELECT 1 FROM ${source} LIMIT 1 OFFSET ?`).get(limit) !==
-    undefined;
   return rows;
 };
 
