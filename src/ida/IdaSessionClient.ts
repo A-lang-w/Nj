@@ -12,6 +12,9 @@ import {
   AnalysisProtocolError,
   AnalysisOutputError,
   AnalysisInputError,
+  AnalysisTimeoutError,
+  AnalysisResourceConstraintError,
+  resourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -105,7 +108,6 @@ interface UpstreamSession {
 /** A failed cleanup retains its private workspace and reports the remaining resource. */
 class IdaCleanupError extends ProviderAdapterError {
   override readonly cleanupIncomplete = true;
-  override readonly cleanupResources: readonly string[];
   constructor(
     path: string,
     cause: unknown,
@@ -146,9 +148,32 @@ class IdaCleanupError extends ProviderAdapterError {
             }),
       },
     });
-    this.cleanupResources = [path];
+    this.setCleanupResources([path]);
   }
 }
+
+/**
+ * A worker that is still tearing down can remain in inventory with its identity
+ * already cleared: an empty `session_id`, `owned: false` and `is_active: false`,
+ * while `input_path` still names the private copy. Such a row establishes no
+ * live session, so the private-input arm must not report it as a blocker. The
+ * owning worker is matched by its own session ID separately, and a genuine peer
+ * on the same input keeps a session ID, so neither case is weakened.
+ *
+ * Limited to `backend: "worker"`: a gui row belongs to an IDA instance REA does
+ * not control, and the observed teardown shape covers workers only, so a gui
+ * row keeps blocking release whatever its flags say.
+ */
+const isReleasedWorkerRow = (entry: {
+  readonly session_id: string;
+  readonly owned: boolean;
+  readonly is_active: boolean;
+  readonly backend: "worker" | "gui";
+}): boolean =>
+  entry.backend === "worker" &&
+  entry.session_id === "" &&
+  entry.owned === false &&
+  entry.is_active === false;
 
 /** Serial read-only session whose lifecycle authority excludes an attached GUI. */
 export class IdaSessionClient implements AnalysisClient {
@@ -292,7 +317,7 @@ export class IdaSessionClient implements AnalysisClient {
       parameters,
     };
     try {
-      if (!readyOnly) await this.#start();
+      if (!readyOnly) await this.#start(operation);
       const before = await this.#observe(options);
       failureContext.metadataBefore = before;
       if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
@@ -386,7 +411,7 @@ export class IdaSessionClient implements AnalysisClient {
     context: IdaOperationFailureContext,
   ) {
     let failure: AnalysisError;
-    if (wasCancelled(options))
+    if (wasCancelled(options)) {
       failure = new AnalysisCancelledError(operation, {
         cause,
         ...(cause instanceof AnalysisError
@@ -405,7 +430,11 @@ export class IdaSessionClient implements AnalysisClient {
             }
           : {}),
       });
-    else if (
+      if (cause instanceof AnalysisError)
+        failure
+          .bindCleanupDependencies([cause])
+          .bindCleanupResourceOwner(cause);
+    } else if (
       cause instanceof ProviderAdapterError &&
       cause.operation === "transport"
     )
@@ -420,13 +449,6 @@ export class IdaSessionClient implements AnalysisClient {
             "Check the configured upstream MCP registration and selected target; see docs/ida-provider.md.",
         },
       });
-    else if (
-      cause instanceof AnalysisError &&
-      (cause.partialObservation !== undefined ||
-        cause.cleanupIncomplete ||
-        cause.capturedOutput !== undefined)
-    )
-      failure = cause;
     else if (cause instanceof AnalysisError) failure = cause;
     else if (cause instanceof z.ZodError)
       failure = new AnalysisOutputError(
@@ -501,15 +523,73 @@ export class IdaSessionClient implements AnalysisClient {
             { kind: "artifact-path", path: this.target.path },
             ...runner.locations,
           ],
+          ...(this.profile === undefined
+            ? {}
+            : { analysisProfile: this.profile }),
         }),
       );
     }
     return err(failure);
   }
 
-  #start(): Promise<void> {
+  async #start(operation: string): Promise<void> {
     this.#startup ??= this.#initialize();
-    return this.#startup;
+    try {
+      await this.#startup;
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof AnalysisTimeoutError) &&
+        !(cause instanceof AnalysisResourceConstraintError) &&
+        !(cause instanceof ProviderAdapterError)
+      )
+        throw cause;
+      // Transport adapters already receive caller attribution in #failure.
+      if (
+        cause instanceof ProviderAdapterError &&
+        cause.operation === "transport"
+      )
+        throw cause;
+      const options = {
+        cause,
+        capturedOutput: cause.capturedOutput,
+        partialObservation: cause.partialObservation,
+        cleanup: cause.cleanup,
+        ...(cause.userMessage === undefined
+          ? {}
+          : { userMessage: cause.userMessage }),
+        diagnostics: {
+          ...cause.diagnostics,
+          startup_operation: cause.operation,
+        },
+      };
+      const action =
+        cause.remediationAction === undefined
+          ? {}
+          : { remediationAction: cause.remediationAction };
+      // Startup is shared, but each accepted operation owns its attribution.
+      // Keep the original cached failure unchanged for later callers.
+      const failure =
+        cause instanceof AnalysisTimeoutError
+          ? new AnalysisTimeoutError(operation, cause.timeoutMs, {
+              ...options,
+              ...action,
+            })
+          : cause instanceof AnalysisResourceConstraintError
+            ? new AnalysisResourceConstraintError(
+                operation,
+                cause.resource,
+                cause.reason,
+                cause.reportedLimits,
+                { ...options, ...resourceConstraintRecovery(cause) },
+              )
+            : new ProviderAdapterError(cause.providerId, operation, {
+                ...options,
+                ...action,
+              });
+      throw failure
+        .bindCleanupDependencies([cause])
+        .bindCleanupResourceOwner(cause);
+    }
   }
 
   async #initialize(): Promise<void> {
@@ -816,11 +896,12 @@ export class IdaSessionClient implements AnalysisClient {
           );
           const remaining = inventory.sessions.filter(
             (entry) =>
-              entry.session_id === this.#database ||
-              sameIdaHostPath(
-                entry.input_path,
-                this.#workspace?.inputPath ?? "",
-              ),
+              !isReleasedWorkerRow(entry) &&
+              (entry.session_id === this.#database ||
+                sameIdaHostPath(
+                  entry.input_path,
+                  this.#workspace?.inputPath ?? "",
+                )),
           );
           if (this.#recordBlockingSessions(remaining))
             throw new AnalysisProtocolError(

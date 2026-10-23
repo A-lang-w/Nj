@@ -6,8 +6,10 @@ import type {
   ArtifactNode,
   ArtifactOccurrence,
 } from "./artifactGraph.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import { evidenceSchema } from "./evidence.js";
 import {
+  ArtifactInventoryCarrierError,
   hasCompleteInventoryCoverage,
   parseArtifactInventoryEvidence,
   type InventorySet,
@@ -79,12 +81,12 @@ export const artifactComparisonResultSchema = z.object({
   left_manifest_id: prefixedDigestSchema("agm"),
   right_manifest_id: prefixedDigestSchema("agm"),
   summary: z.object({
-    unchanged: z.number().int().min(0),
-    added: z.number().int().min(0),
-    removed: z.number().int().min(0),
-    changed: z.number().int().min(0),
-    unknown: z.number().int().min(0),
-    contradiction: z.number().int().min(0).default(0),
+    unchanged: z.int().min(0),
+    added: z.int().min(0),
+    removed: z.int().min(0),
+    changed: z.int().min(0),
+    unknown: z.int().min(0),
+    contradiction: z.int().min(0).default(0),
   }),
   changes: z.array(artifactChangeSchema),
   limitations: z.array(z.string()),
@@ -95,13 +97,26 @@ export type ArtifactComparisonResult = z.infer<
 >;
 type ArtifactChange = z.infer<typeof artifactChangeSchema>;
 
+const comparisonInventory = (input: unknown, side: "left" | "right") => {
+  try {
+    return parseArtifactInventoryEvidence(input);
+  } catch (cause: unknown) {
+    if (!(cause instanceof ArtifactInventoryCarrierError)) throw cause;
+    throw new AnalysisInputError(
+      "compare_artifacts",
+      { cause, userMessage: cause.message },
+      [{ path: [side], reason: "invalid_value", message: cause.message }],
+    );
+  }
+};
+
 /** Compare complete inventory evidence without treating missing evidence as equality. */
 export const compareArtifacts = (
   leftEvidence: unknown,
   rightEvidence: unknown,
 ): ArtifactComparisonResult => {
-  const left = parseArtifactInventoryEvidence(leftEvidence);
-  const right = parseArtifactInventoryEvidence(rightEvidence);
+  const left = comparisonInventory(leftEvidence, "left");
+  const right = comparisonInventory(rightEvidence, "right");
   const leftComplete = left.inventory.complete;
   const rightComplete = right.inventory.complete;
   const sameScope =
@@ -483,16 +498,19 @@ const summarize = (
     contradiction: 0,
   };
   for (const change of changes) counts[change.classification] += 1;
+  // Change rows are keyed by logical path, and one unknown row for a duplicate
+  // path stands for every left occurrence on it. Only occurrences on paths
+  // without a left-side change are affirmatively unchanged.
+  const changedPaths = new Set(
+    changes
+      .filter(({ classification }) => classification !== "added")
+      .map(({ logical_path: path }) => path),
+  );
   return {
     unchanged: covered
-      ? Math.max(
-          0,
-          left.occurrences.length -
-            counts.removed -
-            counts.changed -
-            counts.contradiction -
-            counts.unknown,
-        )
+      ? left.occurrences.filter(
+          ({ logical_path: path }) => !changedPaths.has(path),
+        ).length
       : 0,
     ...counts,
     unknown: covered

@@ -1,3 +1,4 @@
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
@@ -14,6 +15,7 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (mode = "ok", failCleanup = false) => {
@@ -24,7 +26,7 @@ const fixture = async (mode = "ok", failCleanup = false) => {
   await writeFile(
     script,
     `import {readFileSync, writeFileSync, chmodSync, truncateSync} from 'node:fs';
-if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
+if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : ${JSON.stringify(mode)} === 'foreign-version' ? 'tcpdump version 4.99.4' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
 else if (${JSON.stringify(mode)} === 'nonzero') { console.error('invalid decoder'); process.exitCode = 1; }
 else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync('capture', 0o600); writeFileSync('capture', 'changed'); }
 else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync('capture', 0o600); truncateSync('capture', 32 * 1024 * 1024 + 1); console.log('[]'); }
@@ -40,6 +42,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   const configuredCommand =
     mode === "symlink" ? join(directory, "configured-tool") : script;
   if (mode === "symlink") await symlink(script, configuredCommand);
+  if (mode === "path") await symlink(script, join(directory, "tshark"));
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
@@ -48,7 +51,9 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   const provider = new TsharkCaptureProvider(
     {
       ...process.env,
-      REA_TSHARK_COMMAND: configuredCommand,
+      ...(mode === "path"
+        ? { PATH: directory, REA_TSHARK_COMMAND: undefined }
+        : { REA_TSHARK_COMMAND: configuredCommand }),
       REA_TSHARK_PRLIMIT_COMMAND: configuredCommand,
     },
     async (input) => {
@@ -97,6 +102,8 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
       return {
         path: root.path,
         close: async () => {
+          if (mode === "close-abort")
+            controller.abort({ request: "cancel during workspace close" });
           if (!mayClean) throw new Error("cleanup fixture failure");
           await root.close();
         },
@@ -248,6 +255,8 @@ it.each([
     );
     if (result.ok) throw new Error("Expected capture analysis failure");
     expect(result.error._tag).toBe(tag);
+    if (mode === "wait")
+      expect(result.error.cause).toBe(f.controller.signal.reason);
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(
       (await readdir(f.directory)).filter((name) =>
@@ -327,7 +336,7 @@ it("retains a completed observation when cancellation arrives at the service bou
       throw new Error("Unexpected field discovery call");
     },
     inspect: async () => {
-      f.controller.abort();
+      f.controller.abort({ request: "cancel at Evidence boundary" });
       return execution;
     },
     close: async () => {},
@@ -335,6 +344,7 @@ it("retains a completed observation when cancellation arrives at the service bou
   const result = await service.inspect(input, { signal: f.controller.signal });
   if (result.ok) throw new Error("Expected late cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(f.controller.signal.reason);
   expect(result.error.partialObservation).toMatchObject({
     operation: "inspect_packet_capture",
     normalized_result: {
@@ -402,6 +412,67 @@ it("refuses unsupported hosts before launching or allocating a workspace", async
   });
 });
 
+it("selects TShark from PATH with the shared rule and records the selection", async () => {
+  const f = await fixture("path");
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    tool: {
+      configured_path: join(f.directory, "tshark"),
+      selection_source: "path",
+      path: join(f.directory, "producer.mjs"),
+    },
+  });
+});
+
+it.each([
+  [
+    "bad-version",
+    "Packet capture inspection currently requires Wireshark 4.x tools",
+  ],
+  [
+    "foreign-version",
+    "Expected TShark 4.x; inspect the selected installation.",
+  ],
+] as const)(
+  "refuses an unadmitted version banner before dissection: %s",
+  async (mode, reason) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspect({
+      path: f.path,
+      fields: ["ip.addr"],
+    });
+    if (result.ok) throw new Error("Expected version refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: expect.stringContaining(reason),
+    });
+    expect(f.calls()).toBe(1);
+  },
+);
+
+it("refuses a relative REA_TSHARK_COMMAND instead of searching PATH", async () => {
+  const provider = new TsharkCaptureProvider(
+    { REA_TSHARK_COMMAND: "tshark", PATH: "/usr/bin" },
+    async () => {
+      throw new Error("Must not launch");
+    },
+    async () => {
+      throw new Error("Must not allocate");
+    },
+    "linux",
+  );
+  const result = await new PacketCaptureService(provider).inspect({
+    path: "/recording.pcap",
+    fields: ["ip.addr"],
+  });
+  if (result.ok) throw new Error("Expected configuration refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    reason: "REA_TSHARK_COMMAND must be an absolute path to the tshark binary",
+  });
+});
+
 it("preserves complete Evidence when aborted during post-run integrity checks", async () => {
   const f = await fixture("post-run-abort");
   const result = await f.service.inspect(
@@ -429,6 +500,7 @@ it("preserves configured symlink paths separately from resolved tool identities"
   expect(result.value.normalized_result).toMatchObject({
     tool: {
       configured_path: join(f.directory, "configured-tool"),
+      selection_source: "environment",
       path: join(f.directory, "producer.mjs"),
     },
     resource_limiter: {
@@ -471,6 +543,9 @@ it("preserves termination signal and effective file ceiling as a resource failur
     reportedLimits: { file_bytes: 1048576 },
     capturedOutput: { signal: "SIGXFSZ", stderr: "before file limit\n" },
   });
+  expect(analysisErrorRemediationAction(result.error)).toContain(
+    "REA retains the tighter inherited limit",
+  );
 });
 
 it("rejects oversized selector lists and UTF-8 argv expansion before provider work", async () => {
@@ -608,11 +683,22 @@ it.each([
     });
   if (mode === "invalid-json")
     expect(result.error.capturedOutput?.stdout).toBe("not json\n");
-  if (mode === "overflow")
+  if (mode === "overflow") {
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(result.error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected command-output allowance refusal");
     expect(result.error).toMatchObject({
       resource: "memory",
       reportedLimits: { output_bytes: 32 * 1024 * 1024 },
+      retryable: false,
     });
+    expect(analysisErrorRemediationAction(result.error)).toContain(
+      "The retained command-output allowance",
+    );
+    expect(analysisErrorRemediationAction(result.error)).not.toMatch(
+      /Review the reported worker memory limits/u,
+    );
+  }
 });
 
 it("retains completed discovery on late cancellation and cleanup failure", async () => {
@@ -676,3 +762,36 @@ it("preserves discovery resource ownership through CLI shutdown retries", async 
     await f.service.close();
   }
 });
+
+it.each(
+  [false, true].flatMap((failsClose) =>
+    [false, true].map((discovery) => ({ failsClose, discovery })),
+  ),
+)(
+  "retains completed Evidence and exact cancellation during workspace close: %j",
+  async ({ failsClose, discovery }) => {
+    const f = await fixture("close-abort", failsClose);
+    const result = discovery
+      ? await f.service.inspectFields({}, { signal: f.controller.signal })
+      : await f.service.inspect(
+          { path: f.path, fields: ["ip.addr"] },
+          { signal: f.controller.signal },
+        );
+    if (result.ok) throw new Error("Expected finalization cancellation");
+    const primary = failsClose ? result.error.cleanupPrimary : result.error;
+    expect(primary).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect(primary?.cause).toBe(f.controller.signal.reason);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: discovery ? "inspect_packet_fields" : "inspect_packet_capture",
+    });
+    expect(result.error.cleanupIncomplete).toBe(failsClose);
+    if (failsClose)
+      await expect(f.service.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+    f.allowCleanup();
+    await f.service.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(primary?.cause).toBe(f.controller.signal.reason);
+  },
+);

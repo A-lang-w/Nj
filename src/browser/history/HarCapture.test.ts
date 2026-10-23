@@ -1,8 +1,69 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
+import {
+  historicalHar,
+  harWithContainerLookalikes,
+} from "../../../tests/fixtures/historicalHar.js";
 import { decodeCaptureText } from "./CaptureJson.js";
 import { decodeHarCapture } from "./HarCapture.js";
+
+it("interprets HTTP fields only within HAR entries, preserving document lookalikes", () => {
+  const fixture = harWithContainerLookalikes();
+  const decoded = decodeHarCapture(JSON.stringify(fixture), []);
+  expect(decoded.container.reported).toMatchObject({
+    request: fixture.request,
+    response: fixture.response,
+  });
+  expect(decoded.container.redactions).toEqual([]);
+  expect(decoded.records[0]).toMatchObject({
+    reported: {
+      request: {
+        url: "https://example.test/opaque",
+        headers: [{ name: "Authorization", value: null }],
+        cookies: [{ name: "session", value: null }],
+      },
+      response: {
+        redirectURL: "https://example.test/redirect",
+        headers: [{ name: "Set-Cookie", value: null }],
+      },
+    },
+    binary_fields: [
+      { pointer: "/response/content/text", content_base64: "QUJD", bytes: 3 },
+    ],
+  });
+  const marked = decodeHarCapture(JSON.stringify(fixture), [
+    "ordinary-root-evidence",
+  ]);
+  expect(marked.container.reported).toMatchObject({
+    request: {
+      headers: [{ value: null }],
+      cookies: [{ value: null }],
+    },
+    response: { headers: [{ value: null }], content: { text: null } },
+  });
+  expect(marked.container.redactions).toHaveLength(4);
+  expect(
+    marked.container.redactions.every(
+      ({ reason }) => reason === "explicit-sensitive-value",
+    ),
+  ).toBe(true);
+});
+
+it("does not decode container lookalikes when excluding explicitly sensitive body bytes", () => {
+  const fixture = harWithContainerLookalikes();
+  fixture.response.content.text = "QUJD";
+  const decoded = decodeHarCapture(JSON.stringify(fixture), ["ABC"]);
+  expect(decoded.container.reported).toMatchObject({
+    response: { content: { text: "QUJD" } },
+  });
+  expect(decoded.container.redactions).toEqual([]);
+  expect(decoded.records[0]).toMatchObject({
+    reported: { response: { content: { text: null } } },
+    binary_fields: [
+      { state: "redacted", content_base64: null, bytes: null, sha256: null },
+    ],
+  });
+});
 
 it.each([
   { values: [] },
@@ -290,7 +351,7 @@ it.each([
   },
 );
 
-it("keeps unsafe extension numeric lexemes and rejects unsafe mandatory schema numbers", () => {
+it("keeps unsafe numeric lexemes in extension and mandatory schema fields", () => {
   const text = JSON.stringify(historicalHar());
   const result = decodeHarCapture(
     text.replace('"cache":{}', '"cache":{},"_big":9007199254740993'),
@@ -302,12 +363,17 @@ it("keeps unsafe extension numeric lexemes and rejects unsafe mandatory schema n
     literal: "9007199254740993",
   });
   expect(result.records[0]?.reported).toMatchObject({ _big: null });
-  expect(() =>
-    decodeHarCapture(
-      text.replace('"bodySize":0', '"bodySize":9007199254740993'),
-      [],
-    ),
-  ).toThrow("HAR schema validation failed");
+  // The pinned schema admits a valid integer the evidence cannot publish exactly.
+  const mandatory = decodeHarCapture(
+    text.replace('"bodySize":0', '"bodySize":9007199254740993'),
+    [],
+  ).records[0];
+  expect(mandatory?.numeric_literals).toContainEqual({
+    pointer: "/request/bodySize",
+    producer_type: "json-number",
+    literal: "9007199254740993",
+  });
+  expect(mandatory?.reported).toMatchObject({ request: { bodySize: null } });
 });
 
 it.each(["container", "record"] as const)(
@@ -617,6 +683,25 @@ it("excludes a declared literal in encoded HAR text from its binary sidecar too"
   expect(result.records[0]?.binary_fields[0]?.state).toBe("redacted");
 });
 
+it.each([
+  { depth: 64, innermost: "[]", accepted: true },
+  { depth: 64, innermost: "{}", accepted: true },
+  { depth: 64, innermost: "[0]", accepted: true },
+  { depth: 65, innermost: "[]", accepted: false },
+  { depth: 65, innermost: "{}", accepted: false },
+  { depth: 65, innermost: "[0]", accepted: false },
+  { depth: 66, innermost: "[]", accepted: false },
+])(
+  "bounds a $innermost extension at container level $depth",
+  ({ depth, innermost, accepted }) => {
+    // The root and log objects are the first two levels.
+    const enclosing = depth - 3;
+    const text = `{"log":{"version":"1.2","creator":{"name":"fixture","version":"1"},"entries":[],"_extension":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}}`;
+    if (accepted) expect(decodeHarCapture(text, []).total_records).toBe(0);
+    else expect(() => decodeHarCapture(text, [])).toThrow("nesting budget");
+  },
+);
+
 it("rejects excessive extension nesting instead of returning a partial capture", () => {
   let extension: unknown = null;
   for (let index = 0; index < 66; index++) extension = { child: extension };
@@ -693,3 +778,61 @@ it("ignores one leading byte-order mark, as HAR 1.2 requires of readers", () => 
     decodeCaptureText(Buffer.from([0x7b, 0xff, 0x7d]), "HAR"),
   ).toThrow("HAR is not valid UTF-8 JSON.");
 });
+
+const reportedAt = (reported: unknown, pointer: string): unknown =>
+  pointer
+    .split("/")
+    .slice(1)
+    .reduce<unknown>(
+      (value, key) =>
+        value !== null && typeof value === "object"
+          ? Reflect.get(value, key)
+          : undefined,
+      reported,
+    );
+
+it.each([
+  {
+    from: '"time":1.25',
+    literal: "0.123456789012345678901",
+    pointer: "/time",
+  },
+  { from: '"bodySize":99', literal: "1e400", pointer: "/response/bodySize" },
+])(
+  "admits a schema-valid number that evidence cannot publish exactly: $literal",
+  ({ from, literal, pointer }) => {
+    const key = from.slice(0, from.indexOf(":") + 1);
+    const text = JSON.stringify(historicalHar()).replace(
+      from,
+      `${key}${literal}`,
+    );
+    expect(text).toContain(`${key}${literal}`);
+    const record = decodeHarCapture(text, []).records[0];
+    // The exact producer lexeme is retained, and the published value stays unknown.
+    expect(record?.numeric_literals).toContainEqual({
+      pointer,
+      producer_type: "json-number",
+      literal,
+    });
+    expect(reportedAt(record?.reported, pointer)).toBeNull();
+  },
+);
+
+it.each([
+  "9007199254740993.5",
+  "1e-400",
+  "1.0000000000000000001",
+  `1${"0".repeat(309)}.5`,
+  `-1${"0".repeat(309)}.5`,
+])(
+  "judges an integer field by the lexeme when rounding or overflow would hide a fraction: %s",
+  (literal) => {
+    const text = JSON.stringify(historicalHar()).replace(
+      '"bodySize":99',
+      `"bodySize":${literal}`,
+    );
+    expect(() => decodeHarCapture(text, [])).toThrow(
+      "HAR schema validation failed: type (must be integer).",
+    );
+  },
+);
