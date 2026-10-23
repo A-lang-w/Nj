@@ -174,13 +174,19 @@ export const inspectNativeMacho = async (
       ),
     );
   }
-  const layoutRefusal = captures.find(
+  const layoutRefusals = captures.filter(
     (capture) => targetLayoutDyldRefusal(capture) !== null,
   );
+  const layoutRefusal = layoutRefusals[0];
   if (layoutRefusal !== undefined) {
-    const diagnosedType = targetLayoutDyldRefusal(layoutRefusal);
-    if (diagnosedType === null || load.fileTypeKind !== diagnosedType)
-      return err(unusableNativeCommandOutput(layoutRefusal));
+    // Every admitted command must agree with the independently parsed header.
+    // Selecting only the first would hide contradictory imports/exports facts.
+    const conflicting = layoutRefusals.find(
+      (capture) => targetLayoutDyldRefusal(capture) !== load.fileTypeKind,
+    );
+    if (conflicting !== undefined)
+      return err(unusableNativeCommandOutput(conflicting));
+    const diagnosedType = load.fileTypeKind;
     const diagnostic =
       withoutEchoedPathHeader(
         layoutRefusal.stdout,

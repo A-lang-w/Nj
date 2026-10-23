@@ -409,7 +409,11 @@ describe("Mach-O target-layout refusals", () => {
     fileType: string,
     diagnostic: string,
     exitCode = 1,
-    options: { stderr?: string; refusedMode?: string } = {},
+    options: {
+      stderr?: string;
+      refusedMode?: string;
+      exportsDiagnostic?: string;
+    } = {},
   ) => {
     const fixture = new NativeFixtureRunner();
     const result = await inspectNativeMacho({
@@ -432,10 +436,14 @@ describe("Mach-O target-layout refusals", () => {
             !args.includes(options.refusedMode)
           )
             return base;
+          const effectiveDiagnostic = args.includes("-exports")
+            ? (options.exportsDiagnostic ?? diagnostic)
+            : diagnostic;
+          const stdout = `/fixture/debug:\n${effectiveDiagnostic}\n`;
           const failed = {
             ...base.value,
-            stdout: `/fixture/debug:\n${diagnostic}\n`,
-            stdoutBytes: Buffer.byteLength(diagnostic) + 17,
+            stdout,
+            stdoutBytes: Buffer.byteLength(stdout),
             exitCode,
             stderr: options.stderr ?? "",
             stderrBytes: Buffer.byteLength(options.stderr ?? ""),
@@ -511,6 +519,34 @@ describe("Mach-O target-layout refusals", () => {
       expect(result.error).toMatchObject({
         _tag: "AnalysisOutputError",
         reason: "dyld_info failed",
+      });
+    },
+  );
+
+  it.each([
+    ["CORE", "unknown mh.filetype 4", "unknown mh.filetype 3"],
+    ["FVMLIB", "unknown mh.filetype 3", "unknown mh.filetype 4"],
+    ["CORE", "unknown mh.filetype 3", "unknown mh.filetype 4"],
+    ["FVMLIB", "unknown mh.filetype 4", "unknown mh.filetype 3"],
+  ])(
+    "rejects contradictory imports/exports refusals with a %s header: %s / %s",
+    async (fileType, importsDiagnostic, exportsDiagnostic) => {
+      const result = await inspectRefusal(fileType, importsDiagnostic, 1, {
+        exportsDiagnostic,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const headerDiagnostic =
+        fileType === "CORE" ? "unknown mh.filetype 4" : "unknown mh.filetype 3";
+      const conflictingDiagnostic =
+        importsDiagnostic === headerDiagnostic
+          ? exportsDiagnostic
+          : importsDiagnostic;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisOutputError",
+        capturedOutput: {
+          stdout: `/fixture/debug:\n${conflictingDiagnostic}\n`,
+        },
       });
     },
   );
