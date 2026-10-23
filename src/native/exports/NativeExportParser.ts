@@ -5,7 +5,12 @@ import {
   mappedFileOffset,
 } from "../metadata/BinaryContainer.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
-import { readElfString, readElfSymbol } from "../metadata/ElfSymbol.js";
+import { isUtf8 } from "node:buffer";
+import {
+  readElfString,
+  readElfStringBytes,
+  readElfSymbol,
+} from "../metadata/ElfSymbol.js";
 import {
   readNativeDirectoryFromBuffer,
   type NativeSection,
@@ -115,18 +120,69 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
   const cString = (rva: number): string => {
-    const start = map(rva, 1);
-    const end = bytes
-      .subarray(start, start + MAXIMUM_NAME_BYTES + 1)
-      .indexOf(0);
-    if (end <= 0)
-      throw new BinaryFormatFailure(
-        "malformed",
-        `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+    const chunks: Buffer[] = [];
+    let length = 0;
+    while (length <= MAXIMUM_NAME_BYTES) {
+      const address = base + BigInt(rva + length);
+      let sourceMapping: (typeof mappings)[number] | undefined;
+      for (const mapping of mappings) {
+        const end = mapping.address + BigInt(mapping.size);
+        if (
+          mapping.address <= address &&
+          address < end &&
+          (sourceMapping === undefined ||
+            end > sourceMapping.address + BigInt(sourceMapping.size))
+        )
+          sourceMapping = mapping;
+      }
+      if (sourceMapping === undefined) {
+        map(rva + length, 1);
+        throw new BinaryFormatFailure(
+          "malformed",
+          "PE export string mapping is inconsistent",
+        );
+      }
+      const size = Math.min(
+        MAXIMUM_NAME_BYTES + 1 - length,
+        Number(sourceMapping.address + BigInt(sourceMapping.size) - address),
       );
-    // The whole string must stay inside one file-backed mapping.
-    map(rva, end + 1);
-    return bytes.toString("latin1", start, start + end);
+      const offset =
+        sourceMapping.offset + Number(address - sourceMapping.address);
+      const chunk = bytes.subarray(offset, offset + size);
+      const terminator = chunk.indexOf(0);
+      if (terminator >= 0) {
+        const nameLength = length + terminator;
+        if (nameLength === 0)
+          throw new BinaryFormatFailure(
+            "malformed",
+            `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+          );
+        const consumedOffset = mappedFileOffset(
+          mappings,
+          address,
+          terminator + 1,
+          image.zero_fills,
+        );
+        if (length === 0) {
+          // Preserve the common single-mapping path without retaining a
+          // temporary chunk array for every export name.
+          return bytes.toString(
+            "latin1",
+            consumedOffset,
+            consumedOffset + terminator,
+          );
+        }
+        chunks.push(chunk.subarray(0, terminator));
+        return Buffer.concat(chunks, nameLength).toString("latin1");
+      }
+      mappedFileOffset(mappings, address, size, image.zero_fills);
+      chunks.push(chunk);
+      length += size;
+    }
+    throw new BinaryFormatFailure(
+      "malformed",
+      `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+    );
   };
 
   const header = map(directory.virtual_address, PE_EXPORT_DIRECTORY_BYTES);
@@ -188,11 +244,6 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     // A zero slot is an unused ordinal, not an export.
     if (rva === 0) continue;
     const ordinal = ordinalBase + index;
-    if (ordinal > 0xffff)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "PE exported ordinal exceeds 16-bit ordinals",
-      );
     let target: Pick<PeExport, "address" | "forwarder">;
     if (rva >= directory.virtual_address && rva < forwarderEnd) {
       try {
@@ -566,8 +617,12 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       }
     }
     let name: string;
+    let rawName: Buffer;
+    let nameUtf8Decodable: boolean;
     try {
-      name = readElfString(names, symbol.name_offset);
+      rawName = readElfStringBytes(names, symbol.name_offset);
+      nameUtf8Decodable = isUtf8(rawName);
+      name = rawName.toString(nameUtf8Decodable ? "utf8" : "latin1");
     } catch (cause) {
       issues.push({
         code: "name_unreadable",
@@ -584,9 +639,18 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       });
       continue;
     }
-    retain(name, typeof version === "object" ? (version?.name ?? null) : null);
+    const rawNameBase64 = rawName.some((byte) => byte >= 0x80)
+      ? rawName.toString("base64")
+      : null;
+    retain(
+      name,
+      typeof version === "object" ? (version?.name ?? null) : null,
+      rawNameBase64,
+    );
     exports.push({
       name,
+      name_bytes_base64: rawNameBase64,
+      name_utf8_decodable: nameUtf8Decodable,
       value: hex(symbol.value),
       size: symbol.size.toString(),
       type: ELF_TYPES[symbol.type] ?? "other",

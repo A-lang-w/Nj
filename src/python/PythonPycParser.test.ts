@@ -1143,6 +1143,30 @@ const parseWith = (bytes: Buffer, limits: Partial<typeof defaults> = {}) =>
     { ...defaults, ...limits },
   );
 
+it("preflights expanded shared code-name keys before building their hex table", () => {
+  const width = 1000;
+  const name = Buffer.alloc(1100, 0x61);
+  const namesObject = Buffer.concat([
+    Buffer.from([0x28]),
+    i32(width),
+    Buffer.from([0x61 | 0x80]),
+    u32(name.length),
+    name,
+    ...Array.from({ length: width - 1 }, () => marshalRef(0)),
+  ]);
+  const child = marshalCode("py311", { namesObject });
+  const bytes = withConsts([
+    Buffer.concat([Buffer.from([0x3e]), u32(1), child]),
+  ]);
+
+  expect(() => parseWith(bytes, { max_string_bytes: 4096 })).toThrow(
+    expect.objectContaining({
+      boundary: "string",
+      message: expect.stringContaining("max_string_bytes 4096"),
+    }),
+  );
+});
+
 it("keeps one descendant list when many wrappers share a container", () => {
   const children = 1800;
   const wrappers = 14_000;
@@ -1496,8 +1520,11 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   expect(() => parse(file("py311", 3531, { flags: 0x80000000 }))).toThrow(
     /co_flags is negative/,
   );
-  expect(() => parse(file("py37", 3401, { flags: 0x80000000 }))).toThrow(
+  expect(() => parse(file("py38", 3411, { flags: 0x80000000 }))).toThrow(
     /co_flags is negative/,
+  );
+  expect(() => parse(file("py38", 3411, { stacksize: 0xffffffff }))).toThrow(
+    /co_stacksize is negative/,
   );
 
   const valid = parse(
@@ -1520,6 +1547,25 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   const negativePy37Flags = parse(file("py37", 3394, { flags: 0x80000000 }));
   expect(root(negativePy37Flags).flags).toBe(-0x80000000);
   expect(pythonPycSchema.safeParse(negativePy37Flags).success).toBe(true);
+  const negativePy37Stacksize = parse(
+    file("py37", 3394, { stacksize: 0xffffffff }),
+  );
+  expect(root(negativePy37Stacksize).stacksize).toBe(-1);
+  expect(pythonPycSchema.safeParse(negativePy37Stacksize).success).toBe(true);
+  const negativePy38AlphaFlags = parse(
+    file("py37", 3401, { flags: 0x80000000 }),
+  );
+  expect(root(negativePy38AlphaFlags).flags).toBe(-0x80000000);
+  const ambiguousPy38Fields = parse(
+    file("py38", 3410, { stacksize: 0xffffffff, flags: 0x80000000 }),
+  );
+  expect(root(ambiguousPy38Fields)).toMatchObject({
+    stacksize: -1,
+    flags: -0x80000000,
+  });
+  expect(ambiguousPy38Fields.limitations).toEqual(
+    expect.arrayContaining([expect.stringContaining("Magic 3410 is shared")]),
+  );
   const py37 = parse(
     file("py37", 3394, {
       argcount: 1,
