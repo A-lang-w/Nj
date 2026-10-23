@@ -68,6 +68,45 @@ it.each(["draft-2020-12", "draft-07"] as const)(
   },
 );
 
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "keeps objdump Unicode validation and portable SDK patterns in %s",
+  (target) => {
+    const canonical = toolInputSchemaWithMetadata(
+      toolContract("inspect_with_objdump"),
+    );
+    const schema = canonical["~standard"].jsonSchema.input({ target });
+    const input = { path: "sample.elf", operation: "disassemble" };
+    for (const unicodeRegExp of [false, true]) {
+      const options = { strict: false, validateFormats: false, unicodeRegExp };
+      const ajv =
+        target === "draft-2020-12" ? new Ajv2020(options) : new Ajv(options);
+      expect(ajv.validateSchema(schema)).toBe(true);
+      const validate = ajv.compile(schema);
+      for (const symbol of [
+        "known_function",
+        "selector_\u{1F680}",
+        "selector_\uFFFD",
+      ]) {
+        expect(
+          validate({ ...input, symbol }),
+          JSON.stringify(validate.errors),
+        ).toBe(true);
+        expect(canonical.safeParse({ ...input, symbol }).success).toBe(true);
+      }
+      expect(validate({ ...input, symbol: "a\u0000b" })).toBe(false);
+    }
+    // Scalar Unicode engines cannot express unpaired UTF-16 surrogates. The
+    // registered canonical validator owns that runtime constraint.
+    for (const symbol of [
+      "\ud800",
+      "\udc00",
+      "prefix\ud800suffix",
+      "\udc00\ud800",
+    ])
+      expect(canonical.safeParse({ ...input, symbol }).success).toBe(false);
+  },
+);
+
 describe("advertised object dependencies", () => {
   it.each([
     ["draft-07", "dependencies"],
@@ -650,7 +689,9 @@ describe("advertised empty-string literals", () => {
       type: "object",
       properties: { guard: { not: { $ref: "#/$defs/loop" } } },
     };
-    expect(() => presentInputJsonSchema(canonical, () => undefined)).not.toThrow();
+    expect(() =>
+      presentInputJsonSchema(canonical, () => undefined),
+    ).not.toThrow();
   });
 
   it("relaxes a oneOf whose branch is a reference to a widened definition", () => {
@@ -684,7 +725,9 @@ describe("advertised empty-string literals", () => {
       group: { anyOf: [{ type: "string" }] },
     });
   });
+});
 
+describe("advertised empty-string reference constraints", () => {
   it("drops an affected contains group that references a widened definition", () => {
     const canonical = {
       $defs: { empty: { type: "string", const: "" } },
@@ -788,17 +831,20 @@ describe("advertised empty-string literals", () => {
       },
       required: ["path"],
     };
-    const advertised = presentInputJsonSchema(
-      canonical,
-      (property) => (property === "path" ? "The path." : undefined),
+    const advertised = presentInputJsonSchema(canonical, (property) =>
+      property === "path" ? "The path." : undefined,
     );
-    expect(advertised.properties.path).toEqual({
-      type: "string",
-      description: "The path.",
+    expect(advertised.properties).toEqual({
+      path: {
+        type: "string",
+        description: "The path.",
+      },
+      alias: { $ref: "#/properties/path" },
     });
-    expect(advertised.properties.alias).toEqual({ $ref: "#/properties/path" });
   });
+});
 
+describe("advertised empty-string reference writeback", () => {
   it("discards descendant writes removed by an ancestor replacement", () => {
     const canonical = {
       type: "object",
@@ -810,7 +856,9 @@ describe("advertised empty-string literals", () => {
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
     expect(advertised.default).toEqual({});
-    expect(advertised.properties.child).toEqual({ type: "string" });
+    expect(advertised).toHaveProperty(["properties", "child"], {
+      type: "string",
+    });
   });
 
   it("does not treat schema-map entries named $id as resource boundaries", () => {
@@ -844,10 +892,15 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.value).toEqual({ type: "string" });
-    expect(advertised.properties.nested.properties.value).toEqual({
-      $ref: "#/properties/guard/not",
+    expect(advertised).toHaveProperty(["properties", "value"], {
+      type: "string",
     });
+    expect(advertised).toHaveProperty(
+      ["properties", "nested", "properties", "value"],
+      {
+        $ref: "#/properties/guard/not",
+      },
+    );
   });
 
   it("parks relocated targets in their owning resource", () => {
@@ -870,7 +923,8 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    const inner = advertised.properties.inner as Record<string, unknown>;
+    const inner = (advertised.properties as Record<string, unknown>)
+      .inner as Record<string, unknown>;
     expect(inner.properties).toEqual({
       guard: {},
       value: { $ref: "#/$defs/advertisedRelocated0" },
@@ -892,7 +946,9 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.value).toEqual({ type: "string" });
+    expect(advertised).toHaveProperty(["properties", "value"], {
+      type: "string",
+    });
   });
 
   it("does not walk parked definitions maps as schemas", () => {
@@ -918,11 +974,13 @@ describe("advertised empty-string literals", () => {
     expect(defs.items).toEqual({
       $ref: expect.stringMatching(/^#\/\$defs\/advertisedRelocated/),
     });
-    expect(advertised.properties.a).toEqual({
+    expect(advertised).toHaveProperty(["properties", "a"], {
       $ref: expect.stringMatching(/^#\/\$defs\/advertisedRelocated/),
     });
   });
+});
 
+describe("advertised empty-string reference chains", () => {
   it("parks cyclic removed reference groups", () => {
     const canonical = {
       type: "object",
@@ -938,7 +996,8 @@ describe("advertised empty-string literals", () => {
     const text = JSON.stringify(advertised);
     expect(text).not.toContain("#/properties/guardA/not");
     expect(text).not.toContain("#/properties/guardB/not");
-    const value = advertised.properties.value as Record<string, unknown>;
+    const value = (advertised.properties as Record<string, unknown>)
+      .value as Record<string, unknown>;
     expect(String(value.$ref)).toMatch(/^#\/\$defs\/advertisedRelocated\d+$/);
     const defs = advertised.$defs as Record<string, unknown>;
     expect(Object.keys(defs).length).toBeGreaterThanOrEqual(2);
@@ -954,10 +1013,12 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.guardA).toEqual({});
-    expect(advertised.properties.guardB).toEqual({});
-    expect(advertised.properties.value).toEqual({
-      allOf: [{ type: "string" }],
+    expect(advertised.properties).toEqual({
+      guardA: {},
+      guardB: {},
+      value: {
+        allOf: [{ type: "string" }],
+      },
     });
   });
 
@@ -971,7 +1032,7 @@ describe("advertised empty-string literals", () => {
       default: { $ref: "#/properties/guard/not" },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.guard).toEqual({});
+    expect(advertised).toHaveProperty(["properties", "guard"], {});
     expect(advertised.default).toEqual({ type: "string" });
   });
 
@@ -993,14 +1054,13 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    const items = advertised.properties.values.items as Record<
-      string,
-      unknown
-    >;
-    expect(items.properties).toEqual({
-      guard: {},
-      value: { type: "string" },
-    });
+    expect(advertised).toHaveProperty(
+      ["properties", "values", "items", "properties"],
+      {
+        guard: {},
+        value: { type: "string" },
+      },
+    );
   });
 
   it("scopes cycle guards to their schema resource", () => {
@@ -1021,8 +1081,10 @@ describe("advertised empty-string literals", () => {
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
     const inner = (
-      (advertised.default as Record<string, unknown>)
-        .properties as Record<string, unknown>
+      (advertised.default as Record<string, unknown>).properties as Record<
+        string,
+        unknown
+      >
     ).inner as Record<string, unknown>;
     expect(inner.properties).toEqual({ flag: {} });
     expect(inner.default).toEqual({ type: "string" });
@@ -1044,25 +1106,32 @@ describe("advertised empty-string literals", () => {
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
     expect(advertised.default).toEqual({ const: "" });
-    expect(advertised.$defs.nested.default).toEqual({ type: "string" });
+    expect(advertised).toHaveProperty(["$defs", "nested", "default"], {
+      type: "string",
+    });
   });
+});
 
+describe("advertised empty-string nested resource references", () => {
   it("keeps inlined schema resources unique", () => {
     const canonical = {
       type: "object",
       properties: {
         guard: {
-          not: { allOf: [{ $id: "https://example.com/r", type: "object" }], const: "" },
+          not: {
+            allOf: [{ $id: "https://example.com/r", type: "object" }],
+            const: "",
+          },
         },
         a: { $ref: "#/properties/guard/not" },
         b: { $ref: "#/properties/guard/not" },
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.a).toEqual({
+    expect(advertised).toHaveProperty(["properties", "a"], {
       $ref: "#/$defs/advertisedRelocated0",
     });
-    expect(advertised.properties.b).toEqual({
+    expect(advertised).toHaveProperty(["properties", "b"], {
       $ref: "#/$defs/advertisedRelocated0",
     });
     expect(
@@ -1084,8 +1153,10 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.nested.default).toEqual({});
-    expect(advertised.properties.nested.payload).toEqual({ type: "string" });
+    expect(advertised).toHaveProperty(["properties", "nested", "default"], {});
+    expect(advertised).toHaveProperty(["properties", "nested", "payload"], {
+      type: "string",
+    });
   });
 
   it("resolves annotation references within nested resources", () => {
@@ -1101,7 +1172,9 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.nested.default).toEqual({ type: "string" });
+    expect(advertised).toHaveProperty(["properties", "nested", "default"], {
+      type: "string",
+    });
   });
 
   it("composes inlined targets with reference siblings", () => {
@@ -1113,11 +1186,10 @@ describe("advertised empty-string literals", () => {
       },
       required: ["guard"],
     };
-    const advertised = presentInputJsonSchema(
-      canonical,
-      (property) => (property === "value" ? "The value." : undefined),
+    const advertised = presentInputJsonSchema(canonical, (property) =>
+      property === "value" ? "The value." : undefined,
     );
-    expect(advertised.properties.value).toEqual({
+    expect(advertised).toHaveProperty(["properties", "value"], {
       description: "The value.",
       allOf: [{ type: "string" }],
     });
@@ -1133,8 +1205,10 @@ describe("advertised empty-string literals", () => {
       required: ["guard"],
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.guard).toEqual({});
-    expect(advertised.properties.value).toEqual({ type: "string" });
+    expect(advertised.properties).toEqual({
+      guard: {},
+      value: { type: "string" },
+    });
   });
 
   it("resolves nested references against their own resource root", () => {
@@ -1151,8 +1225,11 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.nested.properties.value).toEqual({});
-    expect(advertised.properties.nested.$defs).toEqual({
+    expect(advertised).toHaveProperty(
+      ["properties", "nested", "properties", "value"],
+      {},
+    );
+    expect(advertised).toHaveProperty(["properties", "nested", "$defs"], {
       empty: { type: "string" },
     });
   });
@@ -1165,12 +1242,16 @@ describe("advertised empty-string literals", () => {
       },
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.properties.value).toEqual({
-      type: "string",
-      contentSchema: { type: "string" },
+    expect(advertised.properties).toEqual({
+      value: {
+        type: "string",
+        contentSchema: { type: "string" },
+      },
     });
   });
+});
 
+describe("advertised empty-string pointer and trace seed shapes", () => {
   it("composes overlapping parent and child reference writes", () => {
     const canonical = {
       type: "object",
@@ -1214,10 +1295,16 @@ describe("advertised empty-string literals", () => {
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
     expect(advertised.$defs).toEqual({ empty: { type: "string" } });
-    expect(advertised.properties.nested.$id).toBe("https://example.com/nested");
-    expect(advertised.properties.nested.properties.value).toEqual({
-      not: { $ref: "#/$defs/empty" },
-    });
+    expect(advertised).toHaveProperty(
+      ["properties", "nested", "$id"],
+      "https://example.com/nested",
+    );
+    expect(advertised).toHaveProperty(
+      ["properties", "nested", "properties", "value"],
+      {
+        not: { $ref: "#/$defs/empty" },
+      },
+    );
   });
 
   it("decodes pointer separators before splitting reference tokens", () => {
@@ -1288,7 +1375,138 @@ describe("advertised empty-string literals", () => {
     expect(canonicalValidate({ seed: emptyRoute })).toBe(true);
     expect(advertisedValidate({ seed: emptyRoute })).toBe(true);
     expect(
-      canonicalValidate({ seed: { kind: "route", value: "", match: "contains" } }),
+      canonicalValidate({
+        seed: { kind: "route", value: "", match: "contains" },
+      }),
     ).toBe(false);
   });
 });
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "describes references from their containing resource in %s",
+  (dialect) => {
+    const presented = presentInputJsonSchema(
+      {
+        $schema:
+          dialect === "draft-07"
+            ? "http://json-schema.org/draft-07/schema#"
+            : "https://json-schema.org/draft/2020-12/schema",
+        $id: "https://example.test/root.json",
+        type: "object",
+        definitions: { value: { type: "string", description: "Outer text." } },
+        properties: {
+          child: {
+            $id: "child.json",
+            type: "object",
+            definitions: {
+              value: { type: "number", description: "Nested number." },
+            },
+            properties: { value: { $ref: "#/definitions/value" } },
+          },
+        },
+      },
+      () => undefined,
+    );
+    expect(presented).toMatchObject({
+      properties: {
+        child: { properties: { value: { description: "Nested number." } } },
+      },
+    });
+  },
+);
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "keeps root union resource identities when lifting would change relative refs in %s",
+  (dialect) => {
+    const source = {
+      $schema:
+        dialect === "draft-07"
+          ? "http://json-schema.org/draft-07/schema#"
+          : "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://example.test/root.json",
+      anyOf: ["first", "second"].map((kind) => ({
+        $id: `https://example.test/${kind}/schema.json`,
+        type: "object",
+        properties: { kind: { const: kind }, value: { $ref: "child.json" } },
+        required: ["kind", "value"],
+        additionalProperties: false,
+      })),
+    };
+    const presented = presentInputJsonSchema(source, () => undefined);
+    const createAjv = () => {
+      const ajv =
+        dialect === "draft-07"
+          ? new Ajv({ strict: false })
+          : new Ajv2020({ strict: false });
+      ajv.addSchema({
+        $id: "https://example.test/first/child.json",
+        type: "string",
+      });
+      ajv.addSchema({
+        $id: "https://example.test/second/child.json",
+        type: "number",
+      });
+      return ajv;
+    };
+    const canonical = createAjv().compile(source);
+    const advertised = createAjv().compile(presented);
+    for (const kind of ["first", "second"])
+      for (const value of [7, "seven", null])
+        expect(advertised({ kind, value })).toBe(canonical({ kind, value }));
+  },
+);
+
+it("does not lift properties that still refer to deleted root-union locations", () => {
+  const source = {
+    anyOf: [
+      {
+        type: "object",
+        properties: { value: { $ref: "#/anyOf/1/properties/value" } },
+        required: ["value"],
+      },
+      {
+        type: "object",
+        properties: { value: { type: "number" } },
+        required: ["value"],
+      },
+    ],
+  };
+  const presented = presentInputJsonSchema(source, () => undefined);
+  const canonical = new Ajv2020({ strict: false }).compile(source);
+  const advertised = new Ajv2020({ strict: false }).compile(presented);
+  for (const value of [7, "seven", null])
+    expect(advertised({ value })).toBe(canonical({ value }));
+});
+
+it.each(["$ref", "$dynamicRef"])(
+  "preserves the root union used by recursive %s children",
+  (keyword) => {
+    const source = {
+      anyOf: [
+        {
+          type: "object",
+          properties: { end: { const: "done" } },
+          required: ["end"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: { next: { [keyword]: "#" } },
+          required: ["next"],
+          additionalProperties: false,
+        },
+      ],
+    };
+    const presented = presentInputJsonSchema(source, () => undefined);
+    expect(presented.anyOf).toBeDefined();
+    const canonical = new Ajv2020({ strict: false }).compile(source);
+    const advertised = new Ajv2020({ strict: false }).compile(presented);
+    for (const value of [
+      { end: "done" },
+      { next: { end: "done" } },
+      { next: {} },
+      { next: { end: "invalid" } },
+    ])
+      expect(advertised(value)).toBe(canonical(value));
+  },
+);

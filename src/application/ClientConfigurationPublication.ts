@@ -1,16 +1,9 @@
 import { constants, type Stats } from "node:fs";
-import {
-  link,
-  lstat,
-  mkdtemp,
-  open,
-  realpath,
-  rename,
-  type FileHandle,
-} from "node:fs/promises";
-import { basename, dirname, join, sep } from "node:path";
+import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import {
@@ -20,6 +13,14 @@ import {
 import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
+import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+
+/** The original read owner's selection, before merging and preparing a backup. */
+export interface ClientConfigurationSelection {
+  readonly requestedPath: string;
+  readonly state: Stats | undefined;
+}
 
 /** The exact staged file retained through publication, verification and recovery. */
 export class ClientConfigurationPublication {
@@ -36,10 +37,20 @@ export class ClientConfigurationPublication {
     contents: string,
     previous: string | undefined,
     mode?: number,
+    selection?: ClientConfigurationSelection,
   ): Promise<ClientConfigurationPublication> {
     const parent = await realpath(dirname(path));
     const destination = join(parent, basename(path));
     const input = await selectedConfiguration(destination, previous);
+    if (selection !== undefined) {
+      await assertRequestedConfigurationPath(path, selection.requestedPath);
+      if (
+        selection.state === undefined
+          ? input !== undefined
+          : input === undefined || !sameRegularFileState(selection.state, input)
+      )
+        throw new RegularFileChangedError(destination);
+    }
     const directory = await mkdtemp(`${parent}${sep}.rea-config-`);
     const staging = await OwnedStagedOutput.create(directory);
     const cleanup = new AnalysisCleanupLease(
@@ -72,10 +83,23 @@ export class ClientConfigurationPublication {
       if ((await owner.handle.stat()).ino === 0)
         throw new RegularFileChangedError(stagedPath);
       await staging.assertReadyForPublication(stagedPath);
+      if (selection !== undefined)
+        await assertRequestedConfigurationPath(path, selection.requestedPath);
       await assertSelectedConfiguration(destination, input);
       if (input === undefined) {
         // An exclusive link cannot overwrite a file created after absence was checked.
-        await link(stagedPath, destination);
+        try {
+          await link(stagedPath, destination);
+        } catch (cause: unknown) {
+          if (
+            selection !== undefined &&
+            cause instanceof Error &&
+            "code" in cause &&
+            cause.code === "EEXIST"
+          )
+            throw new RegularFileChangedError(destination, { cause });
+          throw cause;
+        }
       } else {
         // The destination is explicit: rename never follows its final symlink.
         await rename(stagedPath, destination);
@@ -107,11 +131,12 @@ export class ClientConfigurationPublication {
     return outcome.value;
   }
 
-  async assertCurrent(): Promise<void> {
+  async assertCurrent(readback?: string): Promise<void> {
     const owned = await this.owner.handle.stat();
     const named = await lstat(this.path);
     if (
       owned.ino === 0 ||
+      (readback !== undefined && readback !== this.contents) ||
       named.isSymbolicLink() ||
       !sameRegularFileState(owned, named)
     )
@@ -120,10 +145,6 @@ export class ClientConfigurationPublication {
 
   /** State checks do not exclude a concurrent writer to the same inode. */
   async restore(original: string | undefined): Promise<void> {
-    if (original === undefined)
-      throw new Error(
-        "First-run configuration recovery requires manual removal; pathname deletion cannot prove ownership",
-      );
     const handle = this.owner.handle;
     const before = await handle.stat();
     const named = await lstat(this.path);
@@ -132,11 +153,18 @@ export class ClientConfigurationPublication {
       !before.isFile() ||
       named.isSymbolicLink() ||
       !sameRegularFileState(before, named) ||
-      !(await this.#hasPublishedBytes(handle)) ||
+      !(await fileHandleMatchesBytes(
+        handle,
+        Buffer.from(this.contents, "utf8"),
+      )) ||
       !sameRegularFileState(before, await handle.stat()) ||
       !sameRegularFileState(before, await lstat(this.path))
     )
       throw new RegularFileChangedError(this.path);
+    if (original === undefined)
+      throw new Error(
+        "First-run configuration recovery requires manual removal; pathname deletion cannot prove ownership",
+      );
     const bytes = Buffer.from(original, "utf8");
     for (let position = 0; position < bytes.length;) {
       const { bytesWritten } = await handle.write(
@@ -153,30 +181,54 @@ export class ClientConfigurationPublication {
     if (!sameRegularFileState(await handle.stat(), await lstat(this.path)))
       throw new RegularFileChangedError(this.path);
   }
-
-  async #hasPublishedBytes(handle: FileHandle): Promise<boolean> {
-    const expected = Buffer.from(this.contents, "utf8");
-    if ((await handle.stat()).size !== expected.length) return false;
-    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, expected.length));
-    for (let position = 0; position < expected.length;) {
-      const { bytesRead } = await handle.read(
-        chunk,
-        0,
-        Math.min(chunk.length, expected.length - position),
-        position,
-      );
-      if (
-        bytesRead === 0 ||
-        !chunk
-          .subarray(0, bytesRead)
-          .equals(expected.subarray(position, position + bytesRead))
-      )
-        return false;
-      position += bytesRead;
-    }
-    return true;
-  }
 }
+
+const assertRequestedConfigurationPath = async (
+  path: string,
+  requestedPath: string,
+): Promise<void> => {
+  const current = await resolveClientConfigTransactionPath(requestedPath);
+  if (current === undefined)
+    throw new ConfigurationError(
+      `Client configuration path could not be safely verified: ${requestedPath}`,
+    );
+  if (resolve(current) === resolve(path)) return;
+  // `path` is the canonical file selected for this transaction. A later
+  // retarget of a parent-directory alias keeps that file. A configuration
+  // symlink that now names another target, or a path whose parent is already
+  // canonical, still conflicts.
+  if (await isParentAliasRetarget(requestedPath, path, current)) return;
+  throw new RegularFileChangedError(path);
+};
+
+const isParentAliasRetarget = async (
+  requestedPath: string,
+  path: string,
+  current: string,
+): Promise<boolean> => {
+  if (basename(current) !== basename(path)) return false;
+  let requestedStats: { isSymbolicLink(): boolean };
+  try {
+    requestedStats = await lstat(requestedPath);
+  } catch (cause: unknown) {
+    if (isNodeErrorCode(cause, "ENOENT")) return false;
+    throw new ConfigurationError(
+      `Client configuration path could not be safely verified: ${requestedPath}`,
+    );
+  }
+  if (requestedStats.isSymbolicLink()) return false;
+  const requestedParent = dirname(resolve(requestedPath));
+  try {
+    const canonicalParent = await realpath(requestedParent);
+    return resolve(canonicalParent) !== requestedParent;
+  } catch (cause: unknown) {
+    void cause;
+    return false;
+  }
+};
+
+const isNodeErrorCode = (cause: unknown, code: string): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === code;
 
 const selectedConfiguration = async (
   path: string,

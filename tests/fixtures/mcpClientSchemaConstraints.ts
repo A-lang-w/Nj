@@ -88,10 +88,8 @@ export const emptyStringLiteralSchemaError = (
     !active.has(schema.$ref)
   ) {
     const error = emptyStringLiteralSchemaError(
-      resolveLocalSchemaReference(
-        root as Record<string, unknown>,
-        schema.$ref,
-      )?.value,
+      resolveLocalSchemaReference(root as Record<string, unknown>, schema.$ref)
+        ?.value,
       `${path}.$ref`,
       root,
       new Set([...active, schema.$ref]),

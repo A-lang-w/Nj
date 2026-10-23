@@ -29,6 +29,8 @@ const fixture = vi.hoisted(() => ({
       readonly read: number;
       readonly pid?: number;
       readonly parent?: number;
+      readonly processGroupId?: number;
+      readonly sessionId?: number;
       readonly start?: number;
     }
   >(),
@@ -165,6 +167,7 @@ vi.mock("../ExecFileOutput.js", () => ({
 }));
 
 import { startProcessSampler } from "./ProcessSampling.js";
+import { readLinuxProcessStat } from "./LinuxProcessSampling.js";
 import type { ProcessSample } from "../../domain/process/processCapture.js";
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
@@ -195,8 +198,8 @@ const statLine = (pid: number, read: number): string => {
     String(
       mutation?.read === read ? (mutation.parent ?? row.parent) : row.parent,
     ),
-    "100",
-    "100",
+    String(mutation?.read === read ? (mutation.processGroupId ?? 100) : 100),
+    String(mutation?.read === read ? (mutation.sessionId ?? 100) : 100),
   ];
   while (fields.length < 19) fields.push("0");
   fields.push(
@@ -268,6 +271,38 @@ const waitFor = async (condition: () => boolean): Promise<void> => {
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
 };
+
+it("rejects a mismatched stat PID at sampling admission", async () => {
+  setUpFixture();
+  fixture.statMutations.set(100, { read: 1, pid: 200 });
+  const wrongPid = await readLinuxProcessStat(
+    100,
+    new AbortController().signal,
+  );
+  expect(wrongPid.value).toBeUndefined();
+  expect(wrongPid.diagnostics).toMatchObject({
+    count: 1,
+    first: "/proc/100/stat: malformed process identity",
+  });
+});
+
+it.each([0, -1])(
+  "does not classify native unavailable relations (%s) as malformed identity",
+  async (relation) => {
+    setUpFixture();
+    fixture.statMutations.set(100, {
+      read: 1,
+      processGroupId: relation,
+      sessionId: relation,
+    });
+    const observed = await readLinuxProcessStat(
+      100,
+      new AbortController().signal,
+    );
+    expect(observed.value).toBeUndefined();
+    expect(observed.diagnostics).toMatchObject({ count: 0, first: null });
+  },
+);
 
 const flushImmediateProcPass = async (): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -550,6 +585,31 @@ it.each([
     await flushImmediateProcPass();
     await stop();
     expect(samples).toEqual([]);
+  },
+);
+
+it.each([0, -1])(
+  "keeps completed samples without false failures when root relations disappear (%s)",
+  async (relation) => {
+    setUpFixture();
+    fixture.children.set("100:100", "");
+    // Reads 1/2 establish PTY readiness; 3/4 bracket the retained root sample.
+    // The next pass sees a valid kernel record whose relations are unavailable.
+    fixture.statMutations.set(100, {
+      read: 5,
+      processGroupId: relation,
+      sessionId: relation,
+    });
+    const { samples, stop } = start();
+    await waitFor(() => (fixture.statReads.get(100) ?? 0) >= 5);
+    await flushImmediateProcPass();
+    const result = await stop();
+    expect(samples.map(({ pid }) => pid)).toEqual([100]);
+    expect(result.coverage).toMatchObject({
+      sampling_failures: 0,
+      first_sampling_failure: null,
+    });
+    expect(result.partial).toBe(false);
   },
 );
 

@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
+import {
+  schemaArrays as schemaArrayKeywords,
+  schemaChildren as schemaChildKeywords,
+  schemaMaps as schemaMapKeywords,
+} from "../../../src/contracts/jsonSchemaKeywords.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
@@ -288,12 +293,6 @@ function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
     }),
   );
 }
-
-import {
-  schemaArrays as schemaArrayKeywords,
-  schemaChildren as schemaChildKeywords,
-  schemaMaps as schemaMapKeywords,
-} from "../../../src/contracts/jsonSchemaKeywords.js";
 
 function localInputReferences(tools: readonly ToolSchemas[]): string[] {
   return tools.flatMap((tool) => {
