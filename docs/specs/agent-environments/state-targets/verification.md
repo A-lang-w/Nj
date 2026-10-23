@@ -69,6 +69,8 @@ write tool is lost.
 - **Ninth round** (on main `b7ebccf8`): no verdict, read view, recorded read or session replay changes on the restored
   captures (187 write tools, 62 served, 1,151 views, 2,085 of 2,155 initial reads and 2,764 of 3,022 session reads
   matching).
+- **Tenth round** (on main `a2235b09`): no verdict, read view, recorded read or session replay changes on the restored
+  captures.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
