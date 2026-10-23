@@ -3,6 +3,8 @@ import type {
   AnalysisProfileResolution,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
+import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -13,6 +15,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { ghidraDisabledAnalyzerPreset } from "./GhidraDisabledAnalyzers.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import {
   isLegacyMipsAdmission,
@@ -104,11 +107,13 @@ export const resolveGhidraAnalysisProfile = async (
     : null;
   if (pspExtension !== null && !pspExtension.ok) return pspExtension;
   const provider = { ...identity, version: installation.providerVersion };
+  const createProfile = (parameters: Readonly<Record<string, JsonValue>>) =>
+    createGhidraProfile(provider, parameters, target);
   const analyzerParameters =
     disabledAnalyzers === undefined || disabledAnalyzers.length === 0
       ? { analyzer_preset: "ghidra-default" }
       : {
-          analyzer_preset: `ghidra-default+disabled:${disabledAnalyzers.join(",")}`,
+          analyzer_preset: ghidraDisabledAnalyzerPreset(disabledAnalyzers),
           analysis_options: { disabled_analyzers: [...disabledAnalyzers] },
         };
   if (target.format === "raw-binary") {
@@ -125,7 +130,7 @@ export const resolveGhidraAnalysisProfile = async (
     const language = ghidraRawBinaryLanguage(target.architecture);
     return Promise.resolve(
       ok({
-        profile: createAnalysisProfile(provider, {
+        profile: createProfile({
           target_kind: target.kind,
           target_format: target.format,
           architecture: target.architecture,
@@ -207,7 +212,7 @@ export const resolveGhidraAnalysisProfile = async (
     );
   return Promise.resolve(
     ok({
-      profile: createAnalysisProfile(provider, {
+      profile: createProfile({
         target_kind: target.kind,
         target_format: target.format,
         ...(target.format === "pe"
@@ -374,3 +379,26 @@ export const sameGhidraDisabledAnalyzers = (
     ? left === right
     : left.length === right.length &&
       left.every((name, index) => name === right[index]);
+
+/** Keep coordinate-affecting import facts with the provider that interprets them. */
+const createGhidraProfile = (
+  provider: Parameters<typeof createAnalysisProfile>[0],
+  parameters: Readonly<Record<string, JsonValue>>,
+  target: BinaryTarget,
+) =>
+  createAnalysisProfile(provider, {
+    ...parameters,
+    // Ghidra does not currently commit an exact universal-container slice selection.
+    ...(target.kind === "executable" && target.format !== "mach-o-universal"
+      ? {
+          function_coordinate_context: createFunctionCoordinateContext({
+            loader: parameters.loader ?? null,
+            language_id: parameters.language_id ?? null,
+            compiler_spec_id: parameters.compiler_spec_id ?? null,
+            load_segment: parameters.load_segment ?? null,
+            address_coordinates: parameters.address_coordinates ?? null,
+            entry_point: parameters.entry_point ?? null,
+          }),
+        }
+      : {}),
+  });

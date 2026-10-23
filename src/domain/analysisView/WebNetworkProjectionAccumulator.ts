@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -7,7 +8,7 @@ import type { AnalysisError } from "../analysisErrorBase.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { err, ok, type Result } from "../result.js";
 import {
-  webNetworkCaptureSchema,
+  safeParseOwnedWebNetworkCapture,
   type WebNetworkCapture,
 } from "../webNetworkCapture.js";
 import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
@@ -58,6 +59,10 @@ export abstract class WebNetworkProjectionAccumulator {
         "memory",
         `${this.budgetSubject} retained state and temporary work exceed the projection representation budget.`,
         { output_bytes: this.maximumBytes },
+        fixedAllowanceOptions(
+          "The analysis-view projection allowance",
+          "parser",
+        ),
       ),
     );
   }
@@ -67,6 +72,11 @@ export abstract class WebNetworkProjectionAccumulator {
     return admitAnalysisViewData(value, false, (bytes) =>
       this.retain(bytes) ? ok(undefined) : this.overBudget(),
     );
+  }
+
+  /** Reserve bytes a view derives from the borrowed parent before it allocates them. */
+  admitDerivedBytes(bytes: number): Result<void, AnalysisError> {
+    return this.retain(bytes) ? ok(undefined) : this.overBudget();
   }
 
   /** Admit the complete portable envelope before cloning or authenticating it. */
@@ -94,7 +104,7 @@ export abstract class WebNetworkProjectionAccumulator {
 /** Authenticate and gate a retained HAR parent before a grouping view reads any record. */
 export const admitHarCaptureParent = (
   parent: AnalysisViewParent,
-  viewKind: "api-surface" | "environment-manifest",
+  viewKind: "api-surface" | "environment-manifest" | "environment-state",
   accumulator: WebNetworkProjectionAccumulator,
 ): Result<WebNetworkCapture, AnalysisError> => {
   const unsupported = (reason: string) =>
@@ -107,11 +117,11 @@ export const admitHarCaptureParent = (
     );
   if (parent.operation !== "inspect_web_network_capture")
     return unsupported(
-      `View ${viewKind} is unsupported for parent operation ${parent.operation}; ${viewKind} requires inspect_web_network_capture.`,
+      `View ${viewKind} is unsupported for parent operation ${parent.operation}; ${viewKind} requires ${viewKind === "api-surface" ? "inspect_web_network_capture" : "inspect_web_network_capture or capture_browser_scenario"}.`,
     );
   const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
   if (!admitted.ok) return admitted;
-  const parsed = webNetworkCaptureSchema.safeParse(parent.normalizedResult);
+  const parsed = safeParseOwnedWebNetworkCapture(parent.normalizedResult);
   if (!parsed.success)
     return err(
       analysisViewInputError([
@@ -127,11 +137,11 @@ export const admitHarCaptureParent = (
     return unsupported(
       `${viewKind} does not support capture format ${parsed.data.format}.`,
     );
-  // The manifest cites the report path and digest, so its parent's subject must be exactly them;
+  // Environment views cite the report path and digest, so their parent's subject must be exactly them;
   // the api-surface view keeps the admission its existing callers rely on.
   const { artifact } = parsed.data;
   if (
-    viewKind === "environment-manifest" &&
+    viewKind !== "api-surface" &&
     artifact.sha256 !== null &&
     (parent.subject == null ||
       parent.subject.local_path !== artifact.path ||

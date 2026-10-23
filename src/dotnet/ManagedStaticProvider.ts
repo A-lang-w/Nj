@@ -10,7 +10,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
-import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
+import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import {
   MANAGED_TOOL_CONTRACTS,
   managedMembersInputSchema,
@@ -23,6 +23,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -38,7 +39,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
-import { RegularFileCleanupFailure } from "../application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import {
   hashManagedSource,
@@ -85,17 +86,23 @@ class ManagedStaticClient implements AnalysisClient {
           "Operation is not implemented by the managed static provider.",
         ),
       );
+    // A non-PE target is outside this operation's formats, not a missing
+    // provider capability; the unimplemented-operation refusal above is.
     if (this.target.format !== "pe")
       return err(
-        new AnalysisCapabilityUnavailableError(
-          MANAGED_STATIC_PROVIDER.id,
+        new AnalysisUnsupportedTargetError(
           operation,
+          this.target.path,
           `Managed static triage requires a PE target; observed ${this.target.format}.`,
         ),
       );
     try {
       if (options?.signal?.aborted === true)
-        return err(new AnalysisCancelledError(operation));
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: options.signal.reason,
+          }),
+        );
       const snapshot = this.#snapshotBytes;
       const observed =
         snapshot === undefined
@@ -136,7 +143,11 @@ class ManagedStaticClient implements AnalysisClient {
         return err(this.#cleanupError(operation, cause));
       if (cause instanceof AnalysisError) return err(cause);
       if (options?.signal?.aborted === true)
-        return err(new AnalysisCancelledError(operation));
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: options.signal.reason,
+          }),
+        );
       // A PE header or section table the reader cannot map is malformed input.
       if (
         cause instanceof ManagedReaderFailure &&

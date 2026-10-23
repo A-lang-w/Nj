@@ -1,12 +1,10 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import { hasCompleteMethodRows } from "./managedMemberComparisonCoverage.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
-import { parseManagedInspectionEvidence } from "./managedInspectionEvidence.js";
+import { readManagedInspectionEvidence } from "./managedInspectionEvidence.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
@@ -15,15 +13,6 @@ import {
   comparableSides,
   signatureIdentity,
 } from "./managedMemberSignatureIdentity.js";
-import type { JsonValue } from "../jsonValue.js";
-
-export const sha256 = (value: JsonValue): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError("Managed comparison canonicalization failed");
-  return createHash("sha256").update(serialized).digest("hex");
-};
-
 type Method = ManagedMemberInspection["methods"][number];
 type Field = ManagedMemberInspection["fields"][number];
 
@@ -69,49 +58,58 @@ const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
     item.body.status === "present" &&
     item.body.il_sha256 !== null &&
     item.body.normalized_il_sha256 !== null
-      ? sha256([
-          "method-exact",
-          signatureIdentity(item.signature),
-          item.body.il_sha256,
-          item.body.normalized_il_sha256,
-        ])
+      ? digestCanonicalValue(
+          [
+            "method-exact",
+            signatureIdentity(item.signature),
+            item.body.il_sha256,
+            item.body.normalized_il_sha256,
+          ],
+          "Managed comparison",
+        )
       : null,
   // The blob, with type operands named, is the exact signature; decoding
   // only gates the shape keys.
   signatureKey:
     declared(item) === null
       ? null
-      : sha256([
-          "method-signature",
-          declared(item),
-          item.name,
-          signatureIdentity(item.signature),
-        ]),
+      : digestCanonicalValue(
+          [
+            "method-signature",
+            declared(item),
+            item.name,
+            signatureIdentity(item.signature),
+          ],
+          "Managed comparison",
+        ),
   structuralKey:
     item.signature.parse_status === "decoded" && item.body.status === "present"
-      ? sha256([
-          "method-structural",
-          // Decoded type strings carry build-local rows; the identity names them.
-          signatureIdentity(item.signature),
-          item.body.status,
-          item.body.header_format,
-          item.body.il_size,
-          item.body.max_stack,
-          item.body.init_locals,
-          item.body.opcode_counts,
-          item.body.anchors.map(({ opcode, operand_kind, operand }) => [
-            opcode,
-            operand_kind,
-            operand_kind === "constant" ? operand : null,
-          ]),
-          item.body.exception_regions.map((region) => [
-            region.flags,
-            region.try_length,
-            region.handler_length,
-            region.class_token === null ? null : "type-token",
-            region.filter_offset === null ? null : "filter",
-          ]),
-        ])
+      ? digestCanonicalValue(
+          [
+            "method-structural",
+            // Decoded type strings carry build-local rows; the identity names them.
+            signatureIdentity(item.signature),
+            item.body.status,
+            item.body.header_format,
+            item.body.il_size,
+            item.body.max_stack,
+            item.body.init_locals,
+            item.body.opcode_counts,
+            item.body.anchors.map(({ opcode, operand_kind, operand }) => [
+              opcode,
+              operand_kind,
+              operand_kind === "constant" ? operand : null,
+            ]),
+            item.body.exception_regions.map((region) => [
+              region.flags,
+              region.try_length,
+              region.handler_length,
+              region.class_token === null ? null : "type-token",
+              region.filter_offset === null ? null : "filter",
+            ]),
+          ],
+          "Managed comparison",
+        )
       : null,
 });
 
@@ -122,30 +120,40 @@ const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
   signatureId: signatureIdentity(item.signature),
   exactKey:
     item.signature.parse_status === "decoded"
-      ? sha256(["field-exact", signatureIdentity(item.signature)])
+      ? digestCanonicalValue(
+          ["field-exact", signatureIdentity(item.signature)],
+          "Managed comparison",
+        )
       : null,
   // Only an undecoded field reaches this round: a decoded field with the
   // same signature already met its counterpart in the exact round.
   signatureKey:
     declared(item) === null
       ? null
-      : sha256([
-          "field-signature",
-          declared(item),
-          item.name,
-          signatureIdentity(item.signature),
-        ]),
-  structuralKey: sha256([
-    "field-structural",
-    item.signature.kind,
-    item.signature.field_type,
-    item.flags,
-  ]),
+      : digestCanonicalValue(
+          [
+            "field-signature",
+            declared(item),
+            item.name,
+            signatureIdentity(item.signature),
+          ],
+          "Managed comparison",
+        ),
+  structuralKey: digestCanonicalValue(
+    [
+      "field-structural",
+      item.signature.kind,
+      item.signature.field_type,
+      item.flags,
+    ],
+    "Managed comparison",
+  ),
 });
 
 const matchMethods = (
   left: readonly Keyed<Method>[],
   right: readonly Keyed<Method>[],
+  allowRemap: boolean,
 ) =>
   matchByKeys({
     left,
@@ -170,12 +178,12 @@ const matchMethods = (
       },
       {
         basis: "exact-il-signature",
-        key: ({ exactKey }) => exactKey,
+        key: ({ exactKey }) => (allowRemap ? exactKey : null),
         remap: true,
       },
       {
         basis: "structural-method-shape",
-        key: ({ structuralKey }) => structuralKey,
+        key: ({ structuralKey }) => (allowRemap ? structuralKey : null),
         competitionKey: ({ structuralKey }) => structuralKey,
         remap: true,
       },
@@ -185,6 +193,7 @@ const matchMethods = (
 const matchFields = (
   left: readonly Keyed<Field>[],
   right: readonly Keyed<Field>[],
+  allowRemap: boolean,
 ) =>
   matchByKeys({
     left,
@@ -201,7 +210,7 @@ const matchFields = (
       },
       {
         basis: "field-signature",
-        key: ({ exactKey }) => exactKey,
+        key: ({ exactKey }) => (allowRemap ? exactKey : null),
         remap: true,
       },
     ],
@@ -237,7 +246,8 @@ export const identityOf = ({
 }: {
   readonly declaring_type: DeclaredName;
   readonly name: string;
-}): string => sha256([declaring_type, name]);
+}): string =>
+  digestCanonicalValue([declaring_type, name], "Managed comparison");
 
 /** Narrow a key to members of one declared type and name. */
 const declaredAs =
@@ -246,7 +256,7 @@ const declaredAs =
     const value = key(item);
     return value === null || item.identityUnavailable
       ? null
-      : sha256([item.identity, value]);
+      : digestCanonicalValue([item.identity, value], "Managed comparison");
   };
 
 const matchByKeys = <Item extends Declared>({
@@ -555,7 +565,15 @@ export const keyMembers = (
       left.result.methods,
       right.result.methods,
       sides,
-      matchMethods,
+      (a, b) =>
+        matchMethods(
+          a,
+          b,
+          left.result.metadata.status === "complete" &&
+            right.result.metadata.status === "complete" &&
+            hasCompleteMethodRows(left.result) &&
+            hasCompleteMethodRows(right.result),
+        ),
       (item) => keyMethod(item, declaredLeft),
       (item) => keyMethod(item, declaredRight),
     ),
@@ -563,26 +581,26 @@ export const keyMembers = (
       left.result.fields,
       right.result.fields,
       sides,
-      matchFields,
+      (a, b) =>
+        matchFields(
+          a,
+          b,
+          left.result.metadata.status === "complete" &&
+            right.result.metadata.status === "complete",
+        ),
       (item) => keyField(item, declaredLeft),
       (item) => keyField(item, declaredRight),
     ),
   };
 };
 
-export const parseManagedMemberEvidence = (
+export const readManagedMemberEvidence = (
   evidence: unknown,
-): {
-  readonly evidenceId: string;
-  readonly result: ManagedMemberInspection;
-} => {
-  const parsed = parseManagedInspectionEvidence(
+  path: "left" | "right",
+) =>
+  readManagedInspectionEvidence(
     evidence,
     "inspect_managed_members",
     managedMemberInspectionSchema,
+    { operation: "compare_managed_members", path: [path] },
   );
-  return {
-    evidenceId: parsed.evidence.evidence_id,
-    result: parsed.result,
-  };
-};

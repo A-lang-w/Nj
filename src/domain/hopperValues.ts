@@ -13,6 +13,7 @@ import { AnalysisOutputError } from "./analysisErrorCore.js";
 export interface AddressedName {
   readonly address: string;
   readonly name: string;
+  readonly objc_class_label?: "hopper_legacy_class_object";
 }
 
 export interface SegmentSummary {
@@ -37,11 +38,6 @@ export const addressDistance = (start: string, end: string): number | null => {
   return Number(distance);
 };
 
-const procedureMapSchema = z.record(z.string(), z.string());
-const addressedNamesSchema = z.array(
-  z.object({ address: z.string(), name: z.string() }),
-);
-const addressedNameMapSchema = z.record(z.string(), z.string());
 const segmentSchema = z.object({
   name: z.string(),
   start: z.string(),
@@ -80,7 +76,7 @@ export const analysisStringSchema = z.object({
           "Whether the provider declares the encoding or REA infers it from the typed bytes and native display. This does not establish the original source's intended encoding.",
         ),
       termination: z.enum(["missing", "present_or_not_required"]),
-      byte_length: z.number().int().min(0),
+      byte_length: z.int().min(0),
     })
     .exactOptional(),
 });
@@ -105,13 +101,8 @@ export const functionBodySchema = z.discriminatedUnion("available", [
             .describe("Inclusive last address of this observed body range."),
         }),
       ),
-      total_bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      span_bytes: z
-        .number()
-        .int()
-        .min(0)
-        .max(Number.MAX_SAFE_INTEGER)
-        .nullable(),
+      total_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+      span_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
       non_contiguous: z.boolean(),
       contains_entry: z.boolean(),
     })
@@ -249,7 +240,7 @@ export const functionInstructionWindowSchema = z
   })
   .strict();
 
-const availableReferenceKindSchema = z
+export const availableReferenceKindSchema = z
   .object({
     available: z.literal(true),
     provenance: z.string().min(1),
@@ -265,7 +256,7 @@ const availableReferenceKindSchema = z
     conditional: z.boolean(),
     terminal: z.boolean(),
     primary: z.boolean(),
-    operand_index: z.number().int(),
+    operand_index: z.int(),
     external: z.boolean(),
   })
   .strict();
@@ -316,7 +307,7 @@ export const swiftStringLiteralSchema = z.discriminatedUnion("representation", [
 
 const swiftStringLiteralOmissionFields = {
   source_address: swiftStringLiteralFields.source_address,
-  byte_length: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  byte_length: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   reason: z
     .enum(["capacity", "unresolved_jump"])
     .describe(
@@ -439,7 +430,7 @@ export type FunctionDossier = z.infer<typeof functionDossierSchema>;
 /** Strictly parse a complete provider-neutral function dossier. */
 export const parseFunctionDossier = (
   value: JsonValue,
-): Result<JsonValue, AnalysisOutputError> => {
+): Result<FunctionDossier, AnalysisOutputError> => {
   const parsed = functionDossierSchema.safeParse(value);
   return parsed.success
     ? ok(parsed.data)
@@ -450,38 +441,6 @@ export const parseFunctionDossier = (
           { cause: parsed.error },
         ),
       );
-};
-
-/** Parse a provider's direct or wrapped procedure map into stable entries. */
-export const parseProcedures = (
-  value: JsonValue,
-  operation = "list_procedures",
-): Result<readonly AddressedName[], AnalysisOutputError> => {
-  const parsed = procedureMapSchema.safeParse(
-    unwrapProperty(value, "procedures"),
-  );
-  return parsed.success
-    ? ok(
-        Object.entries(parsed.data).map(([address, name]) => ({
-          address,
-          name,
-        })),
-      )
-    : invalid(operation, "procedure map", parsed.error);
-};
-
-/** Parse a provider's direct or wrapped list of address/name records. */
-export const parseNames = (
-  value: JsonValue,
-  operation = "list_names",
-): Result<readonly AddressedName[], AnalysisOutputError> => {
-  const unwrapped = unwrapProperty(value, "names");
-  const records = addressedNamesSchema.safeParse(unwrapped);
-  if (records.success) return ok(records.data);
-  const map = addressedNameMapSchema.safeParse(unwrapped);
-  return map.success
-    ? ok(Object.entries(map.data).map(([address, name]) => ({ address, name })))
-    : invalid(operation, "name list", map.error);
 };
 
 /** Parse callee/caller strings from direct or wrapped provider results. */
