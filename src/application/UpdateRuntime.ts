@@ -389,23 +389,13 @@ export const systemUpdateHost = (
         bunHost,
       );
       if (bunInstallation !== undefined) return bunInstallation;
-      const npmInstallation = await detectNpmInstallation(packageRoot, {
+      return detectNpmInstallation(packageRoot, {
         canonicalPath: realpath,
         globalRoot: () =>
           requireCommandOutput(["npm", "root", "--global"], environment),
         globalPrefix: () =>
           requireCommandOutput(["npm", "prefix", "--global"], environment),
       });
-      if (npmInstallation !== undefined) return npmInstallation;
-      if (
-        (await unverifiedBunAncestor(
-          packageRoot,
-          bunGlobalDirectory(environment, process.platform),
-          bunHost,
-        )) !== undefined
-      )
-        return undefined;
-      return undefined;
     },
     unverifiedBunAncestor: () =>
       unverifiedBunAncestor(
