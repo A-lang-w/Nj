@@ -1,15 +1,17 @@
+import { reconstructionCoverageScopeCases } from "./reconstructionCoverageScope.fixture.js";
 import { describe, expect, it } from "vitest";
 
 import {
   completeReconstructionCoverageData,
   completeReconstructionCoverageFixture,
+  assertReconstructionCoverageEvaluation,
   RECONSTRUCTION_COVERAGE_NOW,
   reconstructionCoverageEvidenceId,
 } from "./reconstructionCoverage.fixture.js";
 import {
   createReconstructionCoverageData,
   createReconstructionVerifierContract,
-  evaluateReconstructionClosure,
+  evaluateParsedReconstructionClosure,
   readReconstructionCoverageData,
   type ReconstructionCoverageData,
 } from "./reconstructionCoverage.js";
@@ -20,7 +22,7 @@ it("preserves duplicate coverage owners instead of overwriting them in shared in
   const workspace = completeReconstructionCoverageData();
   const owner = workspace.owners[0];
   if (owner === undefined) throw new Error("Expected fixture owner");
-  const result = evaluateReconstructionClosure(
+  const result = assertReconstructionCoverageEvaluation(
     {
       ...workspace,
       owners: [owner, owner],
@@ -44,7 +46,7 @@ describe("reconstruction coverage closure", () => {
     const workspace = completeReconstructionCoverageData();
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         workspace,
         "replacement.cli",
         RECONSTRUCTION_COVERAGE_NOW,
@@ -78,7 +80,7 @@ describe("reconstruction coverage closure", () => {
     });
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         incomplete,
         "replacement.cli",
         RECONSTRUCTION_COVERAGE_NOW,
@@ -115,7 +117,7 @@ describe("reconstruction coverage closure", () => {
       boundaries: [{ ...boundary, required_surface_ids: missingSurfaces }],
     });
 
-    const result = evaluateReconstructionClosure(
+    const result = assertReconstructionCoverageEvaluation(
       incomplete,
       boundary.boundary_id,
       RECONSTRUCTION_COVERAGE_NOW,
@@ -147,7 +149,7 @@ describe("reconstruction coverage closure", () => {
       ],
     });
 
-    const result = evaluateReconstructionClosure(
+    const result = assertReconstructionCoverageEvaluation(
       changed,
       "replacement.cli",
       RECONSTRUCTION_COVERAGE_NOW,
@@ -173,7 +175,7 @@ describe("reconstruction coverage closure", () => {
     });
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         stale,
         "replacement.cli",
         RECONSTRUCTION_COVERAGE_NOW,
@@ -233,7 +235,7 @@ describe("reconstruction coverage verifier observations", () => {
     });
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         shared,
         boundary.boundary_id,
         RECONSTRUCTION_COVERAGE_NOW,
@@ -281,7 +283,7 @@ describe("reconstruction coverage verifier selection", () => {
       ],
     });
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         ambiguous,
         boundary.boundary_id,
         RECONSTRUCTION_COVERAGE_NOW,
@@ -298,7 +300,7 @@ describe("reconstruction coverage verifier selection", () => {
       verifier_results: [],
     });
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         missing,
         boundary.boundary_id,
         RECONSTRUCTION_COVERAGE_NOW,
@@ -330,12 +332,12 @@ describe("reconstruction coverage conflicting latest verifier observations", () 
       verifier_results: [failed, result],
     });
 
-    const firstPassResult = evaluateReconstructionClosure(
+    const firstPassResult = assertReconstructionCoverageEvaluation(
       firstPass,
       boundary.boundary_id,
       RECONSTRUCTION_COVERAGE_NOW,
     );
-    const firstFailResult = evaluateReconstructionClosure(
+    const firstFailResult = assertReconstructionCoverageEvaluation(
       firstFail,
       boundary.boundary_id,
       RECONSTRUCTION_COVERAGE_NOW,
@@ -384,12 +386,12 @@ describe("reconstruction coverage equivalent latest verifier observations", () =
       ...workspace,
       verifier_results: [equivalent, first],
     });
-    const forwardResult = evaluateReconstructionClosure(
+    const forwardResult = assertReconstructionCoverageEvaluation(
       forward,
       boundary.boundary_id,
       RECONSTRUCTION_COVERAGE_NOW,
     );
-    const reversedResult = evaluateReconstructionClosure(
+    const reversedResult = assertReconstructionCoverageEvaluation(
       reversed,
       boundary.boundary_id,
       RECONSTRUCTION_COVERAGE_NOW,
@@ -421,7 +423,7 @@ describe("reconstruction coverage verifier timestamp selection", () => {
     });
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         changed,
         boundary.boundary_id,
         RECONSTRUCTION_COVERAGE_NOW,
@@ -441,7 +443,7 @@ describe("reconstruction coverage verifier timestamp selection", () => {
     });
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         changed,
         "replacement.cli",
         RECONSTRUCTION_COVERAGE_NOW,
@@ -478,7 +480,7 @@ describe("reconstruction coverage verifier future timestamps", () => {
     });
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         changed,
         "replacement.cli",
         Date.parse("2026-07-16T12:00:00.123Z") + 0.5,
@@ -491,8 +493,15 @@ describe("reconstruction coverage verifier future timestamps", () => {
 
   it("rejects a non-finite evaluation clock", () => {
     const workspace = completeReconstructionCoverageData();
+    const parsed = readReconstructionCoverageData(workspace, ["coverage"]);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw parsed.error;
     expect(() =>
-      evaluateReconstructionClosure(workspace, "replacement.cli", Number.NaN),
+      evaluateParsedReconstructionClosure(
+        parsed.value,
+        "replacement.cli",
+        Number.NaN,
+      ),
     ).toThrow("Expected finite epoch milliseconds.");
   });
 
@@ -507,7 +516,7 @@ describe("reconstruction coverage verifier future timestamps", () => {
     });
 
     expect(
-      evaluateReconstructionClosure(
+      assertReconstructionCoverageEvaluation(
         changed,
         "replacement.cli",
         RECONSTRUCTION_COVERAGE_NOW,
@@ -533,7 +542,7 @@ describe("reconstruction coverage verifier future timestamps", () => {
       })),
     });
 
-    const result = evaluateReconstructionClosure(
+    const result = assertReconstructionCoverageEvaluation(
       incomplete,
       "replacement.cli",
       RECONSTRUCTION_COVERAGE_NOW,
@@ -599,4 +608,31 @@ describe("reconstruction coverage reference constraints", () => {
       });
     },
   );
+});
+
+describe("effective reconstruction boundary", () => {
+  for (const {
+    label,
+    coverage,
+    status,
+    codes,
+    surfaces,
+    evidenceIds,
+  } of reconstructionCoverageScopeCases())
+    it(label, () => {
+      const result = assertReconstructionCoverageEvaluation(
+        coverage,
+        "replacement.cli",
+        RECONSTRUCTION_COVERAGE_NOW,
+      );
+      expect(result.status).toBe(status);
+      expect(result.summary.required_surfaces).toBe(surfaces);
+      expect(result.reasons.map(({ code }) => code).sort()).toEqual(
+        [...codes].sort(),
+      );
+      expect(result.evidence_ids).toEqual(
+        expect.arrayContaining([...evidenceIds]),
+      );
+      expect(result.recommended_probes).toHaveLength(codes.length);
+    });
 });

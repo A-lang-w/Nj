@@ -1,3 +1,4 @@
+import { reconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import { z } from "zod";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { EvidenceIntegrityError } from "./evidenceErrors.js";
@@ -325,23 +326,6 @@ export const createReconstructionVerifierContract = (
   });
 };
 
-/** Evaluate inline coverage data against one named fail-closed boundary. */
-export const evaluateReconstructionClosure = (
-  coverageInput: unknown,
-  boundaryId: string,
-  nowEpochMs: number,
-): ReconstructionClosureResult => {
-  const parsed = readReconstructionCoverageData(coverageInput, ["coverage"]);
-  if (!parsed.ok) throw parsed.error;
-  const result = evaluateParsedReconstructionClosure(
-    parsed.value,
-    boundaryId,
-    nowEpochMs,
-  );
-  if (!result.ok) throw result.error;
-  return result.value;
-};
-
 /** Evaluate the owner's authenticated workspace and lookup facts. */
 export const evaluateParsedReconstructionClosure = (
   parsed: ParsedReconstructionCoverage,
@@ -362,6 +346,7 @@ export const evaluateParsedReconstructionClosure = (
   const context: ReconstructionEvaluationContext = {
     ...parsed,
     boundary,
+    scope: reconstructionCoverageScope(parsed, boundary),
     nowEpochMs,
     nowInstant,
     reasons: [],
@@ -377,8 +362,8 @@ export const evaluateParsedReconstructionClosure = (
       boundary_id: boundary.boundary_id,
       status: closureStatus(reasons),
       summary: {
-        required_surfaces: boundary.required_surface_ids.length,
-        required_claims: boundary.required_claim_ids.length,
+        required_surfaces: context.scope.surfaceIds.size,
+        required_claims: context.scope.claimIds.size,
         reasons: reasons.length,
       },
       reasons,

@@ -15,6 +15,7 @@ import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { EnhancedTools } from "../application/EnhancedTools.js";
 import type { ValidatedEnhancedCall } from "../application/EnhancedToolTypes.js";
 import {
+  composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
   workflowSnapshotRecord,
@@ -31,6 +32,10 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysisEvidence.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import {
+  reportOperationStart,
+  reportOperationEnd,
+} from "./operationProgress.js";
 
 /** Optional session services used by enhanced tool registration. */
 export interface EnhancedToolRegistration {
@@ -67,6 +72,7 @@ export const registerEnhancedTools = (
   const objcClasses = toolContract("get_objc_classes");
   const objcProtocols = toolContract("get_objc_protocols");
   const batchDecompile = toolContract("batch_decompile");
+  const decompileAll = toolContract("decompile_all");
   const callGraph = toolContract("get_call_graph");
   const swiftTypes = toolContract("analyze_swift_types");
   const xrefsToName = toolContract("find_xrefs_to_name");
@@ -119,6 +125,15 @@ export const registerEnhancedTools = (
     (input, context) =>
       executeEnhancedTool(registration, batchDecompile, {
         validatedCall: { name: "batch_decompile", input },
+        context,
+      }),
+  );
+  server.registerTool(
+    decompileAll.name,
+    toolRegistrationOptions(decompileAll),
+    (input, context) =>
+      executeEnhancedTool(registration, decompileAll, {
+        validatedCall: { name: "decompile_all", input },
         context,
       }),
   );
@@ -222,12 +237,7 @@ const executeEnhancedTool = async (
       const { validatedCall, context } = request;
       const name = validatedCall.name;
       const progress = mcpProgressReporter(context);
-      await progress.report({
-        phase: name,
-        completed: 0,
-        total: 1,
-        message: "started",
-      });
+      await reportOperationStart(progress, name);
       const parsedInput = validatedCall.input;
       const parameters = jsonParameters(parsedInput);
       if (name === "analyze_function")
@@ -237,6 +247,7 @@ const executeEnhancedTool = async (
           progress,
         });
       const analysis: AnalysisOperationPort = {
+        resourceScope: admittedAnalysis.resourceScope,
         execute: (operation, operationParameters, executionOptions) =>
           admittedAnalysis.execute(operation, operationParameters, {
             ...executionOptions,
@@ -244,20 +255,17 @@ const executeEnhancedTool = async (
           }),
       };
       const result = await logToolExecution(registration.logger, name, () =>
-        executeComposedWorkflow(analysis, (observed) =>
-          new EnhancedTools(observed).executeValidated(
-            validatedCall,
-            context.mcpReq.signal,
-          ),
+        executeComposedWorkflow(
+          analysis,
+          (observed) =>
+            new EnhancedTools(observed).executeValidated(
+              validatedCall,
+              context.mcpReq.signal,
+            ),
+          composedLimitationBudget(name),
         ),
       );
-      await progress.report({
-        phase: name,
-        completed: 1,
-        total: 1,
-        message: result.ok ? "completed" : "failed",
-        terminal: true,
-      });
+      await reportOperationEnd(progress, name, result.ok);
       if (result.ok) {
         const evidence = createWorkflowEvidence({
           target: registration.activeTarget?.(),
@@ -338,13 +346,7 @@ const executeFunctionTool = async (
         },
       ),
   );
-  await progress.report({
-    phase: "analyze_function",
-    completed: 1,
-    total: 1,
-    message: result.ok ? "completed" : "failed",
-    terminal: true,
-  });
+  await reportOperationEnd(progress, "analyze_function", result.ok);
   if (!result.ok)
     return registration.delivery.toCallToolResult(result, contract);
   return registration.delivery.toEvidenceToolResult(

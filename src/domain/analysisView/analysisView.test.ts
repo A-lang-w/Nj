@@ -27,7 +27,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import { javascriptModulePath } from "./javascriptApplicationView.js";
+import { javascriptModulePaths } from "./javascriptApplicationView.js";
 import {
   inspectAnalysisViewInputSchema,
   projectAnalysisView,
@@ -287,6 +287,28 @@ it("reports the malformed native dossier field", () => {
   });
 });
 
+it.each(["inspect_binary_layout", "inspect_byte_entropy"] as const)(
+  "retains owning field correction paths for empty %s parents",
+  (operation) => {
+    expect(
+      projectAnalysisView(
+        { ...layoutParent(), operation, normalizedResult: {} },
+        { kind: "summary" },
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["source", "normalized_result", "artifact"],
+            reason: "missing_argument",
+          }),
+        ]),
+      },
+    });
+  },
+);
+
 it("native pseudocode pages do not split surrogate pairs", () => {
   const original = functionDossierSchema.parse(ghidraFunctionDossier());
   const parent = nativeParent({ ...original, pseudocode: "ab😀cd" });
@@ -485,7 +507,7 @@ it("projects JavaScript summary and preserves selected module observations", () 
   if (summary.value.kind !== "summary") throw new Error("expected summary");
   expect(summary.value.summary).toMatchObject({
     format: "directory",
-    limitation_count: 0,
+    limitation_count: summary.value.limitations.length,
   });
   expect(JSON.stringify(summary.value)).not.toMatch(/"graph"/);
   expect(summary.value.summary).not.toHaveProperty("semantic_graph");
@@ -497,7 +519,7 @@ it("projects JavaScript summary and preserves selected module observations", () 
   if (!item.ok) throw item.error;
   const moduleNode = analysis.graph.nodes[0];
   if (moduleNode === undefined) throw new Error("missing module");
-  expect(javascriptModulePath(moduleNode)).toBe("renderer.js");
+  expect(javascriptModulePaths(moduleNode)).toEqual(["renderer.js"]);
   if (item.value.kind !== "item") throw new Error("expected item view");
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
@@ -1056,7 +1078,10 @@ it("retains semantic coverage and limitations in a summary", () => {
   );
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
-    summary: { coverage: { semantic: { status: "partial", truncated: true } } },
+    summary: {
+      limitation_count: 1,
+      coverage: { semantic: { status: "partial", truncated: true } },
+    },
     limitations: ["Some semantic nodes could not be retained."],
     unknowns: expect.arrayContaining([
       "semantic_graph.coverage.status is partial",
@@ -1094,6 +1119,11 @@ it.each([63, 64, 65, 10_000])(
     ] as const) {
       const result = projectAnalysisView(duplicatedParent, view);
       if (!result.ok) throw result.error;
+      if (
+        result.value.kind === "summary" &&
+        result.value.parent_operation === "analyze_javascript_application"
+      )
+        expect(result.value.summary.limitation_count).toBe(count);
       if (count <= 65) {
         expect(result.value.limitations).toEqual(messages);
         expect(result.value.unknowns).toEqual(
@@ -1366,6 +1396,50 @@ it("preserves selected native facet unavailability instead of an exhausted empty
     expect(result.value).toMatchObject({
       item: { available: false, reason },
       unknowns: expect.arrayContaining([reason]),
+    });
+  }
+});
+
+it("selects a unique content-deduplicated module by any retained path", () => {
+  const source = analysisViewJavaScriptAnalysisWithSource();
+  const original = source.graph.nodes[0];
+  const observation = original?.observations[0];
+  if (original === undefined || observation === undefined)
+    throw new Error("Missing module fixture");
+  const node = createJavaScriptApplicationNode({
+    kind: original.kind,
+    identity: original.identity,
+    observations: [
+      ...original.observations.map(({ label, properties, evidence }) => ({
+        label,
+        properties,
+        evidence,
+      })),
+      {
+        evidence: observation.evidence,
+        label: "renderer-alias.js",
+        properties: { ...observation.properties, path: "renderer-alias.js" },
+      },
+    ],
+  });
+  const { graph_id: _graphId, ...graphFacts } = source.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...graphFacts,
+    nodes: [node],
+  });
+  const parent = javascriptParent(
+    analysisViewBindJavaScriptGraphs(source, graph),
+  );
+  for (const path of ["renderer.js", "renderer-alias.js"]) {
+    const selected = projectAnalysisView(parent, {
+      kind: "item",
+      collection: "modules",
+      selector: { path },
+    });
+    if (!selected.ok) throw selected.error;
+    expect(selected.value).toMatchObject({
+      kind: "item",
+      item: { node_id: node.node_id, path },
     });
   }
 });
