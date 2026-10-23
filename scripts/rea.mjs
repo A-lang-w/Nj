@@ -14,7 +14,8 @@ const { default: packageJson } = await import("../package.json", {
 process.env.REA_PACKAGE_VERSION = packageJson.version;
 const isMcpEntry = args[0] === "--mcp" || args[0] === "mcp";
 const isMcpMode = isMcpEntry && args.length === 1;
-const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
+const doctorArguments = productionMcpDoctorArguments(args);
+const isMcpDoctorMode = doctorArguments !== undefined;
 // Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
 // while `mcp -h --http` reaches the HTTP entry's own help.
 const isMcpHttpMode =
@@ -73,7 +74,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   guardClosedStdout();
   const { runProductionMcpDoctorCli } =
     await import("../dist/cli-runtime/mcpDoctor.js");
-  const result = await runProductionMcpDoctorCli(args.slice(2), {
+  const result = await runProductionMcpDoctorCli(doctorArguments, {
     dispatcherPath: fileURLToPath(import.meta.url),
     packageRoot,
     stdoutIsTerminal: process.stdout.isTTY === true,
@@ -209,17 +210,45 @@ function isDoctorCommand(arguments_) {
   return false;
 }
 
+/** Select the production diagnostic without consuming output-option values as commands. */
+function productionMcpDoctorArguments(arguments_) {
+  const commandIndices = [];
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === "--format") {
+      index += 1;
+      continue;
+    }
+    if (
+      argument === "--json" ||
+      argument === "--full-output" ||
+      argument === "--help" ||
+      argument === "-h" ||
+      argument.startsWith("--format=")
+    )
+      continue;
+    if (argument !== (commandIndices.length === 0 ? "mcp" : "doctor"))
+      return undefined;
+    commandIndices.push(index);
+    if (commandIndices.length === 2)
+      return arguments_.filter(
+        (_, position) => !commandIndices.includes(position),
+      );
+  }
+  return undefined;
+}
+
+function cleanupFailureText(cleanup) {
+  if (cleanup instanceof Error) return cleanup.stack ?? cleanup.message;
+  return String(cleanup);
+}
+
 /**
  * A reader that closes the pipe early, as `rea ... | head` does, has declined
  * the rest of the output. Stop writing without reporting a failure, and exit
  * with the status a SIGPIPE-terminated writer reports. MCP stdio keeps its own
  * client lifecycle.
  */
-function cleanupFailureText(cleanup) {
-  if (cleanup instanceof Error) return cleanup.stack ?? cleanup.message;
-  return String(cleanup);
-}
-
 function guardClosedStdout() {
   process.stdout.on("error", (cause) => {
     if (cause?.code === "EPIPE") {
