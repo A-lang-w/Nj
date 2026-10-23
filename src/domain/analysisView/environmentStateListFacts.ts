@@ -1,3 +1,4 @@
+import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import type { StateGateContext, StatePlan } from "./environmentStateGate.js";
@@ -89,16 +90,11 @@ export const itemTotals = (
   return totals;
 };
 
-export const nameTokens = (name: string): string[] =>
-  name
-    .split(/[_\-\s]|(?<=[a-z0-9])(?=[A-Z])/u)
-    .map((token) => token.toLowerCase());
-
 const LISTED_NOUNS = new Set(["elements", "entries", "items", "results"]);
 
 /** Item totals, including compact `totalcount`/`itemcount` and `numberOfElements`; page counts and account IDs are excluded. */
 export const isItemTotal = (name: string): boolean => {
-  const tokens = nameTokens(name);
+  const tokens = identifierWords(name);
   return (
     (tokens.some(
       (token) =>
@@ -134,7 +130,7 @@ const CONTINUATION_NAMES = new Set([
 
 /** A top-level `has_more`, `next` or next-page token member that says more items follow. */
 const continues = (name: string, value: JsonValue | undefined): boolean =>
-  CONTINUATION_NAMES.has(nameTokens(name).join("")) &&
+  CONTINUATION_NAMES.has(identifierWords(name).join("")) &&
   value !== undefined &&
   value !== null &&
   value !== false &&

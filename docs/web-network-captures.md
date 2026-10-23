@@ -604,7 +604,11 @@ repeated reads of one full request line whose list membership changes across a
 write, including transitions to or from an empty list, or whose entity fields
 are added or removed. A type whose reads still disagree keeps every tool a
 recorded view with reason `fields-differ`. Different query strings remain distinct request lines. Sparse responses do not erase the last observation of a field supplied by another request line. Entities are ordered
-by type, collection and first sighting; that order is a list's state order.
+by type and collection, and within a collection as the first line that lists
+every entity any initial read shows in it and names no sort, direction or
+random parameter (`random`, `rand`, `shuffle`, `seed`) lists them; a collection
+without such a line keeps its entities' earliest sightings. That order is a
+list's state order.
 Every entity cites its `record_ordinals`.
 
 `views` lists one plan per read tool in tool order:
@@ -644,22 +648,25 @@ collection, what each query parameter does, and names the result in `query`.
 Each such line is explained by the first combination of roles that lists
 exactly what it recorded from the collection's initial entities:
 
-| Role        | Parameter                                                                                  | Effect                                                                                                                                                          |
-| ----------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `filter`    | any, on a `field` every listed item holds the value in                                     | entities whose field equals the value as text, or whose array field holds it directly or as an object's `id`, `slug` or `name`                                  |
-| `search`    | `q`, `query`, `search`, `searchTerm`, `term`, `keyword`(s)                                 | entities with one of `fields` containing the value, ignoring case; the fields are those it matched in the listed items, URLs only where nothing else matched    |
-| `sort`      | `order`, `orderBy`, `ordering`, `sort`, `sortBy` (and `_by` spellings)                     | ordered by the field the value names (`name`, `-name`, `name:desc`, `name-ASC`): numbers by value, text ignoring case, null last ascending, ties in state order |
-| `direction` | `dir`, `direction`, `order`, `orderDirection`, `sortDir`, `sortOrder` with `asc` or `desc` | the sort's direction                                                                                                                                            |
-| `limit`     | `limit`, `per_page`, `perPage`, `page_size`, `size`, `count`, `take`, `itemsPerPage`       | page size; zero or a negative value lists every match                                                                                                           |
-| `offset`    | `offset`, `start`, `_start`, `skip`                                                        | matches skipped before the page                                                                                                                                 |
-| `page`      | `page`                                                                                     | page number, counted from `first` (1 or 0, whichever explains the line)                                                                                         |
-| `inert`     | any                                                                                        | changes nothing for its recorded `values`; other values are not computed                                                                                        |
+| Role        | Parameter                                                                                                                                                                                                                                                                | Effect                                                                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filter`    | any other, on a `field` every listed item holds the value in; one not named like the field (`shelf`, or `shelf_id`, for `shelf`) stands only when lines giving it two different values agree on it                                                                       | entities whose field equals the value as text, or whose array field holds it directly or as an object's `id`, `slug` or `name`                                                                                                                       |
+| `search`    | `q`, `query`, `search`, `searchTerm`, `term`, `keyword`(s)                                                                                                                                                                                                               | entities with one of `fields` containing the value, ignoring case; the fields are those it matched in the listed items, URLs only where nothing else matched; a term that matched no field leaves the parameter inert until another line's term does |
+| `sort`      | a name asking for an order in any common spelling: `sort`, `_sort`, `sort[]`, `sort[0][field]`, `sorters[...]`, `sortBy`, `sort-column`, `sortKey`, `order`, `orderBy`, `ordering`                                                                                       | ordered by the field the value names (`name`, `-name`, `name:desc`, `name-ASC`): numbers by value, text ignoring case, null last ascending, ties in state order                                                                                      |
+| `direction` | a direction name (`dir`, `direction`, `sortDir`, `sortOrder`, `sortDirection`, `order_direction`, json-server's `_order`, and `order`) given `asc`, `desc`, `ascending` or `descending`; given anything else, `order` is a `sort` and the others are ordinary parameters | the sort's direction                                                                                                                                                                                                                                 |
+| `limit`     | `limit`, `per_page`, `perPage`, `page_size`, `size`, `count`, `take`, `itemsPerPage`                                                                                                                                                                                     | page size; zero or a negative value lists every match                                                                                                                                                                                                |
+| `offset`    | `offset`, `start`, `_start`, `skip`                                                                                                                                                                                                                                      | matches skipped before the page                                                                                                                                                                                                                      |
+| `page`      | `page`                                                                                                                                                                                                                                                                   | page number, counted from `first` (1 or 0, whichever explains the line)                                                                                                                                                                              |
+| `inert`     | any that names no order or direction; never a true `reverse`, or a paging value that is not a safe integer                                                                                                                                                               | changes nothing for its recorded `values`; other values are not computed                                                                                                                                                                             |
 
-Lines that disagree on a parameter's role drop it, inert values gather and
-search fields unite. `query.record_ordinals` are the lines the merged roles
+No two parameters of one call take the same `sort`, `direction` or paging role,
+and a line with more than 12 query parameters is left unexplained. Lines that
+disagree on a parameter's role drop it, inert values gather and search fields
+unite. `query.record_ordinals` are the lines the merged roles
 reproduce, envelope and fields included, and `query.totals` the envelope
-members that count every match before paging on each of them (a
-`number`-of-items member counts the page). The roles are inferences from the
+members that count every match before paging on each of them, top-level or one
+level down in a paging object (`/pageInfo/totalRows`); a `number`-of-items
+member counts the page. The roles are inferences from the
 recorded lines; a line they do not reproduce keeps its recorded members.
 
 `writes` lists one plan per tool whose request may change state, in tool

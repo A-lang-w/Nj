@@ -1,3 +1,4 @@
+import { identifierWords } from "./environmentStateWords.js";
 /** Parameter names a list query reads as the field it sorts by. */
 export const SORT: ReadonlySet<string> = new Set([
   "order",
@@ -61,11 +62,7 @@ const DIRECTION_ONLY = new Set(
 
 /** A parameter name's words, bracketed parts dropped: `sort[0][field]` is `sort`, `sortKey` is `sort`, `key`. */
 const wordsOf = (name: string): string[] =>
-  name
-    .replace(/\[[^\]]*\]/gu, "")
-    .split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/u)
-    .filter((word) => word.length > 0)
-    .map((word) => word.toLowerCase());
+  identifierWords(name.replace(/\[[^\]]*\]/gu, ""));
 
 /** Whether a query parameter asks for an order, in any common spelling: `sort[0][field]`, `_sort`, `sort-direction`, `sortKey`, `orderBy`, `reverse`. */
 export const appliesOrder = (name: string): boolean => {
@@ -79,11 +76,12 @@ export const appliesOrder = (name: string): boolean => {
   );
 };
 
-/** Whether a parameter names only the direction of an order, as `dir`, `sortDirection` or `reverse` do, not the field it sorts by. */
+/** Whether a parameter names only the direction of an order, as `dir`, `sortDirection`, `reverse` or json-server's `_order` beside `_sort` do, not the field it sorts by. */
 export const namesDirection = (name: string): boolean => {
   const words = wordsOf(name);
   const last = words.at(-1);
   return (
+    name === "_order" ||
     DIRECTION_ONLY.has(words.join("")) ||
     last === "dir" ||
     last === "direction" ||

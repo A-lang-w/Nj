@@ -145,6 +145,8 @@ export class SortedArrays {
   ): CheckOutcome {
     const failed = read.outcome;
     if (view.shape !== "item" && view.shape !== "list") return failed;
+    // A view with no candidate left has nothing to note or retry, so its read is never parsed.
+    if (!this.#candidates.has(view.tool)) return failed;
     const shown = this.#shown(view, read.record);
     this.#ruleOut(view.tool, shown);
     const candidates = this.#candidates.get(view.tool)?.fields;

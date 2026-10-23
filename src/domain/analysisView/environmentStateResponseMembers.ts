@@ -9,12 +9,11 @@ import {
   type JsonObject,
   type StateRecordFacts,
 } from "./environmentStateRules.js";
-import { readClock } from "./environmentStateWriteValues.js";
+import { isUuid, readClock } from "./environmentStateWriteValues.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** Fewest repeats, across the capture, that show a member minted on every response rather than changed once. */
 const MINIMUM_REPEATS = 2;
-const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
 
 /** The paths whose repeated reads showed each member minted anew, so only views of those paths leave it out. */
 export type MintedMembers = ReadonlyMap<string, ReadonlySet<string>>;
@@ -32,7 +31,7 @@ const mintedValues = (
     if (
       typeof value === "string" &&
       value.length <= 64 &&
-      (UUID.test(value) || readClock(value) !== undefined)
+      (isUuid(value) || readClock(value) !== undefined)
     )
       values.set(name, value);
   return values;
@@ -59,6 +58,46 @@ const tally = (
   else entry.same += 1;
 };
 
+/** The successful GET reads that repeat their line with no write between, as line, earlier and later read: only those can show a member minted, so only those are parsed. */
+const repeatPairs = (
+  input: Pick<
+    Parameters<typeof perResponseMembers>[0],
+    "records" | "writeWithin" | "retain"
+  >,
+): (readonly [string, StateRecordFacts, StateRecordFacts])[] => {
+  const previous = new Map<string, StateRecordFacts>();
+  const pairs: (readonly [string, StateRecordFacts, StateRecordFacts])[] = [];
+  for (const record of input.records) {
+    if (record.method !== "GET" || !succeeded(record)) continue;
+    const line = `${record.path}?${record.query ?? ""}`;
+    const earlier = previous.get(line);
+    input.retain(
+      earlier === undefined ? ENTRY_BYTES * 2 + textBytes(line.length) : 0,
+    );
+    previous.set(line, record);
+    if (earlier === undefined || input.writeWithin(earlier, record)) continue;
+    input.retain(ENTRY_BYTES * 3);
+    pairs.push([line, earlier, record]);
+  }
+  return pairs;
+};
+
+/** The members minted per path: differing on every repeat there, and across the capture on enough repeats and never the same. */
+const mintedOf = (
+  byPath: ReadonlyMap<string, Repeats>,
+  byName: ReadonlyMap<string, Repeats>,
+): Map<string, Set<string>> => {
+  const minted = new Map<string, Set<string>>();
+  for (const [key, counts] of byPath) {
+    const [path, name] = JSON.parse(key) as [string, string];
+    const overall = byName.get(name)!;
+    if (counts.same > 0 || counts.differ === 0) continue;
+    if (overall.same > 0 || overall.differ < MINIMUM_REPEATS) continue;
+    minted.set(path, (minted.get(path) ?? new Set()).add(name));
+  }
+  return minted;
+};
+
 /**
  * Per path, the top-level members each response mints: a UUID or clock that differs on every repeat of that path's
  * successful GET lines with no write between, where the member also differed on at least two repeats in the
@@ -80,48 +119,38 @@ export const perResponseMembers = (input: {
   readonly checkpoint: () => () => void;
 }): MintedMembers => {
   const release = input.checkpoint();
-  const latest = new Map<
+  const pairs = repeatPairs(input);
+  // Each read is parsed once: a line's later read is kept for the next pair of that line.
+  const parsed = new Map<
     string,
-    { record: StateRecordFacts; values: Map<string, string> }
+    { ordinal: number; values: Map<string, string> | undefined }
   >();
+  const valuesOf = (line: string, record: StateRecordFacts) => {
+    const kept = parsed.get(line);
+    if (kept?.ordinal === record.ordinal) return kept.values;
+    const values = input.withBody(record.ordinal, mintedValues);
+    for (const [name, value] of values ?? [])
+      input.retain(ENTRY_BYTES + textBytes(name.length + value.length));
+    return values;
+  };
   const byPath = new Map<string, Repeats>();
   const byName = new Map<string, Repeats>();
-  for (const record of input.records) {
-    if (record.method !== "GET" || !succeeded(record)) continue;
-    const values = input.withBody(record.ordinal, mintedValues);
-    if (values === undefined) continue;
-    const line = `${record.path}?${record.query ?? ""}`;
-    const earlier = latest.get(line);
-    input.retain(
-      (earlier === undefined ? ENTRY_BYTES * 2 + textBytes(line.length) : 0) +
-        [...values].reduce(
-          (bytes, [name, value]) =>
-            bytes + ENTRY_BYTES + textBytes(name.length + value.length),
-          0,
-        ),
-    );
-    latest.set(line, { record, values });
-    if (earlier === undefined || input.writeWithin(earlier.record, record))
-      continue;
+  for (const [line, earlier, record] of pairs) {
+    const before = valuesOf(line, earlier);
+    const after = valuesOf(line, record);
+    parsed.set(line, { ordinal: record.ordinal, values: after });
+    if (before === undefined || after === undefined) continue;
     const path = normalizedPath(record.path);
-    for (const name of new Set([...earlier.values.keys(), ...values.keys()])) {
+    for (const name of new Set([...before.keys(), ...after.keys()])) {
       // A member minted-looking on one side only is not minted on every response.
-      const before = earlier.values.get(name);
-      const after = values.get(name);
-      const differ =
-        before !== undefined && after !== undefined && before !== after;
+      const was = before.get(name);
+      const now = after.get(name);
+      const differ = was !== undefined && now !== undefined && was !== now;
       tally(byPath, JSON.stringify([path, name]), differ, input.retain);
       tally(byName, name, differ, input.retain);
     }
   }
-  const minted = new Map<string, Set<string>>();
-  for (const [key, counts] of byPath) {
-    const [path, name] = JSON.parse(key) as [string, string];
-    const overall = byName.get(name)!;
-    if (counts.same > 0 || counts.differ === 0) continue;
-    if (overall.same > 0 || overall.differ < MINIMUM_REPEATS) continue;
-    minted.set(path, (minted.get(path) ?? new Set()).add(name));
-  }
+  const minted = mintedOf(byPath, byName);
   release();
   for (const [path, names] of minted)
     input.retain(

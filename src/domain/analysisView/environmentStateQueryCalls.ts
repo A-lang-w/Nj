@@ -1,3 +1,4 @@
+import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   changesState,
@@ -13,13 +14,8 @@ import {
 import { isAbsence } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
 
-/** The words of a segment or operation name: split on `_`, `-`, `.` and camelCase, in lower case. */
-const words = (text: string): string[] =>
-  text
-    .split(/[_\-.\s]+/u)
-    .flatMap((part) => part.split(/(?<=[a-z0-9])(?=[A-Z])/u))
-    .map((word) => word.toLowerCase())
-    .filter((word) => word.length > 0);
+/** The words of a segment or operation name. */
+const words = identifierWords;
 
 /** Path words that name a lookup rather than a change. */
 const QUERY_WORDS = new Set([

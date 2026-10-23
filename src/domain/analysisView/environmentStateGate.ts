@@ -1,3 +1,4 @@
+import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
@@ -37,11 +38,7 @@ import {
   mintedFor,
   type MintedMembers,
 } from "./environmentStateResponseMembers.js";
-import {
-  itemTotals,
-  listFacts,
-  nameTokens,
-} from "./environmentStateListFacts.js";
+import { itemTotals, listFacts } from "./environmentStateListFacts.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** A successful item read first recorded after the initial reads, with the members its object carries. */
@@ -362,7 +359,8 @@ const listQuery = (
     // Absence says nothing about another envelope's counter. Only a present
     // count that disagrees invalidates the shared total interpretation.
     for (const [name, count] of counts.get(line.ordinal) ?? []) {
-      if (nameTokens(counterPath(name).at(-1)!).includes("number")) continue;
+      if (identifierWords(counterPath(name).at(-1)!).includes("number"))
+        continue;
       if (count === total) totals.add(name);
       else contradicted.add(name);
     }

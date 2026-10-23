@@ -4,6 +4,7 @@ import {
   appliesOrder,
   directionOf,
   namesDirection,
+  orderRole,
 } from "./environmentStateOrderParameters.js";
 
 describe("parameters that ask for an order", () => {
@@ -43,6 +44,7 @@ describe("directions", () => {
     "order_direction",
     "sort_order",
     "reverse",
+    "_order",
   ])("reads %s as naming only a direction", (name) => {
     expect(namesDirection(name)).toBe(true);
   });
@@ -53,6 +55,15 @@ describe("directions", () => {
       expect(namesDirection(name)).toBe(false);
     },
   );
+
+  it("takes json-server's `_order` as a direction only, and `order` given a field as the sort", () => {
+    expect([
+      orderRole("_order", "DESC"),
+      orderRole("_order", "title"),
+      orderRole("order", "title"),
+      orderRole("order", "asc"),
+    ]).toEqual(["direction", undefined, "sort", "direction"]);
+  });
 
   it("reads a direction in short or long spelling", () => {
     expect(
