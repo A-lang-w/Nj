@@ -11,17 +11,18 @@ import {
   parseRecoveredJavaScript,
   parserPluginsForPath,
 } from "./javascript/javascriptSourceParser.js";
-import { unshadowedReferenceSourceRequireCalls } from "./referenceSourceRequireBindings.js";
+import {
+  referenceSourceRequireCalls,
+  type ReferenceSourceRequireCall,
+} from "./referenceSourceRequireBindings.js";
 import { isRelativeJavaScriptModuleSpecifier } from "./javascript/javascriptModuleSpecifier.js";
 import {
   isCallExpression,
   isExportAllDeclaration,
   isExportNamedDeclaration,
-  isIdentifier,
   isImport,
   isImportDeclaration,
   isImportExpression,
-  isMemberExpression,
   isStringLiteral,
   isTSExternalModuleReference,
   isTSImportEqualsDeclaration,
@@ -50,6 +51,8 @@ interface ReferenceSourceImportRelationship {
   readonly parse_state: ReferenceSourceImportParseState;
   /** Distinguishes call-form CommonJS require from TS import-equals `requires`. */
   readonly resolutionStrategy?: "runtime-require";
+  /** Internal lookup origin for a proven createRequire URL base. */
+  readonly resolutionBasePath?: string;
 }
 
 interface ReferenceSourceParseFailure {
@@ -128,6 +131,7 @@ const appendRelationship = (
     readonly parseState: ReferenceSourceImportParseState;
     readonly resolution?: ReferenceSourceImportResolution;
     readonly resolutionStrategy?: "runtime-require";
+    readonly resolutionBasePath?: string;
   },
 ): void => {
   if (input.to === undefined) return;
@@ -146,6 +150,9 @@ const appendRelationship = (
     ...(input.resolutionStrategy === undefined
       ? {}
       : { resolutionStrategy: input.resolutionStrategy }),
+    ...(input.resolutionBasePath === undefined
+      ? {}
+      : { resolutionBasePath: input.resolutionBasePath }),
   });
 };
 
@@ -233,31 +240,12 @@ const extractImportDeclarations = (
   }
 };
 
-const isRequireCallee = (callee: Node | null | undefined): boolean => {
-  if (isIdentifier(callee) && callee.name === "require") return true;
-  if (
-    isMemberExpression(callee) &&
-    isIdentifier(callee.object) &&
-    callee.object.name === "require" &&
-    ((!callee.computed && isIdentifier(callee.property)) ||
-      isStringLiteral(callee.property))
-  ) {
-    const propertyName = isIdentifier(callee.property)
-      ? callee.property.name
-      : isStringLiteral(callee.property)
-        ? callee.property.value
-        : undefined;
-    return propertyName === "resolve" || propertyName === "main";
-  }
-  return false;
-};
-
 const extractRequireAndDynamicImports = (
   body: readonly Node[],
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
   limitations: string[],
-  unshadowedRequireCalls: ReadonlySet<CallExpression>,
+  requireCalls: ReadonlyMap<CallExpression, ReferenceSourceRequireCall>,
 ): void => {
   // Single traversal owner: iterative, VISITOR_KEYS-gated, no recursion over
   // loc/comment objects. Survives deeply nested generated member chains that
@@ -283,24 +271,34 @@ const extractRequireAndDynamicImports = (
       });
       continue;
     }
-    const first = call.arguments[0];
     // The shared exact-literal reader owns argument exactness: it unwraps
     // runtime-transparent TS wrappers (`as const`, `!`, `satisfies`) and
     // admits quoted and expression-free template spellings alike.
-    if (isRequireCallee(call.callee) && unshadowedRequireCalls.has(call)) {
-      const result = moduleSpecifierFromExpression(first);
+    const requireCall = requireCalls.get(call);
+    if (requireCall !== undefined) {
+      const result = moduleSpecifierFromExpression(requireCall.arguments?.[0]);
       if (result !== undefined) {
+        const uncertainResolution = requireCall.resolutionBase === "unknown";
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
           to: result.specifier,
           kind: "requires",
-          parseState: result.parseState,
-          resolutionStrategy: "runtime-require",
+          parseState: uncertainResolution ? "partial" : result.parseState,
+          ...(uncertainResolution ? { resolution: "unknown" } : {}),
+          ...(uncertainResolution
+            ? {}
+            : { resolutionStrategy: "runtime-require" as const }),
+          ...(typeof requireCall.resolutionBase === "object"
+            ? {
+                resolutionBasePath: requireCall.resolutionBase.path,
+              }
+            : {}),
         });
       }
       continue;
     }
 
+    const first = call.arguments[0];
     if (isImport(call.callee) && isModuleExpression(first)) {
       const result = moduleSpecifierFromExpression(first);
       if (result !== undefined) {
@@ -413,7 +411,7 @@ export const parseReferenceSourceImports = (
     path,
     relationships,
     limitations,
-    unshadowedReferenceSourceRequireCalls(ast, path),
+    referenceSourceRequireCalls(ast, path),
   );
 
   return {

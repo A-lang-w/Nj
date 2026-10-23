@@ -41,6 +41,27 @@ const failure = (bytes: Buffer, architecture?: string) => {
   }
   throw new Error("expected a link failure");
 };
+const addElfLoadAlias = (
+  bytes: Buffer,
+  fileOffset: number,
+  address: bigint,
+  size: number,
+) => {
+  const withAlias = Buffer.from(bytes);
+  const count = withAlias.readUInt16LE(56);
+  const at = 64 + count * 56;
+  withAlias.writeUInt16LE(count + 1, 56);
+  withAlias.writeUInt32LE(1, at);
+  withAlias.writeUInt32LE(7, at + 4);
+  withAlias.writeBigUInt64LE(BigInt(fileOffset), at + 8);
+  withAlias.writeBigUInt64LE(address, at + 16);
+  withAlias.writeBigUInt64LE(address, at + 24);
+  const mappingSize = size === 0 ? withAlias.length : size;
+  withAlias.writeBigUInt64LE(BigInt(mappingSize), at + 32);
+  withAlias.writeBigUInt64LE(BigInt(mappingSize), at + 40);
+  withAlias.writeBigUInt64LE(0x1000n, at + 48);
+  return withAlias;
+};
 
 it("links methods to code through module tokens, not metadata order", () => {
   const linked = link(createIl2cppBinaryFixture());
@@ -74,6 +95,43 @@ it("links methods to code through module tokens, not metadata order", () => {
       name: FIXTURE_RETURN_TYPE_NAME,
     })),
   );
+});
+
+it.each([
+  ["an identical range", 0, FIXTURE_BINARY_BASE, 0],
+  ["a containing subrange", 0x400, FIXTURE_BINARY_BASE + 0x400n, 0x80],
+] as const)(
+  "counts one registration through %s only once",
+  (_, offset, address, size) => {
+    const bytes = addElfLoadAlias(
+      createElfFixture(createIl2cppBinaryFixture()),
+      offset,
+      address,
+      size,
+    );
+
+    expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+  },
+);
+
+it("still rejects distinct CodeRegistration module table fields", () => {
+  expect(
+    failure(
+      createElfFixture(
+        createIl2cppBinaryFixture({ duplicateCodeRegistration: true }),
+      ),
+    ),
+  ).toEqual({ reason: "code-registration-not-found", kind: "malformed" });
+});
+
+it("still rejects distinct MetadataRegistration fields", () => {
+  expect(
+    failure(
+      createElfFixture(
+        createIl2cppBinaryFixture({ duplicateMetadataRegistration: true }),
+      ),
+    ),
+  ).toEqual({ reason: "metadata-registration-not-found", kind: "malformed" });
 });
 
 it("rejects reused MethodDef tokens within an image but preserves cross-image reuse and folded addresses", () => {
@@ -472,6 +530,29 @@ it("reports a symbol-relocated method slot as unknown rather than no-body", () =
   expect(linked.method_addresses[1]).toEqual(expectedAddress("unknown"));
   expect(linked.method_addresses[0]).toEqual(expectedAddresses[0]);
 });
+
+it.each([
+  ["PC32", 2],
+  ["ABS32", 10],
+] as const)(
+  "keeps a method pointer beside a non-overlapping %s relocation",
+  (_, kind) => {
+    const binary = createIl2cppBinaryFixture();
+    const adjacent = createElfFixture(binary, {
+      machine: 62,
+      unresolvedRelocations: [{ offset: 0x2fc, kind }],
+    });
+    expect(link(adjacent).method_addresses).toEqual(expectedAddresses);
+
+    const overlapping = createElfFixture(binary, {
+      machine: 62,
+      unresolvedRelocations: [{ offset: 0x300, kind }],
+    });
+    expect(link(overlapping).method_addresses[1]).toEqual(
+      expectedAddress("unknown"),
+    );
+  },
+);
 
 it("reads a relative relocation into a zero-filled pointer array as a known value", () => {
   const bytes = createElfFixture(createIl2cppBinaryFixture(), {
