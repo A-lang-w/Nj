@@ -58,6 +58,20 @@ const readInventory = async (root: string) => {
   return result.value;
 };
 
+const invalidNulValueCases = (
+  [
+    ["unmatched quote after NUL", 'false\0"true'],
+    ["invalid escape after NUL", "false\0\\q"],
+    ["space before NUL", "false \0true"],
+    ["quoted space before NUL", '"false \0true"'],
+    ["decoded tab before NUL", "false\\t\0true"],
+    ["invalid boolean prefix", "invalid\0false"],
+  ] as const
+).map(([name, value]) => ({
+  name: `invalid NUL-terminated value: ${name}`,
+  config: `[core]\nignoreCase = ${value}\n`,
+}));
+
 const validConfigCases = [
   {
     name: "empty assignment",
@@ -164,6 +178,29 @@ const validConfigCases = [
     config: `[core]\nignoreCase = ${value}\n`,
     expected,
   })),
+  ...(
+    [
+      ["false prefix", "false\0true", false],
+      ["true prefix", "true\0false", true],
+      ["empty prefix", "\0true", false],
+      ["numeric prefix", "0x0\0true", false],
+      ["quoted value", '"false\0true"', false],
+      ["mixed quoted fragments", 'fal"se\0tr"ue', false],
+      ["valid escape in suffix", "false\0\\ttrue", false],
+      ["comment after terminator", 'false\0# "\\q', false],
+      ["multiple terminators", "false\0true\0bad", false],
+    ] as const
+  ).map(([name, value, expected]) => ({
+    name: `NUL-terminated value: ${name}`,
+    config: `[core]\nignoreCase = ${value}\n`,
+    expected,
+  })),
+  {
+    name: "NUL-terminated false worktree extension",
+    config:
+      "[core]\nignoreCase=false\n[extensions]\nworktreeConfig=false\0true\n",
+    expected: false,
+  },
   {
     name: "numeric false worktree extension",
     config: "[core]\nignoreCase=false\n[extensions]\nworktreeConfig=-0k\n",
@@ -233,13 +270,13 @@ describe.skipIf(process.platform === "win32")(
         expect(files.includes("pkg/Generated/keep.ts")).toBe(!expected);
 
         const graph = await readInventory(root);
-        expect(graph.limitations).not.toContain(UNKNOWN_CASE);
         expect(
           graph.entries
             .filter(({ kind }) => kind === "file")
             .map(({ path }) => path)
             .sort(),
         ).toEqual(files);
+        expect(graph.limitations).not.toContain(UNKNOWN_CASE);
       },
     );
   },
@@ -289,6 +326,7 @@ describe.skipIf(process.platform === "win32")(
         name: "decoded tab at the end of a boolean",
         config: "[core]\nignoreCase=false\\t\n",
       },
+      ...invalidNulValueCases,
       ...(
         [
           ["positive overflow", "2147483648"],

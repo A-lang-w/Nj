@@ -391,8 +391,10 @@ Project rules match UTF-8 bytes, so `?` consumes one byte rather than one
 Unicode character. They use the locally observed `core.ignoreCase` setting;
 insensitive matching folds ASCII letters only, so `é` does not exclude `É`.
 Local Boolean settings accept Git's textual forms and portable decimal, octal
-and hexadecimal integers with optional `k`, `m` or `g` multipliers. Binary
-prefixes depend on the Git build and remain unknown. If the setting cannot be
+and hexadecimal integers with optional `k`, `m` or `g` multipliers. A NUL byte
+ends the parsed value, but invalid quote or escape syntax after it still leaves
+the setting unknown. Binary prefixes depend on the Git build and remain unknown.
+If the setting cannot be
 determined, the importer uses the insensitive fallback and records that
 uncertainty in the graph's limitations. A project-policy line ends at its first
 NUL byte, as in Git; the recorded pattern retains that effective prefix. Original

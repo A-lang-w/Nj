@@ -312,7 +312,13 @@ const parseGitConfigValue = (source: string): string | undefined => {
         return undefined;
     }
   }
-  return quoted ? undefined : parsed.slice(0, trimFrom);
+  if (quoted) return undefined;
+  const value = parsed.slice(0, trimFrom);
+  // Git validates the whole value, then passes a C string to its consumers.
+  // A NUL ends that value, but must not hide malformed quotes or escapes after
+  // it, or turn significant whitespace before it into boundary whitespace.
+  const terminator = value.indexOf("\0");
+  return terminator === -1 ? value : value.slice(0, terminator);
 };
 
 const readOwnedMetadataText = async (
