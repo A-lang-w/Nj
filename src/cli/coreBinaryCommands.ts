@@ -22,17 +22,17 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
  * Args and options are advertised as separate schemas, so each alternative
  * stays optional. Say which choice is required where discovery reads it.
  */
-const requiredSelectorGuidance = (alternatives: string): string =>
-  [
-    `Supply at least one of ${alternatives}.`,
-    "Equal positional and named values are accepted; conflicting values fail.",
-  ].join(" ");
+const requiredSelectorGuidance = (
+  alternatives: string,
+  agreement = "Equal positional and named values are accepted; conflicting values fail.",
+): string => [`Supply at least one of ${alternatives}.`, agreement].join(" ");
 
 const addressOrProcedureGuidance = requiredSelectorGuidance(
   "the positional address or --procedure",
 );
 const decompileSelectorGuidance = requiredSelectorGuidance(
   "the positional address, --procedure, or --file-offset",
+  "Equal positional and --procedure values are accepted; conflicting values fail. --file-offset is a source-file offset, not an analysis address, so use it without another selector.",
 );
 const namedAddressGuidance = requiredSelectorGuidance(
   "the positional address or --address",
