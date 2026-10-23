@@ -149,6 +149,10 @@ const handleOutputFailure = (socket, state) => {
   if (state.mode === "prefix_cut_identifier_exit_tools")
     void cutIdentifierAtBudget();
   else if (state.mode === "oom_exit_tools") oome();
+  else if (state.mode === "sigkill_tools")
+    writeThen(process.stdout, "WARN Decompiling 14005c790, pcode error\n", () =>
+      process.kill(process.pid, "SIGKILL"),
+    );
   else if (state.mode === "flood_then_oom_exit_tools")
     void floodStdout().then(oome);
   else if (state.mode === "flood_then_exit_tools")

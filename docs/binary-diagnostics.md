@@ -170,6 +170,21 @@ subject to earlier cancellation or the startup deadline. `output_incomplete`
 marks a snapshot taken before stream closure; cleanup ownership remains with
 the session until release succeeds.
 
+A kernel or container OOM killer ends Ghidra with `SIGKILL` and prints no
+`OutOfMemoryError`. When a startup, process, or protocol failure records
+`exit_signal: "SIGKILL"` before REA stopped the process, REA reports the
+signal instead of generic `rea doctor` advice. On Linux with cgroup v2, REA
+also reads its own cgroup's `memory.events` before launch and again after the
+kill. `memory_cgroup` records the group path, `oom_kill_before`,
+`oom_kill_after` and `memory_max`. If the count rose, REA returns
+`resource_constraint` with `resource: "memory"` and `cgroup_memory_max` in
+`reported_limits`. The count is hierarchical, so a rise shows an OOM kill in
+REA's process tree, not which process was chosen. The limit also covers
+Ghidra's native decompiler processes, whose number follows the available CPUs,
+so the advice does not recommend a larger Java heap. Without a cgroup v2 memory
+group, or when the count did not rise, the failure stays `execution_failure`
+and names the signal as a possible out-of-memory kill.
+
 ## Portable PE resources
 
 `inspect_pe_resources` / `inspect-pe-resources` inspects an explicit PE32 or
