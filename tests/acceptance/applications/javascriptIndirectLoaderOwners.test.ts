@@ -49,6 +49,30 @@ const cases = [
     possible: true,
   },
   {
+    name: "loader stored on resolve property retains execution ownership",
+    mainFile: "main.mjs",
+    load: 'import {createRequire} from "node:module";const require={resolve:createRequire(import.meta.url)};require.resolve("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "typed loader stored on resolve property retains execution ownership",
+    mainFile: "main.ts",
+    load: 'import {createRequire} from "node:module";const require={resolve:createRequire(import.meta.url)};(require.resolve as any)("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "typed native resolver does not execute the resolved module",
+    mainFile: "main.ts",
+    load: 'import {createRequire} from "node:module";const require=createRequire(import.meta.url);(require.resolve as any)("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "typed replaced resolver retains execution uncertainty",
+    mainFile: "main.ts",
+    load: 'import {createRequire} from "node:module";const require=createRequire(import.meta.url);require.resolve=custom;(require.resolve as any)("../shared/window.cjs");',
+    possible: true,
+  },
+  {
     name: "require.main is not an implicit module loader",
     load: 'require.main("../shared/window.cjs");',
     possible: false,

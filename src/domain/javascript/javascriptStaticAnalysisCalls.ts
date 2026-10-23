@@ -23,7 +23,6 @@ import {
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -51,7 +50,7 @@ import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutati
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
-  semanticRequireLoaderAt,
+  type JavaScriptRequireCallFact,
   semanticModuleRequireCallAt,
   semanticModuleRequireReceiver,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -71,13 +70,12 @@ export const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  const deferredRequireResolve =
-    isRequireResolveCall(node) &&
-    semanticRequireLoaderAt(
-      node,
-      bindings,
-      accumulator.factoryRequireBindingIds,
-    ) !== "local";
+  const requireFact = semanticRequireCallAt(
+    node,
+    bindings,
+    accumulator.factoryRequireBindingIds,
+  );
+  const deferredRequireResolve = requireFact?.resolverReceiver !== undefined;
   const deferredModuleRequire =
     semanticModuleRequireReceiver(node) !== undefined ||
     semanticModuleRequireCallAt(node, bindings, false) ||
@@ -85,12 +83,13 @@ export const inspectCall = (
   if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
   const requireCall = deferredModuleRequire
     ? null
-    : requireCallSpecifier(node, bindings, context);
+    : requireCallReference(requireFact, context);
   if (requireCall !== null)
     addReference(context, {
       node,
       kind: "require",
       specifier: requireCall.specifier,
+      ...(requireCall.resolutionOnly ? { resolution_only: true } : {}),
       ...(requireCall.resolutionBasePath === undefined
         ? {}
         : { resolutionBasePath: requireCall.resolutionBasePath }),
@@ -263,9 +262,8 @@ const noteMediaElementPreloads = (
       accumulator.mediaElementPreloads.add(property);
 };
 
-const requireCallSpecifier = (
-  node: JavaScriptCallLike,
-  bindings: JavaScriptSemanticAnalysisState,
+const requireCallReference = (
+  call: JavaScriptRequireCallFact | undefined,
   context: FindingContext,
   resolveMemberChanged = false,
 ): {
@@ -273,11 +271,6 @@ const requireCallSpecifier = (
   readonly resolutionBasePath?: string;
   readonly resolutionOnly: boolean;
 } | null => {
-  const call = semanticRequireCallAt(
-    node,
-    bindings,
-    context.accumulator.factoryRequireBindingIds,
-  );
   if (call === undefined || call.loader === "local") return null;
   if (
     resolveMemberChanged ||
@@ -289,7 +282,7 @@ const requireCallSpecifier = (
   }
   return {
     specifier: argumentValue(call.arguments?.[0]),
-    resolutionOnly: isRequireResolveCall(node),
+    resolutionOnly: call.resolverReceiver !== undefined,
     ...(call.sourceRelativePath === undefined
       ? {}
       : { resolutionBasePath: call.sourceRelativePath }),
@@ -302,23 +295,22 @@ export const finishModuleRequireCalls = (
   index: JavaScriptBindingIndex,
 ): void => {
   for (const node of context.accumulator.pendingModuleRequireCalls) {
+    const callFact = semanticRequireCallAt(
+      node,
+      index.bindings,
+      context.accumulator.factoryRequireBindingIds,
+    );
+    const resolverReceiver = callFact?.resolverReceiver;
     const resolveMemberChanged =
-      isRequireResolveCall(node) &&
-      (t.isMemberExpression(node.callee) ||
-        t.isOptionalMemberExpression(node.callee)) &&
+      resolverReceiver !== undefined &&
       index
-        .effectsForReferenceAt(node, node.callee.object, ["resolve"])
+        .effectsForReferenceAt(node, resolverReceiver, ["resolve"])
         .effects.some(
           ({ kind, timing }) =>
             timing !== "after" &&
             (kind === "member-write" || kind === "escape"),
         );
-    const call = requireCallSpecifier(
-      node,
-      index.bindings,
-      context,
-      resolveMemberChanged,
-    );
+    const call = requireCallReference(callFact, context, resolveMemberChanged);
     if (call !== null)
       addReference(context, {
         node,
@@ -335,15 +327,6 @@ export const finishModuleRequireCalls = (
     (left, right) => left.offset - right.offset,
   );
 };
-
-const isRequireResolveCall = (
-  node: JavaScriptCallLike,
-): node is t.CallExpression | t.OptionalCallExpression =>
-  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-  (t.isMemberExpression(node.callee) ||
-    t.isOptionalMemberExpression(node.callee)) &&
-  semanticStaticPropertyKey(node.callee.property, node.callee.computed) ===
-    "resolve";
 
 const chunkLoadSpecifier = (
   node: JavaScriptCallLike,

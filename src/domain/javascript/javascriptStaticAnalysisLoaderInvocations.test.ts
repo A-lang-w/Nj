@@ -418,3 +418,12 @@ it("retains an alternate createRequire filename in static reference facts", () =
     },
   ]);
 });
+
+it("keeps a real loader stored on a resolve property executable", () => {
+  const source = `${imported}const require={resolve:make(import.meta.url)};require.resolve("./window.cjs");`;
+  const references = analyzeJavaScriptStaticSource(source).references.filter(
+    ({ kind }) => kind === "require",
+  );
+  expect(references).toMatchObject([{ specifier: "./window.cjs" }]);
+  expect(references[0]?.resolution_only).toBeUndefined();
+});
