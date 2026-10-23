@@ -335,6 +335,23 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   ).toThrow(PythonPycFormatFailure);
 });
 
+it("rejects negative marshal string and bytes lengths as malformed input", () => {
+  // CPython reads bytes/str lengths with `r_long` and rejects a negative value
+  // as "bad marshal data (bytes object size out of range)". A -1 length must
+  // not be read unsigned (wrapping to 4294967295) and misreported as a
+  // max_string_bytes budget refusal. Covers TYPE_STRING/bytes, TYPE_UNICODE and
+  // TYPE_ASCII, which all read their length with the same r_long count.
+  const negativeLength = (tag: number): Buffer =>
+    withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])]);
+  for (const tag of [0x73, 0x75, 0x61]) {
+    expect(() => parse(negativeLength(tag))).toThrow(PythonPycFormatFailure);
+    expect(() => parse(negativeLength(tag))).toThrow(/is negative/);
+    expect(() => parse(negativeLength(tag))).not.toThrow(
+      PythonPycResourceFailure,
+    );
+  }
+});
+
 it("keeps non-finite float and complex constants JSON-safe", () => {
   const report = parse(
     withConsts([

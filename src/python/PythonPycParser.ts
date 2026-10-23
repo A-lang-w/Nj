@@ -412,13 +412,16 @@ class MarshalReader {
         return { kind: "int", value: decoded.value, bits: decoded.bits };
       }
       case TYPE_BYTES:
-        return { kind: "bytes", value: this.blob(this.u32()) };
+        return {
+          kind: "bytes",
+          value: this.blob(this.nonNegativeInt32("Marshal bytes length")),
+        };
       case TYPE_INTERNED:
       case TYPE_UNICODE:
-        return this.utf8(this.u32(), false);
+        return this.utf8(this.nonNegativeInt32("Marshal string length"), false);
       case TYPE_ASCII:
       case TYPE_ASCII_INTERNED:
-        return this.utf8(this.u32(), true);
+        return this.utf8(this.nonNegativeInt32("Marshal string length"), true);
       case TYPE_SHORT_ASCII:
       case TYPE_SHORT_ASCII_INTERNED:
         return this.utf8(this.u8(), true);
@@ -1527,7 +1530,7 @@ class MarshalReader {
     return value;
   }
 
-  /** CPython `r_long` count fields that its constructors require non-negative. */
+  /** CPython `r_long` counts and lengths that its readers require non-negative. */
   nonNegativeInt32(field: string): number {
     const value = this.i32();
     if (value < 0) malformed(`${field} is negative.`);
