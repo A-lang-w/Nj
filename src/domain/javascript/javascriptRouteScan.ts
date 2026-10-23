@@ -1433,8 +1433,21 @@ export class JavaScriptRouteScan {
         };
         emit = true;
       } else if (!typed) {
-        const value = own.get("index")?.value;
+        const field = own.get("index");
+        const value =
+          field === undefined
+            ? undefined
+            : this.#resolve(field.value, site, index);
         emit = t.isBooleanLiteral(value) && value.value;
+        if (
+          (field !== undefined && !t.isBooleanLiteral(value)) ||
+          fields.dynamicNames.has("index")
+        )
+          this.#unknown(
+            mechanism,
+            field?.value ?? node,
+            "The index flag is not a statically resolved boolean.",
+          );
       }
       if (emit && link !== undefined) {
         const segments: JavaScriptRouteSegment[] = [];

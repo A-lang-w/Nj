@@ -30,6 +30,67 @@ const analyze = (source: string, budget?: number) => {
   return complete(scan.finishSteps());
 };
 
+it.each([
+  ["", "true"],
+  ["const INDEX=true;", "INDEX"],
+  ["const INDEX=true; const FLAG=INDEX;", "FLAG"],
+  ["", "(true as const)"],
+  ["const INDEX=true;", "(INDEX as boolean)"],
+  ["", "(true satisfies boolean)"],
+] as const)(
+  "resolves index flags through stable bindings and wrappers: %s %s",
+  (prefix, flag) => {
+    const facts = analyze(
+      `${prefix}createBrowserRouter([{index:${flag},Component:Home},{path:'/parent',children:[{index:${flag},Component:Home}]}]);`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/",
+      "/parent",
+      "/parent",
+    ]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+it.each([
+  ["", "false"],
+  ["const INDEX=false;", "INDEX"],
+  ["", "(false as const)"],
+] as const)("does not emit a known false index: %s %s", (prefix, flag) => {
+  const facts = analyze(
+    `${prefix}createBrowserRouter([{index:${flag},children:[{path:'child'}]}]);`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/child"]);
+  expect(facts.unresolved).toEqual([]);
+});
+it.each([
+  ["const INDEX=choose();", "index:INDEX"],
+  ["let INDEX=true; INDEX=false;", "index:INDEX"],
+  ["const FIRST=SECOND; const SECOND=FIRST;", "index:FIRST"],
+  ["", "index:1"],
+  ["", "get index(){return true}"],
+] as const)(
+  "retains unresolved index flags without losing child paths: %s %s",
+  (prefix, field) => {
+    const facts = analyze(
+      `${prefix}createBrowserRouter([{${field},children:[{path:'child'}]}]);`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/child"]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        mechanism: "nested-route-object",
+        reason: expect.stringContaining("index flag"),
+      }),
+    ]);
+  },
+);
+it("keeps shadowed index bindings separate", () => {
+  const facts = analyze(
+    `const INDEX=true; function nested(){const INDEX=false; createBrowserRouter([{index:INDEX}]);} createBrowserRouter([{index:INDEX}]);`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/"]);
+  expect(facts.unresolved).toEqual([]);
+});
+
 it("joins router children and preserves each segment's source", () => {
   const facts = analyze(
     `createBrowserRouter([{path:'/reports',children:[{path:':id?',children:[{path:'settings'}]}]}]);`,
