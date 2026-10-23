@@ -1,6 +1,7 @@
 import { Formatter } from "incur";
 
 import { jsonOutputParts } from "./cli/jsonOutput.js";
+import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
   versionReport,
   type VersionReportHost,
@@ -349,7 +350,7 @@ export const renderCliOutputArgumentError = (
   };
   if (error.format === "yaml")
     return `ok: false\nerror:\n  code: ${error.code}\n  message: ${JSON.stringify(error.message)}\n`;
-  return `${JSON.stringify(value)}\n`;
+  return `${JSON.stringify(error.format === "jsonl" ? jsonLinesErrorRecord(value) : value)}\n`;
 };
 
 /**
