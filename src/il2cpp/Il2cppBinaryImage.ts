@@ -2,6 +2,7 @@ import {
   readFatContainerHeader,
   validateFatSlice,
 } from "../domain/apple/machoContainer.js";
+import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -146,7 +147,8 @@ export function* openImageSteps(
     try {
       const layout = parseMachoLayout(
         image,
-        container.architecture === "amd64" ? "x86_64" : container.architecture,
+        binaryMetadataArchitecture(container.architecture) ??
+          container.architecture,
       );
       machoPointerFixups = parsePointerFixups(
         image,
