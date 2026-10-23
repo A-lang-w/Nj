@@ -20,7 +20,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, realpath, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
@@ -30,6 +30,7 @@ import type { SignalRecordingPort } from "../application/signals/SignalRecording
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactAnalysisResources,
+  artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
@@ -72,6 +73,10 @@ export const SIGROK_PROVIDER_IDENTITY = {
   version: "sigrok-cli@0.7.2",
 } as const;
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
+
+/** Signal decoding runs only on Linux; discovery and execution share this check. */
+export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
 
 /** Decode selected recordings only, retaining cleanup ownership across failures. */
 export class SigrokRecordingProvider implements SignalRecordingPort {
@@ -141,7 +146,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           cause: options.signal.reason,
         });
       await this.#resources.release();
-      if (this.platform !== "linux")
+      if (!sigrokHostSupported(this.platform))
         throw new Error(
           "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
         );
@@ -173,7 +178,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
-      const snapshotPath = join(root.path, "recording");
+      // The private root is fresh; reuse the basename so its parser-relevant
+      // suffix is preserved without growing a valid source name.
+      const snapshotName = "path" in input ? basename(input.path) : "recording";
+      const snapshotPath = join(root.path, snapshotName);
       const execute = async (
         args: readonly string[],
         // Caller selectors this command loads; their refusals are input errors.
@@ -201,30 +209,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = {
-          stdout: output.stdout.text,
-          stderr: output.stderr.text,
-          truncated: output.diagnosticTruncated ?? false,
-          exit_code: output.exitCode ?? null,
-          signal: output.signal ?? null,
-        };
-        // Finish bounded integrity checks after output; service handles late cancellation with Evidence.
-        const previousPhase = phase;
-        phase = "integrity";
-        resourcePath = command;
-        const current = await this.#resources.read(command, 64 * 1024 * 1024);
-        resourcePath = limiter;
-        const currentLimiter = await this.#resources.read(
-          limiter,
-          64 * 1024 * 1024,
+        capturedOutput = artifactCommandOutput(output);
+        const current = await this.#resources.readCommandAfterRun(
+          command,
+          { path: limiter, sha256: limiterIdentity.sha256 },
+          capturedOutput,
+          operation,
         );
-        if (currentLimiter.sha256 !== limiterIdentity.sha256)
-          throw new AnalysisArtifactChangedError(
-            operation,
-            limiter,
-            "Configured resource limiter changed during analysis.",
-            { capturedOutput },
-          );
         if (current.sha256 !== tool.sha256)
           throw new AnalysisArtifactChangedError(
             operation,
@@ -232,10 +223,27 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             "Configured decoder executable changed during analysis.",
             { capturedOutput },
           );
-        phase = previousPhase;
         resourcePath = "path" in input ? input.path : command;
+        const invalidUtf8Streams = [
+          ...(output.stdout.invalidUtf8 ? ["stdout"] : []),
+          ...(output.stderr.invalidUtf8 ? ["stderr"] : []),
+        ];
+        if (invalidUtf8Streams.length > 0)
+          throw new AnalysisOutputError(
+            operation,
+            "sigrok-cli output is not valid UTF-8; retained text contains replacement characters.",
+            {
+              capturedOutput,
+              diagnostics: {
+                stage: phase,
+                invalid_utf8_streams: invalidUtf8Streams,
+              },
+            },
+          );
+        // Some selected-channel refusals are diagnostics, not process failures:
+        // sigrok can emit fallback annotations and still exit successfully.
         const rejection =
-          output.exitCode === 0 || selection === undefined
+          selection === undefined
             ? undefined
             : parseSigrokSelectorRejection(output.stderr.text, selection);
         if (rejection !== undefined)
@@ -323,7 +331,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase = "producer";
         const args = [
           "--dont-scan",
-          "--input-file=recording",
+          `--input-file=${snapshotName}`,
           `--protocol-decoders=${input.decoders}`,
           "--protocol-decoder-samplenum",
           ...(input.input_format === null
@@ -483,28 +491,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         cause,
         workspacePath,
       );
-    if (phase === "integrity") {
-      const detail = {
+    if (phase === "integrity")
+      return this.#resources.integrityFailure(
         cause,
-        ...(observedOutput === undefined
-          ? {}
-          : { capturedOutput: observedOutput }),
-      };
-      if (
-        cause instanceof ArtifactReaderFailure &&
-        ["limit", "integrity", "path"].includes(cause.reason)
-      )
-        return new AnalysisArtifactChangedError(
-          operation,
-          path,
-          `Post-run identity verification failed for ${path}: ${reason}`,
-          detail,
-        );
-      return new ProviderAdapterError(SIGROK_PROVIDER_IDENTITY.id, operation, {
-        ...detail,
-        diagnostics: { stage: "integrity", resource_path: path, reason },
-      });
-    }
+        path,
+        observedOutput,
+        operation,
+      );
     if (phase === "configuration")
       return new AnalysisCapabilityUnavailableError(
         SIGROK_PROVIDER_IDENTITY.id,

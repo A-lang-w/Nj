@@ -28,6 +28,7 @@ import type { PacketCapturePort } from "../application/captures/PacketCaptureSer
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactAnalysisResources,
+  artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
@@ -60,6 +61,14 @@ import {
   OwnedCommandFailure,
 } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import {
+  TSHARK_COMMAND_ENV,
+  assertWiresharkExecutableIdentity,
+  wiresharkExecutableIdentity,
+  locateWiresharkTool,
+  parseWiresharkVersion,
+  selectWiresharkTool,
+} from "../pcap/PcapConfiguration.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_packet_capture";
@@ -69,6 +78,10 @@ export const TSHARK_PROVIDER_IDENTITY = {
   version: "tshark@4",
 } as const;
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
+
+/** Packet inspection runs only on Linux; discovery and execution share this check. */
+export const tsharkHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
 
 /** Inspect selected capture files only, retaining cleanup ownership across failures. */
 export class TsharkCaptureProvider implements PacketCapturePort {
@@ -141,20 +154,24 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           cause: options.signal.reason,
         });
       await this.#resources.release();
-      if (this.platform !== "linux")
+      if (!tsharkHostSupported(this.platform))
         throw new Error(
-          "Packet inspection requires Linux with util-linux prlimit and REA_TSHARK_COMMAND so expanded captures are processed under an enforced address-space limit.",
+          "Packet inspection requires Linux with util-linux prlimit and TShark 4.x (on PATH or through absolute REA_TSHARK_COMMAND) so expanded captures are processed under an enforced address-space limit.",
         );
-      const configured = this.environment.REA_TSHARK_COMMAND ?? "";
-      if (!isAbsolute(configured))
-        throw new Error("Supply absolute REA_TSHARK_COMMAND for TShark 4.x.");
+      const selection = selectWiresharkTool(this.environment, "tshark");
+      const configured = locateWiresharkTool(selection, this.environment);
+      if (configured === undefined)
+        throw new Error(
+          `TShark 4.x was not found on PATH; add it to PATH or set absolute ${TSHARK_COMMAND_ENV}.`,
+        );
       const command = await realpath(configured);
       await access(command, constants.X_OK);
-      const tool = await this.#resources.read(
+      const toolSnapshot = await this.#resources.read(
         command,
         64 * 1024 * 1024,
         options?.signal,
       );
+      const tool = wiresharkExecutableIdentity(toolSnapshot);
       const configuredLimiter =
         this.environment.REA_TSHARK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
@@ -200,38 +217,20 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = {
-          stdout: output.stdout.text,
-          stderr: output.stderr.text,
-          truncated: output.diagnosticTruncated ?? false,
-          exit_code: output.exitCode ?? null,
-          signal: output.signal ?? null,
-        };
-        // Finish bounded integrity checks after output; service handles late cancellation with Evidence.
-        const previousPhase = phase;
-        phase = "integrity";
-        resourcePath = command;
-        const current = await this.#resources.read(command, 64 * 1024 * 1024);
-        resourcePath = limiter;
-        const currentLimiter = await this.#resources.read(
-          limiter,
-          64 * 1024 * 1024,
+        capturedOutput = artifactCommandOutput(output);
+        const current = await this.#resources.readCommandAfterRun(
+          command,
+          { path: limiter, sha256: limiterIdentity.sha256 },
+          capturedOutput,
+          operation,
         );
-        if (currentLimiter.sha256 !== limiterIdentity.sha256)
-          throw new AnalysisArtifactChangedError(
-            operation,
-            limiter,
-            "Configured resource limiter changed during analysis.",
-            { capturedOutput },
-          );
-        if (current.sha256 !== tool.sha256)
-          throw new AnalysisArtifactChangedError(
-            operation,
-            command,
-            "Configured TShark executable changed during analysis.",
-            { capturedOutput },
-          );
-        phase = previousPhase;
+        assertWiresharkExecutableIdentity(
+          operation,
+          command,
+          tool,
+          wiresharkExecutableIdentity(current),
+          { capturedOutput },
+        );
         resourcePath = "path" in input ? input.path : command;
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
@@ -249,11 +248,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       };
       phase = "configuration";
       const version = await execute(["--version"]);
-      if (
-        !/^TShark \(Wireshark\) 4\.[0-9]+\.[0-9]+(?:[ .(\r\n]|$)/u.test(
-          version.stdout.text,
-        )
-      )
+      if (parseWiresharkVersion(version.stdout.text, "tshark") === null)
         throw new Error(
           "Expected TShark 4.x; inspect the selected installation.",
         );
@@ -261,6 +256,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         diagnostics,
         tool: {
           configured_path: configured,
+          selection_source: selection.source,
           path: command,
           sha256: tool.sha256,
           version_banner: version.stdout.text,
@@ -349,10 +345,9 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           );
         phase = "producer";
         resourcePath = "path" in input ? input.path : command;
-        const matchingPackets = parsePacketOutput(
-          output.stdout.text,
-          input.fields,
-        );
+        // TShark resolves `-e` aliases before emitting canonical field names;
+        // the command arguments, not output names, own field selection.
+        const matchingPackets = parsePacketOutput(output.stdout.text);
         const start = Math.min(input.match_offset, matchingPackets.length);
         const end =
           input.match_limit === null
@@ -506,28 +501,13 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         cause,
         workspacePath,
       );
-    if (phase === "integrity") {
-      const detail = {
+    if (phase === "integrity")
+      return this.#resources.integrityFailure(
         cause,
-        ...(observedOutput === undefined
-          ? {}
-          : { capturedOutput: observedOutput }),
-      };
-      if (
-        cause instanceof ArtifactReaderFailure &&
-        ["limit", "integrity", "path"].includes(cause.reason)
-      )
-        return new AnalysisArtifactChangedError(
-          operation,
-          path,
-          `Post-run identity verification failed for ${path}: ${reason}`,
-          detail,
-        );
-      return new ProviderAdapterError(TSHARK_PROVIDER_IDENTITY.id, operation, {
-        ...detail,
-        diagnostics: { stage: "integrity", resource_path: path, reason },
-      });
-    }
+        path,
+        observedOutput,
+        operation,
+      );
     if (phase === "configuration")
       return new AnalysisCapabilityUnavailableError(
         TSHARK_PROVIDER_IDENTITY.id,
@@ -538,7 +518,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
-          userMessage: `${reason} On Linux, configure TShark 4.x through REA_TSHARK_COMMAND and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
+          userMessage: `${reason} On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
         },
       );
     if (

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -7,6 +7,7 @@ import { buildBinary } from "plist";
 import { describe, expect, it, vi } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
+import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { InterfaceBuilderDecodeBudget } from "../../../src/artifacts/apple/InterfaceBuilderDecodeBudget.js";
 import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
@@ -188,6 +189,132 @@ const encodeNibArchiveWithSharedDataValue = (input: {
   return Buffer.concat([header, objects, keys, values, classes]);
 };
 
+describe("compiled Interface Builder traversal coverage", () => {
+  it.skipIf(process.platform === "win32")(
+    "shares the 64-path omission budget between regular-document capacity and symlink source notices",
+    async () => {
+      const bundle = await createTestTempDirectory(
+        "rea-ib-mixed-omission-bound-",
+      );
+      const bytes = encodeNibArchiveFixture({
+        classes: ["NSView"],
+        objects: [{ classIndex: 0, values: {} }],
+      });
+      await writeFile(join(bundle, "payload.data"), bytes);
+      // One regular document is decoded; the other 61 regular documents and
+      // all 65 symlinks are omitted. Exactly three symlink samples still fit.
+      for (let index = 0; index < 62; index += 1)
+        await writeFile(
+          join(bundle, `${String(index).padStart(3, "0")}.nib`),
+          bytes,
+        );
+      for (let index = 0; index < 65; index += 1)
+        await symlink(
+          "payload.data",
+          join(bundle, `link-${String(index).padStart(3, "0")}.nib`),
+        );
+      const result = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        limits: { max_documents: 1 },
+      });
+      expect(result.documents).toHaveLength(1);
+      expect(result.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "archive_decode",
+          status: "partial",
+          reason: "document_limit_reached",
+          examined: 1,
+          omitted: 126,
+        }),
+      );
+      const reasons = result.limitations.filter((value) =>
+        value.includes(": omitted because "),
+      );
+      const sourceNotices = result.limitations.filter((value) =>
+        value.endsWith(": Symlink target was not followed or disclosed."),
+      );
+      expect(reasons).toHaveLength(64);
+      expect(sourceNotices).toEqual(
+        [0, 1, 2].map(
+          (index) =>
+            `link-${String(index).padStart(3, "0")}.nib: Symlink target was not followed or disclosed.`,
+        ),
+      );
+      const reportedPaths = new Set(
+        [...reasons, ...sourceNotices].map((value) =>
+          value.slice(0, value.indexOf(":")),
+        ),
+      );
+      expect(reportedPaths.size).toBe(64);
+      expect(
+        result.limitations.some((value) => value.startsWith("link-003.nib:")),
+      ).toBe(false);
+      expect(result.limitations).toContain(
+        "62 additional omitted archive path(s) and their reasons were not retained; reporting is bounded to 64 paths.",
+      );
+    },
+  );
+
+  it("preserves unknown traversal after a later complete callback without inventing archive omissions", async () => {
+    const bundle = await createTestTempDirectory("rea-ib-traversal-callback-");
+    const bytes = encodeNibArchiveFixture({
+      classes: ["NSView"],
+      objects: [{ classIndex: 0, values: { title: "Retained view" } }],
+    });
+    await writeFile(join(bundle, "Main.nib"), bytes);
+    const reason = "Controlled producer traversal uncertainty";
+    const entries = DirectoryArtifactReader.prototype.entries;
+    const spy = vi
+      .spyOn(DirectoryArtifactReader.prototype, "entries")
+      .mockImplementation(async function* (
+        this: DirectoryArtifactReader,
+        signal,
+        options,
+      ) {
+        yield* entries.call(this, signal, options);
+        if (typeof options === "function") return;
+        options?.onCoverage?.({
+          status: "unknown",
+          examinedEntries: 1,
+          limitations: [reason],
+        });
+        options?.onCoverage?.({
+          status: "complete",
+          examinedEntries: 1,
+          limitations: [],
+        });
+      });
+    try {
+      const result = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+      });
+      expect(result.documents).toHaveLength(1);
+      expect(result.documents[0]).toMatchObject({ relative_path: "Main.nib" });
+      expect(result.graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind: "view",
+          attributes: expect.objectContaining({ class_name: "NSView" }),
+        }),
+      );
+      expect(result.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "archive_decode",
+          status: "partial",
+          reason: "source_traversal_unknown",
+          examined: 1,
+          omitted: 0,
+        }),
+      );
+      expect(result.graph.truncated).toBe(true);
+      expect(result.limitations).toContain(reason);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("compiled Interface Builder bundle reader", () => {
   it("reads nib plist archives and reports provenance", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
@@ -326,6 +453,57 @@ describe("compiled Interface Builder bundle reader", () => {
   });
 });
 
+describe("NIBArchive real projection", () => {
+  it("projects NIBArchive special reals as typed values with per-document counts", async () => {
+    const root = await createTestTempDirectory("rea-nib-real-projection-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(
+      join(resources, "Numbers.nib"),
+      encodeNibArchiveFixture({
+        classes: ["UIView"],
+        objects: [
+          {
+            classIndex: 0,
+            values: {
+              nan: { float32: Number.NaN },
+              positive: { float32: Number.POSITIVE_INFINITY },
+              negative: { float64: Number.NEGATIVE_INFINITY },
+              negativeZero32: { float32: -0 },
+              negativeZero64: { float64: -0 },
+              nil: null,
+            },
+          },
+        ],
+      }),
+    );
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "f".repeat(64),
+    });
+    const objectNode = result.graph.nodes.find(
+      ({ attributes }) => attributes.interface_builder_object_id === "0",
+    );
+    const values = objectNode?.attributes.nibValues;
+    expect(values).toMatchObject({
+      nan: { $plist_type: "real", value: "nan" },
+      positive: { $plist_type: "real", value: "+infinity" },
+      negative: { $plist_type: "real", value: "-infinity" },
+      negativeZero32: { $plist_type: "real", value: "-0" },
+      negativeZero64: { $plist_type: "real", value: "-0" },
+      nil: null,
+    });
+    expect(result.limitations).toContain(
+      'Contents/Resources/Numbers.nib: 3 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
+    );
+    expect(result.limitations).toContain(
+      'Contents/Resources/Numbers.nib: 2 negative-zero real value(s) are reported as { "$plist_type": "real", "value": "-0" } because a JSON number cannot carry the sign of zero.',
+    );
+  });
+});
+
 describe("keyed archive hierarchy coverage", () => {
   it("projects a deep keyed-archive hierarchy through NSArray wrappers", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
@@ -385,7 +563,7 @@ describe("keyed archive hierarchy coverage", () => {
       ]),
     );
     const rootId = analysis.graph.nodes.find(
-      ({ attributes }) => attributes.interface_builder_object_id === "root",
+      ({ attributes }) => attributes.interface_builder_object_id === "1",
     )?.id;
     const childNames = analysis.graph.edges
       .filter(
@@ -395,7 +573,7 @@ describe("keyed archive hierarchy coverage", () => {
           id.includes(":hierarchy:"),
       )
       .map(({ to }) => (to === null ? null : archiveIdsByNodeId.get(to)));
-    expect(childNames).toEqual(["first", "second"]);
+    expect(childNames).toEqual(["3", "5"]);
   });
 
   it.skipIf(process.platform !== "darwin")(
@@ -829,6 +1007,94 @@ cliTest(
       expect.objectContaining({
         relation: "contains",
         reason: "unsupported_connection_type",
+      }),
+    );
+  },
+);
+
+cliTest(
+  "compiled CLI omits only source-less keyed archive annotation connectors",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-ib-keyed-annotations-");
+    const bundle = join(root, "Example.app");
+    const contents = join(bundle, "Contents");
+    const resources = join(contents, "Resources");
+    await mkdir(resources, { recursive: true });
+    await mkdir(join(contents, "MacOS"), { recursive: true });
+    await writeFile(
+      join(contents, "MacOS", "App"),
+      thinMach(0xfeedfacf, 0x0100000c),
+    );
+    await writeFile(
+      join(contents, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
+    );
+    await writeFile(
+      join(resources, "Annotations.nib"),
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $objects: [
+          "$null",
+          {
+            $class: { UID: 9 },
+            NSSource: { UID: 7 },
+            NSDestination: { UID: 8 },
+            NSLabel: "outlet",
+          },
+          { $class: { UID: 10 }, NSDestination: { UID: 8 } },
+          { $class: { UID: 11 }, AXDestinationArchiveKey: { UID: 8 } },
+          { $class: { UID: 12 }, NSObject: { UID: 8 } },
+          { $class: { UID: 13 }, NSDestination: { UID: 8 } },
+          {
+            $class: { UID: 10 },
+            NSSource: null,
+            NSDestination: { UID: 8 },
+          },
+          { $class: { UID: 14 } },
+          { $class: { UID: 14 } },
+          {
+            $classname: "NSNibOutletConnector",
+            $classes: ["NSNibOutletConnector", "NSNibConnector", "NSObject"],
+          },
+          {
+            $classname: "NSIBHelpConnector",
+            $classes: ["NSIBHelpConnector", "NSObject"],
+          },
+          {
+            $classname: "NSNibAXAttributeConnector",
+            $classes: ["NSNibAXAttributeConnector", "NSObject"],
+          },
+          {
+            $classname: "NSIBUserDefinedRuntimeAttributesConnector",
+            $classes: ["NSIBUserDefinedRuntimeAttributesConnector", "NSObject"],
+          },
+          {
+            $classname: "NSFutureConnector",
+            $classes: ["NSFutureConnector", "NSObject"],
+          },
+          { $classname: "NSView", $classes: ["NSView", "NSObject"] },
+        ],
+        $top: { root: { UID: 1 } },
+      }),
+    );
+
+    const output = await cli.run({
+      arguments: ["decode-interface-builder", bundle, "--json"],
+      environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const result = interfaceBuilderAnalysisSchema.parse(
+      parseEvidence(output.json).normalized_result,
+    );
+    expect(result.documents[0]?.connection_count).toBe(3);
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Contents/Resources/Annotations.nib",
+        status: "partial",
+        reason: "connection_unresolved",
+        examined: 1,
+        omitted: 2,
       }),
     );
   },
@@ -1477,6 +1743,210 @@ describe("NIBArchive ownerless connector accounting", () => {
       }),
     );
   });
+});
+
+describe("NIBArchive single-object connectors", () => {
+  it("does not count tooltip, accessibility or runtime attribute connectors as ownerless", async () => {
+    const root = await createTestTempDirectory("rea-ib-annotation-");
+    const bundle = join(root, "Example.app");
+    await mkdir(bundle, { recursive: true });
+    // Xcode encodes a tooltip, an accessibility description and user-defined
+    // runtime attributes as connector objects that name one object and no
+    // NSSource, beside the outlet that is the only connection here.
+    await writeFile(
+      join(bundle, "Window.nib"),
+      encodeNibArchiveFixture({
+        classes: [
+          "NSCustomObject",
+          "NSButton",
+          "NSNibOutletConnector",
+          "NSIBHelpConnector",
+          "NSNibAXAttributeConnector",
+          "NSIBUserDefinedRuntimeAttributesConnector",
+          "NSString",
+          "NSArray",
+          "NSNumber",
+        ],
+        objects: [
+          { classIndex: 0, values: {} },
+          { classIndex: 1, values: {} },
+          {
+            classIndex: 2,
+            values: {
+              NSSource: { ref: 0 },
+              NSDestination: { ref: 1 },
+              NSLabel: { ref: 6 },
+            },
+          },
+          {
+            classIndex: 3,
+            values: {
+              NSDestination: { ref: 1 },
+              NSFile: { ref: 7 },
+              NSMarker: { ref: 8 },
+            },
+          },
+          {
+            classIndex: 4,
+            values: {
+              AXDestinationArchiveKey: { ref: 1 },
+              AXAttributeTypeArchiveKey: { ref: 9 },
+              AXAttributeValueArchiveKey: { ref: 10 },
+            },
+          },
+          {
+            classIndex: 5,
+            values: {
+              NSObject: { ref: 1 },
+              NSValues: { ref: 11 },
+              NSKeyPaths: { ref: 12 },
+            },
+          },
+          { classIndex: 6, values: { "NS.bytes": "button" } },
+          { classIndex: 6, values: { "NS.bytes": "NSToolTipHelpKey" } },
+          { classIndex: 6, values: { "NS.bytes": "Change text style" } },
+          { classIndex: 6, values: { "NS.bytes": "AXDescription" } },
+          { classIndex: 6, values: { "NS.bytes": "text style" } },
+          {
+            classIndex: 7,
+            values: {
+              NSInlinedValue: false,
+              UINibEncoderEmptyKey: { ref: 13 },
+            },
+          },
+          {
+            classIndex: 7,
+            values: {
+              NSInlinedValue: false,
+              UINibEncoderEmptyKey: { ref: 14 },
+            },
+          },
+          { classIndex: 8, values: { "NS.intval": 4 } },
+          { classIndex: 6, values: { "NS.bytes": "layer.cornerRadius" } },
+        ],
+      }),
+    );
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+    });
+
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Window.nib",
+        status: "complete",
+        reason: null,
+        examined: 1,
+        omitted: 0,
+      }),
+    );
+    expect(analysis.documents).toContainEqual(
+      expect.objectContaining({
+        relative_path: "Window.nib",
+        connection_count: 1,
+      }),
+    );
+    expect(analysis.graph.truncated).toBe(false);
+    expect(analysis.limitations).not.toContain(
+      "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+    );
+  });
+});
+
+// Only an absent NSSource marks an annotation; an encoded but unusable one is
+// still a connection whose owner cannot be resolved.
+describe("NIBArchive connectors with unusable sources", () => {
+  it("keeps an unknown AppKit connector without NSSource unresolved", async () => {
+    const root = await createTestTempDirectory("rea-ib-unknown-connector-");
+    const bundle = join(root, "Example.app");
+    await mkdir(bundle, { recursive: true });
+    await writeFile(
+      join(bundle, "Window.nib"),
+      encodeNibArchiveFixture({
+        classes: ["NSCustomObject", "NSButton", "NSFutureConnector"],
+        objects: [
+          { classIndex: 0, values: {} },
+          { classIndex: 1, values: {} },
+          { classIndex: 2, values: { NSDestination: { ref: 1 } } },
+        ],
+      }),
+    );
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+    });
+
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Window.nib",
+        status: "partial",
+        reason: "connection_unresolved",
+        omitted: 1,
+      }),
+    );
+    expect(analysis.graph.truncated).toBe(true);
+    expect(analysis.limitations).toContain(
+      "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+    );
+  });
+
+  it.each([
+    ["NSNibOutletConnector", "nil", null],
+    ["NSNibOutletConnector", "a non-reference value", 7],
+    ["NSIBHelpConnector", "nil", null],
+  ] as const)(
+    "still counts %s whose NSSource is %s as ownerless",
+    async (className, _label, source) => {
+      const root = await createTestTempDirectory("rea-ib-unusable-source-");
+      const bundle = join(root, "Example.app");
+      await mkdir(bundle, { recursive: true });
+      await writeFile(
+        join(bundle, "Window.nib"),
+        encodeNibArchiveFixture({
+          classes: [
+            "NSCustomObject",
+            "NSButton",
+            "NSNibOutletConnector",
+            "NSIBHelpConnector",
+            "NSString",
+          ],
+          objects: [
+            { classIndex: 0, values: {} },
+            { classIndex: 1, values: {} },
+            {
+              classIndex: className === "NSNibOutletConnector" ? 2 : 3,
+              values: {
+                NSSource: source,
+                NSDestination: { ref: 1 },
+                NSLabel: { ref: 3 },
+              },
+            },
+            { classIndex: 4, values: { "NS.bytes": "button" } },
+          ],
+        }),
+      );
+
+      const analysis = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "e".repeat(64),
+      });
+
+      expect(analysis.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "connections:Window.nib",
+          status: "partial",
+          reason: "connection_unresolved",
+          omitted: 1,
+        }),
+      );
+      expect(analysis.graph.truncated).toBe(true);
+      expect(analysis.limitations).toContain(
+        "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+      );
+    },
+  );
 });
 
 // This exact file is already selected by the unchanged native Apple CI lane.

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
@@ -306,6 +307,7 @@ const addReference = (
       kind: input.value.kind,
       specifier: input.value.specifier,
       expression: input.value.expression,
+      resolution_base_path: input.value.resolution_base_path ?? null,
       resolution_mode:
         input.value.kind === "static-import" ||
         input.value.kind === "dynamic-import" ||
@@ -338,7 +340,9 @@ const addEndpoint = (
   const candidate = input.value.interpretation === "candidate";
   const partial = input.value.resolution === "partial";
   const candidateLimitation =
-    "The unbound method-like argument is only a candidate; its receiver does not establish a network call.";
+    input.value.kind === "route"
+      ? "Only the property name suggests a route; the enclosing object has no router fields."
+      : "The unbound method-like argument is only a candidate; its receiver does not establish a network call.";
   const partialLimitation =
     "The request target is not an exact literal; the endpoint value retains the unresolved source expression.";
   const label = `${input.value.kind} ${candidate ? "endpoint candidate" : "endpoint"}`;
@@ -486,6 +490,7 @@ const addDiscoveredRole = (
     sourcePath: input.file.path,
     context: input.value.resolution_context,
     files: context.filesByPath,
+    jsonDocuments: context.analysis.jsonDocuments,
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
     ...(input.value.role === "preload"
@@ -554,6 +559,7 @@ const addSourceMapEdge = (
     sourcePath: input.file.path,
     context: "url-reference",
     files: context.filesByPath,
+    jsonDocuments: context.analysis.jsonDocuments,
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
   });
@@ -630,6 +636,12 @@ const resolveReference = (
   if (specifier === null) return null;
   const isWorker =
     reference.kind === "worker" || reference.kind === "service-worker";
+  const resolutionSourcePath =
+    reference.kind === "require" && reference.resolution_base_path !== undefined
+      ? posix.normalize(
+          posix.join(posix.dirname(sourcePath), reference.resolution_base_path),
+        )
+      : sourcePath;
   const chunk = isWorker
     ? null
     : resolveBundlerChunkReference(context, sourcePath, reference);
@@ -658,14 +670,16 @@ const resolveReference = (
         sourcePath,
         context: "url-reference",
         files: context.filesByPath,
+        jsonDocuments: context.analysis.jsonDocuments,
         directoryPaths: context.directoryPaths,
         unanalyzedFiles: context.unanalyzedFiles,
       })
     : resolveArtifactPathByContext({
         declaredPath: specifier,
-        sourcePath,
+        sourcePath: resolutionSourcePath,
         context: "module-specifier",
         files: context.filesByPath,
+        jsonDocuments: context.analysis.jsonDocuments,
         directoryPaths: context.directoryPaths,
         unanalyzedFiles: context.unanalyzedFiles,
         ...("require" === reference.kind ||
@@ -673,7 +687,7 @@ const resolveReference = (
         "dynamic-import" === reference.kind
           ? {
               moduleKind: moduleResolutionModeForJavaScriptReference(
-                sourcePath,
+                resolutionSourcePath,
                 reference.kind,
               ),
             }

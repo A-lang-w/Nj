@@ -137,6 +137,10 @@ chunks. Its offsets refer to **base64-decoded body bytes**; other offsets refer
 to retained body bytes. Every field has a body-scoped `field_id` derived from
 its byte offset, a `frame_index`, and a `parent_field_id` for schema-driven
 nested messages or groups. Repeated field numbers remain separate occurrences.
+Trailer blocks are parsed as HTTP field bytes. Valid UTF-8 values are retained;
+when a field contains opaque non-UTF-8 bytes, that field is omitted and the
+trailer frame is partial, while other valid trailer fields remain available.
+The retained body and frame byte range preserve the original opaque value.
 
 Without a schema, varints and fixed-width values retain exact unsigned decimal
 representations. Length-delimited UTF-8, nested-message and packed readings
@@ -270,6 +274,10 @@ not register or wrap the Fiddler MCP server.
   sensitive-value exclusions. Redacted byte fields retain neither original
   bytes nor their digest. Unknown extension names and token-looking query
   parameters do not establish sensitivity.
+  HAR authentication fields, transport URLs and base64 content are interpreted
+  only inside `log.entries`. Similarly named unknown fields in the document
+  container remain opaque evidence; explicit sensitive-value declarations still
+  apply to both scopes.
 
 Mark sensitive literal string/UTF-8 byte values with MCP `sensitive_values`, or
 repeat CLI `--sensitive-value`. These declarations are never persisted in
@@ -410,7 +418,8 @@ agent environment later serves from retained Evidence. The view reuses the
 api-surface grouping, then keeps the groups on the primary origin, the origin
 with the most JSON-like records (`application/json`, `application/*+json`,
 `text/plain`, `text/markdown`), whose path starts with `/api/` or `/apis/` or
-whose content types are JSON-like. Every other group is listed under
+whose content types are JSON-like, and the write groups answered with no body
+(a bodiless `204 DELETE`). Every other group is listed under
 `excluded` with reason `other-origin`, `ui-page-or-asset` or `non-json`, and
 retained records without a usable request line are counted in a limitation.
 
@@ -595,12 +604,12 @@ Every entity cites its `record_ordinals`.
 
 `views` lists one plan per read tool in tool order:
 
-| Shape      | Plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `item`     | The entity object at `pointer` (the root, one member, or `/0` or `/<member>/0`), the ordered `fields` the view shows and the `required_fields` every recording had, and `envelope_ordinal`: the recording whose response, with the entity replaced, every item response shares                                                                                                                                                                                                                                                                                                                                                                                       |
-| `list`     | The array at `pointer`, its `fields`, `membership` (`all`: every entity of the collection in state order, when each recording listed exactly that, had no query or only paging parameters (`limit`, `offset`, `page`, `per_page`, `perpage`, `page_size`, `pagesize`, `size`, `start`, `_start`, `_end`), no item-total member (`total`, `count`, `totalCount`, `item_count`, `totalcount`, `itemcount`, but not `total_pages` or `per_page`; a number or a string of digits) differing from the number listed, and no `has_more`, `next` or next-page token member set; `recorded`: the entities each recording listed) and `counters` that equal the number listed |
-| `document` | The latest initial value of a list tool whose responses hold no identified list, when its initial reads share one request line; held in `documents` with that `path`, whether or not the capture writes it, unless its value changed across any recorded write between those reads (`fields-differ`)                                                                                                                                                                                                                                                                                                                                                                 |
-| `recorded` | A `reason` the tool replays its recordings instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Shape      | Plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `item`     | The entity object at `pointer` (the root, one member, or `/0` or `/<member>/0`), the ordered `fields` the view shows and the `required_fields` every recording had, and `envelope_ordinal`: the recording whose response, with the entity replaced, every item response shares                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `list`     | The array at `pointer`, its `fields`, `membership` (`all`: every entity of the collection in state order, when each recording listed exactly that, had no query or only paging parameters (`limit`, `offset`, `page`, `per_page`, `perpage`, `page_size`, `pagesize`, `size`, `start`, `_start`, `_end`), no item-total member (`total`, `count`, `totalCount`, `item_count`, `totalcount`, `itemcount`, `numberOfElements`, but not `total_pages` or `per_page`; a number or a string of digits) differing from the number listed, and no `has_more`, `next` or next-page token member set; `recorded`: the entities each recording listed, except on the lines `all_record_ordinals` names, which each meet those conditions on their own and list every entity), and `counters` that equal the number listed |
+| `document` | The latest initial value of a list tool whose responses hold no identified list, when its initial reads share one request line; held in `documents` with that `path`, whether or not the capture writes it, unless its value changed across any recorded write between those reads (`fields-differ`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `recorded` | A `reason` the tool replays its recordings instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 An item or list plan is kept only when it reproduces the latest initial
 recording of each request line from the state, comparing JSON values without
@@ -617,6 +626,29 @@ a template it says nothing about the template's other paths. A body is usable
 when its content type is
 JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
 conversion exactly, and no member is named `__proto__`.
+
+A list view also learns, from its checked lines that do not list the whole
+collection, what each query parameter does, and names the result in `query`.
+Each such line is explained by the first combination of roles that lists
+exactly what it recorded from the collection's initial entities:
+
+| Role        | Parameter                                                                                  | Effect                                                                                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filter`    | any, on a `field` every listed item holds the value in                                     | entities whose field equals the value as text, or whose array field holds it directly or as an object's `id`, `slug` or `name`                                  |
+| `search`    | `q`, `query`, `search`, `searchTerm`, `term`, `keyword`(s)                                 | entities with one of `fields` containing the value, ignoring case; the fields are those it matched in the listed items, URLs only where nothing else matched    |
+| `sort`      | `order`, `orderBy`, `ordering`, `sort`, `sortBy` (and `_by` spellings)                     | ordered by the field the value names (`name`, `-name`, `name:desc`, `name-ASC`): numbers by value, text ignoring case, null last ascending, ties in state order |
+| `direction` | `dir`, `direction`, `order`, `orderDirection`, `sortDir`, `sortOrder` with `asc` or `desc` | the sort's direction                                                                                                                                            |
+| `limit`     | `limit`, `per_page`, `perPage`, `page_size`, `size`, `count`, `take`, `itemsPerPage`       | page size; zero or a negative value lists every match                                                                                                           |
+| `offset`    | `offset`, `start`, `_start`, `skip`                                                        | matches skipped before the page                                                                                                                                 |
+| `page`      | `page`                                                                                     | page number, counted from `first` (1 or 0, whichever explains the line)                                                                                         |
+| `inert`     | any                                                                                        | changes nothing for its recorded `values`; other values are not computed                                                                                        |
+
+Lines that disagree on a parameter's role drop it, inert values gather and
+search fields unite. `query.record_ordinals` are the lines the merged roles
+reproduce, envelope and fields included, and `query.totals` the envelope
+members that count every match before paging on each of them (a
+`number`-of-items member counts the page). The roles are inferences from the
+recorded lines; a line they do not reproduce keeps its recorded members.
 
 `writes` lists one plan per tool whose request may change state, in tool
 order. Its `effect` is `create` for a `POST` to a type's
@@ -641,6 +673,11 @@ sending must be a clock, an increment or a slug, or the plan is
 tool. Every member the first call sent is required, except by `PATCH` and
 `POST` updates.
 
+A read on a line `query` answers is checked against the query evaluated over
+the replayed state. It covers the collection only when every parameter sorts or
+pages and the answer holds every match; otherwise it covers the entities it
+lists, and those the line or the read listed that the state no longer holds.
+
 The view then replays the timeline on a copy of the initial state. Modelled
 writes apply their effect; only a `2xx` write is modelled or an example, and
 any other write (a redirect, an unanswered or unmodelled one) leaves the entity
@@ -651,8 +688,9 @@ with its recording as the read plans are, as the whole response it would serve:
 the entity or list rendered into the envelope of the item view's or the line's
 base recording, with the members the state still holds. A 400, 404 or 410 (or a
 `null` body) agrees with an entity the copy does not hold. A match confirms
-the writes that changed its entity or collection since it was last read; a
-mismatch contradicts them, or, when an unmodelled write came after them, is
+the writes that changed its entity or collection since it was last read, less
+those whose entity a read since showed absent, which no longer count for the
+collection; a mismatch contradicts them, or, when an unmodelled write came after them, is
 checked only on the members they sent; a mismatch no write explains marks the related writes since as
 `side-effect`. A plan is `served` when a read confirmed it and none
 contradicted it; otherwise its `reason` is the first of its build reason
@@ -686,8 +724,17 @@ budget. Those budgets have no runtime override. `capture_timeout_ms` does not
 raise them. Exceeding a budget returns no partial success.
 Oversized selected captures return an input error identifying `capture_path`
 and the byte budget; owned reply/output failures remain output or provider errors.
-HAR, SAZ and qlog run in an owned
-192 MiB Node old-generation heap with one V8 worker. Mitmproxy decoding applies
+HAR, SAZ and qlog run in an owned Node old-generation heap with one V8 worker.
+`REA_CAPTURE_DECODER_OLD_GENERATION_MIB` is a decimal integer of mebibytes from
+8 to 16384. Unset uses 192, the previous constant. Invalid values fail
+configuration and name the setting; they do not fall back to 192. The setting
+is read from the environment that starts REA, so a change needs a restart.
+A memory failure names the effective mebibytes, whether they came from the
+default or the setting, the default, the floor, and the maximum. The decoder
+passes that value as `--max-old-space-size` and removes inherited
+`NODE_OPTIONS`, so additional host memory and `NODE_OPTIONS` do not raise the
+heap. The 8 MiB semi-space stays fixed; a smaller old generation aborts Node
+during startup instead of enforcing a limit. Mitmproxy decoding applies
 Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
 both commands use `capture_timeout_ms` (default 30000) and independently supervised
 process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
@@ -695,15 +742,18 @@ and stderr; the collector drops overflow as it arrives, reports the limit
 failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.
 SAZ and qlog refuse decoding when neither a Node heap limit nor a Windows Job Object bound can be enforced. Existing HAR availability is preserved.
 When REA runs on Bun, the HAR/SAZ/qlog decoder runs on Bun, which ignores these V8 heap
-flags; its limitations and resource failures then omit the heap sizes. On
+flags; its limitations and resource failures then omit the V8 heap sizes. On
 Windows, the decoder's owned Job Object instead limits its committed memory to
-704 MiB, the 192 MiB budget plus a 512 MiB reserve for Bun itself. The
-limitations state that limit, and reaching it returns `resource_constraint`
-with `process_memory_limit_bytes`, whatever exit status Bun reports.
+the effective `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` value plus a 512 MiB
+reserve for Bun itself. The default 192 MiB setting therefore yields 704 MiB.
+The limitations state that limit, and reaching it returns `resource_constraint`
+with `process_memory_limit_bytes`, whatever exit status Bun reports. Other Bun
+hosts enforce no decoder heap limit, so raising the setting does not bound them.
 
 Observed decoder memory exhaustion returns `resource_constraint`, with the
-selected capture, applicable limits and retained process diagnostics. HAR/SAZ/qlog's
-old-generation heap is fixed; inherited `NODE_OPTIONS` cannot raise it.
+selected capture, applicable limits and retained process diagnostics. Raising
+host memory or `NODE_OPTIONS` does not raise the old-generation heap. Set
+`REA_CAPTURE_DECODER_OLD_GENERATION_MIB` and restart REA.
 Record selection happens after complete decoding and does not reduce that
 workload. Use a smaller capture exported by its producer or another decoder
 with sufficient capacity, retaining the original for provenance. Subsets do
@@ -774,7 +824,7 @@ by null; there is no single events pointer shared by all traces.
 | Original event and loss declaration | Observed endpoint report; `recovery:packet_lost` does not prove actual network loss. Missing packet number/type remains unknown.                                                                                                                                              |
 | STREAM ranges and byte totals       | Derived per trace and direction from reported offsets and lengths using exact integer arithmetic. `unique_bytes` unions intervals; `frame_length_sum` includes overlaps; `repeated_bytes` is their difference. Overlap alone does not prove retransmission or equal contents. |
 | FIN final sizes                     | Reported offset plus length where FIN is true; multiple conflicting sizes remain visible. A final size does not establish complete coverage or a received body.                                                                                                               |
-| Incomplete fact records             | Ordinals with omitted/redacted interpretable frame metadata; usable fields in other records survive. An empty list does not establish complete logging or capture.                                                                                                            |
+| Incomplete fact records             | Ordinals with omitted/redacted interpretable frame metadata, including an unknown STREAM FIN; usable fields such as known ranges in that record survive. An empty list does not establish complete logging or capture.                                                        |
 | HTTP bodies and causality           | `body_bytes: "not-reported"`; lengths and headers are metadata, with no reconstructed body, hash, timing causality or live process attribution.                                                                                                                               |
 
 QUIC integer fields interpreted here accept exact nonnegative JSON integer

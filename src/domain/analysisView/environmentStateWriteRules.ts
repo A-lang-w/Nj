@@ -1,7 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  decodedSegment,
   isParam,
   normalizedPath,
+  pathSegmentMatches,
   segmentsOf,
   type JsonObject,
 } from "./environmentStateRules.js";
@@ -35,6 +37,12 @@ export type GeneratedRule =
       readonly scope: "collection" | "type";
     }
   | { readonly field: string; readonly rule: "unique" }
+  /** The value kept with each UUID at the pointers (`*` for any array index) replaced by a fresh one, as rewritten child rows are. */
+  | {
+      readonly field: string;
+      readonly rule: "renewed";
+      readonly pointers: string[];
+    }
   | {
       readonly field: string;
       readonly rule: "clock";
@@ -187,24 +195,22 @@ export const pathValuesOf = (
       if (segment !== value) return undefined;
       continue;
     }
-    let decoded = value;
-    try {
-      decoded = decodeURIComponent(value);
-    } catch {
-      decoded = value;
-    }
-    values.set(segment.slice(1, -1), decoded);
+    values.set(segment.slice(1, -1), decodedSegment(value));
   }
   return values;
 };
 
-/** Whether two paths are segment prefixes of one another, a parameter on either side matching any segment. */
+/** Whether two paths are segment prefixes of one another, a parameter on either side matching any segment, with the shared single-decode spelling rule. */
 export const prefixRelated = (left: string, right: string): boolean => {
   const a = segmentsOf(left);
   const b = segmentsOf(right);
   const shared = Math.min(a.length, b.length);
   for (let index = 0; index < shared; index += 1)
-    if (!isParam(a[index]!) && !isParam(b[index]!) && a[index] !== b[index])
+    if (
+      !isParam(a[index]!) &&
+      !isParam(b[index]!) &&
+      !pathSegmentMatches(a[index]!, b[index]!)
+    )
       return false;
   return true;
 };
