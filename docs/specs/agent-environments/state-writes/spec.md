@@ -87,8 +87,8 @@ same root regenerates values on every read.
 A `POST` whose path gives it no target is a `create` into the type its returned
 id is read under: its exemplar's response names an id (an identity member of the
 body or of an object member, or a scalar body or sole member of four characters
-or more), and the first later successful item read naming that id belongs to a
-state type. That read must come before any other tool's write, which may have
+or more), and the first later successful item read naming that id, whose body
+shows the item (a JSON `null` read is passed over), belongs to a state type. That read must come before any other tool's write, which may have
 made what it shows, as a publish call makes a note from a draft. The entity must
 be new: neither the initial state nor any read finished before the call began
 holds that id (one still running may show what the call made): an item read of

@@ -18,6 +18,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
   pathValuesOf,
   type WriteEffect,
@@ -119,6 +120,22 @@ const shownIds = (
   return showsItem(body(), id) ? new Set([id]) : new Set();
 };
 
+/** The shown ids a creation returned, each charged before it is kept. */
+const keptIds = (
+  shown: ReadonlySet<string>,
+  returned: ReadonlySet<string>,
+  retain: (bytes: number) => void,
+): Set<string> => {
+  const kept = new Set<string>();
+  for (const id of shown)
+    if (returned.has(id)) {
+      retain(ENTRY_BYTES + textBytes(id.length));
+      kept.add(id);
+    }
+  retain(ENTRY_BYTES);
+  return kept;
+};
+
 /** One read of a type: where it ran, when it finished, whether it reads one item, and the ids it shows. */
 interface ShownRead {
   readonly at: number;
@@ -201,10 +218,13 @@ export const creationLimit = (
     readonly records: ReadonlyMap<number, StateRecordFacts>;
     readonly position: (record: StateRecordFacts) => number;
     readonly body: (ordinal: number) => JsonValue | undefined;
+    readonly retain: (bytes: number) => void;
   },
   until: StateRecordFacts | undefined,
 ): StateRecordFacts | undefined => {
   if (creations.length === 0) return undefined;
+  // Only the ids some creation returned can be fresh, so each read keeps those alone, charged.
+  const returned = new Set(creations.flatMap((creation) => creation.ids));
   const end = until === undefined ? Infinity : reads.position(until);
   const readers = reads.tools.flatMap((tool) => {
     const read = readType(tool.path_template);
@@ -222,7 +242,11 @@ export const creationLimit = (
               at: reads.position(record),
               end: record.end,
               item,
-              ids: shownIds(record, item, () => reads.body(ordinal)),
+              ids: keptIds(
+                shownIds(record, item, () => reads.body(ordinal)),
+                returned,
+                reads.retain,
+              ),
             },
           ];
     }),
@@ -272,11 +296,13 @@ export const linkedCreate = (input: {
     // Another write may have made what a later read shows, so the search ends there.
     if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
     const view = input.viewOf(record.ordinal);
+    // A read naming the id but showing no entity, such as JSON null, says nothing of where the call created.
     if (
       record.method !== "GET" ||
       !succeeded(record) ||
       view?.shape !== "item" ||
-      !ids.has(lastSegmentValue(record.path))
+      !ids.has(lastSegmentValue(record.path)) ||
+      !input.showsItem(record.ordinal, lastSegmentValue(record.path))
     )
       continue;
     const id = lastSegmentValue(record.path);
