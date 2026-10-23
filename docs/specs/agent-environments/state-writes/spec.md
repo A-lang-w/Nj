@@ -127,7 +127,8 @@ body or of an object member, or a scalar body or sole member of four characters
 or more), and the first later successful item read naming that id belongs to a
 state type. That read must come before any other tool's write, which may have
 made what it shows, as a publish call makes a note from a draft. The entity must
-be new: neither the initial state nor any earlier read holds that id, whether an
+be new: neither the initial state nor any read finished before the call began
+holds that id (one still running may show what the call made), whether an
 item read of it, a list read of its type, or any read of the item read's
 collection, with or without a query, that lists it under an identity member of
 its own (a body with no list counts an identity member at any depth). An id shorter than four characters may be any type's,

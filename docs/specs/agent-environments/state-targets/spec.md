@@ -29,13 +29,13 @@ its cause in the recordings and the code. The five largest shared causes:
   models or one redirected or unanswered, puts the entity into the copy within the view's budget; an entity a modelled
   write touched is never taken back.
 - **Linked creates.** A POST whose path names no state type becomes a create into the type whose item read first names
-  an id its response returned, before any other tool's write, when the id is new: no earlier read of the id, its
-  type's lists or that collection showed it. Its observation is a read of an id its response returned, in an envelope
-  too. Serving creates in that read's collection, for the exemplar's path arguments only (segment by segment, in
-  either spelling), and fills path fields with its exemplar's path values decoded once. A successful POST that
-  returned an id a type's reads only show once it began ends that type's initial window: a read still running then may
-  show it, and a list read shows its listed entities' own ids (identity-named, or a suffix-named field such as
-  `projectId` distinct across two or more when no id-named field identifies them), not those they nest.
+  an id its response returned, before any other tool's write, when the id is new: no read finished before it began, of
+  the id, its type's lists or that collection, showed it. Its observation is a read of an id its response returned, in
+  an envelope too. Serving creates in that read's collection, for the exemplar's path arguments only (segment by
+  segment, in either spelling), and fills path fields with its exemplar's path values decoded once. A successful POST
+  that returned an id a type's reads only show once it began ends that type's initial window: a read still running
+  then may show it, and a list read shows its listed entities' own ids (identity-named, or a suffix-named field such
+  as `projectId` distinct across two or more when no id-named field identifies them), not those they nest.
 - **Rewrite cuts.** When a type's reads disagree across a write under another root, the type's initial window ends at
   the earliest write within the change and the state is extracted again. The earlier of this and the creation cut wins.
 - **Variant lines.** A read line that shows the same entities in another form is a variant: it leaves the view's
@@ -48,9 +48,10 @@ its cause in the recordings and the code. The five largest shared causes:
   and no replayed read gave it. The write gate skips exactly the successful reads serving replays, by the same
   decision. A filter role whose name matches no field needs two agreeing values. A tool whose lines would take more
   than 2^24 line pairs and entity lookups to compare pairwise keeps every line checked. An item line first recorded
-  after the initial window is a variant too when it names a new shaping parameter and its object carries or lacks
-  members the planned lines' do not, and an item only a replayed line showed, which the state never started with,
-  answers with its own recording.
+  after the initial window is a variant too, judged against the lines left once variants are dropped: when it names a
+  new shaping parameter and its object carries or lacks members theirs do not, or selects some fields and leaves out
+  members they always show, and an item only a replayed line showed, which the state never started with, answers with
+  its own recording.
 - **Item actions.** A write to an item path plus a literal segment that names no collection, whose calls answer nothing
   or the entity (never a 201, and with every field its item read always shows), updates that entity; a scalar it
   changes without sending is set on every call. It is served only once a call found every field it sets already at

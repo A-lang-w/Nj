@@ -234,8 +234,8 @@ export const creationLimit = (
 /**
  * The state type and collection a POST whose path names none creates into: that of the first later
  * successful item read naming an id its first successful call returned, before any other tool's
- * write, when neither the initial state nor any earlier read of that id, its type's lists or its
- * collection showed that id. A short id may be any type's, so it links only to a type read before the call.
+ * write, when neither the initial state nor any read finished before the call of that id, its
+ * type's lists or its collection showed that id. A short id may be any type's, so it links only to a type read before the call.
  */
 export const linkedCreate = (input: {
   readonly tool: StateToolFacts;
@@ -252,9 +252,14 @@ export const linkedCreate = (input: {
     (record) => own.has(record.ordinal) && succeeded(record),
   );
   if (first === -1) return undefined;
-  const ids = new Set(input.respondedIds(records[first]!.ordinal));
+  const post = records[first]!;
+  const ids = new Set(input.respondedIds(post.ordinal));
   if (ids.size === 0) return undefined;
-  for (const record of records.slice(0, first))
+  // Only a read finished before the call began shows what was there before it, as `freshIds` decides.
+  const before = records
+    .slice(0, first)
+    .filter((record) => record.end <= post.start);
+  for (const record of before)
     if (
       record.method === "GET" &&
       succeeded(record) &&
@@ -278,7 +283,7 @@ export const linkedCreate = (input: {
       input.entities.some(
         (entity) => entity.type === view.type && entity.id === id,
       ) ||
-      records.slice(0, first).some((earlier) => {
+      before.some((earlier) => {
         const read = input.viewOf(earlier.ordinal);
         return (
           earlier.method === "GET" &&
@@ -290,7 +295,7 @@ export const linkedCreate = (input: {
       });
     const unseen =
       id.length < MIN_ID_LENGTH &&
-      !records.slice(0, first).some((earlier) => {
+      !before.some((earlier) => {
         const read = input.viewOf(earlier.ordinal);
         return (
           earlier.method === "GET" &&

@@ -51,6 +51,7 @@ import { rewriteCuts, type RewriteSpan } from "./environmentStateRewrites.js";
 import {
   checkItemPlan,
   checkListPlan,
+  type LateLine,
   type StateGateContext,
   type StatePlan,
 } from "./environmentStateGate.js";
@@ -64,14 +65,10 @@ import {
 } from "./environmentStateWriteLinks.js";
 import { extractWrites } from "./environmentStateWrites.js";
 import {
-  addLine,
   dropObservations,
   lineShapes,
-  namesNewParameter,
-  noLines,
-  showsOtherMembers,
+  shapesOtherwise,
   withoutVariants,
-  type LineTotals,
 } from "./environmentStateVariants.js";
 import { stateWritesOf } from "./environmentStateQueryCalls.js";
 import {
@@ -238,6 +235,7 @@ export class EnvironmentStateExtraction {
         shapeOf: (record) => shapes.get(record.ordinal),
         queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
         position: (ordinal) => this.#position.get(ordinal)!,
+        retain: (bytes) => this.#retain(bytes),
       });
       if (split === undefined) continue;
       this.#retain(ENTRY_BYTES * (split.dropped.size + 2));
@@ -422,30 +420,31 @@ export class EnvironmentStateExtraction {
     candidate: Candidate,
     pointer: string,
     recordings: readonly StateRecordFacts[],
-    projected: readonly number[] = [],
+    replayed: Pick<StatePlan, "projected" | "late"> = {},
   ): void {
     this.#plans.push({
       ...candidate,
       pointer,
       recordings,
       latest: this.#latestPerLine(recordings),
-      projected,
+      projected: replayed.projected ?? [],
+      late: replayed.late ?? [],
     });
   }
 
   /**
-   * Later identity-free projections, and later lines that show the entity in another representation
-   * than the planned lines (a new shaping parameter, members theirs lack or always carry), are
-   * evidence of replay, never initial entities. Read only those query bodies.
+   * Later identity-free projections are evidence of replay, never initial entities; later lines that
+   * show the identity and name a shaping or projection parameter are kept, with their members, for
+   * the variant pass to decide against the lines left. Read only those query bodies.
    */
   #addLateProjections(
     tool: StateToolFacts,
     type: string,
     projected: number[],
-    planned: LineTotals,
-  ): void {
+  ): LateLine[] {
     const limit = this.#initLimit(type);
-    if (limit === undefined) return;
+    const late: LateLine[] = [];
+    if (limit === undefined) return late;
     for (const ordinal of tool.record_ordinals) {
       const record = this.#byOrdinal.get(ordinal);
       if (
@@ -457,23 +456,25 @@ export class EnvironmentStateExtraction {
       )
         continue;
       const projecting = projectsFields(record.query);
-      if (!projecting && !namesNewParameter(record.query, planned)) continue;
-      const replayed = this.#withBody(ordinal, (body) => {
-        if (body === undefined) return false;
+      // A selection of every field (`fields=*`) shows the entity whole, so only a partial one may replay.
+      const selecting = selectsSomeFields(record.query);
+      const shaping = shapesOtherwise(record.query);
+      if (!projecting && !shaping) continue;
+      const line = this.#withBody(ordinal, (body) => {
+        if (body === undefined) return undefined;
         const located = locateItem(body, lastSegmentValue(record.path));
-        if (projecting) return located === undefined;
-        if (located === undefined) return false;
+        if (located === undefined) return projecting ? null : undefined;
+        if (!selecting && !shaping) return undefined;
         const members = membersAt(body, located.pointer);
-        return showsOtherMembers(
-          { carried: members, common: members },
-          planned,
-        );
+        this.#retain(ENTRY_BYTES * (2 + members.size));
+        return { record, members, projecting: selecting };
       });
-      if (replayed) {
+      if (line === null) {
         this.#retain(ENTRY_BYTES);
         projected.push(ordinal);
-      }
+      } else if (line !== undefined) late.push(line);
     }
+    return late;
   }
 
   /** Item tools prove a type's identity field by the path value their bodies repeat. */
@@ -485,19 +486,12 @@ export class EnvironmentStateExtraction {
     let keys: string[] | undefined;
     const kept: StateRecordFacts[] = [];
     const projected: number[] = [];
-    // The planned lines' representation, which a later line's is compared with.
-    const planned = noLines();
     for (const record of recordings) {
-      const located = this.#withBody(record.ordinal, (body) => {
-        if (body === undefined) return null;
-        const found = locateItem(body, lastSegmentValue(record.path));
-        if (found !== undefined) {
-          const members = membersAt(body, found.pointer);
-          this.#retain(ENTRY_BYTES * (1 + members.size));
-          addLine(planned, record.query, { carried: members, common: members });
-        }
-        return found;
-      });
+      const located = this.#withBody(record.ordinal, (body) =>
+        body === undefined
+          ? null
+          : locateItem(body, lastSegmentValue(record.path)),
+      );
       if (located === null) {
         this.#recorded(tool, "body-unusable");
         return;
@@ -535,11 +529,11 @@ export class EnvironmentStateExtraction {
       return;
     }
     this.#identity.set(type, { field, basis: "path-parameter" });
-    this.#addLateProjections(tool, type, projected, planned);
+    const late = this.#addLateProjections(tool, type, projected);
     projected.sort(
       (left, right) => this.#position.get(left)! - this.#position.get(right)!,
     );
-    this.#addPlan(candidate, pointer, kept, projected);
+    this.#addPlan(candidate, pointer, kept, { projected, late });
   }
 
   /**
@@ -604,14 +598,11 @@ export class EnvironmentStateExtraction {
     if (!this.#identity.has(type))
       this.#identity.set(type, { field, basis: "field-name" });
     this.#retain(ENTRY_BYTES * (initial.length - recordings.length));
-    this.#addPlan(
-      candidate,
-      pointer,
-      recordings,
-      initial
+    this.#addPlan(candidate, pointer, recordings, {
+      projected: initial
         .filter((record) => !recordings.includes(record))
         .map((record) => record.ordinal),
-    );
+    });
   }
 
   #observePlan(plan: StatePlan): void {

@@ -27,7 +27,12 @@ import {
   type JsonObject,
 } from "./environmentStateRules.js";
 import { environmentStateFields } from "./environmentStateView.js";
-import { lineShapes, variantLines } from "./environmentStateVariants.js";
+import {
+  lineShapes,
+  replayKeys,
+  variantLines,
+} from "./environmentStateVariants.js";
+import { rewriteCuts } from "./environmentStateRewrites.js";
 
 type State = Extract<AnalysisViewResult, { kind: "environment-state" }>;
 const ALL_RULES = [
@@ -950,6 +955,62 @@ it("counts each change of a line's membership across a write against the budget"
   expect(allowance(capture(1)) - allowance(capture(2))).toBeGreaterThanOrEqual(
     tags * 256,
   );
+});
+
+it("counts each replay key it keeps against the budget", () => {
+  let retained = 0;
+  const names = Array.from(
+    { length: 500 },
+    (_, index) => `view_${String(index)}`,
+  );
+  const keys = replayKeys(
+    ["?view=plain"],
+    [`?${names.map((name) => `${name}=1`).join("&")}`],
+    (bytes) => {
+      retained += bytes;
+    },
+  );
+  expect(keys.length).toBeGreaterThan(names.length);
+  expect(retained).toBeGreaterThanOrEqual(keys.length * 128);
+});
+
+it("finds each span's earliest write without scanning the writes before it", () => {
+  let reads = 0;
+  const timed = (ordinal: number, start: number, end: number) => {
+    const record = {
+      ordinal,
+      method: "POST",
+      path: "/api/log",
+      query: undefined,
+      status: 200,
+    };
+    return Object.defineProperties(record, {
+      start: { enumerable: true, get: () => ((reads += 1), start) },
+      end: { enumerable: true, get: () => ((reads += 1), end) },
+    }) as typeof record & { readonly start: number; readonly end: number };
+  };
+  const count = 2000;
+  const writes = Array.from({ length: count }, (_, index) =>
+    timed(index, index * 10, index * 10 + 1),
+  );
+  const reads_ = new Map(
+    Array.from({ length: count }, (_, index) => {
+      const ordinal = count + index;
+      return [
+        ordinal,
+        timed(ordinal, index * 10 + 5, index * 10 + 12),
+      ] as const;
+    }),
+  );
+  const spans = [...reads_.keys()].map((earlier, index) => ({
+    type: `/api/type_${String(index)}`,
+    earlier,
+    later: earlier,
+  }));
+  reads = 0;
+  const cuts = rewriteCuts(spans, writes, reads_);
+  expect(cuts.size).toBe(count - 1);
+  expect(reads).toBeLessThan(200 * count);
 });
 
 it("releases a planning pass a rewrite cut discards before extracting the state again", () => {

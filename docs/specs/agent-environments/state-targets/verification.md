@@ -65,6 +65,7 @@ write tool is lost.
 - **Seventh round** (on main `96ea32b7`): WordPress's post create moves from side-effect to unconfirmed, still unserved:
   its only later read, `/wp-json/wp/v2/posts/22?context=edit`, shows the edit representation (`generated_slug`), so it
   is now replayed rather than checked. No served write, read view or recorded read changes.
+- **Eighth round** (on main `3e7e102a`): no verdict, read view or recorded read changes on the restored captures.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged

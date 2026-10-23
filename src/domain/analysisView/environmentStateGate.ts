@@ -43,6 +43,14 @@ import {
 } from "./environmentStateListFacts.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
+/** A successful item read first recorded after the initial reads, with the members its object carries. */
+export interface LateLine {
+  readonly record: StateRecordFacts;
+  readonly members: ReadonlySet<string>;
+  /** Whether it asks for some fields (`fields`, `select`, …). */
+  readonly projecting: boolean;
+}
+
 /** A read tool whose recordings locate entities of one type at one pointer. */
 export interface StatePlan {
   readonly tool: StateToolFacts;
@@ -55,6 +63,8 @@ export interface StatePlan {
   readonly latest: readonly StateRecordFacts[];
   /** Reads left to replay: item reads that asked for some fields only, and representation variants. */
   readonly projected?: readonly number[];
+  /** Item lines first recorded after the initial reads whose identity they show, decided against the lines left once variants are dropped. */
+  readonly late?: readonly LateLine[];
   /** The query keys that pick calls of the replayed reads out. */
   readonly projectedKeys?: readonly ReplayKey[];
 }
