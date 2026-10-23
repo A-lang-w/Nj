@@ -111,6 +111,15 @@ const listed = (members: readonly string[]): string => {
 const bodyContract = (body: WriteBody): string =>
   `accepted members: ${listed(body.accepted)}; members accepted only with their recorded value: ${listed(body.fixed.map(({ member }) => member))}; required: ${listed(body.required)}`;
 
+/** Recorded values up to this many characters are shown where a served write names them; a longer one is only named. */
+const SHOWN_VALUE_CHARS = 120;
+
+/** A recorded value as JSON text, when short enough to show. */
+export const shownValue = (value: JsonValue): string | undefined => {
+  const text = JSON.stringify(value);
+  return text.length <= SHOWN_VALUE_CHARS ? text : undefined;
+};
+
 /** Why a call's body does not fit the members the capture showed, if it does not; `shapes` gives each accepted member's JSON type, else the body's recorded kind. */
 export const bodyProblem = (
   body: WriteBody,
@@ -128,7 +137,7 @@ export const bodyProblem = (
     }
     if (fixed.has(member)) {
       if (!same(fixed.get(member), value))
-        return `Member ${member} is accepted only with the value the capture sent, because the application stored it differently or other recorded fields go with it (${bodyContract(body)}).`;
+        return `Member ${member} is accepted only with the value the capture sent, ${shownValue(fixed.get(member)!) ?? "too long to show here"}, because the application stored it differently or other recorded fields go with it (${bodyContract(body)}).`;
       continue;
     }
     if (!body.accepted.includes(member))

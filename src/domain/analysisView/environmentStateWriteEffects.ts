@@ -217,9 +217,7 @@ export const requestObject = (
     draft && {
       built: built(draft),
       envelope: draft.plan.body?.envelope,
-      query: context.records.find(
-        (other) => other.ordinal === draft.plan.exemplar_ordinal,
-      )?.query,
+      query: context.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
     },
   );
 

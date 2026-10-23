@@ -4,13 +4,15 @@ import {
   isObject,
   locateItem,
   scalarText,
+  segmentsOf,
 } from "./environmentStateRules.js";
 import {
-  bulkCollection,
+  bulkCollectionOf,
   namedEntities,
   type NamedEntity,
 } from "./environmentStateWriteAddress.js";
 import { itemTarget } from "./environmentStateWriteChecks.js";
+import { sameQuery } from "./environmentStateWriteStamps.js";
 import { deleteEntity } from "./environmentStateWriteDelete.js";
 import {
   built,
@@ -83,11 +85,20 @@ export const applyBulk = (
     address === undefined || address.by === "action"
       ? undefined
       : namedEntities(address, body, context.idField(type));
+  // A call with another query than the exemplar's may do something else, as serving refuses it.
+  if (
+    built(draft) &&
+    !sameQuery(
+      context.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
+      step.record.query,
+    )
+  )
+    return [UNKNOWN];
   if (named === undefined) {
     fail(draft, step, "body-unusable");
     return [UNKNOWN];
   }
-  const collection = bulkCollection(type, step.record.path);
+  const collection = `/${bulkCollectionOf(type, segmentsOf(step.record.path), (text) => text).join("/")}`;
   const wasBuilt = built(draft);
   const results = named.map(({ id, body: members }) => {
     const target = itemTarget(context.state, type, {

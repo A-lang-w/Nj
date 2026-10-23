@@ -698,7 +698,8 @@ stores nowhere, or for an item action a `set` of a scalar to the value it
 showed, or the plan is `unexplained-change`; an increment, slug, stamp, derived
 value or set must hold for every call of the tool, and an action is served
 only once a call found what it sets already set. A write is served only
-with the query its first call sent. Every member the first call sent is required, except by `PATCH` and
+with the query its first call sent, which serving applies to a call that
+leaves a parameter out and the catalog advertises as required. Every member the first call sent is required, except by `PATCH` and
 `POST` updates.
 
 A read on a line `query` answers is checked against the query evaluated over

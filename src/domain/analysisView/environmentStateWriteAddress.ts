@@ -13,6 +13,7 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import { entityTarget, succeeded } from "./environmentStateWriteChecks.js";
+import type { WriteIo } from "./environmentStateWriteEffects.js";
 import {
   pathValuesOf,
   type BodyAddress,
@@ -25,7 +26,10 @@ import {
 const BULK_DELETE_SEGMENTS = new Set(["delete", "remove", "destroy"]);
 
 /** What classifying an addressed write reads: the state types, their id fields and item views, and the tool's recorded calls. */
-export interface AddressFacts {
+export interface AddressFacts extends Pick<
+  WriteIo,
+  "withBody" | "requestBody" | "emptyResponse"
+> {
   readonly types: ReadonlySet<string>;
   readonly idField: (type: string) => string | undefined;
   /** Where item reads of a type show its entity, and the fields each always shows. */
@@ -35,12 +39,6 @@ export interface AddressFacts {
   }[];
   /** The tool's successful calls. */
   readonly calls: readonly StateRecordFacts[];
-  readonly withBody: <T>(
-    ordinal: number,
-    use: (body: JsonValue | undefined) => T,
-  ) => T;
-  readonly requestBody: (ordinal: number) => JsonValue | undefined;
-  readonly emptyResponse: (ordinal: number) => boolean;
 }
 
 /** An addressed write's effect, the type it writes and how its calls name the entities. */
@@ -253,14 +251,17 @@ export const namedEntities = (
     : undefined;
 };
 
-/** The collection path a bulk call writes in: its path, without a delete segment, with the type's spelling of the last segment. */
-export const bulkCollection = (target: string, path: string): string => {
-  const written = segmentsOf(path);
-  const depth = segmentsOf(target).length;
-  const collection = written.slice(0, depth);
-  const spelled = segmentsOf(target).at(-1)!;
-  if (!isParam(spelled)) collection[depth - 1] = spelled;
-  return `/${collection.join("/")}`;
+/** The segments of the collection a bulk call writes in: its path's, without a delete segment, with the type's spelling of the last one. */
+export const bulkCollectionOf = <T>(
+  target: string,
+  segments: readonly T[],
+  spelled: (text: string) => T,
+): T[] => {
+  const typed = segmentsOf(target);
+  const collection = segments.slice(0, typed.length);
+  const last = typed.at(-1)!;
+  if (!isParam(last)) collection[typed.length - 1] = spelled(last);
+  return collection;
 };
 
 /** An item action call's path without its action segment: the item path its entity is read under. */
@@ -273,10 +274,7 @@ export const addressedWrite = (
   input: Pick<AddressFacts, "types" | "idField"> & {
     readonly views: Iterable<StateView>;
     readonly records: readonly StateRecordFacts[];
-    readonly io: Pick<
-      AddressFacts,
-      "withBody" | "requestBody" | "emptyResponse"
-    >;
+    readonly io: Pick<WriteIo, "withBody" | "requestBody" | "emptyResponse">;
   },
 ): AddressedWrite | undefined => {
   const ordinals = new Set(tool.record_ordinals);

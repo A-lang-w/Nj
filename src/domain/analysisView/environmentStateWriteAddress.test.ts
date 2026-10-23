@@ -92,6 +92,22 @@ describe("bulk writes at a collection", () => {
       ),
     ).toMatchObject({ served: false, reason: "body-unusable" });
   });
+  it("models no bulk call sent with another query than the exemplar's, which may do something else", () => {
+    // A delete sent with force=false kept book 1, which a modelled delete would have removed.
+    expect(
+      planOf(
+        [
+          ...BOOK_INIT_ROWS,
+          ["DELETE", "/api/books?force=true", [{ id: 2 }], 200, [{ id: 2 }]],
+          ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+          ["DELETE", "/api/books?force=false", [{ id: 1 }], 200, [{ id: 1 }]],
+          ["GET", "/api/books/1", FIRST_BOOK],
+        ],
+        "delete_books",
+      ),
+    ).toMatchObject({ served: true, checked_record_ordinals: [4] });
+  });
+
   it("serves no bulk call whose recorded response counts the entities it wrote", () => {
     expect(
       planOf(

@@ -2001,7 +2001,10 @@ describe("served values an application stamps", () => {
       notes.refusal("patch_notes_by_id", edit("2", bookClock(3))).message,
     ).toContain("derives excerpt");
     expect(
-      notes.refusal("patch_notes_by_id", edit("1", bookClock(3), {})).message,
+      notes.refusal(
+        "patch_notes_by_id",
+        edit("1", bookClock(3), { source: "markdown" }),
+      ).message,
     ).toContain("takes only the query its recording sent (source=html)");
     expect(
       notes.refusal("patch_notes_by_id", edit("1", "2026-01-01T00:00:00Z"))

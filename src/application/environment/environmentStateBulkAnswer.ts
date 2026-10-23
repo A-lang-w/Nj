@@ -1,4 +1,7 @@
-import { namedEntities } from "../../domain/analysisView/environmentStateWriteAddress.js";
+import {
+  bulkCollectionOf,
+  namedEntities,
+} from "../../domain/analysisView/environmentStateWriteAddress.js";
 import {
   updatedEntity,
   updatedFields,
@@ -8,12 +11,9 @@ import type {
   FieldRule,
   WriteResponse,
 } from "../../domain/analysisView/environmentStateWriteRules.js";
-import {
-  isParam,
-  segmentsOf,
-  type JsonObject,
-  type StateEntity,
-  type SuppliedSegment,
+import type {
+  JsonObject,
+  StateEntity,
 } from "../../domain/analysisView/environmentStateRules.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -37,26 +37,10 @@ import {
   writeAnswer,
   type WriteRequest,
 } from "./environmentStateWriteAnswer.js";
-import {
-  environmentToolArguments,
-  hasRepeatedQueryArgument,
-} from "./environmentTools.js";
+import { environmentToolArguments } from "./environmentTools.js";
 
 /** Rules whose generated value is drawn once per call, which one call cannot give several entities. */
 const DRAWN_ONCE = new Set<FieldRule["rule"]>(["unique", "renewed"]);
-
-/** The collection a bulk call's path names, with the type's spelling of its last segment, and no delete segment after it. */
-const collectionSegments = (
-  segments: readonly SuppliedSegment[],
-  target: string,
-): SuppliedSegment[] => {
-  const typed = segmentsOf(target);
-  const collection = segments.slice(0, typed.length);
-  const last = typed.at(-1)!;
-  if (!isParam(last))
-    collection[typed.length - 1] = { text: last, supplied: false };
-  return collection;
-};
 
 /** A bulk answer from the recorded one: one element per written entity, rendered as the first recorded element shows its entity. */
 const bulkResponse = (
@@ -110,7 +94,10 @@ const namedTargets = (
   const segments = callSegments(tool, args);
   if (segments === undefined)
     return err(refused(tool, `Tool ${tool.name} needs every path argument.`));
-  const collection = collectionSegments(segments, type);
+  const collection = bulkCollectionOf(type, segments, (text) => ({
+    text,
+    supplied: false,
+  }));
   const targets = [];
   for (const { id, body: members } of named) {
     const entity = namedEntity(serving.store, type, {
@@ -135,13 +122,6 @@ export const answerBulk = (
   request: WriteRequest,
 ): Result<StateAnswer, AnalysisError> => {
   const { tool, plan, args } = request;
-  if (hasRepeatedQueryArgument(tool, args))
-    return err(
-      refused(
-        tool,
-        "The state write model cannot apply repeated query parameters; the state is unchanged.",
-      ),
-    );
   const targets = namedTargets(serving, request);
   if (!targets.ok) return targets;
   const update = plan.effect === "update";
@@ -202,14 +182,10 @@ export const answerBulk = (
     },
   );
   if (!answer.ok) return answer;
-  for (const entity of written) {
-    if (!update) {
-      serving.store.remove(entity);
-      continue;
-    }
-    const updated = serving.store.update(entity);
+  if (update) {
+    const updated = serving.store.updateAll(written);
     if (!updated.ok) return updated;
-  }
+  } else serving.store.removeAll(written);
   serving.store.commitWrite(values.taken);
   return answer;
 };

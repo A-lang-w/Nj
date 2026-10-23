@@ -1,6 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
-import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
   IDENTITY_NAMES,
   isObject,
@@ -12,6 +11,8 @@ import {
   laterObservation,
   type ObservationSearch,
 } from "./environmentStateWriteObserve.js";
+import { singleQueryValues } from "../recordedTransportUrl.js";
+import { queryKey, queryValuesKey } from "./environmentStateCheckedLines.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
 import { isUuid, readClock } from "./environmentStateWriteValues.js";
 
@@ -114,8 +115,8 @@ export const plannedObject = (
       }
     | undefined,
 ): JsonObject | undefined => {
-  // Serving takes only the query the exemplar sent, which may change what the body does.
-  if (plan?.built === true && queryKey(plan.query) !== queryKey(call.query))
+  // A recorded call with another query than the exemplar's may do something else with its body.
+  if (plan?.built === true && !sameQuery(plan.query, call.query))
     return undefined;
   const envelope =
     plan === undefined
@@ -127,25 +128,35 @@ export const plannedObject = (
   return object !== undefined && isObject(object) ? object : undefined;
 };
 
-/** A query's parameters in one order, so two spellings of one query compare equal. */
-export const queryKey = (
-  query: string | URLSearchParams | null | undefined,
-): string =>
-  new URLSearchParams(
-    [...new URLSearchParams(query ?? "")].sort(
-      ([a, x], [b, y]) => compare(a, b) || compare(x, y),
-    ),
-  ).toString();
+/** Whether two queries name the same values; a query repeating a name with another value matches none. */
+export const sameQuery = (
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean => {
+  const key = queryKey(left);
+  return key !== undefined && key === queryKey(right);
+};
 
-/** Why a write call's query is not the one its recording sent, which may change what the body does; undefined when it is. */
-export const queryProblem = (
+/**
+ * A write call's query as its recording pins it, which may change what the body does: each
+ * parameter the recording sent, at the call's value or else the recorded one; an error naming the
+ * recorded query when the call sends another value or parameter.
+ */
+export const pinnedQuery = (
   recorded: string | null | undefined,
   call: ReadonlyMap<string, string>,
-): string | undefined => {
-  const want = queryKey(recorded);
-  return want === queryKey(new URLSearchParams([...call]))
-    ? undefined
-    : `takes only the query its recording sent (${want === "" ? "none" : want}).`;
+): Result<ReadonlyMap<string, string>, string> => {
+  const values = singleQueryValues(recorded ?? undefined);
+  const pinned = new Map([...(values ?? []), ...call]);
+  const spelled = [...(values ?? [])]
+    .map(([name, value]) => `${name}=${value}`)
+    .join("&");
+  return values !== undefined &&
+    queryValuesKey(pinned) === queryValuesKey(values)
+    ? ok(pinned)
+    : err(
+        `takes only the query its recording sent (${spelled === "" ? "none" : spelled}).`,
+      );
 };
 
 /** Whether the type's other entities hold the field as objects agreeing with this one but in the members, which hold other clocks. */

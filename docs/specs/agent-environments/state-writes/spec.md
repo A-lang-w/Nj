@@ -155,10 +155,12 @@ the exemplar.
   `body.envelope`: serving takes only a body wrapped that way.
 - **Query.** Serving takes only the query parameters the exemplar sent, with
   its values, since they may change what the body does (Ghost reads `html`
-  only with `?source=html`); a call with others is refused. The gate treats a
-  later recorded call sent with another query, or wrapped otherwise, as a
-  write its plan does not explain: it brings the entity to what the call
-  recorded, without attribution.
+  only with `?source=html`): a parameter a call leaves out takes the recorded
+  value, as the recording sent it, and a call with another value or parameter
+  is refused, a bulk call included. The gate treats a later recorded call sent
+  with another query, or wrapped otherwise, as a write its plan does not
+  explain: it brings the entity to what the call recorded, without
+  attribution, and a bulk call leaves the entities it names unmodelled.
 - **The written entity.** The entity is observed in the exemplar's response,
   located by its identity value at the root, in one member, or in a
   one-element array, as item views locate it. When the response does not carry
@@ -551,7 +553,18 @@ served. Their descriptions say the tool:
 - applies its effect to the served state;
 - names its target type;
 - lists its required and accepted body members, quoted and sampled within the
-  description budget as response fields are.
+  description budget as response fields are, the members it accepts only with
+  their recorded value, with that value when its JSON text is 120 characters
+  or less, and the envelope a body wraps its object in;
+- names the query its recording sent.
+
+The input schema says the same: each query parameter the recording sent is
+required, with its value as the only `enum` member; a body that wraps its
+object requires that member, an array of one object; and a member accepted
+only with its recorded value carries that value as `const` when it is short
+and no boolean (some clients reject boolean literals), else a description
+saying it must equal the recorded value. A refused member's message names the
+recorded value the same way.
 
 The discovery budget charges them. `--replay-only` and the replay fallback are
 unchanged.
@@ -643,7 +656,8 @@ included, and `environment-compare` sends a probe's body to it; every id must
 name an entity the state holds, else the call is refused and the state is
 unchanged. A bulk
 update with a `unique` or `renewed` rule writes one entity per call, since one
-call draws those values once. A served item action's path names its entity
+call draws those values once. A bulk write changes or removes its entities in
+one step, so a call the state cannot hold changes none of them. A served item action's path names its entity
 before the action segment.
 
 **Data plane and export.**

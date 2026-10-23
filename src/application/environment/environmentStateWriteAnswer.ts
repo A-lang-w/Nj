@@ -16,7 +16,6 @@ import {
 import { callRenewal } from "../../domain/analysisView/environmentStateWriteGenerated.js";
 import {
   nestedClockValue,
-  queryProblem,
   unenveloped,
 } from "../../domain/analysisView/environmentStateWriteStamps.js";
 import {
@@ -52,7 +51,7 @@ import {
   type ReplayArguments,
 } from "./environmentReplay.js";
 import type { EnvironmentManifestTool } from "./environmentSource.js";
-import { callQuery, callSegments } from "./environmentStateCallLines.js";
+import { callSegments } from "./environmentStateCallLines.js";
 import {
   itemCall,
   missingAnswer,
@@ -70,10 +69,7 @@ import {
   unloadableMember,
   type HeldDocument,
 } from "./environmentStateDocument.js";
-import {
-  environmentToolArguments,
-  hasRepeatedQueryArgument,
-} from "./environmentTools.js";
+import { environmentToolArguments } from "./environmentTools.js";
 
 /** Attempts at a generated UUID or token before a collision with held values is refused. */
 const GENERATION_ATTEMPTS = 64;
@@ -649,19 +645,6 @@ export const answerWrite = (
   serving: StateServing,
   request: WriteRequest,
 ): Result<StateAnswer, AnalysisError> => {
-  if (hasRepeatedQueryArgument(request.tool, request.args))
-    return err(
-      refused(
-        request.tool,
-        "The state write model cannot apply repeated query parameters; the state is unchanged.",
-      ),
-    );
-  const query = queryProblem(
-    serving.source.exchanges.get(request.plan.exemplar_ordinal ?? -1)?.query,
-    callQuery(request.tool, request.args),
-  );
-  if (query !== undefined)
-    return err(refused(request.tool, `Tool ${request.tool.name} ${query}`));
   const body = callBody(request);
   if (!body.ok) return body;
   const call: WriteCall = {
