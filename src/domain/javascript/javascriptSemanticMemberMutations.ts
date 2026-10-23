@@ -178,13 +178,9 @@ export function* collectSemanticMemberMutationsSteps(
   const recordedRequiredEffects = new Set<string>();
   let recordedEffectCount = 0;
   let totalMutationSteps = 0;
-  let mutationLimitHit = false;
 
   const markMutationResourceLimit = (): void => {
-    if (!mutationLimitHit) {
-      mutationLimitHit = true;
-      state.valueResourceLimits.add("alias-selections");
-    }
+    state.valueResourceLimits.add("alias-selections");
   };
   const recordRequiredEffect = (
     specifier: string,
@@ -373,16 +369,48 @@ export function* collectSemanticMemberMutationsSteps(
         ...(ownerInitializer === undefined ? {} : { ownerInitializer }),
       },
     ];
-    if (mutationLimitHit) return;
+    const widenUnvisited = (item: (typeof pending)[number]): void => {
+      let node: t.Node = item.node;
+      let path = item.path;
+      while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+        const key = semanticStaticPropertyKey(node.property, node.computed);
+        path = [key, ...path];
+        node = node.object;
+      }
+      const expr = unwrapJavaScriptExpression(node).node;
+      if (t.isIdentifier(expr)) {
+        const binding = resolveBinding(expr, expr.name);
+        if (binding !== undefined) {
+          if (effect === "escape") {
+            binding.escapedPaths.push({
+              path,
+              node: mutation,
+              receiverInitializers: [],
+            });
+          } else {
+            binding.memberWrites.push({
+              receiverIdentity: "possible",
+              path,
+              node: mutation,
+              receiverInitializers: [],
+            });
+          }
+        }
+      }
+    };
     // Visit shallower alias traversals first so their exact prefixes suppress
     // longer loop paths before those paths enumerate every assignment order.
     for (let cursor = 0; cursor < pending.length; cursor++) {
-      if (cursor >= SEMANTIC_MEMBER_MUTATION_WORKLIST_LIMIT) {
+      if (
+        cursor >= SEMANTIC_MEMBER_MUTATION_WORKLIST_LIMIT ||
+        ++totalMutationSteps > SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT
+      ) {
         markMutationResourceLimit();
-        break;
-      }
-      if (++totalMutationSteps > SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT) {
-        markMutationResourceLimit();
+        for (let i = cursor; i < pending.length; i++) {
+          const item = pending[i];
+          if (item !== undefined) widenUnvisited(item);
+        }
+        clearSemanticValueCaches(state);
         break;
       }
       const current = pending[cursor];
@@ -1303,11 +1331,20 @@ const observableMutationPaths = (
     // Most bindings have no object origin or property projection. Materialize
     // each collection only when it contains a fact or relationship.
     read === undefined ? {} : { read };
+  let settleSteps = 0;
+  const chargeSettleBudget = (): boolean => {
+    if (++settleSteps > SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT) {
+      state.valueResourceLimits.add("alias-selections");
+      return false;
+    }
+    return true;
+  };
   const link = (
     source: MutationObserverNode,
     target: MutationObserverNode,
   ): void => {
     if (target.sources?.has(source) === true) return;
+    if (!chargeSettleBudget()) return;
     (target.sources ??= new Set()).add(source);
     (source.dependents ??= new Set()).add(target);
     schedule(target);
@@ -1333,6 +1370,7 @@ const observableMutationPaths = (
       )}`;
       let selected = observer.projections?.get(identity);
       if (selected === undefined) {
+        if (!chargeSettleBudget()) return observer;
         selected = create({ source: observer, key, numericIndex });
         (observer.projections ??= new Map()).set(identity, selected);
         (observer.dependents ??= new Set()).add(selected);
@@ -1381,14 +1419,18 @@ const observableMutationPaths = (
         link(expressionNode(source.node), observer);
     }
   }
-  let settleSteps = 0;
   const settle = (): void => {
     while (pendingExpressions.length > 0 || pending.length > 0) {
-      if (++settleSteps > SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT) {
-        state.valueResourceLimits.add("alias-selections");
+      if (!chargeSettleBudget()) {
+        pendingExpressions.length = 0;
+        pending.length = 0;
         break;
       }
       while (pendingExpressions.length > 0) {
+        if (!chargeSettleBudget()) {
+          pendingExpressions.length = 0;
+          break;
+        }
         const selected = pendingExpressions.pop();
         if (selected === undefined) break;
         const { expression, observer } = selected;
@@ -1469,11 +1511,17 @@ const observableMutationPaths = (
       let changed = false;
       const add = (origin: MutationObservableOrigin): void => {
         if (observer.origins?.has(origin) === true) return;
+        if (!chargeSettleBudget()) return;
         (observer.origins ??= new Set()).add(origin);
         changed = true;
       };
-      for (const source of observer.sources ?? [])
-        for (const origin of source.origins ?? []) add(origin);
+      for (const source of observer.sources ?? []) {
+        if (settleSteps > SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT) break;
+        for (const origin of source.origins ?? []) {
+          if (settleSteps > SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT) break;
+          add(origin);
+        }
+      }
       if (observer.read !== undefined) {
         const { source, key, numericIndex } = observer.read;
         if (key === null || typeof key === "object") {
@@ -1516,6 +1564,8 @@ const observableMutationPaths = (
                 "escape",
                 state,
               )) {
+                if (settleSteps > SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT)
+                  break;
                 link(
                   project(expressionNode(reference.node), reference.path),
                   observer,

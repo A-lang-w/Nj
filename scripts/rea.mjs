@@ -38,15 +38,22 @@ if (
   const currentLimitMb = Math.round(heapStats.heap_size_limit / (1024 * 1024));
   if (requestedMaxHeapMb > currentLimitMb) {
     const env = { ...process.env, REA_CLI_HEAP_SPAWNED: "1" };
-    const child = spawnSync(
-      process.execPath,
-      [
-        `--max-old-space-size=${requestedMaxHeapMb}`,
-        fileURLToPath(import.meta.url),
-        ...args,
-      ],
-      { stdio: "inherit", env },
-    );
+    const nodeArgs = [
+      ...process.execArgv.filter(
+        (arg) => !arg.startsWith("--max-old-space-size="),
+      ),
+      `--max-old-space-size=${requestedMaxHeapMb}`,
+      fileURLToPath(import.meta.url),
+      ...args,
+    ];
+    const child = spawnSync(process.execPath, nodeArgs, {
+      stdio: "inherit",
+      env,
+    });
+    if (child.error) {
+      process.stderr.write(`Failed to restart CLI: ${child.error.message}\n`);
+      process.exit(1);
+    }
     process.exit(child.status ?? (child.signal ? 1 : 0));
   }
 }

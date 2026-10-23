@@ -936,9 +936,16 @@ describe("results of methods on an escaped receiver", () => {
         let x = { prop: { val: "init" } };
         ${branches}
         x.prop.val = "mutated";
-        return x.prop.val;
+        const later = { value: 1 };
+        later.value = 2;
+        return later.value;
       }
     `);
     expect(ir.coverage.resourceLimits).toContain("alias-selections");
+    const callable = onlyCallable(ir, "test");
+    expect(callable.returnSites[0]?.value).not.toEqual({
+      status: "literal",
+      value: 1,
+    });
   });
 });
