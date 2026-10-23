@@ -411,7 +411,8 @@ call that serving would not apply, such as a create outside its tied
 collection, keeps its evidence.
 
 **Reads.** A read is checked when the served environment would answer it
-from the state:
+from the state (an item, list or document read compares without the view's
+`per_response_members`):
 
 - an item read of a state-backed item view, of the entity serving would name:
   in a held collection the read's path matches, each segment verbatim or either

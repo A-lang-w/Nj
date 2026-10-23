@@ -100,6 +100,12 @@ const clockFormatSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("epoch"), unit: z.enum(["s", "ms"]) }),
 ]);
+const perResponseSchema = z
+  .array(z.string())
+  .optional()
+  .describe(
+    "Top-level members minted per response, such as a request id: a UUID or clock that differed on every repeat of the view's paths (or, for an item view, its collection's) with no write between. Checks leave them out; serving keeps the recorded value, so a served response repeats it.",
+  );
 const entityViewFields = {
   tool: z.string(),
   type: z.string(),
@@ -113,6 +119,7 @@ const entityViewFields = {
     .describe("Ordered fields the view shows of each entity."),
   required_fields: z.array(z.string()),
   checked_record_ordinals: checkedSchema,
+  per_response_members: perResponseSchema,
   clock_formats: z
     .record(z.string(), clockFormatSchema)
     .optional()
@@ -187,6 +194,7 @@ const viewSchema = z.discriminatedUnion("shape", [
     tool: z.string(),
     shape: z.literal("document"),
     checked_record_ordinals: checkedSchema,
+    per_response_members: perResponseSchema,
   }),
   z.strictObject({
     tool: z.string(),

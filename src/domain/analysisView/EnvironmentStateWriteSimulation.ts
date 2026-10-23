@@ -15,6 +15,7 @@ import {
 import { UnseenEntities } from "./environmentStateWriteAdoption.js";
 import { FailedReadBlame } from "./environmentStateWriteBlame.js";
 import { addressedWrite } from "./environmentStateWriteAddress.js";
+import { withoutMembers } from "./environmentStateResponseMembers.js";
 import { linkedTarget } from "./environmentStateWriteLinks.js";
 import { updatedEntity } from "./environmentStateWriteApply.js";
 import { projectedRead } from "./environmentStateWriteObserve.js";
@@ -407,7 +408,7 @@ export class EnvironmentStateWriteSimulation {
     if (view.shape !== "item" && line === undefined) return undefined;
     if (view.shape === "document")
       return this.#input.io.withBody(record.ordinal, (body) =>
-        checkDocumentRead(this.#state, view.tool, record, body),
+        checkDocumentRead(this.#state, view, record, body),
       );
     const item = view.shape === "item";
     const target = item
@@ -430,10 +431,11 @@ export class EnvironmentStateWriteSimulation {
     // The served answer keeps the envelope of the item view's or the line's base recording.
     const base = item ? view.envelope_ordinal : line!.ordinal;
     const ordinals = { base, read: record.ordinal };
+    const minted = view.per_response_members;
     return withBodies(this.#input.io.withBody, ordinals, (served, body) => {
       const check = {
-        body,
-        base: served,
+        body: body === undefined ? body : withoutMembers(body, minted),
+        base: served === undefined ? served : withoutMembers(served, minted),
         idField: this.#types.get(view.type)?.id_field ?? "",
         volatile: this.#input.volatileOf(view.type),
         collection,

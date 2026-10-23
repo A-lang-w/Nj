@@ -57,6 +57,11 @@ its cause in the recordings and the code. The five largest shared causes:
   that value, so a toggle is never served. An action never takes a read another write to the entity still needs.
 - **Bulk writes.** A write at a type's collection whose body names entities by id, as an id array or objects carrying
   the id field, deletes or updates each one; serving takes the body as recorded, a `DELETE` included.
+- **Per-response members.** A top-level member whose value is a UUID or a clock is minted per response on a path when
+  it differs on every repeat of that path's successful GET lines with no write between, and across the capture it
+  differed on at least two repeats and never stayed the same. Only views of that path, or item views whose collection
+  is that path, leave it out: item envelopes, and the write gate's item, list and document reads, compare without it.
+  The view names it in `per_response_members`, and serving keeps the recorded value.
 
 ## Acceptance
 

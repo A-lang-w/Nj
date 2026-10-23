@@ -110,6 +110,8 @@ interface EntityViewPlan {
   readonly clock_formats?: Readonly<Record<string, ClockFormat>> | undefined;
   /** Fields whose string arrays the view lists in code-point order, whatever order they were written in. */
   readonly sorted_arrays?: string[] | undefined;
+  /** Envelope members each response there mints, which checks leave out and serving keeps as recorded. */
+  readonly per_response_members?: string[] | undefined;
 }
 
 /** A query key that picks out replayed reads: a parameter, a parameter with one value, or a parameter left out. */
@@ -185,6 +187,7 @@ export type StateView =
       readonly tool: string;
       readonly shape: "document";
       readonly checked_record_ordinals: number[];
+      readonly per_response_members?: string[] | undefined;
     }
   | {
       readonly tool: string;

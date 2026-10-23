@@ -29,6 +29,7 @@ import { singleQueryValues } from "../recordedTransportUrl.js";
 import type { ServedLine } from "./environmentStateCheckedLines.js";
 import { insertIndex } from "./environmentStateWriteExplain.js";
 import type { InsertRule } from "./environmentStateWriteRules.js";
+import { withoutMembers } from "./environmentStateResponseMembers.js";
 
 export const entityTarget = (type: string, collection: string, id: string) =>
   `e${compositeKey([type, collection, id])}`;
@@ -595,16 +596,17 @@ export const checkListRead = (
 /** A document read on its checked line must equal the held document. */
 export const checkDocumentRead = (
   state: SimulatedState,
-  tool: string,
+  view: Extract<StateView, { shape: "document" }>,
   record: StateRecordFacts,
   body: JsonValue | undefined,
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
-  const value = state.document(tool);
+  const value = state.document(view.tool);
   if (body === undefined || value === undefined) return undefined;
+  const minted = view.per_response_members;
   return {
-    pass: same(value, body),
-    targets: [documentTarget(tool)],
+    pass: same(withoutMembers(value, minted), withoutMembers(body, minted)),
+    targets: [documentTarget(view.tool)],
     unheld: [],
   };
 };
