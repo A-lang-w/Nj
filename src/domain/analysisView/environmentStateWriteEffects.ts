@@ -246,7 +246,7 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
 });
 
 /** The later item reads of the entity a write resolved, as a forward search finds them. */
-const itemReads = (
+export const itemReads = (
   context: EffectContext,
   entity: {
     readonly type: string;

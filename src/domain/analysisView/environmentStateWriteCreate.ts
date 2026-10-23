@@ -18,6 +18,7 @@ import {
   envelopeMember,
   envelopeOf,
   isOpaqueToken,
+  restampedFields,
   variedMembers,
 } from "./environmentStateWriteStamps.js";
 import {
@@ -33,6 +34,7 @@ import {
   built,
   callOf,
   fail,
+  itemReads,
   refuse,
   requestObject,
   retainFixed,
@@ -476,7 +478,14 @@ export const applyCreate = (
     return recorded();
   }
   takeSequences(draft, { collection, fields: fields.value });
-  const inserted = insertCreated(context, draft, entity(fields.value, id));
+  // The call's own values follow the forms serving generates; the state holds a nested clock as the read-back restamped it, as an update's.
+  const stored = restampedFields(
+    searchFrom(context, step),
+    itemReads(context, { type, idField, collection, id }),
+    fields.value,
+    draft.plan.rules,
+  );
+  const inserted = insertCreated(context, draft, entity(stored, id));
   return {
     kind: "applied",
     targets: [inserted, collectionTarget(type, collection)],

@@ -1964,6 +1964,35 @@ describe("values an application stamps", () => {
       ]),
     });
   });
+
+  it("serves creates whose read-backs store a nested clock at another instant than their responses spell", () => {
+    // Each response stamps the edit in milliseconds; its read-back stores microseconds a few milliseconds earlier.
+    const card = (id: number, seconds: number, at: string) => ({
+      id,
+      name: `Card ${String(id)}`,
+      edit: { at, by: "rea" },
+    });
+    const answered = (seconds: number) =>
+      new Date(Date.parse(bookClock(seconds)) + 30).toISOString();
+    const stored = (seconds: number, micro: string) =>
+      `${bookClock(seconds).slice(0, -1)}.${micro}Z`;
+    const state = stateOf([
+      ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+      ["GET", "/api/cards/1", FIRST_CARD],
+      ["GET", "/api/cards/2", SECOND_CARD],
+      ["POST", "/api/cards", card(3, 3, answered(3)), 201, { name: "Card 3" }],
+      ["GET", "/api/cards/3", card(3, 3, stored(3, "020123"))],
+      ["POST", "/api/cards", card(4, 5, answered(5)), 201, { name: "Card 4" }],
+      ["GET", "/api/cards/4", card(4, 5, stored(5, "021456"))],
+    ]);
+    expect(planOf(state, "post_cards")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "edit", rule: "nested-clock" }),
+      ]),
+    });
+  });
 });
 
 /** A book with tags, as an application that keeps tags as a set lists them. */
