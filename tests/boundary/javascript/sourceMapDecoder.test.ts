@@ -115,8 +115,16 @@ it("runs the real pinned codec with an independent heap and removes its private 
   await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
 });
 it.each([
-  { text: "{", tag: "AnalysisInputError" },
   {
+    failure: "malformed JSON",
+    text: "{",
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [{ reason: "invalid_format" }],
+    },
+  },
+  {
+    failure: "external section",
     text: JSON.stringify({
       version: 3,
       sections: [
@@ -126,34 +134,52 @@ it.each([
         },
       ],
     }),
-    tag: "AnalysisCapabilityUnavailableError",
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: "unsupported_source_map_profile",
+      userMessage: expect.stringContaining("https://app.test/external.map"),
+    },
   },
   {
+    failure: "malformed embedded map before row admission",
+    text: JSON.stringify({
+      version: 3,
+      sections: [{ offset: { line: 1000000000, column: 0 }, map: {} }],
+    }),
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          reason: "invalid_format",
+          message: expect.stringContaining("not a version 3 map"),
+        },
+      ],
+    },
+  },
+  {
+    failure: "indexed row limit",
     text: JSON.stringify({
       version: 3,
       sections: [
         {
           offset: { line: 1000000000, column: 0 },
-          map: {
-            version: 3,
-            sources: ["app.ts"],
-            names: [],
-            mappings: "AAAA",
-          },
+          map: JSON.parse(fixture.sourceMap.text) as unknown,
         },
       ],
     }),
-    tag: "ArtifactOperationError",
-  },
-])("preserves actual producer failures: $tag", async ({ text, tag }) => {
-  const response = await realDecoder().trace({ ...input, text });
-  if (response.ok) throw new Error("expected failed map");
-  expect(response.error._tag).toBe(tag);
-  if (tag === "ArtifactOperationError")
-    expect(response.error).toMatchObject({
+    error: {
+      _tag: "ArtifactOperationError",
       reason: "limit",
       detail: expect.stringContaining("generated-row decoder budget"),
-    });
+    },
+  },
+])("preserves actual producer failures: $failure", async ({ text, error }) => {
+  const response = await realDecoder().trace({ ...input, text });
+  if (response.ok) throw new Error("expected failed map");
+  expect(response.error).toMatchObject({
+    operation: "trace_web_source_location",
+    ...error,
+  });
 });
 
 it("keeps indexed section overlap typed as a malformed source map", async () => {
