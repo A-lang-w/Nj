@@ -117,5 +117,6 @@ describe("MinidumpReader", () => {
     const report = parseMinidump(valid);
     expect(report?.modules.length).toBe(1);
     expect(report?.streamTypes).toEqual([7, 6, 4, 4]);
+    expect(report?.limitations).toEqual([]);
   });
 });

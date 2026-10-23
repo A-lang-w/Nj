@@ -53,9 +53,11 @@ export interface CArchiveEntry {
 }
 
 /** Runtime options and external dependencies are declarations, never local blobs. */
-export const isCArchiveDeclaration = (
-  entry: CArchiveEntry,
-): entry is CArchiveEntry & { readonly typeCode: "o" | "d" } =>
+export const isCArchiveDeclaration = <
+  Entry extends { readonly typeCode: string },
+>(
+  entry: Entry,
+): entry is Entry & { readonly typeCode: "o" | "d" } =>
   entry.typeCode === "o" || entry.typeCode === "d";
 
 /** True when a native executable has a structurally valid CArchive cookie. */

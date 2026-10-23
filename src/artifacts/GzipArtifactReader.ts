@@ -36,14 +36,18 @@ const readGzipOriginalFilename = (
       }
       if (offset < prefix.length) {
         const nullByte = prefix.indexOf(0, offset);
-        if (nullByte > offset) {
-          const name = prefix
-            .subarray(offset, nullByte)
-            .toString("latin1")
-            .trim();
-          if (name.length > 0 && !name.includes("/") && !name.includes("\\")) {
-            return name;
-          }
+        const name =
+          nullByte > offset
+            ? prefix.subarray(offset, nullByte).toString("latin1")
+            : "";
+        if (
+          name.length > 0 &&
+          name !== "." &&
+          name !== ".." &&
+          !name.includes("/") &&
+          !name.includes("\\")
+        ) {
+          return name;
         }
       }
     }
@@ -135,7 +139,7 @@ export class GzipArtifactReader implements ArtifactReader {
         kind: "file",
         declaredSize: null,
         compressedSize: size,
-        executable: true,
+        executable: false,
         encrypted: false,
         byteOffset: null,
         declaredIntegrity: null,
@@ -240,11 +244,11 @@ export class GzipArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
     this.closed = true;
     if (this.owner !== undefined) {
       await this.owner.close();
       this.owner = undefined;
     }
+    this.handle = undefined;
   }
 }

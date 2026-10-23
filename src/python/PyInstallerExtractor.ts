@@ -5,6 +5,7 @@ import {
   resolvePythonVersion,
 } from "./PythonBytecode.js";
 import { readMarshalSubset } from "../artifacts/pyinstaller/MarshalSubset.js";
+import { isCArchiveDeclaration } from "../artifacts/pyinstaller/CArchiveLayout.js";
 import { MAX_PYZ_TABLE_BYTES } from "../artifacts/pyinstaller/PyzArchive.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 
@@ -65,7 +66,14 @@ export interface PyInstallerArchive {
 
 export interface ExtractedPyInstallerFile {
   readonly name: string;
-  readonly kind: "script" | "module" | "package" | "pyz" | "binary" | "data";
+  readonly kind:
+    | "script"
+    | "module"
+    | "package"
+    | "pyz"
+    | "binary"
+    | "data"
+    | "metadata";
   readonly data: Buffer;
   readonly decompressed: boolean;
   readonly pythonVersion?: string | undefined;
@@ -147,7 +155,11 @@ export const parsePyInstallerArchive = (
     currentOffset + 18 <= buffer.length
   ) {
     const entryStructLen = buffer.readUInt32BE(currentOffset);
-    if (entryStructLen < 18 || currentOffset + entryStructLen > buffer.length) {
+    if (
+      entryStructLen < 18 ||
+      currentOffset + entryStructLen > endOffset ||
+      currentOffset + entryStructLen > buffer.length
+    ) {
       break;
     }
 
@@ -182,7 +194,12 @@ export const parsePyInstallerArchive = (
   );
   if (pyzEntry) {
     const pyzDataOffset = carchiveOffset + pyzEntry.pkgOffset;
-    if (pyzDataOffset + pyzEntry.compressedLength <= buffer.length) {
+    if (
+      pyzEntry.pkgOffset >= 0 &&
+      pyzEntry.compressedLength >= 0 &&
+      pyzDataOffset + pyzEntry.compressedLength <= absoluteTocOffset &&
+      pyzDataOffset + pyzEntry.compressedLength <= buffer.length
+    ) {
       const rawPyz = buffer.subarray(
         pyzDataOffset,
         pyzDataOffset + pyzEntry.compressedLength,
@@ -473,14 +490,32 @@ export const extractPyInstallerEntries = (
 
   const totalBudget = artifactExpansionBudgetBytes(buffer.length);
   let remainingBudget = totalBudget;
+  const payloadEndOffset = archive.carchiveOffset + archive.cookie.tocOffset;
   const results: ExtractedPyInstallerFile[] = [];
 
   for (const entry of archive.tocEntries) {
+    if (isCArchiveDeclaration({ typeCode: entry.typeFlag })) {
+      results.push({
+        name: entry.name,
+        kind: entry.typeFlag === "o" ? "metadata" : "binary",
+        data: Buffer.alloc(0),
+        decompressed: false,
+        limitations:
+          entry.typeFlag === "d"
+            ? [
+                "Multipackage dependency bytes belong to another executable and remain unresolved.",
+              ]
+            : [
+                "Runtime option is a CArchive declaration and carries no stored file payload.",
+              ],
+      });
+      continue;
+    }
+
     if (remainingBudget <= 0) {
       results.push({
         name: entry.name,
-        kind:
-          entry.typeFlag === "b" || entry.typeFlag === "d" ? "binary" : "data",
+        kind: entry.typeFlag === "b" ? "binary" : "data",
         data: Buffer.alloc(0),
         decompressed: false,
         limitations: [
@@ -491,7 +526,13 @@ export const extractPyInstallerEntries = (
     }
 
     const dataOffset = archive.carchiveOffset + entry.pkgOffset;
-    if (dataOffset < 0 || dataOffset + entry.compressedLength > buffer.length) {
+    if (
+      entry.pkgOffset < 0 ||
+      entry.compressedLength < 0 ||
+      dataOffset < archive.carchiveOffset ||
+      dataOffset + entry.compressedLength > payloadEndOffset ||
+      dataOffset + entry.compressedLength > buffer.length
+    ) {
       continue;
     }
 
@@ -569,8 +610,7 @@ export const extractPyInstallerEntries = (
 
     results.push({
       name: entry.name,
-      kind:
-        entry.typeFlag === "b" || entry.typeFlag === "d" ? "binary" : "data",
+      kind: entry.typeFlag === "b" ? "binary" : "data",
       data: inflated.data,
       decompressed: inflated.decompressed,
       limitations,

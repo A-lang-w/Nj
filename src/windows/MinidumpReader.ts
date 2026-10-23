@@ -12,7 +12,7 @@ export interface MinidumpException {
 }
 
 export interface MinidumpModule {
-  readonly name: string;
+  readonly name: string | null;
   readonly baseAddress: bigint;
   readonly size: number;
   readonly timestamp: Date;
@@ -33,6 +33,7 @@ export interface MinidumpReport {
   readonly exception?: MinidumpException | undefined;
   readonly modules: readonly MinidumpModule[];
   readonly streamTypes: readonly number[];
+  readonly limitations: readonly string[];
 }
 
 const MINIDUMP_SIGNATURE = 0x504d444d; // "MDMP" in LE
@@ -125,15 +126,29 @@ const parseModuleListStream = (
   buffer: Buffer,
   rva: number,
   size: number,
-): MinidumpModule[] => {
-  if (rva + size > buffer.length || size < 4) return [];
+): { readonly modules: MinidumpModule[]; readonly limitations: string[] } => {
+  if (rva + size > buffer.length || size < 4) {
+    return {
+      modules: [],
+      limitations: [
+        "ModuleListStream is truncated or extends past the end of the minidump.",
+      ],
+    };
+  }
   const count = buffer.readUInt32LE(rva);
   const modules: MinidumpModule[] = [];
+  const limitations: string[] = [];
   const entrySize = 108; // MINIDUMP_MODULE size
   const maxPossibleEntries = Math.floor((size - 4) / entrySize);
   const safeCount = Math.min(count, maxPossibleEntries, 10_000);
+  if (count > safeCount) {
+    limitations.push(
+      `ModuleListStream declared ${count} modules; only ${safeCount} entries were inspected.`,
+    );
+  }
   const nameCache = new Map<number, string>();
   let totalNameBytes = 0;
+  let omittedNames = 0;
 
   for (let i = 0; i < safeCount; i += 1) {
     const offset = rva + 4 + i * entrySize;
@@ -145,14 +160,16 @@ const parseModuleListStream = (
     const timeDateStamp = buffer.readUInt32LE(offset + 16);
     const nameRva = buffer.readUInt32LE(offset + 20);
 
-    let name = nameCache.get(nameRva);
+    let name: string | null | undefined = nameCache.get(nameRva);
     if (name === undefined) {
       if (totalNameBytes < MAX_TOTAL_MODULE_NAME_BYTES) {
-        name = readMinidumpString(buffer, nameRva);
-        totalNameBytes += name.length * 2;
-        nameCache.set(nameRva, name);
+        const parsedName = readMinidumpString(buffer, nameRva);
+        totalNameBytes += parsedName.length * 2;
+        nameCache.set(nameRva, parsedName);
+        name = parsedName;
       } else {
-        name = "";
+        name = null;
+        omittedNames += 1;
       }
     }
 
@@ -164,7 +181,13 @@ const parseModuleListStream = (
     });
   }
 
-  return modules;
+  if (omittedNames > 0) {
+    limitations.push(
+      `Module name budget (${MAX_TOTAL_MODULE_NAME_BYTES} bytes) exceeded; ${omittedNames} module name(s) were omitted.`,
+    );
+  }
+
+  return { modules, limitations };
 };
 
 /** Parse Windows Minidump file for crash diagnosis and loaded module analysis. */
@@ -183,6 +206,7 @@ export const parseMinidump = (buffer: Buffer): MinidumpReport | null => {
   let systemInfo: MinidumpSystemInfo | undefined;
   let exception: MinidumpException | undefined;
   let modules: MinidumpModule[] = [];
+  const limitations: string[] = [];
   let hasParsedModules = false;
 
   for (let i = 0; i < numberOfStreams; i += 1) {
@@ -202,7 +226,9 @@ export const parseMinidump = (buffer: Buffer): MinidumpReport | null => {
     } else if (streamType === 4 && !hasParsedModules) {
       // ModuleListStream
       hasParsedModules = true;
-      modules = parseModuleListStream(buffer, rva, dataSize);
+      const parsedModules = parseModuleListStream(buffer, rva, dataSize);
+      modules = parsedModules.modules;
+      limitations.push(...parsedModules.limitations);
     }
   }
 
@@ -212,5 +238,6 @@ export const parseMinidump = (buffer: Buffer): MinidumpReport | null => {
     exception,
     modules,
     streamTypes,
+    limitations,
   };
 };

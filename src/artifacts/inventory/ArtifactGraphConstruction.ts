@@ -618,7 +618,14 @@ export const classifyArtifactBytes = (
     prefix[0] === 0x64 &&
     prefix[1] === 0x65 &&
     prefix[2] === 0x78 &&
-    prefix[3] === 0x0a
+    prefix[3] === 0x0a &&
+    prefix[4]! >= 0x30 &&
+    prefix[4]! <= 0x39 &&
+    prefix[5]! >= 0x30 &&
+    prefix[5]! <= 0x39 &&
+    prefix[6]! >= 0x30 &&
+    prefix[6]! <= 0x39 &&
+    prefix[7] === 0x00
   )
     return "dex";
   if (

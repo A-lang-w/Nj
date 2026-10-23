@@ -26,6 +26,7 @@ describe("GzipArtifactReader", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]!.path).toBe("solve_me");
     expect(entries[0]!.kind).toBe("file");
+    expect(entries[0]!.executable).toBe(false);
     expect(entries[0]!.declaredSize).toBeNull();
 
     const stream = await reader.open(entries[0]!);

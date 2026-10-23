@@ -365,3 +365,59 @@ describe("PyInstallerExtractor - entry extraction and safety limits", () => {
     expect(extracted[0]!.limitations[0]).toMatch(/Decompression error/);
   });
 });
+
+describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
+  it("rejects TOC entries pointing into the table or cookie and preserves declarations", () => {
+    const createTocEntry = (
+      name: string,
+      typeFlag: string,
+      pkgOffset: number,
+      len: number,
+    ): Buffer => {
+      const nameBytes = Buffer.from(`${name}\0`, "utf8");
+      const structLen = 18 + nameBytes.length;
+      const entry = Buffer.alloc(structLen);
+      entry.writeUInt32BE(structLen, 0);
+      entry.writeUInt32BE(pkgOffset, 4);
+      entry.writeUInt32BE(len, 8);
+      entry.writeUInt32BE(len, 12);
+      entry.writeUInt8(0, 16);
+      entry.writeUInt8(typeFlag.charCodeAt(0), 17);
+      nameBytes.copy(entry, 18);
+      return entry;
+    };
+
+    const payload = Buffer.from("REAL_DATA");
+    // Entry 1: points into TOC (offset = payload.length, length = 4) -> must be skipped
+    // Entry 2: runtime option ('o') -> metadata, decompressed: false
+    // Entry 3: dependency ('d') -> unresolved binary, decompressed: false
+    const tocEntries = Buffer.concat([
+      createTocEntry("table_bytes.bin", "x", payload.length, 4),
+      createTocEntry("pyi-runtime-tmpdir", "o", 0, 0),
+      createTocEntry("ext_pkg:lib.dll", "d", 0, 0),
+    ]);
+
+    const tocOffset = payload.length;
+    const tocLength = tocEntries.length;
+    const pkgLength = payload.length + tocLength + 88;
+    const cookie = Buffer.alloc(88);
+    PYINSTALLER_MAGIC.copy(cookie, 0);
+    cookie.writeUInt32BE(pkgLength, 8);
+    cookie.writeUInt32BE(tocOffset, 12);
+    cookie.writeUInt32BE(tocLength, 16);
+    cookie.writeInt32BE(310, 20);
+
+    const binary = Buffer.concat([payload, tocEntries, cookie]);
+    const extracted = extractPyInstallerEntries(binary);
+    expect(extracted.find((e) => e.name === "table_bytes.bin")).toBeUndefined();
+
+    const opt = extracted.find((e) => e.name === "pyi-runtime-tmpdir");
+    expect(opt?.kind).toBe("metadata");
+    expect(opt?.decompressed).toBe(false);
+
+    const dep = extracted.find((e) => e.name === "ext_pkg:lib.dll");
+    expect(dep?.kind).toBe("binary");
+    expect(dep?.decompressed).toBe(false);
+    expect(dep?.limitations[0]).toMatch(/unresolved/);
+  });
+});
