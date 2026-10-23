@@ -555,7 +555,7 @@ it.each([
         {
           facet: `connections:${relativePath}`,
           status: "partial",
-          reason: "connection_limit_reached",
+          reason: "object_limit_reached",
           examined: 1,
           omitted: 2,
         },
@@ -1269,4 +1269,37 @@ it("states each object's class, label, and ID once", () => {
       attributes: { class: "UIButton", title: "Build", objectID: "authored" },
     }),
   ]);
+});
+
+it("attributes connection omissions caused by missing source nodes to the object limit", () => {
+  const result = buildInterfaceBuilderAnalysis({
+    targetSha256: hash,
+    toolVersion: "test",
+    limits: interfaceBuilderLimitsSchema.parse({ max_objects: 1 }),
+    documents: [
+      {
+        relativePath: "Main.nib",
+        archiveSha256: hash,
+        documentKind: "nib",
+        raw: {
+          "com.apple.ibtool.document.objects": {
+            source: { class: "UIButton" },
+            destination: { class: "UIView" },
+          },
+          "com.apple.ibtool.document.connections": {
+            source: [
+              { type: "action", label: "tap:", destinationId: "destination" },
+            ],
+          },
+        },
+      },
+    ],
+  });
+  expect(result.graph.coverage).toContainEqual(
+    expect.objectContaining({
+      facet: "connections:Main.nib",
+      status: "partial",
+      reason: "object_limit_reached",
+    }),
+  );
 });

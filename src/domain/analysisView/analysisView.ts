@@ -9,6 +9,12 @@ import {
 } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import {
+  nativeExportsViewRequestSchema,
+  nativeExportsViewItemsSchema,
+  nativeExportsSummarySchema,
+  projectNativeExportsView,
+} from "./nativeExportsView.js";
+import {
   byteEntropySummarySchema,
   projectByteEntropyView,
 } from "./byteEntropyView.js";
@@ -325,6 +331,7 @@ const nativeViewSchema = z.strictObject({
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  nativeExportsViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
@@ -443,6 +450,7 @@ const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
     "inspect_byte_entropy",
+    "inspect_native_exports",
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
@@ -488,6 +496,12 @@ export const byteEntropySummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   summary: byteEntropySummarySchema,
   parent_operation: z.literal("inspect_byte_entropy"),
+});
+
+export const nativeExportsSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_native_exports"),
+  summary: nativeExportsSummarySchema,
 });
 
 /** Opt-in command delivery keeps output once and retains the complete parent. */
@@ -807,6 +821,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentStateViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    nativeExportsSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
@@ -835,6 +850,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
   ]),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("native-exports"),
+    parent_operation: z.literal("inspect_native_exports"),
+    view: nativeExportsViewRequestSchema,
+    exports: nativeExportsSummarySchema,
+    items: nativeExportsViewItemsSchema,
+  }),
   z.strictObject({
     ...viewResultBase,
     ...nativeInventoryViewContext,
@@ -1068,7 +1091,7 @@ const unsupportedParent = (
     parentArtifactPath(parent),
     parent.operation === "capture_browser_scenario"
       ? `Parent Evidence operation "capture_browser_scenario" supports only the environment-manifest and environment-state views.`
-      : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function/inventory, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, IL2CPP metadata, or web network capture Evidence.`,
+      : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed Evidence from a supported parent operation with a compatible view. For a summary receipt, use its normalized_result.parent_evidence_id rather than the receipt's own evidence_id.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -1190,36 +1213,23 @@ export const projectAnalysisView = (
     const projected = projectPcapCaptureView(parent, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
+  if (parent.operation === "inspect_native_exports") {
+    const projected = projectNativeExportsView(parent, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
   if (parent.operation === "inspect_byte_entropy") {
-    const report = byteEntropySchema.safeParse(parent.normalizedResult);
-    if (!report.success)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["source"],
-            reason: "invalid_value",
-            message:
-              "Parent Evidence result does not match inspect_byte_entropy.",
-          },
-        ]),
-      );
-    const projected = projectByteEntropyView(parent, report.data, view);
+    const report = parseAnalysisViewResult(byteEntropySchema, parent);
+    if (!report.ok) return report;
+    const projected = projectByteEntropyView(parent, report.value, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "inspect_binary_layout") {
-    const layout = safeParseOwnedBinaryLayout(parent.normalizedResult);
-    if (!layout.success)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["source"],
-            reason: "invalid_value",
-            message:
-              "Parent Evidence result does not match inspect_binary_layout.",
-          },
-        ]),
-      );
-    const projected = projectBinaryLayoutView(parent, layout.data, view);
+    const layout = parseAnalysisViewResult(
+      { safeParse: safeParseOwnedBinaryLayout },
+      parent,
+    );
+    if (!layout.ok) return layout;
+    const projected = projectBinaryLayoutView(parent, layout.value, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "analyze_javascript_application") {

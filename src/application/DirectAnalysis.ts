@@ -21,7 +21,7 @@ import {
 } from "../contracts/managed/managedToolContracts.js";
 import {
   EvidenceFileError,
-  EvidenceIntegrityError,
+  AnalysisSnapshotMismatchError,
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -427,6 +427,7 @@ const runAnalysis = async (
     const executed = await executeAnalysisTool({
       session,
       openedTarget: opened.value,
+      selectedPath: path,
       tool,
       arguments: arguments_,
       signal,
@@ -522,6 +523,7 @@ const runAnalysis = async (
 const executeAnalysisTool = async (input: {
   readonly session: BinarySession;
   readonly openedTarget: BinaryTarget;
+  readonly selectedPath: string;
   readonly tool:
     | NativeToolName
     | ArtifactAnalysisOperation
@@ -619,7 +621,10 @@ const executeAnalysisTool = async (input: {
     result.value.provider,
     {
       operation: tool,
-      parameters: input.arguments,
+      parameters:
+        tool === "inspect_artifact"
+          ? { ...input.arguments, input_path: input.selectedPath }
+          : input.arguments,
       result: result.value.result,
       ...(result.value.analysisProfile === undefined
         ? {}
@@ -699,7 +704,7 @@ const prepareSnapshot = async (options: {
   if (!target.ok) return target;
   if (!snapshotMatchesTarget(loaded.value.target, target.value))
     return err(
-      new EvidenceIntegrityError(
+      new AnalysisSnapshotMismatchError(
         "Analysis snapshot target does not match the requested binary",
       ),
     );

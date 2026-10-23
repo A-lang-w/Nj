@@ -1,5 +1,6 @@
 import { z } from "incur";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
+import { findAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
 
 import { resolveCliAnalysisSelector } from "./analysisSelector.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -157,7 +158,8 @@ const registerDecompileCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.decompile, {
-    description: "Read one part of an app as code",
+    description:
+      "Read one part of an app as code; requires a positional selector, --procedure, or --file-offset",
     args: z.object({
       path: z.string().describe("App or program path"),
       address: z
@@ -172,7 +174,7 @@ const registerDecompileCommand = (
         .min(1)
         .optional()
         .describe(
-          "Procedure name or address; use --procedure=<value> for leading dashes",
+          "Required selector: supply this option or the positional selector (decompile also accepts --file-offset); use --procedure=<value> for leading dashes",
         ),
       "file-offset": z
         .string()
@@ -231,15 +233,14 @@ const routesToJavaScriptAnalysis = async (
   (await isJavaScriptApplicationPath(path));
 
 const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".asar")) return true;
-  // `A.app/` and `A.app/.` name the same bundle as `A.app`.
-  if (lower.replace(/(?:\/\.?)+$/u, "").endsWith(".app")) return false;
   try {
-    return (await stat(path)).isDirectory();
+    const canonical = await realpath(path);
+    if (canonical.toLowerCase().endsWith(".asar")) return true;
+    if (!(await stat(canonical)).isDirectory()) return false;
+    const bundle = await findAppBundleResourceRoot(canonical);
+    // Unresolved native metadata must reach native admission's typed failure.
+    return bundle.ok && bundle.value === undefined;
   } catch (cause: unknown) {
-    // A missing or unreadable path is not a JavaScript application directory;
-    // the caller falls through to direct binary analysis instead.
     void cause;
     return false;
   }
@@ -251,7 +252,8 @@ const registerXrefsCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.xrefs, {
-    description: "List bounded references to an analyzed address",
+    description:
+      "List bounded references to an analyzed address; requires a positional selector or --address",
     args: z.object({
       path: z.string().describe("App or program path"),
       address: z.string().min(1).optional().describe("Address or symbol name"),
@@ -262,7 +264,7 @@ const registerXrefsCommand = (
         .min(1)
         .optional()
         .describe(
-          "Address or symbol name; use --address=<value> for leading dashes",
+          "Required selector: supply this option or the positional selector; use --address=<value> for leading dashes",
         ),
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
@@ -292,7 +294,8 @@ const registerTraceCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.trace, {
-    description: "Trace a literal feature through analyzed references",
+    description:
+      "Trace a literal feature through analyzed references; requires a positional selector or --query",
     args: z.object({
       path: z.string().describe("App or program path"),
       query: z.string().min(1).optional().describe("Literal feature query"),
@@ -303,7 +306,7 @@ const registerTraceCommand = (
         .min(1)
         .optional()
         .describe(
-          "Complete literal feature query; use --query=<value> for leading dashes",
+          "Required selector: supply this option or the positional selector; use --query=<value> for leading dashes",
         ),
       caseSensitive: z
         .boolean()
@@ -338,7 +341,8 @@ const registerFunctionCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.function, {
-    description: "Analyze one complete function with evidence",
+    description:
+      "Analyze one complete function with evidence; requires a positional selector or --procedure",
     args: z.object({
       path: z.string().describe("App or program path"),
       address: z
@@ -353,7 +357,7 @@ const registerFunctionCommand = (
         .min(1)
         .optional()
         .describe(
-          "Procedure name or address; use --procedure=<value> for leading dashes",
+          "Required selector: supply this option or the positional selector (decompile also accepts --file-offset); use --procedure=<value> for leading dashes",
         ),
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
@@ -383,7 +387,8 @@ const registerInstructionsCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.instructions, {
-    description: "Read every raw instruction without decompiling",
+    description:
+      "Read every raw instruction without decompiling; requires a positional selector or --procedure",
     args: z.object({
       path: z.string().describe("App or program path"),
       address: z
@@ -398,7 +403,7 @@ const registerInstructionsCommand = (
         .min(1)
         .optional()
         .describe(
-          "Procedure name or address; use --procedure=<value> for leading dashes",
+          "Required selector: supply this option or the positional selector (decompile also accepts --file-offset); use --procedure=<value> for leading dashes",
         ),
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
@@ -428,7 +433,8 @@ const registerSearchCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.search, {
-    description: "Search every analyzed string or procedure name",
+    description:
+      "Search every analyzed string or procedure name; requires a positional selector or --pattern",
     args: z.object({
       path: z.string().describe("App or program path"),
       pattern: z
@@ -443,7 +449,7 @@ const registerSearchCommand = (
         .min(1)
         .optional()
         .describe(
-          "Complete literal text or regex pattern; use --pattern=<value> for leading dashes",
+          "Required selector: supply this option or the positional selector; use --pattern=<value> for leading dashes",
         ),
       kind: z
         .enum(["strings", "procedures"])

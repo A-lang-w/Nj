@@ -230,66 +230,63 @@ export const declaredFileRange = (
   };
 };
 
-/** Map a contiguous file span without gaps or conflicting loader mappings. */
+/** Map a physically contiguous virtual span across consistent adjacent ranges. */
 export const mappedFileOffset = (
   mappings: readonly FileMapping[],
   address: bigint,
   size: number,
   zeroFills: readonly ZeroFillMapping[] = [],
 ): number => {
+  if (!Number.isSafeInteger(size) || size < 0)
+    throw new BinaryFormatFailure("malformed", "Virtual span size is invalid");
+  const end = address + BigInt(size);
   let found: number | undefined;
+  const covered: { start: bigint; end: bigint }[] = [];
+  let whollyCovered = size === 0;
   for (const mapping of mappings) {
-    const delta = address - mapping.address;
+    const mappingEnd = mapping.address + BigInt(mapping.size);
+    const start = address > mapping.address ? address : mapping.address;
+    const overlapEnd = end < mappingEnd ? end : mappingEnd;
     if (
-      delta < 0n ||
-      delta > BigInt(mapping.size) ||
-      BigInt(size) > BigInt(mapping.size) - delta
+      size === 0
+        ? address < mapping.address || address > mappingEnd
+        : start >= overlapEnd
     )
       continue;
-    const offset = mapping.offset + Number(delta);
-    if (found !== undefined && found !== offset)
+    const origin = mapping.offset + Number(address - mapping.address);
+    if (found !== undefined && found !== origin)
       throw new BinaryMappingFailure(
         "ambiguous",
-        "Virtual address has ambiguous file mappings",
+        "Virtual span has ambiguous or noncontiguous file mappings",
       );
-    found = offset;
-  }
-  if (found === undefined && size > 0) {
-    // Keep the common single-mapping path allocation-free. A split span needs
-    // ordered intervals to prove that every byte is backed, even when native
-    // mappings arrive out of address order.
-    const end = address + BigInt(size);
-    const spans = mappings
-      .filter((mapping) =>
-        spansOverlap(
-          address,
-          BigInt(size),
-          mapping.address,
-          BigInt(mapping.size),
-        ),
-      )
-      .sort((left, right) =>
-        left.address < right.address
-          ? -1
-          : left.address > right.address
-            ? 1
-            : 0,
-      );
-    let covered = address;
-    for (const mapping of spans) {
-      if (mapping.address > covered) break;
-      const mappingEnd = mapping.address + BigInt(mapping.size);
-      if (mappingEnd > covered) covered = mappingEnd;
-    }
-    const first = spans[0];
-    if (covered >= end && first !== undefined)
-      found = first.offset + Number(address - first.address);
+    found = origin;
+    if (start === address && overlapEnd === end) whollyCovered = true;
+    else if (!whollyCovered) covered.push({ start, end: overlapEnd });
   }
   if (found === undefined)
     throw new BinaryMappingFailure(
       "unmapped",
       "Virtual address or string range is not file mapped",
     );
+  if (!whollyCovered) {
+    covered.sort((left, right) =>
+      left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
+    );
+    let cursor = address;
+    for (const span of covered) {
+      if (span.start > cursor)
+        throw new BinaryMappingFailure(
+          "unmapped",
+          "Virtual address or string range is not file mapped",
+        );
+      if (span.end > cursor) cursor = span.end;
+    }
+    if (cursor < end)
+      throw new BinaryMappingFailure(
+        "unmapped",
+        "Virtual address or string range is not file mapped",
+      );
+  }
   for (const zeroFill of zeroFills) {
     if (spansOverlap(address, BigInt(size), zeroFill.address, zeroFill.size))
       throw new BinaryMappingFailure(
@@ -297,22 +294,54 @@ export const mappedFileOffset = (
         "Virtual address has ambiguous file and zero-fill mappings",
       );
   }
-  const end = address + BigInt(size);
-  for (const mapping of mappings) {
-    const start = address > mapping.address ? address : mapping.address;
-    const mappingEnd = mapping.address + BigInt(mapping.size);
-    const overlapEnd = end < mappingEnd ? end : mappingEnd;
-    if (start >= overlapEnd) continue;
-    if (
-      BigInt(found) + start - address !==
-      BigInt(mapping.offset) + start - mapping.address
-    )
-      throw new BinaryMappingFailure(
-        "ambiguous",
-        "Virtual address has ambiguous file mappings",
-      );
-  }
   return found;
+};
+
+/** Read a bounded NUL-terminated string while retaining mapping/alias semantics. */
+export const readMappedCString = (
+  bytes: Buffer,
+  image: BinaryContainer,
+  address: bigint,
+  maximumBytes: number,
+): Buffer => {
+  const mappings = imageFileMappings(image);
+  const chunks: Buffer[] = [];
+  let length = 0;
+  while (length <= maximumBytes) {
+    const cursor = address + BigInt(length);
+    const mapping = mappings.find(
+      (range) =>
+        range.address <= cursor && cursor < range.address + BigInt(range.size),
+    );
+    if (mapping === undefined) {
+      mappedFileOffset(mappings, cursor, 1, image.zero_fills);
+      throw new BinaryMappingFailure(
+        "unmapped",
+        "String range is not file mapped",
+      );
+    }
+    const size = Math.min(
+      maximumBytes + 1 - length,
+      Number(mapping.address + BigInt(mapping.size) - cursor),
+    );
+    const offset = mapping.offset + Number(cursor - mapping.address);
+    const chunk = bytes.subarray(offset, offset + size);
+    const terminator = chunk.indexOf(0);
+    const consumed = terminator < 0 ? size : terminator + 1;
+    mappedFileOffset(mappings, cursor, consumed, image.zero_fills);
+    if (terminator >= 0) {
+      const tail = chunk.subarray(0, terminator);
+      if (chunks.length === 0) return tail;
+      chunks.push(tail);
+      return Buffer.concat(chunks, length + terminator);
+    }
+    chunks.push(chunk);
+    length += size;
+  }
+  throw new BinaryFormatFailure(
+    "malformed",
+    `String is unterminated or longer than ${String(maximumBytes)} bytes`,
+  );
 };
 
 /** Recognize a wholly zero-filled span while refusing even partial file aliases. */

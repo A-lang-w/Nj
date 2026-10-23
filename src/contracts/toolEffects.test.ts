@@ -113,6 +113,19 @@ const declaresForeignAuthority = (name: string): boolean => {
 };
 
 describe("tool effects", () => {
+  it("declares the web bundle worker's private file and child process effects", () => {
+    const contract = TOOL_CONTRACTS.find(
+      ({ name }) => name === "analyze_web_bundle",
+    );
+    expect(contract?.effects).toMatchObject({
+      mutatesSession: true,
+      accessesNetwork: true,
+      launchesProcess: true,
+      writesFilesystem: true,
+      executesForeignCode: false,
+      mutatesTarget: false,
+    });
+  });
   it("audits every public tool exactly once", () => {
     expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(
       TOOL_CONTRACTS.map(({ name }) => name).sort(),
@@ -225,5 +238,13 @@ describe("tool effects", () => {
       expect(contract.annotations, contract.name).toEqual(
         annotationsFromEffects(contract.effects),
       );
+  });
+});
+
+it("advertises signature inspection's temporary snapshot filesystem writes", () => {
+  expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
+    writesFilesystem: true,
+    mutatesTarget: false,
+    launchesProcess: true,
   });
 });

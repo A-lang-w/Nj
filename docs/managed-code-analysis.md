@@ -229,9 +229,12 @@ rea inspect-managed-members /absolute/path/Assembly.dll --type Example.Parser
 MCP uses `inspect_managed_members` with
 `{"path":"/absolute/path/Assembly.dll","type_names":["Example.Parser"]}`.
 Repeat `--type` or supply multiple unique `type_names` for several types.
-Names match the reported `full_name` exactly. Top-level names are namespace
-qualified; nested types currently report bare names, which can select several
-types with that name. Each type's `enclosing_type_token` records its enclosing
+Names match the reported `full_name` exactly. Top-level names require that
+namespace-qualified spelling. Nested declarations also accept their bare
+`name`, including when their own namespace is nonempty; this can select several
+types with that name. Selection uses the parsed TypeDef facts and comparison
+uses the returned declaring types, rather than reconstructing scope from the
+caller's spelling. Each type's `enclosing_type_token` records its enclosing
 TypeDef. `nesting_read` distinguishes complete source rows (true), incomplete
 current rows (false), and historical Evidence (null). A null enclosing token
 alone does not establish that a type is top-level.
@@ -322,6 +325,14 @@ for another build, and [managed/native boundary rules](#managed-native-boundarie
 when matching declared native calls to supplied native Evidence. Static inspection
 does not load or execute the assembly. Reconstructed structure and unresolved
 native/runtime questions retain their own authority and coverage.
+
+When the selected source changes during acquisition or no longer matches its
+admitted digest, inspection and comparison report retryable `artifact_changed`;
+any completed hash retains the observed digest and byte count. Retry against a
+stable source. This differs from corrupted retained Evidence, which remains an
+Evidence-integrity failure. Malformed selected PE input has the same input-format
+classification in inspection and comparison, and a failed right-side comparison
+retains the completed left observation.
 
 ## Member comparison
 
@@ -496,6 +507,24 @@ characters. These candidates follow [Microsoft's native library loading rules](h
 These filename rules compare declared and observed identities; they do not
 establish which library the runtime loaded.
 
+Signatures retain their decoded fields, but a Field or MethodDef row whose
+signature has the other member kind is malformed and cannot establish an
+unchanged signature. Runtime-provided methods are counted separately in
+`native_implementations.runtime_provided`; they have no file-backed native body
+for this workflow to map and do not increase `native_body_unresolved`. Historical
+verification Evidence without this separate count leaves it unknown (`null`).
+
+An empty declared import name remains unchanged in verification Evidence and
+produces no native-name candidates. With a supplied PE native context and
+`no_mangle: false`, an unspecified charset includes the ANSI `A` candidate;
+`auto` includes the Windows Unicode `W` candidate. Other native formats do not
+inherit these Windows defaults. These suffixes are static inferred candidates;
+exact spelling still suppresses decoration and no runtime binding is proven.
+The mapping follows [Microsoft's charset guidance](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/charset).
+Partial input coverage records a residual question even when no unresolved
+individual boundary was produced. Selected literal inventories likewise remain
+partial when unknown MethodDef ownership can hide a selected body.
+
 Metadata tokens are not native addresses. Native body mapping for C++/CLI,
 ReadyToRun, NativeAOT, and IL2CPP requires separately verified format and provider
 support. The managed static tools do not recover those mappings. The optional
@@ -664,7 +693,9 @@ runtime, supported host, output contract, and conformance results.
 Target platform is not host support. The canonical parser must inspect
 Windows-produced PE/CLI bytes on REA's supported Linux and macOS hosts with the
 same result. Pinned Windows oracle jobs may provide additional conformance, but
-they do not claim that the REA application itself supports Windows. Native
+do not establish that the REA managed analysis workflow has been verified on a
+Windows host. The [experimental Windows Ghidra boundary](windows-ghidra-p0.md)
+has its own host and provider verification scope. Native
 ReadyToRun, C++/CLI, NativeAOT, or IL2CPP coverage is additionally constrained
 by the selected Hopper/Ghidra host and format matrix.
 
