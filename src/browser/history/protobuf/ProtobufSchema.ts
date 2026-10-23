@@ -1,5 +1,7 @@
 import {
   createFileRegistry,
+  createRegistry,
+  equals,
   fromBinary,
   ScalarType,
   type DescField,
@@ -8,6 +10,8 @@ import {
 } from "@bufbuild/protobuf";
 import {
   FileDescriptorSetSchema,
+  FileDescriptorProtoSchema,
+  type FileDescriptorProto,
   type FileDescriptorSet,
 } from "@bufbuild/protobuf/wkt";
 import { BinaryReader } from "@bufbuild/protobuf/wire";
@@ -39,44 +43,77 @@ const scalarWire = (scalar: ScalarType): ProtobufField["wire_type"] => {
 const floatingValue = (value: number): string =>
   Object.is(value, -0) ? "-0" : String(value);
 
-/** Qualified names can expand a small descriptor into a much larger registry. */
-const chargeRegistryExpansion = async (
+// Descriptor custom options and future fields remain opaque identity facts.
+const descriptorEquality = { registry: createRegistry(), unknown: true };
+
+/** Admit descriptor identities and bound qualified names before registry construction. */
+const admitRegistryDescriptor = async (
   descriptor: FileDescriptorSet,
   budget: ProtobufBudget,
-): Promise<void> => {
+): Promise<FileDescriptorSet> => {
+  const files = new Map<string, FileDescriptorProto>();
+  const registryNames = new Set<string>();
+  const chargeQualifiedName = (name: string, prefix: string) =>
+    budget.charge((prefix.length + 1 + name.length) * 8 + 128);
+  const admitTypeName = (name: string, prefix: string): string => {
+    chargeQualifiedName(name, prefix);
+    budget.charge(32);
+    const qualified = prefix === "" ? name : `${prefix}.${name}`;
+    if (registryNames.has(qualified))
+      throw new Error(
+        "Duplicate fully qualified type name in FileDescriptorSet",
+      );
+    registryNames.add(qualified);
+    return qualified;
+  };
   for (const file of descriptor.file) {
+    await budget.checkpoint();
     budget.charge(file.name.length * 8 + 128);
+    const previous = files.get(file.name);
+    if (previous !== undefined) {
+      if (
+        !equals(FileDescriptorProtoSchema, previous, file, descriptorEquality)
+      )
+        throw new Error("Conflicting file identity in FileDescriptorSet");
+      continue;
+    }
+    files.set(file.name, file);
     const stack = file.messageType.map((message) => ({
       message,
-      prefix: file.package.length,
+      prefix: file.package,
     }));
-    const chargeQualifiedName = (name: string, prefix: number) =>
-      budget.charge((prefix + 1 + name.length) * 8 + 128);
     for (const enumeration of file.enumType)
-      chargeQualifiedName(enumeration.name, file.package.length);
+      admitTypeName(enumeration.name, file.package);
     for (const extension of file.extension)
-      chargeQualifiedName(extension.name, file.package.length);
+      admitTypeName(extension.name, file.package);
     for (const service of file.service) {
-      const length = file.package.length + 1 + service.name.length;
-      budget.charge(length * 8 + 128);
+      const qualified = admitTypeName(service.name, file.package);
       for (const method of service.method)
-        chargeQualifiedName(method.name, length);
+        chargeQualifiedName(method.name, qualified);
     }
     while (stack.length > 0) {
       await budget.checkpoint();
       const { message, prefix } = stack.pop()!;
-      const length = prefix + 1 + message.name.length;
-      budget.charge(length * 8 + 128);
-      for (const field of message.field)
-        chargeQualifiedName(field.name, length);
+      const qualified = admitTypeName(message.name, prefix);
+      budget.charge(message.field.length * 32);
+      const fieldNumbers = new Set<number>();
+      for (const field of message.field) {
+        chargeQualifiedName(field.name, qualified);
+        if (fieldNumbers.has(field.number))
+          throw new Error(
+            "Duplicate field number in FileDescriptorSet message",
+          );
+        fieldNumbers.add(field.number);
+      }
       for (const extension of message.extension)
-        chargeQualifiedName(extension.name, length);
+        admitTypeName(extension.name, qualified);
       for (const enumeration of message.enumType)
-        chargeQualifiedName(enumeration.name, length);
+        admitTypeName(enumeration.name, qualified);
       for (const nested of message.nestedType)
-        stack.push({ message: nested, prefix: length });
+        stack.push({ message: nested, prefix: qualified });
     }
   }
+  return { ...descriptor, file: [...files.values()] };
 };
 
 const scalarValue = (reader: BinaryReader, scalar: ScalarType): string => {
@@ -148,11 +185,11 @@ export class ProtobufSchema implements WireSchema {
     )
       throw new Error("Malformed FileDescriptorSet wire format");
     const descriptor = fromBinary(FileDescriptorSetSchema, bytes, {
-      readUnknownFields: false,
+      readUnknownFields: true,
       recursionLimit: WEB_NETWORK_CAPTURE_LIMITS.depth,
     });
-    await chargeRegistryExpansion(descriptor, budget);
-    const message = createFileRegistry(descriptor).getMessage(
+    const admitted = await admitRegistryDescriptor(descriptor, budget);
+    const message = createFileRegistry(admitted).getMessage(
       typeName.replace(/^\./, ""),
     );
     if (message === undefined)

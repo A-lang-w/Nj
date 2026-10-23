@@ -1,3 +1,4 @@
+import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
@@ -20,6 +21,7 @@ import {
   type ManagedMethod,
   type MemberCore,
   type SignatureTypeName,
+  type DeclarationTypeName,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import {
@@ -56,9 +58,11 @@ export const parseFields = (
   memberLists: TypeMemberListFacts,
   {
     signatureTypeName,
+    declarationTypeName,
     selected = null,
   }: {
     readonly signatureTypeName: SignatureTypeName;
+    readonly declarationTypeName: DeclarationTypeName;
     readonly selected?: SelectedTypeTokens;
   },
 ): {
@@ -119,7 +123,7 @@ export const parseFields = (
           name,
           declared?.token ?? null,
           decoded,
-          signatureTypeName,
+          declarationTypeName,
         ),
       });
       fields.push({
@@ -206,8 +210,15 @@ export const parseExportedTypes = (
 export const parseMemberRefs = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  typeName: (token: string | null) => string | null,
-  signatureTypeName: SignatureTypeName,
+  {
+    typeName,
+    signatureTypeName,
+    declarationTypeName,
+  }: {
+    readonly typeName: (token: string | null) => string | null;
+    readonly signatureTypeName: SignatureTypeName;
+    readonly declarationTypeName: DeclarationTypeName;
+  },
 ): {
   readonly refs: readonly ManagedMemberRef[];
   readonly core: ReadonlyMap<string, MemberCore>;
@@ -279,7 +290,7 @@ export const parseMemberRefs = (
           name,
           parentToken,
           decoded,
-          signatureTypeName,
+          declarationTypeName,
         ),
       });
     }, issues);
@@ -293,6 +304,7 @@ interface ParseMethodsInput {
   readonly pe: ManagedPeLayout;
   readonly ranges: readonly TypeRange[];
   readonly signatureTypeName: SignatureTypeName;
+  readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
   readonly selected?: SelectedTypeTokens;
@@ -306,6 +318,7 @@ export const parseMethods = ({
   pe,
   ranges,
   signatureTypeName,
+  declarationTypeName,
   memberRefKinds,
   memberLists,
   selected = null,
@@ -348,17 +361,21 @@ export const parseMethods = ({
         declared?.fullName === null);
     const produced = methods.length;
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 6, row);
-      const rva = cursor.readUInt32();
-      const implFlags = cursor.readUInt16();
-      const flags = cursor.readUInt16();
+      const {
+        token,
+        rowOffset,
+        rva,
+        implFlags,
+        flags,
+        nameIndex,
+        signatureIndex,
+      } = readMethodDefinitionRow(bytes, layout, row);
       const name = readMetadataString(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
+        nameIndex,
         layout.strings.size,
       );
-      const token = metadataToken(6, row);
       const member = {
         token,
         name,
@@ -371,10 +388,9 @@ export const parseMethods = ({
       const sig = readMetadataBlob(
         bytes,
         layout,
-        cursor.readIndex(layout.blobIndexSize),
+        signatureIndex,
         layout.blob?.size ?? 0,
       );
-      cursor.readIndex(layout.tableIndexSize(8));
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -389,7 +405,7 @@ export const parseMethods = ({
           name,
           declared?.token ?? null,
           decoded,
-          signatureTypeName,
+          declarationTypeName,
         ),
       });
       const read = methodBody(bytes, pe, rva, {
@@ -403,7 +419,7 @@ export const parseMethods = ({
       if (!read.scanned) unscannedMethods += 1;
       methods.push({
         token,
-        row_offset: cursor.start,
+        row_offset: rowOffset,
         declaring_type_token: declared?.token ?? null,
         declaring_type: declared?.fullName ?? null,
         name,

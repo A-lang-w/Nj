@@ -159,7 +159,7 @@ export const readOnlyTools = (
   /** The timeline indexes of the nearest state writes either side of an index, the skipped calls aside: -1 and the length when none, found in one pass each way. */
   const nearestWrites = (
     skip: ReadonlySet<number>,
-  ): ((at: number) => { readonly before: number; readonly after: number }) => {
+  ): Pick<Timeline, "writes" | "isWrite"> => {
     const writes = records.map(
       (record) => !skip.has(record.ordinal) && isStateWrite(record),
     );
@@ -177,7 +177,10 @@ export const readOnlyTools = (
       after[index] = next;
       if (writes[index]) next = index;
     }
-    return (at) => ({ before: before[at]!, after: after[at]! });
+    return {
+      writes: (at) => ({ before: before[at]!, after: after[at]! }),
+      isWrite: (index) => writes[index]!,
+    };
   };
   const candidates = new Map<string, readonly StateRecordFacts[]>();
   for (const tool of tools) {
@@ -190,9 +193,13 @@ export const readOnlyTools = (
       .map((ordinal) => records[position.get(ordinal) ?? -1])
       .filter((record): record is StateRecordFacts => record !== undefined);
     if (!calls.some(succeeded) || calls.some(unresolved)) continue;
-    const writes = nearestWrites(new Set(tool.record_ordinals));
+    const timeline = {
+      position,
+      ...nearestWrites(new Set(tool.record_ordinals)),
+      io,
+    };
     if (
-      repeatsRead(calls, records, { position, writes, io }) ||
+      repeatsRead(calls, records, timeline) ||
       namesReadOperations(calls, io) ||
       namesLookup(tool.path_template)
     )
@@ -200,12 +207,16 @@ export const readOnlyTools = (
   }
   // No candidate's call explains a read change across another's, so drop vetoed candidates until none is.
   for (let vetoed = true; vetoed;) {
-    const writes = nearestWrites(
-      new Set([...candidates.values()].flat().map((call) => call.ordinal)),
-    );
+    const timeline = {
+      position,
+      ...nearestWrites(
+        new Set([...candidates.values()].flat().map((call) => call.ordinal)),
+      ),
+      io,
+    };
     vetoed = false;
     for (const [name, calls] of candidates)
-      if (changesReadsAcross(calls, records, { position, writes, io })) {
+      if (changesReadsAcross(calls, records, timeline)) {
         candidates.delete(name);
         vetoed = true;
       }
@@ -220,6 +231,8 @@ interface Timeline {
     readonly before: number;
     readonly after: number;
   };
+  /** Whether the record at a timeline index is another write. */
+  readonly isWrite: (index: number) => boolean;
   readonly io: QueryCallIo;
 }
 
@@ -238,30 +251,120 @@ const lastFinishedBefore = (
   return latest;
 };
 
-/** Every successful call answers as the successful GET of its path that finished last before it began, of those with no write between, did. */
+/** Every successful call answers as the successful GET of its path that finished last before it began, of those since the last other write, did. */
 const repeatsRead = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
-  { position, writes, io }: Timeline,
-): boolean =>
-  calls.filter(succeeded).every((call) => {
-    const at = position.get(call.ordinal)!;
-    // Only reads after the last other write show the state the call met.
-    const read = lastFinishedBefore(
-      records
-        .slice(writes(at).before + 1, at)
-        .filter(
-          (record) =>
-            record.method === "GET" &&
-            record.path === call.path &&
-            succeeded(record),
-        ),
-      call,
-    );
+  { position, isWrite, io }: Timeline,
+): boolean => {
+  const answering = calls.filter(succeeded);
+  const reads = lastReads(answering, records, position, isWrite);
+  return answering.every((call) => {
+    const read = reads.get(call.ordinal);
     if (read === undefined) return false;
     const answered = io.response(call.ordinal);
     return answered !== undefined && same(answered, io.response(read.ordinal));
   });
+};
+
+/**
+ * Each call's successful GET of its path that finished last before it began, of those since the last
+ * other write, in one sweep: a path's reads wait by end time until a call's start passes them.
+ */
+const lastReads = (
+  calls: readonly StateRecordFacts[],
+  records: readonly StateRecordFacts[],
+  position: ReadonlyMap<number, number>,
+  isWrite: (index: number) => boolean,
+): Map<number, StateRecordFacts> => {
+  const paths = new Set(calls.map((call) => call.path));
+  const callAt = new Map(
+    calls.map((call) => [position.get(call.ordinal)!, call]),
+  );
+  const lastCall = calls.reduce(
+    (latest, call) => Math.max(latest, position.get(call.ordinal)!),
+    -1,
+  );
+  const waiting = new Map<string, ReadsByEnd>();
+  const latest = new Map<string, StateRecordFacts>();
+  const found = new Map<number, StateRecordFacts>();
+  for (let index = 0; index <= lastCall; index += 1) {
+    const record = records[index]!;
+    const call = callAt.get(index);
+    if (call !== undefined) {
+      const ready = waiting.get(call.path);
+      for (
+        let read = ready?.popEndedBy(call.start);
+        read !== undefined;
+        read = ready?.popEndedBy(call.start)
+      )
+        latest.set(call.path, read);
+      const read = latest.get(call.path);
+      if (read !== undefined) found.set(call.ordinal, read);
+    } else if (isWrite(index)) {
+      waiting.clear();
+      latest.clear();
+    } else if (
+      record.method === "GET" &&
+      succeeded(record) &&
+      paths.has(record.path)
+    ) {
+      const heap = waiting.get(record.path) ?? new ReadsByEnd(position);
+      heap.push(record);
+      waiting.set(record.path, heap);
+    }
+  }
+  return found;
+};
+
+/** Reads in a binary heap by end time, then timeline position, so the one that finished first comes out first. */
+class ReadsByEnd {
+  readonly #reads: StateRecordFacts[] = [];
+
+  constructor(private readonly position: ReadonlyMap<number, number>) {}
+
+  #before(left: StateRecordFacts, right: StateRecordFacts): boolean {
+    return (
+      left.end < right.end ||
+      (left.end === right.end &&
+        this.position.get(left.ordinal)! < this.position.get(right.ordinal)!)
+    );
+  }
+
+  push(read: StateRecordFacts): void {
+    const reads = this.#reads;
+    reads.push(read);
+    for (let at = reads.length - 1; at > 0;) {
+      const parent = (at - 1) >>> 1;
+      if (!this.#before(reads[at]!, reads[parent]!)) break;
+      [reads[at], reads[parent]] = [reads[parent]!, reads[at]!];
+      at = parent;
+    }
+  }
+
+  /** The read that finished first, when it finished by `time`. */
+  popEndedBy(time: number): StateRecordFacts | undefined {
+    const reads = this.#reads;
+    const first = reads[0];
+    if (first === undefined || first.end > time) return undefined;
+    const last = reads.pop()!;
+    if (reads.length > 0) {
+      reads[0] = last;
+      for (let at = 0; ;) {
+        const [left, right] = [at * 2 + 1, at * 2 + 2];
+        let next = at;
+        if (left < reads.length && this.#before(reads[left]!, reads[next]!))
+          next = left;
+        if (right < reads.length && this.#before(reads[right]!, reads[next]!))
+          next = right;
+        if (next === at) break;
+        [reads[at], reads[next]] = [reads[next]!, reads[at]!];
+        at = next;
+      }
+    }
+    return first;
+  }
+}
 
 /** Every call names only read operations. */
 const namesReadOperations = (

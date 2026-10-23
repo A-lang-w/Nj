@@ -24,7 +24,13 @@ const projectsLimit = (
   reads: readonly StateRecordFacts[],
   post: StateRecordFacts,
   bodies: ReadonlyMap<number, JsonValue>,
-  created: readonly string[],
+  {
+    created,
+    retain = () => undefined,
+  }: {
+    readonly created: readonly string[];
+    readonly retain?: (bytes: number) => void;
+  },
 ) =>
   creationLimit(
     [{ record: post, ids: created }],
@@ -41,6 +47,7 @@ const projectsLimit = (
       records: new Map([...reads, post].map((at) => [at.ordinal, at])),
       position: (at) => at.ordinal,
       body: (ordinal) => bodies.get(ordinal),
+      retain,
     },
     undefined,
   );
@@ -72,6 +79,7 @@ describe("creation limits", () => {
         records: new Map([list, post, later].map((at) => [at.ordinal, at])),
         position: (at) => at.ordinal,
         body: (ordinal) => bodies.get(ordinal),
+        retain: () => undefined,
       },
       undefined,
     );
@@ -88,11 +96,15 @@ describe("creation limits", () => {
     // The second list began before the POST but ended after it began, so it may show the import.
     const overlapping = record(1, "GET", "/api/projects", [10, 40]);
     expect(
-      projectsLimit([earlier, overlapping], post, bodies, ["proj-0002"]),
+      projectsLimit([earlier, overlapping], post, bodies, {
+        created: ["proj-0002"],
+      }),
     ).toBe(post);
     const finished = record(1, "GET", "/api/projects", [10, 15]);
     expect(
-      projectsLimit([earlier, finished], post, bodies, ["proj-0002"]),
+      projectsLimit([earlier, finished], post, bodies, {
+        created: ["proj-0002"],
+      }),
     ).toBeUndefined();
   });
 
@@ -112,9 +124,9 @@ describe("creation limits", () => {
         ],
       ],
     ]);
-    expect(projectsLimit([list, later], post, bodies, ["proj-0002"])).toBe(
-      post,
-    );
+    expect(
+      projectsLimit([list, later], post, bodies, { created: ["proj-0002"] }),
+    ).toBe(post);
   });
 
   it("reads no suffix-named field as a list's ids when an id field already identifies its entities", () => {
@@ -136,7 +148,7 @@ describe("creation limits", () => {
     ]);
     // The owner the user call returned is no project the call made.
     expect(
-      projectsLimit([list, later], post, bodies, ["user-0003"]),
+      projectsLimit([list, later], post, bodies, { created: ["user-0003"] }),
     ).toBeUndefined();
   });
 
@@ -169,6 +181,7 @@ describe("creation limits", () => {
         records: new Map([item, post, later].map((at) => [at.ordinal, at])),
         position: (at) => at.ordinal,
         body: (ordinal) => bodies.get(ordinal),
+        retain: () => undefined,
       },
       undefined,
     );
@@ -190,7 +203,41 @@ describe("creation limits", () => {
       [2, { projects: [project("user-0009")] }],
     ]);
     expect(
-      projectsLimit([list, later], post, bodies, ["user-0009"]),
+      projectsLimit([list, later], post, bodies, { created: ["user-0009"] }),
     ).toBeUndefined();
+  });
+});
+
+describe("the ids creation limits keep", () => {
+  it("keeps and charges only the shown ids a creation returned", () => {
+    let retained = 0;
+    const lists = 50;
+    const reads = Array.from({ length: lists }, (_, index) =>
+      record(index < lists / 2 ? index : index + 1, "GET", "/api/projects"),
+    );
+    const post = record(lists / 2, "POST", "/api/imports");
+    const rows = (extra: number) =>
+      Array.from({ length: 1000 }, (_, row) => ({
+        id: `proj-${String(row + extra).padStart(5, "0")}`,
+      }));
+    const bodies = new Map<number, JsonValue>(
+      reads.map((read) => [
+        read.ordinal,
+        read.ordinal > post.ordinal
+          ? [...rows(0), { id: "proj-made" }]
+          : rows(0),
+      ]),
+    );
+    expect(
+      projectsLimit(reads, post, bodies, {
+        created: ["proj-made"],
+        retain: (bytes) => {
+          retained += bytes;
+        },
+      }),
+    ).toBe(post);
+    // One kept id per later list, not a thousand per list.
+    expect(retained).toBeGreaterThan(0);
+    expect(retained).toBeLessThan(lists * 1000 * 16);
   });
 });

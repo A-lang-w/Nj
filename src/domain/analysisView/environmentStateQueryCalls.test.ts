@@ -484,6 +484,61 @@ describe("read-only decisions over many calls", () => {
   });
 });
 
+describe("read-only decisions over a long run of calls", () => {
+  it("finds each call's repeated read without rescanning the run before it", () => {
+    let visits = 0;
+    const calls = 2000;
+    const records: StateRecordFacts[] = Array.from(
+      { length: calls * 2 },
+      (_, index) => {
+        const read = index % 2 === 0;
+        const record = {
+          ordinal: index,
+          path: "/v1/jobs/statuses",
+          query: undefined,
+          status: 200,
+          start: index,
+          end: index,
+        };
+        const method = read ? "GET" : "POST";
+        return Object.defineProperty(record, "method", {
+          enumerable: true,
+          get: () => {
+            visits += 1;
+            return method;
+          },
+        }) as StateRecordFacts;
+      },
+    );
+    const ordinals = (read: boolean) =>
+      records
+        .filter((record) => (record.ordinal % 2 === 0) === read)
+        .map((record) => record.ordinal);
+    const tools: StateToolFacts[] = [
+      {
+        name: "get_statuses",
+        method: "GET",
+        path_template: "/v1/jobs/statuses",
+        record_ordinals: ordinals(true),
+      },
+      {
+        name: "post_statuses",
+        method: "POST",
+        path_template: "/v1/jobs/statuses",
+        record_ordinals: ordinals(false),
+      },
+    ];
+    visits = 0;
+    expect([
+      ...readOnlyTools(tools, records, {
+        response: () => JOBS,
+        request: () => ({ jobs: ["night-watch"] }),
+      }),
+    ]).toEqual(["post_statuses"]);
+    expect(visits).toBeLessThan(50 * records.length);
+  });
+});
+
 describe("read-only decisions over many lines", () => {
   it("reads each related line's records once per call, however many lines the lookup's path relates to", () => {
     let reads = 0;

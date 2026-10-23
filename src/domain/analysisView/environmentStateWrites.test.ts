@@ -1743,6 +1743,34 @@ describe("earlier reads of the returned id under other types", () => {
   });
 });
 
+describe("item reads that show no entity", () => {
+  it("links a create past a read of its id that answered JSON null under another type", () => {
+    const user = (id: number, login: string) => ({ id, login });
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      ["GET", "/api/users/1001", user(1001, "alpha")],
+      // Ends the users' initial reads, so the null read below plans nothing.
+      [
+        "PATCH",
+        "/api/users/1001",
+        user(1001, "alpha2"),
+        200,
+        { login: "alpha2" },
+      ],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/users/1003", null],
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+  });
+});
+
 describe("what a linked create observes", () => {
   it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
     const D = note(1004, "Delta");

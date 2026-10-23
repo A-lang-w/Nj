@@ -23,7 +23,10 @@ import type {
 } from "./ManagedMetadataLayout.js";
 import {
   metadataRowCursor,
+  readManagedCompressedUnsigned,
   decodeMetadataCodedIndex,
+  metadataCodedIndexCoordinate,
+  type MetadataCodedIndexCoordinate,
   metadataToken,
   readMetadataString,
   sha256Bytes,
@@ -90,7 +93,7 @@ export const memberTargetIdentity = (
   name: string,
   declaringToken: string | null,
   signature: ManagedSignature,
-  typeName: SignatureTypeName,
+  typeName: DeclarationTypeName,
 ): string | null => {
   if (
     declaringToken === null ||
@@ -100,9 +103,7 @@ export const memberTargetIdentity = (
     return null;
   const table = Number.parseInt(declaringToken.slice(2, 4), 16);
   if (table !== 1 && table !== 2) return null;
-  const owner = typeName(
-    Number.parseInt(declaringToken.slice(4), 16) * 4 + Number(table === 1),
-  );
+  const owner = typeName(table, Number.parseInt(declaringToken.slice(4), 16));
   return owner === null
     ? null
     : createHash("sha256")
@@ -285,38 +286,17 @@ export const readCompressed = (
   bytes: Buffer,
   offset: number,
 ): { readonly value: number; readonly next: number } => {
-  const first = bytes[offset];
-  if (first === undefined)
+  const decoded = readManagedCompressedUnsigned(bytes, offset);
+  if (!decoded.ok)
     throw managedFailure(
       "invalid-blob",
       "signature",
-      "truncated compressed integer",
+      decoded.error.kind === "truncated" && decoded.error.width === 1
+        ? "truncated compressed integer"
+        : "reserved compressed integer",
       offset,
     );
-  if ((first & 0x80) === 0) return { value: first, next: offset + 1 };
-  const second = bytes[offset + 1];
-  if ((first & 0xc0) === 0x80 && second !== undefined)
-    return { value: ((first & 0x3f) << 8) | second, next: offset + 2 };
-  const b1 = bytes[offset + 1];
-  const b2 = bytes[offset + 2];
-  const b3 = bytes[offset + 3];
-  if (
-    (first & 0xe0) === 0xc0 &&
-    b1 !== undefined &&
-    b2 !== undefined &&
-    b3 !== undefined
-  )
-    return {
-      value:
-        (first & 0x1f) * 0x01_00_00_00 + b1 * 0x01_00_00 + b2 * 0x0100 + b3,
-      next: offset + 4,
-    };
-  throw managedFailure(
-    "invalid-blob",
-    "signature",
-    "reserved compressed integer",
-    offset,
-  );
+  return { value: decoded.value.value, next: offset + decoded.value.width };
 };
 
 const ELEMENT_TYPES = new Map<number, string>([
@@ -521,7 +501,7 @@ const readTypeOperand = (
   offset: number,
   layout?: ManagedMetadataLayout,
   tables: readonly number[] = [2, 1, 27],
-): ReturnType<typeof readCompressed> => {
+): Omit<TypeOperand, "offset"> => {
   const token = readCompressed(blob, offset);
   if (layout !== undefined) {
     const decoded = decodeMetadataCodedIndex(
@@ -537,8 +517,10 @@ const readTypeOperand = (
         `TypeDefOrRefOrSpec operand 0x${token.value.toString(16)} is invalid: ${decoded.kind === "null" ? "type operand is null" : decoded.reason}`,
         offset,
       );
+    return { ...token, coordinate: { table: decoded.table, row: decoded.row } };
   }
-  return token;
+  const { table, row } = metadataCodedIndexCoordinate(token.value, 2, tables);
+  return { ...token, coordinate: { table, row } };
 };
 
 /** A TypeDefOrRefOrSpec coded index embedded in a signature blob. */
@@ -546,6 +528,12 @@ interface TypeOperand {
   readonly offset: number;
   readonly next: number;
   readonly value: number;
+  readonly coordinate: MetadataCodedIndexCoordinate;
+}
+
+interface NominalGenericType {
+  readonly table: 1 | 2;
+  readonly row: number;
 }
 
 const readTypeSignature = (
@@ -561,9 +549,14 @@ const readTypeSignature = (
     /** Collect each type operand, to resolve it by name. */
     readonly operands?: TypeOperand[];
   } = {},
-): { readonly value: string; readonly next: number } => {
+): {
+  readonly value: string;
+  readonly next: number;
+  readonly nominalGenericType: NominalGenericType | null;
+} => {
   const stack: TypeContinuation[] = [];
   let cursor = offset;
+  let nominalGenericType: NominalGenericType | null = null;
   let pinned = false;
   for (;;) {
     let value: string | undefined;
@@ -680,6 +673,14 @@ const readTypeSignature = (
           cursor + 1,
         );
       const token = readTypeOperand(blob, cursor + 2, layout, [2, 1]);
+      if (
+        cursor === offset &&
+        (token.coordinate.table === 1 || token.coordinate.table === 2)
+      )
+        nominalGenericType = {
+          table: token.coordinate.table,
+          row: token.coordinate.row,
+        };
       operands?.push({ offset: cursor + 2, ...token });
       const argumentCount = readCompressed(blob, token.next);
       if (argumentCount.value === 0)
@@ -728,7 +729,7 @@ const readTypeSignature = (
     }
     while (value !== undefined) {
       const top = stack.pop();
-      if (top === undefined) return { value, next: cursor };
+      if (top === undefined) return { value, next: cursor, nominalGenericType };
       if (top.kind === "suffix") value += top.suffix;
       else if (top.kind === "modifiers")
         value = `${value} ${top.modifiers.join(" ")}`;
@@ -836,6 +837,7 @@ export const specSignatureFacts = (
 ): {
   readonly types: readonly string[];
   readonly resolvedSha256: string | null;
+  readonly nominalGenericType: NominalGenericType | null;
 } => {
   const budget = managedDecodeBudget(layout);
   // Rendering is transient, so charge it as member signatures are charged.
@@ -854,6 +856,7 @@ export const specSignatureFacts = (
     }
     const types: string[] = [];
     const operands: TypeOperand[] = [];
+    let nominalGenericType: NominalGenericType | null = null;
     // Each Type consumes at least one byte, so a false count fails on truncation.
     for (let index = 0; index < count; index += 1) {
       const type = readTypeSignature(blob, cursor, "type", {
@@ -861,6 +864,7 @@ export const specSignatureFacts = (
         operands,
       });
       types.push(type.value);
+      if (owner.form === "type") nominalGenericType = type.nominalGenericType;
       cursor = type.next;
     }
     if (cursor !== blob.length)
@@ -871,6 +875,7 @@ export const specSignatureFacts = (
         typeName === undefined
           ? null
           : resolvedSha256(blob, operands, typeName),
+      nominalGenericType,
     };
   } catch (cause: unknown) {
     if (
@@ -1035,7 +1040,11 @@ export const signatureGenericArity = (
  * SHA-256 of the namespace-qualified name of a TypeDefOrRefOrSpec coded index,
  * or null when it has no name.
  */
-export type SignatureTypeName = (codedIndex: number) => Buffer | null;
+export type SignatureTypeName = (
+  operand: Pick<TypeOperand, "value" | "coordinate">,
+) => Buffer | null;
+
+export type DeclarationTypeName = (table: 1 | 2, row: number) => Buffer | null;
 
 /**
  * Each type operand is replaced by 0xff, which never starts a compressed
@@ -1058,7 +1067,7 @@ const resolvedSha256 = (
   const hash = createHash("sha256");
   let copied = 0;
   for (const operand of operands) {
-    const name = typeName(operand.value);
+    const name = typeName(operand);
     if (name === null) return null;
     hash.update(blob.subarray(copied, operand.offset));
     hash.update(OPERAND_MARKER);

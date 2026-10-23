@@ -342,6 +342,7 @@ export class EnvironmentStateExtraction {
           records: this.#byOrdinal,
           position: (record) => this.#position.get(record.ordinal)!,
           body: (ordinal) => this.#withBody(ordinal, (body) => body),
+          retain: (bytes) => this.#retain(bytes),
         },
         first,
       ) ?? first;
