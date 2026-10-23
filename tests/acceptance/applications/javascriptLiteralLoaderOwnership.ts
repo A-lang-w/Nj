@@ -359,7 +359,7 @@ const expectCompetingLoaderGraph = (
     );
   if (loader === "createRequire base") {
     const references = graph.edges.filter(
-      ({ properties }) => properties.source_relative_base !== undefined,
+      ({ properties }) => typeof properties.resolution_base_path === "string",
     );
     expect(references).toHaveLength(1);
     expect(references[0]).toMatchObject({
@@ -367,7 +367,7 @@ const expectCompetingLoaderGraph = (
       properties: {
         kind: "require",
         specifier: "../shared/window.cjs",
-        source_relative_base: "../other/nested/main.cjs",
+        resolution_base_path: "../other/nested/main.cjs",
         resolution_status: "resolved",
         resolved_path: "other/shared/window.cjs",
       },

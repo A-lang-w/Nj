@@ -24,8 +24,6 @@ export interface JavaScriptSourceRange {
 interface JavaScriptStaticReferenceState {
   /** A proven native resolver associates a path without invoking module loading. */
   readonly resolution_only?: true;
-  /** Known createRequire filename, relative to the analyzed source directory. */
-  readonly source_relative_base?: string;
   readonly kind:
     | "static-import"
     | "dynamic-import"
@@ -35,6 +33,8 @@ interface JavaScriptStaticReferenceState {
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
+  /** Source-relative filename selected by a proven createRequire factory. */
+  readonly resolution_base_path?: string;
   readonly location: JavaScriptSourceRange;
 }
 

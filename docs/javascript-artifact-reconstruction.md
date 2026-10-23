@@ -252,7 +252,8 @@ Selected bounded text is then parsed as inert data to recover:
 - Electron preload paths and renderer files visible in static syntax;
 - local HTML script entrypoints;
 - Webpack and Rspack chunk registrations and module factories represented as
-  AST literals;
+  AST literals, plus esbuild `__commonJS` module tables; recovered esbuild
+  CommonJS exports use its factory's `exports`-then-`module` parameter order;
 - static imports, dynamic imports, CommonJS `require` calls, workers, and
   service workers (only `new Worker(new URL(path, import.meta.url))` resolves
   relative to the calling module; string worker and service-worker paths use
@@ -276,8 +277,6 @@ Proven native `require.resolve()` references retain `resolution_only: true`.
 They associate a module path without establishing execution or propagating an
 Electron application owner. A replaced or otherwise unresolved resolver remains
 uncertain. Resolving and loading the same path retain distinct reference facts.
-A known alternate `createRequire()` filename is retained as `source_relative_base`
-and used for module resolution, while Evidence locations stay on the original source.
 
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,
@@ -648,6 +647,13 @@ execution and memory limits continue to determine examined coverage. Raising onl
 a node capacity does not raise the unknown capacity. Graphs without unknown
 omissions omit this optional coverage field, preserving their existing identities.
 
+These node and unknown capacities bound retained graph projection. Parsing,
+static analysis and semantic fact construction precede that projection for an
+admitted source. Lowering the capacities can reduce projection and retention
+work, but does not bound upstream semantic-analysis time or memory. Select fewer
+`source_paths` to reduce the sources analyzed; heap and deadline controls set
+separate resource failure boundaries with the runtime-specific limits above.
+
 While sources remain, the sequential worker reserves one next compact static
 checkpoint at its 8 MiB bound with the same 6x retention expansion used at
 admission. Earlier checkpoints are already charged to retained bytes; the
@@ -767,6 +773,14 @@ in `/` are invalid. Imports arrays skip invalid parent-relative, absolute, and
 URL targets before selecting a later package-local file; an unsupported bare
 package or recursive alias keeps its unresolved outcome rather than selecting
 a later fallback.
+
+For a proven `createRequire(new URL(relativeFile, import.meta.url))` call,
+relative `require()` edges use the selected filename's directory and retain the
+source-relative `resolution_base_path` on the graph edge. This follows Node's
+`createRequire(filename)` contract; the path is a loader-resolution fact and
+does not change the source file or call-site Evidence identity. If the filename
+cannot be proven, REA keeps the require target unresolved rather than silently
+resolving it from the caller's directory.
 
 ESM relative module paths, legacy package subpaths without exports, and selected
 package exports targets use URL suffix handling and one percent-decoding pass.

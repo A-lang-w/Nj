@@ -91,9 +91,9 @@ export const inspectCall = (
       node,
       kind: "require",
       specifier: requireCall.specifier,
-      ...(requireCall.sourceRelativeBase === undefined
+      ...(requireCall.resolutionBasePath === undefined
         ? {}
-        : { source_relative_base: requireCall.sourceRelativeBase }),
+        : { resolutionBasePath: requireCall.resolutionBasePath }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -270,8 +270,8 @@ const requireCallSpecifier = (
   resolveMemberChanged = false,
 ): {
   readonly specifier: string | undefined;
+  readonly resolutionBasePath?: string;
   readonly resolutionOnly: boolean;
-  readonly sourceRelativeBase: string | undefined;
 } | null => {
   const call = semanticRequireCallAt(
     node,
@@ -285,16 +285,14 @@ const requireCallSpecifier = (
     !call.sourceRelative
   ) {
     context.accumulator.unknownFindings += 1;
-    return {
-      specifier: undefined,
-      resolutionOnly: false,
-      sourceRelativeBase: undefined,
-    };
+    return { specifier: undefined, resolutionOnly: false };
   }
   return {
     specifier: argumentValue(call.arguments?.[0]),
     resolutionOnly: isRequireResolveCall(node),
-    sourceRelativeBase: call.sourceRelativePath,
+    ...(call.sourceRelativePath === undefined
+      ? {}
+      : { resolutionBasePath: call.sourceRelativePath }),
   };
 };
 
@@ -327,9 +325,9 @@ export const finishModuleRequireCalls = (
         kind: "require",
         specifier: call.specifier,
         ...(call.resolutionOnly ? { resolution_only: true } : {}),
-        ...(call.sourceRelativeBase === undefined
+        ...(call.resolutionBasePath === undefined
           ? {}
-          : { source_relative_base: call.sourceRelativeBase }),
+          : { resolutionBasePath: call.resolutionBasePath }),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
@@ -952,15 +950,15 @@ export const addReference = (
       : { specifier, expression: null };
   addLocatedFinding(context, {
     collection: context.accumulator.references,
-    key: `reference\0${input.kind}\0${input.resolution_only ? "resolve-only\0" : ""}${reference.specifier ?? reference.expression}`,
+    key: `reference\0${input.kind}\0${input.resolution_only ? "resolve-only\0" : ""}${reference.specifier ?? reference.expression}\0${input.resolutionBasePath ?? ""}`,
     node: input.node,
     value: {
       kind: input.kind,
       ...(input.resolution_only ? { resolution_only: true } : {}),
-      ...(input.source_relative_base === undefined
-        ? {}
-        : { source_relative_base: input.source_relative_base }),
       ...reference,
+      ...(input.resolutionBasePath === undefined
+        ? {}
+        : { resolution_base_path: input.resolutionBasePath }),
       module_key: null,
       location: range(input.node),
     },

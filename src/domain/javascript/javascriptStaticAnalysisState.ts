@@ -111,10 +111,10 @@ export interface JavaScriptFindingContext {
 /** Candidate import, require, worker, or service-worker reference. */
 export interface JavaScriptReferenceInput {
   readonly resolution_only?: true;
-  readonly source_relative_base?: string;
   readonly node: t.Node;
   readonly kind: JavaScriptStaticReference["kind"];
   readonly specifier: string | undefined;
+  readonly resolutionBasePath?: string;
 }
 
 /** Candidate route or network endpoint literal. */

@@ -312,11 +312,9 @@ const addReference = (
     properties: {
       kind: input.value.kind,
       ...(input.value.resolution_only ? { resolution_only: true } : {}),
-      ...(input.value.source_relative_base === undefined
-        ? {}
-        : { source_relative_base: input.value.source_relative_base }),
       specifier: input.value.specifier,
       expression: input.value.expression,
+      resolution_base_path: input.value.resolution_base_path ?? null,
       resolution_mode:
         input.value.kind === "static-import" ||
         input.value.kind === "dynamic-import" ||
@@ -645,6 +643,12 @@ const resolveReference = (
   if (specifier === null) return null;
   const isWorker =
     reference.kind === "worker" || reference.kind === "service-worker";
+  const resolutionSourcePath =
+    reference.kind === "require" && reference.resolution_base_path !== undefined
+      ? posix.normalize(
+          posix.join(posix.dirname(sourcePath), reference.resolution_base_path),
+        )
+      : sourcePath;
   const chunk = isWorker
     ? null
     : resolveBundlerChunkReference(context, sourcePath, reference);
@@ -679,15 +683,7 @@ const resolveReference = (
       })
     : resolveArtifactPathByContext({
         declaredPath: specifier,
-        sourcePath:
-          reference.source_relative_base === undefined
-            ? sourcePath
-            : posix.normalize(
-                posix.join(
-                  posix.dirname(sourcePath),
-                  reference.source_relative_base,
-                ),
-              ),
+        sourcePath: resolutionSourcePath,
         context: "module-specifier",
         files: context.filesByPath,
         jsonDocuments: context.analysis.jsonDocuments,
@@ -698,7 +694,7 @@ const resolveReference = (
         "dynamic-import" === reference.kind
           ? {
               moduleKind: moduleResolutionModeForJavaScriptReference(
-                sourcePath,
+                resolutionSourcePath,
                 reference.kind,
               ),
             }
@@ -819,9 +815,6 @@ const unresolvedReferenceNode = (
         properties: {
           reference_kind: reference.kind,
           specifier: reference.specifier,
-          ...(reference.source_relative_base === undefined
-            ? {}
-            : { source_relative_base: reference.source_relative_base }),
           expression: reference.expression,
           resolution: "unresolved",
           ...(resolution === undefined

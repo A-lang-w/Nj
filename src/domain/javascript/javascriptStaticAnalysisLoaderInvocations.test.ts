@@ -414,7 +414,7 @@ it("retains an alternate createRequire filename in static reference facts", () =
     {
       kind: "require",
       specifier: "../shared/window.cjs",
-      source_relative_base: "../other/nested/main.cjs",
+      resolution_base_path: "../other/nested/main.cjs",
     },
   ]);
 });
