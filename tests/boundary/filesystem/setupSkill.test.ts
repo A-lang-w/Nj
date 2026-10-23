@@ -419,7 +419,10 @@ describe("canonical skill publication ownership", () => {
     });
     if (result.ok) throw new Error("Expected injected write failure");
     expect(result.error.rollbackFailures).toEqual([
-      { path: manifest, reason: expect.stringContaining("manual removal") },
+      {
+        path: manifest,
+        reason: expect.stringContaining("Selected input changed"),
+      },
     ]);
     expect(await readFile(manifest, "utf8")).toBe("new user file\n");
   });

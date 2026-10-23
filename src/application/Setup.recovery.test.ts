@@ -112,7 +112,9 @@ describe("setup workflow", () => {
     expect(result.code).toBe("skill_install_failed");
     expect(result.remediation).toContain("REA skill write failed at");
     expect(result.remediation).toContain("injected skill write failure");
-    expect(result.remediation).toContain("Check permissions and rerun setup.");
+    expect(result.remediation).toContain(
+      "Review the current skill files and retained backups, resolve any concurrent changes or permission failures, then rerun setup.",
+    );
     expect(progress.at(-1)).toMatchObject({
       state: "failed",
       detail: expect.stringContaining("injected skill write failure"),

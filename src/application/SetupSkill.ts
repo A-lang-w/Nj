@@ -161,13 +161,10 @@ export const systemSkillInstallFileOperations: SkillInstallFileOperations = {
   backup: (source, destination) =>
     copyFile(source, destination, fsConstants.COPYFILE_EXCL),
   write: (path, content, mode, original) =>
-    ClientConfigurationPublication.write(
-      path,
-      content,
-      original?.bytes,
-      mode,
-      { requestedPath: path, state: original?.stats },
-    ),
+    ClientConfigurationPublication.write(path, content, original?.bytes, mode, {
+      requestedPath: path,
+      state: original?.stats,
+    }),
 };
 
 /** Managed skill location selected for a client family. */
@@ -541,7 +538,7 @@ const releaseSkillFiles = async (
     if (!result.ok && cause instanceof Error)
       return err(
         new SetupSkillInstallError({
-          path: causePath(cause) ?? "skill bundle",
+          path: result.error.path,
           stage: result.error.stage,
           reason: result.error.reason,
           rollbackFailures: [

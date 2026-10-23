@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
@@ -33,7 +33,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import { ClientConfigurationPublicationFailure } from "../../src/application/ClientConfigurationCleanup.js";
 import {
@@ -94,6 +94,79 @@ it.each([false, true])(
       expect(remaining.some((entry) => entry.startsWith(".rea-config-"))).toBe(
         false,
       );
+    } finally {
+      state.rejectClose = false;
+      await resources.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves a later write failure when earlier publication cleanup fails: %s",
+  async (rejectClose) => {
+    const home = await createTestTempDirectory("rea-skill-primary-cleanup-");
+    const [destination] = skillDestinations(home, []);
+    if (destination === undefined) throw new Error("Missing shared skill root");
+    const manifest = join(destination.path, "SKILL.md");
+    const connection = join(
+      destination.path,
+      "references/connection-and-recovery.md",
+    );
+    const original = "previously installed skill instructions\n";
+    const failure = new Error("injected later write failure");
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeFile(manifest, original);
+    const resources = new ArtifactResourceScope();
+    state.rejectClose = rejectClose;
+    try {
+      const result = await installCanonicalSkill(
+        home,
+        [],
+        {},
+        process.platform,
+        {
+          ...systemSkillInstallFileOperations,
+          write: async (...args) => {
+            if (args[0] === connection) throw failure;
+            return systemSkillInstallFileOperations.write(...args);
+          },
+        },
+        resources,
+      );
+      if (result.ok) throw new Error("Expected the later write failure");
+      expect(result.error.path).toBe(connection);
+      expect(result.error.stage).toBe("write");
+      expect(result.error.reason).toBe(failure.message);
+      expect(result.error.message).toContain(
+        `REA skill write failed at ${connection}: ${failure.message}.`,
+      );
+      expect(result.error.rollbackFailures).toEqual(
+        rejectClose
+          ? [
+              {
+                path: manifest,
+                reason: expect.stringContaining("cleanup remains incomplete"),
+              },
+            ]
+          : [],
+      );
+      expect(result.error.recoveryBackupPaths).toEqual([
+        `${manifest}.rea.backup`,
+      ]);
+      expect(await readFile(manifest, "utf8")).toBe(original);
+      expect(await readFile(`${manifest}.rea.backup`, "utf8")).toBe(original);
+      expect(resources.hasPending).toBe(rejectClose);
+      expect(state.handles).toHaveLength(1);
+      expect(state.handles[0]!.fd === -1).toBe(!rejectClose);
+      state.rejectClose = false;
+      await resources.close();
+      expect(resources.hasPending).toBe(false);
+      expect(state.handles[0]!.fd).toBe(-1);
+      expect(
+        (await readdir(destination.path)).some((entry) =>
+          entry.startsWith(".rea-config-"),
+        ),
+      ).toBe(false);
     } finally {
       state.rejectClose = false;
       await resources.close();
