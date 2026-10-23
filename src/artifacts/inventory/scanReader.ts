@@ -217,6 +217,7 @@ const visitArtifactEntries = async (
       const normalizationLimitation = unicodeNormalizationLimitation(
         rawLogicalPath,
         logicalPath,
+        entry.kind,
       );
       if (normalizationLimitation !== undefined)
         occurrence.limitations.push(normalizationLimitation);
