@@ -238,6 +238,9 @@ const normalizeIgnorePattern = (
   // or escapes. Keep that fact after encoding a slash-bearing class as bytes.
   const body = pattern.startsWith("!") ? pattern.slice(1) : pattern;
   const anchored = body.startsWith("/") || body.slice(0, -1).includes("/");
+  // An escaped leading separator is literal, not Git's root anchor. Relative
+  // paths cannot match it; scoping must not turn it into an anchor.
+  if (gitEscapes && body.startsWith("\\/")) return { text: "", anchored };
   let result = "";
   let inClass = false;
   let classFirst = false;

@@ -298,10 +298,10 @@ describe.skipIf(process.platform === "win32")(
 );
 
 describe.skipIf(process.platform === "win32")(
-  "reference ignore terminal separator escapes",
+  "reference ignore separator escapes",
   () => {
     it.each(["", "pkg/"])(
-      "preserves terminal separator escapes in %s",
+      "preserves separator escapes in %s",
       async (prefix) => {
         const root = await createTestTempDirectory(
           "rea-reference-terminal-escape-",
@@ -318,6 +318,13 @@ describe.skipIf(process.platform === "win32")(
               String.raw`!keep/sub\/`,
               String.raw`middle\/file`,
               String.raw`space\/\ `,
+              String.raw`\/leading`,
+              "negative",
+              String.raw`!\/negative`,
+              String.raw`\\/double`,
+              String.raw`\\\/triple`,
+              "/anchored",
+              String.raw`/\/after-anchor`,
             ].join("\n") + "\n",
           [`${prefix}cache/file.ts`]: "terminal escape must not prune\n",
           [`${prefix}odd\\/file.ts`]: "odd escape count must not prune\n",
@@ -331,6 +338,13 @@ describe.skipIf(process.platform === "win32")(
           [`${prefix}middle/other`]: "retained control\n",
           [`${prefix}space/ `]: "escaped trailing space still matches\n",
           [`${prefix}space/other`]: "retained control\n",
+          [`${prefix}leading/file.ts`]: "leading escape must not prune\n",
+          [`${prefix}negative/file.ts`]: "escaped negation must not reopen\n",
+          [`${prefix}\\/double/file.ts`]: "literal backslash directory\n",
+          [`${prefix}\\/triple/file.ts`]: "quoted internal separator\n",
+          [`${prefix}anchored/file.ts`]: "ordinary anchor still matches\n",
+          [`${prefix}deeper/anchored/file.ts`]: "anchor stays scoped\n",
+          [`${prefix}after-anchor/file.ts`]: "extra separator must not match\n",
         });
         const expected = gitInventory(root);
         for (const path of [
@@ -339,6 +353,9 @@ describe.skipIf(process.platform === "win32")(
           "trim/file.ts",
           "middle/other",
           "space/other",
+          "leading/file.ts",
+          "deeper/anchored/file.ts",
+          "after-anchor/file.ts",
         ])
           expect(expected).toContain(prefix + path);
         for (const path of [
@@ -346,6 +363,10 @@ describe.skipIf(process.platform === "win32")(
           "keep/sub/file.ts",
           "middle/file",
           "space/ ",
+          "negative/file.ts",
+          "\\/double/file.ts",
+          "\\/triple/file.ts",
+          "anchored/file.ts",
         ])
           expect(expected).not.toContain(prefix + path);
         const result = await importReferenceSource({
