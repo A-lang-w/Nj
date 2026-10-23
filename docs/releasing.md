@@ -15,11 +15,13 @@ permissions restores the retained tarball and verifier runtime. It installs
 that exact archive into an empty prefix, then exercises CLI help/discovery and
 the real stdio MCP catalog/session contract. Installation finishes before the
 protocol deadline begins, with dependency lifecycle scripts disabled. Only a
-successful rehearsal enables the job with npm publishing authority. Rehearsal
-also checks registry state before that job starts. The publisher downloads only
+successful rehearsal enables the job with npm publishing authority. The publisher
+downloads only
 the original qualified archive and manifest, validates their source/run/attempt,
 version, Node identity and streamed digest using Node built-ins, then invokes
-`npm publish --ignore-scripts` against the official registry. It does not install
+`npm publish --ignore-scripts` against the official registry. A shared built-in
+registry reader checks existing bytes and tags afresh on every publisher attempt,
+including retries after partial publication. It does not install
 application dependencies, restore verifier code or execute package canaries.
 Pinned Node/npm, Actions and the runner remain trusted toolchain inputs. Neither
 job rebuilds or repacks the archive.

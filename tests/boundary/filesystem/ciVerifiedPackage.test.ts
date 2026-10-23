@@ -127,7 +127,15 @@ async function createFixture({
     );
   const output = join(directory, "github-output");
   await writeFile(output, "");
-  return { directory, sourceSha, artifactDirectory, output };
+  return {
+    directory,
+    sourceSha,
+    artifactDirectory,
+    output,
+    version,
+    tag,
+    integrity: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
+  };
 }
 
 function validate(fixture: Fixture, sourceSha = fixture.sourceSha) {
@@ -155,15 +163,45 @@ async function preparePublication(fixture: Fixture, published = "false") {
   for (const name of [
     "prepare-npm-publication.mjs",
     "qualified-package-envelope.mjs",
+    "npm-release-state.mjs",
   ]) {
     await copyFile(
       new URL(`../../../scripts/ci/${name}`, import.meta.url),
       join(scripts, name),
     );
   }
+  await writeFile(
+    join(fixture.directory, "registry-state.json"),
+    JSON.stringify({
+      status: published === "unknown" ? 503 : published === "false" ? 404 : 200,
+      body: {
+        name: "rea-agents",
+        versions: {
+          [fixture.version]: {
+            name: "rea-agents",
+            version: fixture.version,
+            dist: { integrity: fixture.integrity },
+          },
+        },
+        "dist-tags": { [fixture.tag]: fixture.version },
+      },
+    }),
+  );
+  await writeFile(
+    join(scripts, "invoke.mjs"),
+    `
+import { readFile } from "node:fs/promises";
+import { prepareNpmPublication } from "./prepare-npm-publication.mjs";
+const state = JSON.parse(await readFile("registry-state.json", "utf8"));
+await prepareNpmPublication(async (url) => {
+  if (url !== "https://registry.npmjs.org/rea-agents") throw new Error("Unexpected registry origin");
+  return Response.json(state.body, { status: state.status });
+});
+`,
+  );
   return executeWorkflowFixture(
     process.execPath,
-    [join(scripts, "prepare-npm-publication.mjs")],
+    [join(scripts, "invoke.mjs")],
     {
       cwd: fixture.directory,
       env: {
@@ -172,7 +210,6 @@ async function preparePublication(fixture: Fixture, published = "false") {
         GITHUB_RUN_ID: "123",
         GITHUB_RUN_ATTEMPT: "2",
         GITHUB_OUTPUT: fixture.output,
-        NPM_ALREADY_PUBLISHED: published,
       },
     },
   );
@@ -210,7 +247,7 @@ it.each([
   },
 );
 
-it("retains same-run reuse and rejects unknown registry preflight state", async () => {
+it("retains same-run reuse and rejects failed registry lookups", async () => {
   const fixture = await createFixture({ override: { runAttempt: 1 } });
   await expect(preparePublication(fixture, "unknown")).rejects.toThrow();
   expect(await readFile(fixture.output, "utf8")).toBe("");
@@ -219,3 +256,27 @@ it("retains same-run reuse and rejects unknown registry preflight state", async 
     "tag=latest\npublished=false\n",
   );
 });
+
+it("refreshes registry identity after a partial publication instead of reusing earlier absence", async () => {
+  const fixture = await createFixture();
+  await preparePublication(fixture, "false");
+  expect(await readFile(fixture.output, "utf8")).toBe(
+    "tag=latest\npublished=false\n",
+  );
+  await writeFile(fixture.output, "");
+  await preparePublication(fixture, "true");
+  expect(await readFile(fixture.output, "utf8")).toBe(
+    "tag=latest\npublished=true\n",
+  );
+});
+
+it.each(["integrity", "channel"])(
+  "refuses existing registry %s drift before returning publication intent",
+  async (kind) => {
+    const fixture = await createFixture();
+    if (kind === "integrity") fixture.integrity = "sha512-wrong";
+    else fixture.tag = "next";
+    await expect(preparePublication(fixture, "true")).rejects.toThrow();
+    expect(await readFile(fixture.output, "utf8")).toBe("");
+  },
+);

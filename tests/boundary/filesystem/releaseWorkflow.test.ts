@@ -750,13 +750,6 @@ it("rehearses the qualified archive before npm authority and retains registry ve
     expect(step.if).toBeUndefined();
     expect(step["continue-on-error"]).toBeUndefined();
   }
-  const inspectIndex = rehearsal.steps.findIndex((step) =>
-    step.run?.includes("npm-release.mjs inspect"),
-  );
-  expect(inspectIndex).toBeGreaterThan(exerciseIndex);
-  expect(rehearsal.outputs?.published).toBe(
-    "${{ steps.registry.outputs.published }}",
-  );
   expect(publish.permissions).toEqual({
     contents: "read",
     "id-token": "write",
@@ -774,9 +767,6 @@ it("rehearses the qualified archive before npm authority and retains registry ve
       .filter((step) => step.uses?.startsWith("actions/download-artifact@"))
       .map((step) => step.with?.name),
   ).toEqual(["verified-release-package"]);
-  expect(publish.steps.find((step) => step.id === "package")?.env).toEqual({
-    NPM_ALREADY_PUBLISHED: "${{ needs.rehearsal.outputs.published }}",
-  });
   expect(publish.steps.find((step) => step.name === "Publish")?.if).toBe(
     "steps.package.outputs.published == 'false'",
   );

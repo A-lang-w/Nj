@@ -112,6 +112,7 @@ export const SCOPES = {
     "scripts/ci/qualified-package-envelope.mjs",
     "scripts/ci/prepare-npm-publication.mjs",
     "scripts/ci/npm-release.*",
+    "scripts/ci/npm-release-state.*",
     "scripts/verify-release-artifact.mjs",
     "scripts/lib/release-package-canary.mjs",
     "scripts/verify-published-package.mjs",

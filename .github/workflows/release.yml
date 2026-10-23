@@ -315,8 +315,6 @@ jobs:
 
   rehearsal:
     name: Rehearse qualified release on a clean runner
-    outputs:
-      published: ${{ steps.registry.outputs.published }}
     env:
       TURBO_TOKEN: ""
       TURBO_CACHE: local:rw
@@ -345,13 +343,6 @@ jobs:
           VERIFIED_PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}
           VERIFIED_PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: node scripts/verify-release-artifact.mjs "$VERIFIED_PACKAGE_TARBALL" "$VERIFIED_PACKAGE_VERSION"
-
-      - name: Inspect existing npm version
-        id: registry
-        env:
-          VERIFIED_PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}
-          VERIFIED_PACKAGE_VERSION: ${{ steps.package.outputs.version }}
-        run: node scripts/ci/npm-release.mjs inspect "$VERIFIED_PACKAGE_TARBALL" "$VERIFIED_PACKAGE_VERSION"
 
   publish:
     name: Publish to npm
@@ -383,8 +374,6 @@ jobs:
           path: .cache/verified-package/
       - name: Bind publication to qualified intent
         id: package
-        env:
-          NPM_ALREADY_PUBLISHED: ${{ needs.rehearsal.outputs.published }}
         run: node scripts/ci/prepare-npm-publication.mjs
       - name: Publish
         if: steps.package.outputs.published == 'false'

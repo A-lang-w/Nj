@@ -766,6 +766,10 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "scripts/ci/npm-release-state.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "tests/boundary/filesystem/windowsNpxRegistration.test.ts",
     { code: true, package: true, runtime: true, apple: false },
   ],
