@@ -1,11 +1,12 @@
+import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
+import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
-  describeEvidenceBundleFailure,
-  describeValidationFailure,
-  parseImmutableEvidenceBundle,
-  parseEvidenceBundle,
+  safeParseImmutableEvidenceBundle,
+  safeParseEvidenceBundle,
   type EvidenceBundle,
+  type EvidenceBundleFailure,
 } from "../domain/evidenceBundle.js";
 import {
   EvidenceFileError,
@@ -16,7 +17,7 @@ import {
   AnalysisCancelledError,
   type AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
+import { safeParseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import {
   bufferedJsonParts,
   canonicalJsonParts,
@@ -39,74 +40,82 @@ export const readEvidenceBundle = (
   path: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(path, parseEvidenceBundle, signal, resources);
+  readBundle(path, safeParseEvidenceBundle, signal, resources, operation);
 
 /** Read an authenticated immutable snapshot for a subsequent session import. */
 export const readImmutableEvidenceBundle = (
   path: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(path, parseImmutableEvidenceBundle, signal, resources);
+  readBundle(
+    path,
+    safeParseImmutableEvidenceBundle,
+    signal,
+    resources,
+    operation,
+  );
 
 const readBundle = async (
   path: string,
-  parseBundle: (input: unknown) => EvidenceBundle,
+  parseBundle: (
+    input: unknown,
+  ) => Result<EvidenceBundle, EvidenceBundleFailure>,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> => {
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError("import_evidence_bundle", {
+      new AnalysisCancelledError(operation, {
         cause: signal.reason,
       }),
     );
-  const loaded = await readJsonFile(path, signal, resources);
-  if (!loaded.ok) {
-    if (loaded.error instanceof AnalysisCancelledError)
-      return err(
-        new AnalysisCancelledError("import_evidence_bundle", {
-          cause: loaded.error.cause,
-        }),
-      );
-    return loaded;
-  }
+  const loaded = await readJsonFile(path, signal, resources, operation);
+  if (!loaded.ok) return loaded;
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError("import_evidence_bundle", {
+      new AnalysisCancelledError(operation, {
         cause: signal.reason,
       }),
     );
-  let bundle: EvidenceBundle;
-  try {
-    bundle = parseBundle(loaded.value);
-  } catch (cause: unknown) {
-    const failure = describeEvidenceBundleFailure(loaded.value, cause);
+  const headroom = requireAuthenticationHeadroom(loaded.value, {
+    operation,
+    path: absoluteCallerPath(path),
+    description:
+      "Insufficient heap headroom to authenticate the Evidence bundle",
+  });
+  if (!headroom.ok) return headroom;
+  const parsed = parseBundle(loaded.value);
+  if (!parsed.ok) {
+    const failure = parsed.error;
     if (failure.kind === "single-record")
       return err(
         new EvidenceFileError("read", "wrong-kind", {
           path: absoluteCallerPath(path),
-          cause,
+          cause: failure.cause,
           userMessage: failure.message,
         }),
       );
     return err(
       new EvidenceIntegrityError("Evidence bundle validation failed", {
-        cause,
+        cause: failure.cause,
         userMessage: failure.message,
       }),
     );
   }
+  const bundle = parsed.value;
   for (const record of bundle.records) {
     if (record.predicate_type !== "rea.process-capture") continue;
-    try {
-      parseProcessCapture(record.normalized_result);
-    } catch (cause: unknown) {
+    const parsedCapture = safeParseProcessCapture(record.normalized_result);
+    if (!parsedCapture.success) {
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {
-          cause,
-          userMessage: `Process capture record ${record.evidence_id} has an invalid normalized_result (${describeValidationFailure(cause)}). Recreate or re-export the bundle, then try again.`,
+          cause: parsedCapture.error,
+          userMessage: `Process capture record ${record.evidence_id} has an invalid normalized_result (${describeValidationFailure(parsedCapture.error)}). Recreate or re-export the bundle, then try again.`,
         }),
       );
     }
@@ -121,6 +130,7 @@ export const writeEvidenceBundle = async (
   overwrite: boolean,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
+  operation = "export_evidence_bundle",
 ): Promise<
   Result<
     { readonly path: string; readonly bytes: number },
@@ -128,24 +138,24 @@ export const writeEvidenceBundle = async (
   >
 > => {
   if (signal?.aborted === true)
-    return err(new AnalysisCancelledError("export_evidence_bundle"));
-  let checked: EvidenceBundle;
-  try {
-    checked = parseEvidenceBundle(bundle);
-  } catch (cause: unknown) {
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: signal.reason,
+      }),
+    );
+  const checked = safeParseEvidenceBundle(bundle);
+  if (!checked.ok) {
     return err(
       new EvidenceIntegrityError("Evidence bundle validation failed", {
-        cause,
+        cause: checked.error.cause,
       }),
     );
   }
   return writeTextParts(
-    bufferedJsonParts(canonicalJsonParts(checked)),
+    bufferedJsonParts(canonicalJsonParts(checked.value)),
     path,
     overwrite,
     resources,
-    signal === undefined
-      ? undefined
-      : { signal, operation: "export_evidence_bundle" },
+    signal === undefined ? undefined : { signal, operation },
   );
 };

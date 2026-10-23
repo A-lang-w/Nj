@@ -11,10 +11,8 @@ import {
   NonRegularFileReadError,
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
-import {
-  RegularFileCleanupFailure,
-  withRegularFile,
-} from "./RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { withRegularFile } from "./RegularFileRead.js";
 import { clientSkillDirectories } from "./SupportedClients.js";
 import { preserveCurrentRecoveryBackup } from "./SetupRecoveryBackup.js";
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
@@ -168,7 +166,7 @@ export const systemSkillInstallFileOperations: SkillInstallFileOperations = {
       content,
       original?.bytes,
       mode,
-      original?.stats,
+      { requestedPath: path, state: original?.stats },
     ),
 };
 
