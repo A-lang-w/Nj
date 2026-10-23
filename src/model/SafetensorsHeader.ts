@@ -18,6 +18,7 @@ import { safetensorsBits } from "./ModelTensorTypes.js";
 type HeaderValue =
   | string
   | number
+  | null
   | HeaderValue[]
   | { [key: string]: HeaderValue };
 
@@ -68,6 +69,10 @@ class HeaderJson {
       rejectModel("Safetensors header has an invalid nested structure");
     const c = this.text[this.#position];
     if (c === '"') return this.#string();
+    if (this.text.startsWith("null", this.#position)) {
+      this.#position += 4;
+      return null;
+    }
     if (c === "{" || c === "[") {
       this.#position++;
       const object: { [key: string]: HeaderValue } = Object.create(null) as {
@@ -129,7 +134,12 @@ class HeaderJson {
 const objectOf = (
   value: HeaderValue | undefined,
 ): { [key: string]: HeaderValue } => {
-  if (value === undefined || typeof value !== "object" || Array.isArray(value))
+  if (
+    value === undefined ||
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
     return rejectModel("Expected safetensors header object");
   return value;
 };
@@ -202,7 +212,8 @@ export const readSafetensorsHeader = async (
   const root = objectOf(step.value);
   const source = { source_offset: 8, source_length: size };
   const metadata: ModelMetadata[] = [];
-  if (Object.hasOwn(root, "__metadata__")) {
+  // The reference reader declares __metadata__ optional, so null means absent.
+  if (Object.hasOwn(root, "__metadata__") && root.__metadata__ !== null) {
     for (const [key, value] of Object.entries(objectOf(root.__metadata__))) {
       if (typeof value !== "string")
         rejectModel("Safetensors __metadata__ values must be strings");

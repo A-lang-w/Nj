@@ -59,7 +59,8 @@ declared float type; negative zero is `"-0"`. Unknown tensor types retain their 
 lengths; affected totals and storage validation remain unknown.
 
 Safetensors reports the header extent, exact string `__metadata__` values, dtype,
-shape and declared data ranges. JSON duplicate keys, invalid UTF-8, out-of-file
+shape and declared data ranges. A null `__metadata__` reads as absent, as in the
+reference reader. JSON duplicate keys, invalid UTF-8, out-of-file
 ranges, overlaps, gaps, trailing unindexed data and known dtype/shape byte-length
 contradictions are rejected with a typed `file_format_rejected` constraint (public code `target_unavailable`, category `unsupported_target`).
 A missing, non-regular or otherwise unusable selected path is also `target_unavailable`;

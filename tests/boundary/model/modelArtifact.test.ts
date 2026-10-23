@@ -719,6 +719,23 @@ const malformed = [
     () => safetensorsFixture('{"__metadata__":{"x":1}}', Buffer.alloc(0)).bytes,
   ],
   [
+    "safetensors null tensor entry",
+    () => safetensorsFixture('{"x":null}', Buffer.alloc(0)).bytes,
+  ],
+  [
+    "safetensors null metadata value",
+    () =>
+      safetensorsFixture('{"__metadata__":{"x":null}}', Buffer.alloc(0)).bytes,
+  ],
+  [
+    "safetensors null shape dimension",
+    () =>
+      safetensorsFixture(
+        '{"x":{"dtype":"U8","shape":[null],"data_offsets":[0,1]}}',
+        Buffer.alloc(1),
+      ).bytes,
+  ],
+  [
     "safetensors unpaired surrogate",
     () =>
       safetensorsFixture('{"__metadata__":{"x":"\\ud800"}}', Buffer.alloc(0))
@@ -942,6 +959,20 @@ it("inspects a 1 GiB sparse safetensors declaration using only its small header"
     byte_length: dataBytes,
     parameter_count: String(dataBytes),
   });
+});
+
+it("reads null safetensors __metadata__ as absent, as the reference reader does", async () => {
+  const fixture = safetensorsFixture(
+    '{"__metadata__":null,"x":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}',
+    Buffer.from([7]),
+  );
+  const { path, provider } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (!result.ok) throw result.error;
+  expect(result.value.metadata).toEqual([]);
+  expect(
+    result.value.tensors.map(({ name, type, shape }) => [name, type, shape]),
+  ).toEqual([["x", "U8", ["1"]]]);
 });
 
 it("supports true scalar shapes and prototype-named metadata without changing their spelling", async () => {
