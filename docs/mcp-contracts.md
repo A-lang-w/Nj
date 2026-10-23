@@ -1012,6 +1012,12 @@ materialized; extraction fails as `unavailable` with that logical path.
 Extraction materializes regular files exposed by the active archive reader.
 When that reader exposes a nested archive as a file, extraction copies the
 archive file; inspect and extract that file separately to unpack its contents.
+Extraction retains inventory and materialization traversal limitations in its
+result and outer Evidence. If either traversal has unknown coverage, the
+observed regular files can still be copied, but the result does not establish
+a complete source copy. For example, a POSIX filename that is not valid UTF-8
+remains omitted with its raw-name explanation; it is not replacement-decoded
+into an output filename.
 
 Packaging tools commonly sign or strip `.asar.unpacked` native binaries after
 writing the archive header, so their declared hashes no longer match. Electron
@@ -1164,20 +1170,43 @@ includes all dimension limitations. Equal CFGs establish only equal observed
 block sizes and successor relationships. Text from different provider
 identities remains unknown.
 
-The `references` dimension preserves each edge's direction, endpoint identity
-and available kind facts. Within one artifact it compares exact raw endpoint
-coordinates, including the address space; hexadecimal case and zero padding
-do not change identity. Resolving an endpoint to a containing procedure does
-not replace the raw coordinate. Unparseable coordinates stay unknown.
+The `calls` and `references` dimensions share endpoint identity and name
+ambiguity rules. Calls retain procedure entry coordinates and direction;
+references retain each edge's raw source and target coordinates, direction and
+available kind facts. Resolving a reference endpoint to a containing procedure
+does not replace its raw coordinate. Hexadecimal case and zero padding do not
+change coordinates; address spaces remain distinct.
 
-Across artifacts, reference endpoints use stable procedure names. Missing or
-address-generated names remain unknown. A name observed at multiple procedure
-entries retains its label constraint but cannot establish equal endpoints.
+Coordinate equality requires equal artifact digests and formats, a known equal
+architecture, and matching provider-owned native coordinate commitments. Those
+commitments retain the exact selected Mach-O image where available and a digest
+of the loader's mapping inputs. They exclude unrelated analysis settings, so
+changing an analyzer option alone does not invalidate coordinate correspondence.
+Equal coordinates in different slices or mappings cannot establish equality.
+Hopper's default executable profile and Ghidra's supported deterministic imports
+publish these commitments. Hopper loader overrides and attached databases, IDA
+profiles, Ghidra universal-image imports without an exact slice commitment, and
+older or imported Evidence without a commitment leave coordinate identity
+unknown. Unparseable coordinates also remain unknown.
+
+Across different artifacts, endpoints use nonempty stable procedure names.
+Missing or address-generated names remain unknown. A name observed at multiple
+procedure entries across either dossier's call and reference facets retains its
+label constraint but cannot establish equal endpoints. Same-container records
+without a common coordinate context likewise cannot establish equality from
+matching labels. Procedure labels do not carry authoritative symbol-origin
+facts, so recognition of generated names remains conservative and cannot prove
+whether every provider label was generated or explicitly named.
+
 Pairing preserves duplicate counts and considers alternative compatible
-pairings; array order never identifies an edge. Compatible records with
-unknown endpoint identity or kind facts remain `unknown`. Independent known
+pairings; array order never identifies an edge. Compatible records with unknown
+endpoint identity or reference kind facts remain `unknown`. Independent known
 facts that contradict every possible pairing still establish `changed`.
 Source Evidence retains the original addresses, names and unavailable facts.
+Reconstruction verification uses the selected dimension's status: a same-name
+call retargeting in a common context fails a calls claim; an unresolved slice or
+mapping cannot pass it. Empty function labels leave `function_match` ambiguous
+and the identity dimension unknown.
 
 ### Comparison input shapes
 
@@ -1197,6 +1226,14 @@ validation; the SDK rejects them against the canonical input schema before
 invoking the handler. Domain validation additionally checks
 relationships such as event sequence references and retained counts; JSON
 Schema does not express those cross-field invariants.
+
+Comparison also preserves the capture's coverage. A partial HTTP inventory can
+establish an observed difference against a complete peer, but an omitted request
+does not establish removal. Partial WebSocket streams do not establish frame
+alignment. WebMCP frame IDs and tool keys are local to a capture; semantic owner
+facts and known counts determine correspondence. Retained script digests can
+establish source changes. See [browser comparison semantics](browser-observation.md)
+for value uncertainty and storage-fingerprint recapture requirements.
 
 ## Generated catalog
 

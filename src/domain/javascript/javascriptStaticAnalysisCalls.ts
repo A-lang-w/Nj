@@ -91,6 +91,10 @@ export const inspectCall = (
       node,
       kind: "require",
       specifier: requireCall.specifier,
+      operation: requireCall.operation,
+      ...(requireCall.resolutionBasePath === undefined
+        ? {}
+        : { resolutionBasePath: requireCall.resolutionBasePath }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -265,7 +269,11 @@ const requireCallSpecifier = (
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
   resolveMemberChanged = false,
-): { readonly specifier: string | undefined } | null => {
+): {
+  readonly specifier: string | undefined;
+  readonly operation: "load" | "resolve";
+  readonly resolutionBasePath?: string;
+} | null => {
   const call = semanticRequireCallAt(
     node,
     bindings,
@@ -278,9 +286,18 @@ const requireCallSpecifier = (
     !call.sourceRelative
   ) {
     context.accumulator.unknownFindings += 1;
-    return { specifier: undefined };
+    return {
+      specifier: undefined,
+      operation: resolveMemberChanged ? "load" : call.operation,
+    };
   }
-  return { specifier: argumentValue(call.arguments?.[0]) };
+  return {
+    operation: call.operation,
+    specifier: argumentValue(call.arguments?.[0]),
+    ...(call.sourceRelativePath === undefined
+      ? {}
+      : { resolutionBasePath: call.sourceRelativePath }),
+  };
 };
 
 /** Examine member-loader receivers only after shared alias mutation facts settle. */
@@ -311,6 +328,10 @@ export const finishModuleRequireCalls = (
         node,
         kind: "require",
         specifier: call.specifier,
+        operation: call.operation,
+        ...(call.resolutionBasePath === undefined
+          ? {}
+          : { resolutionBasePath: call.resolutionBasePath }),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
@@ -933,11 +954,15 @@ export const addReference = (
       : { specifier, expression: null };
   addLocatedFinding(context, {
     collection: context.accumulator.references,
-    key: `reference\0${input.kind}\0${reference.specifier ?? reference.expression}`,
+    key: `reference\0${input.kind}\0${input.operation ?? "load"}\0${reference.specifier ?? reference.expression}\0${input.resolutionBasePath ?? ""}`,
     node: input.node,
     value: {
       kind: input.kind,
+      operation: input.operation ?? "load",
       ...reference,
+      ...(input.resolutionBasePath === undefined
+        ? {}
+        : { resolution_base_path: input.resolutionBasePath }),
       module_key: null,
       location: range(input.node),
     },

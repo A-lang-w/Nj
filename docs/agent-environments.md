@@ -771,10 +771,39 @@ recording replayed in its place and never from a recording whose body the probe 
 two collections can reuse a live id, and an equal pair stays in that collection. A live id in a later request's path, query or body is translated before the
 environment answers, a path parameter by the collection the live path names (a nested collection keeps its parent values, each decoded once, and a literal route segment stays), except a query value that pages a list, such as `limit`
 or `page`. Each call is checked against the served tool's input schema first, as the MCP server checks it. After mapping, two clock values compare by format only (ISO-8601 strings, and epoch numbers under
-`at`, `time`, `date`, `timestamp`, `created`, `updated` or `modified` field names, including snake-case and camel-case forms), and two different values each side generated on its own compare equal: both UUIDs, or one length of
-eight or more with the same character classes and a digit. The report counts each kind of normalised value.
+`at`, `time`, `date`, `timestamp`, `created`, `updated` or `modified` field names, including snake-case and camel-case forms).
+Numeric arrays retain that containing field's clock context through nested
+arrays; an object's own fields establish their own context. Numeric values at
+the body root, in root arrays, or under measurement fields remain literal.
+
+Generated strings normalize only where this confirmed, served write's entity
+response rules identify generation. A `unique` rule or UUID identity rule must
+still compare two UUIDs; a `renewed` rule applies only at its recorded pointers,
+with `*` matching actual array items. Token/sequence strings retain the existing
+format check: equal length of at least eight, the same character classes, and
+a digit. Numeric sequences continue to compare literally unless an ID mapping
+applies. String shape and names such as `token` or `sku` alone do not establish
+generation. Read and replay responses without these facts stay literal except
+for supported clocks and learned IDs. A missing write target replays an absence
+response and does not inherit the successful entity response's generation rules.
+Admitted generated values must also preserve aliases and distinct identities
+within that response. UUID identity uses the generator's case-insensitive
+matching; token and sequence strings retain their literal identity. This
+correspondence ends with the answer and is not inferred across calls.
+The report counts each kind of normalised
+value; the generation rules remain model-derived facts, rather than new
+observations of the application.
 ISO clock offsets are accepted only within RFC 3339's `00`–`23` hour and `00`–`59` minute ranges.
-Timestamp ordering retains submillisecond precision when the source records it.
+Probe ordering retains every recorded fractional-second digit in ISO timestamps
+with a four-digit year, `T`, and a `Z` or `±HH:MM` suffix. Equal instants use ordinal order. Other native-Date
+spellings keep their existing millisecond interpretation; an absent or unreadable
+start time makes the whole probe use record order. Original capture timestamps
+remain unchanged. Clock-format comparison and respelling recognize four-digit
+ISO years `0000`–`0099` as well as later years, with normal calendar validation.
+Respelling preserves the original value when the target zone would require a year
+outside `0000`–`9999`; generated writes refuse a clock outside that format.
+Capture-state extraction still uses millisecond coordinates for request intervals
+and their ordering, and generated-clock progression compares milliseconds.
 
 Comparison keeps response representations distinct: JSON values compare structurally, text compares as text, and a
 retained base64 body compares by bytes (including with UTF-8 text carrying those same bytes), never by its base64

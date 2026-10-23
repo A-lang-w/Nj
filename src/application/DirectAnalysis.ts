@@ -28,12 +28,8 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { access, stat } from "node:fs/promises";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { readAnalysisSnapshot } from "./binary/AnalysisSnapshotFiles.js";
 import { requiresNativeSourceAdmissionBeforeReplay } from "./binary/AnalysisSnapshotCache.js";
-import {
-  classifyBinaryTargetFilesystemFailure,
-  parseBinaryTarget,
-} from "./BinaryTargetResolver.js";
+import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   snapshotEvidenceForQuery,
@@ -51,6 +47,7 @@ import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.j
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
 import {
+  composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
   workflowSnapshotRecord,
@@ -93,7 +90,8 @@ type DirectAnalysisTool =
   | "xrefs"
   | "trace_feature"
   | "trace_native_ui_action"
-  | "trace_native_values";
+  | "trace_native_values"
+  | "decompile_all";
 
 // These one-shot CLI questions require native utilities, not a deep engine.
 // Runtime observation retains the ordinary session and authority checks.
@@ -341,6 +339,7 @@ const runAnalysis = async (
       );
     }
     const prepared = await prepareSnapshot({
+      session,
       path,
       snapshotPath,
       signal,
@@ -466,7 +465,11 @@ const runAnalysis = async (
           return err(recorded.error.retainPartialObservation(evidence));
       }
     }
-    if (tool !== "trace_native_ui_action" && snapshotPath !== undefined) {
+    if (
+      tool !== "trace_native_ui_action" &&
+      tool !== "decompile_all" &&
+      snapshotPath !== undefined
+    ) {
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok)
         return err(snapshot.error.retainPartialObservation(evidence));
@@ -482,7 +485,7 @@ const runAnalysis = async (
         const recovered =
           written.error instanceof EvidenceFileError &&
           written.error.published !== undefined &&
-          (await session.closeWriteResources()).ok;
+          (await session.closeFileResources()).ok;
         if (!recovered)
           return err(written.error.retainPartialObservation(evidence));
       }
@@ -554,11 +557,15 @@ const executeAnalysisTool = async (input: {
     tool === "inspect_native_dispatch_metadata" ||
     tool === "trace_feature" ||
     tool === "trace_native_values" ||
-    tool === "trace_native_ui_action"
+    tool === "trace_native_ui_action" ||
+    tool === "decompile_all"
   ) {
     const { EnhancedTools } = await import("./EnhancedTools.js");
-    const result = await executeComposedWorkflow(session, (observed) =>
-      new EnhancedTools(observed).execute(tool, input.arguments, signal),
+    const result = await executeComposedWorkflow(
+      session,
+      (observed) =>
+        new EnhancedTools(observed).execute(tool, input.arguments, signal),
+      composedLimitationBudget(tool),
     );
     if (!result.ok) return result;
     const evidence = createWorkflowEvidence({
@@ -653,6 +660,10 @@ const withProcessCancellation = async <Value>(
 };
 
 const prepareSnapshot = async (options: {
+  readonly session: Pick<
+    BinarySession,
+    "readAnalysisSnapshot" | "resolveTarget"
+  >;
   readonly path: string;
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
@@ -665,12 +676,15 @@ const prepareSnapshot = async (options: {
     AnalysisError
   >
 > => {
-  const { path, snapshotPath } = options;
+  const { path, snapshotPath, session } = options;
   if (snapshotPath === undefined || !(await fileExists(snapshotPath)))
     return ok({});
-  const loaded = await readAnalysisSnapshot(snapshotPath, options.signal);
+  const loaded = await session.readAnalysisSnapshot(
+    snapshotPath,
+    options.signal,
+  );
   if (!loaded.ok) return loaded;
-  const target = await parseBinaryTarget(path, {
+  const target = await session.resolveTarget(path, {
     signal: options.signal,
     ...(options.formatHint === undefined
       ? {}
@@ -713,7 +727,8 @@ const allowsSnapshotReplay = (
     | ManagedToolName
     | DirectAnalysisTool,
 ): boolean => {
-  if (tool === "trace_native_ui_action") return false;
+  if (tool === "trace_native_ui_action" || tool === "decompile_all")
+    return false;
   const descriptor = route.capabilities?.get(tool);
   return descriptor === undefined
     ? ![...(route.capabilities?.values() ?? [])].some(
@@ -786,7 +801,8 @@ const isWorkflowEvidenceTool = (
   tool === "inspect_native_dispatch_metadata" ||
   tool === "trace_feature" ||
   tool === "trace_native_values" ||
-  tool === "trace_native_ui_action";
+  tool === "trace_native_ui_action" ||
+  tool === "decompile_all";
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {

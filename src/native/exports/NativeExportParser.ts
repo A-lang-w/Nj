@@ -3,6 +3,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   mappedFileOffset,
+  imageFileMappings,
 } from "../metadata/BinaryContainer.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
 import { isUtf8 } from "node:buffer";
@@ -109,10 +110,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       ],
     };
   const reader = new BinaryReader(bytes, true);
-  const mappings =
-    image.pe_header_mapping === undefined
-      ? image.mappings
-      : [image.pe_header_mapping, ...image.mappings];
+  const mappings = imageFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
   const cString = (rva: number): string => {
@@ -511,21 +509,26 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     byte_order: directory.little ? ("little" as const) : ("big" as const),
   };
   const { sections } = directory;
-  if (sections.length === 0)
+  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
+  if (
+    sections.length === 0 ||
+    (dynsym === undefined && directory.has_dynamic_segment)
+  )
     return {
       ...result,
       exports: [],
       coverage: {
         status: "unsupported",
         reason:
-          "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented",
+          sections.length === 0
+            ? "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented"
+            : "The ELF declares a dynamic segment but has no dynamic symbol section; enumerating dynamic symbols from the dynamic segment is not implemented",
         examined_entries: 0,
         exports: 0,
       },
       issues: [],
       limitations: ELF_LIMITATIONS,
     };
-  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
   if (dynsym === undefined)
     return {
       ...result,
