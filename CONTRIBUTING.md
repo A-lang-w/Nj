@@ -254,7 +254,7 @@ tar --force-local -xzf rea-agents-<version>.tgz package/native/windows/build/man
 mkdir -p native/windows/build && cp package/native/windows/build/* native/windows/build/
 ```
 
-The two digests must be identical. The loader then checks the manifest's
+The `openssl` output must equal the `dist.integrity` value after its `sha512-` prefix. The loader then checks the manifest's
 version, ABI, architecture, and artifact SHA-256 before granting authority. A
 checkout whose version differs from every published release still needs the
 Linux build lane.
