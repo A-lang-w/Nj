@@ -1,3 +1,4 @@
+import { DEFAULT_ASAR_HEADER_ADMISSION } from "../config/asarHeaderAdmission.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import {
   ingestElectronScriptEvent,
   type ElectronScriptDraft,
 } from "./CdpElectronScriptEvents.js";
+import { CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON } from "./CdpScriptSourceBudget.js";
 import { captureElectronScripts } from "./CdpElectronScripts.js";
 import { inspectElectronPageInputSchema } from "../domain/javascript/electronObservation.js";
 
@@ -53,6 +55,7 @@ describe("Electron frame capture", () => {
           },
         },
         completeness,
+        DEFAULT_ASAR_HEADER_ADMISSION,
       );
 
       expect(frames.map((frame) => frame.frame_id)).toEqual(["frame-main"]);
@@ -132,6 +135,7 @@ describe("Electron frame capture", () => {
       scripts,
       frameIds: new Set(["frame-old", "frame-new"]),
       completeness,
+      asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
     });
 
     expect(capture.total).toBe(4);
@@ -157,5 +161,77 @@ describe("Electron frame capture", () => {
       reason: "out_of_target_scope",
       count: 1,
     });
+  });
+});
+
+it("admits a prefix and fitting suffix around an oversized Electron source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-electron-source-budget-"));
+  temporary.push(root);
+  const paths = await Promise.all(
+    ["prefix.js", "oversized.js", "suffix.js"].map(async (name) => {
+      const path = join(root, name);
+      await writeFile(path, "metadata");
+      return path;
+    }),
+  );
+  const sourceById = {
+    prefix: "p".repeat(16 * 1024 * 1024),
+    oversized: "o".repeat(17 * 1024 * 1024),
+    suffix: "s".repeat(1024 * 1024),
+  };
+  const scripts: ElectronScriptDraft[] = paths.map((path, index) => {
+    const scriptId = ["prefix", "oversized", "suffix"][index];
+    if (scriptId === undefined) throw new Error("Missing script identity");
+    return {
+      scriptId,
+      rawUrl: pathToFileURL(path).href,
+      hash: scriptId,
+      length: null,
+      isModule: false,
+      language: "JavaScript",
+      frameId: null,
+    };
+  });
+  const completeness = new CdpCaptureCompleteness();
+  const capture = await captureElectronScripts({
+    connection: {
+      send: async (
+        _method: string,
+        params: Readonly<Record<string, unknown>>,
+      ) => ({
+        scriptSource:
+          sourceById[
+            (params as { scriptId: keyof typeof sourceById }).scriptId
+          ],
+      }),
+    } as unknown as CdpConnection,
+    sessionId: undefined,
+    request: inspectElectronPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page-1",
+      observation_ms: 0,
+      include_script_sources: true,
+    }),
+    scripts,
+    frameIds: new Set(),
+    completeness,
+    asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
+  });
+  const byHash = new Map(
+    capture.items.map((item) => [item.cdp_hash, item.source]),
+  );
+
+  expect(capture.total).toBe(3);
+  expect([...byHash.keys()].sort()).toEqual(["oversized", "prefix", "suffix"]);
+  expect(byHash.get("prefix")?.included).toBe(true);
+  expect(byHash.get("oversized")).toEqual({
+    included: false,
+    reason: CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON,
+  });
+  expect(byHash.get("suffix")?.included).toBe(true);
+  expect(completeness.snapshot().excluded).toContainEqual({
+    section: "script_sources",
+    reason: "resource_budget_exhausted",
+    count: 1,
   });
 });

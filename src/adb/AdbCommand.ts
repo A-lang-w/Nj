@@ -9,6 +9,7 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   execFileBytes,
@@ -17,8 +18,26 @@ import {
   type ExecFileOutputFailure,
 } from "../process/ExecFileOutput.js";
 import { packageChangeFailureReason } from "./AdbShellOutput.js";
+import { isSuccessfulDaemonStartNotice } from "./AdbDeviceOutput.js";
 
-const STDERR_EXCERPT_BYTES = 512;
+const STDERR_EXCERPT_CHARACTERS = 512;
+
+// Match the known host operand in adb's local-file diagnostics. The suffix is
+// part of the format: opening/reading identify local failures explicitly.
+const LOCAL_FILE_DIAGNOSTICS = [
+  ["cannot create", ":"],
+  ["cannot create file/directory", ":"],
+  ["cannot stat", ":"],
+  ["cannot open", ":"],
+  ["cannot write", ":"],
+  ["failed to stat local file", ":"],
+  ["failed to read all of", ":"],
+  ["failed to access", ":"],
+  ["failed to stat", ":"],
+  ["failed to open", ":"],
+  ["opening", " locally failed:"],
+  ["reading", " locally failed:"],
+] as const;
 
 /** Project parsed command-owner facts without reinterpreting the rejection. */
 export const adbCommandCapturedOutput = (
@@ -68,12 +87,26 @@ export const adbArguments = (
 export interface AdbRunLimits {
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
+  /**
+   * Live device observations can shrink between calls. Mutation commands omit
+   * this so a truncated result stays non-retryable.
+   */
+  readonly volatileOutput?: boolean;
+}
+
+/** Keep the selected device separate from the file addressed by the command. */
+export interface AdbCommandTarget {
+  readonly device: string;
+  /** Caller-addressed file, such as a remote path or the original APK input. */
+  readonly path?: string;
+  /** Exact host operand adb consumes, including an owned input snapshot. */
+  readonly localPath?: string;
 }
 
 /** Run one bounded adb invocation and keep its exact failure shape. */
 export const runAdbCapture = async (
   operation: string,
-  targetPath: string,
+  target: AdbCommandTarget,
   binary: string,
   arguments_: readonly string[],
   limits: AdbRunLimits,
@@ -105,46 +138,87 @@ export const runAdbCapture = async (
       return err(
         new AnalysisProtocolError(`adb failed for ${operation}`, { cause }),
       );
-    if (failure.outputTruncated)
+    if (failure.outputTruncated) {
+      const name = `The adb output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override)`;
+      const allowance =
+        limits.volatileOutput === true
+          ? {
+              fixedAllowance: { name, kind: "live" as const },
+              retryable: true as const,
+            }
+          : fixedAllowanceOptions(name, "capture");
       return err(
         new AnalysisResourceConstraintError(
           operation,
           "memory",
           `adb output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
           { max_output_bytes: limits.maxOutputBytes },
-          { cause },
+          { cause, ...allowance },
         ),
       );
-    const excerpt = failure.stderr.trim().slice(0, STDERR_EXCERPT_BYTES);
-    if (/unauthorized/iu.test(excerpt))
-      return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
+    }
+    const stderr = failure.stderr.trim();
+    const excerpt = stderr.slice(0, STDERR_EXCERPT_CHARACTERS);
+    // Device-state words inside a reported file name are not device verdicts.
+    // Only leading notices need line parsing. Do not expand a capture-sized
+    // stderr into an array whose entries can exceed the byte capture budget.
+    let diagnosticStart = 0;
+    while (diagnosticStart < stderr.length) {
+      const newline = stderr.indexOf("\n", diagnosticStart);
+      const line = stderr
+        .slice(diagnosticStart, newline === -1 ? stderr.length : newline)
+        .trimEnd();
+      if (
+        !isSuccessfulDaemonStartNotice(line) &&
+        !/^\* daemon not running(?:; starting now at [^\r\n]*|\. starting it now on port \d+ \*)$/u.test(
+          line,
+        )
+      )
+        break;
+      diagnosticStart = newline === -1 ? stderr.length : newline + 1;
+    }
+    const diagnostic = stderr
+      .slice(diagnosticStart)
+      .replace(
+        /^(?:adb:\s*)?(?:error:\s*)?(?:(?:failed to get feature set|connect failed):\s*)?/iu,
+        "",
       );
     if (
-      /device[^\n]*not found|device offline|still authorizing|more than one device/iu.test(
-        excerpt,
+      /^(?:unauthorized\b|device(?: '[^'\n]*')? (?:unauthorized\b|offline\b|not found\b|still authorizing\b)|still authorizing\b|more than one device\b)/iu.test(
+        diagnostic,
       )
     )
       return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
+        new AnalysisUnsupportedTargetError(operation, target.device, excerpt, {
           cause,
         }),
       );
     if (
       /No such file or directory|Permission denied|read: Permission denied/iu.test(
-        excerpt,
+        diagnostic,
       )
-    )
+    ) {
+      const localPath = target.localPath;
+      const path =
+        localPath !== undefined &&
+        LOCAL_FILE_DIAGNOSTICS.some(([verb, suffix]) =>
+          [localPath, `'${localPath}'`, `"${localPath}"`].some((operand) =>
+            diagnostic.startsWith(`${verb} ${operand}${suffix}`),
+          ),
+        )
+          ? localPath
+          : (target.path ?? target.device);
       return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
+        new AnalysisUnsupportedTargetError(operation, path, excerpt, { cause }),
       );
+    }
     if (failure.killed)
       return err(
-        new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),
+        new AnalysisTimeoutError(operation, limits.timeoutMs, {
+          cause,
+          userMessage: `adb ${operation} reached its ${String(limits.timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
+          remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+        }),
       );
     return err(
       new AdbProtocolError(
@@ -210,10 +284,10 @@ export const probeAdbPathExistence = async (
 ): Promise<Result<boolean, AnalysisError>> => {
   const probed = await runAdbCapture(
     operation,
-    path,
+    { device: serial, path },
     binary,
     adbArguments(serial, ["shell", "test", "-e", path]),
-    limits,
+    { ...limits, volatileOutput: true },
     signal,
   );
   if (probed.ok) {
