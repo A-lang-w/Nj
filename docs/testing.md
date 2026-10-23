@@ -26,6 +26,14 @@ behavior, and complete CI evidence before merging.
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
 
+The general source suite above runs on Linux in CI, and Windows CI runs a
+curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).
+A Windows source checkout can fail source tests for reasons unrelated to the
+change, such as POSIX fixture paths, `#!/bin/sh` tool stubs, or POSIX rename
+semantics. Compare failures against the base revision, or run the suite on
+Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
+Windows source checkouts.
+
 For example:
 
 ```bash
@@ -257,6 +265,13 @@ cases. Share setup without hiding inputs or expected evidence. For successful
 `Result` values, throw the typed error before asserting the value; a preceding
 `.ok` assertion adds no coverage. Protocol fixtures must reject unmodeled
 commands and preserve actual producer reply shapes.
+
+Packed bridge validation uses Python's standard-library AST and tar readers
+with `-I -S`: caller-local modules, `PYTHONPATH`, and site startup hooks must
+not replace those readers or execute during validation. Controlled `ast.py`
+and `sitecustomize.py` fixtures must leave their markers absent and still
+reject malformed packed Python with `SyntaxError`. This checks static package
+verification, not real Hopper or Ghidra behavior.
 
 Stateless source-analysis matrices may share a file-owned stdio MCP connection
 and retain representative compiled CLI parity checks. Every distinct source
@@ -753,16 +768,16 @@ installation (`application.java.min` through `application.java.max`). Current
 12.1 releases require JDK 21 or newer and set no maximum. The lanes below still
 prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 
-| Ghidra lane                                | Supported runner/target                                                                         | Additional local tools                                              |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                   | Host C compiler, Ghidra 12.1.4, and full JDK 21                     |
-| `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback and unknown-name rejection | Ghidra 12.1.4 and full JDK 21                                       |
-| `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                          | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                 |
-| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 ELF through CLI and MCP                      | RISC-V Clang, LLD, LLVM readelf, Ghidra 12.1.4, and full JDK 21     |
-| `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                                 | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
-| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
-| `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O              | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
-| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                  | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
+| Ghidra lane                                | Supported runner/target                                                                                         | Additional local tools                                              |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                                   | Host C compiler, Ghidra 12.1.4, and full JDK 21                     |
+| `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback, not-applicable and unknown analyzer names | Ghidra 12.1.4 and full JDK 21                                       |
+| `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                          | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                 |
+| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 ELF through CLI and MCP                                      | RISC-V Clang, LLD, LLVM readelf, Ghidra 12.1.4, and full JDK 21     |
+| `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                                                 | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
+| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O                 | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
+| `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                              | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                  | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
 
 The optional Swift lane compiles a source-owned fixture and checks modern and
 provider-demangled procedure names through real stdio MCP, with and without the
@@ -931,7 +946,7 @@ analyzed as native code (75k methods on arm64) and decompiled through both
 CLI and MCP with explicit unit selection, plus the thin Java wrapper and
 decoded manifest. The dedicated Dart snapshot processor and `run_script`
 remained GUI-only surfaces in that headless build.
-The separate [Linux CE native audit](../experiments/analysis-efficiency/jeb-linux-native.md)
+The separate [Linux CE native audit](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/jeb-linux-native.md)
 uses the official CE `5.48.0.202610071539` direct CLI launcher and real
 CLI/stdio MCP ELF workflows. That audit does not qualify CE Java/Android
 decompilation or GUI project opening, and it does not replace the licensed
@@ -1486,14 +1501,19 @@ fallback weight for new files, rather than dividing only by file count.
 Each file keeps its full duration on one worker. Extra workers overlap other
 files in the same sequence group, and `process-boundary` runs after that
 group. History published before the competing-loader split still names only
-`javascriptLiteralPercentPaths.test.ts`. Until that artifact records one of
-the three new files, the sequencer assigns that recorded duration by the
-pre-split case counts: 54/192 to the remaining file and 46/192 to each new
-file. Every discovered file still belongs to exactly one shard; worker limits
-and project ordering remain unchanged. Fast qualification keeps eight built
-shards without coverage. The merge job rejects successful reports with missing,
-unexpected, or duplicate portable files. Coverage instrumentation and aggregate
-thresholds remain enforced in full qualification.
+`javascriptLiteralPercentPaths.test.ts`. Until an artifact records
+`javascriptLiteralLoaderOwnership.test.ts`, the sequencer assigns that
+recorded duration by the pre-split case counts: 54/192 stays with the
+percent-path file and 138/192 goes to the consolidated loader file. History
+that names the retired Early, Middle, and Late shards sums those durations
+onto the consolidated file instead, and scales a partial set as three equal
+shares. That weight is the old dual-surface cost. The demoted file runs every
+loader once through the shared stdio MCP session, so the first schedule
+overestimates it. Every discovered file still belongs to exactly one shard;
+worker limits and project ordering remain unchanged. Fast qualification keeps
+eight built shards without coverage. The merge job rejects successful reports
+with missing, unexpected, or duplicate portable files. Coverage instrumentation
+and aggregate thresholds remain enforced in full qualification.
 Missing or unusable history falls back to Vitest's default assignment. Only
 timing data is reused; live provider results are never cached. Turbo outputs are
 restored by task hash, with trusted default-branch runs as cache writers and PRs
