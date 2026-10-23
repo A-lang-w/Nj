@@ -178,7 +178,7 @@ it.each([
   [false, true],
   [true, true],
 ])(
-  "recomputes a shared cyclic value under a different active ancestor (prewarmed: %s, rebound: %s)",
+  "preserves unknown forward initializer reads across memo warming (prewarmed: %s, rebound: %s)",
   (prewarmed, rebound) => {
     const parsed = parseJavaScriptSource(
       `
@@ -206,15 +206,15 @@ ${rebound ? "a=0; b=0;" : ""}
     const value = evaluateSemanticBinding(binding, state);
     const firstCommon = property(property(value, "first"), "shared");
     const secondCommon = property(property(value, "second"), "shared");
-    expect(property(firstCommon, "a").status).toBe("cycle");
-    expect(property(property(firstCommon, "b"), "own")).toEqual({
-      status: "literal",
-      value: "b",
-    });
-    expect(property(secondCommon, "b").status).toBe("cycle");
-    expect(property(property(secondCommon, "a"), "own")).toEqual({
+    expect(firstCommon.status).toBe("unknown");
+    expect(secondCommon.status).toBe("unknown");
+    expect(property(property(value, "first"), "own")).toEqual({
       status: "literal",
       value: "a",
+    });
+    expect(property(property(value, "second"), "own")).toEqual({
+      status: "literal",
+      value: "b",
     });
   },
 );
@@ -257,10 +257,10 @@ it.each([
   },
 );
 
-const balancedOr = (names: string[]): string => {
+const balancedChoice = (names: string[]): string => {
   if (names.length === 1) return names[0]!;
   const middle = Math.floor(names.length / 2);
-  return `(${balancedOr(names.slice(0, middle))} || ${balancedOr(names.slice(middle))})`;
+  return `(flag${names.join("_")} ? ${balancedChoice(names.slice(0, middle))} : ${balancedChoice(names.slice(middle))})`;
 };
 
 it("shares dependency proofs across a shallow wide reconvergent graph", () => {
@@ -268,10 +268,10 @@ it("shares dependency proofs across a shallow wide reconvergent graph", () => {
     const imports = Array.from({ length: width }, (_, index) => `l${index}`);
     const aliases = Array.from({ length: width }, (_, index) => `a${index}`);
     const source = `${imports.map((name) => `import * as ${name} from "fs";`).join("\n")}
-const shared = ${balancedOr(imports)};
+const shared = ${balancedChoice(imports)};
 function consumer() {
 ${aliases.map((name) => `const ${name} = shared;`).join("\n")}
-const root = ${balancedOr(aliases)};
+const root = ${balancedChoice(aliases)};
 }`;
     const parsed = parseJavaScriptSource(source, "wide.js");
     if (parsed === null) throw new Error("Expected parsed source");

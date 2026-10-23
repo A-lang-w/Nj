@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
 
 describe("native addon type-only TypeScript imports", () => {
   it("ignores declaration-wide import type and export type from .node modules", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       import type { NativeThing } from "./addon.node";
       export type { Extra } from "./addon.node";
     `);
@@ -13,7 +13,7 @@ describe("native addon type-only TypeScript imports", () => {
   });
 
   it("keeps only value members from mixed type/value native imports", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       import { type OtherThing, load } from "./addon.node";
       load();
     `);
@@ -27,7 +27,7 @@ describe("native addon type-only TypeScript imports", () => {
   });
 
   it("retains ordinary value imports of native addons", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       import { load } from "./addon.node";
       load();
     `);
@@ -47,7 +47,7 @@ describe("native addon type-only re-exports", () => {
     ['export { type Extra } from "./addon.node";', []],
     ['export type * from "./addon.node";', []],
   ] as const)("retains only runtime members from %s", (source, members) => {
-    const analysis = analyzeJavaScriptStaticSource(source);
+    const analysis = analyzeCommonJsStaticFixture(source);
     expect(analysis.parse_status).toBe("complete");
     expect(analysis.electron.native_addon_bindings).toEqual(
       members.length === 0
@@ -65,7 +65,7 @@ describe("native addon type-only re-exports", () => {
 
 describe("native addon loader provenance", () => {
   it("distinguishes CommonJS and ESM re-exports", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const required = require("./addon.node#literal.node");
       module.exports = require("./addon.node#literal.node");
       import imported from "./addon.node#literal.node";
@@ -97,7 +97,7 @@ describe("native addon loader provenance", () => {
   it.each(["#", "?"])(
     "classifies require filenames literally for %s",
     (punctuation) => {
-      const analysis = analyzeJavaScriptStaticSource(`
+      const analysis = analyzeCommonJsStaticFixture(`
       const script = require("./addon.node${punctuation}helper.js");
       import native from "./addon.node${punctuation}helper.js";
     `);

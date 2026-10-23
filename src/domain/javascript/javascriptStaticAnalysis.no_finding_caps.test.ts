@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
 
 describe("JavaScript static analysis findings", () => {
   it("does not infer a webpack push from a dynamic computed key", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const push = "push";
       const arr = {};
       arr[push]([[1], { 1: function () {} }]);
@@ -23,7 +23,7 @@ describe("JavaScript static analysis findings", () => {
       `contextBridge.exposeInMainWorld("api", { ${names.map((name) => `${name}: () => true`).join(", ")} });`,
       `const { ${names.join(", ")} } = require("./addon.node");`,
     ].join("\n");
-    const analysis = analyzeJavaScriptStaticSource(source);
+    const analysis = analyzeCommonJsStaticFixture(source);
 
     expect(analysis.parse_status).toBe("complete");
     expect(analysis.references).toHaveLength(10_003);

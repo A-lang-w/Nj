@@ -2,7 +2,6 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
-  readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -516,8 +515,18 @@ export const createAmbientPathResolver = (
                   !property.shorthand &&
                   key === "__proto__";
                 if (prototypeSetter && t.isObjectProperty(property)) {
-                  const literal = readExactJavaScriptLiteral(property.value);
-                  return literal.found && literal.value !== null;
+                  // Unknown values may be primitive: Annex B ignores them and
+                  // leaves Object.prototype in place. Only a proven object or
+                  // null can exclude that shared prototype.
+                  const value = unwrapJavaScriptExpression(property.value).node;
+                  return !(
+                    t.isNullLiteral(value) ||
+                    t.isObjectExpression(value) ||
+                    t.isArrayExpression(value) ||
+                    t.isFunction(value) ||
+                    t.isClassExpression(value) ||
+                    facts?.freshObject(value)
+                  );
                 }
                 return (
                   prototypeDepths.includes(0) ||

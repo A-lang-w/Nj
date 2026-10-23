@@ -27,6 +27,11 @@ export interface AdbProcessEntry {
 const PROCESS_LINE =
   /^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/u;
 
+const safeInteger = (text: string): number | null => {
+  const value = Number(text);
+  return Number.isSafeInteger(value) ? value : null;
+};
+
 /** Parse `ps -A` output; the header line is preserved verbatim as `columns`. */
 export const parseProcessListOutput = (
   stdout: string,
@@ -47,14 +52,19 @@ export const parseProcessListOutput = (
     }
     const match = PROCESS_LINE.exec(line);
     if (match === null) {
-      unparsed.add(line);
+      unparsed.add(rawLine);
       continue;
     }
+    const pid = safeInteger(match[2]!);
+    const ppid = safeInteger(match[3]!);
+    const rss = safeInteger(match[5]!);
+    if (pid === null || ppid === null || rss === null) unparsed.add(rawLine);
+    if (pid === null) continue;
     processes.push({
       user: match[1]!,
-      pid: Number(match[2]!),
-      ppid: Number.isSafeInteger(Number(match[3]!)) ? Number(match[3]!) : null,
-      rss: Number.isSafeInteger(Number(match[5]!)) ? Number(match[5]!) : null,
+      pid,
+      ppid,
+      rss,
       state: match[8]!,
       name: match[9]!.trim(),
     });
@@ -68,9 +78,6 @@ export interface AdbFeatureEntry {
 }
 
 const FEATURE_LINE = /^feature:([^=\s]+)(?:=(0x[0-9a-fA-F]+|\d+))?$/u;
-
-const parseFeatureVersion = (text: string): number =>
-  text.startsWith("0x") ? Number.parseInt(text.slice(2), 16) : Number(text);
 
 /** Parse `pm list features` output, including hex GL versions. */
 export const parseFeatureListOutput = (
@@ -86,12 +93,14 @@ export const parseFeatureListOutput = (
     if (line === "") continue;
     const match = FEATURE_LINE.exec(line);
     if (match === null) {
-      unparsed.add(line);
+      unparsed.add(rawLine);
       continue;
     }
+    const version = match[2] === undefined ? null : safeInteger(match[2]);
+    if (match[2] !== undefined && version === null) unparsed.add(rawLine);
     features.push({
       name: match[1]!,
-      version: match[2] === undefined ? null : parseFeatureVersion(match[2]!),
+      version,
     });
   }
   return { features, unparsedLines: unparsed.facts() };
@@ -360,7 +369,7 @@ export const parseDumpsysPackageOutput = (
       details.installerPackageName === null
     )
       details.installerPackageName = absentInstallerOrName(value);
-    else if (key === "userId" && details.userId === null) {
+    else if ((key === "userId" || key === "appId") && details.userId === null) {
       const parsed = /^(\d+)/u.exec(value);
       if (parsed !== null) details.userId = Number(parsed[1]!);
     } else if (key === "pkgFlags" && details.pkgFlags === null)
@@ -418,18 +427,14 @@ export const packageChangeFailureReason = (output: string): string | null =>
  */
 export const parsePackageChangeOutput = (
   stdout: string,
-): {
-  readonly status: "success" | "failure";
-  readonly reason: string | null;
-} => {
+):
+  | { readonly status: "success" | "unknown"; readonly reason: null }
+  | { readonly status: "failure"; readonly reason: string } => {
   const text = stdout.trim();
+  const failure = packageChangeFailureReason(text);
+  if (failure !== null) return { status: "failure", reason: failure };
   if (/^Success$/mu.test(text)) return { status: "success", reason: null };
-  return {
-    status: "failure",
-    reason:
-      packageChangeFailureReason(text) ??
-      (text === "" ? null : text.slice(0, 512)),
-  };
+  return { status: "unknown", reason: null };
 };
 
 /**

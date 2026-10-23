@@ -157,7 +157,7 @@ const evaluateClaim = (
     heads,
     comparison.evidence_id,
     allSourceIds,
-    claim.dimension,
+    observation.selectedDimensions ?? [claim.dimension],
   );
   const status = classify(observed, blockers, relevantUnknowns);
   return reconstructionClaimResultSchema.parse({
@@ -277,6 +277,7 @@ const comparisonObservation = (
   readonly status: ObservedStatus;
   readonly limitations: readonly string[];
   readonly hasIndependentFunctionChange?: boolean;
+  readonly selectedDimensions?: readonly string[];
 } => {
   if (claim.kind === "behavioral") {
     const parsed = readComparisonResult(evidence, "compare_process_captures");
@@ -304,6 +305,10 @@ const comparisonObservation = (
     if (claim.dimension === "overall")
       return {
         status: result.status,
+        selectedDimensions: [
+          "overall",
+          ...result.dimensions.map(({ dimension }) => dimension),
+        ],
         limitations: result.dimensions.flatMap(
           ({ limitations }) => limitations,
         ),

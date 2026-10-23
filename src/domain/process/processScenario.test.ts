@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import { z } from "zod";
+import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { SESSION_TOOL_CONTRACTS } from "../../contracts/sessionToolContracts.js";
 import {
@@ -11,6 +13,23 @@ import {
 } from "./processScenario.js";
 
 const baseScenario = { executable: "/usr/bin/true" };
+
+it("advertises the same unsupported PTY environment name as runtime admission", () => {
+  const schema = z.toJSONSchema(processScenarioSchema.shape.environment, {
+    io: "input",
+  });
+  const ajv = new Ajv2020({ strict: false });
+  const validate = ajv.compile(schema);
+  expect(validate(Object.fromEntries([["__proto__", "selected"]]))).toBe(false);
+  expect(
+    validate({
+      constructor: "ordinary",
+      prototype: "ordinary",
+      NORMAL_CAPTURE_KEY: "control",
+    }),
+  ).toBe(true);
+  expect(validate({ REA_PROCESS_RUN_ID: "reserved" })).toBe(false);
+});
 
 it("defaults the finalization interval to zero without changing committed identity", () => {
   const scenario = parseProcessScenario(baseScenario);
@@ -110,7 +129,7 @@ it.each([
   );
 });
 
-it("keeps the committed identity of a scenario without finalization byte for byte", () => {
+it("keeps scenario identity without finalization while versioning corrected port semantics", () => {
   const scenario = parseProcessScenario({
     executable: "/usr/bin/true",
     arguments: ["-x"],
@@ -127,10 +146,29 @@ it("keeps the committed identity of a scenario without finalization byte for byt
     digestProcessCommitment(processScenarioCommitment(scenario)),
     "the full scenario commitment is unchanged",
   ).toBe("b50005d26269bd1db4a49c79e05bca67c3a18d837b45cd1c8ff591c01eb7623a");
+  const comparison = processComparisonContract(scenario);
+  expect(comparison.port_normalization_version).toBe("contextual-endpoints-v3");
+  const {
+    pid_normalization_version: pidVersion,
+    terminal_observation_version: terminalVersion,
+    ...rootOnlyComparison
+  } = comparison;
+  expect(terminalVersion).toBe("deferred-rendered-journal-v1");
+  expect(pidVersion).toBe("sampled-identifiers-v2");
   expect(
-    digestProcessCommitment(processComparisonContract(scenario)),
-    "the comparison contract commitment is unchanged",
+    digestProcessCommitment({
+      ...rootOnlyComparison,
+      port_normalization_version: "contextual-endpoints-v2",
+    }),
+    "the earlier comparison contract had no finalization field",
   ).toBe("675b759347a737a4f1cbfbf2fc759258d9c877216513f2f4dad3ed1e9e6e7631");
+  expect(
+    digestProcessCommitment(rootOnlyComparison),
+    "corrected endpoint normalization has its own comparison commitment",
+  ).toBe("301f70ed68bd81b67d07c88b44c85ed0cf7d583967d2f769e2cb193d4db61c20");
+  expect(digestProcessCommitment(comparison)).not.toBe(
+    digestProcessCommitment(rootOnlyComparison),
+  );
 });
 
 it("admits the default and the exact combined terminal-cell budget", () => {
@@ -237,3 +275,26 @@ it("identifies each event scheduled after the scenario timeout", () => {
     }),
   ]);
 });
+
+it.each(["selected-value", 7])(
+  "rejects a selected __proto__ PTY environment value instead of omitting %j",
+  (value) => {
+    const environment = Object.fromEntries([
+      ["__proto__", value],
+      ["NORMAL_CAPTURE_KEY", "control"],
+    ]);
+    const parsed = processScenarioSchema.safeParse({
+      ...baseScenario,
+      environment,
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success)
+      throw new Error("Expected the unsupported PTY name to be rejected");
+    expect(parsed.error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["environment", "__proto__"],
+        message: expect.stringContaining("PTY backend cannot preserve"),
+      }),
+    );
+  },
+);

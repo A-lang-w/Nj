@@ -29,7 +29,7 @@ import {
 import {
   parseTypes,
   readTypeDefinitions,
-  type TypeRange,
+  type DecodedTypeDefinition,
 } from "./ManagedMemberInspectorCore.js";
 import { edgeTargets } from "./ManagedMethodSpecs.js";
 import { managedTypeNameDigests } from "./ManagedTypeNameDigests.js";
@@ -124,26 +124,27 @@ const readMemberLayout = (bytes: Buffer, pe: ManagedPeLayout) => {
 };
 
 const selectTypes = (
-  ranges: readonly TypeRange[],
+  types: readonly DecodedTypeDefinition[],
   typeNames: readonly string[] | undefined,
 ): {
   readonly tokens: SelectedTypeTokens;
   readonly selection: ManagedMemberInspection["selection"];
-  readonly unreadableNames: number;
 } => {
-  if (typeNames === undefined)
-    return { tokens: null, selection: null, unreadableNames: 0 };
+  if (typeNames === undefined) return { tokens: null, selection: null };
   const requested = new Set(typeNames);
   const tokens = new Set<string>();
   const matched = new Set<string>();
-  for (const range of ranges) {
-    if (range.fullName === null || !requested.has(range.fullName)) continue;
-    tokens.add(range.token);
-    matched.add(range.fullName);
+  for (const { type } of types) {
+    const nested = (type.flags & 0x7) >= 2;
+    const spellings = nested ? [type.full_name, type.name] : [type.full_name];
+    for (const name of spellings) {
+      if (!requested.has(name)) continue;
+      tokens.add(type.token);
+      matched.add(name);
+    }
   }
   return {
     tokens,
-    unreadableNames: ranges.filter(({ fullName }) => fullName === null).length,
     selection: {
       type_names: [...typeNames],
       unmatched_type_names: typeNames.filter((name) => !matched.has(name)),
@@ -198,27 +199,24 @@ export const inspectManagedMembersBytes = (
     const identity = readManagedModuleIdentity(bytes, layout);
     appendManagedParseIssues(issues, identity.issues);
     const ranges = readTypeDefinitions(bytes, layout, issues, memberLists);
-    const {
-      tokens: selected,
-      selection,
-      unreadableNames,
-    } = selectTypes(ranges, typeNames);
     const parsedTypes = parseTypes(bytes, layout, ranges);
+    const { tokens: selected, selection } = selectTypes(
+      parsedTypes.types,
+      typeNames,
+    );
+    const unreadableNames =
+      typeNames === undefined ? 0 : ranges.length - parsedTypes.types.length;
     appendManagedParseIssues(issues, parsedTypes.issues);
     const typeReferences = managedTypeReferences(bytes, layout, issues);
     const { operand: signatureTypeName, declaration: declarationTypeName } =
       managedTypeNameDigests(layout, issues, parsedTypes, typeReferences);
     const types = parsedTypes.types
-      .filter((type) => selected === null || selected.has(type.token))
-      .map((type) => {
+      .filter(({ type }) => selected === null || selected.has(type.token))
+      .map(({ row, type }) => {
         managedDecodeBudget(layout).reserve(512, type.row_offset);
         return {
           ...type,
-          name_sha256:
-            declarationTypeName(
-              2,
-              Number.parseInt(type.token.slice(4), 16),
-            )?.toString("hex") ?? null,
+          name_sha256: declarationTypeName(2, row)?.toString("hex") ?? null,
         };
       });
     const envelope = managedPeInspectionEnvelope(

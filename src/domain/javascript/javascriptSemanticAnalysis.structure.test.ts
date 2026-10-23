@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { analyzeCommonJsSemanticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
 import {
   programScope,
   bindingById,
@@ -14,7 +14,7 @@ describe("JavaScript semantic analysis: ESM import origins", () => {
   it.each(["", "a", "0"])(
     "preserves exact ESM import name %j in binding origins",
     (name) => {
-      const ir = analyzeJavaScriptSemantics(
+      const ir = analyzeCommonJsSemanticFixture(
         "import { " +
           JSON.stringify(name) +
           ' as selected } from "./module.mjs"; const alias = selected; export { alias };',
@@ -35,7 +35,7 @@ describe("JavaScript semantic analysis: ESM import origins", () => {
   );
 
   it("keeps default and namespace import origins distinct from an empty named import", () => {
-    const ir = analyzeJavaScriptSemantics(
+    const ir = analyzeCommonJsSemanticFixture(
       'import value from "./module.mjs"; import * as namespace from "./module.mjs";',
     );
     expect(origin(topLevelBinding(ir, "value"))).toEqual({
@@ -51,7 +51,7 @@ describe("JavaScript semantic analysis: ESM import origins", () => {
 
 describe("JavaScript semantic analysis: structure 1", () => {
   it("resolves imports, require destructuring, aliases, assignments, and shadowing", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       import { ipcRenderer as ir } from "electron";
       const { ipcMain: bus } = require("electron");
       const forwarded = bus;
@@ -145,7 +145,7 @@ describe("JavaScript semantic analysis: structure 1", () => {
   ])(
     "does not assign CommonJS origins to lexically shadowed require",
     (source) => {
-      const ir = analyzeJavaScriptSemantics(source);
+      const ir = analyzeCommonJsSemanticFixture(source);
       const bus = onlyBinding(ir, "bus");
       expect(bus.provenance.origins).toEqual([]);
       expect(ir.moduleLinks.filter(({ kind }) => kind === "require")).toEqual(
@@ -155,7 +155,7 @@ describe("JavaScript semantic analysis: structure 1", () => {
   );
 
   it("propagates literal, template, object, conditional, and destructured values", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const prefix = "rea";
       const suffix = "open";
       const channel = \`${"${prefix}"}:${"${suffix}"}\`;
@@ -193,7 +193,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
     `for (const value of entries) { consume(value); }`,
     `for (const value in entries) { consume(value); }`,
   ])("does not leak lexical loop bindings into the enclosing scope", (loop) => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const value = "outside";
       ${loop}
       consume(value);
@@ -212,7 +212,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
   });
 
   it("resolves closures inside a loop against the loop binding", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const value = "outside";
       for (const value of entries) { callbacks.push(() => value); }
       consume(value);
@@ -233,7 +233,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
   });
 
   it("keeps var loop declarations in the enclosing function", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       function run() { for (var value of entries) { consume(value); } return value; }
     `);
     const binding = onlyBinding(ir, "value");
@@ -249,7 +249,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
 
 describe("JavaScript semantic analysis: class expression lexical names", () => {
   it("resolves named class expressions inside the class without changing the outer binding", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const Service = "outside";
       const Wrapper = class Service {
         create() { return new Service(); }
@@ -276,7 +276,7 @@ describe("JavaScript semantic analysis: class expression lexical names", () => {
   });
 
   it("does not expose a named class expression outside its class", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const Wrapper = class Internal { create() { return new Internal(); } };
       consume(Internal);
     `);
@@ -293,7 +293,7 @@ describe("JavaScript semantic analysis: class expression lexical names", () => {
 
 describe("JavaScript semantic analysis: class member keys", () => {
   it("does not read an outer binding through noncomputed class member names", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const marker = "seed";
       class Holder {
         marker() {}
@@ -310,7 +310,7 @@ describe("JavaScript semantic analysis: class member keys", () => {
   });
 
   it("does not read an outer binding through TypeScript class member names", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const marker = "seed";
       abstract class Holder {
         declare marker: string;
@@ -331,7 +331,7 @@ describe("JavaScript semantic analysis: class member keys", () => {
   });
 
   it("does not capture an outer binding through a noncomputed method name", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       function outer() {
         const marker = 1;
         class Holder { marker() { return 2; } }
@@ -342,7 +342,7 @@ describe("JavaScript semantic analysis: class member keys", () => {
   });
 
   it("keeps reads from computed class keys and field initializers", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const marker = "seed";
       class Holder {
         [marker]() {}
@@ -361,7 +361,7 @@ describe("JavaScript semantic analysis: class member keys", () => {
 
 describe("JavaScript semantic analysis: structure 2", () => {
   it("retains ESM, re-export, require, and CommonJS export relationships", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       export { ipcRenderer as bridge } from "electron";
       export * from "./wrapper.js";
       export const localValue = 1;
@@ -409,7 +409,7 @@ describe("JavaScript semantic analysis: structure 2", () => {
   });
 
   it("does not invent export or method names from dynamic keys", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const key = resolveKey();
       exports[key] = addon;
       module.exports[key] = addon;
@@ -431,7 +431,7 @@ describe("JavaScript semantic analysis: structure 2", () => {
   });
 
   it("resolves the value of a simple assignment expression exported through CommonJS", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       function parse() { return { kind: "result" }; }
       const holder = {};
       module.exports = holder.value = parse;
@@ -450,7 +450,7 @@ describe("JavaScript semantic analysis: structure 2", () => {
   it.each(["parse", "default"])(
     "does not export a %s property write to a replaced module.exports receiver",
     (name) => {
-      const ir = analyzeJavaScriptSemantics(`
+      const ir = analyzeCommonJsSemanticFixture(`
         module.exports.${name} = (module.exports = () => ({ kind: "result" }));
       `);
       expect(ir.moduleLinks).toEqual([
@@ -470,7 +470,7 @@ describe("CommonJS receiver lifetimes", () => {
   ])(
     "keeps the receiver identity intact when mutating its contents: %s",
     (mutation) => {
-      const ir = analyzeJavaScriptSemantics(
+      const ir = analyzeCommonJsSemanticFixture(
         `exports.parse = () => 1; ${mutation}`,
       );
       const exported = ir.moduleLinks.find(
@@ -493,7 +493,7 @@ describe("CommonJS receiver lifetimes", () => {
   ])(
     "excludes a detached CommonJS receiver across statements: %s",
     (source) => {
-      const ir = analyzeJavaScriptSemantics(source);
+      const ir = analyzeCommonJsSemanticFixture(source);
       expect(
         ir.moduleLinks.filter(
           ({ exportedName }) =>
@@ -516,7 +516,7 @@ describe("CommonJS receiver lifetimes", () => {
     "exports.parse = (module.exports = {}); module.exports = exports;",
     "(module.exports = {}, exports = module.exports, exports.parse = () => 1);",
   ])("retains a connected CommonJS receiver: %s", (source) => {
-    expect(analyzeJavaScriptSemantics(source).moduleLinks).toContainEqual(
+    expect(analyzeCommonJsSemanticFixture(source).moduleLinks).toContainEqual(
       expect.objectContaining({
         kind: "commonjs-export",
         exportedName: "parse",
@@ -548,7 +548,7 @@ describe("CommonJS receiver lifetimes", () => {
     "module.exports = {}; const assign = Object.assign; assign.call(null, module, { exports }); exports.parse = () => 1;",
     "module.exports = {}; const wrapper = module; Object.assign(wrapper, { exports }); exports.parse = () => 1;",
   ])("keeps uncertain CommonJS receiver identity unresolved: %s", (source) => {
-    expect(analyzeJavaScriptSemantics(source).moduleLinks).toContainEqual(
+    expect(analyzeCommonJsSemanticFixture(source).moduleLinks).toContainEqual(
       expect.objectContaining({
         kind: "commonjs-export",
         exportedName: "parse",
@@ -561,7 +561,7 @@ describe("CommonJS receiver lifetimes", () => {
 
 describe("CommonJS exports defined with Object.defineProperty", () => {
   const exportsOf = (source: string) =>
-    analyzeJavaScriptSemantics(source).moduleLinks.filter(
+    analyzeCommonJsSemanticFixture(source).moduleLinks.filter(
       ({ kind }) => kind === "commonjs-export",
     );
   const defineParse =
@@ -675,7 +675,7 @@ describe("CommonJS exports defined with Object.defineProperty", () => {
 
 describe("JavaScript semantic analysis: write references", () => {
   it("classifies destructuring and loop targets as writes, not reads", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       let a, b, c;
       ({ a } = source);
       [b] = list;
@@ -696,7 +696,7 @@ describe("JavaScript semantic analysis: write references", () => {
   });
 
   it("retains the read a compound assignment or update performs", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       let total = 0;
       total += 1;
       total++;
@@ -717,7 +717,7 @@ describe("JavaScript semantic analysis: write references", () => {
   });
 
   it("treats TypeScript parameter-property declarations as bindings rather than reads", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       const seed = 1;
       class Service {
         constructor(
@@ -757,7 +757,7 @@ describe("JavaScript semantic analysis: write references", () => {
 
 describe("JavaScript semantic analysis: dynamic and case scopes", () => {
   it("marks with and eval as unresolved dynamic scope instead of staying silent", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       function load(source) {
         with (host) { consume(target); }
         eval("var injected = 1;");
@@ -772,7 +772,7 @@ describe("JavaScript semantic analysis: dynamic and case scopes", () => {
   });
 
   it("does not assign CommonJS exports to lexically shadowed module or exports", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       function shadowed(module, exports) {
         module.exports.value = 1;
         exports.other = 2;
@@ -787,7 +787,7 @@ describe("JavaScript semantic analysis: dynamic and case scopes", () => {
   });
 
   it("shares one lexical scope across switch cases and isolates static blocks", () => {
-    const switchIr = analyzeJavaScriptSemantics(`
+    const switchIr = analyzeCommonJsSemanticFixture(`
       const kind = select();
       switch (kind) {
         case "a": let shared = 1; break;
@@ -801,7 +801,7 @@ describe("JavaScript semantic analysis: dynamic and case scopes", () => {
     expect(shared[0]?.scopeId).not.toBe(
       topLevelBinding(switchIr, "kind").scopeId,
     );
-    const classIr = analyzeJavaScriptSemantics(`
+    const classIr = analyzeCommonJsSemanticFixture(`
       class Holder {
         static { let isolated = 1; }
         static { let isolated = 2; }
@@ -813,7 +813,7 @@ describe("JavaScript semantic analysis: dynamic and case scopes", () => {
   });
 
   it("keeps function, class, and method identities separate from bindings", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeCommonJsSemanticFixture(`
       class Service {
         run() {}
         get value() { return 1; }

@@ -140,7 +140,7 @@ it.each([
   (path, declarations, expected) => {
     const file = parseJavaScriptSource(
       `
-      const {spawn,exec}=require("node:child_process");
+      ${path === "fixture.mjs" ? 'import {spawn,exec} from "node:child_process";' : 'const {spawn,exec}=require("node:child_process");'}
       ${declarations}
       spawn("argv",argv,{stdio:"inherit"}); exec("callback",done);
     `,

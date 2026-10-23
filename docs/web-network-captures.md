@@ -141,6 +141,19 @@ Selecting `record_ordinals` (CLI `--record`) also decodes retained bodies with
 recognized protobuf or gRPC content types. Whole-capture inspection does not
 perform this extra work. The original binary sidecar, SHA-256 and producer
 ordinal remain the source; decoding adds flat body, frame and field facts.
+Automatic binary Protobuf admission validates reserved MIME parameters:
+`encoding` may be `binary`, while `charset` and the reserved `version` must be
+absent. Illegal profiles retain the source body, add a limitation, and leave
+protobuf coverage partial. Ordinary non-encoding parameters remain accepted;
+an explicit framing choice interprets bytes independently of the MIME profile.
+Admission follows HTTP token and quoted-string syntax: unterminated quotes and
+conflicting repeated reserved parameters remain invalid. Repeated headers with
+implicit binary encoding and `encoding=binary` agree without rewriting either
+header. Invalid declarations remain visible even with explicit framing, and
+declared gRPC bodies still receive credential checks before a MIME refusal.
+An excluded HAR `mimeType` remains unknown for automatic interpretation even
+when a visible Content-Type header exists. That header can still identify the
+transport for credential checks; explicit wire framing remains independent.
 
 Native gRPC admits only data-frame flags 0/1; gRPC-web additionally admits its
 terminal trailer frame. `grpc-web-text` supports independently padded base64
@@ -187,7 +200,12 @@ Map semantics, extensions and required-field validation are
 unsupported. A supplied schema does not establish the sender's actual schema.
 An invalid nested interpretation records `schema_status: "invalid-message"`
 and `schema_error` locally; later outer fields remain available. Valid string
-contents, including a leading U+FEFF, are preserved.
+contents, including a leading U+FEFF, are preserved. Descriptor wire failures
+name `protobuf.schema.descriptor_set_path` with the wire reason and byte offset;
+a missing selected type names `protobuf.schema.message_type`. Duplicate field
+numbers in a message are refused before registry construction, independently of
+declaration order. Resource exhaustion and cancellation keep their own outcomes
+and previously admitted capture Evidence remains available.
 
 ```bash
 # Compile your own schema with your existing protoc, including local imports:
@@ -289,8 +307,10 @@ not register or wrap the Fiddler MCP server.
 - `numeric_literals` preserve HAR number lexemes and native integer/float
   representations, including unsafe integers and non-finite native floats.
   Values that cannot be safely represented as JSON numbers are `null` in the
-  reported view. Unsafe standard HAR numeric fields fail schema validation;
-  unsafe extension numbers remain available through their sidecars.
+  reported view. Schema-valid HAR numbers are admitted even when they cannot
+  be published safely as JSON numbers; their exact lexemes remain in
+  `numeric_literals`. Standard numeric fields must still satisfy the pinned
+  schema, including integer requirements judged from the numeric lexeme.
 - `binary_fields` retain exposed bytes, base64 and SHA-256 independently of
   declared sizes. Valid HAR `content.encoding: "base64"` is decoded exactly;
   producer-decoded Unicode text, missing text and unknown encodings do not
@@ -453,7 +473,9 @@ api-surface grouping, then keeps the groups on the primary origin, the origin
 with the most JSON-like records (`application/json`, `application/*+json`,
 `text/plain`, `text/markdown`), whose path starts with `/api/` or `/apis/` or
 whose content types are JSON-like, and the write groups answered with no body
-(a bodiless `204 DELETE`). Every other group is listed under
+(a bodiless `204 DELETE`). Empty retained response text establishes a bodiless
+write only when its encoding is understood and unredacted; an opaque or hidden
+encoding leaves the body unknown. Every other group is listed under
 `excluded` with reason `other-origin`, `ui-page-or-asset` or `non-json`, and
 retained records without a usable request line are counted in a limitation.
 
@@ -758,6 +780,12 @@ budget. Those budgets have no runtime override. `capture_timeout_ms` does not
 raise them. Exceeding a budget returns no partial success.
 Oversized selected captures return an input error identifying `capture_path`
 and the byte budget; owned reply/output failures remain output or provider errors.
+An explicit complete-reply refusal names the 100663296-byte allowance and its
+lack of a runtime override. Record selection, paging, delivery mode and worker
+memory do not increase that allowance; a smaller producer export is a narrower
+observation, and the refusal leaves no completed capture Evidence to retrieve.
+Cancellation during reply-file finalization retains validated completed capture
+facts as partial observations. Malformed or unvalidated replies are not promoted.
 HAR, SAZ and qlog run in an owned Node old-generation heap with one V8 worker.
 `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` is a decimal integer of mebibytes from
 8 to 16384. Unset uses 192, the previous constant. Invalid values fail

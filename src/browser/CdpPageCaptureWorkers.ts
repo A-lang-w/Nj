@@ -24,6 +24,9 @@ export const captureWorkers = async (
 ): Promise<WebPageInspection["workers"]> => {
   const { context, allowedOrigins, limitations, events } = input;
   const completeness = events.completeness;
+  // This final target snapshot cannot establish worker lifetimes or observed
+  // worker-session activity during the preceding page observation window.
+  completeness.attachLimited("workers");
   const result = await optionalCdpCommand(
     { ...context, sessionId: undefined },
     "Target.getTargets",

@@ -448,3 +448,28 @@ it("retains native resolver identity independently of an unknown filename base",
     },
   ]);
 });
+
+it("retains unknown historical .js loader scope until a package manifest establishes it", () => {
+  const bytes = new TextEncoder().encode('require("./dep.cjs");');
+  const relationships = (
+    mode?: "module" | "commonjs" | "unspecified" | "unknown",
+  ) =>
+    parseReferenceSourceImports("main.js", bytes, "JavaScript", mode)
+      .relationships;
+  expect(relationships()).toEqual([
+    expect.objectContaining({
+      to: "./dep.cjs",
+      resolution: "unknown",
+      parse_state: "partial",
+    }),
+  ]);
+  expect(relationships("module")).toEqual([]);
+  for (const mode of ["commonjs", "unspecified"] as const)
+    expect(relationships(mode)).toEqual([
+      expect.objectContaining({
+        to: "./dep.cjs",
+        resolution: "internal",
+        parse_state: "parsed",
+      }),
+    ]);
+});

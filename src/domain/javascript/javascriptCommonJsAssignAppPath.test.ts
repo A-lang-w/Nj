@@ -2,7 +2,7 @@ import { runInNewContext } from "node:vm";
 
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
 
 const cases = [
   [
@@ -114,7 +114,7 @@ it.each(cases)(
       module.exports,
     );
     expect(changed).toBe(possible ? 1 : 0);
-    const analysis = analyzeJavaScriptStaticSource(defining);
+    const analysis = analyzeCommonJsStaticFixture(defining);
     expect(analysis.parse_error_count).toBe(0);
     expect((analysis.electron.app_path_changes ?? []).length > 0).toBe(
       possible,
@@ -122,7 +122,7 @@ it.each(cases)(
   },
 );
 
-it("retains native source uncertainty when an array iterator is overwritten", () => {
+it("does not invent a native export through an overwritten array iterator", () => {
   const defining =
     "const{app}=require('electron');const sources=[{change:app.setAppPath,app}];sources[Symbol.iterator]=function*(){yield{change(){},app}};Object.assign(exports,...sources);";
   let changed = 0;
@@ -134,8 +134,8 @@ it("retains native source uncertainty when an array iterator is overwritten", ()
   });
   runInNewContext("change.call(app,'./lib');", module.exports);
   expect(changed).toBe(0);
-  // The static owner does not execute this custom iterator; it must retain the
-  // native origin still present in the source rather than silently drop it.
-  const analysis = analyzeJavaScriptStaticSource(defining);
-  expect((analysis.electron.app_path_changes ?? []).length).toBeGreaterThan(0);
+  // The original array slots cannot establish what the custom iterator publishes.
+  const analysis = analyzeCommonJsStaticFixture(defining);
+  expect(analysis.electron.app_path_changes ?? []).toEqual([]);
+  expect(analysis.parse_error_count).toBe(0);
 });

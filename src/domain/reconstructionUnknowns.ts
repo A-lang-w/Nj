@@ -28,18 +28,16 @@ export const reconstructionClaimUnknowns = (
   heads: ReadonlyMap<string, ResidualUnknown>,
   comparisonId: string,
   sourceIds: readonly string[],
-  dimension?: string,
+  dimensions?: readonly string[],
 ): ResidualUnknown[] => {
   const appliesToClaim = (item: ResidualUnknown): boolean => {
     const scope = item.comparison_conclusion_scope;
     return (
       scope === undefined ||
       (scope.comparison_evidence_id === comparisonId &&
-        (dimension === undefined ||
-          dimension === "overall" ||
-          scope.dimensions.some(
-            (scopedDimension) => scopedDimension === dimension,
-          )))
+        (dimensions === undefined ||
+          dimensions.includes("overall") ||
+          scope.dimensions.some((dimension) => dimensions.includes(dimension))))
     );
   };
   const evidenceIds = new Set([comparisonId, ...sourceIds]);

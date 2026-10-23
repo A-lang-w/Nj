@@ -157,7 +157,14 @@ import/export forms. Function/tag signatures resolve type indices; table/memory
 limits, memory page size and global value type/mutability remain explicit.
 Unadmitted types (including GC reference signatures) retain null signatures and
 issues. Exact decoded names retain escapes, empty names, BOM and punctuation.
-This facet is absent in historical Evidence that did not examine typed interfaces.
+Internal WAT labels are display identifiers: a repeated label in a type or
+function/table/memory/global/tag index space is ambiguous. Named references to
+it retain null signatures or indices and an explicit issue; numeric references
+and uniquely named definitions keep their own identity. Comparison treats an
+unresolved signature as unknown, including in self-comparison. Inventory
+completeness describes observed import/export entries, independently of type
+resolution. This facet is absent in historical Evidence that did not examine
+typed interfaces.
 
 `compare_wasm_interfaces` accepts two complete `inspect_wasm_artifact` Evidence
 records, or exact retained references in the current MCP session, and required
@@ -192,3 +199,9 @@ After building, run `REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin node
 scripts/verify-wasm-interface-comparison.mjs` for original-module comparison
 through the compiled CLI and stdio MCP. It uses owned fixtures and WABT 1.0.42;
 no WASM module is instantiated or executed.
+
+Glue parsing accepts Node-supported WASM source-phase imports, including
+`import source module from "./module.wasm"` and
+`await import.source("./module.wasm")`. Their string literals retain the same
+coordinates and local candidate associations as ordinary import literals; these
+are static source observations, without module instantiation or execution.

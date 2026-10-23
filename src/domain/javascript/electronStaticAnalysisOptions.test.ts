@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
 
 describe("Electron constant option evidence", () => {
   it("keeps mixed constant, inline and unresolved windows in construction order", () => {
-    const analysis = analyzeJavaScriptStaticSource(
+    const analysis = analyzeCommonJsStaticFixture(
       [
         'const { BrowserWindow } = require("electron");',
         "const options = { webPreferences: { sandbox: true } };",
@@ -34,7 +34,7 @@ describe("Electron constant option evidence", () => {
   });
 
   it("resolves local constant options despite an unrelated option write", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const { BrowserWindow } = require("electron");
       function open() {
         const preferences = { nodeIntegration: true, contextIsolation: false };
@@ -71,7 +71,7 @@ describe("Electron constant option evidence", () => {
     "const box = {}; box.options = options; box.options.webPreferences.sandbox = false;",
     "options = replacement;",
   ])("keeps changed or escaped constant options unknown: %s", (mutation) => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const { BrowserWindow } = require("electron");
       const options = { webPreferences: { sandbox: true } };
       ${mutation}
@@ -94,7 +94,7 @@ describe("Electron constant option evidence", () => {
     "const options = { webPreferences: { sandbox: true } }; { const options = unknown; new BrowserWindow(options); }",
     "let options = { webPreferences: { sandbox: true } }; new BrowserWindow(options);",
   ])("does not invent a constant initializer: %s", (source) => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const { BrowserWindow } = require("electron"); ${source}
     `);
     expect(analysis.electron.browser_windows).toMatchObject([
@@ -107,7 +107,7 @@ describe("Electron constant option evidence", () => {
   });
 
   it("preserves constants selected before later mutation and resolves preload context", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const { BrowserWindow } = require("electron");
       const original = { webPreferences: { preload: require("path").join(__dirname, "preload.js"), sandbox: true } };
       const options = original;
@@ -130,7 +130,7 @@ describe("Electron option evidence", () => {
     '{ webPreferences: ({ preload: "./preload.js", sandbox: true } as const) }',
     '{ webPreferences: { preload: "./preload.js" as const, sandbox: true } }',
   ])("unwraps type-only wrappers around inline options: %s", (options) => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       import { BrowserWindow } from "electron";
       new BrowserWindow(${options});
     `);
@@ -154,7 +154,7 @@ describe("Electron option evidence", () => {
   });
 
   it("keeps the final explicit preload and service name with unrelated keys", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const { BrowserWindow, utilityProcess } = require("electron");
       new BrowserWindow({ webPreferences: { preload: "./kept.js", sandbox: true }, title: "App" });
       utilityProcess.fork("./worker.js", [], { serviceName: "kept", cwd: "/app" });
@@ -181,7 +181,7 @@ describe("Electron option evidence", () => {
   ])(
     "recovers Electron bindings initialized unconditionally in a %s",
     (_name, declaration) => {
-      const analysis = analyzeJavaScriptStaticSource(
+      const analysis = analyzeCommonJsStaticFixture(
         `${declaration} new electron.BrowserWindow({webPreferences:{preload:"./preload.js"}});`,
       );
       expect(analysis.parse_error_count).toBe(0);
@@ -198,7 +198,7 @@ describe("Electron option evidence", () => {
   ])(
     "keeps conditionally skipped loop declarations unresolved: %s",
     (declaration) => {
-      const analysis = analyzeJavaScriptStaticSource(
+      const analysis = analyzeCommonJsStaticFixture(
         `${declaration} new electron.BrowserWindow({});`,
       );
       expect(analysis.electron.browser_windows).toEqual([]);
@@ -206,21 +206,22 @@ describe("Electron option evidence", () => {
   );
 
   it("does not read an audio or video preload attribute as a preload script", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       jsx("audio", { controls: true, preload: "metadata", src });
       (0, React.createElement)(\`video\`, { preload: "auto" });
       jsx("webview", { preload: "./guest.js" });
-      const options = { preload: "./preload.js" };
+      const options = { preload: "./decoy.js" };
+      const { BrowserWindow } = require("electron");
+      new BrowserWindow({ webPreferences: { preload: "./preload.js" } });
     `);
 
     expect(analysis.role_paths.map(({ path }) => path)).toEqual([
-      "./guest.js",
       "./preload.js",
     ]);
   });
 
   it("keeps values unknown when a later computed key can override them", () => {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const { BrowserWindow, utilityProcess } = require("electron");
       new BrowserWindow({ webPreferences: { preload: "./maybe.js" }, [key]: null });
       utilityProcess.fork("./worker.js", [], { serviceName: "maybe", [key]: null });
@@ -248,7 +249,7 @@ describe("Electron option evidence", () => {
       String.raw`\unicode`,
       "` } });",
     ].join("");
-    const analysis = analyzeJavaScriptStaticSource(source);
+    const analysis = analyzeCommonJsStaticFixture(source);
 
     expect(analysis.parse_status).toBe("partial");
     expect(analysis.parse_error_count).toBe(1);
@@ -270,7 +271,7 @@ describe("Electron empty option keys", () => {
     ["wrapped empty string", '["" as const]'],
   ])("unrelated %s option keys", (_label, key) => {
     it("retains an earlier explicit webPreferences object", () => {
-      const analysis = analyzeJavaScriptStaticSource(`
+      const analysis = analyzeCommonJsStaticFixture(`
         const { BrowserWindow } = require("electron");
         new BrowserWindow({
           webPreferences: { preload: "./kept.js", sandbox: true },
@@ -297,7 +298,7 @@ describe("Electron empty option keys", () => {
     });
 
     it("retains an earlier explicit preload within webPreferences", () => {
-      const analysis = analyzeJavaScriptStaticSource(`
+      const analysis = analyzeCommonJsStaticFixture(`
         const { BrowserWindow } = require("electron");
         new BrowserWindow({ webPreferences: {
           preload: "./kept.js", sandbox: true, ${key}: false
@@ -324,7 +325,7 @@ describe("Electron empty option keys", () => {
     });
 
     it("retains an earlier explicit utility-process service name", () => {
-      const analysis = analyzeJavaScriptStaticSource(`
+      const analysis = analyzeCommonJsStaticFixture(`
         const { utilityProcess } = require("electron");
         utilityProcess.fork("./worker.js", [], {
           serviceName: "kept", ${key}: true
@@ -345,7 +346,7 @@ describe("Electron empty option keys", () => {
   ])(
     "keeps a preceding %s override unknown after an unrelated empty template key",
     (_label, override) => {
-      const analysis = analyzeJavaScriptStaticSource(`
+      const analysis = analyzeCommonJsStaticFixture(`
         const { BrowserWindow, utilityProcess } = require("electron");
         new BrowserWindow({
           webPreferences: { preload: "./maybe.js" },

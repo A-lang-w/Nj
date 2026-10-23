@@ -75,7 +75,7 @@ const formatKey = (format: ClockFormat): string =>
     ? `epoch-${format.unit}`
     : `iso${format.separator}${String(format.fraction)}${format.zone === "" ? "" : format.zone === "Z" ? "Z" : "offset"}`;
 
-/** The format of a clock value: an ISO-8601 string, or an epoch number under a time-named field. */
+/** ISO text has its own clock syntax; numeric epochs require a time-named field. */
 const clockFormat = (
   value: JsonValue,
   key: string | undefined,

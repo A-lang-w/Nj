@@ -16,6 +16,7 @@ import { memberListIndexSize } from "./ManagedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
 import {
+  readCompressed,
   signature,
   isParsedTokenInstruction,
   type DecodedMethod,
@@ -62,6 +63,66 @@ const ldstrBody = (tokens: readonly string[]): Buffer => {
   ]);
   return Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]);
 };
+
+it.each([
+  {
+    options: { methodSignature: Buffer.from([0x06, 0x08]) },
+    collection: "methods",
+    expected: "method",
+  },
+  {
+    options: { fieldSignature: Buffer.from([0x00, 0x00, 0x01]) },
+    collection: "fields",
+    expected: "field",
+  },
+] as const)(
+  "rejects a wrong-kind $expected signature at its metadata owner",
+  ({ options, collection, expected }) => {
+    const bytes = buildManagedPeFixture(options);
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result[collection][0]?.signature).toMatchObject({
+      parse_status: "malformed",
+      resolved_sha256: null,
+      issue: expect.stringContaining(`Expected ${expected} signature`),
+    });
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid-blob",
+          detail: expect.stringContaining(`Expected ${expected} signature`),
+        }),
+      ]),
+    });
+  },
+);
+
+describe("managed compressed integer framing", () => {
+  it.each([[0x80], [0xc0], [0xc0, 1], [0xc0, 1, 2]])(
+    "keeps an incomplete width %j distinct from a reserved prefix",
+    (...value) => {
+      expect(() => readCompressed(Buffer.from(value), 0)).toThrow(
+        "truncated compressed integer",
+      );
+    },
+  );
+  it("preserves complete widths and rejects reserved leading bits", () => {
+    expect(readCompressed(Buffer.from([0x80, 1]), 0)).toEqual({
+      value: 1,
+      next: 2,
+    });
+    expect(readCompressed(Buffer.from([0xc0, 1, 2, 3]), 0)).toEqual({
+      value: 0x010203,
+      next: 4,
+    });
+    expect(() => readCompressed(Buffer.from([0xe0, 1, 2, 3]), 0)).toThrow(
+      "reserved compressed integer",
+    );
+  });
+});
 
 describe("managed method body anchors", () => {
   it.each([
@@ -1871,6 +1932,16 @@ describe("managed TypeDef list ownership bounds", () => {
         }),
       ],
     });
+    const selected = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      { typeNames: ["Fixture.Program"] },
+    );
+    expect(selected.methods).toEqual([]);
+    expect(selected.user_strings).toMatchObject({
+      state: "partial",
+      literals: [],
+    });
   });
 
   it("does not infer an earlier owner from an invalid next list endpoint", () => {
@@ -2108,8 +2179,8 @@ it.each([
 
 it.each([
   [[], "truncated compressed integer"],
-  [[0x80], "reserved compressed integer"],
-  [[0xc0, 0, 0], "reserved compressed integer"],
+  [[0x80], "truncated compressed integer"],
+  [[0xc0, 0, 0], "truncated compressed integer"],
   [[0xe0], "reserved compressed integer"],
 ] as const)(
   "retains TypeSpec prefix failure %j at its owning row",

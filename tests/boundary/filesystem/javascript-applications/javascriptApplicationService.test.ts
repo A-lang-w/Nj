@@ -91,8 +91,7 @@ describe("JavaScript source selection cancellation boundary", () => {
 it("resolves lazy package and JSON facts without completing their skipped observations", async () => {
   const root = await createTestTempDirectory("rea-js-lazy-json-facts-");
   await writeFixtureFiles(root, {
-    "app/first.cjs":
-      'const pkg = require("late-pkg"); const config = require("./config.json");\n',
+    "app/first.cjs": 'require("late-pkg"); require("./config.json");\n',
     "app/second.cjs": "module.exports = 2;\n",
     "app/config.json": "true",
     "app/node_modules/late-pkg/package.json": JSON.stringify({
@@ -182,23 +181,25 @@ it("resolves lazy package and JSON facts without completing their skipped observ
       outcome.analysis,
     );
     expect(graph.coverage.status).toBe("partial");
-    expect(
-      graph.edges.find(
-        ({ relation, properties }) =>
-          relation === "imports" && properties.specifier === "late-pkg",
-      )?.properties,
-    ).toMatchObject({
+    const packageRelationships = graph.edges.filter(
+      ({ relation, properties }) =>
+        relation === "imports" &&
+        properties.module_link_kind === "require" &&
+        properties.specifier === "late-pkg",
+    );
+    expect(packageRelationships).toHaveLength(1);
+    expect(packageRelationships[0]?.properties).toMatchObject({
       resolution_status: "resolved",
       resolved_path: "app/node_modules/late-pkg/index.cjs",
     });
-    expect(
-      graph.edges.find(
-        ({ relation, properties }) =>
-          relation === "imports" &&
-          properties.module_link_kind === "require" &&
-          properties.specifier === "./config.json",
-      )?.properties,
-    ).toMatchObject({
+    const jsonRelationships = graph.edges.filter(
+      ({ relation, properties }) =>
+        relation === "imports" &&
+        properties.module_link_kind === "require" &&
+        properties.specifier === "./config.json",
+    );
+    expect(jsonRelationships).toHaveLength(1);
+    expect(jsonRelationships[0]?.properties).toMatchObject({
       target_file_kind: "json",
       target_json_status: "included",
     });
