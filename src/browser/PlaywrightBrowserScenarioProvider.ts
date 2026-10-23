@@ -14,7 +14,10 @@ import type {
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
-import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
+import {
+  BROWSER_SCENARIO_START_STEP_ID,
+  type BrowserScenarioAction,
+} from "../domain/browserScenarioValues.js";
 import {
   browserScenarioCaptureSchema,
   type BrowserScenarioCapture,
@@ -32,7 +35,10 @@ import {
 } from "../domain/browserScenarioCaptureValues.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
+import {
+  BrowserObservationError,
+  browserCleanupObservation,
+} from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
@@ -44,7 +50,6 @@ import {
   type ScenarioActionStop,
 } from "./ScenarioActionSequence.js";
 import {
-  browserScenarioCleanupObservation,
   browserScenarioOperationFailure,
   browserScenarioCaptureData,
 } from "./BrowserScenarioPartialObservation.js";
@@ -147,7 +152,7 @@ const initialStep = async (input: {
   );
   return createStep({
     stepIndex: 0,
-    stepId: "scenario_start",
+    stepId: BROWSER_SCENARIO_START_STEP_ID,
     action: "goto_start",
     status: "completed",
     elapsedMs,
@@ -239,6 +244,7 @@ const globalCompleteness = (
   );
   if (session.mode === "connect") missing.push("events");
   if ((session.eventLimitations?.().length ?? 0) > 0) missing.push("events");
+  if ((session.storageLimitations?.().length ?? 0) > 0) missing.push("storage");
   return classifyBrowserScenarioCompleteness(missing, truncated);
 };
 
@@ -299,7 +305,7 @@ const runScenario = async (
   try {
     cleanupOutcome = { ok: true, cleanup: await session.close() };
   } catch (cause: unknown) {
-    const cleanup = browserScenarioCleanupObservation(cause);
+    const cleanup = browserCleanupObservation(cause);
     const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
       cause,
       cleanup,
@@ -316,7 +322,7 @@ const runScenario = async (
           cause: options.signal.reason,
         }),
       };
-    const cleanup = browserScenarioCleanupObservation(cleanupOutcome.cause);
+    const cleanup = browserCleanupObservation(cleanupOutcome.cause);
     const partialObservation: BrowserScenarioPartialObservation = {
       kind: "browser-scenario-observation",
       capture: browserScenarioCaptureData({

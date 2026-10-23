@@ -1,8 +1,12 @@
-import { expect, it } from "vitest";
+import { expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
 
 import { digestProcessCommitment } from "./processScenario.js";
-import { parseProcessCapture } from "./processCaptureParsing.js";
+import {
+  parseProcessCapture,
+  type ProcessCapture,
+} from "./processCaptureParsing.js";
+import type { UnverifiedProcessCapture } from "./processCapture.js";
 import { partialProcessCaptureObservationSchema } from "./processCapture.js";
 import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
 import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
@@ -12,6 +16,8 @@ import {
   emptyUnverifiedProcessCapture as emptyCapture,
   processCaptureIssues,
 } from "./processCapture.fixture.js";
+
+expectTypeOf<UnverifiedProcessCapture>().not.toExtend<ProcessCapture>();
 
 /** Name every rejected field reported by the production parser. */
 const rejectedPaths = (input: unknown): readonly string[] => {
@@ -135,6 +141,7 @@ it.each([
   { path: "root_0:.", reason: "entry_unavailable", system_code: null },
   { path: "root_0:.", reason: "identity_changed", system_code: "ENOENT" },
   { path: "root_0:.", reason: "directory_unavailable", system_code: "ENOENT" },
+  { path: "root_0:.", reason: "symlink_not_followed", system_code: null },
 ] as const)("rejects an inconsistent omission %j", (omission) => {
   expect(() =>
     parseProcessCapture(captureWithEnumerationOmission(omission)),
@@ -169,6 +176,69 @@ it("requires entry-unavailability details and matching aggregate reasons", () =>
         },
       }),
     ).toThrow("enumeration_omissions");
+});
+
+it("binds unfollowed coverage to observed symlink metadata without inventing an OS failure", () => {
+  const partial = captureWithEnumerationOmission({
+    path: "root_0:.",
+    reason: "symlink_not_followed",
+    system_code: null,
+  });
+  const link = {
+    path: "root_0:.",
+    type: "symlink" as const,
+    mode: 0o120777,
+    size: 7,
+    sha256: null,
+    symlink_target: "reports",
+  };
+  const effect = {
+    path: link.path,
+    status: "created" as const,
+    before: null,
+    after: link,
+  };
+  const capture = {
+    ...partial,
+    files_after: [link],
+    filesystem_effects: [effect],
+    filesystem_checkpoints: partial.filesystem_checkpoints.map((checkpoint) =>
+      checkpoint.name === "after_settlement"
+        ? { ...checkpoint, files: [link], effects: [effect] }
+        : checkpoint,
+    ),
+  };
+  expect(parseProcessCapture(capture)).toEqual(capture);
+  for (const changes of [
+    { enumeration_omissions: [] },
+    {
+      enumeration_omissions: [
+        {
+          path: link.path,
+          reason: "symlink_not_followed",
+          system_code: "ENOENT",
+        },
+      ],
+    },
+  ])
+    expect(() =>
+      parseProcessCapture({
+        ...capture,
+        truncation_details: {
+          ...capture.truncation_details,
+          filesystem_after: {
+            ...capture.truncation_details.filesystem_after,
+            ...changes,
+          },
+        },
+      }),
+    ).toThrow("enumeration_omissions");
+  expect(() =>
+    parseProcessCapture({
+      ...capture,
+      files_after: [{ ...link, type: "directory", symlink_target: null }],
+    }),
+  ).toThrow("enumeration_omissions");
 });
 
 it("never considers truncated captures equivalent", () => {

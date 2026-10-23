@@ -501,7 +501,7 @@ function hexBytes(bytes) {
 function assertProfile(profile) {
   assert.equal(
     profile.parameters.load_image_evidence,
-    "independent-mz-mapping-relocations-v1",
+    "independent-mz-mapping-relocations-v2",
   );
   assert.equal(
     profile.parameters.function_body_evidence,

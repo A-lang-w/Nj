@@ -32,6 +32,7 @@ const functionWorkflow = <Name extends FunctionWorkflowName>(
     ...toolContractMetadata(name),
     description,
     kind: "enhanced",
+    requiresActiveTarget: true,
     inputSchema,
     outputSchema,
     examples: [

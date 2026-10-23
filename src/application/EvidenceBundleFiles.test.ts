@@ -7,7 +7,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
-const HEADROOM_MODULE = "./EvidenceAuthenticationHeadroom.js";
+const HEADROOM_MODULE = "./JsonAuthenticationHeadroom.js";
 
 afterEach(() => {
   vi.doUnmock(HEADROOM_MODULE);
@@ -19,16 +19,17 @@ const readerUnderStarvedHeap = async () => {
   vi.resetModules();
   vi.doMock(HEADROOM_MODULE, async (importOriginal) => {
     const actual =
-      await importOriginal<
-        typeof import("./EvidenceAuthenticationHeadroom.js")
-      >();
+      await importOriginal<typeof import("./JsonAuthenticationHeadroom.js")>();
     return {
       ...actual,
       requireAuthenticationHeadroom: (
         value: unknown,
-        path: string,
-        operation: string,
-      ) => actual.requireAuthenticationHeadroom(value, path, operation, 1024),
+        options: Parameters<typeof actual.requireAuthenticationHeadroom>[1],
+      ) =>
+        actual.requireAuthenticationHeadroom(value, {
+          ...options,
+          availableBytes: 1024,
+        }),
     };
   });
   return import("./EvidenceBundleFiles.js");
@@ -59,8 +60,6 @@ describe("evidence bundle import headroom", () => {
         resource: "memory",
         reportedLimits: {
           input_path: path,
-          parsed_copies: 2,
-          serialized_copies: 2,
           available_heap_bytes: 1024,
         },
       },

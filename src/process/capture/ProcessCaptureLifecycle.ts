@@ -52,10 +52,14 @@ import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
   normalizeProcessElapsedTime,
   normalizeProcessSamples,
+  normalizeRetainedTerminalFrames,
   type BoundedProcessTextNormalization,
 } from "./ProcessNormalization.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   hasCaptureTruncation,
   type NormalizedTerminalRetention,
@@ -123,6 +127,33 @@ export type TerminalExitResult =
       readonly reason: "timeout" | "idle_timeout" | "cancelled";
       readonly finalization: ProcessCaptureFinalization;
     };
+
+/**
+ * The target's normal exit code. A signal-terminated process has none, so a
+ * nonzero signal yields null even when the PTY reports a numeric code.
+ */
+const normalExitCode = (exit: {
+  readonly exitCode: number;
+  readonly signal?: number;
+}): number | null =>
+  exit.exitCode >= 0 && (exit.signal ?? 0) === 0 ? exit.exitCode : null;
+
+/** Project an observed exit; only an `exited` reason carries a normal code. */
+export const captureExitObservation = <
+  Reason extends TerminalExitResult["reason"],
+>(exit: {
+  readonly exitCode: number;
+  readonly signal?: number;
+  readonly reason: Reason;
+  readonly finalization?: ProcessCaptureFinalization;
+}) => ({
+  code: exit.reason === "exited" ? normalExitCode(exit) : null,
+  signal: exit.signal ?? null,
+  reason: exit.reason,
+  ...(exit.finalization === undefined
+    ? {}
+    : { finalization: exit.finalization }),
+});
 
 interface CaptureResultOptions {
   readonly frames: readonly TerminalFrame[];
@@ -330,17 +361,7 @@ export const buildCaptureResult = (
     frames: options.frames,
     rendered_frames: options.renderedFrames,
     interaction_events: options.interactions,
-    exit: {
-      code:
-        options.exit.reason === "exited" && options.exit.exitCode >= 0
-          ? options.exit.exitCode
-          : null,
-      signal: options.exit.signal ?? null,
-      reason: options.exit.reason,
-      ...(options.exit.finalization === undefined
-        ? {}
-        : { finalization: options.exit.finalization }),
-    },
+    exit: captureExitObservation(options.exit),
     settlement: options.settlement,
     process_samples: normalizeProcessSamples(
       options.samples,
@@ -438,7 +459,7 @@ const captureCoverageUnknowns = (
     unknowns.push({
       scope: "terminal",
       reason:
-        (details.rendered_terminal.unknown_size_frames ?? 0) > 0
+        (details.rendered_terminal.normalization_over_budget_frames ?? 0) > 0
           ? "Rendered frames were omitted because a normalization stage exceeded the remaining output_bytes budget; final rendered byte totals are unknown for those frames. See truncation_details.rendered_terminal."
           : "Cumulative rendered state and visible-line bytes exceeded output_bytes; whole rendered frames were omitted. Raw PTY coverage is reported separately. See truncation_details.rendered_terminal.",
     });
@@ -446,6 +467,11 @@ const captureCoverageUnknowns = (
     ["before", details.filesystem_before],
     ["after_settlement", details.filesystem_after],
   ] as const) {
+    for (const subtree of coverage.unobserved_subtrees ?? [])
+      unknowns.push({
+        scope: "filesystem",
+        reason: `Filesystem ${name} subtree ${subtree.path} was outside observation: ${subtree.reason === "symlink_not_followed" ? "symbolic links are not followed" : "the exact observer-owned directory is excluded, including target activity within it"}.`,
+      });
     if (coverage.enumeration_truncated)
       unknowns.push({
         scope: "filesystem",
@@ -985,9 +1011,7 @@ export const awaitTerminalExit = async ({
             : {
                 finalization: snapshot(
                   finalizationElapsedMs,
-                  exit.exitCode >= 0 && (exit.signal ?? 0) === 0
-                    ? exit.exitCode
-                    : null,
+                  normalExitCode(exit),
                 ),
               }),
         });
@@ -1416,12 +1440,14 @@ export const captureTerminalFrames = (options: {
     maxBytes: number,
   ) => BoundedProcessTextNormalization;
   readonly recordEvent: RecordProcessCaptureEvent;
+  readonly identifiers: () => readonly number[];
 }): (() => TerminalCaptureRetention) => {
   let rawBytes = 0;
   let normalizedBytes = 0;
   let observedBytes = 0;
   let observedFrames = 0;
   let normalizedOmittedFrames = 0;
+  let firstIdentifiers: readonly number[] | undefined;
   options.terminal.onData((data) => {
     options.onOutput();
     const bytes = Buffer.byteLength(data);
@@ -1436,6 +1462,7 @@ export const captureTerminalFrames = (options: {
       normalizedOmittedFrames += 1;
       return;
     }
+    firstIdentifiers ??= options.identifiers();
     rawBytes += bytes;
     normalizedBytes += normalized.utf8Bytes;
     const atMs = normalizeProcessElapsedTime(
@@ -1452,20 +1479,35 @@ export const captureTerminalFrames = (options: {
     options.renderer.write(data, atMs);
     options.recordEvent("frames", sequence);
   });
-  return () => ({
-    raw_terminal: {
-      budget_bytes: options.scenario.limits.output_bytes,
-      observed_bytes: observedBytes,
-      retained_bytes: rawBytes,
-      observed_frames: observedFrames,
-      retained_frames: options.frames.length,
-    },
-    normalized_terminal: {
-      budget_bytes: options.scenario.limits.output_bytes,
-      retained_bytes: normalizedBytes,
-      omitted_frames: normalizedOmittedFrames,
-    },
-  });
+  return () => {
+    const identifiers = options.identifiers();
+    if (
+      options.scenario.normalization.pids &&
+      firstIdentifiers !== undefined &&
+      identifiers !== firstIdentifiers
+    ) {
+      normalizedBytes = normalizeRetainedTerminalFrames(
+        options.frames,
+        options.normalizeText,
+        options.scenario.limits.output_bytes,
+      );
+      firstIdentifiers = identifiers;
+    }
+    return {
+      raw_terminal: {
+        budget_bytes: options.scenario.limits.output_bytes,
+        observed_bytes: observedBytes,
+        retained_bytes: rawBytes,
+        observed_frames: observedFrames,
+        retained_frames: options.frames.length,
+      },
+      normalized_terminal: {
+        budget_bytes: options.scenario.limits.output_bytes,
+        retained_bytes: normalizedBytes,
+        omitted_frames: normalizedOmittedFrames,
+      },
+    };
+  };
 };
 
 export interface TerminalCaptureRetention {
@@ -1556,6 +1598,15 @@ export const resolveProcessResult = (
         cleanupReport: cleanup,
         cleanupFailure: cleanupError,
       });
+    if (executionFailure instanceof AnalysisError) {
+      if (partialObservation !== undefined)
+        executionFailure.retainPartialObservation(partialObservation);
+      throw analysisErrorWithCleanupFailure(
+        executionFailure,
+        cleanupError,
+        "capture_process",
+      ).bindCleanupDependencies([executionFailure, cleanupError]);
+    }
     throw cleanupError;
   }
   if (executionFailure instanceof ProcessCaptureError) {
@@ -1568,6 +1619,14 @@ export const resolveProcessResult = (
     });
   }
   if (executionFailure !== undefined) {
+    if (executionFailure instanceof AnalysisError) {
+      if (partialObservation !== undefined)
+        executionFailure.retainPartialObservation(partialObservation);
+      executionFailure.retainDiagnostics({
+        cleanup_report: jsonValueSchema.parse(cleanup),
+      });
+      throw executionFailure;
+    }
     throw new ProcessCaptureError("process capture failed", {
       cause: executionFailure,
       reason: "capture_failed",
@@ -1634,17 +1693,22 @@ export const prepareProcessCapture = async (
   let temporaryRoot: string | undefined;
   const runId = randomUUID();
   try {
-    before = await captureSnapshot(scenario, signal, undefined, resourceScope);
     temporaryRoot = await host.createTemporaryRoot();
+    before = await captureSnapshot(scenario, signal, undefined, {
+      ...(resourceScope === undefined ? {} : { cleanup: resourceScope }),
+      observerPaths: [temporaryRoot],
+    });
     assertNotCancelled(signal);
     const ownershipBaseline =
       (await host.captureOwnershipBaseline?.(signal)) ?? [];
     assertNotCancelled(signal);
     return { temporaryRoot, runId, ownershipBaseline, before };
   } catch (cause: unknown) {
+    let failure = cause;
     if (cause instanceof ProcessCaptureSnapshotFailure) {
       before = cause.snapshot;
       for (const lease of cause.cleanupLeases) resourceScope?.retain(lease);
+      failure = cause.failureForCaller();
     }
     const cleanupOptions =
       temporaryRoot === undefined
@@ -1675,7 +1739,7 @@ export const prepareProcessCapture = async (
           : await resourceScope.release(cleanupOptions);
     resolveProcessResult(
       undefined,
-      normalizeCaptureFailure(cause, signal),
+      normalizeCaptureFailure(failure, signal),
       cleanup,
       createProcessCaptureObservationBuffer({
         frames: [],
@@ -1687,7 +1751,7 @@ export const prepareProcessCapture = async (
       }),
       { scenario },
     );
-    throw cause;
+    throw failure;
   }
 };
 

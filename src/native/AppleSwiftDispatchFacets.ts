@@ -1,3 +1,4 @@
+import type { SwiftContextReader } from "./AppleSwiftNominalTypes.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerResolution } from "./AppleMachoFixups.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
@@ -47,7 +48,9 @@ export type SwiftRelativeField =
   | "typeName"
   | "witnessTablePattern"
   | "typeMetadataRecord"
-  | "classDescriptorName"
+  | "contextParent"
+  | "moduleName"
+  | "typeAccessFunction"
   | "methodImplementation";
 
 type SwiftRelativeFieldContract = {
@@ -67,7 +70,9 @@ const relativeFieldContracts = {
   typeName: { encoding: "direct", nullability: "nonnull" },
   witnessTablePattern: { encoding: "direct", nullability: "nullable" },
   typeMetadataRecord: { encoding: "taggedDirect", nullability: "nonnull" },
-  classDescriptorName: { encoding: "direct", nullability: "nonnull" },
+  contextParent: { encoding: "indirectable", nullability: "nullable" },
+  moduleName: { encoding: "direct", nullability: "nonnull" },
+  typeAccessFunction: { encoding: "direct", nullability: "nullable" },
   methodImplementation: {
     encoding: "compactFunction",
     nullability: "nullable",
@@ -145,7 +150,10 @@ const readSwiftProtocolFacts = (input: {
     return { name: null, readable: false, reason };
   }
   try {
-    return { name: read.string(nameAddress), readable: true, reason: null };
+    const name = read.string(nameAddress);
+    if (name.length === 0)
+      throw new RangeError("Swift protocol descriptor name is empty");
+    return { name, readable: true, reason: null };
   } catch (cause) {
     const reason = expectedSwiftMetadataReadFailure(cause);
     if (reason === null) throw cause;
@@ -309,6 +317,7 @@ export const createSwiftRelativeReader = (input: {
 
 /** Decode `__swift5_proto` conformances and static witness slots into `result`. */
 export const decodeSwiftDispatchFacets = (input: {
+  contextReader?: SwiftContextReader;
   sections: readonly Section[];
   segments: readonly Segment[];
   readers: SwiftDispatchReaders;
@@ -364,6 +373,9 @@ export const decodeSwiftDispatchFacets = (input: {
           descriptor,
           flags,
           read,
+          ...(input.contextReader === undefined
+            ? {}
+            : { contextReader: input.contextReader }),
           relative,
           unresolvedReason: unresolvedSwiftRelativeReason,
         });
@@ -398,10 +410,20 @@ export const decodeSwiftDispatchFacets = (input: {
             descriptor,
           );
         }
+        const conformanceReason = witnessReason ?? typeReference.reason;
         const conformanceDecode =
-          witnessReason === null
+          conformanceReason === null
             ? { status: "decoded" as const, reason: null }
-            : { status: "partial" as const, reason: witnessReason };
+            : { status: "partial" as const, reason: conformanceReason };
+        if (witnessReason === null && typeReference.reason !== null)
+          issues.push(
+            issue(
+              "swift_conformances_static_witness_slots",
+              "conformance_identity_partial",
+              typeReference.reason,
+              hex(descriptor),
+            ),
+          );
         result.swift_conformances.push({
           type_name: typeReference.name,
           type_reference_kind: typeReference.kind,
@@ -415,7 +437,7 @@ export const decodeSwiftDispatchFacets = (input: {
             ? {}
             : { protocol_target: read.targetLocation(protocol) }),
           protocol_binding: protocolBinding,
-          module: null,
+          module: typeReference.module,
           witness_table:
             witness === null
               ? { address: null, file_offset: null }

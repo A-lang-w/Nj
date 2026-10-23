@@ -10,16 +10,16 @@ import { browserVersionSchema } from "./browserObservationSchemas.js";
 
 /** Explicit instrumentation request for one finite, externally driven execution window. */
 export const observeWebExecutionInputSchema = webRuntimeScopeSchema.extend({
-  observation_ms: z.number().int().min(1).max(2_147_483_647).default(10_000),
+  observation_ms: z.int().min(1).max(2_147_483_647).default(10_000),
 });
 export type ObserveWebExecutionInput = z.infer<
   typeof observeWebExecutionInputSchema
 >;
 
 const rangeSchema = z.object({
-  start_offset: z.number().int().min(0),
-  end_offset: z.number().int().min(0),
-  count: z.number().int().min(0),
+  start_offset: z.int().min(0),
+  end_offset: z.int().min(0),
+  count: z.int().min(0),
   source_bounds: z.enum(["verified", "unknown"]),
 });
 const functionSchema = z.object({
@@ -29,13 +29,13 @@ const functionSchema = z.object({
 });
 
 /** Precise V8 ranges retain their nested structure and counts without summing them. */
-export const webExecutionSchema = z.object({
+export const webExecutionObservationSchema = z.object({
   browser: browserVersionSchema,
   target: webRuntimeTargetSchema,
   window: z.object({
     armed_at: z.iso.datetime(),
     ended_at: z.iso.datetime(),
-    requested_ms: z.number().int().min(1),
+    requested_ms: z.int().min(1),
     end_reason: z.enum([
       "window_elapsed",
       "document_changed",
@@ -57,7 +57,7 @@ export const webExecutionSchema = z.object({
         functions: z.array(functionSchema),
       }),
     ),
-    excluded_scripts: z.number().int().min(0),
+    excluded_scripts: z.int().min(0),
   }),
   requests: z.array(
     z.object({
@@ -74,9 +74,9 @@ export const webExecutionSchema = z.object({
       causal_attribution: z.literal("unknown"),
     }),
   ),
-  excluded_requests: z.number().int().min(0),
+  excluded_requests: z.int().min(0),
   script_inventory: z.object({
-    main_document_scripts: z.number().int().min(0),
+    main_document_scripts: z.int().min(0),
     not_reported_script_ids: z.array(z.string().min(1)),
     coverage_absence: z.literal("unknown"),
   }),
@@ -86,9 +86,18 @@ export const webExecutionSchema = z.object({
     disables_optimized_execution: z.literal(true),
     takes_one_resetting_sample: z.boolean(),
     executes_selected_code: z.literal(false),
-    cleanup: z.literal("confirmed"),
+    cleanup: z.enum(["confirmed", "unconfirmed"]),
     page_ownership: z.literal("external"),
   }),
   limitations: z.array(z.string()),
 });
+/** Successful operations require the cleanup owner's acknowledgement. */
+export const webExecutionSchema = webExecutionObservationSchema.extend({
+  instrumentation: webExecutionObservationSchema.shape.instrumentation.extend({
+    cleanup: z.literal("confirmed"),
+  }),
+});
+export type WebExecutionObservation = z.infer<
+  typeof webExecutionObservationSchema
+>;
 export type WebExecution = z.infer<typeof webExecutionSchema>;

@@ -1,5 +1,5 @@
-import { z } from "zod";
-
+import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
+import { authenticateEvidenceBundleValue } from "../EvidenceBundleFiles.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -8,20 +8,13 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseEvidence, type Evidence } from "../../domain/evidence.js";
-import { parseEvidenceBundle } from "../../domain/evidenceBundle.js";
-import {
-  EvidenceFileError,
-  EvidenceIntegrityError,
-} from "../../domain/evidenceErrors.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
-import {
-  isBundleShaped,
-  requireAuthenticationHeadroom,
-} from "../EvidenceAuthenticationHeadroom.js";
 import { readJsonFile } from "../JsonFiles.js";
 
-/** The request's cancellation and the scope that owns descriptors whose close failed. */
+/** The request cancellation and the scope retaining descriptors whose close failed. */
 export interface EvidenceFileReadOptions {
   readonly signal?: AbortSignal;
   readonly resources?: ArtifactResourceScope;
@@ -61,10 +54,10 @@ const selectBundleRecord = (
         )
       : ok(selected);
   }
-  const [only, ...rest] = records;
+  const only = records[0];
   if (only === undefined)
     return err(selectionError(`Evidence bundle ${path} holds no records.`));
-  if (rest.length > 0)
+  if (records.length > 1)
     return err(
       selectionError(
         `Evidence bundle ${path} holds ${String(records.length)} records; select one with source.evidence_id. It holds ${listRecordIds(records)}.`,
@@ -76,75 +69,60 @@ const selectBundleRecord = (
 const listRecordIds = (records: readonly Evidence[]): string => {
   const listed = records
     .slice(0, LISTED_RECORD_IDS)
-    .map((record) => `${record.evidence_id} (${record.operation})`)
+    .map((record) => record.evidence_id)
     .join(", ");
   const omitted = records.length - LISTED_RECORD_IDS;
   return omitted > 0 ? `${listed} and ${String(omitted)} more` : listed;
 };
 
-/**
- * Read and authenticate one Evidence file under the request's cancellation and
- * resource scope. An Evidence bundle file, as --evidence_output and
- * export_evidence_bundle write, projects the selected record or its only one.
- */
+/** Read one Evidence record or select from an authenticated bundle without rereading the file. */
 export const readEvidenceFileSource = async (
   path: string,
   options: EvidenceFileReadOptions = {},
   evidenceId?: string,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const { signal, resources } = options;
+  const operation = INSPECT_ANALYSIS_VIEW_OPERATION;
   if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION, {
-        cause: signal.reason,
-      }),
-    );
-  const loaded = await readJsonFile(path, signal, resources);
-  if (!loaded.ok) {
-    if (loaded.error instanceof AnalysisCancelledError)
-      return err(
-        new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION, {
-          cause: loaded.error.cause,
-        }),
-      );
-    return loaded;
+    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  const loaded = await readJsonFile(path, signal, resources, operation);
+  if (!loaded.ok) return loaded;
+  if (signal?.aborted)
+    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  const value = loaded.value;
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.hasOwn(value, "records")
+  ) {
+    const bundle = authenticateEvidenceBundleValue(value, path, { operation });
+    return bundle.ok
+      ? selectBundleRecord(bundle.value.records, path, evidenceId)
+      : bundle;
   }
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION, {
-        cause: signal.reason,
-      }),
-    );
-  const headroom = requireAuthenticationHeadroom(
-    loaded.value,
+  const headroom = requireAuthenticationHeadroom(value, {
+    operation,
     path,
-    INSPECT_ANALYSIS_VIEW_OPERATION,
-  );
+    description: "Insufficient heap headroom to authenticate the Evidence file",
+  });
   if (!headroom.ok) return headroom;
-  const bundle = isBundleShaped(loaded.value);
-  try {
-    if (!bundle) return ok(parseEvidence(loaded.value));
-    const records = parseEvidenceBundle(loaded.value).records;
-    return selectBundleRecord(records, path, evidenceId);
-  } catch (cause: unknown) {
-    if (cause instanceof z.ZodError)
-      return err(
-        new EvidenceFileError("read", "wrong-kind", {
-          path,
-          cause,
-          contentIssues: projectInputIssues(cause.issues, loaded.value),
-          userMessage: bundle
-            ? "The selected file does not contain a valid Evidence bundle. Supply an unmodified bundle written by --evidence_output or export_evidence_bundle."
-            : "The selected file does not contain valid Evidence. Repair or recreate the file and try again.",
-        }),
-      );
-    if (cause instanceof TypeError)
-      return err(
-        new EvidenceIntegrityError(cause.message, {
-          cause,
-          userMessage: cause.message,
-        }),
-      );
-    throw cause;
-  }
+  const parsed = safeParseEvidence(value);
+  if (!parsed.ok)
+    return err(
+      new EvidenceFileError("read", "wrong-kind", {
+        path,
+        cause: parsed.error,
+        contentIssues: projectInputIssues(parsed.error.issues, value),
+        userMessage:
+          "The selected file does not contain valid Evidence. Repair or recreate the file and try again.",
+      }),
+    );
+  if (evidenceId !== undefined && parsed.value.evidence_id !== evidenceId)
+    return err(
+      selectionError(
+        `Evidence file ${path} holds ${parsed.value.evidence_id}, not selected record ${evidenceId}.`,
+      ),
+    );
+  return parsed;
 };

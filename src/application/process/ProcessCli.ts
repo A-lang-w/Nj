@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
@@ -9,28 +7,25 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { createEvidence, parseEvidence } from "../../domain/evidence.js";
-import { describeValidationFailure } from "../../domain/evidenceBundle.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import {
   analysisInputErrorFromIssues,
   projectInputIssues,
 } from "../../domain/inputIssueProjection.js";
 import { processTraceSpecificationSchema } from "../../domain/process/processTraceSpecification.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
-import { compareProcessCaptures } from "../../domain/process/processComparison.js";
-import { parseProcessCapture } from "../../domain/process/processCaptureParsing.js";
+import { compareProcessCaptureEvidence } from "../../domain/process/processComparisonEvidence.js";
 import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
+import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import {
-  PROCESS_PROVIDER,
-  isProcessEvidenceProvider,
-} from "../../domain/process/processEvidenceProvider.js";
-import { createProcessCaptureEvidence } from "./ProcessEvidence.js";
+  createProcessCaptureEvidence,
+  parseProcessCaptureEvidence,
+} from "./ProcessEvidence.js";
 import { readJsonFile } from "../JsonFiles.js";
-import { RegularFileCleanupFailure } from "../RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput extends AnalysisErrorProjection {
@@ -137,31 +132,11 @@ export const compareProcessEvidenceFiles = async (
         : parseTraceSpecification(
             await readJson(traceSpecPath, "compare_process_captures", signal),
           );
-    const comparison =
-      traceSpecification === undefined
-        ? compareProcessCaptures(left.capture, right.capture)
-        : compareProcessCaptures(left.capture, right.capture, {
-            traceSpecification,
-          });
-    return createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-comparison",
-      operation: "compare_process_captures",
-      parameters: {
-        left_evidence_id: left.id,
-        right_evidence_id: right.id,
-        left_normalization: left.capture.normalization,
-        right_normalization: right.capture.normalization,
-        ...(traceSpecification === undefined
-          ? {}
-          : { trace_spec: jsonValueSchema.parse(traceSpecification) }),
-      },
-      result: jsonValueSchema.parse(comparison),
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: comparison.limitations,
-      locations: [...left.locations, ...right.locations],
-      evidenceLinks: [left.id, right.id],
-    });
+    return compareProcessCaptureEvidence(
+      left,
+      right,
+      traceSpecification === undefined ? {} : { traceSpecification },
+    ).evidence;
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     return projectProcessCliError(cause, "compare_process_captures");
@@ -169,45 +144,34 @@ export const compareProcessEvidenceFiles = async (
 };
 
 const parseCaptureEvidence = (input: unknown, side: "left" | "right") => {
-  let evidence;
-  try {
-    evidence = parseEvidence(input);
-  } catch (cause: unknown) {
-    if (cause instanceof z.ZodError)
-      throw new AnalysisInputError(
+  const parsed = parseProcessCaptureEvidence(input);
+  if (parsed.ok) return parsed.value;
+  const failure = parsed.error;
+  switch (failure.kind) {
+    case "invalid-evidence":
+      throw analysisInputErrorFromIssues(
         "compare_process_captures",
-        { cause },
-        projectInputIssues(cause.issues, input),
+        failure.cause.issues,
+        input,
+        { cause: failure.cause },
       );
-    throw invalidCaptureEvidence(cause, side);
-  }
-  if (
-    evidence.operation !== "capture_process_scenario" ||
-    evidence.predicate_type !== "rea.process-capture"
-  ) {
-    throw processInputFailure(
-      "compare_process_captures",
-      `Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.`,
-      [side],
-      "invalid_value",
-    );
-  }
-  if (!isProcessEvidenceProvider(evidence.provider))
-    throw new AnalysisInputError("compare_process_captures", undefined, [
-      {
-        path: [side, "provider"],
-        reason: "invalid_value",
-        message: `The ${side} Evidence provider ${evidence.provider.id} v${evidence.provider.version} (${evidence.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
-      },
-    ]);
-  try {
-    return {
-      id: evidence.evidence_id,
-      capture: parseProcessCapture(evidence.normalized_result),
-      locations: evidence.locations,
-    };
-  } catch (cause: unknown) {
-    throw invalidCaptureEvidence(cause, side);
+    case "wrong-workflow":
+      throw processInputFailure(
+        "compare_process_captures",
+        "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
+        [side],
+        "invalid_value",
+      );
+    case "unsupported-provider":
+      throw new AnalysisInputError("compare_process_captures", undefined, [
+        {
+          path: [side, "provider"],
+          reason: "invalid_value",
+          message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
+        },
+      ]);
+    case "invalid-capture":
+      throw invalidCaptureEvidence(failure.cause, side);
   }
 };
 
@@ -276,8 +240,15 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
   ...projectAnalysisError(error),
 });
 
+/**
+ * This catch includes target execution, and the projection stays non-retryable.
+ * Tell the user what happened; do not ask them to run the command again.
+ */
+export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
+  "Do not repeat this command. Tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
+
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
-export const projectProcessCliError = (
+const projectProcessCliError = (
   cause: unknown,
   operation: "capture_process_scenario" | "compare_process_captures",
 ): ProcessCliErrorOutput => {
@@ -287,6 +258,7 @@ export const projectProcessCliError = (
       cause,
       diagnostics: { phase: "process_cli" },
       userMessage: `Process command could not complete: ${describeValidationFailure(cause)}`,
+      remediationAction: PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
     }),
   );
 };

@@ -27,14 +27,8 @@ export const jsonValueValidationIssue = (root: unknown): string | undefined => {
   }
 };
 
-/** One container being walked: its members are examined by cursor, never queued. */
-interface ContainerFrame {
-  readonly value: object;
-  /** Own keys of an object; an array is indexed by position. */
-  readonly keys: readonly (string | symbol)[] | undefined;
-  readonly length: number;
-  readonly depth: number;
-  index: number;
+function* ownEnumerableKeys(value: Record<string, unknown>): Generator<string> {
+  for (const key in value) if (Object.hasOwn(value, key)) yield key;
 }
 
 /** Validate JSON in bounded steps; cache only authenticated immutable roots. */
@@ -51,77 +45,104 @@ export function* jsonValueValidationSteps(
     if (immutable !== undefined) immutableValidation.set(immutable, issue);
     return issue;
   };
-  // Live state is one frame per open container plus an object frame's own
-  // keys, never a queued entry per member, so width costs an array nothing
-  // and an object its key list; nesting, bounded below, adds frames.
-  const frames: ContainerFrame[] = [];
+  type Frame =
+    | {
+        readonly kind: "array";
+        readonly value: unknown[];
+        readonly depth: number;
+        index: number;
+      }
+    | {
+        readonly kind: "object";
+        readonly value: Record<string, unknown>;
+        readonly depth: number;
+        readonly keys: Generator<string>;
+      };
+  const pending: Frame[] = [];
+  let value = root;
+  let depth = 0;
+  let inspect = true;
   let examined = 0;
-  const examine = (value: unknown, depth: number): string | undefined => {
-    if (depth > MAX_JSON_DEPTH)
-      return `JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}`;
-    if (typeof value === "object" && value !== null && types.isProxy(value))
-      return "JSON values cannot contain proxies";
-    if (
-      value === null ||
-      typeof value === "string" ||
-      typeof value === "boolean"
-    )
-      return undefined;
-    if (typeof value === "number")
-      return Number.isFinite(value) ? undefined : "JSON numbers must be finite";
-    if (Array.isArray(value)) {
-      frames.push({
-        value,
-        keys: undefined,
-        length: value.length,
-        depth,
-        index: 0,
-      });
-      return undefined;
-    }
-    if (!isRecord(value)) return "Invalid JSON value";
-    const prototype: unknown = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null)
-      return "JSON objects require ordinary data properties";
-    const keys = Reflect.ownKeys(value);
-    frames.push({ value, keys, length: keys.length, depth, index: 0 });
-    return undefined;
-  };
-  const rootIssue = examine(root, 0);
-  if (rootIssue !== undefined) return finish(rootIssue);
-  while (frames.length > 0) {
-    const frame = frames[frames.length - 1]!;
-    if (frame.index >= frame.length) {
-      frames.pop();
+  for (;;) {
+    if (inspect) {
+      if (examined++ === 4096) {
+        examined = 0;
+        yield;
+      }
+      if (depth > MAX_JSON_DEPTH)
+        return finish(
+          `JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`,
+        );
+      if (typeof value === "object" && value !== null && types.isProxy(value))
+        return finish("JSON values cannot contain proxies");
+      if (
+        value === null ||
+        typeof value === "string" ||
+        typeof value === "boolean"
+      ) {
+        inspect = false;
+      } else if (typeof value === "number") {
+        if (!Number.isFinite(value))
+          return finish("JSON numbers must be finite");
+        inspect = false;
+      } else if (Array.isArray(value)) {
+        pending.push({
+          kind: "array",
+          value,
+          depth,
+          index: 0,
+        });
+        inspect = false;
+      } else if (isRecord(value)) {
+        const prototype: unknown = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null)
+          return finish("JSON objects require ordinary data properties");
+        for (const key of Object.getOwnPropertySymbols(value))
+          if (Object.getOwnPropertyDescriptor(value, key)?.enumerable === true)
+            return finish("JSON object keys must be strings");
+        pending.push({
+          kind: "object",
+          value,
+          depth,
+          keys: ownEnumerableKeys(value),
+        });
+        inspect = false;
+      } else return finish("Invalid JSON value");
       continue;
     }
-    const position = frame.index++;
-    let member: unknown;
-    if (frame.keys === undefined) {
-      const descriptor = Object.getOwnPropertyDescriptor(frame.value, position);
+
+    const frame = pending[pending.length - 1];
+    if (frame === undefined) return finish(undefined);
+    if (frame.kind === "array") {
+      if (frame.index >= frame.value.length) {
+        pending.pop();
+        continue;
+      }
+      const index = frame.index++;
+      const descriptor = Object.getOwnPropertyDescriptor(frame.value, index);
       if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
         return finish(
           "JSON arrays require dense data properties without accessors",
         );
-      member = descriptor.value;
-    } else {
-      const key = frame.keys[position]!;
-      const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
-      if (descriptor?.enumerable !== true) continue;
-      if (typeof key !== "string")
-        return finish("JSON object keys must be strings");
-      if (!Object.hasOwn(descriptor, "value"))
-        return finish("JSON objects cannot contain accessors");
-      member = descriptor.value;
+      value = descriptor.value;
+      depth = frame.depth + 1;
+      inspect = true;
+      continue;
     }
-    if (examined++ === 4096) {
-      examined = 0;
-      yield;
+
+    const next = frame.keys.next();
+    if (next.done) {
+      pending.pop();
+      continue;
     }
-    const issue = examine(member, frame.depth + 1);
-    if (issue !== undefined) return finish(issue);
+    const descriptor = Object.getOwnPropertyDescriptor(frame.value, next.value);
+    if (descriptor?.enumerable !== true) continue;
+    if (!Object.hasOwn(descriptor, "value"))
+      return finish("JSON objects cannot contain accessors");
+    value = descriptor.value;
+    depth = frame.depth + 1;
+    inspect = true;
   }
-  return finish(undefined);
 }
 
 const preserveJsonValue = (value: JsonValue): JsonValue => {
@@ -133,13 +154,17 @@ const preserveJsonValue = (value: JsonValue): JsonValue => {
       copy.push(preserveJsonValue(value[index]!));
     return copy;
   }
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries<JsonValue>(
-      Object.entries(value).map(([key, child]) => [
-        key,
-        preserveJsonValue(child),
-      ]),
-    );
+  if (value !== null && typeof value === "object") {
+    const copy: Record<string, JsonValue> = {};
+    for (const key of ownEnumerableKeys(value))
+      Object.defineProperty(copy, key, {
+        value: preserveJsonValue(value[key]!),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    return copy;
+  }
   return value;
 };
 
@@ -161,6 +186,13 @@ export const jsonValueSchema = z
   .pipe(validatedJsonValue)
   .transform(preserveJsonValue);
 jsonValueSchema._zod.toJSONSchema = () => ({});
+
+/** Validate JSON that the current boundary exclusively owns, without a second full-tree copy. */
+export const ownedJsonValueSchema = z
+  .unknown()
+  .nonoptional()
+  .pipe(validatedJsonValue);
+ownedJsonValueSchema._zod.toJSONSchema = () => ({});
 
 const objectValidation = z.custom<Record<string, JsonValue>>(
   isRecord,
