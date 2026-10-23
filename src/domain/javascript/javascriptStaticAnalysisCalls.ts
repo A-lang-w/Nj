@@ -91,6 +91,9 @@ export const inspectCall = (
       node,
       kind: "require",
       specifier: requireCall.specifier,
+      ...(requireCall.sourceRelativeBase === undefined
+        ? {}
+        : { source_relative_base: requireCall.sourceRelativeBase }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -268,6 +271,7 @@ const requireCallSpecifier = (
 ): {
   readonly specifier: string | undefined;
   readonly resolutionOnly: boolean;
+  readonly sourceRelativeBase: string | undefined;
 } | null => {
   const call = semanticRequireCallAt(
     node,
@@ -281,11 +285,16 @@ const requireCallSpecifier = (
     !call.sourceRelative
   ) {
     context.accumulator.unknownFindings += 1;
-    return { specifier: undefined, resolutionOnly: false };
+    return {
+      specifier: undefined,
+      resolutionOnly: false,
+      sourceRelativeBase: undefined,
+    };
   }
   return {
     specifier: argumentValue(call.arguments?.[0]),
     resolutionOnly: isRequireResolveCall(node),
+    sourceRelativeBase: call.sourceRelativePath,
   };
 };
 
@@ -318,6 +327,9 @@ export const finishModuleRequireCalls = (
         kind: "require",
         specifier: call.specifier,
         ...(call.resolutionOnly ? { resolution_only: true } : {}),
+        ...(call.sourceRelativeBase === undefined
+          ? {}
+          : { source_relative_base: call.sourceRelativeBase }),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
@@ -945,6 +957,9 @@ export const addReference = (
     value: {
       kind: input.kind,
       ...(input.resolution_only ? { resolution_only: true } : {}),
+      ...(input.source_relative_base === undefined
+        ? {}
+        : { source_relative_base: input.source_relative_base }),
       ...reference,
       module_key: null,
       location: range(input.node),

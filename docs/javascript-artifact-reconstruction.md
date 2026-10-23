@@ -276,6 +276,8 @@ Proven native `require.resolve()` references retain `resolution_only: true`.
 They associate a module path without establishing execution or propagating an
 Electron application owner. A replaced or otherwise unresolved resolver remains
 uncertain. Resolving and loading the same path retain distinct reference facts.
+A known alternate `createRequire()` filename is retained as `source_relative_base`
+and used for module resolution, while Evidence locations stay on the original source.
 
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,

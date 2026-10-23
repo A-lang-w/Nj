@@ -30,16 +30,24 @@ const withRuntime = <
   Value extends {
     module_runtime?: string | undefined;
     resolution_only?: true | undefined;
+    source_relative_base?: string | undefined;
     resolution_basis?: "wrapper-substitution" | undefined;
   },
 >(
   value: Value,
 ) => {
-  const { module_runtime, resolution_basis, resolution_only, ...rest } = value;
+  const {
+    module_runtime,
+    resolution_basis,
+    resolution_only,
+    source_relative_base,
+    ...rest
+  } = value;
   return {
     ...rest,
     ...(module_runtime === undefined ? {} : { module_runtime }),
     ...(resolution_only === undefined ? {} : { resolution_only }),
+    ...(source_relative_base === undefined ? {} : { source_relative_base }),
     ...(resolution_basis === undefined ? {} : { resolution_basis }),
   };
 };
@@ -299,6 +307,7 @@ const electron = z
 const referenceShape = {
   ...findingContext,
   resolution_only: z.literal(true).optional(),
+  source_relative_base: z.string().optional(),
   kind: z.enum([
     "static-import",
     "dynamic-import",

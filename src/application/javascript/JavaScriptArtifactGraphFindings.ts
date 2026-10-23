@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
@@ -311,6 +312,9 @@ const addReference = (
     properties: {
       kind: input.value.kind,
       ...(input.value.resolution_only ? { resolution_only: true } : {}),
+      ...(input.value.source_relative_base === undefined
+        ? {}
+        : { source_relative_base: input.value.source_relative_base }),
       specifier: input.value.specifier,
       expression: input.value.expression,
       resolution_mode:
@@ -675,7 +679,15 @@ const resolveReference = (
       })
     : resolveArtifactPathByContext({
         declaredPath: specifier,
-        sourcePath,
+        sourcePath:
+          reference.source_relative_base === undefined
+            ? sourcePath
+            : posix.normalize(
+                posix.join(
+                  posix.dirname(sourcePath),
+                  reference.source_relative_base,
+                ),
+              ),
         context: "module-specifier",
         files: context.filesByPath,
         jsonDocuments: context.analysis.jsonDocuments,
@@ -807,6 +819,9 @@ const unresolvedReferenceNode = (
         properties: {
           reference_kind: reference.kind,
           specifier: reference.specifier,
+          ...(reference.source_relative_base === undefined
+            ? {}
+            : { source_relative_base: reference.source_relative_base }),
           expression: reference.expression,
           resolution: "unresolved",
           ...(resolution === undefined

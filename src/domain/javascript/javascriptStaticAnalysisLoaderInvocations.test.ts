@@ -403,3 +403,18 @@ it.each([
     );
   },
 );
+
+it("retains an alternate createRequire filename in static reference facts", () => {
+  const source = `${imported}const load=make(new URL("../other/nested/main.cjs", import.meta.url));load("../shared/window.cjs");`;
+  expect(
+    analyzeJavaScriptStaticSource(source).references.filter(
+      ({ kind }) => kind === "require",
+    ),
+  ).toMatchObject([
+    {
+      kind: "require",
+      specifier: "../shared/window.cjs",
+      source_relative_base: "../other/nested/main.cjs",
+    },
+  ]);
+});
