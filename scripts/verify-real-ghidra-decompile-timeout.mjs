@@ -26,10 +26,36 @@ import {
 // volatile state. Ghidra decompiles it correctly but takes far longer than the
 // configured limit, so the limit, not an injected result, stops it.
 const LIMIT_SECONDS = 1;
+// This verifier budgets one MiB for its generated C source. Bound the number
+// of lines before allocating them, including the largest admitted integer's
+// decimal representation; the joined source and line array remain bounded.
+const FIXTURE_SOURCE_BYTES = 1024 * 1024;
+const FIXTURE_PREFIX = [
+  "volatile unsigned rea_state[64];",
+  "__attribute__((noinline, used)) unsigned rea_slow(unsigned x) {",
+  "  unsigned a = x;",
+];
+const FIXTURE_SUFFIX = [
+  "  return a;",
+  "}",
+  "__attribute__((noinline, used)) int rea_small(int v) {",
+  "  return v + (int)rea_state[0];",
+  "}",
+  "",
+];
+const MAX_BRANCH_LINE_BYTES = Buffer.byteLength(
+  `  if (rea_state[63] & 1073741824u) a = a * 31u + ${Number.MAX_SAFE_INTEGER}u; else a ^= rea_state[63];\n`,
+);
+const FIXTURE_FIXED_BYTES = Buffer.byteLength(
+  [...FIXTURE_PREFIX, ...FIXTURE_SUFFIX].join("\n"),
+);
+const MAX_BRANCHES = Math.floor(
+  (FIXTURE_SOURCE_BYTES - FIXTURE_FIXED_BYTES) / MAX_BRANCH_LINE_BYTES,
+);
 const BRANCHES = Number(process.env.REA_DECOMPILE_TIMEOUT_BRANCHES ?? 6000);
 assert.ok(
-  Number.isSafeInteger(BRANCHES) && BRANCHES > 0,
-  "invalid branch count",
+  Number.isSafeInteger(BRANCHES) && BRANCHES > 0 && BRANCHES <= MAX_BRANCHES,
+  `REA_DECOMPILE_TIMEOUT_BRANCHES must be an integer from 1 to ${MAX_BRANCHES} (generated source budget: ${FIXTURE_SOURCE_BYTES} bytes)`,
 );
 
 const run = createVerifierRun();
@@ -54,24 +80,15 @@ assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const fixtureSource = () => {
-  const lines = [
-    "volatile unsigned rea_state[64];",
-    "__attribute__((noinline, used)) unsigned rea_slow(unsigned x) {",
-    "  unsigned a = x;",
-  ];
+  const lines = [...FIXTURE_PREFIX];
   for (let index = 0; index < BRANCHES; index += 1)
     lines.push(
       `  if (rea_state[${index % 64}] & ${(1 << (index % 31)) >>> 0}u) a = a * 31u + ${index}u; else a ^= rea_state[${(index * 7) % 64}];`,
     );
-  lines.push(
-    "  return a;",
-    "}",
-    "__attribute__((noinline, used)) int rea_small(int v) {",
-    "  return v + (int)rea_state[0];",
-    "}",
-    "",
-  );
-  return lines.join("\n");
+  lines.push(...FIXTURE_SUFFIX);
+  const source = lines.join("\n");
+  assert.ok(Buffer.byteLength(source) <= FIXTURE_SOURCE_BYTES);
+  return source;
 };
 
 const workspace = await mkdtemp(

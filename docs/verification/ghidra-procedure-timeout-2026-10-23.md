@@ -190,6 +190,21 @@ The completed-task timing/context pair above was not repeated after these
 wording changes or subsequent main integration. Those later costs are
 unmeasured; the earlier estimates remain tied to their pinned source.
 
+## Verifier fixture budget
+
+The optional branch-count override is bounded before source allocation by a
+1 MiB generated-source budget and a conservative maximum line size, including
+the longest safe-integer decimal representation. The resulting maximum is
+11,272 branches; this bounds the line array, joined string and compiler input,
+not a claim about Ghidra capacity or compilation memory. Existing command
+supervision still bounds compilation time.
+
+A direct generator check admitted 1, 3,000, 6,000 and 11,272 branches and rejected
+zero, negative, fractional, billion-branch and maximum-safe-integer requests
+before generation. The maximum generated 854,215 bytes. The 3,000-branch source
+remains byte-identical to the measured fixture (SHA-256 `f99074876faae8e18e45265dab007b6fcc396fe909d57efab72adc8925a960c7`).
+These checks do not repeat the real-provider measurements above.
+
 ## Validation and limits
 
 - The initial selected source/boundary run passed 310 tests with 10 platform
