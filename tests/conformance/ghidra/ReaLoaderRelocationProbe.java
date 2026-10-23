@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import generic.jar.ResourceFile;
 import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.util.opinion.ElfLoader;
 import ghidra.app.script.GhidraScript;
 import ghidra.app.script.GhidraScriptProvider;
 import ghidra.app.script.GhidraScriptUtil;
@@ -12,6 +13,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockSourceInfo;
@@ -132,6 +134,15 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         return found;
     }
 
+    private Relocation relocationForSymbol(String name) {
+        Iterator<Relocation> relocations = currentProgram.getRelocationTable().getRelocations();
+        while (relocations.hasNext()) {
+            Relocation candidate = relocations.next();
+            if (name.equals(candidate.getSymbolName())) return candidate;
+        }
+        return null;
+    }
+
     private static boolean targetBacked(MemoryBlock block, FileBytes target) {
         for (MemoryBlockSourceInfo source : block.getSourceInfos())
             if (source.getFileBytes().orElse(null) == target) return true;
@@ -140,6 +151,26 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
 
     private Reference readerReference(Function reader, Address target) {
         for (Instruction instruction : currentProgram.getListing().getInstructions(reader.getBody(), true)) {
+            for (Reference reference : instruction.getReferencesFrom()) {
+                if (reference.getToAddress().equals(target) && reference.getReferenceType().isRead())
+                    return reference;
+            }
+        }
+        return null;
+    }
+
+    private Reference writerReference(Function writer, Address target) {
+        for (Instruction instruction : currentProgram.getListing().getInstructions(writer.getBody(), true)) {
+            for (Reference reference : instruction.getReferencesFrom()) {
+                if (reference.getToAddress().equals(target) && reference.getReferenceType().isWrite())
+                    return reference;
+            }
+        }
+        return null;
+    }
+
+    private Reference readReference(Function function, Address target) {
+        for (Instruction instruction : currentProgram.getListing().getInstructions(function.getBody(), true)) {
             for (Reference reference : instruction.getReferencesFrom()) {
                 if (reference.getToAddress().equals(target) && reference.getReferenceType().isRead())
                     return reference;
@@ -212,10 +243,15 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         List<FileSnapshot> sourceBefore = snapshotFileBytes(sources);
 
         Function reader = function("rea_loader_reader");
+        Function writer = function("rea_loader_writer");
+        Function gotCaller = function("rea_loader_got_caller");
         Address pointer = symbolAddress("rea_loader_pointer");
         Relocation relocation = relocationAt(pointer);
-        require("program_relocations_are_loader_relocations",
-            !currentProgram.getRelocationTable().isRelocatable());
+        String elfFileType = currentProgram.getOptions(Program.PROGRAM_INFO)
+            .getString(ElfLoader.ELF_FILE_TYPE_PROPERTY, "");
+        require("fixture_is_elf_shared_object", elfFileType.equals("shared object"));
+        require("dynamic_elf_relocation_table_is_relocatable",
+            currentProgram.getRelocationTable().isRelocatable());
         require("importer_relocation_present",
             relocation != null && relocation.getBytes() != null && relocation.getBytes().length > 0 &&
             currentProgram.getRelocationTable().hasRelocation(pointer));
@@ -225,6 +261,15 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
             pointerValue(memory, pointer).equals(symbolAddress("rea_loader_value")));
         Reference reference = readerReference(reader, pointer);
         require("reader_references_relocation", reference != null);
+        require("writer_references_relocation", writerReference(writer, pointer) != null);
+
+        Relocation functionGotRelocation = relocationForSymbol("rea_external");
+        Relocation dataGotRelocation = relocationForSymbol("rea_external_value");
+        require("got_function_relocation_present", functionGotRelocation != null);
+        require("got_data_relocation_present", dataGotRelocation != null);
+        require("got_caller_references_loader_relocation",
+            readReference(gotCaller, functionGotRelocation.getAddress()) != null ||
+            readReference(gotCaller, dataGotRelocation.getAddress()) != null);
 
         MemoryBlock block = memory.getBlock(pointer);
         if (block == null) throw new IllegalStateException("Pointer relocation has no loaded memory block");
@@ -239,6 +284,8 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         boolean decompilerAvailable = false;
         String baselinePseudocode = null;
         String protectedPseudocode = null;
+        String baselineGotPseudocode = null;
+        String protectedGotPseudocode = null;
         List<String> limitations = null;
         Method initialize = privateMethod(bridge.getClass(), "initializeDecompiler");
         Method pseudocodeMethod = privateMethod(bridge.getClass(), "procedurePseudocode", JsonObject.class);
@@ -248,20 +295,28 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
                 decompilerAvailable = true;
             }
             catch (IllegalStateException unavailable) {
-                Throwable cause = unavailable.getCause();
-                require("native_decompiler_unavailable_is_explicit",
-                    cause instanceof IllegalStateException &&
-                    cause.getMessage() != null && cause.getMessage().contains("could not open"));
-            }
-            if (decompilerAvailable) {
-                JsonObject baseline = (JsonObject)invoke(
-                    pseudocodeMethod,
-                    bridge,
-                    procedureQuery(currentProgram.getName(), reader.getName())
+                throw new IllegalStateException(
+                    "The Linux loader-relocation probe requires Ghidra's native decompiler",
+                    unavailable.getCause()
                 );
-                baselinePseudocode = baseline.get("value").getAsString();
-                require("baseline_pseudocode_folds_file_constant", containsFileConstant(baselinePseudocode));
             }
+            require("native_decompiler_available", decompilerAvailable);
+            JsonObject baseline = (JsonObject)invoke(
+                pseudocodeMethod,
+                bridge,
+                procedureQuery(currentProgram.getName(), reader.getName())
+            );
+            baselinePseudocode = baseline.get("value").getAsString();
+            require("baseline_pseudocode_folds_file_constant", containsFileConstant(baselinePseudocode));
+            JsonObject baselineGot = (JsonObject)invoke(
+                pseudocodeMethod,
+                bridge,
+                procedureQuery(currentProgram.getName(), gotCaller.getName())
+            );
+            baselineGotPseudocode = baselineGot.get("value").getAsString();
+            require("baseline_got_pseudocode_resolves_external_symbols",
+                baselineGotPseudocode.contains("rea_external") &&
+                baselineGotPseudocode.contains("rea_external_value"));
 
             disposeDecompiler(bridge);
             Method protect = privateMethod(bridge.getClass(), "protectLoaderInitializedRelocations");
@@ -288,18 +343,56 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
                     value.contains("file-backed value may differ") &&
                     value.contains("not authoritative")));
 
-            if (decompilerAvailable) {
-                invoke(initialize, bridge);
-                JsonObject protectedResult = (JsonObject)invoke(
-                    pseudocodeMethod,
-                    bridge,
-                    procedureQuery(currentProgram.getName(), reader.getName())
-                );
-                protectedPseudocode = protectedResult.get("value").getAsString();
-                require("pseudocode_does_not_use_file_constant", !containsFileConstant(protectedPseudocode));
-                require("protected_pseudocode_is_not_baseline_constant",
-                    !protectedPseudocode.equals(baselinePseudocode));
-            }
+            @SuppressWarnings("unchecked")
+            List<String> writerLimitations = (List<String>)invoke(
+                limitationsMethod,
+                bridge,
+                writer,
+                currentProgram.getListing().getInstructions(writer.getBody(), true)
+            );
+            require("non_read_relocation_reference_not_reported_as_read",
+                writerLimitations.stream().noneMatch(value ->
+                    value.contains("file-backed value may differ")));
+
+            Method relocationLookup = privateMethod(
+                bridge.getClass(), "loaderInitializedRelocationAt", Address.class
+            );
+            int addressableUnitSize = pointer.getAddressSpace().getAddressableUnitSize();
+            long relocationLengthInAddressableUnits = Math.max(
+                1L,
+                (relocation.getLength() + (long)addressableUnitSize - 1L) / addressableUnitSize
+            );
+            Address lastAffectedAddress = pointer.add(relocationLengthInAddressableUnits - 1L);
+            require("relocation_lookup_covers_last_affected_byte",
+                invoke(relocationLookup, bridge, lastAffectedAddress) != null);
+
+            MemoryBlock functionGotBlock = memory.getBlock(functionGotRelocation.getAddress());
+            MemoryBlock dataGotBlock = memory.getBlock(dataGotRelocation.getAddress());
+            require("got_relocations_are_volatile",
+                functionGotBlock != null && functionGotBlock.isVolatile() &&
+                dataGotBlock != null && dataGotBlock.isVolatile());
+
+            invoke(initialize, bridge);
+            JsonObject protectedResult = (JsonObject)invoke(
+                pseudocodeMethod,
+                bridge,
+                procedureQuery(currentProgram.getName(), reader.getName())
+            );
+            protectedPseudocode = protectedResult.get("value").getAsString();
+            require("pseudocode_does_not_use_file_constant", !containsFileConstant(protectedPseudocode));
+            require("protected_pseudocode_is_not_baseline_constant",
+                !protectedPseudocode.equals(baselinePseudocode));
+            JsonObject protectedGot = (JsonObject)invoke(
+                pseudocodeMethod,
+                bridge,
+                procedureQuery(currentProgram.getName(), gotCaller.getName())
+            );
+            protectedGotPseudocode = protectedGot.get("value").getAsString();
+            require("protected_got_pseudocode_keeps_external_symbols",
+                protectedGotPseudocode.contains("rea_external") &&
+                protectedGotPseudocode.contains("rea_external_value"));
+            require("full_relro_got_caller_pseudocode_is_stable",
+                protectedGotPseudocode.equals(baselineGotPseudocode));
         }
         finally {
             disposeDecompiler(bridge);
@@ -317,8 +410,10 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         report.addProperty("source_filebytes_unchanged", fileBytesUnchanged(sourceBefore));
         report.addProperty("permissions", permissions(block));
         report.addProperty("decompiler_verified", decompilerAvailable);
-        if (baselinePseudocode != null) report.addProperty("baseline_pseudocode", baselinePseudocode);
-        if (protectedPseudocode != null) report.addProperty("protected_pseudocode", protectedPseudocode);
+        report.addProperty("baseline_pseudocode", baselinePseudocode);
+        report.addProperty("protected_pseudocode", protectedPseudocode);
+        report.addProperty("baseline_got_caller_pseudocode", baselineGotPseudocode);
+        report.addProperty("protected_got_caller_pseudocode", protectedGotPseudocode);
         if (limitations == null) throw new IllegalStateException("Loader limitation probe did not run");
         report.add("limitations", GSON_ARRAY(limitations));
         report.add("checks", checks);

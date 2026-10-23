@@ -38,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
@@ -60,6 +61,7 @@ import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
+import ghidra.app.util.opinion.ElfLoader;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
@@ -123,7 +125,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
-    private final Map<Address, LoaderInitializedRelocation> loaderInitializedRelocations =
+    private final NavigableMap<Address, LoaderInitializedRelocation> loaderInitializedRelocations =
         new TreeMap<>();
     private String admittedTargetSha256;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
@@ -935,7 +937,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * block while preserving its read/write/execute permissions.
      */
     private void protectLoaderInitializedRelocations() throws Exception {
-        if (currentProgram.getRelocationTable().isRelocatable()) return;
+        String elfFileType = currentProgram.getOptions(
+            ghidra.program.model.listing.Program.PROGRAM_INFO
+        ).getString(ElfLoader.ELF_FILE_TYPE_PROPERTY, "");
+        // Ghidra also marks ELF ET_DYN and ET_CORE programs relocatable.
+        if (currentProgram.getRelocationTable().isRelocatable() &&
+            !elfFileType.equals("shared object")) return;
         Map<Address, LoaderInitializedRelocation> discovered = new TreeMap<>();
         Set<MemoryBlock> blocks = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         Iterator<Relocation> iterator = currentProgram.getRelocationTable().getRelocations();
@@ -946,10 +953,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             MemoryBlock block = currentProgram.getMemory().getBlock(location);
             if (block == null || !block.isLoaded() || !block.isInitialized() || block.isWrite())
                 continue;
+            long lengthInBytes = relocation.getLength();
+            int addressableUnitSize = location.getAddressSpace().getAddressableUnitSize();
+            long lengthInAddressableUnits = Math.max(
+                1L,
+                (lengthInBytes + addressableUnitSize - 1L) / addressableUnitSize
+            );
             discovered.put(
                 location,
                 new LoaderInitializedRelocation(
                     location,
+                    lengthInAddressableUnits,
                     block.getName(),
                     relocation.getSymbolName()
                 )
@@ -971,6 +985,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             currentProgram.endTransaction(transaction, commit);
         }
         loaderInitializedRelocations.putAll(discovered);
+    }
+
+    private LoaderInitializedRelocation loaderInitializedRelocationAt(Address address) {
+        Map.Entry<Address, LoaderInitializedRelocation> entry =
+            loaderInitializedRelocations.floorEntry(address);
+        if (entry == null) return null;
+        LoaderInitializedRelocation relocation = entry.getValue();
+        return relocation.contains(address) ? relocation : null;
     }
 
     private void initializeDecompiler() {
@@ -3589,8 +3611,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             String limitation = terminalCallLimitation(instruction);
             if (limitation != null) limitations.add(limitation);
             for (Reference reference : instruction.getReferencesFrom()) {
-                LoaderInitializedRelocation relocation =
-                    loaderInitializedRelocations.get(reference.getToAddress());
+                if (!reference.getReferenceType().isRead()) continue;
+                LoaderInitializedRelocation relocation = loaderInitializedRelocationAt(
+                    reference.getToAddress()
+                );
                 if (relocation == null || !observedLoaderRelocations.add(relocation.address()))
                     continue;
                 limitations.add(loaderInitializedRelocationLimitation(relocation));
@@ -3615,8 +3639,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String symbolDetail = symbol == null || symbol.isBlank()
             ? "an unnamed relocation"
             : "the relocation for " + symbol;
-        return "This procedure reads " + canonicalAddress(relocation.address()) +
-            " from non-writable block " + relocation.blockName() +
+        return "This procedure reads bytes affected by the loader relocation at " +
+            canonicalAddress(relocation.address()) + " in non-writable block " +
+            relocation.blockName() +
             ", which contains " + symbolDetail +
             "; the file-backed value may differ from the loader-initialized runtime value, " +
             "so constants derived from this location are not authoritative.";
@@ -4985,8 +5010,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record InventoryItem(Address address, String value, JsonObject facts) {}
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record LoaderInitializedRelocation(
-        Address address, String blockName, String symbolName
-    ) {}
+        Address address, long lengthInAddressableUnits, String blockName, String symbolName
+    ) {
+        private boolean contains(Address candidate) {
+            if (!candidate.hasSameAddressSpace(address) || candidate.compareTo(address) < 0)
+                return false;
+            long displacement = candidate.subtract(address);
+            return displacement >= 0 && displacement < lengthInAddressableUnits;
+        }
+    }
     private record FunctionEntry(Function function, InventoryItem item) {}
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
     private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}

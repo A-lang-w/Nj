@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24.18.0-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 
 ENV CI=1
 

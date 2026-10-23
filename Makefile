@@ -4,7 +4,7 @@ build:
 	npm run build:cached
 
 run:
-	npm start
+	@node scripts/rea.mjs mcp
 
 test:
 	npm run test:fast

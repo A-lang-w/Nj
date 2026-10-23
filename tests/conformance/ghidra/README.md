@@ -46,19 +46,18 @@ binaries and Ghidra projects are never committed.
   The injection does not establish which natural inputs make the decompiler
   fail.
 
-- `loader-relocation.c` and `ReaLoaderRelocationProbe.java` exercise the
-  production `ReaGhidraBridge` against a real imported Linux PIE ELF. The
-  fixture's `.data.rel.ro` pointer is populated by the ELF loader relocation;
-  the probe resolves that importer-created relocation, requires the real reader
-  instruction's read reference to target it, and requires the loaded block to
-  be non-writable. It compares an unprotected decompiler result that folds the
-  file-backed `0x11111111` value with a protected result that leaves the read
-  non-constant, while retaining the production loader-value limitation and
-  unchanged source `FileBytes` and permissions. `npm run
-  verify:ghidra:loader-relocation` requires a Linux host, BYO Ghidra/JDK, and a
-  C compiler; it never executes the fixture. The native decompiler comparison
-  is reported as unavailable when the installed Ghidra lacks its platform
-  decompiler component.
+- `loader-relocation.c`, `loader-relocation-provider.c` and
+  `ReaLoaderRelocationProbe.java` exercise the production `ReaGhidraBridge`
+  against a real imported Linux full-RELRO PIE ELF and a small shared library.
+  The fixture's `.data.rel.ro` pointer is populated by an importer-created
+  relocation. The probe proves that the `ET_DYN` program is marked relocatable
+  by Ghidra but is still protected, checks the relocation byte range and
+  read/write reference handling, and compares baseline/protected pseudocode.
+  It also checks that a `-fno-plt` GOT caller retains identical pseudocode when
+  its relocation blocks become volatile. Source `FileBytes` and block
+  permissions must remain unchanged. `npm run
+  verify:ghidra:loader-relocation` requires Linux, BYO Ghidra/JDK with its
+  native decompiler, and a C compiler; the fixture is never executed.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The

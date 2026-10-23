@@ -21,10 +21,15 @@ const exec = promisify(execFile);
 const expectedChecks = [
   "bridge_source_bound",
   "relocation_protection_precedes_decompiler",
-  "program_relocations_are_loader_relocations",
+  "fixture_is_elf_shared_object",
+  "dynamic_elf_relocation_table_is_relocatable",
   "importer_relocation_present",
   "relocation_targets_pointer_symbol",
   "reader_references_relocation",
+  "writer_references_relocation",
+  "got_function_relocation_present",
+  "got_data_relocation_present",
+  "got_caller_references_loader_relocation",
   "destination_is_loaded_initialized",
   "destination_is_file_backed",
   "destination_is_non_writable",
@@ -33,6 +38,13 @@ const expectedChecks = [
   "destination_permissions_preserved",
   "source_filebytes_unchanged",
   "evidence_limitation_represents_loader_uncertainty",
+  "non_read_relocation_reference_not_reported_as_read",
+  "relocation_lookup_covers_last_affected_byte",
+  "got_relocations_are_volatile",
+  "native_decompiler_available",
+  "baseline_got_pseudocode_resolves_external_symbols",
+  "protected_got_pseudocode_keeps_external_symbols",
+  "full_relro_got_caller_pseudocode_is_stable",
 ];
 
 if (process.argv.length !== 2)
@@ -68,8 +80,15 @@ const workspace = await mkdtemp(
 );
 const project = join(workspace, "project");
 const target = join(workspace, "rea-loader-relocation.elf");
+const provider = join(workspace, "librea-loader-provider.so");
 const fixture = fileURLToPath(
   new URL("../tests/conformance/ghidra/loader-relocation.c", import.meta.url),
+);
+const providerFixture = fileURLToPath(
+  new URL(
+    "../tests/conformance/ghidra/loader-relocation-provider.c",
+    import.meta.url,
+  ),
 );
 const bridgeDirectory = fileURLToPath(
   new URL("../bridge/ghidra", import.meta.url),
@@ -84,7 +103,8 @@ let report;
 
 try {
   await mkdir(project);
-  await buildFixture(compiler, fixture, target);
+  await buildProvider(compiler, providerFixture, provider);
+  await buildFixture(compiler, fixture, provider, target);
   const targetDigest = digest(await readFile(target));
   const launch = await spawnOwnedProviderProcess({
     command: installation.analyzeHeadlessPath,
@@ -137,26 +157,21 @@ try {
         value.includes("not authoritative"),
     ),
   );
-  if (report.decompiler_verified) {
-    assert.ok(
-      report.checks.includes("baseline_pseudocode_folds_file_constant"),
-    );
-    assert.ok(report.checks.includes("pseudocode_does_not_use_file_constant"));
-    assert.ok(
-      report.checks.includes("protected_pseudocode_is_not_baseline_constant"),
-    );
-  } else {
-    assert.ok(
-      report.checks.includes("native_decompiler_unavailable_is_explicit"),
-    );
-  }
+  assert.equal(report.decompiler_verified, true);
+  assert.ok(report.checks.includes("baseline_pseudocode_folds_file_constant"));
+  assert.ok(report.checks.includes("pseudocode_does_not_use_file_constant"));
+  assert.ok(
+    report.checks.includes("protected_pseudocode_is_not_baseline_constant"),
+  );
+  assert.ok(
+    report.checks.includes("full_relro_got_caller_pseudocode_is_stable"),
+  );
   assert.equal(digest(await readFile(target)), targetDigest);
   report = {
     ...report,
     target_sha256: targetDigest,
-    decompiler_scope: report.decompiler_verified
-      ? "native Ghidra baseline and protected pseudocode comparison passed"
-      : "native Ghidra decompiler unavailable; importer relocation, bridge limitation, and volatile-block checks passed",
+    decompiler_scope:
+      "native Ghidra baseline and protected pseudocode comparisons passed",
   };
 } finally {
   if (supervisor !== undefined) {
@@ -176,15 +191,31 @@ console.log(
   }),
 );
 
-async function buildFixture(compiler, source, output) {
+async function buildProvider(compiler, source, output) {
+  const arguments_ = [
+    "-O0",
+    "-fPIC",
+    "-shared",
+    "-nostdlib",
+    source,
+    "-o",
+    output,
+  ];
+  await exec(compiler, arguments_, { timeout: 60_000 });
+}
+
+async function buildFixture(compiler, source, provider, output) {
   const arguments_ = [
     "-O0",
     "-fPIE",
+    "-fno-plt",
     "-pie",
     "-nostdlib",
     "-Wl,-z,relro,-z,now",
     "-Wl,-e,rea_loader_start",
+    "-Wl,-rpath,$ORIGIN",
     source,
+    provider,
     "-o",
     output,
   ];

@@ -22,6 +22,19 @@ rea_loader_word rea_loader_reader(void) {
   return *rea_loader_pointer;
 }
 
+__attribute__((noinline, used, visibility("default")))
+void rea_loader_writer(void) {
+  *((volatile rea_loader_word **)(void *)&rea_loader_pointer) = 0;
+}
+
+extern rea_loader_word rea_external(int value);
+extern rea_loader_word rea_external_value;
+
+__attribute__((noinline, used, visibility("default")))
+rea_loader_word rea_loader_got_caller(rea_loader_word value) {
+  return rea_external((int)value) + rea_external_value;
+}
+
 __attribute__((used, visibility("default"))) void rea_loader_start(void) {
   volatile rea_loader_word result = rea_loader_reader();
   (void)result;
