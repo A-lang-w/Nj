@@ -2,7 +2,11 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { pythonPycFixture } from "../../src/python/PythonPyc.fixture.js";
+import {
+  marshalCode,
+  pythonPycFixture,
+  pythonPycHeader,
+} from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -21,6 +25,386 @@ cliTest(
     );
     expect(evidence.normalized_result.header.python_version).toBe("3.12");
     expect(evidence.normalized_result.code_objects[1]?.name).toBe("inner");
+  },
+);
+
+cliTest(
+  "classifies unsupported 3.7 alpha headers without labeling their marshal data malformed",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-alpha-header-");
+    const marshal = Buffer.from(
+      "e3000000000000000000000000010000004000000073040000006400530029014ea900720100000072010000007201000000fa066d6f642e7079da083c6d6f64756c653e010000007300000000",
+      "hex",
+    );
+    expect(marshal).toHaveLength(77);
+    for (const magic of [3390, 3391]) {
+      const path = join(root, `${magic}.pyc`);
+      const header = Buffer.alloc(12);
+      header.writeUInt16LE(magic);
+      header[2] = 0x0d;
+      header[3] = 0x0a;
+      await writeFile(path, Buffer.concat([header, marshal]));
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "unsupported_target",
+        category: "unsupported_target",
+      });
+      expect(JSON.stringify(result.json)).toContain(
+        "unsupported 12-byte CPython header",
+      );
+      expect(result.json).not.toHaveProperty("normalized_result");
+    }
+
+    for (const magic of [3392, 3394]) {
+      const path = join(root, `${magic}.pyc`);
+      await writeFile(path, Buffer.concat([pythonPycHeader(magic), marshal]));
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        result.json,
+      );
+      expect(evidence.normalized_result.header.magic).toBe(magic);
+      expect(evidence.normalized_result.code_objects[0]?.bytecode.bytes).toBe(
+        4,
+      );
+    }
+  },
+);
+
+cliTest(
+  "rejects constructor-invalid signed code flags and preserves unknown positive flags",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-flags-");
+    for (const { name, magic, layout, flags, expected, valid } of [
+      {
+        name: "zero",
+        magic: 3531,
+        layout: "py311",
+        flags: 0,
+        expected: 0,
+        valid: true,
+      },
+      {
+        name: "unknown-positive",
+        magic: 3531,
+        layout: "py311",
+        flags: 0x40000000,
+        expected: 0x40000000,
+        valid: true,
+      },
+      {
+        name: "negative-py311",
+        magic: 3531,
+        layout: "py311",
+        flags: 0x80000000,
+        expected: -0x80000000,
+        valid: false,
+      },
+      {
+        name: "negative-plus-one-py311",
+        magic: 3531,
+        layout: "py311",
+        flags: 0x80000001,
+        expected: -0x7fffffff,
+        valid: false,
+      },
+      {
+        name: "negative-py37",
+        magic: 3394,
+        layout: "py37",
+        flags: 0x80000000,
+        expected: -0x80000000,
+        valid: true,
+      },
+    ] as const) {
+      const path = join(root, `${name}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([pythonPycHeader(magic), marshalCode(layout, { flags })]),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      if (valid) {
+        expect(result.exitCode, result.stderr).toBe(0);
+        const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+          result.json,
+        );
+        expect(evidence.normalized_result.code_objects[0]?.flags).toBe(
+          expected,
+        );
+      } else {
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          details: {
+            operation: "inspect_python_pyc",
+            issues: [
+              {
+                reason: "invalid_format",
+                message: expect.stringContaining("co_flags is negative"),
+              },
+            ],
+          },
+        });
+        expect(result.json).not.toHaveProperty("normalized_result");
+      }
+    }
+  },
+);
+
+cliTest(
+  "preserves negative CPython first line numbers through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-lines-");
+    const path = join(root, "sample.pyc");
+    const nested = marshalCode("py311", {
+      name: "inner",
+      firstlineno: -7,
+    });
+    const bytes = Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", {
+        firstlineno: -1,
+        consts: [nested],
+      }),
+    ]);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
+    expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual({
+      kind: "code",
+      name: "inner",
+      firstlineno: -7,
+    });
+  },
+);
+
+cliTest(
+  "matches CPython reference slots for singleton and reference tags",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-ref-slots-");
+    const cases = [
+      {
+        name: "flagged-none",
+        consts: "2903cefa01787200000000",
+        expected: [
+          { kind: "none" },
+          { kind: "str", value: "x" },
+          { kind: "str", value: "x" },
+        ],
+      },
+      {
+        name: "flagged-ref",
+        consts: "2904fa0161f200000000fa01627201000000",
+        expected: [
+          { kind: "str", value: "a" },
+          { kind: "str", value: "a" },
+          { kind: "str", value: "b" },
+          { kind: "str", value: "b" },
+        ],
+      },
+    ];
+    for (const testCase of cases) {
+      const path = join(root, `${testCase.name}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([
+          pythonPycHeader(3531),
+          marshalCode("py311", {
+            constsObject: Buffer.from(testCase.consts, "hex"),
+          }),
+        ]),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        result.json,
+      );
+      expect(evidence.normalized_result.code_objects[0]?.consts).toMatchObject(
+        testCase.expected,
+      );
+    }
+  },
+);
+
+cliTest(
+  "counts code keys using the selected CPython equality rules",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-equality-");
+    const cases = [
+      { magic: 3413, layout: "py38" as const, lengths: [1, 1] },
+      { magic: 3439, layout: "py38" as const, lengths: [1, 1] },
+      { magic: 3531, layout: "py311" as const, lengths: [2, 2] },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const code = (linetable: Buffer) =>
+        marshalCode(testCase.layout, {
+          name: "f",
+          filename: "fixture.py",
+          firstlineno: 1,
+          linetable,
+        });
+      const frozenSet = Buffer.concat([
+        Buffer.from([0x3e]),
+        Buffer.from([2, 0, 0, 0]),
+        code(Buffer.from([2, 1])),
+        code(Buffer.from([2, 2])),
+      ]);
+      const dict = Buffer.concat([
+        Buffer.from([0x7b]),
+        code(Buffer.from([2, 1])),
+        Buffer.from([0x4e]),
+        code(Buffer.from([2, 2])),
+        Buffer.from([0x54, 0x30]),
+      ]);
+      const path = join(root, `case-${index}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([
+          pythonPycHeader(testCase.magic),
+          marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
+        ]),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        result.json,
+      );
+      expect(
+        evidence.normalized_result.code_objects[0]?.consts.map((value) =>
+          value.kind === "frozenset" || value.kind === "dict"
+            ? value.length
+            : null,
+        ),
+      ).toEqual(testCase.lengths);
+    }
+  },
+);
+
+cliTest(
+  "uses constructor-normalized legacy flags for code keys and preserves raw flags",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-python-pyc-effective-flags-",
+    );
+    const cases = [
+      {
+        name: "py37-empty-tables",
+        magic: 3394,
+        layout: "py37" as const,
+        freevars: [],
+        cellvars: [],
+        lengths: [1, 1],
+      },
+      {
+        name: "py310-nonempty-tables",
+        magic: 3439,
+        layout: "py38" as const,
+        freevars: ["capture"],
+        cellvars: [],
+        lengths: [1, 1],
+      },
+      {
+        name: "py311-raw-flags",
+        magic: 3531,
+        layout: "py311" as const,
+        freevars: [],
+        cellvars: [],
+        lengths: [2, 2],
+      },
+    ];
+    for (const testCase of cases) {
+      const code = (flags: number) =>
+        marshalCode(testCase.layout, {
+          name: "f",
+          filename: "fixture.py",
+          firstlineno: 1,
+          flags,
+          freevars: testCase.freevars,
+          cellvars: testCase.cellvars,
+        });
+      const first = code(0);
+      const second = code(0x40);
+      const frozenSet = Buffer.concat([
+        Buffer.from([0x3e]),
+        Buffer.from([2, 0, 0, 0]),
+        first,
+        second,
+      ]);
+      const dict = Buffer.concat([
+        Buffer.from([0x7b]),
+        first,
+        Buffer.from([0x4e]),
+        second,
+        Buffer.from([0x54, 0x30]),
+      ]);
+      const path = join(root, `${testCase.name}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([
+          pythonPycHeader(testCase.magic),
+          marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
+        ]),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        result.json,
+      );
+      expect(
+        evidence.normalized_result.code_objects[0]?.consts.map((value) =>
+          value.kind === "frozenset" || value.kind === "dict"
+            ? value.length
+            : null,
+        ),
+      ).toEqual(testCase.lengths);
+      expect(
+        evidence.normalized_result.code_objects
+          .filter((object) => object.name === "f")
+          .map((object) => object.flags),
+      ).toContain(0);
+
+      const rawPath = join(root, `raw-${testCase.name}.pyc`);
+      await writeFile(
+        rawPath,
+        Buffer.concat([
+          pythonPycHeader(testCase.magic),
+          marshalCode(testCase.layout, {
+            name: "f",
+            flags: 0x40,
+            freevars: testCase.freevars,
+            cellvars: testCase.cellvars,
+          }),
+        ]),
+      );
+      const rawResult = await cli.run({
+        arguments: ["inspect-python-pyc", rawPath, "--json"],
+      });
+      expect(rawResult.exitCode, rawResult.stderr).toBe(0);
+      const rawEvidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        rawResult.json,
+      );
+      expect(rawEvidence.normalized_result.code_objects[0]?.flags).toBe(0x40);
+    }
   },
 );
 

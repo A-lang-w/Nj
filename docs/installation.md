@@ -696,10 +696,12 @@ manual dependency repair.
 
 When the package-manager step fails, setup reports the failing command and its
 captured output, so a package conflict is distinguishable from an authorization
-failure. On CachyOS, an unversioned compatibility package such as
-`zlib-ng-compat` may conflict with Hopper's versioned `zlib` dependency. Resolve
-the package conflict yourself or install Hopper's official package manually,
-then rerun `rea setup`.
+failure. Hopper is optional, so setup still applies the approved client
+registrations and skill, then reports `needs_human` with the Hopper failure. On
+Arch Linux and CachyOS, the unversioned compatibility package `zlib-ng-compat`
+may conflict with Hopper's versioned `zlib` dependency. Resolve the package
+conflict yourself, install Hopper's official package manually, or use another
+provider such as Ghidra; rerun `rea setup` after installing Hopper.
 
 The supported Linux demo forwards additional launches into its existing
 application, even across private displays. REA therefore reserves one Linux
@@ -1367,7 +1369,7 @@ equivalent entry point. Setup run through `npx` registers
 `cmd.exe /d /c` so clients can start the runner's command shim. Neither
 registration points into the runner's temporary package cache.
 
-REA supports Node.js 22.x (>=22.19), 24.x (>=24.11), and 26+. Node.js 23, 25, and prereleases are unsupported. It uses the npm already paired with that runtime and never upgrades Node.js, npm, or Homebrew.
+REA supports Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), and 26.12.1+. Node.js 23, 25, earlier 26.x releases, and prereleases are unsupported. It uses the npm already paired with that runtime and never upgrades Node.js, npm, or Homebrew.
 
 When REA runs on Bun, the `rea doctor` `node` check reports the Bun version and
 the Node.js compatibility version Bun declares, and passes when that
