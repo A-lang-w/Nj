@@ -23,7 +23,8 @@ import {
   deliverAnalysisEvidence,
 } from "../../../src/application/EvidenceBundleCommands.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
-import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
+import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -175,28 +176,40 @@ it("preserves the failed-close owner when import is also cancelled", async () =>
   const cancellationReason = new JsonInputPhysicalReadFailure(
     new Error("opaque cancellation reason"),
   );
+  let owner: OwnedFileHandle | undefined;
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementationOnce(async () => {
+    .mockImplementationOnce(async function (this: OwnedFileHandle) {
+      owner = this;
       controller.abort(cancellationReason);
       throw cleanupCause;
     });
-  let failure: unknown;
+  let failure: RetainedRegularFileCleanupFailure | undefined;
+  let error: EvidenceFileError | undefined;
   try {
-    try {
-      await readImmutableEvidenceBundle(path, controller.signal);
-    } catch (cause: unknown) {
-      failure = cause;
-    }
-    expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
-    if (!(failure instanceof RegularFileCleanupFailure))
-      throw new Error("Expected the retained file handle owner");
-    expect(failure.cleanupCause).toBe(cleanupCause);
+    const result = await readImmutableEvidenceBundle(path, controller.signal);
+    if (result.ok || !(result.error instanceof EvidenceFileError))
+      throw new Error("Expected typed file cleanup failure");
+    error = result.error;
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupPrimary).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: cancellationReason,
+    });
+    expect(error.cause).toBeInstanceOf(AggregateError);
+    const cleanup = (error.cause as AggregateError).errors[1];
+    expect(cleanup).toBeInstanceOf(EvidenceFileError);
+    expect(cleanup.cause).toBeInstanceOf(RetainedRegularFileCleanupFailure);
+    failure = cleanup.cause;
+    expect(failure?.owner).toBe(owner);
+    expect(failure?.cleanupCause).toBe(cleanupCause);
+    expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
   } finally {
     close.mockRestore();
-    if (failure instanceof RegularFileCleanupFailure)
-      await failure.owner.close();
+    if (failure !== undefined) await failure.cleanupLease.release();
+    else await owner?.close();
   }
+  expect(error?.cleanupIncomplete).toBe(false);
   expect(await readEvidenceBundle(path)).toMatchObject({ ok: true });
 });
 

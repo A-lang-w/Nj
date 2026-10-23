@@ -11,7 +11,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
+import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { err } from "../../../src/domain/result.js";
@@ -409,33 +409,60 @@ describe("process CLI file cleanup", () => {
       await writeFile(path, JSON.stringify({ executable: process.execPath }));
       const controller = new AbortController();
       const cleanupCause = new Error("injected file close failure");
+      let owner: OwnedFileHandle | undefined;
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
-        .mockImplementationOnce(async () => {
+        .mockImplementationOnce(async function (this: OwnedFileHandle) {
+          owner = this;
           if (cancelDuringClose) controller.abort();
           throw cleanupCause;
         });
-      let failure: unknown;
+      // Record the actual Result boundary before the CLI's data-only projection.
+      const originalRead = jsonFiles.readJsonFile;
+      let sourceError: EvidenceFileError | undefined;
+      const read = vi
+        .spyOn(jsonFiles, "readJsonFile")
+        .mockImplementation(async (...args) => {
+          const result = await originalRead(...args);
+          if (!result.ok && result.error instanceof EvidenceFileError)
+            sourceError = result.error;
+          return result;
+        });
+      let failure: RetainedRegularFileCleanupFailure | undefined;
       try {
-        try {
-          await captureProcessScenarioFile(
-            path,
-            process.env,
-            cancelDuringClose ? controller.signal : undefined,
+        const projected = await captureProcessScenarioFile(
+          path,
+          process.env,
+          cancelDuringClose ? controller.signal : undefined,
+        );
+        expect(projected).toMatchObject({
+          error: "Process command failed",
+          code: "cleanup_incomplete",
+          details: { cleanup: "incomplete", resources: [path] },
+        });
+        if (sourceError === undefined)
+          throw new Error("Missing owned file Result");
+        const cleanup =
+          sourceError.cleanupPrimary === undefined
+            ? sourceError
+            : (sourceError.cause as AggregateError).errors[1];
+        expect(cleanup).toBeInstanceOf(EvidenceFileError);
+        expect(cleanup.cause).toBeInstanceOf(RetainedRegularFileCleanupFailure);
+        failure = cleanup.cause;
+        expect(failure?.cleanupCause).toBe(cleanupCause);
+        expect(failure?.owner).toBe(owner);
+        expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
+        if (cancelDuringClose)
+          expect(sourceError.cleanupPrimary?.cause).toBe(
+            controller.signal.reason,
           );
-        } catch (cause: unknown) {
-          failure = cause;
-        }
-        expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
-        if (!(failure instanceof RegularFileCleanupFailure))
-          throw new Error("Expected the retained file handle owner");
-        expect(failure.cleanupCause).toBe(cleanupCause);
-        expect(failure.owner.handle.fd).toBeGreaterThanOrEqual(0);
       } finally {
+        read.mockRestore();
         close.mockRestore();
-        if (failure instanceof RegularFileCleanupFailure)
-          await failure.owner.close();
+        if (failure !== undefined) await failure.cleanupLease.release();
+        else await owner?.close();
       }
+      expect(sourceError?.cleanupIncomplete).toBe(false);
     },
   );
 });

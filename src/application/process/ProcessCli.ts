@@ -25,7 +25,6 @@ import {
   parseProcessCaptureEvidence,
 } from "./ProcessEvidence.js";
 import { readJsonFile } from "../JsonFiles.js";
-import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput extends AnalysisErrorProjection {
@@ -105,7 +104,6 @@ export const captureProcessScenarioFile = async (
     if (!captured.ok) return cliAnalysisError(captured.error);
     return createProcessCaptureEvidence(parsed.data, captured.value);
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
     return projectProcessCliError(cause, "capture_process_scenario");
   }
 };
@@ -138,7 +136,6 @@ export const compareProcessEvidenceFiles = async (
       traceSpecification === undefined ? {} : { traceSpecification },
     ).evidence;
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
     return projectProcessCliError(cause, "compare_process_captures");
   }
 };
