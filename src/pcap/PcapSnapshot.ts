@@ -7,10 +7,10 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
@@ -20,7 +20,11 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../process/RuntimeControlUnavailableError.js";
+import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_pcap_capture";
 const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
@@ -45,20 +49,9 @@ export class PcapSnapshot {
         await PrivateRuntimeRoot.create({ prefix: "rea-pcap-" }),
       );
     } catch (cause) {
-      if (cause instanceof PrivateRuntimeRootUnavailableError)
-        throw new AnalysisCapabilityUnavailableError(
-          "pcap",
-          OPERATION,
-          cause.message,
-          { cause, retryable: cause.retryable },
-        );
-      throw new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        "Cannot allocate the owned capture workspace",
-        null,
-        { cause },
-      );
+      if (cause instanceof RuntimeControlUnavailableError)
+        throw runtimeControlCapabilityError("pcap", OPERATION, cause);
+      throw privateWorkspaceFailure("pcap", OPERATION, cause, null);
     }
   }
 
@@ -156,6 +149,10 @@ export class PcapSnapshot {
           "file-size",
           "Capture exceeds the owned-snapshot disk budget",
           { max_capture_bytes: MAX_CAPTURE_BYTES },
+          fixedAllowanceOptions(
+            "the owned capture snapshot allowance",
+            "input",
+          ),
         );
       const destination = this.own(
         new OwnedFileHandle(await open(this.path, "wx", 0o600)),
@@ -232,13 +229,7 @@ export class PcapSnapshot {
           cause: cancellation.reason,
         });
       if (cause instanceof AnalysisError) throw cause;
-      throw new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        "Owned capture snapshot I/O failed",
-        null,
-        { cause },
-      );
+      throw privateWorkspaceFailure("pcap", OPERATION, primary, this.root.path);
     }
   }
 

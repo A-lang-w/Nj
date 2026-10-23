@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type {
   ArtifactReader,
@@ -7,6 +8,7 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { GodotPckArtifactReader } from "../GodotPckArtifactReader.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
+import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import type {
   ArtifactInventoryCoverage,
@@ -23,6 +25,7 @@ export const createReader = (
   format: ArtifactOccurrence["artifact_format"],
   environment: Readonly<NodeJS.ProcessEnv>,
   rootSource?: StableRegularFileDescriptor,
+  asarHeaderAdmission?: AsarHeaderAdmission,
 ): ArtifactReader | undefined => {
   if (isZipPackageFormat(format))
     return new ZipArtifactReader(path, format, undefined, rootSource);
@@ -30,7 +33,14 @@ export const createReader = (
     case "directory":
       return new DirectoryArtifactReader(path);
     case "asar":
-      return new AsarArtifactReader(path);
+      return new AsarArtifactReader(
+        path,
+        asarHeaderAdmission === undefined
+          ? {}
+          : { headerAdmission: asarHeaderAdmission },
+      );
+    case "pyinstaller":
+      return new PyInstallerArtifactReader(path, rootSource);
     case "godot-pck":
       return new GodotPckArtifactReader(path, rootSource);
     case "mach-o-universal":

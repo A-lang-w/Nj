@@ -1,3 +1,5 @@
+import { byteEntropySchema } from "../domain/native/byteEntropy.js";
+import { byteEntropySummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeFunctionMatchingSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
@@ -26,6 +28,7 @@ import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunction
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/native/nativeValueTrace.js";
+import { bundleResourceRootSchema } from "../domain/apple/bundleResourceRoot.js";
 import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
 import { nativeCallObservationResultSchema } from "../domain/native/nativeCallObservation.js";
 import {
@@ -87,6 +90,7 @@ import {
   lifecycleResultOf,
   nullableText,
   procedureInfoOutput,
+  objcClassDiscoveryOutput,
   evidenceResultOf,
   segmentOutput,
   sessionProvider,
@@ -165,9 +169,8 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   address_to_file_offset: evidenceResultOf(
     z.object({
       address: z.string(),
-      file_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      file_offset: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
       provider_file_offset: z
-        .number()
         .int()
         .min(0)
         .max(Number.MAX_SAFE_INTEGER)
@@ -176,7 +179,6 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
           "Original coordinate returned by the provider's mapping API.",
         ),
       image_base_file_offset: z
-        .number()
         .int()
         .min(0)
         .max(Number.MAX_SAFE_INTEGER)
@@ -257,14 +259,14 @@ const callPathTraceOutput = evidenceResultOf(
     nodes: z.array(
       z.object({
         address: z.string(),
-        depth: z.number().int().min(0),
+        depth: z.int().min(0),
       }),
     ),
     edges: z.array(
       z.object({
         source_address: z.string(),
         target_address: z.string(),
-        discovery_depth: z.number().int().min(1),
+        discovery_depth: z.int().min(1),
       }),
     ),
     traversal_path: z.array(z.string()),
@@ -276,7 +278,7 @@ const callPathTraceOutput = evidenceResultOf(
     ),
     relationship_coverage: z.record(z.string(), relationshipCoverageSchema),
     traversal: z.object({
-      nodes_visited: z.number().int().min(1),
+      nodes_visited: z.int().min(1),
     }),
     truncated: z.boolean(),
     residual_unknowns: z.array(z.string()),
@@ -308,7 +310,7 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   ),
   trace_native_values: evidenceResultOf(nativeValueTraceSchema),
   trace_native_ui_action: evidenceResultOf(nativeInvestigationTraceSchema),
-  get_objc_classes: symbolDiscoveryOutput("classes"),
+  get_objc_classes: objcClassDiscoveryOutput,
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   batch_decompile: evidenceResultOf(
     z.object({
@@ -332,9 +334,9 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
           }),
         ]),
       ),
-      total: z.number().int().min(0),
-      succeeded: z.number().int().min(0),
-      failed: z.number().int().min(0),
+      total: z.int().min(0),
+      succeeded: z.int().min(0),
+      failed: z.int().min(0),
     }),
   ),
   get_call_graph: evidenceResultOf(
@@ -345,11 +347,11 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   ),
   analyze_swift_types: evidenceResultOf(
     z.object({
-      total: z.number().int().min(0),
+      total: z.int().min(0),
       categories: z.record(
         z.string(),
         z.object({
-          count: z.number().int().min(0),
+          count: z.int().min(0),
           items: z.array(
             addressedEntry.extend({
               mangled_names: z.array(z.string()),
@@ -398,9 +400,9 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
           }),
         )
         .optional(),
-      segment_count: z.number().int().min(0).optional(),
-      procedure_count: z.number().int().min(0),
-      string_count: z.number().int().min(0),
+      segment_count: z.int().min(0).optional(),
+      procedure_count: z.int().min(0),
+      string_count: z.int().min(0),
     }),
   ),
   analyze_function: functionDossierOutput,
@@ -409,8 +411,15 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   trace_call_path: callPathTraceOutput,
 };
 
+/** Complete entropy Evidence or its retained summary, shared by the named contract. */
+export const byteEntropyOutputSchema = analysisDetailOutputSchemaOf(
+  byteEntropySchema,
+  byteEntropySummaryViewResultSchema,
+);
+
 /** Exact Evidence schemas for provider-neutral native inspection. */
 export const nativeOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  inspect_byte_entropy: byteEntropyOutputSchema,
   observe_native_ui: evidenceResultOf(nativeUiResultSchema),
   capture_native_ui_scenario: evidenceResultOf(nativeUiResultSchema),
   observe_native_calls: evidenceResultOf(nativeCallObservationResultSchema),
@@ -511,24 +520,22 @@ export const sessionOutputSchemas = {
       rawLifecycleTargetSchema,
     ]),
   ),
+  open_bundle_resources: lifecycleResultOf(bundleResourceRootSchema),
   close_binary: lifecycleResultOf(
     z.union([
       z.null(),
       z.object({
         path: z.string(),
-        bytes: z.number().int().min(0),
+        bytes: z.int().min(0),
         primitive_entries: z
-          .number()
           .int()
           .min(0)
           .describe("Retained eligible primitive query bindings."),
         workflow_entries: z
-          .number()
           .int()
           .min(0)
           .describe("Retained eligible composed workflow bindings."),
         evidence_records: z
-          .number()
           .int()
           .min(0)
           .describe(
@@ -542,6 +549,11 @@ export const sessionOutputSchemas = {
       sessionProvider.extend({ open: z.literal(false) }),
       sessionProvider.extend({
         open: z.literal(true),
+        session_kind: z.literal("bundle_resources"),
+        resource_root: bundleResourceRootSchema,
+      }),
+      sessionProvider.extend({
+        open: z.literal(true),
         ...detectedLifecycleTargetSchema.shape,
       }),
       sessionProvider.extend({
@@ -553,9 +565,9 @@ export const sessionOutputSchemas = {
   export_evidence_bundle: lifecycleResultOf(
     z.object({
       path: z.string(),
-      bytes: z.number().int().min(0),
-      records: z.number().int().min(0),
-      unknowns: z.number().int().min(0),
+      bytes: z.int().min(0),
+      records: z.int().min(0),
+      unknowns: z.int().min(0),
     }),
   ),
   get_evidence_bundle: lifecycleResultOf(
@@ -581,9 +593,9 @@ export const sessionOutputSchemas = {
   ),
   import_evidence_bundle: lifecycleResultOf(
     z.object({
-      imported: z.number().int().min(0),
-      unknowns_added: z.number().int().min(0),
-      total: z.number().int().min(0),
+      imported: z.int().min(0),
+      unknowns_added: z.int().min(0),
+      total: z.int().min(0),
     }),
   ),
   capture_process_scenario: evidenceResultOf(processCaptureSchema),
@@ -608,9 +620,9 @@ export const sessionOutputSchemas = {
   list_unknowns: lifecycleResultOf(
     z.object({
       items: z.array(residualUnknownSchema),
-      total: z.number().int().min(0),
-      offset: z.number().int().min(0),
-      next_offset: z.number().int().min(0).nullable(),
+      total: z.int().min(0),
+      offset: z.int().min(0),
+      next_offset: z.int().min(0).nullable(),
     }),
   ),
   record_unknown: lifecycleResultOf(residualUnknownSchema),

@@ -145,6 +145,9 @@ REA требует Node.js 22.x (>=22.19), 24.x (>=24.11) или 26+, а так�
 | Структура ELF без запуска           | Секции, сегменты, исходные символы/релокации и возможные механизмы защиты по данным статического анализа                   | pwntools, предоставленный вызывающей стороной, в Linux x64; [диагностика бинарных файлов](../binary-diagnostics.md)                      |
 | Байт-код EVM                        | Селекторы диспетчеризации, смещения байтов, предполагаемые аргументы и изменяемость состояния                              | Локальные необработанные байты или шестнадцатеричное представление в Linux x64; [руководство по EVM без запуска](../evm-bytecode.md)     |
 | Rust binaries                       | Embedded cargo-auditable dependency list                                                                                   | [Rust binaries](../rust-binaries.md)                                                                                                     |
+| PE certificates                     | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                               | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                  |
+| ELF notes                           | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                            | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                             |
+| Erlang BEAM                         | IFF chunks, atoms, exports, and tables                                                                                     | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                        |
 | Записанные сбои Linux               | Необработанные записи note, регистры/сигналы каждого записанного потока и необязательные кандидаты сопоставления с памятью | pwntools, предоставленный вызывающей стороной, в Linux x64; необязательные GDB/pwndbg; [записанные сбои](../recorded-crashes.md)         |
 | Установленные настольные приложения | Возможные среды выполнения, файлы с доказательствами, компоненты и дальнейшие шаги                                         | Ограниченная проверка каталогов и заголовков；[Настольные приложения](../desktop-applications.md)                                        |
 | JavaScript / Electron               | Модули, импорты, карты исходного кода, маршруты, IPC и связи с нативными дополнениями                                      | Node.js и npm; [анализ приложений](../javascript-application-workflows.md)                                                               |
@@ -162,6 +165,7 @@ REA требует Node.js 22.x (>=22.19), 24.x (>=24.11) или 26+, а так�
 | Записанные логические сигналы       | Аннотации декодера, диапазоны отсчётов и диагностика                                                                       | Linux: sigrok-cli 0.7.2 + prlimit; [руководство по сигналам](../signal-recordings.md)                                                    |
 | Пакеты и ресурсы                    | Списки файлов, хеши, plist, структура пакетов Apple и извлечённые ресурсы                                                  | [Руководство по артефактам и JavaScript](../javascript-artifact-reconstruction.md), [приложения Apple](../apple-application-analysis.md) |
 | Поведение процессов                 | Вывод терминала, взаимодействия, наблюдения за завершением и файловой системой, сравнения запусков                         | Linux/macOS с нативным PTY; [захват процессов](../process-capture.md)                                                                    |
+| PyInstaller                         | CArchive, PYZ, Python bytecode                                                                                             | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                    |
 
 Статическое исследование JavaScript и .NET читает предоставленные файлы, не запуская приложение. Захват во время выполнения запускает выбранную цель или взаимодействует с ней с правами вашего пользователя; соответствующие руководства описывают последствия.
 
@@ -264,6 +268,8 @@ npx rea-agents@latest setup
 
 - [Установка и настройка](../installation.md): регистрация агентов, настройка провайдеров, обновление и удаление.
 - [Готовность и устранение неполадок](../installation.md#check-readiness-for-your-task): диагностика конкретного агента или движка анализа.
+- [CUDA / HIP](../gpu-code-objects.md)
+- [GGUF / safetensors](../model-artifacts.md)
 - [CLI и Evidence](../cli.md): команды, выбор провайдера, снимки, импорт/экспорт и коды завершения.
 - [Контракты MCP](../mcp-contracts.md) и [промпты агентов](../mcp-prompts.md): результаты инструментов, сеансы и исследования с подсказками.
 - [Каталог инструментов](../mcp-contracts.md#generated-catalog): создаваемый при сборке перечень инструментов, провайдеров и команд CLI.
