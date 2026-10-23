@@ -79,6 +79,8 @@ type MarshalValue =
       readonly bytes: number;
       /** Marshal bytes. JavaScript strings merge lone surrogates with pairs. */
       readonly raw: Buffer;
+      /** UTF-16 end of the bounded prefix, measured at source code-point boundaries. */
+      readonly previewEnd: number;
     }
   | { readonly kind: "tuple"; readonly items: MarshalValue[] }
   | { readonly kind: "list"; readonly items: MarshalValue[] }
@@ -1459,13 +1461,14 @@ class MarshalReader {
       return {
         kind: "str",
         value: bytes.toString("latin1"),
+        previewEnd: Math.min(length, PYTHON_PYC_CONST_PREVIEW_LIMIT),
         bytes: length,
         raw: bytes,
       };
     }
     return {
       kind: "str",
-      value: decodeSurrogatePass(bytes),
+      ...decodeSurrogatePass(bytes),
       bytes: length,
       raw: bytes,
     };
@@ -1547,9 +1550,13 @@ class MarshalReader {
  * Decode marshal UTF-8 the way CPython does (`surrogatepass`): encoded lone
  * surrogates are kept, every other ill-formed sequence is rejected.
  */
-const decodeSurrogatePass = (bytes: Buffer): string => {
+const decodeSurrogatePass = (
+  bytes: Buffer,
+): { value: string; previewEnd: number } => {
   const units: number[] = [];
   let text = "";
+  let decodedUnits = 0;
+  let previewEnd = 0;
   for (let index = 0; index < bytes.length;) {
     const lead = bytes[index] ?? 0;
     let codePoint: number;
@@ -1583,13 +1590,16 @@ const decodeSurrogatePass = (bytes: Buffer): string => {
     )
       return malformed("Marshal string is not valid UTF-8.");
     units.push(codePoint);
+    decodedUnits += codePoint > 0xffff ? 2 : 1;
+    if (decodedUnits <= PYTHON_PYC_CONST_PREVIEW_LIMIT)
+      previewEnd = decodedUnits;
     index += width;
     if (units.length === 4096) {
       text += codePointsToString(units);
       units.length = 0;
     }
   }
-  return text + codePointsToString(units);
+  return { value: text + codePointsToString(units), previewEnd };
 };
 
 const codePointsToString = (codePoints: readonly number[]): string =>
@@ -1695,19 +1705,11 @@ const buildConstSummary = (value: MarshalValue): PythonPycConst => {
       return { kind: "float", value: jsonFloat(value.value) };
     case "str": {
       const truncated = value.value.length > PYTHON_PYC_CONST_PREVIEW_LIMIT;
-      // Keep the UTF-16 budget without splitting a source surrogate pair.
-      // A source-encoded lone surrogate is preserved rather than repaired.
-      const end =
-        truncated &&
-        (value.value.codePointAt(PYTHON_PYC_CONST_PREVIEW_LIMIT - 1) ?? 0) >
-          0xffff
-          ? PYTHON_PYC_CONST_PREVIEW_LIMIT - 1
-          : PYTHON_PYC_CONST_PREVIEW_LIMIT;
       return {
         kind: "str",
         bytes: value.bytes,
         truncated,
-        value: truncated ? value.value.slice(0, end) : value.value,
+        value: truncated ? value.value.slice(0, value.previewEnd) : value.value,
       };
     }
     case "bytes":

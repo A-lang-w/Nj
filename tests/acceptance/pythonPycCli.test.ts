@@ -796,3 +796,44 @@ cliTest(
     expect(toon.stdout).not.toContain("�");
   },
 );
+
+cliTest(
+  "distinguishes source surrogate code points from astral scalars at the preview cut",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-source-boundary-");
+    const path = join(root, "source-boundaries.pyc");
+    const prefix = "a".repeat(79);
+    const scalar = Buffer.from(prefix + "𐀀z");
+    const separate = Buffer.concat([
+      Buffer.from(prefix),
+      Buffer.from([0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80]),
+      Buffer.from("z"),
+    ]);
+    await writeFile(
+      path,
+      Buffer.concat([
+        pythonPycHeader(3531),
+        marshalCode("py311", {
+          consts: [marshalUtf8(scalar), marshalUtf8(separate)],
+        }),
+      ]),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const schema = toolContract("inspect_python_pyc").outputSchema;
+    const report = schema.parse(response.json).normalized_result;
+    expect(report.code_objects[0]?.consts).toEqual([
+      { kind: "str", value: prefix, bytes: 84, truncated: true },
+      { kind: "str", value: prefix + "\ud800", bytes: 86, truncated: true },
+    ]);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+    const mcp = await call("inspect_python_pyc", { path });
+    expect(mcp.isError).not.toBe(true);
+    expect(schema.parse(mcp.structuredContent).normalized_result).toEqual(
+      report,
+    );
+  },
+);
