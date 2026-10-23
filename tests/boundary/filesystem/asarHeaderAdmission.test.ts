@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { SafeOutputSourceFailure } from "../../../src/artifacts/SafeOutputSourceFailure.js";
 import {
   admitAsarHeader,
   asarHeaderAdmissionRecovery,
@@ -265,12 +266,21 @@ it("keeps header admission recovery while scope cleanup is pending and after ret
       },
     });
     if (attempt.kind !== "failed") throw new Error("Expected owned failure");
-    const error = translateArtifactFailure(
-      "inventory_artifact",
-      scope.cleanupFailure({ kind: "failed", cause: inventoryFailure }, [
-        attempt,
-      ]),
+    const raw = scope.cleanupFailure(
+      { kind: "failed", cause: inventoryFailure },
+      [attempt],
     );
+    // Producing wrappers keep the named admission themselves, not only after translation.
+    expect(inventoryFailure.admission).toMatchObject({ kind: "asar-header" });
+    expect(raw.admission).toEqual(inventoryFailure.admission);
+    expect(
+      new SafeOutputSourceFailure(inventoryFailure, [
+        new ArtifactReaderFailure("io", "source close failed", {
+          cleanup: { reason: "source close failed", resources: ["source"] },
+        }),
+      ]).admission,
+    ).toEqual(inventoryFailure.admission);
+    const error = translateArtifactFailure("inventory_artifact", raw);
     const expected = {
       message: recovery,
       remediation: { action: recovery },

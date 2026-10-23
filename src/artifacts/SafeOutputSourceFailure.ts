@@ -59,6 +59,9 @@ export class SafeOutputSourceFailure extends ArtifactReaderFailure {
         ...(projected.boundary === undefined
           ? {}
           : { boundary: projected.boundary }),
+        ...(projected.admission === undefined
+          ? {}
+          : { admission: projected.admission }),
       },
       projected.details,
     );

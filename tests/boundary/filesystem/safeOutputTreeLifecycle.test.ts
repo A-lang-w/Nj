@@ -13,6 +13,7 @@ import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperati
 import { firmwareFailure } from "../../../src/firmware/FirmwareFailures.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const expected = {
@@ -225,6 +226,104 @@ it.each([false, true])(
       await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
     } finally {
       await lease.release();
+      expect(await tree.rollback()).toEqual({
+        status: "complete",
+        residualPaths: [],
+      });
+    }
+  },
+);
+
+it.each(
+  // Finalization waits in the iterator until close; silent finalization joins it.
+  (["refusal", "finalization", "silent-finalization"] as const).flatMap(
+    (phase) =>
+      (["prompt", "late-close", "late-error"] as const).map((destruction) => ({
+        phase,
+        destruction,
+      })),
+  ),
+)(
+  "bounds source destruction by cancellation and retains it until closure: %j",
+  async ({ phase, destruction }) => {
+    const root = await createTestTempDirectory("rea-stalled-source-");
+    const tree = await SafeOutputTree.create(join(root, "output"));
+    const controller = new AbortController();
+    const cancellation = new Error("caller cancelled");
+    const failure = new Error("late source destruction failed");
+    let finishDestroy: ((error: Error | null) => void) | undefined;
+    const source = new Readable({
+      emitClose: phase !== "silent-finalization",
+      read() {
+        this.push(Buffer.from("owned"));
+        this.push(null);
+      },
+      destroy(_error, callback) {
+        finishDestroy = callback;
+        if (destruction === "prompt")
+          void delay(200).then(() => callback(null));
+      },
+    });
+    const relativePath = phase === "refusal" ? "../outside" : "file";
+    // Refusal sees cancellation before destruction; finalization sees it while joining.
+    if (phase === "refusal") controller.abort(cancellation);
+    else void delay(100).then(() => controller.abort(cancellation));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        tree
+          .write(relativePath, source, expected, controller.signal)
+          .catch((cause: unknown) => cause),
+        new Promise<"stalled">((resolve) => {
+          timer = setTimeout(() => resolve("stalled"), 4_000);
+        }),
+      ]);
+      expect(result).not.toBe("stalled");
+      expect(result).toMatchObject({
+        reason: phase === "refusal" ? "path" : "cancelled",
+      });
+      const translated = translateArtifactFailure("extract_artifact", result);
+      const firmware = firmwareFailure(result, {
+        engine: "unblob",
+        operation: "extract_firmware",
+      });
+      if (destruction === "prompt") {
+        // Destruction that settles within the grace is not reported as cleanup.
+        expect(result).not.toBeInstanceOf(SafeOutputSourceFailure);
+        expect(source.closed).toBe(true);
+        expect(translated.cleanupIncomplete).toBe(false);
+        expect(firmware.cleanupIncomplete).toBe(false);
+        return;
+      }
+      expect(source.closed).toBe(false);
+      expect(result).toBeInstanceOf(SafeOutputSourceFailure);
+      const resource = `input stream for ${relativePath}`;
+      const [unsettled] = (result as SafeOutputSourceFailure).sourceFailures;
+      expect(unsettled).toMatchObject({
+        reason: "cancelled",
+        cancellation: { reason: cancellation },
+        cleanup: { resources: [resource] },
+      });
+      for (const error of [translated, firmware]) {
+        expect(error.cleanupIncomplete).toBe(true);
+        expect(error.cleanupResources).toEqual([resource]);
+      }
+      expect(projectAnalysisError(translated).code).toBe("cleanup_incomplete");
+      // Only observed closure releases the retained owner; a late error keeps it.
+      const [lease] = (unsettled as ArtifactReaderFailure).cleanupLeases ?? [];
+      finishDestroy?.(destruction === "late-error" ? failure : null);
+      if (destruction === "late-error")
+        await expect(lease?.release()).rejects.toBe(failure);
+      else await lease?.release();
+      expect(source.closed).toBe(true);
+      // Node's iterator keeps its end-of-stream listener after an error.
+      if (phase !== "finalization" || destruction !== "late-error")
+        expect(source.listenerCount("error")).toBe(0);
+      for (const error of [translated, firmware])
+        expect(error.cleanupIncomplete).toBe(destruction === "late-error");
+    } finally {
+      clearTimeout(timer);
+      finishDestroy?.(null);
       expect(await tree.rollback()).toEqual({
         status: "complete",
         residualPaths: [],
