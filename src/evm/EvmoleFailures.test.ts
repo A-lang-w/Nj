@@ -47,6 +47,22 @@ it(
     expect(result.remediationAction).toContain(
       "Do not truncate required bytes",
     );
+    const projected = projectAnalysisError(result);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_evm_interface",
+        resource: "file-size",
+        reported_limits: { maximum_input_bytes: 4194304 },
+      },
+    });
+    expect(projected.remediation.action).toContain(
+      "Do not truncate required bytes",
+    );
+    expect(projected.remediation.action).toContain(
+      "retrying the unchanged oversized input will fail again",
+    );
   },
 );
 
@@ -65,6 +81,20 @@ it("keeps non-file-size artifact refusals as input errors", () => {
     ).toBeInstanceOf(AnalysisInputError);
   }
 });
+
+it.each(["worker", "configuration"] as const)(
+  "does not classify file-size-shaped failures from the %s phase as input limits",
+  (phase) => {
+    const source = new ArtifactReaderFailure(
+      "limit",
+      "Selected artifact exceeds 4194304 bytes: /selected.hex",
+      { boundary: "file-size" },
+    );
+    const result = evmInterfaceFailure(source, phase, "/selected.hex");
+    expect(result).not.toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(result).not.toBeInstanceOf(AnalysisInputError);
+  },
+);
 
 it.each([
   undefined,
