@@ -16,14 +16,16 @@ export interface PeImportFixtureDll {
  * Minimal PE32/PE32+ image whose `.idata` section holds IMAGE_IMPORT_DESCRIPTOR
  * and optional IMAGE_DELAYLOAD_DESCRIPTOR tables at RVA 0x1000.
  */
-export const peImportImage = (options: {
-  readonly bits?: 32 | 64;
-  readonly dlls?: readonly PeImportFixtureDll[];
-  readonly delayDlls?: readonly PeImportFixtureDll[];
-  readonly delayAttributes?: number;
-  readonly importDirectory?: boolean;
-  readonly delayDirectory?: boolean;
-}): Buffer => {
+export const peImportImage = (
+  options: {
+    readonly bits?: 32 | 64;
+    readonly dlls?: readonly PeImportFixtureDll[];
+    readonly delayDlls?: readonly PeImportFixtureDll[];
+    readonly delayAttributes?: number;
+    readonly importDirectory?: boolean;
+    readonly delayDirectory?: boolean;
+  } = {},
+): Buffer => {
   const bits = options.bits ?? 64;
   const dlls = options.dlls ?? [
     {
