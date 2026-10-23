@@ -54,7 +54,7 @@ import {
   environmentToolAnswer,
   type EnvironmentToolAnswer,
 } from "./environmentToolAnswer.js";
-import { type EnvironmentToolDefinition } from "./environmentTools.js";
+import type { EnvironmentToolDefinition } from "./environmentTools.js";
 import { same } from "../../domain/analysisView/environmentStateRules.js";
 
 /** One probe capture file: its label for the report and its parsed JSON. */
