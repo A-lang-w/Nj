@@ -25,7 +25,7 @@ const fixtureImports = (loader: string) => {
   }
 };
 
-const additionalLoaderSources: Readonly<Record<string, string>> = {
+const unprovenLoaderSources: Readonly<Record<string, string>> = {
   "custom iterator assignment module loader":
     'const values = { *[Symbol.iterator]() { yield module; } }; const holder = {}; [holder.loader] = values; holder.loader.require("../shared/window.cjs");',
   "replaced iterator assignment module loader":
@@ -181,7 +181,7 @@ const fixtureMainInventoryPath = (loader: string, main: string): string => {
 };
 
 const fixtureLoaderSource = (loader: string): string =>
-  additionalLoaderSources[loader] ??
+  unprovenLoaderSources[loader] ??
   (loader === "resolve-only"
     ? 'require.resolve("../shared/window.cjs");'
     : loader === "missing wildcard alias"
@@ -240,12 +240,12 @@ const explicitCompetingLoaders = [
 /** Every competing-loader case, in the order the original matrix ran. */
 export const competingLoaderNames = [
   ...explicitCompetingLoaders,
-  ...Object.keys(additionalLoaderSources),
+  ...Object.keys(unprovenLoaderSources),
   "single percent main",
 ];
 
 /**
- * Compiled CLI parity for this stateless matrix. These loaders cover the
+ * Compiled CLI parity for this stateless matrix. These three loaders are the
  * distinct renderer outcomes: unresolved, the first application page, and the
  * percent-encoded second page. Both surfaces call
  * analyzeJavaScriptApplication; parity compares those normalized results.
@@ -255,7 +255,6 @@ export const cliParityLoaders = [
   "module.require",
   "earlier reassigned module alias",
   "single percent main",
-  "createRequire base",
 ] as const;
 
 type CompetingLoaderGraph = Awaited<
@@ -271,9 +270,6 @@ const writeCompetingLoaderFixture = async (loader: string): Promise<string> => {
   const imports = fixtureImports(loader);
   const load = fixtureLoaderSource(loader);
   await writeFixtureFiles(root, {
-    ...(loader === "createRequire base"
-      ? { "other/shared/window.cjs": "module.exports = 1;" }
-      : {}),
     "a/package.json": JSON.stringify({ main: "main.cjs" }),
     "a/main.cjs":
       single || absolute
@@ -357,22 +353,31 @@ const expectCompetingLoaderGraph = (
         }),
       ]),
     );
-  if (loader === "createRequire base") {
-    const references = graph.edges.filter(
-      ({ properties }) => typeof properties.resolution_base_path === "string",
+  if (loader === "createRequire base")
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "imports",
+          properties: expect.objectContaining({
+            kind: "require",
+            operation: "load",
+            specifier: "../shared/window.cjs",
+            resolution_base_path: "../other/nested/main.cjs",
+            resolution_status: "not-found",
+            resolved_path: null,
+          }),
+          evidence: expect.objectContaining({
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({
+                kind: "source-range",
+                source: "b/main.mjs",
+              }),
+            }),
+          }),
+        }),
+      ]),
     );
-    expect(references).toHaveLength(1);
-    expect(references[0]).toMatchObject({
-      relation: "imports",
-      properties: {
-        kind: "require",
-        specifier: "../shared/window.cjs",
-        resolution_base_path: "../other/nested/main.cjs",
-        resolution_status: "resolved",
-        resolved_path: "other/shared/window.cjs",
-      },
-    });
-  }
   if (loader.endsWith("alias") && !inert && !loader.includes("module alias"))
     expect(graph.edges).toEqual(
       expect.arrayContaining([

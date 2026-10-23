@@ -89,7 +89,7 @@ export const inspectCall = (
       node,
       kind: "require",
       specifier: requireCall.specifier,
-      ...(requireCall.resolutionOnly ? { resolution_only: true } : {}),
+      operation: requireCall.operation,
       ...(requireCall.resolutionBasePath === undefined
         ? {}
         : { resolutionBasePath: requireCall.resolutionBasePath }),
@@ -268,25 +268,24 @@ const requireCallReference = (
   resolveMemberChanged = false,
 ): {
   readonly specifier: string | undefined;
+  readonly operation: "load" | "resolve";
   readonly resolutionBasePath?: string;
-  readonly resolutionOnly: boolean;
 } | null => {
   if (call === undefined || call.loader === "local") return null;
-  const resolutionOnly =
-    call.resolverReceiver !== undefined &&
-    !resolveMemberChanged &&
-    call.loader !== "unknown";
   if (
     resolveMemberChanged ||
     call.loader === "unknown" ||
     !call.sourceRelative
   ) {
     context.accumulator.unknownFindings += 1;
-    return { specifier: undefined, resolutionOnly };
+    return {
+      specifier: undefined,
+      operation: resolveMemberChanged ? "load" : call.operation,
+    };
   }
   return {
+    operation: call.operation,
     specifier: argumentValue(call.arguments?.[0]),
-    resolutionOnly,
     ...(call.sourceRelativePath === undefined
       ? {}
       : { resolutionBasePath: call.sourceRelativePath }),
@@ -304,11 +303,11 @@ export const finishModuleRequireCalls = (
       index.bindings,
       context.accumulator.factoryRequireBindingIds,
     );
-    const resolverReceiver = callFact?.resolverReceiver;
+    const receiver = callFact?.resolverReceiver;
     const resolveMemberChanged =
-      resolverReceiver !== undefined &&
+      receiver !== undefined &&
       index
-        .effectsForReferenceAt(node, resolverReceiver, ["resolve"])
+        .effectsForReferenceAt(node, receiver, ["resolve"])
         .effects.some(
           ({ kind, timing }) =>
             timing !== "after" &&
@@ -320,7 +319,7 @@ export const finishModuleRequireCalls = (
         node,
         kind: "require",
         specifier: call.specifier,
-        ...(call.resolutionOnly ? { resolution_only: true } : {}),
+        operation: call.operation,
         ...(call.resolutionBasePath === undefined
           ? {}
           : { resolutionBasePath: call.resolutionBasePath }),
@@ -937,11 +936,11 @@ export const addReference = (
       : { specifier, expression: null };
   addLocatedFinding(context, {
     collection: context.accumulator.references,
-    key: `reference\0${input.kind}\0${input.resolution_only ? "resolve-only\0" : ""}${reference.specifier ?? reference.expression}\0${input.resolutionBasePath ?? ""}`,
+    key: `reference\0${input.kind}\0${input.operation ?? "load"}\0${reference.specifier ?? reference.expression}\0${input.resolutionBasePath ?? ""}`,
     node: input.node,
     value: {
       kind: input.kind,
-      ...(input.resolution_only ? { resolution_only: true } : {}),
+      operation: input.operation ?? "load",
       ...reference,
       ...(input.resolutionBasePath === undefined
         ? {}

@@ -22,8 +22,8 @@ export interface JavaScriptSourceRange {
 }
 
 interface JavaScriptStaticReferenceState {
-  /** A proven native resolver associates a path without invoking module loading. */
-  readonly resolution_only?: true;
+  /** Resolution discovers a target without loading or executing it. */
+  readonly operation: "load" | "resolve";
   readonly kind:
     | "static-import"
     | "dynamic-import"

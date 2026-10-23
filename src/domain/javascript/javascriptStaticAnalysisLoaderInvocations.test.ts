@@ -27,7 +27,6 @@ it.each(["require", "require.resolve", "require.main"])(
               expect.objectContaining({
                 kind: "require",
                 specifier: "node:path",
-                resolution_only: true,
               }),
             ]
           : [],
@@ -154,13 +153,17 @@ it("retains a mutated require.resolve request as an unknown fact", () => {
       parse_state: "partial",
     }),
   ]);
-  const references = analyzeJavaScriptStaticSource(source).references.filter(
-    ({ kind }) => kind === "require",
-  );
-  expect(references).toEqual([
-    expect.objectContaining({ kind: "require", specifier: null }),
+  expect(
+    analyzeJavaScriptStaticSource(source).references.filter(
+      ({ kind }) => kind === "require",
+    ),
+  ).toEqual([
+    expect.objectContaining({
+      kind: "require",
+      operation: "load",
+      specifier: null,
+    }),
   ]);
-  expect(references[0]?.resolution_only).toBeUndefined();
 });
 
 it("does not treat bundler factory resolve members as Node resolvers", () => {
@@ -419,13 +422,16 @@ it("retains an alternate createRequire filename in static reference facts", () =
   ]);
 });
 
-it("keeps a real loader stored on a resolve property executable", () => {
+it("retains possible loading for a callable stored on a resolve property", () => {
   const source = `${imported}const require={resolve:make(import.meta.url)};require.resolve("./window.cjs");`;
   const references = analyzeJavaScriptStaticSource(source).references.filter(
     ({ kind }) => kind === "require",
   );
-  expect(references).toMatchObject([{ specifier: "./window.cjs" }]);
-  expect(references[0]?.resolution_only).toBeUndefined();
+  expect(references).toHaveLength(1);
+  expect(references[0]?.operation).toBe("load");
+  expect(references[0]?.specifier ?? references[0]?.expression).toContain(
+    "./window.cjs",
+  );
 });
 
 it("retains native resolver identity independently of an unknown filename base", () => {
@@ -437,7 +443,7 @@ it("retains native resolver identity independently of an unknown filename base",
   ).toMatchObject([
     {
       specifier: null,
-      resolution_only: true,
+      operation: "resolve",
       expression: expect.stringContaining("load.resolve"),
     },
   ]);

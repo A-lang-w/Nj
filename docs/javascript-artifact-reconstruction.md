@@ -273,11 +273,6 @@ Selected bounded text is then parsed as inert data to recover:
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on.
 
-Proven native `require.resolve()` references retain `resolution_only: true`.
-They associate a module path without establishing execution or propagating an
-Electron application owner. A replaced or otherwise unresolved resolver remains
-uncertain. Resolving and loading the same path retain distinct reference facts.
-
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,
 while locally shadowed receivers can still contribute network endpoint
@@ -781,6 +776,16 @@ source-relative `resolution_base_path` on the graph edge. This follows Node's
 does not change the source file or call-site Evidence identity. If the filename
 cannot be proven, REA keeps the require target unresolved rather than silently
 resolving it from the caller's directory.
+
+Module-reference graph edges, including native-addon `loads` edges, retain
+`properties.operation`: `load` identifies
+an import or loader invocation that may execute the target; `resolve` identifies
+a proven `require.resolve()` lookup that discovers a target without executing it.
+Both retain the exact specifier, resolution mode, selected resolution base, and
+call-site Evidence. Resolve-only edges do not propagate application ownership or
+create executable-import gaps when their targets are missing. A modified
+`.resolve` member remains an uncertain `load`, because its replacement may execute
+code. These static facts do not establish that a call runs at runtime.
 
 ESM relative module paths, legacy package subpaths without exports, and selected
 package exports targets use URL suffix handling and one percent-decoding pass.

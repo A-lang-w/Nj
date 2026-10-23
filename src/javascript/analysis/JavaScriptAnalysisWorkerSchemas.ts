@@ -296,7 +296,7 @@ const electron = z
   }));
 const referenceShape = {
   ...findingContext,
-  resolution_only: z.literal(true).exactOptional(),
+  operation: z.enum(["load", "resolve"]),
   resolution_base_path: z.string().exactOptional(),
   kind: z.enum([
     "static-import",
