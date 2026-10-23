@@ -104,12 +104,12 @@ export const evidenceLocationSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
   z.strictObject({
     kind: z.literal("file-offset"),
-    offset: z.number().int().min(0),
+    offset: z.int().min(0),
   }),
   z.strictObject({
     kind: z.literal("file-offset-range"),
-    start: z.number().int().min(0),
-    end: z.number().int().min(0),
+    start: z.int().min(0),
+    end: z.int().min(0),
   }),
 ]);
 
@@ -227,11 +227,7 @@ export const rebindEvidenceSubjectTargetPath = (
 type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
-export interface EvidenceProvider {
-  readonly id: string;
-  readonly name: string;
-  readonly version: string | null;
-}
+export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;
 
 export interface EvidenceObservation {
   readonly predicateType?: string;

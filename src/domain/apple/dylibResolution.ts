@@ -82,19 +82,19 @@ const dependencySchema = z.strictObject({
 export const machoSliceSchema = z.strictObject({
   architecture: z.string().min(1),
   /** Physical identity observed in the thin header and, for FAT, its table. */
-  slice_offset: z.number().int().nonnegative(),
-  slice_size: z.number().int().positive(),
-  cpu_type: z.number().int().nonnegative(),
-  cpu_subtype: z.number().int().nonnegative(),
-  fat_cpu_type: z.number().int().nonnegative().nullable(),
-  fat_cpu_subtype: z.number().int().nonnegative().nullable(),
-  fat_alignment_exponent: z.number().int().nonnegative().nullable(),
+  slice_offset: z.int().nonnegative(),
+  slice_size: z.int().positive(),
+  cpu_type: z.int().nonnegative(),
+  cpu_subtype: z.int().nonnegative(),
+  fat_cpu_type: z.int().nonnegative().nullable(),
+  fat_cpu_subtype: z.int().nonnegative().nullable(),
+  fat_alignment_exponent: z.int().nonnegative().nullable(),
   file_type: z.enum(["execute", "dylib", "bundle", "other"]),
-  file_type_code: z.number().int().nonnegative(),
+  file_type_code: z.int().nonnegative(),
   /** Raw LC_BUILD_VERSION platform number; null means no such command was observed. */
-  platform: z.number().int().nonnegative().nullable(),
+  platform: z.int().nonnegative().nullable(),
   /** Every distinct build platform declared by LC_BUILD_VERSION/version-min commands. */
-  platforms: z.array(z.number().int().nonnegative()),
+  platforms: z.array(z.int().nonnegative()),
   install_name: z.string().nullable(),
   dependencies: z.array(dependencySchema),
   rpaths: z.array(z.string()),
@@ -182,7 +182,7 @@ const findingSchema = z.strictObject({
     "earlier-rpath-candidate-absent",
     "dyld-environment-present",
   ]),
-  edge_index: z.number().int().nonnegative().nullable(),
+  edge_index: z.int().nonnegative().nullable(),
   image: z.string().nullable(),
   basis: z.literal("derived"),
   explanation: z.string().min(1),
@@ -350,12 +350,14 @@ const evaluateCandidate = async (
   let outcome: Candidate["outcome"];
   if (facts.status !== "parsed") outcome = facts.status;
   else {
-    const slice = compatibleSlice(facts.slices, context.processIdentity);
-    if (slice === undefined) outcome = "architecture-missing";
+    const selection = compatibleSlice(facts.slices, context.processIdentity);
+    if (selection.kind === "unknown") outcome = "undetermined";
+    else if (selection.kind === "missing") outcome = "architecture-missing";
     // Dependency commands require a dylib; generic dyld image loadability
     // also admits main executables and bundles for different operations.
-    else if (slice.file_type_code !== 6) outcome = "not-loadable";
+    else if (selection.slice.file_type_code !== 6) outcome = "not-loadable";
     else {
+      const { slice } = selection;
       const platformResult = platformLoadability(context, slice);
       outcome =
         platformResult.outcome === "compatible"
@@ -544,10 +546,11 @@ const resolveDependency = async (
       : searched;
   const image =
     resolved.image === null ? undefined : context.images.get(resolved.image);
-  const slice =
+  const selection =
     image?.status === "parsed"
       ? compatibleSlice(image.slices, context.processIdentity)
       : undefined;
+  const slice = selection?.kind === "selected" ? selection.slice : undefined;
   return {
     root: context.root,
     architecture: context.processIdentity.architecture,
@@ -602,11 +605,12 @@ const traceProcess = async (
       const image = edge.resolution.image;
       if (image === null || context.loaded.has(image)) continue;
       const facts = context.images.get(image);
-      const slice =
+      const selection =
         facts?.status === "parsed"
           ? compatibleSlice(facts.slices, context.processIdentity)
           : undefined;
-      if (slice === undefined) continue;
+      if (selection?.kind !== "selected") continue;
+      const { slice } = selection;
       context.loaded.set(image, {
         slice,
         chain: [...current.chain, image],

@@ -1,3 +1,4 @@
+import { nodeCodecResult } from "../compression/NodeCodecResult.js";
 import { constants, inflate, zstdDecompress } from "node:zlib";
 import { promisify } from "node:util";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
@@ -10,6 +11,7 @@ export const decodeGpuPayload = async (
   compression: "zlib" | "zstd" | "lz4",
   expected: number,
   signal?: AbortSignal,
+  allowZeroPadding = false,
 ): Promise<Buffer> => {
   assertArtifactReadActive(signal);
   if (compression === "lz4") return decodeLz4Block(bytes, expected, signal);
@@ -30,22 +32,14 @@ export const decodeGpuPayload = async (
     );
   }
   assertArtifactReadActive(signal);
+  const { buffer: decoded, consumedBytes: consumed } = nodeCodecResult(result);
   if (
-    typeof result !== "object" ||
-    result === null ||
-    !("buffer" in result) ||
-    !Buffer.isBuffer(result.buffer) ||
-    !("engine" in result) ||
-    typeof result.engine !== "object" ||
-    result.engine === null ||
-    !("bytesWritten" in result.engine) ||
-    typeof result.engine.bytesWritten !== "number"
+    consumed !== bytes.length &&
+    (!allowZeroPadding ||
+      consumed < 0 ||
+      consumed > bytes.length ||
+      !bytes.subarray(consumed).every((byte) => byte === 0))
   )
-    throw new Error(
-      "Built-in GPU decoder omitted its buffer or consumed-input accounting",
-    );
-  const decoded = result.buffer;
-  if (result.engine.bytesWritten !== bytes.length)
     rejectGpu(
       "GPU compressed payload contains bytes outside its complete codec stream",
     );

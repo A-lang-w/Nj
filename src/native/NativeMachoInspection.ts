@@ -13,7 +13,7 @@ import {
   MACHO_ARCHITECTURE_POLICIES,
   selectMachoArchitectureName,
 } from "./MachoArchitectureSelection.js";
-import { parseDyldSymbols } from "./parsers/dyldInfo.js";
+import { parseDyldExports, parseDyldImports } from "./parsers/dyldInfo.js";
 import { parseLipoOutput, type LipoArchitecture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import { parseOtoolLoadCommands } from "./parsers/otool.js";
@@ -246,9 +246,12 @@ const normalizeMacho = (
   const dyldExportsCapture = byTool("dyld_info", 1);
   const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
   const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
+  const hasChainedFixups = load.commands.some(
+    ({ kind }) => kind === "LC_DYLD_CHAINED_FIXUPS",
+  );
   const imports = missingImportsUuid
     ? []
-    : parseDyldSymbols(sliceOutput(dyldImportsCapture), "imports");
+    : parseDyldImports(sliceOutput(dyldImportsCapture), hasChainedFixups);
   const imageBase =
     load.segments.find(
       (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
@@ -256,9 +259,8 @@ const normalizeMacho = (
   const nmExports = parseNmExports(byTool("nm").stdout);
   const dyldExports = missingExportsUuid
     ? []
-    : parseDyldSymbols(
+    : parseDyldExports(
         sliceOutput(dyldExportsCapture),
-        "exports",
         imageBase,
         new Set(nmExports.map(({ name }) => name)),
       );
@@ -332,6 +334,11 @@ const normalizeMacho = (
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
       ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
+      ...(imports.some(({ name_status }) => name_status === "ambiguous")
+        ? [
+            "Chained import text contains symbol/addend expressions whose split is ambiguous.",
+          ]
+        : []),
     ]),
     exports: covered(exports, false, [
       ...(missingExportsUuid
@@ -379,9 +386,10 @@ const namesEveryExport = (
 ): boolean => {
   const names = new Set(parseNmExports(nmOutput).map(({ name }) => name));
   return sliceOutput(dyldExports)
-    .split(/\r?\n/u)
+    .split("\n")
     .every((rawLine, index) => {
-      const line = rawLine.trim();
+      // Keep a trailing carriage return: it belongs to the exported name.
+      const line = rawLine.trimStart();
       if (
         line.length === 0 ||
         (index === 0 && line.endsWith(":")) ||
@@ -389,17 +397,18 @@ const namesEveryExport = (
         /^offset\s+symbol$/u.test(line)
       )
         return true;
-      const rows = parseDyldSymbols(line, "exports", null, names);
+      const rows = parseDyldExports(line, null, names);
       // The parser withholds a row only when nm names both of its readings.
       if (rows.length === 0)
-        return names.has(/^0x[\da-f]+\s+(.+)$/iu.exec(line)?.[1] ?? "");
+        return names.has(/^0x[\da-f]+\s+(.+)$/isu.exec(line)?.[1] ?? "");
       return rows.length === 1 && names.has(rows[0]!.name);
     });
 };
 
+// nm -j ends each name with LF; a carriage return before it is part of the name.
 const parseNmExports = (output: string) =>
   output
-    .split(/\r?\n/u)
+    .split("\n")
     .filter((name) => name.length > 0)
     .map((name) => ({
       name,

@@ -1,6 +1,6 @@
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
-  ArtifactFileCleanupFailure,
+  artifactFilePrimaryFailure,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -30,7 +30,8 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { readGoBinaryImage } from "./GoBinaryImage.js";
+import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
+import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -131,18 +132,8 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
   });
 };
 
-const failureFor = (
-  cause: unknown,
-  path: string,
-  signal?: AbortSignal,
-): AnalysisError => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? failureForPrimary(cause.fileCleanupFailure.outcome.cause, path)
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path);
+const failureFor = (cause: unknown, path: string): AnalysisError => {
+  const primary = failureForPrimary(artifactFilePrimaryFailure(cause), path);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(
@@ -169,6 +160,7 @@ const outputLimit = (path: string) =>
 const limitationsFor = (
   info: { go_version: string | null; module_text: string | null } | null,
   module: GoModuleMetadata | null,
+  sectionNamesLimitation: string | undefined,
 ): string[] => [
   "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
   "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
@@ -183,6 +175,7 @@ const limitationsFor = (
         "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
       ]
     : []),
+  ...(sectionNamesLimitation === undefined ? [] : [sectionNamesLimitation]),
   ...(module !== null && module.main === null
     ? [
         "Dependency coverage is unknown because no main-module record was decoded from the embedded module information, as in GOPATH-mode builds. Decoded dependency records remain visible; an empty list does not establish the absence of dependencies.",
@@ -194,6 +187,26 @@ const limitationsFor = (
       ]
     : []),
 ];
+
+/** Locate image-relative build-info ranges in the selected file. */
+const inFile = (
+  info: GoBinaryImage["build_info"],
+  fileOffset: number,
+): GoBinaryImage["build_info"] =>
+  info === null || fileOffset === 0
+    ? info
+    : {
+        ...info,
+        header_offset: info.header_offset + fileOffset,
+        version_location: {
+          ...info.version_location,
+          offset: info.version_location.offset + fileOffset,
+        },
+        module_location: {
+          ...info.module_location,
+          offset: info.module_location.offset + fileOffset,
+        },
+      };
 
 /** Stable in-process metadata inspection without subprocesses, temporary files or Go installation. */
 export class GoBinaryProvider implements GoBinaryPort {
@@ -235,8 +248,18 @@ export class GoBinaryProvider implements GoBinaryPort {
           this.#resources,
         );
         assertArtifactReadActive(options?.signal);
-        const image = readGoBinaryImage(snapshot.bytes);
-        const info = image.build_info;
+        const selected = requireSelectedNativeImage(
+          OPERATION,
+          input.path,
+          snapshot.bytes,
+          input.architecture,
+        );
+        const image = readGoBinaryImage(selected.bytes);
+        const {
+          section_names_limitation: sectionNamesLimitation,
+          ...publicImage
+        } = image;
+        const info = inFile(image.build_info, selected.fileOffset);
         if (
           info !== null &&
           ((info.module_text !== null &&
@@ -256,14 +279,17 @@ export class GoBinaryProvider implements GoBinaryPort {
                 )
               : parseGoModuleText(info.module_text);
         const report = {
-          ...image,
+          ...publicImage,
           artifact: {
             path: input.path,
             sha256: snapshot.sha256,
             bytes: snapshot.bytes.length,
           },
+          ...(selected.selection === null
+            ? {}
+            : { selected_slice: selected.selection }),
           build_info: info === null ? null : { ...info, module },
-          limitations: limitationsFor(info, module),
+          limitations: limitationsFor(info, module, sectionNamesLimitation),
         };
         if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
           throw outputLimit(input.path);
@@ -278,7 +304,7 @@ export class GoBinaryProvider implements GoBinaryPort {
         return ok(parsed.data);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, options?.signal));
+      return err(failureFor(cause, input.path));
     }
   }
 }

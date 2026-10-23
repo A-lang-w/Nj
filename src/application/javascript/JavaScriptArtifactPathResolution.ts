@@ -1,3 +1,4 @@
+import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { isBuiltin } from "node:module";
 import { posix, win32 } from "node:path";
 import { ELECTRON_MODULE } from "../../domain/javascript/javascriptElectronMemberWrites.js";
@@ -79,6 +80,7 @@ export type ArtifactPathResolution = ArtifactPathResolutionBase &
 
 /** Values needed to resolve a declaration without filesystem access. */
 export interface ResolveArtifactPathInput {
+  readonly jsonDocuments: JavaScriptJsonDocuments;
   readonly declaredPath: string;
   readonly sourcePath: string;
   readonly context: ArtifactPathResolutionContext;
@@ -1096,10 +1098,19 @@ const resolveLegacyEsmSubpath = (
   directory: string,
   subpath: string,
 ): CandidateResolution => {
-  const declarationRejection = rejectDeclaration(
-    stripQueryAndFragment(htmlUrlText(subpath)),
-  );
+  const subpathPath = stripQueryAndFragment(htmlUrlText(subpath));
+  const declarationRejection = rejectDeclaration(subpathPath);
   if (declarationRejection !== null) return declarationRejection;
+  let depth = directory === "." ? 0 : directory.split("/").length;
+  for (const segment of subpathPath.split("/")) {
+    if (segment === "..") {
+      if (depth === 0)
+        return unresolvedCandidate("rejected", [
+          "The resolved candidate escapes the canonical artifact root.",
+        ]);
+      depth--;
+    } else if (segment !== ".") depth++;
+  }
   const metadataUrl = packageMetadataUrl(
     posix.join(directory, "package.json"),
     subpath,
@@ -1208,7 +1219,9 @@ const resolveExportTarget = (
   const candidate = confineCandidate(decoded);
   if (typeof candidate !== "string") return withTargetSource(candidate);
   if (target.lookupLimitation !== undefined)
-    return unresolvedCandidate("unavailable", [target.lookupLimitation]);
+    return withTargetSource(
+      unresolvedCandidate("unavailable", [target.lookupLimitation]),
+    );
   return (
     resolveFileCandidates(input, [candidate]) ??
     withTargetSource(exactPackageTargetNotFound(candidate, mapKind))
@@ -1315,11 +1328,19 @@ const htmlCandidate = (
       "The HTML reference path percent-decodes to NUL or to bytes that are not UTF-8.",
     ]);
   if (declaredPath.startsWith("/"))
-    return urlRelativeCandidate("", declaredPath);
+    return exactUrlPathCandidate(
+      declaredPath,
+      urlRelativeCandidate("", declaredPath),
+      "HTML",
+    );
   if (base === undefined || base === null || base === "")
     return declaredPath === ""
       ? input.sourcePath
-      : urlRelativeCandidate(posix.dirname(input.sourcePath), declaredPath);
+      : exactUrlPathCandidate(
+          declaredPath,
+          urlRelativeCandidate(posix.dirname(input.sourcePath), declaredPath),
+          "HTML",
+        );
   // A local base href is a second untrusted path input; apply the same
   // admission rules a declared path gets so it cannot smuggle traversal or
   // separator syntax past canonicalization.
@@ -1338,23 +1359,28 @@ const htmlCandidate = (
     urlDirectoryState(posix.dirname(input.sourcePath)),
     decodedBase,
   );
-  if (declaredPath === "") {
-    const basePath = urlPathCandidate(baseState);
-    return typeof basePath === "string"
-      ? exactUrlPathCandidate(decodedBase, basePath, "HTML")
-      : basePath;
-  }
-  return urlPathCandidate(
-    applyUrlReference(urlBaseDirectory(baseState), declaredPath),
+  if (declaredPath === "")
+    return exactUrlPathCandidate(
+      decodedBase,
+      urlPathCandidate(baseState),
+      "HTML",
+    );
+  return exactUrlPathCandidate(
+    declaredPath,
+    urlPathCandidate(
+      applyUrlReference(urlBaseDirectory(baseState), declaredPath),
+    ),
+    "HTML",
   );
 };
 
 const exactUrlPathCandidate = (
   declared: string,
-  candidate: string,
+  candidate: string | CandidateResolution,
   kind: "HTML" | "URL" | "module URL",
 ): string | CandidateResolution => {
-  if (!urlPathIsDirectory(declared)) return candidate;
+  if (typeof candidate !== "string" || !urlPathIsDirectory(declared))
+    return candidate;
   const confined = confineCandidate(candidate);
   if (typeof confined !== "string") return confined;
   return unresolvedCandidate("not-found", [
@@ -1425,25 +1451,17 @@ const readPackageMetadata = (
       kind: "unavailable",
       limitation: `Directory package metadata ${path} was inventoried but its text is unavailable: ${file.text.reason}.`,
     };
-  let value: unknown;
-  try {
-    value = JSON.parse(file.text.value);
-  } catch (cause: unknown) {
-    void cause;
+  const document = input.jsonDocuments.read(file);
+  if (document.status !== "included" || document.packageFields === null)
     return {
       kind: "unavailable",
       limitation: `Directory package metadata ${path} is not valid package JSON.`,
     };
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return {
-      kind: "unavailable",
-      limitation: `Directory package metadata ${path} is not valid package JSON.`,
-    };
-  const name = Reflect.get(value, "name");
-  const exports = Reflect.get(value, "exports");
-  const imports = Reflect.get(value, "imports");
-  const main = Reflect.get(value, "main");
+  const value = document.packageFields;
+  const name = value.name;
+  const exports = value.exports;
+  const imports = value.imports;
+  const main = value.main;
   return {
     kind: "available",
     path,
@@ -1464,7 +1482,7 @@ const readPackageMetadata = (
       input.moduleKind !== undefined && typeof main !== "string"
         ? undefined
         : main,
-    module: Reflect.get(value, "module"),
+    module: value.module,
   };
 };
 
@@ -1541,6 +1559,7 @@ const resolveDirectory = (
     sourcePath: metadata.path,
     context: "package-entrypoint",
     files: input.files,
+    jsonDocuments: input.jsonDocuments,
     ...(input.directoryPaths === undefined
       ? {}
       : { directoryPaths: input.directoryPaths }),

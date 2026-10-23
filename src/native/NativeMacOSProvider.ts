@@ -46,8 +46,10 @@ import {
   isMachOFormat,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
-import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadata.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import {
+  isAppleDispatchMetadataTarget,
+  nativeDispatchMetadataInputSchema,
+} from "../domain/native/objcSwiftMetadata.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
@@ -56,6 +58,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -135,6 +138,7 @@ import {
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
 import { resolveBundleResourcePlistSelection } from "./NativePlistSource.js";
+import { UnsupportedBinaryPlistUidError } from "../artifacts/apple/PlistScalars.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -270,7 +274,7 @@ class NativeMacOSClient implements AnalysisClient {
         ),
       );
     if (operation === "inspect_native_dispatch_metadata") {
-      const input = toolContract(operation).inputSchema.safeParse(parameters);
+      const input = nativeDispatchMetadataInputSchema.safeParse(parameters);
       if (!input.success)
         return err(
           analysisInputErrorFromIssues(
@@ -296,9 +300,13 @@ class NativeMacOSClient implements AnalysisClient {
             this.target,
             input.data.max_records,
             this.#dispatchResources,
-            options?.signal,
-            input.data.objc_class_import_addresses,
-            input.data.objc_class_import_addresses_complete ?? true,
+            {
+              signal: options?.signal,
+              objcClassImportAddresses: input.data.objc_class_import_addresses,
+              objcClassImportAddressesComplete:
+                input.data.objc_class_import_addresses_complete ?? true,
+              maxInputBytes: input.data.max_input_bytes,
+            },
           ),
         );
         return ok(
@@ -1018,6 +1026,15 @@ class NativeMacOSClient implements AnalysisClient {
     if (!source.ok) return source;
     const parsed = parsePlistBinary(source.value);
     if (!parsed.ok) {
+      if (parsed.error instanceof UnsupportedBinaryPlistUidError)
+        return err(
+          new AnalysisUnsupportedTargetError(
+            "inspect_plist",
+            fileInput.selection.path,
+            parsed.error.message,
+            { cause: parsed.error },
+          ),
+        );
       return parsed.error instanceof AnalysisOutputError
         ? err(
             unreadablePlist(
@@ -1026,7 +1043,7 @@ class NativeMacOSClient implements AnalysisClient {
               { cause: parsed.error },
             ),
           )
-        : parsed;
+        : err(parsed.error);
     }
     return ok(
       nativePlistObservation({

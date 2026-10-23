@@ -1,8 +1,5 @@
 import { readPeSectionHeader } from "./NativeSectionDirectory.js";
-import {
-  observeMzWindowsHeader,
-  parseDosMzHeader,
-} from "../../domain/dosMz.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -14,9 +11,15 @@ import {
 } from "./BinaryContainer.js";
 
 const peHeaderOffset = (reader: BinaryReader): number => {
-  const windowsHeader = observeMzWindowsHeader(reader.bytes);
+  const evidence = parseMzHeaderEvidence(reader.bytes);
+  const { windowsHeader } = evidence;
+  if (windowsHeader.state === "candidate")
+    throw new BinaryFormatFailure(
+      "unsupported",
+      "MZ Windows new-header candidate is unresolved",
+    );
   if (windowsHeader.state !== "declared") {
-    const dos = parseDosMzHeader(reader.bytes);
+    const dos = evidence.dos;
     if (!dos.ok) throw new BinaryFormatFailure("malformed", dos.error);
     throw new BinaryFormatFailure(
       "unsupported",
@@ -82,7 +85,17 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
       "malformed",
       "PE data directories extend beyond the optional header",
     );
+  const dataDirectories = Array.from({ length: directories }, (_, index) => {
+    const entry = optional + directoriesOffset + index * 8;
+    return { virtual_address: reader.u32(entry), size: reader.u32(entry + 4) };
+  });
   const imageBase = reader.word(optional + (bits === 64 ? 24 : 28), bits);
+  const fileAlignment = reader.u32(optional + 36);
+  const headerMapping: FileMapping = {
+    address: imageBase,
+    offset: 0,
+    size: Math.min(reader.u32(optional + 60), bytes.length),
+  };
   const count = reader.u16(pe + 6);
   const start = reader.table(
     BigInt(optional + optionalSize),
@@ -115,6 +128,7 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
         virtualAddress,
         virtualSize,
         rawSize: size,
+        fileAlignment,
       }),
     );
     const address = imageBase + BigInt(virtualAddress);
@@ -152,6 +166,8 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
   return {
     format: "pe",
     image_base: imageBase,
+    pe_data_directories: dataDirectories,
+    pe_header_mapping: headerMapping,
     architecture: names.get(machine) ?? `pe-machine-${machine}`,
     bits,
     byte_order: "little",
@@ -171,6 +187,7 @@ const peImageSection = ({
   virtualAddress,
   virtualSize,
   rawSize,
+  fileAlignment,
 }: {
   readonly reader: BinaryReader;
   readonly name: string;
@@ -180,6 +197,7 @@ const peImageSection = ({
   readonly virtualAddress: number;
   readonly virtualSize: number;
   readonly rawSize: number;
+  readonly fileAlignment: number;
 }): ImageSection => {
   const range = declaredFileRange(
     reader.bytes.length,
@@ -198,6 +216,7 @@ const peImageSection = ({
     virtual_address: virtualAddress,
     virtual_size: virtualSize,
     raw_size: rawSize,
+    file_alignment: fileAlignment,
     characteristics,
     ...range,
     read_only: readOnly,

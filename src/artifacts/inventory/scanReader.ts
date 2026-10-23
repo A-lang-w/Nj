@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
   artifactIntegrityPair,
   artifactIntegrityDetails,
@@ -56,6 +57,7 @@ interface ScanContext {
   readonly reader: ArtifactReader;
   readonly signal: AbortSignal | undefined;
   readonly integrity: ArtifactIntegrityPolicy;
+  readonly asarHeaderAdmission: AsarHeaderAdmission | undefined;
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
@@ -72,6 +74,7 @@ export const scanReader = async (
   ownedReaders: ArtifactReader[],
   signal?: AbortSignal,
   integrity: ArtifactIntegrityPolicy = STRICT_INTEGRITY_POLICY,
+  asarHeaderAdmission?: AsarHeaderAdmission,
 ): Promise<{
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
@@ -94,6 +97,7 @@ export const scanReader = async (
     reader,
     signal,
     integrity,
+    asarHeaderAdmission,
     nodes,
     occurrences,
     pendingContradictions,
@@ -194,10 +198,14 @@ const visitArtifactEntries = async (
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      context.registry.add(
-        logicalPath,
-        expandableAsar ? "directory" : entry.kind,
-      );
+      // PyInstaller TOC rows are source-distinct even when their logical
+      // destinations collide. Inventory retains those observations; the
+      // extraction path registry remains the authority for materialization.
+      if (frame.reader.format !== "pyinstaller")
+        context.registry.add(
+          logicalPath,
+          expandableAsar ? "directory" : entry.kind,
+        );
       const duplicateOrdinal =
         context.occurrenceCountByPath.get(logicalPath) ?? 0;
       context.occurrenceCountByPath.set(logicalPath, duplicateOrdinal + 1);
@@ -248,7 +256,12 @@ const visitArtifactEntries = async (
         digested.classification.format === "asar" &&
         !digested.mismatched
       ) {
-        const nested = new AsarArtifactReader(entry.adapterKey);
+        const nested = new AsarArtifactReader(
+          entry.adapterKey,
+          context.asarHeaderAdmission === undefined
+            ? {}
+            : { headerAdmission: context.asarHeaderAdmission },
+        );
         context.ownedReaders.push(nested);
         await nested.prepareContainer(digested.node.sha256, context.signal);
         // Only traversed containers can own members, not opaque ASAR-named files.
@@ -304,6 +317,7 @@ const digestArtifactEntry = async (
     await currentReader.open(entry, context.signal),
     context.signal,
     entry.declaredIntegrity?.algorithm,
+    context.asarHeaderAdmission,
   );
   const claim = entry.declaredIntegrity;
   const observed = claim?.algorithm === "md5" ? digest.md5 : digest.sha256;
@@ -330,13 +344,17 @@ const digestArtifactEntry = async (
   }
   const classified =
     entry.kind === "slice"
-      ? ({ kind: "universal-slice", format: "mach-o" } as const)
+      ? {
+          kind: "universal-slice" as const,
+          format: "mach-o" as const,
+          contentFormat: classifyArtifactBytes(digest, digest.bytes),
+        }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
   return {
     node: createArtifactNode({
       sha256: digest.sha256,
       size: digest.bytes,
-      format: classifyArtifactBytes(digest.prefix, digest.bytes),
+      format: classified.contentFormat,
       contentState: "embedded",
     }),
     mismatched,

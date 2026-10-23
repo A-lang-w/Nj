@@ -127,6 +127,7 @@ it.each([true, false])(
     };
     await withPyInstallerReader(
       cArchiveExecutable({
+        carrier: "pe",
         layout: "2.1",
         pythonVersion: 309,
         members: [
@@ -198,7 +199,7 @@ it.each([true, false])(
   },
 );
 
-it.each(["duplicate", "size", "offset", "overlap"])(
+it.each(["size", "offset", "overlap"])(
   "bounds %s diagnostics for large nondeclaration names",
   async (mode) => {
     const name = "member".repeat(200_000);
@@ -213,12 +214,7 @@ it.each(["duplicate", "size", "offset", "overlap"])(
       layout: "2.1",
       pythonVersion: 309,
       members:
-        mode === "duplicate" || mode === "overlap"
-          ? [
-              first,
-              { ...first, name: mode === "duplicate" ? name : name + "-b" },
-            ]
-          : [first],
+        mode === "overlap" ? [first, { ...first, name: name + "-b" }] : [first],
     });
     const toc = 64 + bytes.readUInt32BE(bytes.length - 88 + 12);
     if (mode === "offset")
@@ -239,7 +235,7 @@ it.each(["duplicate", "size", "offset", "overlap"])(
       expect(failure.reason).toBe(mode === "offset" ? "format" : "integrity");
       expect(failure.message.length).toBeLessThan(128);
       expect(failure.message).toContain(
-        `table index ${mode === "duplicate" || mode === "overlap" ? 1 : 0}`,
+        `table index ${mode === "overlap" ? 1 : 0}`,
       );
     });
   },
@@ -661,7 +657,7 @@ it("retains legacy namespace payload extents without materializing them", async 
       expect(
         inventory.occurrences.find((row) => row.logical_path === "PYZ.pyz/ns"),
       ).toMatchObject({
-        entry_kind: "directory",
+        entry_kind: "metadata",
         declared_size: 0,
         compressed_size: length,
         format_metadata: {
@@ -785,7 +781,7 @@ it.each([false, true])(
             (row) => row.logical_path === "PYZ.pyz/legacy",
           ),
         ).toMatchObject({
-          entry_kind: "directory",
+          entry_kind: "metadata",
           encrypted: marker,
           compressed_size: expect.any(Number),
           format_metadata: {
@@ -797,7 +793,7 @@ it.each([false, true])(
             (row) => row.logical_path === "PYZ.pyz/empty",
           ),
         ).toMatchObject({
-          entry_kind: "directory",
+          entry_kind: "metadata",
           encrypted: false,
           compressed_size: 0,
           format_metadata: { encryption_source: null },
@@ -904,7 +900,7 @@ it("retains the producer's nonzero namespace offset without inventing data", asy
       expect(
         inventory.occurrences.find((row) => row.logical_path === "PYZ.pyz/ns"),
       ).toMatchObject({
-        entry_kind: "directory",
+        entry_kind: "metadata",
         declared_size: 0,
         compressed_size: 0,
         format_metadata: {

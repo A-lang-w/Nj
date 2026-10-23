@@ -1,3 +1,4 @@
+import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
 import { z } from "incur";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -265,13 +266,10 @@ const registerNativeDispatchMetadataCommand = (
       path: z.string().describe("Target path used to bind the result evidence"),
     }),
     options: z.object({
-      maxRecords: z
-        .number()
-        .int()
-        .min(1)
-        .max(20_000)
-        .default(5_000)
-        .describe("Maximum symbol records to inspect"),
+      maxRecords: nativeDispatchMetadataInputSchema.shape.max_records.describe(
+        "Maximum symbol records to inspect",
+      ),
+      maxInputBytes: nativeDispatchMetadataInputSchema.shape.max_input_bytes,
       snapshot: snapshotSelectionOption.describe(
         "Load or update the local analysis snapshot",
       ),
@@ -282,7 +280,12 @@ const registerNativeDispatchMetadataCommand = (
         runDirectAnalysis(
           args.path,
           "inspect_native_dispatch_metadata",
-          { max_records: options.maxRecords },
+          {
+            max_records: options.maxRecords,
+            ...(options.maxInputBytes === undefined
+              ? {}
+              : { max_input_bytes: options.maxInputBytes }),
+          },
           directAnalysisOptionsFromCli(logger, options),
         ),
       ),
