@@ -998,7 +998,6 @@ describe("verified npm ownership in a Bun ancestor project", () => {
     const callerDirectory = process.cwd();
     try {
       process.chdir(root);
-      await symlink(".local", join(projectDirectory, ".local"));
       const result = await runUpdate(
         "3.2.1",
         systemUpdateHost(packageRoot, projectDirectory, environment),

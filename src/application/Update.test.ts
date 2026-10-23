@@ -376,8 +376,9 @@ describe("update failures and version boundaries", () => {
 });
 
 describe("npm installation ownership", () => {
+  // realpath() returns platform-absolute paths, so Windows hosts add a drive.
   const host = (root: string, prefix = "/usr/local"): NpmInstallationHost => ({
-    canonicalPath: (path) => Promise.resolve(path),
+    canonicalPath: (path) => Promise.resolve(resolve(path)),
     globalRoot: () => Promise.resolve(root),
     globalPrefix: () => Promise.resolve(prefix),
   });
@@ -386,7 +387,11 @@ describe("npm installation ownership", () => {
     const packageRoot = "/usr/local/lib/node_modules/rea-agents";
     await expect(
       detectNpmInstallation(packageRoot, host("/usr/local/lib/node_modules")),
-    ).resolves.toEqual({ manager: "npm", prefix: "/usr/local", packageRoot });
+    ).resolves.toEqual({
+      manager: "npm",
+      prefix: "/usr/local",
+      packageRoot: resolve(packageRoot),
+    });
   });
 
   it("accepts a custom Unix npm prefix only when npm reports its global root", async () => {
@@ -399,7 +404,7 @@ describe("npm installation ownership", () => {
     ).resolves.toEqual({
       manager: "npm",
       prefix: "/home/user/.local",
-      packageRoot,
+      packageRoot: resolve(packageRoot),
     });
   });
 
