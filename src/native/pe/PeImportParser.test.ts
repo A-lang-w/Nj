@@ -74,6 +74,22 @@ it("hashes unmapped ordinals as pefile's ord<decimal> fallback", async () => {
   });
 });
 
+it("falls back to ord<decimal> for DLL names that shadow object members", async () => {
+  const bytes = peImportImage({
+    bits: 32,
+    dlls: [
+      { name: "constructor", functions: [{ ordinal: 1 }] },
+      { name: "__proto__", functions: [{ ordinal: 2 }] },
+    ],
+  });
+  // pefile: "constructor.ord1,__proto__.ord2".
+  expect((await parse(bytes)).imphash).toEqual({
+    algorithm: "pefile",
+    md5: "8a4fd3988e11f8e29b11a7edc60886e6",
+    reason: null,
+  });
+});
+
 it("uses pefile's complete ws2_32 and wsock32 ordinal tables", async () => {
   const bytes = peImportImage({
     bits: 32,

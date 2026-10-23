@@ -26,9 +26,14 @@ const stripImportExtension = (name: string): string => {
 };
 
 /** pefile `ordlookup.ordLookup(dll, ordinal, make_name=True)`. */
-const pefileOrdinalName = (dll: string, ordinal: number): string =>
-  PEFILE_ORDINAL_NAMES[dll.toLowerCase()]?.get(ordinal) ??
-  `ord${String(ordinal)}`;
+const pefileOrdinalName = (dll: string, ordinal: number): string => {
+  const key = dll.toLowerCase();
+  // Own keys only: "constructor" and "__proto__" are valid DLL names.
+  const names = Object.hasOwn(PEFILE_ORDINAL_NAMES, key)
+    ? PEFILE_ORDINAL_NAMES[key]
+    : undefined;
+  return names?.get(ordinal) ?? `ord${String(ordinal)}`;
+};
 
 const withheld = (reason: string): PeImports["imphash"] => ({
   algorithm: "pefile",
