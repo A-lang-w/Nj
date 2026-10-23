@@ -479,15 +479,18 @@ class TimelineCapture {
     if (requestId === undefined) return;
     const resourceType = cdpStringValue(params.type);
     const otherType = resourceType !== undefined && resourceType !== "Document";
-    // The frame is kept as observed and classified when the failure arrives,
-    // after any root replacement has committed.
+    // The frame is kept as observed. Whether it was the main frame when a hop
+    // first named it is kept too, so a later root replacement cannot relabel
+    // it; a frame that becomes the root afterwards is checked at failure.
     const frameId = cdpFrameId(params.frameId);
+    const namedMain = frameId !== undefined && frameId === this.mainFrameId;
     const previous = this.#documentCandidates.get(requestId);
     if (previous === undefined) {
       if (otherType) return;
       this.#documentCandidates.set(requestId, {
         declaredDocument: resourceType === "Document",
         frameId,
+        admittedAsMain: namedMain,
         frameConflict: false,
       });
       return;
@@ -499,6 +502,8 @@ class TimelineCapture {
         !otherType &&
         (previous.declaredDocument || resourceType === "Document"),
       frameId: previous.frameId ?? frameId,
+      admittedAsMain:
+        previous.frameId === undefined ? namedMain : previous.admittedAsMain,
       frameConflict:
         previous.frameConflict ||
         (frameId !== undefined &&
@@ -516,7 +521,9 @@ class TimelineCapture {
   #ownership(candidate: DocumentCandidate): "main" | "other" | "unknown" {
     if (candidate.frameConflict || candidate.frameId === undefined)
       return "unknown";
-    return candidate.frameId === this.mainFrameId ? "main" : "other";
+    return candidate.admittedAsMain || candidate.frameId === this.mainFrameId
+      ? "main"
+      : "other";
   }
 
   #redirect(params: UnknownRecord, bufferedBeforeArm: boolean): void {
@@ -785,6 +792,8 @@ interface DocumentCandidate {
   readonly declaredDocument: boolean;
   /** The first frame a hop named; omitted when no hop named one. */
   readonly frameId: string | undefined;
+  /** That frame was the main frame when the hop named it. */
+  readonly admittedAsMain: boolean;
   /** Hops named different frames, so ownership stays unknown. */
   readonly frameConflict: boolean;
 }

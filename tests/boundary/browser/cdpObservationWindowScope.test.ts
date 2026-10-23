@@ -735,6 +735,55 @@ it("attributes a failure to a root replacement that commits after its request", 
   );
 });
 
+it("keeps a former main-frame document failure after a root replacement commits", async () => {
+  const { observation } = await observeWithFake({
+    eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.setLifecycleEventsEnabled") return undefined;
+      return [
+        {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "former-main-document",
+            timestamp: 21,
+            type: "Document",
+            frameId: "frame-main",
+            request: { url: `${origin}/former` },
+          },
+        },
+        frameNavigated(command, {
+          id: "replacement-main",
+          loaderId: "replacement-loader",
+          url: `${origin}/replacement`,
+        }),
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "former-main-document",
+            timestamp: 22,
+            type: "Document",
+            errorText: "net::ERR_ABORTED",
+          },
+        },
+      ];
+    },
+  });
+
+  expect(observation.timeline).toContainEqual(
+    expect.objectContaining({
+      type: "navigation_committed",
+    }),
+  );
+  expect(observation.timeline).toContainEqual(
+    expect.objectContaining({
+      type: "load_failed",
+      request_id: "former-main-document",
+    }),
+  );
+});
+
 it("keeps contradictory redirect ownership unknown after a later hop agrees again", async () => {
   const hop = (
     command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
