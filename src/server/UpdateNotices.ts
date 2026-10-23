@@ -90,16 +90,12 @@ export class UpdateNotices {
       .then(() => this.lookup(controller.signal))
       .then((result) => {
         if (this.closed || controller.signal.aborted) return;
-        this.latest =
-          result.ok &&
-          valid(result.value) !== null &&
-          gt(result.value, this.current)
-            ? { version: result.value, observedAt: this.now() }
-            : undefined;
+        if (!result.ok || valid(result.value) === null) return;
+        this.latest = gt(result.value, this.current)
+          ? { version: result.value, observedAt: this.now() }
+          : undefined;
       })
-      .catch(() => {
-        this.latest = undefined;
-      })
+      .catch(() => undefined)
       .finally(() => {
         clearTimeout(timeout);
         this.controller = undefined;

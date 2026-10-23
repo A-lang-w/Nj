@@ -489,3 +489,46 @@ it("delivers a timestamped unannounced observation while a daily call revalidate
     release?.(ok("1.2.0"));
   }
 });
+
+it.each(["unavailable", "invalid-metadata", "reject", "malformed"] as const)(
+  "preserves timestamped observations after failed revalidation: %s",
+  async (failure) => {
+    let now = 0;
+    const lookup = vi
+      .fn()
+      .mockResolvedValueOnce(ok("1.1.0"))
+      .mockImplementationOnce(async () => {
+        if (failure === "reject") throw new Error("offline");
+        return failure === "malformed" ? ok("malformed") : err(failure);
+      })
+      .mockResolvedValueOnce(ok("1.2.0"))
+      .mockResolvedValueOnce(ok("1.0.0"));
+    const notices = new UpdateNotices("1.0.0", lookup, () => now);
+    notices.refresh();
+    await vi.waitFor(() => expect(notices.peek()?.version).toBe("1.1.0"));
+    const client = await connect(notices);
+    now += 24 * 60 * 60 * 1000;
+    notices.refresh();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(notices.peek()?.version).toBe("1.1.0");
+    await client.callTool({ name: "fixture", arguments: {} });
+    expect(receivedNotices.get(client)).toEqual([
+      {
+        level: "notice",
+        logger: "rea.update",
+        data: expect.stringContaining(
+          "latest published 1.1.0 as observed at 1970-01-01T00:00:00.000Z",
+        ),
+      },
+    ]);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    now += 24 * 60 * 60 * 1000;
+    notices.refresh();
+    await vi.waitFor(() => expect(notices.peek()?.version).toBe("1.2.0"));
+    now += 24 * 60 * 60 * 1000;
+    notices.refresh();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(lookup).toHaveBeenCalledTimes(4);
+    expect(notices.peek()).toBeUndefined();
+  },
+);
