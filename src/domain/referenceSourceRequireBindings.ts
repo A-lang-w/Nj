@@ -36,7 +36,10 @@ export interface ReferenceSourceRequireCall {
 export const referenceSourceRequireCalls = (
   file: Pick<ParsedJavaScriptSource, "program">,
   path: string,
-): ReadonlyMap<t.CallExpression, ReferenceSourceRequireCall> => {
+): ReadonlyMap<
+  t.CallExpression | t.OptionalCallExpression,
+  ReferenceSourceRequireCall
+> => {
   // Unmarked paths depend on package scope or compiler options. Preserve their
   // candidate CommonJS edges; explicit module paths have no wrapper loader.
   const wrapperMode = commonJsWrapperMode(path);
@@ -48,14 +51,15 @@ export const referenceSourceRequireCalls = (
   );
   const factoryBindings: ReadonlySet<string> = new Set();
   const candidates: {
-    readonly call: t.CallExpression;
+    readonly call: t.CallExpression | t.OptionalCallExpression;
     readonly identifier: t.Identifier;
     readonly arguments: JavaScriptRequireCallFact["arguments"];
     readonly resolutionBase: ReferenceSourceRequireResolutionBase;
   }[] = [];
   traverseJavaScriptAst(file.program, {
     enter: (node) => {
-      if (!t.isCallExpression(node)) return;
+      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+        return;
       const identifier = callReceiverIdentifier(node.callee);
       if (identifier === undefined) return;
       let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
@@ -100,8 +104,7 @@ export const referenceSourceRequireCalls = (
             ? "source-file"
             : "unknown";
       const searchBase = requireResolveSearchBase(
-        node,
-        callFact.arguments,
+        callFact,
         index.bindings,
         base,
         wrapperMode === "present",
@@ -136,14 +139,13 @@ export const referenceSourceRequireCalls = (
 
 /** `require.resolve` options replace the default search paths unless exact current-directory paths are supplied. */
 const requireResolveSearchBase = (
-  call: t.CallExpression,
-  callArguments: JavaScriptRequireCallFact["arguments"],
+  call: JavaScriptRequireCallFact,
   bindings: JavaScriptSemanticAnalysisState,
   loaderBase: ReferenceSourceRequireResolutionBase,
   hasCommonJsWrapper: boolean,
 ): ReferenceSourceRequireResolutionBase => {
-  const arguments_ = callArguments ?? [];
-  if (!isRequireResolveCall(call) || arguments_.length < 2) return loaderBase;
+  const arguments_ = call.arguments ?? [];
+  if (call.operation !== "resolve" || arguments_.length < 2) return loaderBase;
   if (arguments_.length !== 2) return "unknown";
   const options = t.isExpression(arguments_[1]) ? arguments_[1] : undefined;
   if (options === undefined || !t.isObjectExpression(options)) return "unknown";
@@ -164,15 +166,6 @@ const requireResolveSearchBase = (
     : "unknown";
 };
 
-const isRequireResolveCall = (call: t.CallExpression): boolean => {
-  const callee = call.callee;
-  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
-    return false;
-  return (
-    semanticStaticPropertyKey(callee.property, callee.computed) === "resolve"
-  );
-};
-
 type CommonJsWrapperMode = "present" | "absent" | "unknown";
 
 const commonJsWrapperMode = (path: string): CommonJsWrapperMode =>
@@ -186,13 +179,14 @@ const commonJsWrapperMode = (path: string): CommonJsWrapperMode =>
 
 const hasPriorMemberMutation = (
   index: JavaScriptReceiverIndex,
-  site: t.CallExpression,
+  site: t.CallExpression | t.OptionalCallExpression,
   identifier: t.Identifier,
 ): boolean => {
   const callee = site.callee;
-  const property = t.isMemberExpression(callee)
-    ? semanticStaticPropertyKey(callee.property, callee.computed)
-    : undefined;
+  const property =
+    t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+      ? semanticStaticPropertyKey(callee.property, callee.computed)
+      : undefined;
   if (property === undefined || property === null) return true;
   const facts = index.effectsForReferenceAt(site, identifier, [property]);
   return (

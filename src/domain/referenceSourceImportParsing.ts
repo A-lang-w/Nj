@@ -3,6 +3,7 @@ import type {
   File,
   ImportExpression,
   Node,
+  OptionalCallExpression,
 } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
@@ -21,6 +22,7 @@ import {
   isExportNamedDeclaration,
   isImportDeclaration,
   isImportExpression,
+  isOptionalCallExpression,
   isStringLiteral,
   isTSExternalModuleReference,
   isTSImportEqualsDeclaration,
@@ -218,16 +220,25 @@ const extractRequireAndDynamicImports = (
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
   limitations: string[],
-  requireCalls: ReadonlyMap<CallExpression, ReferenceSourceRequireCall>,
+  requireCalls: ReadonlyMap<
+    CallExpression | OptionalCallExpression,
+    ReferenceSourceRequireCall
+  >,
 ): void => {
   // Single traversal owner: iterative, VISITOR_KEYS-gated, no recursion over
   // loc/comment objects. Survives deeply nested generated member chains that
   // overflowed the previous hand-rolled Object.values walker.
-  const expressions: Array<CallExpression | ImportExpression> = [];
+  const expressions: Array<
+    CallExpression | OptionalCallExpression | ImportExpression
+  > = [];
   for (const statement of body)
     traverseJavaScriptAst(statement, {
       enter: (node) => {
-        if (isCallExpression(node) || isImportExpression(node))
+        if (
+          isCallExpression(node) ||
+          isOptionalCallExpression(node) ||
+          isImportExpression(node)
+        )
           expressions.push(node);
       },
     });
