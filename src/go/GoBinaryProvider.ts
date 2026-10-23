@@ -1,6 +1,11 @@
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
+import {
+  readStableArtifact,
+  type StableArtifactSnapshot,
+} from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFailure,
+  artifactFileCompletion,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -37,6 +42,7 @@ import {
   BinaryResourceFailure,
 } from "../native/metadata/BinaryContainer.js";
 import { parseGoModuleBytes, parseGoModuleText } from "./GoModuleText.js";
+import { fileSnapshotPartialObservationSchema } from "../domain/fileSnapshotObservation.js";
 
 /** Bundled format reader identity; embedded compiler versions are separate observed facts. */
 export const GO_BINARY_PROVIDER_IDENTITY = {
@@ -110,11 +116,7 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
       return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
         cause,
       });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
+    if (isSelectedRegularFileError(cause))
       return new AnalysisInputError(OPERATION, { cause }, [
         {
           path: ["path"],
@@ -134,6 +136,20 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFailure(cause), path);
+  const completed = artifactFileCompletion(cause);
+  if (completed !== undefined) {
+    // This inspect boundary acquires exactly one StableArtifactSnapshot before
+    // metadata decoding. Completion describes that read, not a decoded report.
+    const snapshot = completed.value as StableArtifactSnapshot;
+    primary.retainPartialObservation(
+      fileSnapshotPartialObservationSchema.parse({
+        kind: "file-snapshot-hash",
+        path,
+        sha256: snapshot.sha256,
+        bytes: snapshot.bytes.length,
+      }),
+    );
+  }
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(

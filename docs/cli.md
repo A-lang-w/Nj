@@ -46,6 +46,96 @@ module page. See
 [JavaScript application workflows](javascript-application-workflows.md) for
 views, feature traces and comparisons that take the same saved Evidence.
 
+## JSON Lines record output
+
+Use `--format jsonl` to consume row-oriented results one record per line:
+
+```bash
+cat > observations-view.json <<'JSON'
+{"source":{"kind":"evidence-file","path":"app-evidence.json"},"view":{"kind":"javascript-facts","property_keys":[],"offset":0,"limit":32}}
+JSON
+rea inspect-analysis-view observations-view.json --format jsonl > observations.jsonl
+```
+
+This request selects up to 32 observation identities and their provenance,
+without observation property values.
+
+This changes JSONL object-collection framing. Scripts that need one complete
+report or a scalar field should use `--format json`. For a full application
+graph, first project a supported analysis view rather than selecting an
+arbitrary nested graph array.
+
+A top-level array emits its elements in source order. An object must have one
+clear `rows`, `items`, `records`, or `occurrences` array, directly or under
+`page`. Evidence uses the same boundaries inside `normalized_result`.
+An arbitrary report or a scalar selection is refused with an actionable error;
+use `--format json` for a complete document. If several collections exist,
+select one with `--filter-output`, for example `normalized_result.rows`.
+
+Object collections finish with a control record:
+
+```json
+{
+  "$rea": "jsonl/v1",
+  "type": "metadata",
+  "records": {
+    "path": ["normalized_result", "rows"],
+    "emitted": 2,
+    "source": 10,
+    "filter": "normalized_result.rows[0,2]"
+  },
+  "context": {
+    "evidence_id": "ev_…",
+    "normalized_result": {
+      "coverage": {
+        "status": "page",
+        "examined": 10,
+        "total": 100,
+        "next_offset": 10,
+        "exhausted": false
+      }
+    }
+  }
+}
+```
+
+This abbreviated example illustrates framing. The actual `context` preserves
+all non-row fields, including Evidence subject, provider, authority, confidence,
+locations, links, limitations, parent/view digests, pagination and coverage.
+With `--full-output`, it also retains the command envelope and its metadata.
+A data filter selects row fields/slices while this context remains available;
+excluded peer record collections and unselected Evidence `raw_result` are not
+restored. An explicitly selected `raw_result` remains selected. Retain the
+original Evidence for complete observations.
+
+`records.emitted` and `records.source` count the selected output and its source
+array; they do not assert analysis completeness. Source coverage and unknowns
+retain their original meaning. Existing row identities and indices remain
+unchanged unless your field selection excludes them. Empty object collections
+still emit metadata; an empty top-level array emits no lines. Bare top-level
+arrays have no synthetic coverage record.
+
+Command and output-validation failures emit `{"$rea":"jsonl/v1","type":"error","ok":false,"result":…}`
+and retain the original diagnostic payload. SDK validation/sentinel errors use
+the SDK's exit status rather than guessing from data fields. `$rea` is reserved
+at the top level of a data record, so control records are unambiguous; collisions
+are refused before rows are written. Nested `$rea` values are ordinary data.
+A missing final metadata record or nonzero exit can indicate an interrupted
+export; do not treat already emitted rows as a complete result.
+
+`--token-count` estimates this exact representation, including metadata, one
+line at a time. Errors remain error records even with token counting enabled.
+Token windows cannot preserve JSON Lines and are rejected. JSON encoding and
+stdout writes are incremental, including large escaped strings; this is output
+streaming over a completed result, not incremental analysis. The analysis still
+needs its normal resources. A single record must fit the runtime string limit
+for token estimation; remove `--token-count` to stream a larger record.
+
+Standalone version and MCP doctor diagnostics remain single JSON documents
+in JSON Lines mode. Incur's streaming generator events and successful sentinel
+responses retain their SDK protocol. MCP application results and Evidence
+contracts are unchanged.
+
 ## Shell completion
 
 The CLI includes optional shell completion. Run `rea completions --help` to
@@ -56,8 +146,11 @@ into the current shell:
 eval "$(rea completions bash)"
 ```
 
-The current Bash hook requires support for `complete -o nosort`; macOS's
-system Bash 3.2 cannot load it. Use a newer Bash for this hook.
+The Bash hook supports macOS system Bash 3.2. It uses optional completion
+features when the shell provides them and falls back to portable registration.
+Completion includes standard global options and the active command's options;
+`rea mcp ` offers only `add` and `doctor`. Output-option values remain data when
+resolving the command scope.
 
 For future interactive non-login Bash sessions, add the command to
 `~/.bashrc`. Interactive login Bash sessions read the first available file in
@@ -309,7 +402,11 @@ an exact result when the target bytes, operation, parameters, provider and
 settings match. Mutations and cursor-dependent calls are excluded from the
 cache. Snapshot files are local and use owner-only permissions.
 
-Dispatching a metadata write invalidates the active session's snapshot cache,
+Importing an Evidence bundle refreshes retained subject display names and paths.
+It preserves cached analysis results, including observations for other targets.
+Snapshot bindings that use a replaced record retain its updated display path.
+
+Dispatching a provider metadata write invalidates the active session's snapshot cache,
 even if its reply fails: the provider may already have applied the write.
 Close and reopen the target before importing or saving another snapshot.
 
@@ -334,6 +431,11 @@ cached result. `close_binary` accepts `snapshot_path` and optional
 `overwrite: true` to save before releasing provider resources. A failed save
 leaves the session open so the caller can resolve the output failure.
 
+If a snapshot switch fails after the previous target was retired, restoration
+keeps that target's analysis commitments with the replacement client. This
+includes the native dispatch workflow profile on a profileless route, so its
+existing snapshot and fresh observations retain the same provenance.
+
 The MCP save receipt reports `primitive_entries`, `workflow_entries`, and
 `evidence_records` separately. Zero primitive bindings can still accompany retained workflow
 results and Evidence. These are cached observations, not a saved provider
@@ -351,9 +453,22 @@ canonical form, or compare two supplied bundles:
 rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
 rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
+rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-sha256>","right_evidence_id":"ev_<right-sha256>"}]' --json
 ```
 
+`--record_pairs` supplies an explicit JSON array of observation pairs, matching
+MCP `compare_bundles.record_pairs`. Pair IDs must exist on their named sides and
+be one-to-one. Without pairs, one-sided membership remains unknown; REA does
+not infer correspondence from position or display names.
+
 Exports preserve an existing destination unless `--overwrite` is explicit.
+
+Atomic Evidence output stages on the selected destination's filesystem. If the
+OS pathname ceiling prevents its internal staging name, REA retries in a shorter
+ancestor on that same filesystem and removes the unused stage. Existing output
+protection still applies. A genuine pathname refusal uses `resource_constraint`
+with `details.reason: path-limit` and `boundary: filesystem-path`.
+
 For application traces and version comparisons, see
 [JavaScript application workflows](javascript-application-workflows.md).
 MCP [retained Evidence references](mcp-contracts.md#retained-application-evidence-inputs)
@@ -375,11 +490,19 @@ rea import-reference-source /absolute/path/to/source --detail summary --outline-
 
 The default (`--detail full`) returns the complete `HistoricalSourceGraph`.
 Choose `--detail summary` for a `HistoricalSourceSummary` of that same committed
-inventory: its `HistoricalSourceManifest` contains the full graph and root
+inventory: its `HistoricalSourceManifest` contains the semantic graph and root
 digests, with provenance, VCS facts, languages, manifest paths, entry and
 relationship counts, parse-failure counts, file/directory states, exclusions
 and limitations. The summary is a presentation view, not a graph accepted by
 source-to-bundle comparison; keep the full output for that workflow.
+
+Known filesystem failures commit the operation, parsed errno, entry-relative
+location and recovery guidance. Entry `local_diagnostics`, when present,
+retains the exact host message, including local paths, outside the semantic
+graph commitment. Equivalent permission failures therefore retain their manifest
+identity after relocation while preserving original source diagnostics in full
+output and visible summary outline entries. Other substantive limitations still
+participate in the graph commitment.
 
 `--outline-depth` requires `--detail summary` and accepts a nonnegative safe
 integer. Depth 1 shows root children, depth 2 (the default) also shows their
@@ -400,11 +523,26 @@ output, not the amount of source examined. A shallow tree or many exclusions can
 still produce a large summary; depth 0 removes the outline but preserves the
 other facts. No fixed output-size or runtime improvement is promised.
 
+Import failures use the shared error contract (`code`, `category`, `message`,
+`retryable`, and `remediation`). When reads completed before failure,
+`details.diagnostics.partial` retains the reader facts, with file bytes as
+arrays of byte values. Unresolved cleanup uses `cleanup_incomplete` and
+retains the source failure and resource paths in `details`.
+
 The import records hashes and metadata for the supplied files, separately
 from observations of the current app. For a directory inside a Git checkout,
 it records the HEAD of the nearest enclosing repository; whether the working
-tree matches that commit remains unknown. It honors the source tree's `.gitignore`
-and applies default exclusions for common generated and dependency paths such
+tree matches that commit remains unknown. Root selection follows filesystem
+symlink/parent semantics before canonical identity is derived. It honors
+`.gitignore` files at the selected root and in traversed child directories,
+with patterns relative to their containing directory and deeper negations
+applied only when the parent was not excluded. Matching uses the nearest
+repository's local `core.ignorecase` setting (false when unset), including the
+shared configuration of linked worktrees. Policy and Git metadata reads retain
+their descriptor cleanup under the import's resource owner; unreadable policy
+is a typed failure, not an empty policy. Above-root `.gitignore` files, global
+excludes, `.git/info/exclude`, config includes and worktree-specific config are
+not loaded. The import also applies default exclusions for common generated and dependency paths such
 as `node_modules/`, `dist/`, and `*.log`. Pattern-based exclusions record the
 matched pattern and whether it came from project, default, caller, or sensitive
 path policy. Links into excluded paths retain their internal target metadata;
@@ -437,11 +575,21 @@ does not infer module targets from replacement characters. Exact dynamic-import
 strings, expression-free templates and runtime-transparent TypeScript wrappers
 retain their targets; computed imports remain unknown. TypeScript import-equals
 dependencies remain `requires` relationships whether or not they are exported.
+Historical dependencies also include TypeScript import types (`import("./dep").T`
+and `typeof import("./dep")`) and declarations inside ambient module bodies;
+these source relationships do not assert runtime loading. Language labels retain
+the conventional case-sensitive `.C` (C++) and `.M` (Objective-C++) suffixes.
 
 REA derives historical CommonJS paths only when the selected loader and its
 base are proven: this includes the exact
 `createRequire(new URL("./file.cjs", import.meta.url))` form and
-`require.resolve` with `{ paths: [__dirname] }`. Other custom bases and search
+`require.resolve` with `{ paths: [__dirname] }`. Exact optional-call forms such
+as `require.resolve?.("./dep.cjs")` use the same loader and mutation facts. The
+nearest inventoried package manifest supplies `.js` module scope; an explicit
+`type: "module"` supplies no CommonJS wrapper, while an unreadable, excluded or
+malformed manifest, or package scope outside the selected inventory, leaves
+candidate loader resolution unknown. A nearest manifest without a `type` field
+uses the shared parser's JavaScript module-syntax facts. Other custom bases and search
 options remain partial with unknown resolution and the literal requested
 specifier. Overwritten resolver methods retain that uncertainty; they are not
 attributed to Node. `require.main` is a module object, so calling it does not
@@ -450,6 +598,14 @@ Node's [`require.resolve`](https://nodejs.org/docs/v24.22.1/api/modules.html#req
 performs lookup without loading the target. An excluded `package.json`
 also leaves package-directory selection unknown rather than treating the
 manifest as absent and applying an `index` fallback.
+
+Import requests use URL pathname semantics: query and fragment remain request
+identity, percent escapes decode exactly once for inventory lookup, and encoded
+separators or malformed escapes retain an unresolved relationship and diagnostic.
+URL-bearing relationships retain the authored `source_specifier` separately from
+the inventoried `to` path; distinct query/fragment requests remain distinct even
+when they name the same file. CommonJS requests retain literal filename semantics
+for percent signs, query marks and fragments.
 
 Historical-source import requires safe no-follow file opens on Linux or
 macOS. Native Windows returns `unsupported_host`; use Linux REA inside WSL
@@ -625,6 +781,10 @@ such as `UNSUPPORTED_OUTPUT_COMBINATION` for `--json` with `--token-limit`. Use
 
 ## Output and exit status
 
+Commands reject surplus positional arguments before execution, including commands
+that accept no positionals. Use `rea <command> --help` for the declared argument
+shape; a final variadic argument continues to accept multiple values.
+
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
 bytes as text, omitting a final UTF-8 code point if it crosses that byte limit.
@@ -636,14 +796,19 @@ truncation alone does not change the diagnostic health or exit status.
 The default terminal format is TOON. Use `--json` when saving results for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
-missing value fails with `MISSING_OUTPUT_VALUE` before the command runs. `--json` is indented on a terminal and compact when piped or
+missing value fails with `MISSING_OUTPUT_VALUE` before the command runs.
+Malformed format values and token windows fail with `INVALID_OUTPUT_VALUE` in the
+selected structured format. Token limits and offsets must be nonnegative safe
+integers; zero selects an empty window. These checks run before command execution. `--json` is indented on a terminal and compact when piped or
 redirected, which keeps large results smaller for agents and scripts; pipe
 through `jq .` for indented files. Output selection and formatting do not change
 operation status.
 
 `--format md` escapes backslashes and pipes in table headers and cells, and
 renders cell line breaks as `<br>`. These are presentation changes; retained
-Evidence and JSON output keep the original values. Table widths are measured
+Evidence and JSON output keep the original values. Nested objects and arrays
+use JSON inside their owning Markdown cells, retaining the field names and
+values instead of replacing them with an object label. Table widths are measured
 iteratively, so an admitted row page is not limited by the JavaScript function
 argument count.
 
@@ -688,11 +853,20 @@ Refusals before binding (unreadable files, non-Evidence JSON, capture Evidence
 in a format other than HAR, a manifest or state whose parent is not the
 supplied evidence, an unbindable port) print a structured
 error and exit `1`, as does a listener that fails after binding.
+If shutdown fails, the command reports `cleanup_incomplete` with the retained
+server resources. It preserves a primary listener diagnostic, or a
+`shutdown_observation` naming the requested shutdown and its URL, environment,
+tool count and Evidence identifiers. The successful `stopped` document is
+returned only after cleanup is confirmed. The same in-process server owner
+retains failed stages for retry; the CLI exposes no separate retry command.
 `rea environment-export` is one-shot: it prints the written files and exits
 `0`, or prints a structured `invalid_request` error and exits `1` for the same
 pair refusals, a non-empty or file-occupied directory, a missing package
 tarball or a name that is not a kebab-case label or is a Windows device name,
-writing nothing in each case.
+writing nothing in each case. A file occupying the destination is reported as
+requiring a directory; identity-change diagnostics are reserved for admitted
+paths that fail later identity checks. Host permission failures identify whether
+input reading or bundle writing was denied and retain the reported path.
 A write that fails after the first file (a permission, disk-space or
 pathname-length failure on a later path) propagates as the host's failure,
 naming its cause and, when it failed on one bundle file or the package
@@ -713,7 +887,9 @@ browser, web and Electron commands (including `analyze-web-bundle`,
 for Android/ADB, Apktool/JEB/Flutter, firmware, PCAP and signal analysis,
 WASM/EVM, Go/Rust and binary diagnostics, Frida instrumentation, the Cutter
 command, objdump, Rizin and GDB, and the agent environment server
-(`environment-serve`). In these paths, a returned structured
+(`environment-serve`). The handler also wraps `doctor`,
+`inspect-sqlite-database`, `recover-javascript-sources`,
+`inspect-il2cpp-metadata`, and `inspect-desktop-application`. In these paths, a returned structured
 `cancelled` result can be printed before the wrapper assigns the
 signal-derived status. This describes the current source routing; it is not a
 claim that every command or provider runtime has been independently exercised.
@@ -731,9 +907,9 @@ CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a
 SIGPIPE-terminated writer). The operation itself may have completed; only its
 output was declined.
 
-`inspect-artifact` also returns a structured cancelled result, but its direct
-analysis cancellation path does not set a signal-derived exit status, so it
-exits `1`. Setup has its own contract: cancellation exits `0`. Treat the
+`inspect-artifact` also returns a structured cancelled result. Its logging
+wrapper sits outside the cancellation handler and replaces the signal-derived
+status with the analysis failure status, so it exits `1`. Setup has its own contract: cancellation exits `0`. Treat the
 structured result and process status as separate signals when scripting
 cancellation.
 
@@ -749,3 +925,13 @@ REA's failure status:
 set -o pipefail
 rea inspect-artifact ./app.asar --json | jq . > inspection.json
 ```
+
+`--token-count` reports a tokenx estimate for the selected emitted document,
+including a requested full-output envelope and metadata. JSON uses the same
+terminal indentation or compact piped representation as normal output; JSONL
+uses its emitted line representation. The final newline is included (tokenx
+assigns whitespace no tokens). This is an estimate, not a model tokenizer count.
+Counting retains the existing bounded formatted-string allocation after capacity
+admission; omit the flag to stream large JSON documents without materializing
+the complete formatted text. Exhausted token windows display an empty range at
+the total token count and have no next offset.

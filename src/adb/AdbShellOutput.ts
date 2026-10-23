@@ -360,7 +360,7 @@ export const parseDumpsysPackageOutput = (
       details.installerPackageName === null
     )
       details.installerPackageName = absentInstallerOrName(value);
-    else if (key === "userId" && details.userId === null) {
+    else if ((key === "userId" || key === "appId") && details.userId === null) {
       const parsed = /^(\d+)/u.exec(value);
       if (parsed !== null) details.userId = Number(parsed[1]!);
     } else if (key === "pkgFlags" && details.pkgFlags === null)
@@ -418,18 +418,14 @@ export const packageChangeFailureReason = (output: string): string | null =>
  */
 export const parsePackageChangeOutput = (
   stdout: string,
-): {
-  readonly status: "success" | "failure";
-  readonly reason: string | null;
-} => {
+):
+  | { readonly status: "success" | "unknown"; readonly reason: null }
+  | { readonly status: "failure"; readonly reason: string } => {
   const text = stdout.trim();
+  const failure = packageChangeFailureReason(text);
+  if (failure !== null) return { status: "failure", reason: failure };
   if (/^Success$/mu.test(text)) return { status: "success", reason: null };
-  return {
-    status: "failure",
-    reason:
-      packageChangeFailureReason(text) ??
-      (text === "" ? null : text.slice(0, 512)),
-  };
+  return { status: "unknown", reason: null };
 };
 
 /**

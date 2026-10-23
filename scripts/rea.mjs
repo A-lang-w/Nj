@@ -14,9 +14,20 @@ const { default: packageJson } = await import("../package.json", {
   with: { type: "json" },
 });
 process.env.REA_PACKAGE_VERSION = packageJson.version;
-const isMcpEntry = args[0] === "--mcp" || args[0] === "mcp";
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const builtinArgumentRuntime = "dist/cli-runtime/cliBuiltinArguments.js";
+const builtinArguments = (await compiledRuntimeExists([builtinArgumentRuntime]))
+  ? await import("../dist/cli-runtime/cliBuiltinArguments.js")
+  : undefined;
+const isShellCompletion =
+  builtinArguments?.cliCompletionShell?.(process.env) !== undefined;
+const doctorArguments = isShellCompletion
+  ? undefined
+  : builtinArguments?.productionMcpDoctorArguments(args);
+const isMcpEntry =
+  !isShellCompletion && (args[0] === "--mcp" || args[0] === "mcp");
 const isMcpMode = isMcpEntry && args.length === 1;
-const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
+const isMcpDoctorMode = doctorArguments !== undefined;
 // Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
 // while `mcp -h --http` reaches the HTTP entry's own help.
 const isMcpHttpMode =
@@ -27,8 +38,6 @@ const isMcpHttpMode =
 const SIGPIPE_EXIT_STATUS = 141;
 // Set once the reader of CLI output has closed the pipe.
 let stdoutClosed = false;
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
 // Windows home lookup throws for an empty USERPROFILE. Dependencies resolve
 // home during import, before REA's own resolver can apply its account fallback.
 if (process.platform === "win32" && process.env.USERPROFILE === "") {
@@ -49,8 +58,9 @@ if (
   process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
 }
 
-const runtimeFiles =
-  isMcpMode || isMcpHttpMode
+const runtimeFiles = [
+  builtinArgumentRuntime,
+  ...(isMcpMode || isMcpHttpMode
     ? ["dist/mcp/main.js"]
     : isMcpDoctorMode
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
@@ -58,7 +68,8 @@ const runtimeFiles =
           "dist/cli-runtime/cli.js",
           "dist/cli-runtime/cliOutput.js",
           "dist/cli-runtime/cliResultOutput.js",
-        ];
+        ]),
+];
 
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
@@ -75,7 +86,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   guardClosedStdout();
   const { runProductionMcpDoctorCli } =
     await import("../dist/cli-runtime/mcpDoctor.js");
-  const result = await runProductionMcpDoctorCli(args.slice(2), {
+  const result = await runProductionMcpDoctorCli(doctorArguments, {
     dispatcherPath: fileURLToPath(import.meta.url),
     packageRoot,
     stdoutIsTerminal: process.stdout.isTTY === true,
@@ -93,21 +104,24 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   } = await import("../dist/cli-runtime/cliOutput.js");
   guardClosedStdout();
   // Incur's `mcp add` cannot spawn `npx` on Windows (#5811); REA's own setup can
-  // register the same agents there, so delegate and say so.
-  const delegation = windowsMcpAddDelegation(args, process.platform);
+  // register the same agents there, so delegate and say so. Completion words
+  // are transport data, not a command, so they are never delegated.
+  const delegation = isShellCompletion
+    ? undefined
+    : windowsMcpAddDelegation(args, process.platform);
   if (delegation !== undefined && "refusal" in delegation) {
-    process.stderr.write(`${delegation.refusal}
-`);
+    process.stderr.write(`${delegation.refusal}\n`);
     process.exitCode = 1;
     process.exit(1);
   }
-  if (delegation !== undefined)
-    process.stderr.write(`${delegation.note}
-`);
-  const cliArgs = normalizeCliArguments(
-    delegation === undefined ? args : delegation.args,
+  if (delegation !== undefined) process.stderr.write(`${delegation.note}\n`);
+  const cliArgs = isShellCompletion
+    ? args
+    : normalizeCliArguments(delegation === undefined ? args : delegation.args);
+  // Completion words are transport data, including partial output flags.
+  const outputOptions = parseCliOutputArguments(
+    isShellCompletion ? [] : cliArgs,
   );
-  const outputOptions = parseCliOutputArguments(cliArgs);
   const outputArguments = outputOptions.validation;
   // `--version` with an explicit format reports the runtime as a document;
   // plain `--version` stays Incur's bare version string.
@@ -156,6 +170,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
               return;
             }
             if (output.length > 0) wroteOutput = true;
+            if (resultOutput?.captureSdkOutput(output)) return;
             writeStdout(output);
           },
           // A command failure caused by the closed pipe keeps the pipe's status.
@@ -163,26 +178,25 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           // shutdown is reported here because this callback is what exits.
           exit: (code) => {
             exiting = true;
-            const status = stdoutClosed ? SIGPIPE_EXIT_STATUS : code;
-            void Promise.resolve()
-              .then(() => closeCliJavaScriptResources())
-              .then(
-                () => {
-                  process.exit(status);
-                },
-                (cleanup) => {
-                  process.stderr.write(
-                    `Failed to close the JavaScript analysis worker: ${cleanupFailureText(cleanup)}\n`,
-                  );
-                  process.exit(
-                    stdoutClosed
-                      ? SIGPIPE_EXIT_STATUS
-                      : status === 0
-                        ? 1
-                        : status,
-                  );
-                },
-              );
+            void (async () => {
+              let status = code;
+              try {
+                await closeCliJavaScriptResources();
+              } catch (cleanup) {
+                process.stderr.write(
+                  `Failed to close the JavaScript analysis worker: ${cleanupFailureText(cleanup)}\n`,
+                );
+                if (status === 0) status = 1;
+              }
+              try {
+                await resultOutput?.finishSdkOutput(code);
+              } catch (cause) {
+                if (!stdoutClosed)
+                  process.stderr.write(`${cleanupFailureText(cause)}\n`);
+                if (status === 0) status = 1;
+              }
+              process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : status);
+            })();
           },
         });
       } catch (cause) {
@@ -200,6 +214,11 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       }
       if (!wroteOutput && !resultOutput?.handled)
         writeStdout(renderEmptyFilteredCliOutput(outputOptions) ?? "");
+      // An SDK failure exits through the callback, which owns its pending write.
+      if (!exiting)
+        await resultOutput?.finishSdkOutput(
+          typeof process.exitCode === "number" ? process.exitCode : 0,
+        );
     }
   } catch (cause) {
     dispatchFailure = cause;

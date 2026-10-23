@@ -15,7 +15,20 @@ snapshot parser and a separate optional annotation extension. Check the
 [release boundary](installation.md#released-package-and-main) when using npm.
 
 See [import language and analysis seeds](installation.md#ghidra-import-language-and-analysis-seeds)
-to override the header-detected language or seed analysis.
+to override the header-detected language or seed analysis. An override that conflicts with a fixed raw, DOS, PSP, MIPS or RISC-V import
+is a configuration error naming the conflicting settings. It does not make an
+otherwise admitted target unsupported; REA preserves the requested settings.
+An inaccessible language
+catalog remains a read failure; it does not prove that a configured language is
+undefined. Installation `application.properties` has a fixed 1 MiB read allowance
+with no runtime override. The failure retains that allowance and directs recovery
+at the selected installation metadata.
+
+Retained process diagnostics can report termination by `SIGKILL`; the signal alone
+cannot establish an OOM kill. REA gives neutral recovery guidance and preserves the
+signal. Confirm resource causes from process output or host/container records;
+operation-scoped JVM `OutOfMemoryError` observations retain their separate resource
+classification. Automatic kernel or cgroup OOM attribution is not implemented.
 
 Provider selection and profile identity follow
 [MCP contracts](mcp-contracts.md#identity-and-discovery). One deep
@@ -257,3 +270,9 @@ next match. Coverage can overlap between pages; do not sum it as unique memory.
 page. These blocks are never searched. Cancellation returns a typed error,
 discards the active Ghidra database, and does not return a successful partial page.
 Hopper byte search remains unavailable until its implementation is verified.
+
+MIPS16 shared-image admission requires examined dynamic REL declarations.
+RELR dynamic tags or nonempty `SHT_RELR` sections leave relocation coverage
+unavailable and the profile unsupported; REA does not infer an empty relocation
+set from the absence of REL declarations. RELR loader semantics have not been
+verified for this lane.

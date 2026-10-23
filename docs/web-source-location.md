@@ -67,7 +67,14 @@ The adapter uses the locked upstream
 without modifying its code. It validates map/VLQ structure before allocation,
 normalizes nested indexed offsets before upstream flattening, checks section
 boundaries and indexes, and retains raw declaration identity. It supports regular
-maps and inline indexed sections. External section URLs return an actionable
+maps and inline indexed sections. Numeric `version: 3` is required on the root
+and every embedded map, including indexed ancestors. Invalid embedded headers
+report their section path and cannot produce descendant mapping facts. This
+uses the rejection option for version errors allowed by
+[ECMA-426](https://tc39.es/ecma426/#sec-decodeindexsourcemap).
+Equal section starts are allowed when earlier sections contribute no mappings;
+actual decoded mappings must stay before the next section boundary.
+External section URLs return an actionable
 unsupported-profile error. This is a defined decoder profile, not a claim to
 implement every current source-map extension.
 
@@ -87,6 +94,12 @@ limitations state it, and reaching it returns `resource_constraint` with
 heap limit is established. Cleanup may extend the deadline and an unconfirmed
 cleanup overrides success with `cleanup_incomplete` and the owning
 operation/resources.
+
+The decoder releases its owned codec process before removing the private request
+directory. A cleanup failure reports only the owners still pending: the process
+run token while process release is unconfirmed, and the directory until removal
+succeeds. A later successful retry settles every error bound to that command;
+historical failure diagnostics remain available.
 
 Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply, 262144 decoded
 rows/segments and 64 nested section levels. Those structural budgets and the

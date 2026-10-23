@@ -51,6 +51,10 @@ import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
+import {
+  createFunctionCoordinateContext,
+  functionCoordinateContextsEqual,
+} from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
@@ -662,7 +666,7 @@ describe("Ghidra platform support", () => {
         executable_role: target.executableRole,
         managed: target.managed,
         native_aot_metadata: {
-          contract_revision: "rtr-9.1-x64-pe-read-only-v5",
+          contract_revision: "rtr-9.1-x64-pe-read-only-v7",
           source_bytes: 128 * 1024 * 1024,
           work_units: 64 * 1024 * 1024,
           working_memory_bytes: 64 * 1024 * 1024,
@@ -2162,6 +2166,44 @@ it.each(["captured", "cancelled-with-facts"] as const)(
   },
 );
 
+it("preserves the observed NativeAOT snapshot digest with source-change recovery", async () => {
+  const bytes = nativeAotPeFixture();
+  const expected = "0".repeat(64);
+  const owner = new GhidraNativeAotSnapshotOwner({
+    targetSha256: expected,
+    targetPath: "/fixtures/admitted.exe",
+    readSnapshot: async () => ok({ kind: "captured", bytes }),
+    projectFailure: () => {
+      throw new Error("Identity mismatch must retain source-change recovery");
+    },
+  });
+  try {
+    const result = await owner.derive(
+      "0x140000000",
+      "inspect_native_load_image",
+      undefined,
+      {},
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisArtifactChangedError",
+      path: "/fixtures/admitted.exe",
+      diagnostics: {
+        expected_sha256: expected,
+        observed_sha256: nativeAotPeDigest(bytes),
+      },
+      partialObservation: {
+        kind: "native-aot-snapshot",
+        analysis_artifact_sha256: expected,
+        capture: { status: "captured", bytes: bytes.length },
+      },
+    });
+  } finally {
+    await owner.close();
+  }
+});
+
 it("preserves NativeAOT source facts and cleanup when a later caller contradicts identity", async () => {
   const partial = {
     kind: "file-snapshot-hash" as const,
@@ -2177,6 +2219,7 @@ it("preserves NativeAOT source facts and cleanup when a later caller contradicts
   onTestFinished(() => lease.release());
   const owner = new GhidraNativeAotSnapshotOwner({
     targetSha256: partial.sha256,
+    targetPath: partial.path,
     readSnapshot: async () =>
       err(
         new GhidraSessionError(
@@ -3646,6 +3689,39 @@ const issueOutput = [
   "\tat ghidra.app.plugin.core.analysis.GolangSymbolAnalyzer$PropagateRttiBackgroundCommand.applyTo",
 ].join("\n");
 
+describe("Ghidra exit-signal evidence", () => {
+  it("preserves observed SIGKILL without guessing its cause or installation recovery", async () => {
+    const projected = await projectFailure("process", {
+      exit_code: null,
+      exit_signal: "SIGKILL",
+      failure_output: failureOutput(),
+    });
+    expect(projected.code).toBe("execution_failure");
+    expect(projected.message).toContain("SIGKILL");
+    expect(projected.message).toContain("does not establish its cause");
+    expect(projected.remediation.action).toContain(
+      "host or container termination records",
+    );
+    expect(projected.remediation.action).not.toContain("rea doctor");
+    expect(projected.remediation.action).not.toContain(
+      "GHIDRA_HEADLESS_MAXMEM",
+    );
+  });
+
+  it("keeps operation-scoped JVM memory evidence stronger than an exit signal", async () => {
+    const projected = await projectFailure("process", {
+      exit_signal: "SIGKILL",
+      failure_output: failureOutput(
+        "",
+        "java.lang.OutOfMemoryError: Java heap space",
+      ),
+    });
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.message).toContain("Java heap space");
+    expect(projected.remediation.action).toContain("GHIDRA_HEADLESS_MAXMEM");
+  });
+});
+
 describe("Ghidra OOME error projection", () => {
   it("recognizes the headless analyzer's real detail-before-class output", async () => {
     const projected = await projectFailure("process", {
@@ -4114,3 +4190,83 @@ it.each([false, true])(
     );
   },
 );
+
+it("commits native coordinates independently of analyzer choices and preserves raw base identity", async () => {
+  const resolve = async (ghidra: GhidraProvider, target: BinaryTarget) => {
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok) throw resolved.error;
+    if (resolved.value.profile === null)
+      throw new Error("expected native profile");
+    return resolved.value.profile;
+  };
+  const defaultProvider = provider();
+  const configured = configuredProvider({
+    REA_GHIDRA_DISABLED_ANALYZERS: "Decompiler Switch Analysis",
+  });
+  const target = executableTarget("elf", "x86_64");
+  const baseline = await resolve(defaultProvider, target);
+  const changedOptions = await resolve(configured, target);
+  expect(baseline.parameters.function_coordinate_context).toEqual(
+    createFunctionCoordinateContext({
+      loader: "auto-from-header",
+      language_id: "auto-from-header",
+      compiler_spec_id: "auto-default",
+      load_segment: null,
+      address_coordinates: null,
+      entry_point: null,
+    }),
+  );
+  expect(baseline.digest).not.toBe(changedOptions.digest);
+  expect(functionCoordinateContextsEqual(baseline, changedOptions)).toBe(true);
+  const raw = fixtureRawBinaryLoadImage().target;
+  const rawProfile = await resolve(defaultProvider, raw);
+  const shifted = await resolve(defaultProvider, {
+    ...raw,
+    entryPoint: "0x8001000",
+    entryPointSource: "0x8001000",
+  });
+  expect(rawProfile.parameters.function_coordinate_context).toMatchObject({
+    kind: "native-function-coordinate-context-v1",
+    selected_image: null,
+    mapping_sha256: expect.any(String),
+  });
+  expect(functionCoordinateContextsEqual(rawProfile, shifted)).toBe(false);
+});
+
+it("session-observation failure clears only its resolved cleanup dependency after close retry", async () => {
+  const retained = new ProviderCleanupError("ghidra", ["owned-session"], {
+    reason: "fixture first close refused",
+  });
+  let closes = 0;
+  let calls = 0;
+  const ghidra = configuredProvider(
+    { REA_GHIDRA_DISABLED_ANALYZERS: "Decompiler Switch Analysis" },
+    () => ({
+      start: async () => ok(sessionInfo()),
+      callTool: async () => {
+        calls++;
+        return ok(null);
+      },
+      close: async () => {
+        closes++;
+        if (closes === 1) return err(retained);
+        retained.resolveCleanup();
+        return ok(null);
+      },
+    }),
+  );
+  const client = await createElfClient(ghidra);
+  const failed = await client.execute("list_procedures", {});
+  if (failed.ok) throw new Error("Missing analyzer observation accepted");
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "cleanup_incomplete",
+  });
+  expect(calls).toBe(0);
+  expect(await client.close()).toEqual({ ok: true, value: null });
+  expect(closes).toBe(2);
+  expect(failed.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "execution_failure",
+  });
+  await ghidra.closeOwnedResources();
+});
