@@ -131,7 +131,17 @@ it.each([
   {
     text: JSON.stringify({
       version: 3,
-      sections: [{ offset: { line: 1000000000, column: 0 }, map: {} }],
+      sections: [
+        {
+          offset: { line: 1000000000, column: 0 },
+          map: {
+            version: 3,
+            sources: ["app.ts"],
+            names: [],
+            mappings: "AAAA",
+          },
+        },
+      ],
     }),
     tag: "ArtifactOperationError",
   },
@@ -139,6 +149,11 @@ it.each([
   const response = await realDecoder().trace({ ...input, text });
   if (response.ok) throw new Error("expected failed map");
   expect(response.error._tag).toBe(tag);
+  if (tag === "ArtifactOperationError")
+    expect(response.error).toMatchObject({
+      reason: "limit",
+      detail: expect.stringContaining("generated-row decoder budget"),
+    });
 });
 
 it("keeps indexed section overlap typed as a malformed source map", async () => {
