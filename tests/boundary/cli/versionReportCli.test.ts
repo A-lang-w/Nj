@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { homedir, userInfo } from "node:os";
+import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 import { expect } from "vitest";
 import { z } from "zod";
@@ -17,9 +19,23 @@ cliTest(
     const { name, version } = packageSchema.parse(
       JSON.parse(await readFile("package.json", "utf8")),
     );
-    const cwd = await createTestTempDirectory("rea-version-report-");
+    // Unique private values: the report must carry none of them. Literal
+    // report values such as "node" or "linux" cannot collide with these.
+    const marker = `rea-private-${randomUUID()}`;
+    const cwd = await createTestTempDirectory(`${marker}-cwd-`);
+    const home = join(cwd, `${marker}-home`);
+    await mkdir(home);
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      REA_VERSION_REPORT_PRIVATE_MARKER: marker,
+    };
 
-    const json = await cli.run({ arguments: ["--version", "--json"], cwd });
+    const json = await cli.run({
+      arguments: ["--version", "--json"],
+      cwd,
+      environment,
+    });
     expect(json.exitCode, json.stderr).toBe(0);
     // Piped JSON is one compact document.
     expect(json.stdout.trimEnd().split("\n")).toHaveLength(1);
@@ -35,8 +51,7 @@ cliTest(
         satisfied: true,
       },
     });
-    for (const identifying of [homedir(), cwd, userInfo().username])
-      expect(json.stdout).not.toContain(identifying);
+    expect(json.stdout).not.toContain(marker);
 
     const yaml = await cli.run({
       arguments: ["--version", "--format=yaml"],
@@ -50,6 +65,23 @@ cliTest(
     const plain = await cli.run({ arguments: ["--version"], cwd });
     expect(plain.exitCode, plain.stderr).toBe(0);
     expect(plain.stdout).toBe(`${version}\n`);
+
+    // Valid other output controls keep the plain version; invalid
+    // combinations keep their existing output-flag error.
+    const filtered = await cli.run({
+      arguments: ["--version", "--json", "--filter-output", "version"],
+      cwd,
+    });
+    expect(filtered.exitCode, filtered.stderr).toBe(0);
+    expect(filtered.stdout).toBe(`${version}\n`);
+    const windowed = await cli.run({
+      arguments: ["--version", "--json", "--token-limit", "5"],
+      cwd,
+    });
+    expect(windowed.exitCode).toBe(1);
+    expect(windowed.json).toMatchObject({
+      error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+    });
 
     // Help keeps precedence over --version.
     const help = await cli.run({

@@ -567,9 +567,11 @@ The field names are stable. The report contains no paths, environment values,
 user or host names, and it starts no provider and reads no target. `--format`
 selects any CLI output format, such as `--format yaml`. JSON follows the usual
 rule: indented on a terminal, compact when piped or redirected. `--help` still
-takes precedence, and `--version` combined with other output controls, such as
-`--filter-output`, prints the plain version. Use `rea doctor` for provider and
-host readiness.
+takes precedence. With other output controls, `--version` keeps its existing
+behavior: valid controls such as `--filter-output` or `--full-output` print the
+plain version, and invalid combinations report the usual output-flag error,
+such as `UNSUPPORTED_OUTPUT_COMBINATION` for `--json` with `--token-limit`. Use
+`rea doctor` for provider and host readiness.
 
 ## Output and exit status
 
