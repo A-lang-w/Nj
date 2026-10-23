@@ -27,6 +27,7 @@ it.each(["require", "require.resolve", "require.main"])(
               expect.objectContaining({
                 kind: "require",
                 specifier: "node:path",
+                resolution_only: true,
               }),
             ]
           : [],
@@ -153,11 +154,13 @@ it("retains a mutated require.resolve request as an unknown fact", () => {
       parse_state: "partial",
     }),
   ]);
-  expect(
-    analyzeJavaScriptStaticSource(source).references.filter(
-      ({ kind }) => kind === "require",
-    ),
-  ).toEqual([expect.objectContaining({ kind: "require", specifier: null })]);
+  const references = analyzeJavaScriptStaticSource(source).references.filter(
+    ({ kind }) => kind === "require",
+  );
+  expect(references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: null }),
+  ]);
+  expect(references[0]?.resolution_only).toBeUndefined();
 });
 
 it("does not treat bundler factory resolve members as Node resolvers", () => {

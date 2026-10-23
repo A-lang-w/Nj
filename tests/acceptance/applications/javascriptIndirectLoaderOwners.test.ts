@@ -44,6 +44,11 @@ const cases = [
     possible: false,
   },
   {
+    name: "resolution followed by loading retains execution ownership",
+    load: 'require.resolve("../shared/window.cjs");require("../shared/window.cjs");',
+    possible: true,
+  },
+  {
     name: "require.main is not an implicit module loader",
     load: 'require.main("../shared/window.cjs");',
     possible: false,

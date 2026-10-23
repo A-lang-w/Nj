@@ -265,7 +265,10 @@ const requireCallSpecifier = (
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
   resolveMemberChanged = false,
-): { readonly specifier: string | undefined } | null => {
+): {
+  readonly specifier: string | undefined;
+  readonly resolutionOnly: boolean;
+} | null => {
   const call = semanticRequireCallAt(
     node,
     bindings,
@@ -278,9 +281,12 @@ const requireCallSpecifier = (
     !call.sourceRelative
   ) {
     context.accumulator.unknownFindings += 1;
-    return { specifier: undefined };
+    return { specifier: undefined, resolutionOnly: false };
   }
-  return { specifier: argumentValue(call.arguments?.[0]) };
+  return {
+    specifier: argumentValue(call.arguments?.[0]),
+    resolutionOnly: isRequireResolveCall(node),
+  };
 };
 
 /** Examine member-loader receivers only after shared alias mutation facts settle. */
@@ -311,6 +317,7 @@ export const finishModuleRequireCalls = (
         node,
         kind: "require",
         specifier: call.specifier,
+        ...(call.resolutionOnly ? { resolution_only: true } : {}),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
@@ -933,10 +940,11 @@ export const addReference = (
       : { specifier, expression: null };
   addLocatedFinding(context, {
     collection: context.accumulator.references,
-    key: `reference\0${input.kind}\0${reference.specifier ?? reference.expression}`,
+    key: `reference\0${input.kind}\0${input.resolution_only ? "resolve-only\0" : ""}${reference.specifier ?? reference.expression}`,
     node: input.node,
     value: {
       kind: input.kind,
+      ...(input.resolution_only ? { resolution_only: true } : {}),
       ...reference,
       module_key: null,
       location: range(input.node),

@@ -272,6 +272,11 @@ Selected bounded text is then parsed as inert data to recover:
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on.
 
+Proven native `require.resolve()` references retain `resolution_only: true`.
+They associate a module path without establishing execution or propagating an
+Electron application owner. A replaced or otherwise unresolved resolver remains
+uncertain. Resolving and loading the same path retain distinct reference facts.
+
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,
 while locally shadowed receivers can still contribute network endpoint
