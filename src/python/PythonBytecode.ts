@@ -23,11 +23,14 @@ const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
 
   // Python 3.x
   3000: "3.0",
+  3131: "3.0",
   3141: "3.1",
+  3151: "3.1",
   3180: "3.2",
   3230: "3.3",
   3310: "3.4",
   3350: "3.5",
+  3351: "3.5",
   3379: "3.6",
   3394: "3.7",
   3413: "3.8",
@@ -38,6 +41,23 @@ const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
   3571: "3.13",
   3627: "3.14",
 };
+
+const isEightByteHeader = (
+  magic: number,
+  major: number,
+  minor: number,
+): boolean =>
+  major === 2 ||
+  (major === 3 && minor < 3) ||
+  (Number.isNaN(major) && magic >= 3000 && magic < 3190);
+
+const isTwelveByteHeader = (
+  magic: number,
+  major: number,
+  minor: number,
+): boolean =>
+  (major === 3 && minor >= 3 && minor < 7) ||
+  (Number.isNaN(major) && magic >= 3190 && magic < 3390);
 
 /** Verify if bytes begin with valid Python bytecode magic and CRLF framing. */
 export const isPythonBytecode = (bytes: Uint8Array): boolean => {
@@ -71,7 +91,7 @@ export const parsePythonBytecodeHeader = (
   const minor = Number(minorStr);
 
   // Python 2.x and Python 3.0 to 3.2: 4-byte magic + 4-byte timestamp = 8 bytes
-  if (major === 2 || (major === 3 && minor < 3)) {
+  if (isEightByteHeader(magic, major, minor)) {
     if (bytes.length < 8) return null;
     const timestampSec = bytes.readUInt32LE(4);
     return {
@@ -84,7 +104,7 @@ export const parsePythonBytecodeHeader = (
   }
 
   // Python 3.3 to 3.6: 4-byte magic + 4-byte timestamp + 4-byte size = 12 bytes
-  if (major === 3 && minor < 7) {
+  if (isTwelveByteHeader(magic, major, minor)) {
     if (bytes.length < 12) return null;
     const timestampSec = bytes.readUInt32LE(4);
     const sourceSize = bytes.readUInt32LE(8);
@@ -185,7 +205,7 @@ export const buildPythonBytecodeHeader = (
   const sourceSize = options?.sourceSize ?? 0;
 
   // Python 2.x and Python 3.0 to 3.2: 8 bytes
-  if (major === 2 || (major === 3 && minor < 3)) {
+  if (isEightByteHeader(magic, major, minor)) {
     const header = Buffer.alloc(8);
     header.writeUInt16LE(magic, 0);
     header[2] = 0x0d;
@@ -195,7 +215,7 @@ export const buildPythonBytecodeHeader = (
   }
 
   // Python 3.3 to 3.6: 12 bytes
-  if (major === 3 && minor < 7) {
+  if (isTwelveByteHeader(magic, major, minor)) {
     const header = Buffer.alloc(12);
     header.writeUInt16LE(magic, 0);
     header[2] = 0x0d;

@@ -63,6 +63,7 @@ export const isMinidump = (buffer: Buffer): boolean => {
 
 const MAX_MINIDUMP_STRING_BYTES = 64 * 1024; // 64 KiB per string
 const MAX_TOTAL_MODULE_NAME_BYTES = 1024 * 1024; // 1 MiB total for all module names
+export const MAX_MINIDUMP_STREAMS = 1_024; // Stream directory cap
 
 const readMinidumpString = (buffer: Buffer, rva: number): string => {
   if (rva < 0 || rva + 4 > buffer.length) return "";
@@ -209,7 +210,14 @@ export const parseMinidump = (buffer: Buffer): MinidumpReport | null => {
   const limitations: string[] = [];
   let hasParsedModules = false;
 
-  for (let i = 0; i < numberOfStreams; i += 1) {
+  const inspectedStreams = Math.min(numberOfStreams, MAX_MINIDUMP_STREAMS);
+  if (numberOfStreams > inspectedStreams) {
+    limitations.push(
+      `Minidump header declared ${numberOfStreams} streams; only ${inspectedStreams} stream directory entries were inspected.`,
+    );
+  }
+
+  for (let i = 0; i < inspectedStreams; i += 1) {
     const entryOffset = streamDirectoryRva + i * 12;
     const streamType = buffer.readUInt32LE(entryOffset);
     const dataSize = buffer.readUInt32LE(entryOffset + 4);

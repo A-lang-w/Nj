@@ -610,7 +610,7 @@ export const classifyArtifactBytes = (
     return "wasm";
   if (
     prefix.length >= 16 &&
-    prefix.subarray(0, 16).toString("ascii").startsWith("SQLite format 3")
+    prefix.subarray(0, 16).toString("ascii") === "SQLite format 3\0"
   )
     return "sqlite";
   if (

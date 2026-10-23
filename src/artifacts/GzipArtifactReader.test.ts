@@ -42,4 +42,22 @@ describe("GzipArtifactReader", () => {
     await reader.close();
     await rm(tempDir, { recursive: true, force: true });
   });
+
+  it("falls back to decompressed_payload when archive basename is literally .gz", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "rea-gzip-dot-test-"));
+    const gzipPath = join(tempDir, ".gz");
+    await writeFile(gzipPath, gzipSync(Buffer.from("payload")));
+
+    const reader = new GzipArtifactReader(gzipPath);
+    const entries = [];
+    for await (const entry of reader.entries()) {
+      entries.push(entry);
+    }
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.path).toBe("decompressed_payload");
+
+    await reader.close();
+    await rm(tempDir, { recursive: true, force: true });
+  });
 });

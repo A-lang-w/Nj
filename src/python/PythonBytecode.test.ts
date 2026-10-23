@@ -115,6 +115,22 @@ describe("PythonBytecode", () => {
     expect(parsed?.version).toBe("3.2");
     expect(parsed?.magicNumber).toBe(3180);
     expect(parsed?.codeObjectOffset).toBe(8);
+
+    const header30 = buildPythonBytecodeHeader(3131, { timestamp });
+    expect(header30.length).toBe(8);
+    expect(parsePythonBytecodeHeader(header30)).toMatchObject({
+      version: "3.0",
+      magicNumber: 3131,
+      codeObjectOffset: 8,
+    });
+
+    const header31 = buildPythonBytecodeHeader(3151, { timestamp });
+    expect(header31.length).toBe(8);
+    expect(parsePythonBytecodeHeader(header31)).toMatchObject({
+      version: "3.1",
+      magicNumber: 3151,
+      codeObjectOffset: 8,
+    });
   });
 
   it("rejects truncated headers that do not have the complete version-specific length", () => {

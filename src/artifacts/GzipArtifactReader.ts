@@ -54,9 +54,15 @@ const readGzipOriginalFilename = (
   }
   const base = basename(fallbackPath);
   if (base.toLowerCase().endsWith(".gz")) {
-    return base.slice(0, -3);
+    const stem = base.slice(0, -3);
+    if (stem.length > 0 && stem !== "." && stem !== "..") {
+      return stem;
+    }
+    return "decompressed_payload";
   }
-  return base.length > 0 ? `${base}.unpacked` : "decompressed_payload";
+  return base.length > 0 && base !== "." && base !== ".."
+    ? `${base}.unpacked`
+    : "decompressed_payload";
 };
 
 /** Single-stream decompression reader for GZIP archives. */

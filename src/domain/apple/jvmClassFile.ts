@@ -4,6 +4,13 @@ export const MAX_JVM_CLASS_PROBE_BYTES = 64 * 1024;
 
 export type JvmClassProbeState = "pending" | "matched" | "rejected";
 
+const isValidJvmVersion = (major: number, minor: number): boolean => {
+  if (major < 45 || major > 100) return false;
+  if (major === 45) return true;
+  if (major < 56) return minor === 0;
+  return minor === 0 || minor === 65535;
+};
+
 /**
  * Streaming, bounded JVM class signature probe.
  * Checks magic (0xcafebabe), valid major/minor version framing, and parses
@@ -56,12 +63,7 @@ export const createJvmClassSignatureProbe = (): {
       const major = view.getUint16(6, false);
       const poolCount = view.getUint16(8, false);
 
-      if (
-        major < 45 ||
-        major > 100 ||
-        (minor !== 0 && minor !== 65535) ||
-        poolCount === 0
-      ) {
+      if (!isValidJvmVersion(major, minor) || poolCount === 0) {
         state = "rejected";
         return state;
       }

@@ -170,7 +170,6 @@ export const createArtifactClassificationProbe = (
     write(bytes: Uint8Array): void {
       const streamOffset = observedBytes;
       asar.write(bytes);
-      jvm.write(bytes);
       let offset = 0;
       while (offset < bytes.length) {
         const limit =
@@ -188,6 +187,7 @@ export const createArtifactClassificationProbe = (
         );
         retain(selected);
         xml.write(selected);
+        jvm.write(selected);
         offset += selected.length;
       }
       if (

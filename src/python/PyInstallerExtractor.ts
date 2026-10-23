@@ -204,21 +204,15 @@ export const parsePyInstallerArchive = (
         pyzDataOffset,
         pyzDataOffset + pyzEntry.compressedLength,
       );
-      let decompressedPyz = rawPyz;
-      if (pyzEntry.compressionFlag === 1) {
-        try {
-          const maxPyzBytes =
-            pyzEntry.uncompressedLength > 0
-              ? Math.min(pyzEntry.uncompressedLength, MAX_PER_ENTRY_BYTES)
-              : MAX_PER_ENTRY_BYTES;
-          decompressedPyz = zlib.inflateSync(rawPyz, {
-            maxOutputLength: maxPyzBytes,
-          });
-        } catch {
-          // ignore decompression failure on probe
-        }
+      const inflatedPyz = inflatePayload(
+        rawPyz,
+        pyzEntry.compressionFlag,
+        MAX_PER_ENTRY_BYTES,
+        pyzEntry.uncompressedLength,
+      );
+      if (inflatedPyz.decompressed) {
+        embeddedPyz = parsePyzArchive(inflatedPyz.data) ?? undefined;
       }
-      embeddedPyz = parsePyzArchive(decompressedPyz) ?? undefined;
     }
   }
 
@@ -320,6 +314,13 @@ const inflatePayload = (
   readonly error?: string | undefined;
 } => {
   if (flag === 0) {
+    if (expectedLength !== undefined && raw.length !== expectedLength) {
+      return {
+        data: raw,
+        decompressed: false,
+        error: `Uncompressed entry size ${raw.length} contradicts declared uncompressed length ${expectedLength}`,
+      };
+    }
     if (raw.length > maxOutputBytes) {
       return {
         data: raw,
@@ -329,13 +330,28 @@ const inflatePayload = (
     }
     return { data: raw, decompressed: true };
   }
+  if (expectedLength !== undefined && expectedLength > maxOutputBytes) {
+    return {
+      data: raw,
+      decompressed: false,
+      error: `Decompression error: expansion budget exceeded: declared uncompressed length ${expectedLength} exceeds output budget ${maxOutputBytes}`,
+    };
+  }
   const budget =
-    expectedLength !== undefined && expectedLength > 0
-      ? Math.min(maxOutputBytes, expectedLength)
+    expectedLength !== undefined
+      ? Math.min(maxOutputBytes, Math.max(1, expectedLength))
       : maxOutputBytes;
   try {
+    const data = zlib.inflateSync(raw, { maxOutputLength: budget });
+    if (expectedLength !== undefined && data.length !== expectedLength) {
+      return {
+        data: raw,
+        decompressed: false,
+        error: `Decompression error: inflated size ${data.length} contradicts declared uncompressed length ${expectedLength}`,
+      };
+    }
     return {
-      data: zlib.inflateSync(raw, { maxOutputLength: budget }),
+      data,
       decompressed: true,
     };
   } catch (err) {

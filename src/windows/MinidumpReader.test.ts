@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isMinidump, parseMinidump } from "./MinidumpReader.js";
+import {
+  isMinidump,
+  MAX_MINIDUMP_STREAMS,
+  parseMinidump,
+} from "./MinidumpReader.js";
 
 const createMockMinidump = (): Buffer => {
   const buf = Buffer.alloc(1024, 0);
@@ -118,5 +122,21 @@ describe("MinidumpReader", () => {
     expect(report?.modules.length).toBe(1);
     expect(report?.streamTypes).toEqual([7, 6, 4, 4]);
     expect(report?.limitations).toEqual([]);
+  });
+
+  it("bounds excessive stream directory counts and records a limitation", () => {
+    const streamCount = MAX_MINIDUMP_STREAMS + 5;
+    const buf = Buffer.alloc(32 + streamCount * 12, 0);
+    buf.writeUInt32LE(0x504d444d, 0);
+    buf.writeUInt32LE(0x0000a793, 4);
+    buf.writeUInt32LE(streamCount, 8);
+    buf.writeUInt32LE(32, 12);
+
+    const report = parseMinidump(buf);
+    expect(report).not.toBeNull();
+    expect(report?.streamTypes).toHaveLength(MAX_MINIDUMP_STREAMS);
+    expect(report?.limitations[0]).toMatch(
+      /only 1024 stream directory entries/,
+    );
   });
 });

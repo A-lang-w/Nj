@@ -483,6 +483,14 @@ describe("extended artifact signature classification", () => {
       kind: "resource",
       format: "sqlite",
     });
+
+    const nonTerminatedSqliteText = Buffer.from(
+      "SQLite format 3: notes on database header layout",
+      "ascii",
+    );
+    expect(
+      classifyArtifactBytesAtPath("notes.txt", nonTerminatedSqliteText).format,
+    ).toBe("file");
   });
 
   it("classifies JVM class files larger than 8 KiB prefix without FAT misclassification", () => {
@@ -509,6 +517,17 @@ describe("extended artifact signature classification", () => {
       65536,
     );
     expect(result).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    // Java 1.1 (45.3) class file with non-zero minor version
+    const java11Prefix = Buffer.from(prefix);
+    java11Prefix.writeUInt16BE(3, 4); // minor = 3
+    java11Prefix.writeUInt16BE(45, 6); // major = 45 (Java 1.1)
+    expect(
+      classifyArtifactBytesAtPath("Legacy11.class", java11Prefix, 65536),
+    ).toEqual({
       kind: "executable",
       format: "jvm-class",
     });

@@ -420,4 +420,41 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
     expect(dep?.decompressed).toBe(false);
     expect(dep?.limitations[0]).toMatch(/unresolved/);
   });
+
+  it("rejects compressed CArchive entries that expand to fewer bytes than declared", () => {
+    const raw = Buffer.from("short_payload");
+    const compressed = zlib.deflateSync(raw);
+
+    const cookie = Buffer.alloc(88);
+    PYINSTALLER_MAGIC.copy(cookie, 0);
+
+    const nameBytes = Buffer.from("short.py\0", "utf8");
+    const structLen = 18 + nameBytes.length;
+    const tocEntry = Buffer.alloc(structLen);
+    tocEntry.writeUInt32BE(structLen, 0);
+    tocEntry.writeUInt32BE(0, 4);
+    tocEntry.writeUInt32BE(compressed.length, 8);
+    tocEntry.writeUInt32BE(raw.length + 50, 12); // declared larger than actual
+    tocEntry.writeUInt8(1, 16);
+    tocEntry.writeUInt8("s".charCodeAt(0), 17);
+    nameBytes.copy(tocEntry, 18);
+
+    const carchiveData = compressed;
+    const tocOffset = carchiveData.length;
+    const tocLength = tocEntry.length;
+    const pkgLength = carchiveData.length + tocLength + 88;
+
+    cookie.writeUInt32BE(pkgLength, 8);
+    cookie.writeUInt32BE(tocOffset, 12);
+    cookie.writeUInt32BE(tocLength, 16);
+    cookie.writeInt32BE(310, 20);
+
+    const binary = Buffer.concat([carchiveData, tocEntry, cookie]);
+    const extracted = extractPyInstallerEntries(binary);
+    expect(extracted).toHaveLength(1);
+    expect(extracted[0]?.decompressed).toBe(false);
+    expect(extracted[0]?.limitations[0]).toMatch(
+      /contradicts declared uncompressed length/,
+    );
+  });
 });
