@@ -379,7 +379,7 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
-  "retains a verified active inferior after public command output truncation makes protocol state ambiguous",
+  "recovers truncated output with verified detach while leaving the inferior alive",
   async () => {
     const sessionId = await startFakeInferiorSession({
       overflowPxCommand: true,
@@ -412,18 +412,18 @@ it.skipIf(process.platform !== "linux")(
         if (watchdog !== undefined) clearTimeout(watchdog);
       });
 
-    expect(completed.ok).toBe(false);
-    if (completed.ok) return;
-    expect(completed.error.cleanupIncomplete).toBe(true);
-    expect(completed.error.cleanupResources).toEqual([sessionId]);
-    const evidence = evidenceSchema.parse(completed.error.partialObservation);
+    expect(completed.ok).toBe(true);
+    if (!completed.ok) throw completed.error;
+    const evidence = evidenceSchema.parse(completed.value.evidence);
     expect(evidence.normalized_result).toMatchObject({
       output_truncated: true,
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "The owned debugger session remains retained because cleanup could not be verified",
-    );
+    expect(inferiorPid).toBeDefined();
+    expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
     expect(manager!.status(sessionId)?.state).toBe("closed");
+    expect((await manager!.close(sessionId)).ok).toBe(true);
+    expect(manager!.status(sessionId)).toBeUndefined();
+    expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
   },
 );
 
@@ -568,6 +568,7 @@ const truncateOlj = ${JSON.stringify(options.truncateOlj ?? false)};
 const truncateCleanupFrame = ${JSON.stringify(options.truncateCleanupFrame ?? false)};
 const overflowPxCommand = ${JSON.stringify(options.overflowPxCommand ?? false)};
 let oljCalls = 0;
+let detached = false;
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -579,8 +580,9 @@ process.stdin.on("data", (chunk) => {
     if (line === "olj") {
       oljCalls += 1;
       if (truncateOlj && oljCalls === 1) process.stdout.write("x".repeat(16 * 1024 * 1024 + 1) + "\\0");
-      else process.stdout.write((oljCalls === 1 ? initialRows : oljCalls === 2 ? afterDetach : "[]") + "\\0");
+      else process.stdout.write((detached ? afterDetach : initialRows) + "\\0");
     }
+    else if (line.startsWith("o- ")) detached = true;
     else if (overflowPxCommand && line === "px") process.stdout.write("x".repeat(2_048) + "\\0");
     else if (line === "e dbg.exitkills") process.stdout.write(exitKills + "\\0");
     else if (line.startsWith("!echo ")) process.stdout.write((truncateCleanupFrame ? "x".repeat(2_048) : "") + line.slice(6) + "\\0");

@@ -609,6 +609,7 @@ const completedOutputCloseFixture = async () => {
   const fixtureRoot = await mkdtemp(
     join(tmpdir(), "rea-lldb-complete-output-"),
   );
+  const expectedPidPath = join(fixtureRoot, "expected-pid");
   const fakeLldb = join(fixtureRoot, "fake-lldb");
   const completed = {
     ...successfulTracerOutput,
@@ -628,6 +629,7 @@ const config = JSON.parse(fs.readFileSync(command.slice("rea_trace ".length), "u
 const child = spawnSync(process.execPath, ["-e", ""]);
 const result = ${JSON.stringify(completed)};
 result.pid = child.pid;
+fs.writeFileSync(${JSON.stringify(expectedPidPath)}, String(child.pid));
 fs.writeFileSync(config.pid_path, String(child.pid));
 fs.writeFileSync(config.stdout_capture_path, "ok");
 fs.writeFileSync(config.stderr_capture_path, "");
@@ -637,7 +639,15 @@ process.exit(0);
 `,
     { mode: 0o700 },
   );
-  return { fixtureRoot, fakeLldb, completed };
+  return {
+    fixtureRoot,
+    fakeLldb,
+    completed,
+    expected: async () => ({
+      ...completed,
+      pid: Number(await readFile(expectedPidPath, "utf8")),
+    }),
+  };
 };
 
 describe("LLDB process exit at output-close loop completion", () => {
@@ -645,7 +655,7 @@ describe("LLDB process exit at output-close loop completion", () => {
     it.skipIf(process.platform === "win32")(
       `retains completed trace facts after output closure (cancelled=${String(abort)})`,
       async () => {
-        const { fixtureRoot, fakeLldb, completed } =
+        const { fixtureRoot, fakeLldb, completed, expected } =
           await completedOutputCloseFixture();
         const controller = new AbortController();
         const reason = { requested: "stop after completed output closure" };
@@ -679,7 +689,7 @@ describe("LLDB process exit at output-close loop completion", () => {
           expect(interrupted).toBe(abort);
           if (result.ok) {
             expect(abort).toBe(false);
-            expect(result.value.run).toMatchObject(completed);
+            expect(result.value.run).toMatchObject(await expected());
             expect(result.value.stdout).toMatchObject({
               text: "ok",
               bytes: 2,

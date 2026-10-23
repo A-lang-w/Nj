@@ -1,3 +1,4 @@
+import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
@@ -475,7 +476,7 @@ export const inspectClientConfiguration = async (
     if (!(cause instanceof ConfigurationError)) throw cause;
     return {
       status: "invalid",
-      remediation: `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
+      remediation: analysisErrorUserMessage(cause),
     };
   }
   if (inspection.status !== "create" && inspection.status !== "update")
@@ -598,7 +599,10 @@ const inspectClientDocument = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (cause instanceof ConfigurationError)
-      return { status: "invalid", remediation: cause.message };
+      return {
+        status: "invalid",
+        remediation: analysisErrorUserMessage(cause),
+      };
     // Malformed configuration is reported with the invalid remediation.
     void cause;
     return {

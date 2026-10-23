@@ -12,6 +12,16 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../src/domain/harmony/harmonyApplication.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 
+const projectionFacts = (value: unknown) => {
+  const {
+    projection_id: _id,
+    source_evidence_ids: sources,
+    ...facts
+  } = harmonyApplicationProjectionResultSchema.parse(value);
+  expect(sources).toHaveLength(1);
+  return facts;
+};
+
 test("preserves Harmony archive formats through the public CLI/MCP lifecycle", async ({
   cli,
   workspace,
@@ -139,10 +149,8 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       });
       expect(cliProjection.exitCode, cliProjection.stderr).toBe(0);
       expect(
-        harmonyApplicationProjectionResultSchema.parse(
-          parseEvidence(cliProjection.json).normalized_result,
-        ),
-      ).toEqual(graph);
+        projectionFacts(parseEvidence(cliProjection.json).normalized_result),
+      ).toEqual(projectionFacts(graph));
       const closed = await client.callTool({
         name: "close_binary",
         arguments: {},

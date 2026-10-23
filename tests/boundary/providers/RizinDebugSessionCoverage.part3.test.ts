@@ -216,9 +216,12 @@ it.skipIf(process.platform === "win32").each([false, true])(
     );
     expect(result.ok).toBe(false);
     if (!result.ok && incomplete)
-      expect(result.error.cleanup?.reason).toContain(
-        "injected stop uncertainty",
-      );
+      expect(result.error.diagnostics?.cleanup_error).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          reason: expect.stringContaining("injected stop uncertainty"),
+        },
+      });
   },
 );
 
@@ -339,6 +342,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
   "recovers output-limit cleanup only after a fresh marker and inferior readback (retry=%s)",
   async (retry) => {
     let synchronizationAllowed = !retry;
+    let pendingSynchronizationMarker: string | undefined;
     const writes: string[] = [];
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
@@ -348,6 +352,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
         if (text.startsWith("noisy\n"))
           control.output(`too much output\0${marker}\0`);
         else if (text.startsWith("!echo __REA_CLEANUP_SYNC_")) {
+          pendingSynchronizationMarker = marker;
           if (synchronizationAllowed)
             control.output(`stale frame\0${marker}\0`);
         } else if (text.startsWith("olj\n")) control.output(`[]\0${marker}\0`);
@@ -370,10 +375,20 @@ it.skipIf(process.platform === "win32").each([false, true])(
         (await manager.execute(started.value.session_id, "later")).ok,
       ).toBe(false);
       synchronizationAllowed = true;
+      if (pendingSynchronizationMarker !== undefined)
+        injected.control.output(
+          `late frame\0${pendingSynchronizationMarker}\0`,
+        );
       expect((await manager.close(started.value.session_id)).ok).toBe(true);
       expect(result.error.cleanupIncomplete).toBe(false);
     }
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(true);
+    if (!retry) {
+      expect(manager.status(started.value.session_id)).toMatchObject({
+        state: "closed",
+      });
+      expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    }
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );

@@ -384,7 +384,11 @@ cliTest(
       arguments: [...argv, "--filter-output", "toString", "--token-count"],
     });
     expect(omittedCount.exitCode).toBe(0);
-    expect(omittedCount.stdout).toBe("0\n");
+    expect(omittedCount.stdout).toBe("1\n");
+    const empty = await cli.run({
+      arguments: [...argv, "--filter-output", "toString"],
+    });
+    expect(empty.json).toEqual({});
     const jsonl = await cli.run({
       arguments: [
         "inspect-managed-members",

@@ -44,7 +44,7 @@ describe("JavaScript export container coverage through authenticated Evidence", 
       before: "",
       after: ", options: { nested: {} }",
       paths: ["/options", "/options/nested"],
-      addedPaths: ["/options"],
+      addedPaths: ["/options", "/options/nested"],
     },
     {
       name: "escaped property keys",

@@ -144,7 +144,10 @@ export function* openImageSteps(
   let machoPointerFixups: PointerFixups | undefined;
   if (container.format === "macho") {
     try {
-      const layout = parseMachoLayout(image, container.architecture);
+      const layout = parseMachoLayout(
+        image,
+        container.architecture === "amd64" ? "x86_64" : container.architecture,
+      );
       machoPointerFixups = parsePointerFixups(
         image,
         layout.fixups,
