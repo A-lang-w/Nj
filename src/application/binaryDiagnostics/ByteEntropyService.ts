@@ -158,6 +158,20 @@ export class ByteEntropyService {
                 { cause },
               )
             : invalid("path", "Selected file could not be found.");
+        if (cause.code === "ELOOP" || cause.code === "ENAMETOOLONG")
+          return admitted
+            ? new AnalysisArtifactChangedError(
+                OPERATION,
+                input.path,
+                "Selected file path changed during entropy inspection.",
+                { cause },
+              )
+            : invalid(
+                "path",
+                cause.code === "ELOOP"
+                  ? "Selected path's symbolic links loop or exceed the host limit (ELOOP)."
+                  : "Selected path exceeds the host path or component length limit (ENAMETOOLONG).",
+              );
       }
       return new AnalysisOutputError(
         OPERATION,
