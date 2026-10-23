@@ -138,6 +138,7 @@ export const CLI_COMMANDS = Object.freeze({
   environmentServe: "environment-serve",
   environmentExport: "environment-export",
   environmentCompare: "environment-compare",
+  environmentBuild: "environment-build",
   compare: "compare",
   captureProcess: "capture-process",
   compareProcessCaptures: "compare-process-captures",
