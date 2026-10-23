@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { literalSubstringPredicate } from "../analysisSearch.js";
+import { directionOf, orderRole } from "./environmentStateOrderParameters.js";
 import {
   isObject,
   pointerTo,
@@ -39,26 +40,6 @@ export interface QueryLine {
   readonly entities: readonly StateEntity[];
 }
 
-const SORT = new Set([
-  "order",
-  "orderby",
-  "order_by",
-  "ordering",
-  "sort",
-  "sortby",
-  "sort_by",
-]);
-const DIRECTION = new Set([
-  "dir",
-  "direction",
-  "order",
-  "orderdirection",
-  "order_direction",
-  "sortdir",
-  "sort_dir",
-  "sortorder",
-  "sort_order",
-]);
 const LIMIT = new Set([
   "count",
   "itemsperpage",
@@ -81,7 +62,6 @@ const SEARCH = new Set([
   "searchterm",
   "term",
 ]);
-const DIRECTIONS = new Set(["asc", "desc"]);
 const IDENTIFYING = ["id", "slug", "name"];
 /** At most this many role combinations are tried for one line. */
 const MAX_COMBINATIONS = 256;
@@ -207,8 +187,9 @@ const readCall = (
       call.selections.push(contains(parameter.fields, value));
     } else if (parameter.role === "sort") call.sort = value;
     else if (parameter.role === "direction") {
-      if (!DIRECTIONS.has(value.toLowerCase())) return undefined;
-      call.direction = value.toLowerCase();
+      const direction = directionOf(value);
+      if (direction === undefined) return undefined;
+      call.direction = direction;
     } else if (parameter.role === "inert") {
       if (!parameter.values.includes(value)) return undefined;
     } else if (number === undefined) return undefined;
@@ -395,10 +376,9 @@ const choicesFor = (
     (SEARCH.has(key) && !plainSearch(value))
   )
     return [];
-  if (DIRECTION.has(key) && DIRECTIONS.has(value.toLowerCase()))
-    choices.push({ role: "direction" });
-  else if (SORT.has(key)) choices.push({ role: "sort" });
-  else if (LIMIT.has(key)) choices.push({ role: "limit" });
+  const order = orderRole(name, value);
+  if (order !== undefined) return order === "none" ? [] : [{ role: order }];
+  if (LIMIT.has(key)) choices.push({ role: "limit" });
   else if (OFFSET.has(key)) choices.push({ role: "offset" });
   else if (key === "page")
     choices.push({ role: "page", first: 1 }, { role: "page", first: 0 });

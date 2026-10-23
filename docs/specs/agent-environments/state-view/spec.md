@@ -93,6 +93,23 @@ later increments.
   under the view's separator, with its own fraction digits padded with zeros to
   the view's width and none dropped; an epoch spelling is computed from the
   instant.
+- An item or list view names in `sorted_arrays` the fields it lists as string
+  arrays in code-point order whatever order they were written in (tags kept as
+  a set). Only the write gate learns it. A field is a candidate when every
+  initial entity shows it as a sorted string array or null, one with two
+  distinct strings, and no read the gate counts has listed it unsorted with two
+  distinct strings. It is learned from a counted read that fails with the
+  stored order and passes with the field sorted, and only when that read lists
+  a written array in an order that is neither the written one nor values the
+  initial state held first, then the new ones as written (an application
+  ordering by tag id or creation shows that order too). The stored value keeps
+  the written order, so a write's own answer echoes it; every view of the type
+  for which the field is still a candidate sorts it as well.
+- A collection's initial order is the order of the first line that lists every
+  entity any initial read shows in it and names no sort, direction (`sort[]`,
+  `_sort`, `sort-column`, `sortKey`, `orderBy` and like spellings) or random
+  parameter (`random`, `rand`, `shuffle`, `seed`); a collection without such a
+  line keeps its entities' earliest sightings.
 - A list has `all` membership only when no item-total envelope member (`total`,
   `count` and their compounds, not page counts) differs from the number of
   entities it lists and no `has_more`, `next` or next-page token is set.

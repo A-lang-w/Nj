@@ -307,7 +307,13 @@ and the state is left unchanged.
 collection's order: sorted by the identity field or a clock field (ascending
 or descending), `first` or `last`. The rule is the first candidate consistent
 with both the initial `all`-membership recordings and the position a later
-recorded list shows. With no evidence, the rule is `last`.
+recorded list shows. With no evidence, the rule is `last`. A sort by a
+random identity (version 4 UUIDs, or generated ids every creation clock lists
+in another order) is a candidate only after `last`: the recorded order by it is
+a coincidence until a list shows a create placed by it; time-ordered ids
+(ObjectId, ULID, TSID, version 7 UUIDs) keep it. When the sorts the recorded
+order admits would place the created entity differently, none is claimed
+before `last` until a later list settles it.
 
 ## The gate
 
@@ -456,6 +462,12 @@ refuses to answer with.
 - After a failed item check, the copy takes the read's recorded values (or
   drops the entity on a recorded absence). A list whose check failed is not
   checked again.
+- A failed item or list read the gate counts passes when the view lists some
+  string-array fields sorted and its order rules out the written one and the
+  order the values were first held in (see `sorted_arrays` in the state view);
+  the type's views keep the fewest such fields the read needs, and the read
+  checks the writes it exercises. A counted read listing such a field unsorted
+  rules it out for its view.
 - A list that fails only for where one create placed its entity passes when
   another of that create's insert candidates reproduces it, which then
   becomes the plan's rule, unless an earlier list check relied on the rule

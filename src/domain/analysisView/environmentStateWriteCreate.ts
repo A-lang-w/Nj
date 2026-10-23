@@ -48,6 +48,7 @@ import {
   explainCreate,
   insertCandidates,
   insertIndex,
+  randomIdentities,
   nextInteger,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
@@ -168,9 +169,22 @@ const buildCreate = (
       ["string", "number"].includes(typeof member[field]),
     ),
   );
-  draft.candidates = insertCandidates(members, [
-    ...new Set([idField, ...clocks, ...scalars]),
-  ]);
+  const generated = explained.rules.some(
+    (rule) =>
+      rule.rule === "identity" &&
+      rule.field === idField &&
+      rule.generator !== "sequence",
+  );
+  draft.candidates = insertCandidates(
+    members,
+    [...new Set([idField, ...clocks, ...scalars])],
+    {
+      ...(generated && randomIdentities(members, idField, clocks)
+        ? { random: idField }
+        : {}),
+      created: evidence.observed.object,
+    },
+  );
   retainFixed(context, explained.body.fixed);
   Object.assign(draft.plan, {
     exemplar_ordinal: step.record.ordinal,

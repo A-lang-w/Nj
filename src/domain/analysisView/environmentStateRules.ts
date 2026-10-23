@@ -1,5 +1,6 @@
 import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 import {
@@ -107,6 +108,8 @@ interface EntityViewPlan {
   readonly checked_record_ordinals: number[];
   /** How the view spells the clock fields it always spells otherwise than the entities' stored values. */
   readonly clock_formats?: Readonly<Record<string, ClockFormat>> | undefined;
+  /** Fields whose string arrays the view lists in code-point order, whatever order they were written in. */
+  readonly sorted_arrays?: string[] | undefined;
 }
 
 /** A query key that picks out replayed reads: a parameter, a parameter with one value, or a parameter left out. */
@@ -623,7 +626,10 @@ export const listItems = (
 /** One entity as a view shows it: the view's fields it has, view-specific values first; volatile fields take `observed` values when given. */
 export const renderStateEntity = (
   entity: StateEntity,
-  view: Pick<EntityViewPlan, "tool" | "fields" | "clock_formats">,
+  view: Pick<
+    EntityViewPlan,
+    "tool" | "fields" | "clock_formats" | "sorted_arrays"
+  >,
   volatileFields: ReadonlySet<string>,
   observed?: JsonObject,
 ): JsonObject => {
@@ -631,6 +637,7 @@ export const renderStateEntity = (
     entity.view_fields.find((candidate) => candidate.tool === view.tool)
       ?.fields ?? {};
   const formats = view.clock_formats ?? {};
+  const sorted = new Set(view.sorted_arrays);
   return Object.fromEntries(
     view.fields.flatMap((name): [string, JsonValue][] => {
       const source =
@@ -641,17 +648,22 @@ export const renderStateEntity = (
             : entity.fields;
       if (!Object.hasOwn(source, name)) return [];
       // A stored value the view never recorded, such as a written one, takes the view's spelling.
-      return [
-        [
-          name,
-          source === entity.fields && Object.hasOwn(formats, name)
-            ? respellClock(source[name]!, formats[name]!)
-            : source[name]!,
-        ],
-      ];
+      const value =
+        source === entity.fields && Object.hasOwn(formats, name)
+          ? respellClock(source[name]!, formats[name]!)
+          : source[name]!;
+      return [[name, sorted.has(name) ? inSetOrder(value) : value]];
     }),
   );
 };
+
+/** Whether a value is an array of strings. */
+export const isStringArray = (value: JsonValue): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/** A string array in code-point order, as a view that keeps the field as a set lists it; any other value as it is. */
+const inSetOrder = (value: JsonValue): JsonValue =>
+  isStringArray(value) ? value.toSorted(compareUnicodeCodePoints) : value;
 
 /** The fields every recording of a view carried that the entity, as serving renders it, lacks; serving refuses to answer with such an entity. */
 export const missingRequiredFields = (

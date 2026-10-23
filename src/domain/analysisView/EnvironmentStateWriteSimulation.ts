@@ -18,6 +18,7 @@ import { linkedTarget } from "./environmentStateWriteLinks.js";
 import { updatedEntity } from "./environmentStateWriteApply.js";
 import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
+import { SortedArrays } from "./environmentStateWriteSorted.js";
 import {
   checkDocumentRead,
   checkItemRead,
@@ -100,6 +101,8 @@ export class EnvironmentStateWriteSimulation {
   readonly #effects = new WriteEffects();
   /** Fields reads show the application leaves out, which serving then does not require. */
   readonly omitted = new OmittedFields((bytes) => this.#input.io.retain(bytes));
+  /** Array fields reads showed a view lists sorted. */
+  readonly #sorted: SortedArrays;
   readonly #lastCheck = new Map<string, number>();
   /** When the latest modelled write to each target since its last check ended. */
   readonly #touchedSince: PendingTargets = new Map();
@@ -150,6 +153,11 @@ export class EnvironmentStateWriteSimulation {
       for (const ordinal of tool.record_ordinals)
         this.#toolOf.set(ordinal, tool);
     this.#checkedLines = checkedLines(input);
+    this.#sorted = new SortedArrays(input.views.values(), input.entities, {
+      state: this.#state,
+      io: input.io,
+      idField: (type) => this.#types.get(type)?.id_field,
+    });
     this.#taint = new WriteTaint(
       [...this.#types.keys()],
       new Map(
@@ -231,7 +239,7 @@ export class EnvironmentStateWriteSimulation {
         const view = this.#input.views.get(
           this.#toolOf.get(ordinal)?.name ?? "",
         );
-        return view === undefined ? undefined : this.omitted.view(view);
+        return view === undefined ? undefined : this.#viewOf(view);
       },
       idField: (type) => this.#types.get(type)!.id_field,
       observed: (ordinal) =>
@@ -424,10 +432,20 @@ export class EnvironmentStateWriteSimulation {
     return servedLine(this.#checkedLines.get(view.tool), record);
   }
 
+  /** The view as the gate currently knows it: without the fields reads showed omitted, with the arrays they showed sorted. */
+  #viewOf(view: StateView): StateView {
+    return this.#sorted.view(this.omitted.view(view));
+  }
+
+  /** The views as reads showed them. */
+  views(views: readonly StateView[]): StateView[] {
+    return this.#sorted.views(this.omitted.views(views));
+  }
+
   #read(record: StateRecordFacts, index: number, tool: StateToolFacts): void {
     const original = this.#input.views.get(tool.name);
     if (original === undefined) return;
-    const view = this.omitted.view(original);
+    let view = this.#viewOf(original);
     if (projectedRead(view, record, this.#input.io)) return;
     const borrowers = this.#observations.get(record.ordinal);
     if (!borrowers && this.#resynced(view, record, index)) return;
@@ -441,6 +459,15 @@ export class EnvironmentStateWriteSimulation {
           runningAt(this.#touchedSince, key, record.start),
       );
     if (blocked(keys)) return;
+    // A read the gate counts can show the view lists a written array sorted, or rule that out.
+    outcome = this.#sorted.retry(
+      view,
+      { record, outcome },
+      (candidate) => this.#check(candidate, record),
+      blocked,
+    );
+    view = this.#viewOf(original);
+    keys = [...outcome.targets, ...outcome.unheld];
     let exercised = exercisedBy(this.#touched, keys, borrowers);
     if (borrowers !== undefined) {
       this.omitted.keep(view, outcome);

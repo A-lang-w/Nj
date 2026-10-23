@@ -46,6 +46,7 @@ import {
   type ObservedEntity,
   type StateObservation,
 } from "./environmentStateMerge.js";
+import { orderByWholeLines } from "./environmentStateInitialOrder.js";
 import { rewriteCuts, type RewriteSpan } from "./environmentStateRewrites.js";
 import {
   checkItemPlan,
@@ -209,6 +210,10 @@ export class EnvironmentStateExtraction {
       this.#planList(candidate);
     for (const plan of this.#plans) this.#observePlan(plan);
     this.#dropVariants();
+    orderByWholeLines(
+      this.#entities.values(),
+      (ordinal) => this.#byOrdinal.get(ordinal)?.query,
+    );
     this.#classifyChanges();
     this.#merge();
     return candidates;

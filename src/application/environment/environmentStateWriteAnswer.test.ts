@@ -2065,3 +2065,35 @@ describe("path fields of creates read under another path", () => {
     }
   });
 });
+
+describe("array fields a view lists sorted", () => {
+  it("answers the update with the written order and later reads with it sorted", () => {
+    const tagged = (entry: Book, tags: string[]): Book => ({ ...entry, tags });
+    const books = servedFrom([
+      [
+        "GET",
+        "/api/books",
+        [tagged(FIRST_BOOK, ["alpha", "beta"]), tagged(SECOND_BOOK, ["gamma"])],
+      ],
+      ["GET", "/api/books/1", tagged(FIRST_BOOK, ["alpha", "beta"])],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["gamma"])],
+      [
+        "PATCH",
+        "/api/books/2",
+        tagged(SECOND_BOOK, ["zeta", "delta"]),
+        200,
+        { tags: ["zeta", "delta"] },
+      ],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ]);
+    expect(
+      books.answer("patch_books_by_id", {
+        id: "1",
+        body: { tags: ["omega", "beta"] },
+      }).body,
+    ).toMatchObject({ tags: ["omega", "beta"] });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toMatchObject({
+      tags: ["beta", "omega"],
+    });
+  });
+});

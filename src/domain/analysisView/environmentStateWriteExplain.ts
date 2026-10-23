@@ -511,10 +511,44 @@ const orderedBy = (
     );
   });
 
-/** Insert rules consistent with a collection's recorded order: sorted by identity or clock fields when shown, then last and first. */
+/** A version 4 UUID, which is random and so orders nothing. */
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+/**
+ * Whether a collection's identities order nothing: version 4 UUIDs, or values every creation clock
+ * lists in another order. Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
+ */
+export const randomIdentities = (
+  members: readonly JsonObject[],
+  idField: string,
+  clocks: readonly string[],
+): boolean => {
+  const ids = members.map((member) => scalarText(member[idField]) ?? "");
+  if (ids.length > 0 && ids.every((id) => UUID_V4.test(id))) return true;
+  if (members.length < 2 || clocks.length === 0) return false;
+  const byId = members.toSorted(
+    (left, right) => compareValues(left[idField], right[idField]) ?? 0,
+  );
+  return clocks.every((clock) =>
+    byId.some(
+      (member, index) =>
+        index > 0 &&
+        (compareValues(byId[index - 1]![clock], member[clock]) ?? 1) > 0,
+    ),
+  );
+};
+
+/**
+ * Insert rules consistent with a collection's recorded order: sorted by identity or clock fields when
+ * shown, then last and first. Sorts by a field of random values come after last, since they order
+ * nothing until a read shows a create placed by them; when the other sorts place the created entity
+ * differently, none is claimed before last.
+ */
 export const insertCandidates = (
   members: readonly JsonObject[],
   fields: readonly string[],
+  placing: { readonly random?: string; readonly created?: JsonObject } = {},
 ): InsertRule[] => {
   const sorted: InsertRule[] = [];
   if (members.length >= 2)
@@ -522,7 +556,20 @@ export const insertCandidates = (
       for (const direction of ["ascending", "descending"] as const)
         if (orderedBy(members, field, direction))
           sorted.push({ rule: "sorted", field, direction });
-  return [...sorted, { rule: "last" }, { rule: "first" }];
+  const byRandom = (rule: InsertRule) =>
+    rule.rule === "sorted" && rule.field === placing.random;
+  const early = sorted.filter((rule) => !byRandom(rule));
+  const { created } = placing;
+  const tied =
+    created !== undefined &&
+    new Set(early.map((rule) => insertIndex(rule, members, created))).size > 1;
+  return [
+    ...(tied ? [] : early),
+    { rule: "last" },
+    ...(tied ? early : []),
+    ...sorted.filter(byRandom),
+    { rule: "first" },
+  ];
 };
 
 /** Where an entity with these fields enters a collection under an insert rule. */

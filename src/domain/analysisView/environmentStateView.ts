@@ -119,6 +119,12 @@ const entityViewFields = {
     .describe(
       "How the view spells clock fields it always spells otherwise than the entities' stored values; a stored value the view never recorded is spelled this way.",
     ),
+  sorted_arrays: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Fields whose string arrays the view lists in code-point order, whatever order they were written in; learned from a read that shows a written array sorted.",
+    ),
 };
 const replayedReadFields = {
   projected_record_ordinals: z

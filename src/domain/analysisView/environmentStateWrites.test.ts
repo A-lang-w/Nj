@@ -1903,3 +1903,203 @@ describe("values an application stamps", () => {
     });
   });
 });
+
+/** A book with tags, as an application that keeps tags as a set lists them. */
+const tagged = (entry: Book, tags: string[]): Book => ({ ...entry, tags });
+const TAGGED_INIT_ROWS: TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/books",
+    [tagged(FIRST_BOOK, ["alpha", "beta"]), tagged(SECOND_BOOK, ["gamma"])],
+  ],
+  ["GET", "/api/books/1", tagged(FIRST_BOOK, ["alpha", "beta"])],
+  ["GET", "/api/books/2", tagged(SECOND_BOOK, ["gamma"])],
+  [
+    "PATCH",
+    "/api/books/2",
+    tagged(SECOND_BOOK, ["zeta", "delta"]),
+    200,
+    { tags: ["zeta", "delta"] },
+  ],
+];
+
+describe("array fields a view lists sorted", () => {
+  it("serves an update whose read-back lists the written tags sorted, and every view of the type sorts them", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    for (const tool of ["get_books_by_id", "get_books"])
+      expect(state.views.find((view) => view.tool === tool)).toMatchObject({
+        sorted_arrays: ["tags"],
+      });
+  });
+
+  it("learns no sorting from a read after another the gate counted listed the field unsorted", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["zeta", "delta"])],
+      [
+        "PATCH",
+        "/api/books/1",
+        tagged(FIRST_BOOK, ["omega", "beta"]),
+        200,
+        { tags: ["omega", "beta"] },
+      ],
+      ["GET", "/api/books/1", tagged(FIRST_BOOK, ["beta", "omega"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("learns no sorting from a read whose order fits the values held first, then the new ones as written", () => {
+    // `alpha` was held before the update and `zeta` was not: a store ordering tags by when it made them lists them so too.
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS.slice(0, 3),
+      [
+        "PATCH",
+        "/api/books/2",
+        tagged(SECOND_BOOK, ["zeta", "alpha"]),
+        200,
+        { tags: ["zeta", "alpha"] },
+      ],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["alpha", "zeta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("keeps the written order a read-back shows, though every initial array was sorted", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["zeta", "delta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+});
+
+describe("initial order", () => {
+  it("orders a collection as a whole list line that applies no sort lists it, after an item read and filtered or sorted lines", () => {
+    const alpha = book(1, "Alpha", "2026-10-01T09:00:00Z");
+    const charlie = book(2, "Charlie", "2026-10-01T10:00:00Z");
+    const bravo = book(3, "Bravo", "2026-10-01T11:00:00Z");
+    const state = stateOf([
+      ["GET", "/api/books/2", charlie],
+      ["GET", "/api/books?name=Alpha", [alpha]],
+      ["GET", "/api/books?ordering=name", [alpha, bravo, charlie]],
+      ["GET", "/api/books", [bravo, alpha, charlie]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/3", bravo],
+    ]);
+    expect(
+      state.entities
+        .filter((entity) => entity.type === "/api/books")
+        .map((entity) => entity.id),
+    ).toEqual(["3", "1", "2"]);
+  });
+});
+
+describe("insert rules the recorded order cannot settle", () => {
+  const listed = (id: string, name: string, created: string) => ({
+    id,
+    name,
+    created_at: created,
+  });
+  const rowsFor = (
+    members: { id: string; name: string; created_at: string }[],
+    created: { id: string; name: string; created_at: string },
+  ): TimedCaptureRow[] => [
+    ["GET", "/api/items", members],
+    ...members.map((member): TimedCaptureRow => [
+      "GET",
+      `/api/items/${member.id}`,
+      member,
+    ]),
+    ["POST", "/api/items", created, 201, { name: created.name }],
+    ["GET", `/api/items/${created.id}`, created],
+  ];
+
+  it("places a create last, not by identity, when its identities are random UUIDs", () => {
+    const at = "2026-10-01T09:00:00Z";
+    const plan = planOf(
+      stateOf(
+        rowsFor(
+          [
+            listed("1c0e8a2b-7f3d-4e9a-b1c2-d3e4f5a6b7c8", "Delta", at),
+            listed("5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", "Alpha", at),
+            listed("9b2f1c3e-0d4a-4b6e-8f1a-2c3d4e5f6a7b", "Charlie", at),
+          ],
+          listed("e5d6e7f8-1a2b-4c3d-9e4f-5a6b7c8d9e0f", "Echo", bookClock(4)),
+        ),
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({ served: true, insert: { rule: "last" } });
+  });
+
+  it("keeps sorting by an identity a creation clock follows", () => {
+    const plan = planOf(
+      environmentStateViewOf(
+        timedCaptureEvidence(
+          rowsFor(
+            [
+              listed(
+                "6ad47b491023b50001087124",
+                "Alpha",
+                "2026-10-01T09:00:00Z",
+              ),
+              listed(
+                "6ad47b491023b50001087125",
+                "Bravo",
+                "2026-10-01T10:00:00Z",
+              ),
+            ],
+            listed("6ad47b491023b50001087130", "Charlie", bookClock(3)),
+          ),
+        ),
+        ["opaque-token"],
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      insert: { rule: "sorted", field: "id", direction: "ascending" },
+    });
+  });
+
+  it("places a create last when the orders the list admits put it in different places", () => {
+    const plan = planOf(
+      stateOf(
+        rowsFor(
+          [
+            listed("2", "Alpha", "2026-10-01T10:00:00Z"),
+            listed("1", "Delta", "2026-10-01T09:00:00Z"),
+          ],
+          listed("3", "Bravo", bookClock(3)),
+        ),
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({ served: true, insert: { rule: "last" } });
+  });
+});
