@@ -272,17 +272,21 @@ const requireCallReference = (
   readonly resolutionOnly: boolean;
 } | null => {
   if (call === undefined || call.loader === "local") return null;
+  const resolutionOnly =
+    call.resolverReceiver !== undefined &&
+    !resolveMemberChanged &&
+    call.loader !== "unknown";
   if (
     resolveMemberChanged ||
     call.loader === "unknown" ||
     !call.sourceRelative
   ) {
     context.accumulator.unknownFindings += 1;
-    return { specifier: undefined, resolutionOnly: false };
+    return { specifier: undefined, resolutionOnly };
   }
   return {
     specifier: argumentValue(call.arguments?.[0]),
-    resolutionOnly: call.resolverReceiver !== undefined,
+    resolutionOnly,
     ...(call.sourceRelativePath === undefined
       ? {}
       : { resolutionBasePath: call.sourceRelativePath }),

@@ -427,3 +427,18 @@ it("keeps a real loader stored on a resolve property executable", () => {
   expect(references).toMatchObject([{ specifier: "./window.cjs" }]);
   expect(references[0]?.resolution_only).toBeUndefined();
 });
+
+it("retains native resolver identity independently of an unknown filename base", () => {
+  const source = `${imported}const load=make(process.argv[1]);load.resolve("./window.cjs");`;
+  expect(
+    analyzeJavaScriptStaticSource(source).references.filter(
+      ({ kind }) => kind === "require",
+    ),
+  ).toMatchObject([
+    {
+      specifier: null,
+      resolution_only: true,
+      expression: expect.stringContaining("load.resolve"),
+    },
+  ]);
+});
