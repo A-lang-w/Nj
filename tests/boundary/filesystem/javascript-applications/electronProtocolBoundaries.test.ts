@@ -100,4 +100,38 @@ describe("Electron URL scheme boundaries", () => {
       normalized_result: { summary: { protocol_registrations: 4 } },
     });
   });
+
+  it("keeps a non-string literal scheme as observed rather than dynamic", async () => {
+    const root = await createTestTempDirectory(
+      "rea-electron-protocol-literal-",
+    );
+    await Promise.all([
+      writeFile(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "rea-electron-protocol-literal",
+          main: "main.cjs",
+        }),
+      ),
+      writeFile(
+        join(root, "main.cjs"),
+        [
+          'const { protocol } = require("electron");',
+          "protocol.handle(42, () => null);",
+        ].join("\n"),
+      ),
+    ]);
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const [node] = parseJavaScriptApplicationGraph(result.graph).nodes.filter(
+      ({ kind }) => kind === "url-scheme",
+    );
+    expect(node?.observations[0]).toMatchObject({
+      label: "42",
+      properties: {
+        scheme: null,
+        scheme_literal: 42,
+        resolution: "non-string-literal",
+      },
+    });
+  });
 });

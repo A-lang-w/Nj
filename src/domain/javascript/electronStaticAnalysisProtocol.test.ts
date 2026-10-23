@@ -174,3 +174,46 @@ describe("Electron protocol registrations in TypeScript sources", () => {
     ]);
   });
 });
+
+describe("Electron privileged scheme spreads", () => {
+  const privilegesOf = (privileges: string) =>
+    protocolsOf(`
+      const { protocol } = require("electron");
+      protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: ${privileges} }]);
+    `)[0]?.enabled_privileges;
+
+  it.each([
+    [
+      "a literal spread before a key",
+      "{ ...{ secure: true }, standard: true }",
+      ["secure", "standard"],
+    ],
+    [
+      "a later key overriding a spread",
+      "{ ...{ secure: true, stream: true }, stream: false }",
+      ["secure"],
+    ],
+    [
+      "a later spread overriding a key",
+      "{ standard: true, ...{ standard: false } }",
+      [],
+    ],
+    [
+      "nested literal spreads",
+      "{ ...{ ...{ secure: true } as const } }",
+      ["secure"],
+    ],
+  ])("reads %s", (_name, privileges, expected) => {
+    expect(privilegesOf(privileges)).toEqual(expected);
+  });
+
+  it.each([
+    ["a spread of an unknown value", "{ ...options, secure: true }"],
+    [
+      "a spread containing a getter",
+      "{ ...{ get secure() { return true; } } }",
+    ],
+  ])("keeps %s unknown", (_name, privileges) => {
+    expect(privilegesOf(privileges)).toBeNull();
+  });
+});

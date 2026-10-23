@@ -1,3 +1,4 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ElectronProtocolFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
@@ -11,7 +12,6 @@ import {
   addElectronInferenceEdge,
   electronFindingSourceNode,
   electronObservationIdentity,
-  electronRangeKey,
 } from "./ElectronBoundaryGraphContext.js";
 
 interface ProtocolInput {
@@ -46,26 +46,40 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
     value.module_runtime,
   );
   if (source === undefined) return;
+  const literal = value.scheme.status === "literal";
   const scheme =
-    value.scheme.status === "literal" && typeof value.scheme.value === "string"
+    literal && typeof value.scheme.value === "string"
       ? value.scheme.value
       : null;
+  // A number, boolean or null literal is observed exactly but names no scheme.
+  const nonString = literal && scheme === null;
   const facts = {
     scheme,
     scheme_expression: value.scheme.expression,
-    resolution: scheme === null ? "dynamic" : "literal",
+    scheme_literal: nonString ? value.scheme.value : null,
+    resolution:
+      scheme !== null
+        ? "literal"
+        : nonString
+          ? "non-string-literal"
+          : "dynamic",
     api: value.api,
     role: value.role,
     session: value.session,
     enabled_privileges: value.enabled_privileges,
   };
   const limitations =
-    scheme === null
-      ? [
-          REGISTRATION_LIMITATION,
-          "The scheme expression is dynamic; its runtime value remains unknown.",
-        ]
-      : [REGISTRATION_LIMITATION];
+    scheme !== null
+      ? [REGISTRATION_LIMITATION]
+      : nonString
+        ? [
+            REGISTRATION_LIMITATION,
+            "The scheme argument is a literal that is not a string, so it does not name a URL scheme as written.",
+          ]
+        : [
+            REGISTRATION_LIMITATION,
+            "The scheme expression is dynamic; its runtime value remains unknown.",
+          ];
   // One node per literal scheme across the artifact, so a scheme that is both
   // privileged and handled is one entry point with several registrations.
   const node = context.accumulator.addNode({
@@ -75,7 +89,7 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
         ? artifactLocalIdentity(
             file.sha256,
             "electron-dynamic-url-scheme",
-            `${value.api}:${electronRangeKey(value.location)}`,
+            `${value.api}:${javascriptSourceRangeKey(value.location)}`,
           )
         : electronObservationIdentity(
             context,
@@ -84,7 +98,7 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
           ),
     observations: [
       {
-        label: scheme ?? value.scheme.expression,
+        label: scheme ?? value.scheme.expression ?? String(value.scheme.value),
         properties: facts,
         evidence: astObservationEvidence({
           sha256: file.sha256,
