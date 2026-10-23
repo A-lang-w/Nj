@@ -11,8 +11,8 @@ import {
   insertIndex,
   responseShapeOf,
   type CreateEvidence,
-  type UpdateEvidence,
 } from "./environmentStateWriteExplain.js";
+import type { UpdateEvidence } from "./environmentStateWriteChanges.js";
 import {
   callRenewal,
   unexplainedRenewals,
@@ -397,6 +397,7 @@ it("explains an update's sent members as echoes, constants or the identity", () 
       kinds: [],
     },
     unexplained: [],
+    unstamped: [],
   });
 });
 

@@ -80,6 +80,8 @@ export interface WriteDraft {
   readonly linked?: string | undefined;
   /** Fields an item action's call found already at the value it sets them to. */
   readonly steady: Set<string>;
+  /** Unsent clocks a call left as they were in its own second, which it cannot show it stamps. */
+  readonly unstamped: Set<string>;
 }
 
 /** A write observation plus the fields its selected read view actually covers, if any. */
@@ -524,12 +526,12 @@ export const updateEntity = (
   if (!written.ok || (disagrees && !unknown))
     refuse(draft, step, "unexplained-change");
   if (!written.ok || disagrees || unknown) return recorded();
-  rememberCall(context.io.retain, draft, {
-    before: entity.fields,
-    after: after.object,
-    sent: body,
-    kept,
-  });
+  rememberCall(
+    context.io.retain,
+    draft,
+    { before: entity.fields, after: after.object, sent: body, kept },
+    explained.unstamped,
+  );
   context.io.retain(64 + jsonTextCodeUnits(written.value) * 2);
   context.state.put(updatedEntity(entity, written.value));
   return appliedUpdate(draft.plan, { targets, target }, entity.fields, {
@@ -543,16 +545,21 @@ const contradictsGeneratedClock = (
   before: JsonObject,
   after: JsonObject,
   rules: readonly FieldRule[],
-  explained: readonly FieldRule[],
+  explained: ReturnType<typeof explainUpdate>,
 ): boolean =>
   rules.some((rule) => {
-    if (rule.rule !== "clock" || !Object.hasOwn(after, rule.field))
+    // A clock left in the call's own second cannot show whether it advanced.
+    if (
+      rule.rule !== "clock" ||
+      !Object.hasOwn(after, rule.field) ||
+      explained.unstamped.includes(rule.field)
+    )
       return false;
     const previous = readClock(before[rule.field]);
     if (previous === undefined) return false;
     const next = readClock(after[rule.field]);
     return (
-      !explained.some(
+      !explained.rules.some(
         (candidate) =>
           candidate.field === rule.field && candidate.rule === "clock",
       ) ||
@@ -569,5 +576,5 @@ const contradictsPlan = (
   explained: ReturnType<typeof explainUpdate>,
 ): boolean =>
   contradictsEarlierCalls(draft, explained.rules) ||
-  contradictsGeneratedClock(before, after, draft.plan.rules, explained.rules) ||
+  contradictsGeneratedClock(before, after, draft.plan.rules, explained) ||
   conflictsWithPlan(draft.plan, explained);

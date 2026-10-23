@@ -4,8 +4,8 @@ import {
   explainCreate,
   explainUpdate,
   type CreateEvidence,
-  type UpdateEvidence,
 } from "./environmentStateWriteExplain.js";
+import type { UpdateEvidence } from "./environmentStateWriteChanges.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
 import {
   envelopeOf,
@@ -206,6 +206,87 @@ describe("values an update stamps without being sent them", () => {
         { title: "No html" },
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("the acting user's paired fields and same-second clocks", () => {
+  it("stamps the id beside the name naming the acting user, as the recorded pair shows them", () => {
+    const result = explainUpdate(
+      updated(
+        {
+          id: "42",
+          name: "A",
+          createdById: "u1",
+          createdByName: "Rea Admin",
+          modifiedByName: null,
+        },
+        {
+          id: "42",
+          name: "B",
+          createdById: "u1",
+          createdByName: "Rea Admin",
+          modifiedByName: "Rea Admin",
+          modifiedById: "u1",
+        },
+        { name: "B" },
+      ),
+    );
+    expect(result.rules).toContainEqual({
+      field: "modifiedById",
+      rule: "stamp",
+      value: "u1",
+    });
+    expect(result.rules).toContainEqual({
+      field: "modifiedByName",
+      rule: "stamp",
+      value: "Rea Admin",
+    });
+    // An id the creator's counterpart does not hold names someone else, so it is not the acting user's.
+    const other = explainUpdate(
+      updated(
+        {
+          id: "42",
+          name: "A",
+          createdById: "u1",
+          createdByName: "Rea Admin",
+          modifiedByName: null,
+        },
+        {
+          id: "42",
+          name: "B",
+          createdById: "u1",
+          createdByName: "Rea Admin",
+          modifiedByName: "Rea Admin",
+          modifiedById: "u2",
+        },
+        { name: "B" },
+      ),
+    );
+    expect(other.rules.map((rule) => rule.field)).not.toContain("modifiedById");
+  });
+
+  it("names the unsent whole-second clocks an update left in its own second, and no finer or creation one", () => {
+    const second = "2026-03-04T05:06:00Z";
+    const result = explainUpdate(
+      updated(
+        {
+          id: "42",
+          name: "A",
+          modifiedAt: second,
+          seenAt: "2026-03-04T05:06:00.250Z",
+          createdAt: second,
+        },
+        {
+          id: "42",
+          name: "B",
+          modifiedAt: second,
+          seenAt: "2026-03-04T05:06:00.250Z",
+          createdAt: second,
+        },
+        { name: "B" },
+      ),
+    );
+    expect(result.unstamped).toEqual(["modifiedAt"]);
   });
 });
 

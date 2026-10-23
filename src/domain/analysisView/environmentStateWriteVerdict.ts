@@ -47,6 +47,12 @@ const steady = (plan: StateWritePlan, draft: WriteDraft): boolean => {
   return set.length > 0 && set.every((field) => draft.steady.has(field));
 };
 
+/** Whether a clock a call left as it was in its own second has no rule another call showed, so no call showed whether the write stamps it. */
+const unstamped = (plan: StateWritePlan, draft: WriteDraft): boolean =>
+  [...draft.unstamped].some(
+    (field) => !plan.rules.some((rule) => rule.field === field),
+  );
+
 /** A replayed write's plan, served only when it was called, nothing contradicted it, a read confirmed it and its answers can render. */
 export const writeVerdict = (
   draft: WriteDraft,
@@ -59,7 +65,11 @@ export const writeVerdict = (
       plan.reason = "contradicted";
       plan.contradicted_by = draft.contradictedBy;
     } else if (draft.sideEffect) plan.reason = "side-effect";
-    else if (draft.confirmed.length === 0 || !steady(plan, draft))
+    else if (
+      draft.confirmed.length === 0 ||
+      !steady(plan, draft) ||
+      unstamped(plan, draft)
+    )
       plan.reason = "unconfirmed";
     else if (!renders(plan, input)) plan.reason = "incomplete-entities";
   }

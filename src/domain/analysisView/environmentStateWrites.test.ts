@@ -2194,3 +2194,62 @@ describe("insert rules the recorded order cannot settle", () => {
     expect(plan).toMatchObject({ served: true, insert: { rule: "last" } });
   });
 });
+
+/** A task whose modified clock is stored in whole seconds. */
+const task = (id: number, name: string, modifiedAt: string) => ({
+  id,
+  name,
+  modifiedAt,
+});
+const OLD_CLOCK = "2026-10-01T09:00:00Z";
+
+describe("clocks an update may stamp in its own second", () => {
+  const sameSecond: TimedCaptureRow[] = [
+    [
+      "GET",
+      "/api/tasks",
+      [task(1, "First", bookClock(3)), task(2, "Second", OLD_CLOCK)],
+    ],
+    ["GET", "/api/tasks/1", task(1, "First", bookClock(3))],
+    ["GET", "/api/tasks/2", task(2, "Second", OLD_CLOCK)],
+    [
+      "PATCH",
+      "/api/tasks/1",
+      task(1, "Renamed", bookClock(3)),
+      200,
+      { name: "Renamed" },
+    ],
+    ["GET", "/api/tasks/1", task(1, "Renamed", bookClock(3))],
+  ];
+
+  it("confirms no update that left an unsent clock as it was in the second it ran", () => {
+    expect(planOf(stateOf(sameSecond), "patch_tasks_by_id")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+    });
+  });
+
+  it("serves the update once another call shows it stamping the clock", () => {
+    const plan = planOf(
+      stateOf([
+        ...sameSecond,
+        [
+          "PATCH",
+          "/api/tasks/2",
+          task(2, "Second (renamed)", bookClock(5)),
+          200,
+          { name: "Second (renamed)" },
+        ],
+        ["GET", "/api/tasks/2", task(2, "Second (renamed)", bookClock(5))],
+      ]),
+      "patch_tasks_by_id",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+    });
+    expect(plan.rules).toContainEqual(
+      expect.objectContaining({ field: "modifiedAt", rule: "clock" }),
+    );
+  });
+});

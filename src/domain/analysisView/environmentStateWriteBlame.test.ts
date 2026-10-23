@@ -43,6 +43,24 @@ const createdThenRenamed = (
 ];
 
 describe("blame for a failed item read", () => {
+  it("confirms no update by a read showing a field its response showed and the state lacks, with no rule for it", () => {
+    const reviewed = (entry: Book): Book => ({ ...entry, reviewedBy: "rea" });
+    const rows = createdThenRenamed(
+      reviewed(RENAMED_THIRD),
+      reviewed(shelved(RENAMED_THIRD)),
+    );
+    // The shelves no write's answer shows stay the create's to answer for.
+    expect(planOf(rows, "post_books")).toMatchObject({
+      reason: "contradicted",
+      contradicted_by: 5,
+    });
+    expect(planOf(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+      contradicted_by: null,
+    });
+  });
+
   it("contradicts the create that left a field out and serves the update whose own fields the read shows", () => {
     const rows = createdThenRenamed(RENAMED_THIRD);
     expect(planOf(rows, "post_books")).toMatchObject({

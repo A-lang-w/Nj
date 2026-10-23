@@ -206,6 +206,7 @@ export const rememberCall = (
     readonly plan: { readonly rules: readonly FieldRule[] };
     readonly updates: UpdateCall[];
     readonly steady: Set<string>;
+    readonly unstamped: Set<string>;
   },
   call: {
     readonly before: JsonObject;
@@ -213,9 +214,15 @@ export const rememberCall = (
     readonly sent: JsonObject;
     readonly kept: readonly string[];
   },
+  /** Clocks the call left as they were in its own second, which show neither a stamp nor a kept value. */
+  sameSecond: readonly string[],
 ): void => {
-  const { kept } = call;
-  const facts = { shown: scalars(call.after), sent: scalars(call.sent), kept };
+  const unstamped = new Set(sameSecond);
+  for (const field of unstamped) draft.unstamped.add(field);
+  const kept = call.kept.filter((field) => !unstamped.has(field));
+  const shown = scalars(call.after);
+  for (const field of unstamped) shown.delete(field);
+  const facts = { shown, sent: scalars(call.sent), kept };
   retain(64 + jsonTextCodeUnits([...facts.shown, ...facts.sent, kept]) * 2);
   draft.updates.push(facts);
   for (const field of steadyFields(draft.plan.rules, call.before, call.after))

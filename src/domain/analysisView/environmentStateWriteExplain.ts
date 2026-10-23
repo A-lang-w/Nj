@@ -34,20 +34,22 @@ import {
 } from "./environmentStateWriteCopies.js";
 import {
   unexplainedRenewals,
-  freshUuid,
   GENERATED,
-  renewedRule,
 } from "./environmentStateWriteGenerated.js";
 import {
   createdNestedClock,
   createdToken,
-  derivedRule,
-  freshToken,
   isClockNear,
-  nestedClockRule,
+  pairedStamps,
   pinnedEchoes,
-  stampRule,
 } from "./environmentStateWriteStamps.js";
+import {
+  changeRule,
+  heldClock,
+  sameSecondClocks,
+  sentRule,
+  type UpdateEvidence,
+} from "./environmentStateWriteChanges.js";
 
 /** What explaining a create reads: the observed entity, the call that wrote it and the entities it joined. */
 export interface CreateEvidence {
@@ -282,109 +284,6 @@ export const explainCreate = (
   };
 };
 
-/** What explaining an update reads: the entity before and after, the call and its method. */
-export interface UpdateEvidence {
-  readonly before: JsonObject;
-  readonly after: JsonObject;
-  readonly call: WriteCall & { readonly body: JsonObject };
-  readonly method: string;
-  readonly idField: string;
-  readonly id: string;
-  readonly startMs: number | undefined;
-  /** Fields covered by a later read view. Missing fields outside that coverage remain unknown. */
-  readonly readFields?: readonly string[];
-  /** The type's other entities, none of which may hold a value the update generated. */
-  readonly others: readonly JsonObject[];
-  /** The fields of the observing read's view when that view showed the entity before, so one the entity lacked was added. */
-  readonly shown?: readonly string[];
-  /** An item action, whose unsent changes take the values it showed. */
-  readonly action?: boolean;
-}
-
-/** The rule a field the update changed without sending follows, if any; `slugs` maps each echoed member's slug to the first such member. */
-const changeRule = (
-  evidence: UpdateEvidence,
-  field: string,
-  slugs: ReadonlyMap<string, string>,
-): FieldRule | undefined => {
-  const before = evidence.before[field];
-  const after = evidence.after[field]!;
-  if (readClock(after) !== undefined && isClockNear(after, evidence.startMs))
-    return { field, rule: "clock", format: readClock(after)!.format };
-  if (freshUuid(evidence, field)) return { field, rule: "unique" };
-  // A renamed slug is spelled like a token, so the slug comes first.
-  const member = typeof after === "string" ? slugs.get(after) : undefined;
-  if (member !== undefined) return { field, rule: "slug", from: member };
-  if (freshToken(evidence, field)) return { field, rule: "unique" };
-  const nested = nestedClockRule(field, { before, after }, evidence);
-  if (nested !== undefined) return nested;
-  // Child rows only: a single UUID that changed is a reference or a generated value, judged above.
-  const renewed =
-    Array.isArray(before) || isObject(before)
-      ? renewedRule(field, { before, after }, evidence.others)
-      : undefined;
-  if (renewed !== undefined) return renewed;
-  const was = integerOf(before);
-  if (was !== undefined && integerOf(after) === was + 1)
-    return { field, rule: "increment" };
-  return (
-    stampRule(evidence, field) ??
-    derivedRule(evidence, field) ??
-    actionRule(evidence, field)
-  );
-};
-
-/** An item action sets a scalar it names; a changed object, list or instant is another write's doing or a regenerated value. */
-const actionRule = (
-  evidence: UpdateEvidence,
-  field: string,
-): FieldRule | undefined => {
-  const after = evidence.after[field]!;
-  return evidence.action === true &&
-    (after === null || typeof after !== "object") &&
-    readClock(after) === undefined
-    ? { field, rule: "set", value: after }
-    : undefined;
-};
-
-/** A sent clock the call left as it was, stored in whole seconds and naming the second the call ran in: the application stamps it anew, and the client sent back the one it read. */
-const heldClock = (
-  evidence: UpdateEvidence,
-  member: string,
-  sent: JsonValue,
-): boolean => {
-  const clock = readClock(sent);
-  return (
-    clock !== undefined &&
-    evidence.startMs !== undefined &&
-    clock.ms % 1000 === 0 &&
-    clock.subMillisecond === 0 &&
-    Math.abs(clock.ms - evidence.startMs) < 1000 &&
-    same(evidence.before[member], sent) &&
-    same(evidence.after[member], sent)
-  );
-};
-
-/** How an update stored a sent member: stamped anew as the one held clock it sent back, echoed, renewed as a fresh UUID, or as a constant. */
-const sentRule = (
-  evidence: UpdateEvidence,
-  member: string,
-  held: readonly string[],
-): FieldRule => {
-  const sent = evidence.call.body[member]!;
-  if (held.length === 1 && held[0] === member)
-    return {
-      field: member,
-      rule: "held-clock",
-      format: readClock(sent)!.format,
-    };
-  if (same(evidence.after[member], sent))
-    return { field: member, rule: "echo" };
-  return freshUuid(evidence, member)
-    ? { field: member, rule: "unique" }
-    : { field: member, rule: "constant", value: evidence.after[member]! };
-};
-
 /** Each slug an echoed string member slugs to, from the first such member. */
 const echoedSlugs = (
   body: JsonObject,
@@ -406,6 +305,8 @@ export const explainUpdate = (
   readonly rules: FieldRule[];
   readonly body: WriteBody;
   readonly unexplained: string[];
+  /** Unsent clocks left as they were in the call's own second, which the call cannot show it stamps. */
+  readonly unstamped: string[];
 } => {
   const { body } = evidence.call;
   const rules: FieldRule[] = [];
@@ -454,6 +355,7 @@ export const explainUpdate = (
     if (rule === undefined) unexplained.push(field);
     else rules.push(rule);
   }
+  rules.push(...pairedStamps(evidence, rules));
   // Serving renews one UUID alike in every field, so the call must have.
   unexplained.push(...unexplainedRenewals(rules, evidence));
   const pinned = pinnedEchoes(evidence.after, body, { varied: new Set() });
@@ -466,7 +368,12 @@ export const explainUpdate = (
       ? Object.keys(body).filter((member) => member !== identity)
       : [],
   );
-  return { rules, body: { ...shaped, identity }, unexplained };
+  return {
+    rules,
+    body: { ...shaped, identity },
+    unexplained,
+    unstamped: sameSecondClocks(evidence),
+  };
 };
 
 /**

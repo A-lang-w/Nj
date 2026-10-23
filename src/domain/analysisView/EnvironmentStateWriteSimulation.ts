@@ -215,6 +215,7 @@ export class EnvironmentStateWriteSimulation {
         updates: [],
         sequences: new Map(),
         steady: new Set(),
+        unstamped: new Set(),
         linked: link.collection,
       });
     }
@@ -662,7 +663,7 @@ export class EnvironmentStateWriteSimulation {
     if (failed.exercised.size === 0)
       for (const write of this.#log)
         if (
-          write.index > blame.after &&
+          write.index > since &&
           prefixRelated(write.path, failed.record.path)
         )
           this.#drafts.get(write.tool)!.sideEffect = true;

@@ -270,8 +270,13 @@ least one. A sent clock the call left as it was, stored in whole seconds and
 naming the second the call ran in, is a `held-clock` the application stamps
 anew (Ghost's `updated_at`, which a client sends back as it read it), when it is
 the only such member the call sent: a call must send it as the entity holds it,
-or it is refused, and it is served as the write's clock. A field the exemplar's
-update changed without sending it is explained as one of:
+or it is refused, and it is served as the write's clock. An unsent clock the
+call left as it was, stored in whole seconds and naming the second the call ran
+in, cannot show whether the update stamps it, unless it names when the entity
+was made (`createdAt`, `row_created_timestamp`): the plan stays `unconfirmed`
+until another call shows it stamped, and that call's clock rule then holds
+without the first call contradicting it. A field the exemplar's update changed
+without sending it is explained as one of:
 
 - clock;
 - a nested clock: an object the entity held whose only changes are clocks
@@ -292,7 +297,10 @@ update changed without sending it is explained as one of:
   `edited…by` or `changed…by` (or `last…`), stored on every call, when the
   entity already held the value under its `created…by` counterpart
   (`modifiedByName` and `createdByName`), and the call sent no member naming
-  the same thing (`modifiedById`);
+  the same thing (`modifiedById`). The other `…by` field naming the same user
+  (`modifiedById` beside `modifiedByName`) is stamped with it when the call
+  showed it at its own `created…by` counterpart's value, even where the entity
+  lacked it before;
 - `derived`: when the call sent exactly one member the entity stores nowhere,
   a value showing that member's text, markup aside (at least 8 characters): a
   field Ghost derives from the `html` it was sent. The member is accepted only
@@ -484,9 +492,13 @@ refuses to answer with.
   call's response shows every other field it and the read both show (but
   volatile ones and those other updates wrote) as the read does: serving
   answers an update from the copy, so a response that shows the entity
-  otherwise would be answered wrongly. When the read differs on a field the
-  copy holds that no exercised update wrote, any of the writes may have caused
-  it, and each is contradicted.
+  otherwise would be answered wrongly. A field the copy lacks that the read and
+  an exercised update's response both show, with the same value other than
+  null, is that update's change: an update whose effect does not hold it is
+  neither confirmed nor contradicted by the read, and when such changes are
+  the read's whole difference the entity's own writer is not contradicted.
+  When the read differs on a field the copy holds that no exercised update
+  wrote, any of the writes may have caused it, and each is contradicted.
 - A failed item read whose field newly embeds an entity a create made (an
   object in the field, or within it, naming it by its id and by another of its
   strings of 3 or more characters, 8 or more when the id is shorter than 8),

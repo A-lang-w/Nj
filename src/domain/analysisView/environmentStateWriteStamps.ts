@@ -309,7 +309,7 @@ const wordsOf = (name: string): string[] =>
     .filter((word) => word.length > 0);
 
 /** A name without the trailing words that make it a reference: `assignedUserId` and `assignedUserName` share `assigned user`. */
-const stemOf = (name: string): string => {
+const referentOf = (name: string): string => {
   const words = wordsOf(name);
   while (words.length > 1 && REFERENCE_WORDS.has(words.at(-1)!)) words.pop();
   return words.join(" ");
@@ -336,7 +336,7 @@ export const stampRule = (
   // A field naming what the call sent refers to that, not to the acting user.
   if (
     Object.keys(evidence.call.body).some(
-      (member) => stemOf(member) === stemOf(field),
+      (member) => referentOf(member) === referentOf(field),
     )
   )
     return undefined;
@@ -345,6 +345,32 @@ export const stampRule = (
   )
     ? { field, rule: "stamp", value: after }
     : undefined;
+};
+
+/** The other `…by` field naming the acting user (`modifiedById` beside `modifiedByName`), stamped with it when the recorded call shows it at its `created…by` counterpart's value. */
+export const pairedStamps = (
+  evidence: ChangeEvidence,
+  rules: readonly FieldRule[],
+): FieldRule[] => {
+  const ruled = new Set(rules.map((rule) => rule.field));
+  return rules.flatMap((rule) =>
+    rule.rule === "stamp"
+      ? Object.keys(evidence.after).flatMap((sibling): FieldRule[] => {
+          const value = evidence.after[sibling] ?? null;
+          const creator = creatorOf(sibling);
+          return !ruled.has(sibling) &&
+            value !== null &&
+            creator !== undefined &&
+            referentOf(sibling) === referentOf(rule.field) &&
+            Object.entries(evidence.before).some(
+              ([other, held]) =>
+                same(held, value) && wordsOf(other).join(" ") === creator,
+            )
+            ? [{ field: sibling, rule: "stamp", value }]
+            : [];
+        })
+      : [],
+  );
 };
 
 /** A sent string's text, markup aside: what a value derived from it shows. */
@@ -433,7 +459,7 @@ const nestedIdentities = (entity: JsonObject): Map<string, Set<string>> => {
       return text === undefined ? [] : [text];
     });
     if (texts.length === 0) continue;
-    const stem = stemOf(field);
+    const stem = referentOf(field);
     index.set(stem, new Set([...(index.get(stem) ?? []), ...texts]));
   }
   return index;
@@ -482,7 +508,9 @@ export const pinnedEchoes = (
   // A member names the object nested under the field it refers to, as `collection_id` does `collection`.
   const namesNested = (member: string, value: JsonValue): boolean => {
     const text = scalarText(value);
-    return text !== undefined && nested.get(stemOf(member))?.has(text) === true;
+    return (
+      text !== undefined && nested.get(referentOf(member))?.has(text) === true
+    );
   };
   return new Set(
     Object.entries(body).flatMap(([member, value]) =>
