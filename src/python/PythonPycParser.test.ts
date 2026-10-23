@@ -319,6 +319,28 @@ it("charges long digits to the string budget and keeps large previews bounded", 
   );
 });
 
+it("accepts backward-compatible TYPE_INT64 marshal integer constants", () => {
+  // CPython retains the `r_long64` reader (TYPE_INT64, 0x49): an 8-byte
+  // little-endian signed integer. It must decode like TYPE_INT rather than be
+  // rejected as an unsupported marshal type.
+  const int64 = (value: bigint): Buffer => {
+    const payload = Buffer.alloc(8);
+    payload.writeBigInt64LE(value);
+    return Buffer.concat([Buffer.from([0x49]), payload]);
+  };
+  const report = parse(
+    withConsts([int64(42n), int64(0x1_0000_002an), int64(-5n)]),
+  );
+  expect(root(report).consts[0]).toEqual({ kind: "int", bits: 6, value: "42" });
+  expect(root(report).consts[1]).toEqual({
+    kind: "int",
+    bits: 33,
+    value: "4294967338",
+  });
+  expect(root(report).consts[2]).toEqual({ kind: "int", bits: 3, value: "-5" });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
 it("decodes marshal strings with CPython surrogatepass rules", () => {
   const report = parse(
     withConsts([marshalUnicode(Buffer.from([0x73, 0xed, 0xa0, 0x80]))]),
