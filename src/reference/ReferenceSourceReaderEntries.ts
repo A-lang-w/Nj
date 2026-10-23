@@ -16,6 +16,7 @@ import {
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { pathFromRoot } from "./ReferenceSourceReaderPaths.js";
 import { readStableFile } from "./ReferenceSourceReaderFile.js";
+import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import {
   isAborted,
   sameFile,
@@ -26,9 +27,28 @@ import type {
   PendingDirectory,
   ReferenceSourceEntry,
   ReferenceSourceExclusionKind,
+  ReferenceSourceFailureCode,
   ReferenceSourceResult,
   TraversalState,
 } from "./ReferenceSourceReaderTypes.js";
+
+const recordDirectoryFailure = (
+  state: TraversalState,
+  absolute: string,
+  code: ReferenceSourceFailureCode,
+  message: string,
+): void => {
+  if (absolute === state.root) state.rootFailure = { code, message };
+  else
+    state.entries.push(
+      entryFailure(
+        pathFromRoot(state.root, absolute),
+        "directory",
+        code,
+        message,
+      ),
+    );
+};
 
 export const traverseDirectory = async (
   state: TraversalState,
@@ -42,21 +62,21 @@ export const traverseDirectory = async (
   );
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (!before.ok) {
-    state.entries.push(
-      entryFailure(
-        pathFromRoot(state.root, current.path),
-        "directory",
-        before.code,
-        before.message,
-      ),
-    );
+    recordDirectoryFailure(state, current.path, before.code, before.message);
     return { ok: true, value: undefined };
   }
   const directories: PendingDirectory[] = [];
   let readFailure: string | undefined;
+  let unrepresentableNameCount = 0;
+  let firstUnrepresentableNameHex: string | undefined;
   let handle: Dir | undefined;
   try {
-    handle = await opendir(current.path);
+    // Preserve directory-entry identity until UTF-8 validity is established.
+    // Node's opendir accepts this byte-preserving encoding; @types/node's
+    // OpenDirOptions currently narrows it to text encodings.
+    handle = await opendir(current.path, {
+      encoding: "buffer" as BufferEncoding,
+    });
   } catch (cause: unknown) {
     readFailure = directoryReadFailure(cause);
   }
@@ -74,7 +94,17 @@ export const traverseDirectory = async (
           break;
         }
         if (child === null) break;
-        result = await processEntry(state, current, child.name, directories);
+        if (!Buffer.isBuffer(child.name)) {
+          readFailure = "Directory entry name was not returned as raw bytes";
+          break;
+        }
+        const decoded = decodeDirectoryEntryName(child.name);
+        if (decoded.kind === "unrepresentable") {
+          unrepresentableNameCount += 1;
+          firstUnrepresentableNameHex ??= decoded.rawHex;
+          continue;
+        }
+        result = await processEntry(state, current, decoded.name, directories);
         if (!result.ok) break;
       }
     } finally {
@@ -86,14 +116,7 @@ export const traverseDirectory = async (
     }
     if (cleanup.kind === "failed") {
       if (result.ok && !isAborted(state.signal) && readFailure !== undefined)
-        state.entries.push(
-          entryFailure(
-            pathFromRoot(state.root, current.path),
-            "directory",
-            "io",
-            readFailure,
-          ),
-        );
+        recordDirectoryFailure(state, current.path, "io", readFailure);
       const observation = ArtifactReaderFailure.cleanupObservation(
         cleanup.cause,
         current.path,
@@ -126,14 +149,8 @@ export const traverseDirectory = async (
   }
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (readFailure !== undefined) {
-    state.entries.push(
-      entryFailure(
-        pathFromRoot(state.root, current.path),
-        "directory",
-        "io",
-        readFailure,
-      ),
-    );
+    recordDirectoryFailure(state, current.path, "io", readFailure);
+    scheduleObservedDirectories(state, directories);
     return { ok: true, value: undefined };
   }
   const after = await validateDirectory(
@@ -144,25 +161,38 @@ export const traverseDirectory = async (
   );
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (!after.ok || !sameFile(before.stats, after.stats)) {
-    state.entries.push(
-      entryFailure(
-        pathFromRoot(state.root, current.path),
-        "directory",
-        "changed",
-        "Directory changed while it was read",
-      ),
+    recordDirectoryFailure(
+      state,
+      current.path,
+      after.ok ? "changed" : after.code,
+      after.ok ? "Directory changed while it was read" : after.message,
     );
+    scheduleObservedDirectories(state, directories);
     return { ok: true, value: undefined };
   }
-  if (current.path !== state.root)
+  if (unrepresentableNameCount > 0) {
+    recordDirectoryFailure(
+      state,
+      current.path,
+      "unsupported",
+      `Directory contains ${String(unrepresentableNameCount)} entry name(s) that are not valid UTF-8; no filesystem operations were performed for them. First raw basename bytes: ${firstUnrepresentableNameHex ?? "unknown"}.`,
+    );
+  } else if (current.path !== state.root)
     state.entries.push({
       status: "read",
       kind: "directory",
       path: pathFromRoot(state.root, current.path),
     });
+  scheduleObservedDirectories(state, directories);
+  return { ok: true, value: undefined };
+};
+
+const scheduleObservedDirectories = (
+  state: TraversalState,
+  directories: PendingDirectory[],
+): void => {
   directories.reverse();
   state.pending.push(...directories);
-  return { ok: true, value: undefined };
 };
 
 const directoryReadFailure = (cause: unknown): string => {
@@ -207,7 +237,10 @@ const processEntry = async (
         ok: false,
         error: failure("io", "Reference source exclusion check failed"),
       };
-    if (excluded.value) return { ok: true, value: undefined };
+    if (excluded.value) {
+      state.exclusions.push({ path, kind: "unknown" });
+      return { ok: true, value: undefined };
+    }
     state.entries.push(entryFailure(path, "unknown", "io", metadata.message));
     return { ok: true, value: undefined };
   }
@@ -228,7 +261,10 @@ const processEntry = async (
         message: "Reference source exclusion check failed",
       },
     };
-  if (excluded.value) return { ok: true, value: undefined };
+  if (excluded.value) {
+    state.exclusions.push({ path, kind });
+    return { ok: true, value: undefined };
+  }
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (kind === "symlink")
     state.entries.push(
@@ -341,8 +377,35 @@ const readSymlinkTarget = async (
   absolute: string,
   path: string,
 ): Promise<ReferenceSourceEntry> => {
-  const rawTarget = await readlink(absolute);
-  const lexicalTarget = resolve(dirname(absolute), rawTarget);
+  let rawTarget: Buffer;
+  try {
+    // Keep the symlink's source bytes until UTF-8 validity is known. The
+    // default string encoding can alias an invalid target with a real U+FFFD
+    // sibling during the subsequent path lookup.
+    rawTarget = await readlink(absolute, { encoding: "buffer" });
+  } catch (cause: unknown) {
+    // POSIX readlink reports EINVAL when the observed link became a non-link.
+    // Keep this classification at the syscall, rather than hiding EINVAL from
+    // unrelated metadata or target-resolution operations.
+    if (cause instanceof Error && Reflect.get(cause, "code") === "EINVAL")
+      return changedSymlink(path);
+    throw cause;
+  }
+  let target: string;
+  try {
+    target = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(rawTarget);
+  } catch {
+    return entryFailure(
+      path,
+      "symlink",
+      "unsupported",
+      `Symlink target is not valid UTF-8 (raw target bytes: ${rawTarget.toString("hex")})`,
+    );
+  }
+  const lexicalTarget = resolve(dirname(absolute), target);
   if (!isPathWithinRoot(root, lexicalTarget))
     return {
       status: "read",

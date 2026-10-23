@@ -125,7 +125,6 @@ export const readMetadataString = (
   const start = layout.strings.offset + index;
   const cached = managedDecodeBudget(layout).cachedString(index);
   if (cached !== undefined && cached.encodedBytes <= heapExtent) {
-    managedDecodeBudget(layout).reserveString(cached.encodedBytes, start);
     return cached.value;
   }
   const maximum = Math.min(
@@ -168,14 +167,29 @@ export const readMetadataBlob = (
   heapExtent: number,
 ): Buffer => {
   if (index === 0) return Buffer.alloc(0);
-  if (index < 0 || index >= layout.blob.size)
+  if (index < 0)
+    throw managedFailure(
+      "invalid-heap-index",
+      "metadata.#Blob",
+      "Blob heap index is negative",
+      null,
+    );
+  const heap = layout.blob;
+  if (heap === null)
+    throw managedFailure(
+      "missing-stream",
+      "metadata.#Blob",
+      `Blob index ${String(index)} references an absent #Blob stream`,
+      null,
+    );
+  if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
       "metadata.#Blob",
       "Blob heap index is outside #Blob",
-      layout.blob.offset + Math.max(index, 0),
+      heap.offset + Math.max(index, 0),
     );
-  const start = layout.blob.offset + index;
+  const start = heap.offset + index;
   const decoded = compressedLength(bytes, start, "metadata.#Blob", "blob");
   if (decoded.length > heapExtent)
     throw managedFailure(
@@ -185,7 +199,7 @@ export const readMetadataBlob = (
       start,
     );
   const content = start + decoded.prefix;
-  if (content > layout.blob.offset + layout.blob.size - decoded.length)
+  if (content > heap.offset + heap.size - decoded.length)
     throw managedFailure(
       "invalid-blob",
       "metadata.#Blob",
@@ -378,37 +392,53 @@ export const metadataRowCursor = (
   );
 };
 
-/** Decode a metadata coded index without signed 32-bit coercion. */
-export const metadataCodedToken = (
-  raw: number,
-  bits: number,
-  tables: readonly (number | undefined)[],
-  rowCounts: readonly number[],
-): string | null => {
-  if (raw === 0) return null;
-  const tag = raw & (2 ** bits - 1);
-  const row = Math.floor(raw / 2 ** bits);
-  const table = tables[tag];
-  return table === undefined || row === 0 || row > (rowCounts[table] ?? 0)
-    ? null
-    : metadataToken(table, row);
-};
+export type ManagedCodedIndex =
+  | { readonly kind: "null" }
+  | {
+      readonly kind: "valid";
+      readonly token: string;
+      readonly table: number;
+      readonly row: number;
+    }
+  | {
+      readonly kind: "invalid";
+      readonly reason: string;
+      readonly table: number | undefined;
+      readonly row: number;
+    };
 
-/** Explain why a non-null coded index cannot name an admitted metadata row. */
-export const metadataCodedTokenInvalidReason = (
+/** Decode and validate a metadata coded index without signed row coercion. */
+export const decodeMetadataCodedIndex = (
   raw: number,
   bits: number,
   tables: readonly (number | undefined)[],
   rowCounts: readonly number[],
-): string | null => {
-  if (raw === 0) return null;
+): ManagedCodedIndex => {
+  if (raw === 0) return { kind: "null" };
   const tag = raw & (2 ** bits - 1);
   const row = Math.floor(raw / 2 ** bits);
   const table = tables[tag];
-  if (table === undefined) return `coded index tag ${tag} is not defined`;
-  if (row === 0) return `coded index selects row zero in table ${table}`;
+  if (table === undefined)
+    return {
+      kind: "invalid",
+      reason: `coded index tag ${tag} is not defined`,
+      table,
+      row,
+    };
+  if (row === 0)
+    return {
+      kind: "invalid",
+      reason: `coded index selects row zero in table ${table}`,
+      table,
+      row,
+    };
   const count = rowCounts[table] ?? 0;
-  return row > count
-    ? `coded index selects row ${row} in table ${table}, which has ${count} rows`
-    : null;
+  if (row > count)
+    return {
+      kind: "invalid",
+      reason: `coded index selects row ${row} in table ${table}, which has ${count} rows`,
+      table,
+      row,
+    };
+  return { kind: "valid", token: metadataToken(table, row), table, row };
 };

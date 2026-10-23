@@ -77,7 +77,8 @@ export interface ManagedMetadataLayout {
   readonly streamNames: readonly string[];
   readonly strings: MetadataStream;
   readonly guid: MetadataStream;
-  readonly blob: MetadataStream;
+  /** Empty blob heaps may omit the stream; index zero remains the empty blob. */
+  readonly blob: MetadataStream | null;
   /** Optional: assemblies without `ldstr` literals may omit #US. */
   readonly userStrings: MetadataStream | null;
   readonly tables: ReadonlyMap<number, MetadataTableLayout>;
@@ -141,8 +142,10 @@ const requireRange = (
 
 const align4 = (value: number): number => Math.ceil(value / 4) * 4;
 
+/** Read within the metadata root; report failures at artifact file offsets. */
 const readStreamName = (
   bytes: Buffer,
+  rootOffset: number,
   offset: number,
 ): { readonly name: string; readonly next: number } => {
   const endLimit = Math.min(bytes.length, offset + 32);
@@ -153,7 +156,7 @@ const readStreamName = (
       "invalid-stream",
       "metadata.stream-name",
       "Metadata stream name is missing a bounded terminator",
-      offset,
+      rootOffset + offset,
     );
   const nameBytes = bytes.subarray(offset, end);
   if (nameBytes.some((byte) => byte < 0x20 || byte > 0x7e))
@@ -161,7 +164,7 @@ const readStreamName = (
       "invalid-stream",
       "metadata.stream-name",
       "Metadata stream name is not printable ASCII",
-      offset,
+      rootOffset + offset,
     );
   return {
     name: nameBytes.toString("ascii"),
@@ -250,7 +253,7 @@ const readMetadataStreams = (
     requireRange(bytes, rootOffset, cursor, 8, "metadata.stream-header");
     const relativeOffset = bytes.readUInt32LE(cursor);
     const streamSize = bytes.readUInt32LE(cursor + 4);
-    const named = readStreamName(bytes, cursor + 8);
+    const named = readStreamName(bytes, rootOffset, cursor + 8);
     if (streams.has(named.name))
       throw managedFailure(
         "invalid-stream",
@@ -459,7 +462,7 @@ export const readManagedMetadataLayout = (
     streamNames: [...streams.keys()].sort(),
     strings: requireStream(streams, "#Strings"),
     guid: requireStream(streams, "#GUID"),
-    blob: requireStream(streams, "#Blob"),
+    blob: streams.get("#Blob") ?? null,
     userStrings: streams.get("#US") ?? null,
     tables,
     rowCounts,

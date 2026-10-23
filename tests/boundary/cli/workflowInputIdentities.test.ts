@@ -206,6 +206,70 @@ const checkNativeObservationIdentities = async ({
   );
 };
 
+const checkMalformedEvidenceBeforeIdentities = async ({
+  cli,
+  root,
+  application,
+}: WorkflowContext) => {
+  const malformed = {
+    ...application,
+    provider: { ...application.provider, name: 3 },
+  };
+  for (const [command, input, path] of [
+    [
+      "compare-application-versions",
+      { left: application, right: malformed },
+      ["right", "provider", "name"],
+    ],
+    [
+      "compare-javascript-export-shapes",
+      { left: application, right: malformed, ...selectors },
+      ["right", "provider", "name"],
+    ],
+    [
+      "trace-application-feature",
+      { application, seed, native_observations: [malformed, application] },
+      ["native_observations", 0, "provider", "name"],
+    ],
+  ] as const) {
+    const rejected = await runJson(cli, root, command, input);
+    expect(rejected.exitCode).toBe(1);
+    expect(rejected.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path, reason: "invalid_type" }] },
+    });
+  }
+  const missingLeft = {
+    kind: "retained-evidence",
+    evidence_id: `ev_${"a".repeat(64)}`,
+  };
+  const missingRight = {
+    kind: "retained-evidence",
+    evidence_id: `ev_${"b".repeat(64)}`,
+  };
+  for (const [command, extra] of [
+    ["compare-application-versions", {}],
+    ["compare-javascript-export-shapes", selectors],
+  ] as const) {
+    // Lookup of both selected sources precedes graph authentication.
+    for (const [left, right, evidenceId] of [
+      [malformed, missingRight, missingRight.evidence_id],
+      [missingLeft, missingRight, missingLeft.evidence_id],
+    ] as const) {
+      const rejected = await runJson(cli, root, command, {
+        left,
+        right,
+        ...extra,
+      });
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.json).toMatchObject({
+        code: "evidence_integrity_mismatch",
+        details: { evidence_id: evidenceId, reason: "missing" },
+      });
+    }
+  }
+};
+
 cliTest(
   "preserves workflow identity validation through CLI and inline, retained and mixed MCP inputs",
   async ({ cli }) => {
@@ -277,6 +341,7 @@ cliTest(
     };
     await checkComparisonIdentities(context);
     await checkNativeObservationIdentities(context);
+    await checkMalformedEvidenceBeforeIdentities(context);
     const compared = await call("compare_application_versions", {
       left: reference,
       right: otherReference,

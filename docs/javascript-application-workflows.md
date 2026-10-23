@@ -40,6 +40,12 @@ combine its fields with the fact's location. Semantic trace results include the
 canonical context subset referenced by their returned facts, so those facts
 remain self-contained in the response.
 
+Content-deduplicated module references match every retained observation path.
+A path-filtered reference reports the caller-selected path while keeping its
+shared node identity. Item selection also accepts any retained path when it
+identifies one module; if several module kinds share that path, select the
+reported `node_id`. Node-ID selection uses the stable representative path.
+
 ## Retained module facts
 
 For canonical identities and retained source-range counts, query the existing
@@ -79,6 +85,65 @@ from page exhaustion; an exhausted or empty page cannot prove absence from an
 incompletely analyzed application. CLI `inspect-analysis-view` reads the same
 request from a JSON file; portable input uses `source.kind: "inline"` with the
 complete parent Evidence.
+
+## Retained file and native facts
+
+Read metadata, native inventory and unavailable processing scopes directly from
+retained application observations:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_ACTUAL_PARENT_ID"
+  },
+  "view": {
+    "kind": "javascript-facts",
+    "where": { "paths": ["package.json", "build/Release/addon.node"] },
+    "property_keys": [
+      "name",
+      "version",
+      "bytes",
+      "availability",
+      "operation",
+      "analysis_status"
+    ],
+    "offset": 0,
+    "limit": 32
+  }
+}
+```
+
+Each row preserves its node identity, observation ID, source-map reference and
+original Evidence, including location, authority, confidence, coverage and
+limitations. `property_keys` selects exact retained property names; absent keys
+stay omitted and retained null values stay null. An empty list requests only
+identity/provenance. Observations are not merged into a single asserted fact.
+When property names are unknown, opt into
+`include_available_property_keys: true`. Each returned row then lists its
+original `available_property_keys`, without unselected values; combine this with
+`property_keys: []` for discovery only. The default is false, so known-field
+reads do not pay for field inventories. Keep node/observation IDs paired when
+combining rows; location-related observations need not belong to the same node.
+
+`where.paths` compares exact Evidence `artifact-path` values or `source-range`
+sources. Empty query strings remain valid selectors, though current location
+contracts require nonempty paths/sources. It does not inspect display labels or a
+property named `path`, normalize URLs, or reopen files. Omission includes unknown
+locations; an empty list matches none. Optional `where.kinds` filters original
+node kinds, with an empty list likewise matching none. Multiple locations of
+shared content remain separate rows with the same canonical node identity.
+
+These rows select application-graph observations. Semantic relationships and
+semantic unknown records remain in complete parent Evidence and trace tools.
+
+Rows follow retained node/observation order. The default offset/limit is 0/64;
+follow `coverage.next_offset`. Page totals count matching retained observations,
+while `source_coverage` preserves caller selection and application/semantic
+partial or unknown states. An empty or exhausted page does not establish absence
+outside examined coverage. Complete source Evidence remains available through
+export. CLI `inspect-analysis-view` and portable Evidence use the same contract
+and application implementation as MCP.
 
 ## Feature tracing
 
@@ -124,6 +189,33 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
+these built-in effects only when the file has no visible possible write to that
+global, including a computed write through a global object. The check does not
+evaluate order or reachability, so a later or guarded polyfill write also
+removes the resolved effect.
+
+Local callback candidates do not establish a complete target set when a
+conditional write may leave a parameter, catch binding, or uninitialized
+variable unchanged. These calls retain candidate edges and dynamic uncertainty;
+default traces remain ambiguous with partial coverage. Opt into
+`include_ambiguous_dynamic_edges` to traverse the candidates. Proven preceding
+unconditional assignments, including writes dominating a read in the same
+conditional block, can resolve a target; later writes do not replace an
+earlier read or captured alias. Unproved ordering across branches or function
+activations remains conservative. Returned-reference effects use the same
+read-position facts as call resolution.
+
+Returned-reference effects share one property-projection state per source read.
+When several paths reach that read, differing keys at the same depth become
+wildcards; differing depths become an unknown-depth selection. This retains a
+conservative superset of the represented local targets rather than enumerating
+every alias history or dropping paths at a query cap. It can add possible effects,
+including for finite projection cycles. Static limitations disclose this loss of
+precision; semantic graphs retain `dynamic-property` unknowns at the affected
+callee coordinates, and captured web bundles identify the affected script keys.
+These candidates do not prove runtime calls or mutations. Existing source-worker
+and result-admission limits still apply.
 
 Mutation tracking covers explicit member assignments, updates, deletion, and
 loop assignment targets, including the supported local aliases and shared
@@ -174,8 +266,10 @@ graph and read literal values from `properties.value`, rather than decoding
 role keys or labels. Previously stored graphs and their original IDs remain
 valid inputs.
 
-Endpoint nodes keep the exact endpoint in each observation's `properties.value`;
-semantic request and response nodes keep it in `properties.endpoint`. Endpoint
+Endpoint observations keep their value in `properties.value`. When
+`properties.resolution` is `partial`, that value is the unresolved source
+expression, with an identity distinct from an exact endpoint of the same text.
+Semantic request and response nodes keep their endpoint in `properties.endpoint`. Endpoint
 lookup identities are preserved independently of the primitive-value lattice's
 byte budget. An oversized normalized literal can become unknown while the same
 string remains an exact endpoint for tracing and comparison. Endpoint
@@ -215,6 +309,27 @@ facts. Each item is `unchanged`, `added`, `removed`, `changed`, or `unknown`,
 and the result includes its basis, candidates, changed dimensions, Evidence
 links, limitations, and a `changed_from` graph containing all compared nodes,
 their observations, and relationships.
+
+A matched pair whose only differing dimension is `location` counts as
+`unchanged` when both input graphs have complete coverage and its neighboring
+relationship identities are resolved. This includes an
+identical module shifted by an earlier bundle edit and a named IPC channel
+observed at a new offset. The item still reports `dimensions: ["location"]`
+and both node IDs; the graph retains both original observations and coordinates.
+Content, property, and complete relationship differences still count as
+`changed`. With incomplete coverage, relocation alone remains `unknown` and
+retains the location and coverage dimensions. Matching confidence is unchanged:
+an inferred pair is not promoted to exact identity by this classification.
+
+Complete inventory does not resolve ambiguous or unmatched relationship targets.
+A matched module with identical bytes can therefore remain `unknown` when a
+neighbor, including its containing chunk, has no cross-version match. The item
+retains its exact content match, coordinates, candidate inventory, and an explicit
+relationship-identity limitation. `coverage` is added to its dimensions only for
+incomplete inventory. Definite content, property, or complete topology differences
+remain `changed` while retaining any separate relationship uncertainty.
+An unknown item with no observed content, property, or relationship difference
+does not emit a `changed_from` edge; its pairing and uncertainty remain in the item.
 
 One-sided absence is `added` or `removed` only when the opposite input graph has
 complete coverage. With partial, unavailable, or truncated input, the same
@@ -259,6 +374,13 @@ Direct return expressions, including expression-bodied arrows, are evaluated
 through an execution-free value lattice. Literal object fields and direct
 return sites are represented in the result. Calls, dynamic spreads, computed
 keys, and parser recovery remain partial or unknown.
+Rebound values are evaluated at their read position: saving an incoming parameter
+before a later assignment preserves caller-dependent uncertainty, while a proven
+preceding assignment can supply a constant. Unresolved ordering remains unknown.
+Supported reads within object and array literals follow left-to-right evaluation;
+an unproved relative order remains unknown. A later write in a separate conditional
+block can still leave an earlier capture unknown because ordering across those
+blocks is not proven.
 Objects and arrays passed to calls, constructors, or tagged templates, used
 as method receivers, or stored through property targets are not assumed
 unchanged afterward. Property stores conservatively retain reference escape
@@ -290,8 +412,23 @@ when the object is an array element, nested inside mixed object/array
 containers, or assigned to a previously declared identifier. Saving the getter
 result in an alias does not make its old field values immutable. Known array
 indices include holes; an element after a spread has only a minimum possible
-index. Unrelated properties and known array prefixes remain precise, and a
-getter read without a write does not invalidate the receiver's fields.
+index. For these returned-reference writes, unrelated properties and known
+array prefixes remain precise. Accessor applicability uses the shared object
+reference owner for literal definition order, own-property shadowing, known
+array elements and explicit literal prototypes. Getter invocation effects
+project write and call operands through the same local alias and `this` owner
+used by returned references. Reads of another selected getter continue that
+effect walk. A receiver reached by these effects becomes uncertain on an
+ordinary or optional read, compound assignment or update. A simple assignment
+or deletion does not invoke the getter. Selected setters invalidate
+the receiver on assignment, including through known array and prototype paths.
+Inert getters and ordinary data slots retain their supported precision.
+
+These are conservative source-derived effects, not execution results. The
+analysis does not establish general accessor purity, model every class or
+reflectively installed descriptor, or cover getter reads introduced by object
+spread/destructuring and all implicit coercion or disposal invocations. Absence of a later explicit write does not establish getter purity;
+unsupported invocation forms can still retain stale receiver-field facts.
 Nested callable returns are not assigned to their parent callable. Projected
 graph observations carry source ranges but never source text.
 

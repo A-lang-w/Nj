@@ -14,6 +14,7 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
@@ -66,6 +67,16 @@ const fixturePort = (): AnalysisOperationPort => ({
   // oxlint-disable-next-line complexity -- this fixture exhaustively serves the registered MCP surface.
   execute: (name, arguments_) => {
     switch (name) {
+      case "read_binary_inventory_summary":
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              name,
+              "This fixture exercises composed overview",
+            ),
+          ),
+        );
       case "inspect_native_dispatch_metadata":
         return Promise.resolve(
           err(
@@ -268,8 +279,12 @@ describe("enhanced MCP tools", () => {
       ),
     );
     expect(results[0]).toMatchObject({
-      count: 1,
-      classes: [{ address: "0x10", name: "_OBJC_CLASS_$_Fixture" }],
+      count: 2,
+      classes: [
+        { address: "0x10", name: "_OBJC_CLASS_$_Fixture" },
+        { address: "0x11", name: "_OBJC_CLASS_$_Fixture" },
+      ],
+      identity_coverage: { status: "unknown" },
     });
     expect(results[1]).toMatchObject({
       count: 1,
@@ -425,3 +440,96 @@ describe("enhanced MCP tools", () => {
     });
   });
 });
+
+it("retains unlocated provider symbols through the advertised native dispatch MCP contract", async () => {
+  const ordinary = fixturePort();
+  const client = await connect({
+    execute: (operation, parameters, options) =>
+      operation === "list_names"
+        ? Promise.resolve(
+            targetObservation([
+              { address: "", value: "$s4Test7MyClassC" },
+              { address: "", value: "-[Fixture buildTapped:]" },
+            ]),
+          )
+        : ordinary.execute(operation, parameters, options),
+  });
+  const response = await client.callTool({
+    name: "inspect_native_dispatch_metadata",
+    arguments: { max_records: 100 },
+  });
+  expect(response.isError).not.toBe(true);
+  expect(jsonResult(response)).toMatchObject({
+    provider: { id: "fixture" },
+    target_sha256: "a".repeat(64),
+    result: {
+      swift_symbols: [
+        {
+          mangled_name: "$s4Test7MyClassC",
+          address: null,
+          evidence: [{ reported_address: "", location: { address: null } }],
+        },
+      ],
+      objc_dispatch_implementations: [
+        { implementation_address: null, evidence: [{ reported_address: "" }] },
+      ],
+      objc_classes: [
+        {
+          name: "Fixture",
+          methods: [{ selector: "buildTapped:", address: null }],
+        },
+      ],
+    },
+  });
+});
+
+it.each([
+  { addresses: ["0x2000", "0x3000"], candidates: 2, numeric: null },
+  { addresses: ["ram:0x2000", "rom:0x2000"], candidates: 2, numeric: null },
+  { addresses: ["0x2000", "0X002000"], candidates: 1, numeric: 8192 },
+  {
+    addresses: ["overlay%2f1:0x2000", "overlay%2F1:0X002000"],
+    candidates: 1,
+    numeric: null,
+  },
+])(
+  "retains implementation identity and source spelling through MCP: $addresses",
+  async ({ addresses, candidates, numeric }) => {
+    const ordinary = fixturePort();
+    const client = await connect({
+      execute: (operation, parameters, options) =>
+        operation === "list_names"
+          ? Promise.resolve(
+              targetObservation(
+                addresses.map((address) => ({
+                  address,
+                  value: "-[Fixture buildTapped:]",
+                })),
+              ),
+            )
+          : ordinary.execute(operation, parameters, options),
+    });
+    const response = await client.callTool({
+      name: "inspect_native_dispatch_metadata",
+      arguments: {},
+    });
+    expect(
+      response.isError,
+      JSON.stringify(response.structuredContent),
+    ).not.toBe(true);
+    const result = nativeDispatchMetadataResultSchema.parse(
+      jsonResult(response),
+    ).result;
+    expect(result.objc_dispatch_implementations).toHaveLength(candidates);
+    expect(result.objc_classes[0]?.methods).toMatchObject([
+      { selector: "buildTapped:", address: numeric },
+    ]);
+    expect(
+      result.objc_dispatch_implementations
+        .flatMap(({ evidence }) =>
+          evidence.map(({ location }) => location.address),
+        )
+        .sort(),
+    ).toEqual([...addresses].sort());
+  },
+);

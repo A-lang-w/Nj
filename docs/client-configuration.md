@@ -14,6 +14,12 @@ preserving your REA client entry. See the
 
 ## GitHub Copilot CLI
 
+Setup preserves an existing `tools` selection in the REA registration, including
+an empty list. New registrations default to `["*"]`. A restricted selection is
+aligned configuration; doctor does not widen it to expose every REA tool. See
+[Copilot's MCP configuration](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
+for tool-selection settings.
+
 For GitHub Copilot CLI 1.0.95, `gpt-4.1` model metadata can block ordinary
 chat with REA's full input-schema profile before sending a model request
 (`compaction_static_context_blocked`; [#1554](https://github.com/morluto/rea/issues/1554)).
@@ -52,10 +58,16 @@ in the file the installed app reads:
   `%APPDATA%` file it still reads; with neither file, setup creates the
   private copy.
 - If `%LOCALAPPDATA%\Packages` holds a `Claude_<publisher ID>` package from
-  another publisher, or cannot be read, REA cannot establish which file Claude
+  another publisher, an `AnthropicPBC.Claude_<publisher ID>` package, or cannot
+  be read, REA cannot establish which file Claude
   Desktop reads. Setup, doctor and uninstall report that instead of falling
   back to `%APPDATA%`. Doctor then reports `claude_desktop` as invalid, and
   uninstall stops before removing anything for any client.
+  The reported `AnthropicPBC.Claude_fnn82j28hfe8t` build can use the `Claude-3p`
+  deployment directory. REA recognizes that package as an unresolved location;
+  it does not assume that it reads the legacy AppData file or automatically
+  register in `Claude-3p`. See [#4432](https://github.com/morluto/rea/issues/4432)
+  for the reported build and manual registration evidence.
 
 Quit Claude Desktop fully before approving setup; closing its window is not
 enough. A running Claude Desktop can rewrite its configuration from memory and
@@ -67,12 +79,17 @@ to rerun it.
 A process that the MSIX app started, such as a terminal in Claude Desktop's
 Code tab, sees the package's private files at their `%APPDATA%` paths even
 though it reports no package identity. Setup compares one of those files at
-both paths. When it finds that redirected view, the app is running, so setup
-and uninstall refuse to change Claude Desktop's configuration; rerun them from
-a terminal that Claude Desktop did not start. If the package has no private
-file to compare, setup and uninstall cannot rule that out and also refuse; open
-Claude Desktop once if it has never run, quit it fully, then rerun. Doctor
-reads the same file from either kind of process.
+both paths: first one from the package's private `Claude` folder, and when
+that folder has none (some installations keep writing the real
+`%APPDATA%\Claude`), one from the package's other private roaming folders,
+which the package redirects in the same way. When it finds that redirected
+view, the app is running, so setup and uninstall refuse to change Claude
+Desktop's configuration; rerun them from a terminal that Claude Desktop did not
+start. If the package keeps no private roaming file at all, setup and
+uninstall cannot rule that out and also refuse. With Claude Desktop fully
+quit, add REA's entry by hand to the file setup names, which is the one the
+app reads, or remove it from both the private copy and the `%APPDATA%` file.
+Doctor reads the same file from either kind of process.
 
 The same process also writes everything under `%APPDATA%` and
 `%LOCALAPPDATA%` into the package's private storage, where other apps never
@@ -147,11 +164,14 @@ headroom. The default is 450000 ms, covering the default 330-second Ghidra
 startup; an explicit Ghidra startup timeout of 2700000 ms produces a 2820000 ms
 tool timeout. The startup allowance follows an explicitly selected Ghidra or
 Hopper provider, and otherwise uses the larger known Ghidra/Hopper deadline.
-An explicit `REA_JEB_MCP_TIMEOUT_MS` request budget also contributes to that
-maximum. For `ida` or `auto` selection, a valid IDA registration's parsed
+An explicit `REA_JEB_MCP_TIMEOUT_MS` deadline, shared by catalog discovery and
+each tools/call, also contributes to that maximum. For `ida` or `auto` selection, a valid IDA registration's parsed
 `timeoutMs` also contributes to that maximum; its default is 300000 ms.
 Setup forwards these explicitly selected REA deadlines and the input schema
-profile into the registration; unrelated process values are omitted.
+profile into the registration; unrelated process values are omitted. An
+explicit `REA_JADX_OPERATION_TIMEOUT_MS` is forwarded with the JADX
+registration but does not contribute to the derived tool timeout; raise
+`toolTimeoutMs` to cover a longer selected JADX deadline.
 This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
@@ -234,17 +254,58 @@ standalone CLI check.
 
 ## Codex and Devin
 
+REA manages its launcher and selected provider settings in the client
+registration. Codex's server and per-tool approval policies are user choices.
+Setup patches REA's connection fields in the selected file and retains other
+server settings, including `default_tools_approval_mode`, nested
+`[mcp_servers.rea.tools.<name>]` tables, tool allow/deny lists, and unrecognized
+client settings. Doctor accepts Codex's per-tool policy tables. Known malformed
+policy values block setup before it writes the configuration or a backup, and
+the diagnostic identifies the setting to repair. See the
+[Codex configuration reference](https://developers.openai.com/codex/config-reference/)
+for the supported policy values.
+
+| Settings                                  | Setup ownership                                                       |
+| ----------------------------------------- | --------------------------------------------------------------------- |
+| Launcher, transport and activation        | Refreshes the REA stdio connection and enables it.                    |
+| Explicit server environment               | Preserves configured overrides and merges selected provider settings. |
+| Codex positive timeouts and client policy | Retains caller choices; adds missing recommended REA timeouts.        |
+| Unrelated or future server settings       | Retains their parsed values.                                          |
+
+Dry-run applies the same policy validation and writes no files. A successful
+refresh keeps an exact recovery snapshot of the original configuration;
+repeating setup with the same settings performs no write. Uninstall removes
+the owned REA entry, including its policy, while retaining other servers and
+the recovery snapshot. A green registration check establishes known
+configuration alignment; it does not prove that a particular client or fork
+successfully exposes every REA tool.
+
 Codex treats an unset or empty `CODEX_HOME` as `~/.codex`. Its MCP server
 registration supports `startup_timeout_sec` for connection initialization and
 `tool_timeout_sec` for each tool call. New REA registrations use a 30-second
 startup timeout and a tool timeout derived from the known provider
 allowance plus 120 seconds of operation headroom. This yields 450 seconds for
 the default Ghidra allowance; an explicit Ghidra startup timeout of 2700
-seconds yields 2820 seconds. Setup preserves positive caller-selected timeout
+seconds yields 2820 seconds. That 30-second Codex figure is client guidance.
+REA's own phase budgets are `REA_MCP_INITIALIZE_BUDGET_MS` (default 15000),
+`REA_MCP_TOOLS_LIST_BUDGET_MS` (default 5000),
+`REA_MCP_FIRST_CATALOG_BUDGET_MS` (default 20000), and
+`REA_MCP_DOCTOR_DEADLINE_MS` (default 30000). Each is a positive decimal
+integer of milliseconds from 1 to 2147483647. Unset keeps the default.
+Invalid values fail configuration and name the setting. Setup copies a
+caller-selected value into the registration, and a change is read from the
+environment that starts REA, so it needs a restart. Doctor and packaged
+startup probes name the effective milliseconds, whether they came from the
+default or the setting, the default, the floor, and the maximum. REA does
+not enforce Codex's 30 seconds as the doctor deadline. The 120000 ms
+tool-operation headroom and the 64 KiB doctor stderr cap stay fixed. Setup preserves positive caller-selected timeout
 values in the REA entry, and doctor reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance. An explicitly selected
 JEB request budget also contributes to the allowance. A configured IDA
 registration's parsed `timeoutMs` contributes for `ida` or `auto` selection.
+An explicit `REA_JADX_OPERATION_TIMEOUT_MS` is forwarded with the JADX
+registration but does not contribute; raise `tool_timeout_sec` to cover a
+longer selected JADX deadline.
 These values are client-side deadlines, so increase them in `~/.codex/config.toml` if a
 workload needs more time. Devin honors `XDG_CONFIG_HOME` for its
 `devin/mcp_config.json` on non-Windows systems.
