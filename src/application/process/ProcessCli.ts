@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
@@ -10,7 +8,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { describeValidationFailure } from "../../domain/evidenceBundle.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   analysisInputErrorFromIssues,
@@ -29,7 +27,7 @@ import {
   parseProcessCaptureEvidence,
 } from "./ProcessEvidence.js";
 import { readJsonFile } from "../JsonFiles.js";
-import { RegularFileCleanupFailure } from "../RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput extends AnalysisErrorProjection {
@@ -173,13 +171,11 @@ const parseCaptureEvidence = (input: unknown, side: "left" | "right") => {
   const failure = parsed.error;
   switch (failure.kind) {
     case "invalid-evidence":
-      if (failure.cause instanceof z.ZodError)
-        throw new AnalysisInputError(
-          "compare_process_captures",
-          { cause: failure.cause },
-          projectInputIssues(failure.cause.issues, input),
-        );
-      throw invalidCaptureEvidence(failure.cause, side);
+      throw new AnalysisInputError(
+        "compare_process_captures",
+        { cause: failure.cause },
+        projectInputIssues(failure.cause.issues, input),
+      );
     case "wrong-workflow":
       throw processInputFailure(
         "compare_process_captures",
@@ -265,8 +261,15 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
   ...projectAnalysisError(error),
 });
 
+/**
+ * This catch includes target execution, and the projection stays non-retryable.
+ * Tell the user what happened; do not ask them to run the command again.
+ */
+export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
+  "Do not repeat this command. Tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
+
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
-export const projectProcessCliError = (
+const projectProcessCliError = (
   cause: unknown,
   operation: "capture_process_scenario" | "compare_process_captures",
 ): ProcessCliErrorOutput => {
@@ -276,6 +279,7 @@ export const projectProcessCliError = (
       cause,
       diagnostics: { phase: "process_cli" },
       userMessage: `Process command could not complete: ${describeValidationFailure(cause)}`,
+      remediationAction: PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
     }),
   );
 };
