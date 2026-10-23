@@ -155,7 +155,10 @@ const localAccessorMethods = (
       }
       if (selection.requireLocalProof && current.path.length > 0) {
         const receiverPath = current.path.slice(0, -1);
-        for (const path of [current.path, [...receiverPath, "__proto__"]]) {
+        for (const { path, includeDescendants } of [
+          { path: current.path, includeDescendants: false },
+          { path: [...receiverPath, "__proto__"], includeDescendants: true },
+        ]) {
           const facts = semanticProjectedSourceFactsAtRead(
             binding,
             node,
@@ -164,7 +167,12 @@ const localAccessorMethods = (
             true,
             root,
           );
-          if (facts === undefined || facts.slotMayHaveChanged) return undefined;
+          if (
+            facts === undefined ||
+            facts.slotMayHaveChanged ||
+            (includeDescendants && facts.hasDescendantEffects)
+          )
+            return undefined;
         }
         const receiver = semanticProjectedSourceFactsAtRead(
           binding,

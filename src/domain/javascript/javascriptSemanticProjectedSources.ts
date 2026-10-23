@@ -198,6 +198,7 @@ const projectedSourceFactsAtRead = (
       readonly retainsOrigin: boolean;
       /** Effects on this selected slot, excluding writes that only select its receiver. */
       readonly slotMayHaveChanged: boolean;
+      readonly hasDescendantEffects: boolean;
     }
   | undefined => {
   const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
@@ -258,6 +259,7 @@ const projectedSourceFactsAtRead = (
     });
   const matches = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
+    includeDescendants = false,
   ) =>
     (effect.receiverInitializers === undefined ||
       effect.receiverInitializers.length === 0 ||
@@ -271,8 +273,9 @@ const projectedSourceFactsAtRead = (
         ),
       )) &&
     path.length > 0 &&
-    effect.path.length <= path.length &&
+    (includeDescendants || effect.path.length <= path.length) &&
     effect.path.every((key, index) => {
+      if (index >= path.length) return includeDescendants;
       const selected = path[index];
       return (
         selected !== undefined &&
@@ -287,7 +290,7 @@ const projectedSourceFactsAtRead = (
     semanticEffectTiming(selectedAt(effect.path.length), effect.node, state) !==
       "after" &&
     !targetsReplacedPrefix(effect);
-  const writes = binding.memberWrites.filter(matches);
+  const writes = binding.memberWrites.filter((effect) => matches(effect));
   let replacement:
     | JavaScriptSemanticBindingState["memberWrites"][number]
     | undefined;
@@ -337,6 +340,15 @@ const projectedSourceFactsAtRead = (
     )
   )
     return undefined;
+  const descendantAffectsSelection = (
+    effect: JavaScriptSemanticBindingState["memberWrites"][number],
+  ): boolean =>
+    effect.path.length > path.length &&
+    matches(effect, true) &&
+    !superseded(effect);
+  const hasDescendantEffects =
+    binding.memberWrites.some(descendantAffectsSelection) ||
+    binding.escapedPaths.some(descendantAffectsSelection);
   const slotMayHaveChanged = writes.some(
     (effect) => !superseded(effect) && effect.path.length === path.length,
   );
@@ -388,7 +400,12 @@ const projectedSourceFactsAtRead = (
     }
   }
   if (!retainEligibility && replacement !== undefined)
-    return { sources, retainsOrigin: false, slotMayHaveChanged };
+    return {
+      sources,
+      retainsOrigin: false,
+      slotMayHaveChanged,
+      hasDescendantEffects,
+    };
   for (const initializer of read.binding.initializers) {
     if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
     if (semanticReferenceSourcesInactive(initializer, state)) continue;
@@ -428,5 +445,10 @@ const projectedSourceFactsAtRead = (
         });
     }
   }
-  return { sources, retainsOrigin: true, slotMayHaveChanged };
+  return {
+    sources,
+    retainsOrigin: true,
+    slotMayHaveChanged,
+    hasDescendantEffects,
+  };
 };

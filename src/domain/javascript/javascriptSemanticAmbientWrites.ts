@@ -116,7 +116,10 @@ export const createAmbientPathResolver = (
     capture?: t.Node,
     escapedContents = false,
     projection: AmbientProjection = [],
-    localIdentity?: (node: t.Node, path: AmbientProjection) => void,
+    selection?: {
+      readonly localIdentity?: (node: t.Node, path: AmbientProjection) => void;
+      readonly prototypeReceiver?: boolean;
+    },
   ): readonly AmbientPath[] => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
@@ -205,7 +208,7 @@ export const createAmbientPathResolver = (
           );
       };
       if (!t.isIdentifier(root) && facts?.freshObject(root)) {
-        localIdentity?.(root, suffix);
+        selection?.localIdentity?.(root, suffix);
         for (const [source, path] of facts?.stores.get(root) ?? []) {
           const selected =
             suffix === undefined ||
@@ -310,6 +313,32 @@ export const createAmbientPathResolver = (
           });
         }
         continue;
+      }
+      // Literal instances share native prototypes. A write to the instance's
+      // own __proto__ slot changes only that instance; selecting or exposing
+      // the prototype's contents can affect every instance of the builtin.
+      if (
+        possibleWrites &&
+        suffix?.[0] === "__proto__" &&
+        (escapedContents || selection?.prototypeReceiver || suffix.length > 1)
+      ) {
+        const builtin = t.isArrayExpression(root)
+          ? "Array"
+          : t.isObjectExpression(root) &&
+              root.properties.every((property) => {
+                if (t.isSpreadElement(property)) return false;
+                const key = semanticStaticPropertyKey(
+                  property.key,
+                  property.computed,
+                );
+                return key !== null && key !== "__proto__";
+              })
+            ? "Object"
+            : undefined;
+        if (builtin !== undefined) {
+          retain(["global", builtin, "prototype", ...suffix.slice(1)]);
+          continue;
+        }
       }
       if (
         possibleWrites &&
@@ -606,16 +635,19 @@ export function* indexJavaScriptAmbientWritesSteps(
     pendingStores.delete(source);
     if (source.target === undefined) continue;
     const identities = new Map<t.Node, AmbientProjection>();
-    ambientWrites(source.target, source.mutation, false, [], (node, path) => {
-      const users = dependents.get(node) ?? new Set<SemanticIterationSource>();
-      users.add(source);
-      dependents.set(node, users);
-      identities.set(
-        node,
-        identities.has(node)
-          ? joinAmbientProjection(identities.get(node), path)
-          : path,
-      );
+    ambientWrites(source.target, source.mutation, false, [], {
+      localIdentity: (node, path) => {
+        const users =
+          dependents.get(node) ?? new Set<SemanticIterationSource>();
+        users.add(source);
+        dependents.set(node, users);
+        identities.set(
+          node,
+          identities.has(node)
+            ? joinAmbientProjection(identities.get(node), path)
+            : path,
+        );
+      },
     });
     // Publish only completed queries; each source/root projection can only widen.
     for (const [node, path] of identities) {
@@ -648,8 +680,10 @@ export function* indexJavaScriptAmbientWritesSteps(
       source.mutation,
       false,
       [],
-      () => {
-        local = true;
+      {
+        localIdentity: () => {
+          local = true;
+        },
       },
     );
     if (!local || ambient.length > 0)
@@ -668,10 +702,9 @@ export function* indexJavaScriptAmbientWritesSteps(
     const paths =
       target === undefined
         ? [path]
-        : ambientWrites(target.node, target.capture).map((identity) => [
-            ...identity,
-            ...path.slice(2),
-          ]);
+        : ambientWrites(target.node, target.capture, false, [], {
+            prototypeReceiver: true,
+          }).map((identity) => [...identity, ...path.slice(2)]);
     for (const resolved of paths) {
       retainSemanticAmbientEffect(state, "write", resolved, node);
     }
