@@ -1,3 +1,7 @@
+import {
+  hasCompleteMethodRows,
+  selectedDeclaringTypes,
+} from "./managedMemberComparisonCoverage.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   managedMemberInspectionSchema,
@@ -152,6 +156,7 @@ const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
 const matchMethods = (
   left: readonly Keyed<Method>[],
   right: readonly Keyed<Method>[],
+  allowRemap: boolean,
 ) =>
   matchByKeys({
     left,
@@ -176,12 +181,12 @@ const matchMethods = (
       },
       {
         basis: "exact-il-signature",
-        key: ({ exactKey }) => exactKey,
+        key: ({ exactKey }) => (allowRemap ? exactKey : null),
         remap: true,
       },
       {
         basis: "structural-method-shape",
-        key: ({ structuralKey }) => structuralKey,
+        key: ({ structuralKey }) => (allowRemap ? structuralKey : null),
         competitionKey: ({ structuralKey }) => structuralKey,
         remap: true,
       },
@@ -191,6 +196,7 @@ const matchMethods = (
 const matchFields = (
   left: readonly Keyed<Field>[],
   right: readonly Keyed<Field>[],
+  allowRemap: boolean,
 ) =>
   matchByKeys({
     left,
@@ -207,7 +213,7 @@ const matchFields = (
       },
       {
         basis: "field-signature",
-        key: ({ exactKey }) => exactKey,
+        key: ({ exactKey }) => (allowRemap ? exactKey : null),
         remap: true,
       },
     ],
@@ -487,12 +493,15 @@ const groupBy = <Item>(
 };
 
 /** Whether a side's inventory observed members of this declaring type. */
-const observedBy =
-  (side: ManagedMemberComparisonSide) =>
-  ({ declaring_type }: { readonly declaring_type: string | null }): boolean =>
-    side.result.selection === null ||
-    (declaring_type !== null &&
-      side.result.selection.type_names.includes(declaring_type));
+const observedBy = (side: ManagedMemberComparisonSide) => {
+  const types = selectedDeclaringTypes(side.result);
+  return ({
+    declaring_type,
+  }: {
+    readonly declaring_type: string | null;
+  }): boolean =>
+    types === null || (declaring_type !== null && types.has(declaring_type));
+};
 
 /**
  * Pair only members whose declaring type both sides observed. A member outside
@@ -562,7 +571,15 @@ export const keyMembers = (
       left.result.methods,
       right.result.methods,
       sides,
-      matchMethods,
+      (a, b) =>
+        matchMethods(
+          a,
+          b,
+          left.result.metadata.status === "complete" &&
+            right.result.metadata.status === "complete" &&
+            hasCompleteMethodRows(left.result) &&
+            hasCompleteMethodRows(right.result),
+        ),
       (item) => keyMethod(item, declaredLeft),
       (item) => keyMethod(item, declaredRight),
     ),
@@ -570,7 +587,13 @@ export const keyMembers = (
       left.result.fields,
       right.result.fields,
       sides,
-      matchFields,
+      (a, b) =>
+        matchFields(
+          a,
+          b,
+          left.result.metadata.status === "complete" &&
+            right.result.metadata.status === "complete",
+        ),
       (item) => keyField(item, declaredLeft),
       (item) => keyField(item, declaredRight),
     ),

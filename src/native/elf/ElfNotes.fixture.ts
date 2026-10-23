@@ -209,6 +209,73 @@ export const elfNoteFixture = (options: ElfNoteImageOptions = {}): Buffer => {
   return bytes;
 };
 
+/** A non-allocated SHT_NOTE whose stored bytes include an ELF compression header. */
+export const compressedElfNoteSectionFixture = (
+  bits: 32 | 64 = 64,
+  little = true,
+): Buffer => {
+  const notes = concat(
+    gnuBuildIdNote(undefined, little),
+    gnuAbiTagNote(little),
+  );
+  const header = Buffer.alloc(bits === 64 ? 24 : 12);
+  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
+  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
+  writeWord(header, bits === 64 ? 16 : 8, 4, bits, little);
+  const bytes = elfNoteFixture({
+    bits,
+    little,
+    type: 1,
+    ownership: "section",
+    sectionName: ".debug.notes",
+    alignment: bits === 64 ? 8 : 4,
+    notes: concat(header, deflateSync(notes)),
+  });
+  const noteSection = (bits === 64 ? 64 : 52) + (bits === 64 ? 64 : 40);
+  writeWord(bytes, noteSection + 8, 0x800, bits, little);
+  return bytes;
+};
+
+/** Valid ELF64 section count stored in section header zero per the gABI. */
+export const elfExtendedSectionCountFixture = (): Buffer => {
+  const count = 0xff00;
+  const sectionOffset = 0x200;
+  const noteOffset = 0x100;
+  const namesOffset = 0x180;
+  const note = gnuBuildIdNote("12345678");
+  const names = Buffer.from("\0.note.gnu.build-id\0.shstrtab\0", "latin1");
+  const bytes = Buffer.alloc(sectionOffset + count * 64);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  bytes.writeUInt16LE(1, 16);
+  bytes.writeUInt16LE(62, 18);
+  bytes.writeUInt32LE(1, 20);
+  bytes.writeBigUInt64LE(BigInt(sectionOffset), 40);
+  bytes.writeUInt16LE(64, 52);
+  bytes.writeUInt16LE(56, 54);
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt16LE(0, 60);
+  bytes.writeUInt16LE(2, 62);
+  bytes.writeBigUInt64LE(BigInt(count), sectionOffset + 32);
+
+  const noteSection = sectionOffset + 64;
+  bytes.writeUInt32LE(1, noteSection);
+  bytes.writeUInt32LE(7, noteSection + 4);
+  bytes.writeBigUInt64LE(BigInt(noteOffset), noteSection + 24);
+  bytes.writeBigUInt64LE(BigInt(note.length), noteSection + 32);
+  bytes.writeBigUInt64LE(4n, noteSection + 48);
+
+  const namesSection = sectionOffset + 2 * 64;
+  bytes.writeUInt32LE(20, namesSection);
+  bytes.writeUInt32LE(3, namesSection + 4);
+  bytes.writeBigUInt64LE(BigInt(namesOffset), namesSection + 24);
+  bytes.writeBigUInt64LE(BigInt(names.length), namesSection + 32);
+  bytes.writeBigUInt64LE(1n, namesSection + 48);
+
+  note.copy(bytes, noteOffset);
+  names.copy(bytes, namesOffset);
+  return bytes;
+};
+
 /** ELF note fixture with a zlib-compressed section-name string table. */
 export const compressedElfNoteFixture = (
   bits: 32 | 64 = 64,

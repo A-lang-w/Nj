@@ -1,6 +1,8 @@
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
+  clientConfigurationForWrite,
+  clientWriteDialect,
   effectiveClientConfiguration,
   readConfigurationText,
   type ClientConfigurationSource,
@@ -8,8 +10,8 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
-  clientRegistrationEntry,
   clientConfigurationValuesEqual,
+  effectiveClientServer,
   clientServerListedDisabled,
   clientServerPath,
   legacyClientServerPath,
@@ -26,21 +28,21 @@ import { dirname } from "node:path";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { withClientConfigurationTransaction } from "./ClientConfigurationTransaction.js";
 import { isClientConfigurationCleanupFailure } from "./ClientConfigurationCleanup.js";
-import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
+import {
+  ClientConfigurationPublication,
+  ClientConfigurationWriteError,
+} from "./ClientConfigurationPublication.js";
 import {
   clientRegistrationEnvironment,
   clientRegistrationEnvironmentDetailsWithBudget,
   type ProviderRequestBudgetResolver,
 } from "./ClientRegistrationEnvironment.js";
 
+import { refreshClientRegistration } from "./ClientRegistration.js";
+
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
-import {
-  MCP_STARTUP_POLICY,
-  recommendedMcpToolTimeoutMs,
-  recommendedMcpToolTimeoutSeconds,
-} from "../mcpStartupPolicy.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
@@ -100,14 +102,20 @@ export const configureClientConfiguration = async (
   );
   if (transactionPath === undefined)
     return { status: "failed", reason: "path" };
-  return withClientConfigurationTransaction(transactionPath, () =>
-    configureClientDocument(
-      { client, transactionPath },
-      environment,
-      command,
-      resolveProviderRequestBudget,
-    ),
-  );
+  try {
+    return await withClientConfigurationTransaction(transactionPath, () =>
+      configureClientDocument(
+        { client, transactionPath },
+        environment,
+        command,
+        resolveProviderRequestBudget,
+      ),
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError)
+      return { status: "failed", reason: "readback" };
+    throw cause;
+  }
 };
 
 const configureClientDocument = async (
@@ -175,6 +183,7 @@ const configureClientDocument = async (
           : "{}"),
       format,
     );
+    parsed = clientConfigurationForWrite(parsed, files.value);
     const policy = await readClientPolicyBlock(
       client,
       parsed,
@@ -322,8 +331,15 @@ const persistClientConfiguration = async ({
     );
   } catch (cause: unknown) {
     // An unserializable edit is reported before any file is written.
-    void cause;
-    return { status: "failed", reason: "write" };
+    return {
+      status: "failed",
+      reason: "write",
+      failure: new ClientConfigurationWriteError(
+        client.configPath,
+        "serialize",
+        cause,
+      ).problem,
+    };
   }
   if (!serialized.ok)
     return {
@@ -355,9 +371,17 @@ const persistClientConfiguration = async ({
     if (isClientConfigurationCleanupFailure(cause)) throw cause;
     if (isConfigurationConflict(cause))
       return conflictFailure(recoveryBackupPath);
-    // Write failure is reported by the status reason.
-    void cause;
-    return { status: "failed", reason: "write" };
+    return {
+      status: "failed",
+      reason: "write",
+      failure: (cause instanceof ClientConfigurationWriteError
+        ? cause
+        : new ClientConfigurationWriteError(client.configPath, "publish", cause)
+      ).problem,
+      ...(recoveryBackupPath === undefined
+        ? {}
+        : { backupPath: recoveryBackupPath }),
+    };
   }
   return publication.verify(async () => {
     try {
@@ -422,7 +446,10 @@ export const clientConfigurationAligned = async (
       return false;
     }
     const original = await readRegularFileText(client.configPath);
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = clientConfigurationForWrite(
+      parseClientConfiguration(original, client.format),
+      files.value,
+    );
     const desired = await clientConfigurationDesired(
       client,
       providerEnvironment,
@@ -452,12 +479,21 @@ export const inspectClientConfiguration = async (
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationInspection> => {
-  const inspection = await inspectClientDocument(
-    client,
-    providerEnvironment,
-    command,
-    resolveProviderRequestBudget,
-  );
+  let inspection: ClientConfigurationInspection;
+  try {
+    inspection = await inspectClientDocument(
+      client,
+      providerEnvironment,
+      command,
+      resolveProviderRequestBudget,
+    );
+  } catch (cause: unknown) {
+    if (!(cause instanceof ConfigurationError)) throw cause;
+    return {
+      status: "invalid",
+      remediation: `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
+    };
+  }
   if (inspection.status !== "create" && inspection.status !== "update")
     return inspection;
   // A change the running client would overwrite is not a persisted registration.
@@ -545,7 +581,10 @@ const inspectClientDocument = async (
     };
   }
   try {
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = clientConfigurationForWrite(
+      parseClientConfiguration(original, client.format),
+      files.value,
+    );
     const desired = await clientConfigurationDesired(
       client,
       providerEnvironment,
@@ -741,7 +780,10 @@ const clientConfigurationDesired = async (
     client,
     document: parsed,
   });
-  const format = parsed?.dialect ?? client.format ?? "json";
+  const format = clientWriteDialect(
+    parsed?.dialect ?? client.format ?? "json",
+    sources,
+  );
   const launcher =
     command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command;
   if (format === "dsh") {
@@ -785,59 +827,16 @@ const clientConfigurationDesired = async (
           REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
         }
       : environment.value;
-  const registration = clientRegistrationEntry(
+  const registration = refreshClientRegistration(
+    client,
     format,
     launcher,
     registrationEnvironment,
+    parsed === undefined
+      ? undefined
+      : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),
+    validated.value.timeoutInputs,
   );
-  const previous = parsed?.servers[PRODUCT_IDENTITY.mcpServerKey];
-  if (
-    client.name === "kimi" &&
-    typeof previous === "object" &&
-    previous !== null &&
-    "enabledTools" in previous
-  )
-    registration.enabledTools = previous.enabledTools;
-  return {
-    ...registration,
-    ...(client.name === "codex" || client.name === "grok_build"
-      ? {
-          startup_timeout_sec:
-            client.name === "codex"
-              ? (positiveTimeout(previous, "startup_timeout_sec") ??
-                MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)
-              : MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
-        }
-      : {}),
-    ...(client.name === "codex"
-      ? {
-          tool_timeout_sec:
-            positiveTimeout(previous, "tool_timeout_sec") ??
-            recommendedMcpToolTimeoutSeconds(validated.value.timeoutInputs),
-        }
-      : {}),
-    ...(client.name === "kimi"
-      ? {
-          startupTimeoutMs:
-            positiveTimeout(previous, "startupTimeoutMs") ??
-            MCP_STARTUP_POLICY.kimiStartupTimeoutMs,
-          toolTimeoutMs:
-            positiveTimeout(previous, "toolTimeoutMs") ??
-            recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
-        }
-      : {}),
-  };
-};
-
-const positiveTimeout = (
-  registration: unknown,
-  key: string,
-): number | bigint | undefined => {
-  if (typeof registration !== "object" || registration === null) return;
-  const value: unknown = Reflect.get(registration, key);
-  // TOML keeps integers beyond the safe Number range exact as bigint.
-  if (typeof value === "bigint") return value > 0n ? value : undefined;
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : undefined;
+  if (!registration.ok) throw registration.error;
+  return registration.value;
 };

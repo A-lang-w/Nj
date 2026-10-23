@@ -10,6 +10,8 @@ import {
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
+  hasCompleteMethodRows,
+  selectedDeclaringTypes,
   buildComparisonMatching,
   buildComparisonSummary,
   comparisonLimitations,
@@ -215,11 +217,6 @@ export interface ManagedMemberComparisonSide {
   readonly result: ManagedMemberInspection;
 }
 
-const selectedTypes = (
-  result: ManagedMemberInspection,
-): ReadonlySet<string> | null =>
-  result.selection === null ? null : new Set(result.selection.type_names);
-
 const callEdgesByCaller = (
   result: ManagedMemberInspection,
 ): ReadonlyMap<
@@ -268,11 +265,19 @@ export const compareManagedMembers = (
     rightEvidenceId: right.evidenceId,
     leftComplete: left.result.metadata.status === "complete",
     rightComplete: right.result.metadata.status === "complete",
-    leftSelection: selectedTypes(left.result),
-    rightSelection: selectedTypes(right.result),
+    leftMethodsComplete:
+      left.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(left.result),
+    rightMethodsComplete:
+      right.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(right.result),
+    leftSelection: selectedDeclaringTypes(left.result),
+    rightSelection: selectedDeclaringTypes(right.result),
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
+    leftAssembly: left.result.assembly,
+    rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
     leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),

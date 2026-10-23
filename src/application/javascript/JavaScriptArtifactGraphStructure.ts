@@ -25,6 +25,7 @@ import {
   dependencyManifest,
   addUnavailableStaticParseScope,
   artifactFileNodeKind,
+  fileOccurrenceIdentity,
   artifactLocalIdentity,
   javascriptAnalysisCoverage,
   createElectronRoleNode,
@@ -245,6 +246,13 @@ export const addJavaScriptArtifactFiles = (
         ),
         details: { analysis_status: analyzed.analysis_failure.status },
       });
+    else if (file.kind === "html" && !file.text.included)
+      addUnavailableStaticParseScope(context, {
+        file,
+        asset: target,
+        ...javascriptArtifactAnalysisScopes.html,
+        limitation: `HTML text could not be decoded: ${file.text.reason}.`,
+      });
     else if (
       file.kind === "javascript" &&
       (analyzed.javascript === null ||
@@ -348,20 +356,23 @@ export const addJavaScriptArtifactFiles = (
         },
       });
   }
-  addUnavailableAsarEntries(context);
+  addUnavailableArtifactEntries(context);
 };
 
-const addUnavailableAsarEntries = (
+const addUnavailableArtifactEntries = (
   context: JavaScriptArtifactGraphContext,
 ): void => {
   for (const file of context.fileSet.unavailable_relevant_files) {
-    if (!isAsarContainer(context, file.container_sha256)) continue;
+    const asar = isAsarContainer(context, file.container_sha256);
+    const operation = asar
+      ? "inventory-asar-unavailable-entry"
+      : "inventory-unavailable-entry";
     const limitations = [
       ...(file.limitations ?? []),
       `The inventoried ${file.kind ?? "relevant"} entry has unavailable bytes; no content artifact identity can be established.`,
     ];
     const entry = context.accumulator.addNode({
-      kind: "asar-entry",
+      kind: asar ? "asar-entry" : "artifact",
       identity: {
         strategy: "canonical-path",
         stability: "artifact-version",
@@ -372,6 +383,7 @@ const addUnavailableAsarEntries = (
         {
           label: file.path,
           properties: {
+            path: file.path,
             entry_sha256: file.sha256,
             bytes: file.bytes,
             inventory_artifact_id: file.inventory_artifact_id,
@@ -386,7 +398,7 @@ const addUnavailableAsarEntries = (
           evidence: artifactObservationEvidence({
             sha256: file.container_sha256,
             path: file.path,
-            operation: "inventory-asar-unavailable-entry",
+            operation,
             coverage: partialApplicationCoverage([], null),
             limitations,
           }),
@@ -407,11 +419,29 @@ const addUnavailableAsarEntries = (
       evidence: artifactObservationEvidence({
         sha256: file.container_sha256,
         path: file.path,
-        operation: "inventory-asar-unavailable-entry",
+        operation,
         coverage: partialApplicationCoverage([], null),
         limitations,
       }),
     });
+    const scope =
+      file.kind === undefined
+        ? null
+        : javascriptArtifactAnalysisScopes[file.kind];
+    if (scope !== null)
+      addUnavailableStaticParseScope(context, {
+        file,
+        asset: entry,
+        ...scope,
+        limitation: limitations.join(" "),
+        ...(file.inventory_occurrence_id === undefined
+          ? {}
+          : {
+              details: {
+                inventory_occurrence_id: file.inventory_occurrence_id,
+              },
+            }),
+      });
     if (file.kind === "native-addon" || file.artifact_kind === "native-addon") {
       const addon = context.accumulator.addNode({
         kind: "native-addon",
@@ -603,6 +633,7 @@ const createFileTarget = (
       {
         label: file.path,
         properties: {
+          file_occurrence: fileOccurrenceIdentity(file),
           path: file.path,
           bytes: file.bytes,
           inventory_artifact_id: file.inventory_artifact_id,

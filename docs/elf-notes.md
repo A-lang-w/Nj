@@ -46,13 +46,26 @@ The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 names, section names, and GNU descriptor text share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together
-within that ceiling; repeated table ranges count again. Each descriptor range is hashed once,
+within that ceiling. If admission fails, the error reports the required
+`max_file_bytes`; raising it can admit the decoded table up to the operation's
+512 MiB maximum. Once admitted, raising that setting does not increase the
+scan budget for the same source and decoded names. Repeated table ranges count again. Each descriptor range is hashed once,
 and each GNU version's trailing NUL run is scanned once; neither walk may
 exceed that byte ceiling. Malformed ELF headers, truncated header
 tables, declared note tables that extend past the file, and truncated
 note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
-unsupported.
+unsupported and returns an unsupported-target outcome rather than invalid-input
+recovery.
+
+`SHF_COMPRESSED` note sections return `unsupported_target` before their payload
+is interpreted or decompressed. Their compression header is storage metadata,
+not a note header. The current result requires physical file offsets for each
+note and descriptor, which decoded compressed notes cannot provide. This refusal
+does not label compressed note storage as malformed or allocate its declared
+decoded size. Compressed section-name tables remain supported within the limits
+above. Inspect a separately decompressed copy when these notes are needed,
+retaining the original artifact for provenance.
 
 This workflow does not execute the image or verify GNU build-id uniqueness
 against package catalogs.

@@ -131,7 +131,7 @@ export const parsePeCertificates = (
         )
           fail("WIN_CERTIFICATE has invalid PKCS#7 alignment padding.");
         payload = entryPayload.subarray(0, root.end);
-        const parsed = parsePkcs7SignedData(payload, root);
+        const parsed = parsePkcs7SignedData(root);
         teletexStringCompatibilityUsed ||=
           parsed.teletexStringCompatibilityUsed;
         pkcs7 = {
@@ -180,7 +180,6 @@ export const parsePeCertificates = (
           })),
         };
       } catch (cause) {
-        if (cause instanceof ArtifactReaderFailure) throw cause;
         if (cause instanceof PeCertificateAsn1Failure)
           fail(`PKCS#7 signedData is malformed: ${cause.message}`);
         throw cause;

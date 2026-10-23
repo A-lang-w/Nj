@@ -1,6 +1,11 @@
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
+import {
+  readStableArtifact,
+  type StableArtifactSnapshot,
+} from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFailure,
+  artifactFileCompletion,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -37,6 +42,7 @@ import {
   BinaryResourceFailure,
 } from "../native/metadata/BinaryContainer.js";
 import { parseGoModuleBytes, parseGoModuleText } from "./GoModuleText.js";
+import { fileSnapshotPartialObservationSchema } from "../domain/fileSnapshotObservation.js";
 
 /** Bundled format reader identity; embedded compiler versions are separate observed facts. */
 export const GO_BINARY_PROVIDER_IDENTITY = {
@@ -110,11 +116,7 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
       return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
         cause,
       });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
+    if (isSelectedRegularFileError(cause))
       return new AnalysisInputError(OPERATION, { cause }, [
         {
           path: ["path"],
@@ -134,6 +136,20 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFailure(cause), path);
+  const completed = artifactFileCompletion(cause);
+  if (completed !== undefined) {
+    // This inspect boundary acquires exactly one StableArtifactSnapshot before
+    // metadata decoding. Completion describes that read, not a decoded report.
+    const snapshot = completed.value as StableArtifactSnapshot;
+    primary.retainPartialObservation(
+      fileSnapshotPartialObservationSchema.parse({
+        kind: "file-snapshot-hash",
+        path,
+        sha256: snapshot.sha256,
+        bytes: snapshot.bytes.length,
+      }),
+    );
+  }
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(
@@ -160,6 +176,7 @@ const outputLimit = (path: string) =>
 const limitationsFor = (
   info: { go_version: string | null; module_text: string | null } | null,
   module: GoModuleMetadata | null,
+  sectionNamesLimitation: string | undefined,
 ): string[] => [
   "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
   "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
@@ -174,6 +191,7 @@ const limitationsFor = (
         "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
       ]
     : []),
+  ...(sectionNamesLimitation === undefined ? [] : [sectionNamesLimitation]),
   ...(module !== null && module.main === null
     ? [
         "Dependency coverage is unknown because no main-module record was decoded from the embedded module information, as in GOPATH-mode builds. Decoded dependency records remain visible; an empty list does not establish the absence of dependencies.",
@@ -253,6 +271,10 @@ export class GoBinaryProvider implements GoBinaryPort {
           input.architecture,
         );
         const image = readGoBinaryImage(selected.bytes);
+        const {
+          section_names_limitation: sectionNamesLimitation,
+          ...publicImage
+        } = image;
         const info = inFile(image.build_info, selected.fileOffset);
         if (
           info !== null &&
@@ -273,7 +295,7 @@ export class GoBinaryProvider implements GoBinaryPort {
                 )
               : parseGoModuleText(info.module_text);
         const report = {
-          ...image,
+          ...publicImage,
           artifact: {
             path: input.path,
             sha256: snapshot.sha256,
@@ -283,7 +305,7 @@ export class GoBinaryProvider implements GoBinaryPort {
             ? {}
             : { selected_slice: selected.selection }),
           build_info: info === null ? null : { ...info, module },
-          limitations: limitationsFor(info, module),
+          limitations: limitationsFor(info, module, sectionNamesLimitation),
         };
         if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
           throw outputLimit(input.path);

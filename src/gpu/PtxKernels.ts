@@ -55,7 +55,16 @@ function* tokens(text: string): Generator<Token> {
       continue;
     }
     if (/[.\w$%@]/u.test(text[at]!)) {
-      while (at < text.length && /[.\w$%@]/u.test(text[at]!)) advance();
+      // Dot-prefixed keywords remain separate when their whitespace is omitted.
+      // Internal dots in names, instruction mnemonics and version literals stay intact.
+      const keyword = text[at] === ".";
+      advance();
+      while (
+        at < text.length &&
+        /[.\w$%@]/u.test(text[at]!) &&
+        (!keyword || text[at] !== ".")
+      )
+        advance();
     } else advance();
     if (at - position > 65536)
       throw new BinaryResourceFailure(
@@ -71,6 +80,12 @@ const integer = (token: string | undefined): number | null => {
   const value = Number(token);
   return Number.isSafeInteger(value) ? value : null;
 };
+const alignmentValue = (token: string | undefined): number | null => {
+  const value = integer(token);
+  return value !== null && value > 0 && Number.isInteger(Math.log2(value))
+    ? value
+    : null;
+};
 type PtxVersion = { major: number; minor: number };
 const ptxVersion = (token: string | undefined): PtxVersion | null => {
   const match = /^(\d+)\.(\d+)$/u.exec(token ?? "");
@@ -85,7 +100,7 @@ const sizeOf = (type: string | undefined): number | null => {
   const match = /^\.(?:b|u|s|f)(8|16|32|64|128)$/u.exec(type ?? "");
   return match === null ? null : Number(match[1]) / 8;
 };
-const identifier = /^%?[A-Za-z_$][\w$@.]*$/u;
+const identifier = /^(?:%?[A-Za-z_$][\w$@.]*|%[0-9][A-Za-z0-9_$]*)$/u;
 /** Stream register names/ranges without retaining the declaration token list. */
 const registerDeclaration = (
   next: () => Token,
@@ -145,21 +160,10 @@ const declaration = (
   size: number | null;
   align: number | null;
 } => {
-  const values = (source[0] === ".param" ? source.slice(1) : source).flatMap(
-    (value) =>
-      value.startsWith(".ptr.")
-        ? [
-            ".ptr",
-            ...value
-              .slice(5)
-              .split(".")
-              .map((part) => `.${part}`),
-          ]
-        : [value],
-  );
+  const values = source[0] === ".param" ? source.slice(1) : source;
   let at = 0;
-  const explicit = values[at] === ".align";
-  const alignment = explicit ? integer(values[++at]) : null;
+  let explicit = values[at] === ".align";
+  let alignment = explicit ? alignmentValue(values[++at]) : null;
   if (explicit) at++;
   const vector = values[at] === ".v2" ? 2 : values[at] === ".v4" ? 4 : 1;
   if (vector !== 1) at++;
@@ -177,17 +181,17 @@ const declaration = (
       [".const", ".global", ".local", ".shared"].includes(qualifier)
     ) {
       // Address-space qualifiers describe the pointed-to object.
-    } else if (pointer && qualifier === ".align") {
+    } else if (qualifier === ".align") {
       const alignmentToken = values[at];
       if (alignmentToken !== undefined && /^[0-9]+$/u.test(alignmentToken))
         at++;
-      const pointeeAlignment = integer(alignmentToken);
-      if (
-        pointeeAlignment === null ||
-        pointeeAlignment <= 0 ||
-        !Number.isInteger(Math.log2(pointeeAlignment))
-      )
-        layoutKnown = false;
+      const declaredAlignment = alignmentValue(alignmentToken);
+      if (declaredAlignment === null) layoutKnown = false;
+      if (!pointer) {
+        if (explicit) layoutKnown = false;
+        explicit = true;
+        alignment = declaredAlignment;
+      }
     } else layoutKnown = false;
   }
   const name = identifier.test(values[at] ?? "") ? values[at]! : null;
@@ -221,8 +225,7 @@ const declaration = (
       : vector === 1
         ? scalar
         : `.v${vector} ${scalar}`;
-  const parameterAlignment = explicit ? alignment : size;
-  const align = parameterAlignment;
+  const align = explicit ? alignment : size;
   if (dimensions.length === 1) {
     const dimension = dimensions[0]!,
       count = dimension.length === 1 ? integer(dimension[0]) : null;
@@ -535,8 +538,7 @@ export const ptxTargetIdentity = (target: string): string =>
 /** Resolve all module-scope targets through the highest numbered architecture. */
 export const readPtxTarget = (text: string): PtxTargetFacts => {
   const stream = tokens(text);
-  let version = false,
-    depth = 0,
+  let depth = 0,
     target: string | null = null,
     targetIdentity: string | null = null,
     targetArchitecture = -1,
@@ -544,6 +546,15 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
     unsupported = false,
     malformed = false;
   try {
+    const first = stream.next();
+    if (first.done || first.value.value !== ".version")
+      return { recognized: false, target: null, limitation: null };
+    const declaredVersion = stream.next();
+    if (
+      declaredVersion.done ||
+      ptxVersion(declaredVersion.value.value) === null
+    )
+      return { recognized: false, target: null, limitation: null };
     for (const token of stream) {
       if (token.value === "{") {
         depth++;
@@ -554,12 +565,7 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
         continue;
       }
       if (depth !== 0) continue;
-      if (token.value === ".version") {
-        const value = stream.next();
-        version = !value.done && ptxVersion(value.value.value) !== null;
-        continue;
-      }
-      if (token.value !== ".target" || !version) continue;
+      if (token.value !== ".target") continue;
       const value = stream.next();
       if (value.done) {
         unsupported = true;
@@ -593,7 +599,7 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
     if (!(cause instanceof BinaryFormatFailure)) throw cause;
     malformed = true;
   }
-  const recognized = version && target !== null;
+  const recognized = target !== null;
   const limitation = !recognized
     ? null
     : unsupported

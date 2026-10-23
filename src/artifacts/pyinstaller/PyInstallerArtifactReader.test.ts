@@ -12,9 +12,12 @@ import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifact
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
+import { parsePythonPyc } from "../../python/PythonPycParser.js";
+import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
 import {
   PYTHON_39_MAGIC,
   cArchiveExecutable,
+  cArchiveBytecodeExecutable,
   cookieRangeOutsideFile,
   pyzArchive,
   type CArchiveFixtureMember,
@@ -92,6 +95,54 @@ const sampleMembers = (
     compress: false,
   },
 ];
+
+it("preserves legacy pyc bytes and derives only modern headerless CArchive bytecode", async () => {
+  const fixture = cArchiveBytecodeExecutable();
+  const path = await writeArchive("bytecode-layouts", fixture.archive);
+  const reader = new PyInstallerArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    for (const module of fixture.modules) {
+      const entry = entries.find((item) => item.path === module.name)!;
+      expect(entry.formatMetadata).toMatchObject({
+        bytecode_header: module.derived ? "derived" : "unknown",
+        bytecode_magic: module.derived ? "6f0d0d0a" : null,
+      });
+      const bytes = await buffer(await reader.open(entry));
+      expect(bytes).toEqual(module.bytes);
+      expect(
+        parsePythonPyc(
+          bytes,
+          { path: module.name, bytes: bytes.length, sha256: sha256(bytes) },
+          inspectPythonPycInputSchema.parse({ path: module.name }),
+        ).coverage.status,
+      ).toBe("complete");
+      expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
+    }
+  } finally {
+    await reader.close();
+  }
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  for (const module of fixture.modules) {
+    const occurrence = snapshot.occurrences.find(
+      (row) => row.logical_path === module.name,
+    )!;
+    expect(
+      snapshot.nodes.find(
+        (node) => node.artifact_id === occurrence.artifact_id,
+      ),
+    ).toMatchObject({
+      sha256: sha256(module.bytes),
+      size: module.bytes.length,
+    });
+    expect(
+      snapshot.edges.find(
+        (edge) => edge.occurrence_id === occurrence.occurrence_id,
+      )?.relation,
+    ).toBe(module.derived ? "derived-from" : "contains");
+  }
+});
 
 it("inventories a 2.1 archive, nested PYZ modules, and derived bytecode", async () => {
   const script = Buffer.from("print('hi')");
@@ -849,6 +900,7 @@ it("inventories and extracts a Windows member name under its canonical path", as
   const path = await writeArchive(
     "windows",
     cArchiveExecutable({
+      carrier: "pe",
       layout: "2.1",
       pythonVersion: 309,
       pythonLibrary: "python39.dll",
@@ -880,7 +932,7 @@ it("inventories and extracts a Windows member name under its canonical path", as
   await materializeArtifactInventory(
     {
       inputPath: path,
-      inputFormat: "elf",
+      inputFormat: "pe",
       outputRoot: output,
       environment: process.env,
       integrityPolicy: "fail",
@@ -892,6 +944,92 @@ it("inventories and extracts a Windows member name under its canonical path", as
   expect(await readFile(join(output, "PYZ.pyz", "res", "icon.bin"))).toEqual(
     icon,
   );
+});
+
+it("preserves distinct POSIX backslash and slash member paths", async () => {
+  const backslashName = String.raw`a\b.txt`;
+  const slashName = "a/b.txt";
+  const backslashPayload = Buffer.from("literal-backslash");
+  const slashPayload = Buffer.from("nested-slash");
+  const path = await writeArchive(
+    "posix-paths",
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      pythonLibrary: "python39.dll",
+      members: [
+        {
+          name: backslashName,
+          typeCode: "x",
+          payload: backslashPayload,
+          compress: false,
+        },
+        {
+          name: slashName,
+          typeCode: "x",
+          payload: slashPayload,
+          compress: false,
+        },
+      ],
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  const backslashEntry = snapshot.occurrences.find(
+    (occurrence) => occurrence.logical_path === backslashName,
+  );
+  const slashEntry = snapshot.occurrences.find(
+    (occurrence) => occurrence.logical_path === slashName,
+  );
+  expect(backslashEntry?.format_metadata).toMatchObject({
+    source_name: backslashName,
+  });
+  expect(slashEntry?.format_metadata).toMatchObject({ source_name: slashName });
+  expect(snapshot.coverage.status).toBe("complete");
+  if (process.platform === "win32") return;
+
+  const directory = await createTestTempDirectory("rea-pyinstaller-posix-out-");
+  const output = join(directory, "extracted");
+  await materializeArtifactInventory(
+    {
+      inputPath: path,
+      inputFormat: "elf",
+      outputRoot: output,
+      environment: process.env,
+      integrityPolicy: "fail",
+    },
+    path,
+    snapshot,
+  );
+  expect(await readFile(join(output, backslashName))).toEqual(backslashPayload);
+  expect(await readFile(join(output, "a", "b.txt"))).toEqual(slashPayload);
+});
+
+it("reads a PE signature beyond the carrier prefix before projecting paths", async () => {
+  const path = await writeArchive(
+    "distant-pe",
+    cArchiveExecutable({
+      carrier: "pe",
+      peHeaderOffset: 8190,
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: String.raw`pkg\data.bin`,
+          typeCode: "x",
+          payload: Buffer.from("windows-path"),
+          compress: false,
+        },
+      ],
+    }),
+  );
+  const reader = new PyInstallerArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(entries.map((entry) => entry.path)).toContain("pkg/data.bin");
+  } finally {
+    await reader.close();
+  }
 });
 
 it("rejects a stored member whose declared size disagrees with its bytes", async () => {

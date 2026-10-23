@@ -187,6 +187,59 @@ export const createIl2cppBinaryFixture = (
   return bytes;
 };
 
+/** Add one classic dyld bind at the selected slot, retaining its stored word. */
+export const createIl2cppDyldBindFixture = (
+  raw: bigint,
+  slotOffset = POINTERS,
+): Buffer => {
+  const bytes = Buffer.from(createIl2cppBinaryFixture());
+  const command = 104;
+  const streamOffset = 0xf00;
+  const offsetBytes: number[] = [];
+  let remaining = slotOffset;
+  do {
+    const byte = remaining & 0x7f;
+    remaining >>>= 7;
+    offsetBytes.push(byte | (remaining === 0 ? 0 : 0x80));
+  } while (remaining !== 0);
+  const stream = Buffer.concat([
+    Buffer.from([0x3e, 0x40]),
+    Buffer.from("_FixtureMethod\0", "utf8"),
+    Buffer.from([0x51, 0x70, ...offsetBytes, 0x90, 0x00]),
+  ]);
+  bytes.writeUInt32LE(2, 16);
+  bytes.writeUInt32LE(120, 20);
+  bytes.writeUInt32LE(0x80000022, command);
+  bytes.writeUInt32LE(48, command + 4);
+  bytes.writeUInt32LE(streamOffset, command + 16);
+  bytes.writeUInt32LE(stream.length, command + 20);
+  stream.copy(bytes, streamOffset);
+  // A classic pointer bind names writable loader storage.
+  bytes.writeUInt32LE(7, 88);
+  bytes.writeUInt32LE(7, 92);
+  bytes.writeBigUInt64LE(raw, slotOffset);
+  return bytes;
+};
+
+/** Complete registration whose final zero words may occupy declared zero-fill. */
+export const createIl2cppRegistrationTailFixture = (
+  tailBytes: 0 | 8 | 16,
+  zeroFilled = true,
+): Buffer => {
+  const source = createIl2cppBinaryFixture();
+  source.copy(
+    source,
+    SIZE - 128,
+    METADATA_REGISTRATION,
+    METADATA_REGISTRATION + 128,
+  );
+  source.fill(0, METADATA_REGISTRATION, METADATA_REGISTRATION + 128);
+  const bytes = source.subarray(0, SIZE - tailBytes);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+  if (!zeroFilled) bytes.writeBigUInt64LE(BigInt(bytes.length), 64);
+  return bytes;
+};
+
 /** Wrap thin Mach-O slices in a 32-bit universal header, page aligned. */
 export const createUniversalFixture = (
   slices: readonly { readonly cpu: number; readonly bytes: Buffer }[],

@@ -5,6 +5,7 @@ import type { PyzArchive, PyzEntry } from "./PyzArchive.js";
 import {
   RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
   reconstructedPycHeader,
+  type CArchiveBytecodeHeader,
 } from "./PythonBytecode.js";
 import {
   cArchiveEntryMetadata,
@@ -14,6 +15,8 @@ import {
 import type { PyInstallerEntryMetadata } from "../../domain/artifactFormatMetadata.js";
 
 const CRYPTO_KEY_NAME = "pyimod00_crypto_key";
+
+export type CarrierPathDialect = "posix" | "windows" | "unknown";
 
 /** Parsed facts and the descriptor identity used to locate a retained image. */
 export interface PyzImage {
@@ -58,7 +61,8 @@ export const hasEncryptionMarker = (
 export const projectStoredMember = (
   entry: CArchiveEntry,
   archiveStart: number,
-  pythonMagic: Buffer | undefined,
+  bytecode: CArchiveBytecodeHeader,
+  pathDialect: CarrierPathDialect,
 ): PyInstallerMember => {
   if (isCArchiveDeclaration(entry))
     return {
@@ -79,16 +83,14 @@ export const projectStoredMember = (
       }),
       read: undefined,
     };
-  const header =
-    pythonMagic !== undefined && isBytecodeType(entry.typeCode)
-      ? reconstructedPycHeader(pythonMagic)
-      : undefined;
-  const path = canonicalMemberPath(entry.name);
+  const { header } = bytecode;
+  const path = canonicalMemberPath(entry.name, pathDialect);
   const symlink = entry.typeCode === "n";
   const limitations: string[] = [];
   if (symlink) limitations.push("PyInstaller symlink target was not read.");
   if (header !== undefined)
     limitations.push(RECONSTRUCTED_PYTHON_HEADER_LIMITATION);
+  if (bytecode.limitation !== undefined) limitations.push(bytecode.limitation);
   const declaredSize = entry.uncompressedSize;
   return {
     entry: fileEntry({
@@ -116,9 +118,10 @@ export const projectPyzContainer = (
   archiveStart: number,
   image: PyzImage,
   encrypted: boolean,
+  pathDialect: CarrierPathDialect,
 ): PyInstallerMember => {
   const { archive } = image;
-  const path = canonicalMemberPath(entry.name);
+  const path = canonicalMemberPath(entry.name, pathDialect);
   const byteOffset = sourceByteOffset(entry, archiveStart);
   const limitations: string[] = [];
   if (archive.kind === "opaque")
@@ -198,6 +201,7 @@ export const projectPyzMember = (
   item: PyzEntry,
   encryptionMarker: boolean,
   pythonMagic: Buffer | undefined,
+  pathDialect: CarrierPathDialect,
   range:
     | {
         readonly handle: FileHandle;
@@ -206,7 +210,11 @@ export const projectPyzMember = (
       }
     | undefined,
 ): PyInstallerMember => {
-  const path = pyzMemberPath(canonicalMemberPath(container.name), item);
+  const path = pyzMemberPath(
+    canonicalMemberPath(container.name, pathDialect),
+    item,
+    pathDialect,
+  );
   const encrypted = pyzEntryEncrypted(item, encryptionMarker);
   if (item.namespace)
     return {
@@ -282,14 +290,17 @@ export const projectPyzMember = (
 };
 
 /**
- * CArchive and PYZ data names treat `\` as a separator. The logical path is
+ * CArchive and PYZ data names use the carrier's path dialect. The logical path is
  * canonical; the stored spelling is kept when that conversion changes it.
  * `source_location` is an offset plus declared size, so a compressed member
  * publishes a file span only when that size is the physical extent. Otherwise
  * the span stays unknown, as ZIP does for compressed entries.
  */
-const canonicalMemberPath = (storedName: string): string =>
-  storedName.replaceAll("\\", "/");
+const canonicalMemberPath = (
+  storedName: string,
+  pathDialect: CarrierPathDialect,
+): string =>
+  pathDialect === "windows" ? storedName.replaceAll("\\", "/") : storedName;
 
 const sourceByteOffset = (
   entry: CArchiveEntry,
@@ -297,17 +308,18 @@ const sourceByteOffset = (
 ): number | null =>
   entry.compressionFlag === 0 ? archiveStart + entry.offset : null;
 
-const pyzMemberPath = (container: string, item: PyzEntry): string => {
+const pyzMemberPath = (
+  container: string,
+  item: PyzEntry,
+  pathDialect: CarrierPathDialect,
+): string => {
   if (item.typeCode === 2)
-    return `${container}/${canonicalMemberPath(item.name)}`;
+    return `${container}/${canonicalMemberPath(item.name, pathDialect)}`;
   const dotted = item.name.replaceAll(".", "/");
   if (item.namespace) return `${container}/${dotted}`;
   if (item.package) return `${container}/${dotted}/__init__.pyc`;
   return `${container}/${dotted}.pyc`;
 };
-
-const isBytecodeType = (typeCode: string): boolean =>
-  typeCode === "s" || typeCode === "m" || typeCode === "M";
 
 const fileEntry = (input: {
   readonly path: string;

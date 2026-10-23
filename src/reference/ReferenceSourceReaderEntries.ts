@@ -12,6 +12,7 @@ import {
   failure,
   filesystemFailureDetail,
   safeSize,
+  type FilesystemFailureDetail,
 } from "./ReferenceSourceReaderErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { pathFromRoot } from "./ReferenceSourceReaderPaths.js";
@@ -37,8 +38,10 @@ const recordDirectoryFailure = (
   absolute: string,
   code: ReferenceSourceFailureCode,
   message: string,
+  localDiagnostic?: string,
 ): void => {
-  if (absolute === state.root) state.rootFailure = { code, message };
+  if (absolute === state.root)
+    state.rootFailure = { code, message: localDiagnostic ?? message };
   else
     state.entries.push(
       entryFailure(
@@ -46,6 +49,8 @@ const recordDirectoryFailure = (
         "directory",
         code,
         message,
+        undefined,
+        localDiagnostic,
       ),
     );
 };
@@ -62,11 +67,22 @@ export const traverseDirectory = async (
   );
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (!before.ok) {
-    recordDirectoryFailure(state, current.path, before.code, before.message);
+    recordDirectoryFailure(
+      state,
+      current.path,
+      before.code,
+      before.message,
+      before.localDiagnostic,
+    );
     return { ok: true, value: undefined };
   }
+  const policy = await state.beforeDirectory?.(
+    pathFromRoot(state.root, current.path),
+  );
+  if (policy !== undefined && !policy.ok) return policy;
+  if (isAborted(state.signal)) return err(cancelled());
   const directories: PendingDirectory[] = [];
-  let readFailure: string | undefined;
+  let readFailure: FilesystemFailureDetail | undefined;
   let unrepresentableNameCount = 0;
   let firstUnrepresentableNameHex: string | undefined;
   let handle: Dir | undefined;
@@ -95,7 +111,9 @@ export const traverseDirectory = async (
         }
         if (child === null) break;
         if (!Buffer.isBuffer(child.name)) {
-          readFailure = "Directory entry name was not returned as raw bytes";
+          readFailure = {
+            message: "Directory entry name was not returned as raw bytes",
+          };
           break;
         }
         const decoded = decodeDirectoryEntryName(child.name);
@@ -116,7 +134,13 @@ export const traverseDirectory = async (
     }
     if (cleanup.kind === "failed") {
       if (result.ok && !isAborted(state.signal) && readFailure !== undefined)
-        recordDirectoryFailure(state, current.path, "io", readFailure);
+        recordDirectoryFailure(
+          state,
+          current.path,
+          "io",
+          readFailure.message,
+          readFailure.localDiagnostic,
+        );
       const observation = ArtifactReaderFailure.cleanupObservation(
         cleanup.cause,
         current.path,
@@ -127,7 +151,8 @@ export const traverseDirectory = async (
           ? cancelled()
           : failure(
               "io",
-              readFailure ??
+              readFailure?.localDiagnostic ??
+                readFailure?.message ??
                 `Reference directory cleanup failed: ${current.path}`,
             )
         : result.error;
@@ -149,7 +174,13 @@ export const traverseDirectory = async (
   }
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (readFailure !== undefined) {
-    recordDirectoryFailure(state, current.path, "io", readFailure);
+    recordDirectoryFailure(
+      state,
+      current.path,
+      "io",
+      readFailure.message,
+      readFailure.localDiagnostic,
+    );
     scheduleObservedDirectories(state, directories);
     return { ok: true, value: undefined };
   }
@@ -166,6 +197,7 @@ export const traverseDirectory = async (
       current.path,
       after.ok ? "changed" : after.code,
       after.ok ? "Directory changed while it was read" : after.message,
+      after.ok ? undefined : after.localDiagnostic,
     );
     scheduleObservedDirectories(state, directories);
     return { ok: true, value: undefined };
@@ -195,27 +227,27 @@ const scheduleObservedDirectories = (
   state.pending.push(...directories);
 };
 
-const directoryReadFailure = (cause: unknown): string => {
-  const message = filesystemFailureDetail(cause, "Directory could not be read");
-  if (message === undefined) throw cause;
-  return message;
+const directoryReadFailure = (cause: unknown): FilesystemFailureDetail => {
+  const detail = filesystemFailureDetail(cause, "Directory could not be read");
+  if (detail === undefined) throw cause;
+  return detail;
 };
 
 const readMetadata = async (
   path: string,
 ): Promise<
   | { readonly ok: true; readonly value: BigIntStats }
-  | { readonly ok: false; readonly message: string }
+  | ({ readonly ok: false } & FilesystemFailureDetail)
 > => {
   try {
     return { ok: true, value: await bigLstat(path) };
   } catch (cause: unknown) {
-    const message = filesystemFailureDetail(
+    const detail = filesystemFailureDetail(
       cause,
       "Entry metadata could not be read",
     );
-    if (message === undefined) throw cause;
-    return { ok: false, message };
+    if (detail === undefined) throw cause;
+    return { ok: false, ...detail };
   }
 };
 
@@ -241,7 +273,16 @@ const processEntry = async (
       state.exclusions.push({ path, kind: "unknown" });
       return { ok: true, value: undefined };
     }
-    state.entries.push(entryFailure(path, "unknown", "io", metadata.message));
+    state.entries.push(
+      entryFailure(
+        path,
+        "unknown",
+        "io",
+        metadata.message,
+        undefined,
+        metadata.localDiagnostic,
+      ),
+    );
     return { ok: true, value: undefined };
   }
   const kind = metadata.value.isSymbolicLink()
@@ -352,12 +393,19 @@ export const readStableSymlinkTarget = async (
     const code =
       cause instanceof Error ? Reflect.get(cause, "code") : undefined;
     if (code === "ENOENT" || code === "ENOTDIR") return changedSymlink(path);
-    const message = filesystemFailureDetail(
+    const detail = filesystemFailureDetail(
       cause,
       "Symbolic link target could not be read safely",
     );
-    if (message === undefined) throw cause;
-    return entryFailure(path, "symlink", "io", message);
+    if (detail === undefined) throw cause;
+    return entryFailure(
+      path,
+      "symlink",
+      "io",
+      detail.message,
+      undefined,
+      detail.localDiagnostic,
+    );
   }
 };
 
@@ -377,9 +425,12 @@ const readSymlinkTarget = async (
   absolute: string,
   path: string,
 ): Promise<ReferenceSourceEntry> => {
-  let rawTarget: string;
+  let rawTarget: Buffer;
   try {
-    rawTarget = await readlink(absolute);
+    // Keep the symlink's source bytes until UTF-8 validity is known. The
+    // default string encoding can alias an invalid target with a real U+FFFD
+    // sibling during the subsequent path lookup.
+    rawTarget = await readlink(absolute, { encoding: "buffer" });
   } catch (cause: unknown) {
     // POSIX readlink reports EINVAL when the observed link became a non-link.
     // Keep this classification at the syscall, rather than hiding EINVAL from
@@ -388,7 +439,21 @@ const readSymlinkTarget = async (
       return changedSymlink(path);
     throw cause;
   }
-  const lexicalTarget = resolve(dirname(absolute), rawTarget);
+  let target: string;
+  try {
+    target = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(rawTarget);
+  } catch {
+    return entryFailure(
+      path,
+      "symlink",
+      "unsupported",
+      `Symlink target is not valid UTF-8 (raw target bytes: ${rawTarget.toString("hex")})`,
+    );
+  }
+  const lexicalTarget = resolve(dirname(absolute), target);
   if (!isPathWithinRoot(root, lexicalTarget))
     return {
       status: "read",

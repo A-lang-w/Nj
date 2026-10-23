@@ -100,6 +100,42 @@ it("accepts only zero eight-byte alignment padding included in dwLength", () => 
   }
 });
 
+it.each([false, true])(
+  "reads all counted alignment gaps and consecutive entries (PE32+ = %s)",
+  (plus) => {
+    const gaps = new Set<number>();
+    for (let size = 1; size <= 32; size += 1) {
+      const payload = pkcs7SignedDataFixture("x".repeat(size));
+      const gap = (8 - ((8 + payload.length) % 8)) % 8;
+      if (gaps.has(gap)) continue;
+      gaps.add(gap);
+      const single = peCertificateFixture(plus, payload, 2, true);
+      const table = single.subarray(0x200);
+      const bytes = Buffer.concat([single, table]);
+      const directoryAt = 0x98 + (plus ? 112 : 96) + 4 * 8;
+      bytes.writeUInt32LE(table.length * 2, directoryAt + 4);
+      const report = peCertificatesSchema.parse(parse(bytes));
+      expect(report.coverage).toEqual({
+        status: "complete",
+        examined_entries: 2,
+        certificates: 2,
+      });
+      for (const [index, entry] of report.entries.entries()) {
+        expect(entry.location).toEqual({
+          offset: 0x200 + index * table.length,
+          bytes: table.length,
+        });
+        expect(entry.payload.bytes).toBe(payload.length);
+        expect(entry.payload.sha256).toBe(
+          createHash("sha256").update(payload).digest("hex"),
+        );
+        expect(entry.pkcs7?.signers).toHaveLength(1);
+      }
+    }
+    expect([...gaps].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  },
+);
+
 it("rejects nonzero or excessive bytes after the encoded PKCS#7 value", () => {
   const payload = pkcs7SignedDataFixture();
   const nonzero = peCertificateFixture(false, payload, 2, true);

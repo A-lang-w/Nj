@@ -1,9 +1,8 @@
 import type {
   CallExpression,
   File,
-  ImportExpression,
+  OptionalCallExpression,
   Node,
-  StringLiteral,
 } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
@@ -14,15 +13,17 @@ import {
 import {
   referenceSourceRequireCalls,
   type ReferenceSourceRequireCall,
+  type ReferenceSourcePackageType,
 } from "./referenceSourceRequireBindings.js";
 import { isRelativeJavaScriptModuleSpecifier } from "./javascript/javascriptModuleSpecifier.js";
 import {
   isCallExpression,
   isExportAllDeclaration,
   isExportNamedDeclaration,
-  isImport,
   isImportDeclaration,
   isImportExpression,
+  isOptionalCallExpression,
+  isTSImportType,
   isStringLiteral,
   isTSExternalModuleReference,
   isTSImportEqualsDeclaration,
@@ -96,31 +97,6 @@ const resolveSpecifier = (
   return "external";
 };
 
-const isModuleExpression = (
-  expression: Node | null | undefined,
-): expression is StringLiteral | CallExpression =>
-  isStringLiteral(expression) || isCallExpression(expression);
-
-const moduleSpecifierFromExpression = (
-  expression: Node | null | undefined,
-):
-  | { specifier: string; parseState: ReferenceSourceImportParseState }
-  | undefined => {
-  const specifier = exactStringModuleName(expression);
-  if (specifier !== undefined) return { specifier, parseState: "parsed" };
-  if (
-    isCallExpression(expression) &&
-    isImport(expression.callee) &&
-    expression.arguments.length > 0
-  ) {
-    const nestedSpecifier = exactStringModuleName(expression.arguments[0]);
-    return nestedSpecifier === undefined
-      ? { specifier: "<dynamic-import>", parseState: "partial" }
-      : { specifier: nestedSpecifier, parseState: "parsed" };
-  }
-  return undefined;
-};
-
 const appendRelationship = (
   relationships: ReferenceSourceImportRelationship[],
   limitations: string[],
@@ -173,144 +149,72 @@ const appendImportEquals = (
   });
 };
 
-const extractImportDeclarations = (
-  body: readonly Node[],
+/** One AST owner retains historical declarations, types and runtime requests. */
+const extractImports = (
+  ast: File,
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
   limitations: string[],
+  requireCalls: ReadonlyMap<
+    CallExpression | OptionalCallExpression,
+    ReferenceSourceRequireCall
+  >,
 ): void => {
-  for (const statement of body) {
-    if (isImportDeclaration(statement)) {
-      appendRelationship(relationships, limitations, {
-        fromPath: from_path,
-        to: safeModuleName(statement.source),
-        kind: "imports",
-        parseState: "parsed",
-      });
-      continue;
-    }
-
-    if (isExportNamedDeclaration(statement)) {
-      if (statement.source !== null && statement.source !== undefined) {
+  traverseJavaScriptAst(ast.program, {
+    enter: (node) => {
+      if (
+        isImportDeclaration(node) ||
+        isExportAllDeclaration(node) ||
+        (isExportNamedDeclaration(node) && node.source != null)
+      ) {
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
-          to: safeModuleName(statement.source),
+          to: safeModuleName(node.source),
           kind: "imports",
           parseState: "parsed",
         });
-      } else if (
-        statement.declaration !== null &&
-        statement.declaration !== undefined
-      )
-        appendImportEquals(
-          statement.declaration,
-          from_path,
-          relationships,
-          limitations,
-        );
-      continue;
-    }
-
-    if (isExportAllDeclaration(statement)) {
-      appendRelationship(relationships, limitations, {
-        fromPath: from_path,
-        to: safeModuleName(statement.source),
-        kind: "imports",
-        parseState: "parsed",
-      });
-      continue;
-    }
-
-    if (isTSImportEqualsDeclaration(statement)) {
-      appendImportEquals(statement, from_path, relationships, limitations);
-      continue;
-    }
-
-    if (isTSModuleDeclaration(statement)) {
-      if (statement.declare === true && isStringLiteral(statement.id)) {
+      } else if (isTSImportEqualsDeclaration(node)) {
+        appendImportEquals(node, from_path, relationships, limitations);
+      } else if (isTSModuleDeclaration(node)) {
+        if (node.declare === true && isStringLiteral(node.id))
+          appendRelationship(relationships, limitations, {
+            fromPath: from_path,
+            to: node.id.value,
+            kind: "declares-module",
+            parseState: "parsed",
+            resolution: "unknown",
+          });
+      } else if (isImportExpression(node) || isTSImportType(node)) {
+        const specifier = exactStringModuleName(node.source);
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
-          to: statement.id.value,
-          kind: "declares-module",
-          parseState: "parsed",
-          resolution: "unknown",
+          to: specifier ?? "<dynamic-import>",
+          kind: "imports",
+          parseState: specifier === undefined ? "partial" : "parsed",
+          ...(specifier === undefined ? { resolution: "unknown" } : {}),
         });
-      }
-    }
-  }
-};
-
-const extractRequireAndDynamicImports = (
-  body: readonly Node[],
-  from_path: string,
-  relationships: ReferenceSourceImportRelationship[],
-  limitations: string[],
-  requireCalls: ReadonlyMap<CallExpression, ReferenceSourceRequireCall>,
-): void => {
-  // Single traversal owner: iterative, VISITOR_KEYS-gated, no recursion over
-  // loc/comment objects. Survives deeply nested generated member chains that
-  // overflowed the previous hand-rolled Object.values walker.
-  const expressions: Array<CallExpression | ImportExpression> = [];
-  for (const statement of body)
-    traverseJavaScriptAst(statement, {
-      enter: (node) => {
-        if (isCallExpression(node) || isImportExpression(node))
-          expressions.push(node);
-      },
-    });
-
-  for (const call of expressions) {
-    if (isImportExpression(call)) {
-      const specifier = exactStringModuleName(call.source);
-      appendRelationship(relationships, limitations, {
-        fromPath: from_path,
-        to: specifier ?? "<dynamic-import>",
-        kind: "imports",
-        parseState: specifier === undefined ? "partial" : "parsed",
-        ...(specifier === undefined ? { resolution: "unknown" } : {}),
-      });
-      continue;
-    }
-    // The shared exact-literal reader owns argument exactness: it unwraps
-    // runtime-transparent TS wrappers (`as const`, `!`, `satisfies`) and
-    // admits quoted and expression-free template spellings alike.
-    const requireCall = requireCalls.get(call);
-    if (requireCall !== undefined) {
-      const result = moduleSpecifierFromExpression(requireCall.arguments?.[0]);
-      if (result !== undefined) {
+      } else if (isCallExpression(node) || isOptionalCallExpression(node)) {
+        const requireCall = requireCalls.get(node);
+        if (requireCall === undefined) return;
+        const specifier = exactStringModuleName(requireCall.arguments?.[0]);
+        if (specifier === undefined) return;
         const uncertainResolution = requireCall.resolutionBase === "unknown";
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
-          to: result.specifier,
+          to: specifier,
           kind: "requires",
-          parseState: uncertainResolution ? "partial" : result.parseState,
+          parseState: uncertainResolution ? "partial" : "parsed",
           ...(uncertainResolution ? { resolution: "unknown" } : {}),
           ...(uncertainResolution
             ? {}
             : { resolutionStrategy: "runtime-require" as const }),
           ...(typeof requireCall.resolutionBase === "object"
-            ? {
-                resolutionBasePath: requireCall.resolutionBase.path,
-              }
+            ? { resolutionBasePath: requireCall.resolutionBase.path }
             : {}),
         });
       }
-      continue;
-    }
-
-    const first = call.arguments[0];
-    if (isImport(call.callee) && isModuleExpression(first)) {
-      const result = moduleSpecifierFromExpression(first);
-      if (result !== undefined) {
-        appendRelationship(relationships, limitations, {
-          fromPath: from_path,
-          to: result.specifier,
-          kind: "imports",
-          parseState: result.parseState,
-        });
-      }
-    }
-  }
+    },
+  });
 };
 
 const parseWithBabel = (
@@ -358,6 +262,7 @@ export const parseReferenceSourceImports = (
   path: string,
   bytes: Uint8Array,
   language: string | null,
+  packageType?: ReferenceSourcePackageType,
 ): ReferenceSourceImportParseResult => {
   if (language !== null && !PARSEABLE_REFERENCE_SOURCE_LANGUAGES.has(language))
     return { relationships: [], parse_failures: [], limitations: [] };
@@ -405,13 +310,12 @@ export const parseReferenceSourceImports = (
   }
 
   const relationships: ReferenceSourceImportRelationship[] = [];
-  extractImportDeclarations(ast.program.body, path, relationships, limitations);
-  extractRequireAndDynamicImports(
-    ast.program.body,
+  extractImports(
+    ast,
     path,
     relationships,
     limitations,
-    referenceSourceRequireCalls(ast, path),
+    referenceSourceRequireCalls(ast, path, packageType),
   );
 
   return {
