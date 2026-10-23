@@ -18,7 +18,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+import { readRegularFileSnapshot } from "./RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -33,7 +33,7 @@ export interface ClientConfigurationSelection {
 export class ClientConfigurationPublication {
   private constructor(
     readonly path: string,
-    private readonly contents: string,
+    private readonly contents: string | Buffer,
     private readonly owner: OwnedFileHandle,
     private readonly staging: OwnedStagedOutput,
     private readonly cleanup: AnalysisCleanupLease,
@@ -41,8 +41,8 @@ export class ClientConfigurationPublication {
 
   static async write(
     path: string,
-    contents: string,
-    previous: string | undefined,
+    contents: string | Buffer,
+    previous: string | Buffer | undefined,
     mode?: number,
     selection?: ClientConfigurationSelection,
   ): Promise<ClientConfigurationPublication> {
@@ -50,7 +50,10 @@ export class ClientConfigurationPublication {
     const destination = join(parent, basename(path));
     const input = await selectedConfiguration(destination, previous);
     if (selection !== undefined) {
-      await assertRequestedConfigurationPath(path, selection.requestedPath);
+      await assertRequestedConfigurationPath(
+        destination,
+        selection.requestedPath,
+      );
       if (
         selection.state === undefined
           ? input !== undefined
@@ -91,7 +94,10 @@ export class ClientConfigurationPublication {
         throw new RegularFileChangedError(stagedPath);
       await staging.assertReadyForPublication(stagedPath);
       if (selection !== undefined)
-        await assertRequestedConfigurationPath(path, selection.requestedPath);
+        await assertRequestedConfigurationPath(
+          destination,
+          selection.requestedPath,
+        );
       await assertSelectedConfiguration(destination, input);
       if (input === undefined) {
         // An exclusive link cannot overwrite a file created after absence was checked.
@@ -151,7 +157,7 @@ export class ClientConfigurationPublication {
   }
 
   /** State checks do not exclude a concurrent writer to the same inode. */
-  async restore(original: string | undefined): Promise<void> {
+  async restore(original: string | Buffer | undefined): Promise<void> {
     const handle = this.owner.handle;
     const before = await handle.stat();
     const named = await lstat(this.path);
@@ -169,7 +175,9 @@ export class ClientConfigurationPublication {
       throw new Error(
         "First-run configuration recovery requires manual removal; pathname deletion cannot prove ownership",
       );
-    const bytes = Buffer.from(original, "utf8");
+    const bytes = Buffer.isBuffer(original)
+      ? original
+      : Buffer.from(original, "utf8");
     for (let position = 0; position < bytes.length;) {
       const { bytesWritten } = await handle.write(
         bytes,
@@ -187,7 +195,9 @@ export class ClientConfigurationPublication {
   }
 
   async #hasPublishedBytes(handle: FileHandle): Promise<boolean> {
-    const expected = Buffer.from(this.contents, "utf8");
+    const expected = Buffer.isBuffer(this.contents)
+      ? this.contents
+      : Buffer.from(this.contents, "utf8");
     if ((await handle.stat()).size !== expected.length) return false;
     const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, expected.length));
     for (let position = 0; position < expected.length;) {
@@ -259,20 +269,40 @@ const isNodeErrorCode = (cause: unknown, code: string): boolean =>
 
 const selectedConfiguration = async (
   path: string,
-  previous: string | undefined,
+  previous: string | Buffer | undefined,
 ): Promise<Stats | undefined> => {
-  let selected:
-    | Awaited<ReturnType<typeof readRegularFileTextSnapshot>>
-    | undefined;
+  let selected: Awaited<ReturnType<typeof readRegularFileSnapshot>> | undefined;
   try {
-    selected = await readRegularFileTextSnapshot(path, { symlinks: "reject" });
+    selected = await readRegularFileSnapshot(path, { symlinks: "reject" });
   } catch (cause: unknown) {
     if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
       throw cause;
   }
-  if (selected?.text !== previous || selected?.state.ino === 0)
+  if (
+    (previous === undefined
+      ? selected !== undefined
+      : selected === undefined ||
+        !samePreviousContent(selected.bytes, previous)) ||
+    selected?.state.ino === 0
+  )
     throw new RegularFileChangedError(path);
   return selected?.state;
+};
+
+const samePreviousContent = (
+  bytes: Buffer,
+  previous: string | Buffer,
+): boolean => {
+  if (Buffer.isBuffer(previous)) return bytes.equals(previous);
+  try {
+    return (
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        bytes,
+      ) === previous
+    );
+  } catch {
+    return false;
+  }
 };
 
 const assertSelectedConfiguration = async (
