@@ -30,8 +30,13 @@ inside one tool.
 
 A primitive reports a reusable fact about an identified object or relationship.
 A format-specific decoder qualifies; one application's business interpretation
-belongs outside the general contract. Expose provider APIs when they add a
-useful capability that existing tools cannot express.
+belongs outside the general contract. The format owner reports source
+observations and structural validation; the application or workflow owner
+applies use-case-specific admission policy without reinterpreting raw fields.
+For example, DOS MZ structure and Windows-header evidence stay separate, while
+target resolution decides whether the unresolved header permits admission.
+Expose provider APIs when they add a useful capability that existing tools
+cannot express.
 
 Compose a workflow when repeated use demonstrates a multi-source outcome REA
 can join without hiding caller choices or uncertainty. Batch homogeneous reads
@@ -57,6 +62,9 @@ satisfy. A plan without execution does not establish runtime behavior.
 - Keep observed, derived, and inferred relationships distinct. Preserve
   unresolved edges and partial provider facts instead of requiring every
   provider to supply the same metadata.
+  When a format constructor changes defaults or flags, retain the source
+  values and use separately derived effective values only for operations
+  whose semantics require them.
 - For caller/callee reads, `relationship_coverage` describes only the
   provider-observed direct relationship set. `complete` means that set was
   returned without a known read limit; it does not claim every possible runtime
@@ -66,7 +74,45 @@ satisfy. A plan without execution does not establish runtime behavior.
   enforce the requested target and lifecycle.
 - Add limits only for real format, protocol, authority, or measured resource
   constraints. Report pagination, truncation, cancellation, and partial failure.
-  An assumed agent budget is insufficient justification for a limit.
+  An assumed agent budget is insufficient justification for a limit. Name the
+  ceiling and its recovery as described in
+  [admission limits and recovery](design/limits-and-recovery.md).
+
+### Interpret boundary facts once
+
+Comparison needs separate proofs for lookup, correspondence, content, and
+coverage. A hash cannot supply the proof that two retained values belong to
+corresponding objects.
+
+| Comparison fact                                                               | What it establishes                             | What remains unknown                          |
+| ----------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------- |
+| Same capture-local frame or request ID                                        | Lookup within that capture                      | Cross-capture identity                        |
+| Same HTTP method, URL, and resource type                                      | A repeated-request group                        | Which individual responses correspond         |
+| A partial HTTP response multiset is contained in a complete peer              | Omissions can explain every retained sample     | Equality or modification                      |
+| A retained HTTP sample is absent from a complete peer group                   | An observed difference independent of omissions | Other unobserved differences                  |
+| Complete WebSocket connection/frame inventories and matching metadata streams | Ordered payload positions can be compared       | Equality of unavailable payload facts         |
+| Unique WebMCP name, owner origin, and frame URL                               | Tool correspondence without transient frame IDs | Correspondence between duplicate owners       |
+| A complete source digest or decoded storage value                             | Comparable content                              | Missing source bytes or opaque remote objects |
+
+Complete traversal or inventory does not make unavailable values equal. A
+partial aggregate fingerprint difference cannot establish modification when
+omissions alone explain it; independently proven differences still survive.
+
+The format or protocol reader owns interpretation. Pass its parsed facts and
+explicit uncertainty to consumers; do not make adapters reparse display text,
+reconstruct omitted values, or infer success from missing diagnostics.
+
+Keep format recognition separate from provider admission. A recognizable header
+can supply useful observations while later structure remains unresolved or a
+provider cannot accept the artifact. Report the reason at the affected boundary
+without erasing earlier observations or labeling unresolved input malformed.
+
+Derive validation from the field's own format and revision. A runtime API's
+narrower argument range need not constrain a wider on-disk field. A shared layout,
+magic, or version label need not identify every constructor or equality rule.
+When supported producer revisions differ, retain what the input establishes and
+state what it cannot distinguish. Static inspection does not establish that the
+artifact can execute successfully.
 
 ## Own the lifecycle
 
@@ -174,6 +220,15 @@ serialization expansion, and temporary-file growth separately. Derive facet
 completeness from examined records and exhaustiveness, rather than diagnostic
 prose or an empty failure list. Preserve observations independently of cleanup
 success.
+
+For example, if ten applicable records are discovered, eight are examined, and
+five are returned, the five returned records do not establish complete coverage
+of the ten. Keep discovered, applicable, examined, and retained scope distinct.
+A filtered page can be complete for its selection while the parent inventory
+remains partial. Carry the upstream coverage and unresolved reasons through
+filtering and paging; an item missing from that page is not proved absent from
+the target. Structured completeness and absence fields must agree with the
+stated limitations.
 
 Update canonical contracts, output schemas, examples, generated artifacts, and
 relevant docs together. Verify converted advertised schemas and success,
