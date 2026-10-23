@@ -89,6 +89,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
       omittedArchives.push({ path, reason });
     else unreportedOmittedArchives += 1;
   };
+  let failure: { cause: unknown } | undefined;
   try {
     const selection = await selectInterfaceBuilderCandidates(
       reader,
@@ -230,9 +231,26 @@ export const analyzeInterfaceBuilderBundle = async (input: {
         );
       }
     }
+  } catch (cause: unknown) {
+    failure = { cause };
   } finally {
-    await reader.close();
+    try {
+      await reader.close();
+    } catch (cause: unknown) {
+      // A close failure owns cleanup evidence but must not replace the typed
+      // primary this change exists to preserve.
+      failure = {
+        cause: ArtifactReaderFailure.withCleanup(
+          failure === undefined ? cause : failure.cause,
+          ArtifactReaderFailure.cleanupObservation(
+            cause,
+            `Interface Builder bundle reader for ${input.bundlePath}`,
+          ),
+        ),
+      };
+    }
   }
+  if (failure !== undefined) throw failure.cause;
   const result = buildInterfaceBuilderAnalysis({
     targetSha256: input.targetSha256,
     ...(input.resourceRoot === undefined

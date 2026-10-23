@@ -78,7 +78,11 @@ it("propagates an unreadable document instead of reporting an invalid archive", 
   const open = DirectoryArtifactReader.prototype.open;
   const spy = vi
     .spyOn(DirectoryArtifactReader.prototype, "open")
-    .mockImplementation((entry, signal) => {
+    .mockImplementation(function (
+      this: DirectoryArtifactReader,
+      entry,
+      signal,
+    ) {
       if (entry.path.endsWith("Panel.nib"))
         return Promise.reject(
           new ArtifactReaderFailure(
@@ -86,7 +90,7 @@ it("propagates an unreadable document instead of reporting an invalid archive", 
             "Could not open entry at Contents/Resources/Panel.nib (EACCES): permission denied",
           ),
         );
-      return open.call(DirectoryArtifactReader.prototype, entry, signal);
+      return open.call(this, entry, signal);
     });
   try {
     await expect(analyze(bundle)).rejects.toMatchObject({
@@ -96,6 +100,47 @@ it("propagates an unreadable document instead of reporting an invalid archive", 
     });
   } finally {
     spy.mockRestore();
+  }
+});
+
+it("keeps the read failure when final cleanup also fails", async () => {
+  const { bundle } = await createBundle(
+    "Panel.nib",
+    Buffer.from(archive("Build")),
+  );
+  const open = DirectoryArtifactReader.prototype.open;
+  const close = DirectoryArtifactReader.prototype.close;
+  const openSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "open")
+    .mockImplementation(function (
+      this: DirectoryArtifactReader,
+      entry,
+      signal,
+    ) {
+      if (entry.path.endsWith("Panel.nib"))
+        return Promise.reject(
+          new ArtifactReaderFailure("integrity", "Selected input changed"),
+        );
+      return open.call(this, entry, signal);
+    });
+  const closeSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockImplementation(async function (this: DirectoryArtifactReader) {
+      await close.call(this);
+      throw new Error("native close failed");
+    });
+  try {
+    const rejected = await analyze(bundle).catch((cause: unknown) => cause);
+    expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(rejected instanceof ArtifactReaderFailure))
+      throw new Error("expected a reader failure");
+    // The typed primary survives; the close failure becomes cleanup ownership.
+    expect(rejected.reason).toBe("integrity");
+    expect(rejected.message).toBe("Selected input changed");
+    expect(rejected.cleanup).toBeDefined();
+  } finally {
+    openSpy.mockRestore();
+    closeSpy.mockRestore();
   }
 });
 
