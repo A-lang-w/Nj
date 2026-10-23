@@ -18,6 +18,7 @@ import {
   readManagedMetadataInventory,
   readManagedModuleIdentity,
 } from "./ManagedMetadataInventory.js";
+import { managedMetadataTypeNames } from "./ManagedMetadataInventoryRows.js";
 import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
 import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
@@ -27,7 +28,7 @@ import {
 } from "./ManagedReaderFailure.js";
 import {
   parseTypes,
-  typeRanges,
+  readTypeDefinitions,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import { edgeTargets } from "./ManagedMethodSpecs.js";
@@ -91,6 +92,7 @@ const unavailable = (
         typeNames === undefined
           ? null
           : { type_names: [...typeNames], unmatched_type_names: [] },
+      method_rows: null,
       coverage: {
         state: "unavailable",
         issues: issue === null ? [] : [issue],
@@ -187,9 +189,15 @@ export const inspectManagedMembersBytes = (
   let recover: ReturnType<typeof prepareManagedMemberRecovery> | undefined;
   try {
     const { layout, memberLists } = readMemberLayout(bytes, pe);
+    const methodTotal = layout.table(6)?.rowCount ?? 0;
+    const methodRows = {
+      offset: Math.min(methodOffset, methodTotal),
+      count: Math.min(methodLimit, Math.max(0, methodTotal - methodOffset)),
+      total: methodTotal,
+    };
     const identity = readManagedModuleIdentity(bytes, layout);
     appendManagedParseIssues(issues, identity.issues);
-    const ranges = typeRanges(bytes, layout, issues, memberLists);
+    const ranges = readTypeDefinitions(bytes, layout, issues, memberLists);
     const {
       tokens: selected,
       selection,
@@ -251,6 +259,7 @@ export const inspectManagedMembersBytes = (
         types,
         nesting_read: parsedTypes.nesting.complete,
         selection,
+        method_rows: methodRows,
         limitations: [...typeIdentityLimitations, ...selectionLimitations],
       },
       uniqueManagedParseIssues(issues),
@@ -262,6 +271,13 @@ export const inspectManagedMembersBytes = (
       readManagedResourceDirectory(pe, issues),
       memberLists,
       identity,
+      managedMetadataTypeNames(
+        bytes,
+        layout,
+        issues,
+        parsedTypes,
+        typeReferences,
+      ),
     );
     appendManagedParseIssues(issues, inventory.issues);
     const exportedTypes = parseExportedTypes(bytes, layout);
@@ -347,11 +363,13 @@ export const inspectManagedMembersBytes = (
           unreadableSelectedTypes: unreadableNames,
         })
       : null;
-    const targets = edgeTargets(bytes, layout, methods.methods, [
-      fields.core,
-      memberRefs.core,
-      methods.core,
-    ]);
+    const targets = edgeTargets(
+      bytes,
+      layout,
+      methods.methods,
+      [fields.core, memberRefs.core, methods.core],
+      signatureTypeName,
+    );
     appendManagedParseIssues(issues, targets.issues);
     const incompleteMembers =
       [...fields.fields, ...memberRefs.refs, ...methods.methods].some(
@@ -388,6 +406,7 @@ export const inspectManagedMembersBytes = (
           field_accesses: related.fieldAccesses,
           user_strings: userStrings,
           selection,
+          method_rows: methodRows,
           coverage: {
             state:
               issues.length === 0 && !incompleteMembers
