@@ -146,6 +146,14 @@ Automatic binary Protobuf admission validates reserved MIME parameters:
 absent. Illegal profiles retain the source body, add a limitation, and leave
 protobuf coverage partial. Ordinary non-encoding parameters remain accepted;
 an explicit framing choice interprets bytes independently of the MIME profile.
+Admission follows HTTP token and quoted-string syntax: unterminated quotes and
+conflicting repeated reserved parameters remain invalid. Repeated headers with
+implicit binary encoding and `encoding=binary` agree without rewriting either
+header. Invalid declarations remain visible even with explicit framing, and
+declared gRPC bodies still receive credential checks before a MIME refusal.
+An excluded HAR `mimeType` remains unknown for automatic interpretation even
+when a visible Content-Type header exists. That header can still identify the
+transport for credential checks; explicit wire framing remains independent.
 
 Native gRPC admits only data-frame flags 0/1; gRPC-web additionally admits its
 terminal trailer frame. `grpc-web-text` supports independently padded base64
@@ -465,7 +473,9 @@ api-surface grouping, then keeps the groups on the primary origin, the origin
 with the most JSON-like records (`application/json`, `application/*+json`,
 `text/plain`, `text/markdown`), whose path starts with `/api/` or `/apis/` or
 whose content types are JSON-like, and the write groups answered with no body
-(a bodiless `204 DELETE`). Every other group is listed under
+(a bodiless `204 DELETE`). Empty retained response text establishes a bodiless
+write only when its encoding is understood and unredacted; an opaque or hidden
+encoding leaves the body unknown. Every other group is listed under
 `excluded` with reason `other-origin`, `ui-page-or-asset` or `non-json`, and
 retained records without a usable request line are counted in a limitation.
 
