@@ -16,10 +16,13 @@ const linux = it.skipIf(process.platform !== "linux");
 // fails with EFBIG and leaves a truncated file, as the real producer would.
 // The producer asserts the kernel left exactly min(attempted, limit) bytes,
 // then reports what is on disk, so only the ceiling's relation to the staging
-// budget can expose the truncation.
+// budget can expose the truncation. With oversizedLogBytes, the producer
+// restores the default SIGXFSZ action and keeps writing its log until the
+// kernel kills it at the ceiling.
 const firmwareService = async (
   attemptedBytes: number,
   extractionFileLimit: number,
+  oversizedLogBytes = 0,
 ) => {
   const directory = await createTestTempDirectory("rea-firmware-limits-");
   const command = join(directory, "unblob-probe");
@@ -27,7 +30,7 @@ const firmwareService = async (
   await writeFile(
     command,
     `#!/usr/bin/python3
-import errno, hashlib, json, os, resource, sys
+import errno, hashlib, json, os, resource, signal, sys
 if '--version' in sys.argv:
     assert resource.getrlimit(resource.RLIMIT_FSIZE) == (${String(probeFileLimit)}, ${String(probeFileLimit)})
     print('26.6.4')
@@ -37,6 +40,12 @@ args = sys.argv[1:]
 report = args[args.index('--report') + 1]
 log = args[args.index('--log') + 1]
 source = args[-1]
+if ${String(oversizedLogBytes)}:
+    signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
+    with open(log, 'wb', buffering=0) as handle:
+        pending = memoryview(b'x' * ${String(oversizedLogBytes)})
+        while pending:
+            pending = pending[handle.write(pending):]
 child = os.path.join(args[args.index('--extract-dir') + 1], 'rootfs', 'config')
 with open(source, 'rb') as handle:
     data = handle.read()
@@ -136,6 +145,34 @@ linux.each([
       error: {
         _tag: "AnalysisOutputError",
         reason: `Staging byte budget exceeded (${String(budget)})`,
+      },
+    });
+    await expect(access(fixture.output)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
+
+linux(
+  "reports the effective per-file cap when a small-budget producer log exceeds it",
+  async () => {
+    const ceiling = FIRMWARE_LIMITS.reportBytes + 1;
+    const fixture = await firmwareService(1, ceiling, ceiling + 4096);
+    const outcome = await fixture.service.execute("extract_firmware", {
+      path: fixture.path,
+      output_directory: fixture.output,
+      max_output_bytes: 64,
+    });
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "file-size",
+        reportedLimits: { file_size_bytes: ceiling },
+        remediationAction: expect.stringContaining(
+          `${String(FIRMWARE_LIMITS.reportBytes)}-byte report budget`,
+        ),
       },
     });
     await expect(access(fixture.output)).rejects.toMatchObject({

@@ -299,13 +299,11 @@ export const runFirmwareCommand = async (context: {
       snapshot.exitCode === 1
     )
   ) {
-    const fileSizeBytes =
-      context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes;
     const fileSizeAdjustable = context.outputBudget !== undefined;
     const signalLimit = firmwareSignalLimitError(
       operation,
       snapshot.signal,
-      fileSizeBytes,
+      fileSizeLimit,
       fileSizeAdjustable,
       capturedFirmwareOutput(snapshot),
     );
@@ -321,7 +319,7 @@ export const runFirmwareCommand = async (context: {
         stdout_bytes: snapshot.stdout.bytes,
         stderr_bytes: snapshot.stderr.bytes,
       },
-      remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
+      remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeLimit, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
     });
   }
   return {
