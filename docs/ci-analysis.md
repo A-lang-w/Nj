@@ -1,6 +1,6 @@
 # Static analysis in GitHub Actions
 
-The [minimal workflow](../examples/github-actions/rea-analysis.yml) builds a small
+The [minimal workflow](https://github.com/morluto/rea/blob/main/examples/github-actions/rea-analysis.yml) builds a small
 JavaScript application, analyzes its files without executing them, and uploads
 machine-readable results. It uses the existing CLI, not a separate GitHub Action
 or an MCP client. It does not promise support for every REA provider.
@@ -20,7 +20,7 @@ or an MCP client. It does not promise support for every REA provider.
    | `analysis.stderr` | Original diagnostics/progress; an empty file is normal when there are none.                        |
    | `exit-code.txt`   | Original analysis process exit code.                                                               |
 
-The example pins Node.js 24.18.0, REA 6.7.0, and action commit revisions. It installs
+The example pins Node.js 24.22.1, REA 6.7.0, and action commit revisions. It installs
 REA into the runner's temporary directory rather than changing the application's
 dependencies. This pins the tool version, not every transitive npm dependency;
 use a reviewed, committed package lock and `npm ci` if your integration requires
@@ -52,11 +52,14 @@ retention for your repository; the example retains reports for seven days.
 
 The analysis step captures stdout and stderr separately, records `$?`, and exits
 with that same status. There is no `continue-on-error`, `|| true`, output filter,
-or pipeline that could turn a failed analysis green. The upload step uses
-`always()` so available diagnostics survive an analysis failure. If installation
-or the build failed before analysis began, reports may not exist; upload warns
-rather than inventing an empty successful result. Runner loss or cancellation
-can still prevent upload.
+or pipeline that could turn a failed analysis green. Before checkout or other
+fallible steps, the workflow creates a fresh report directory under `RUNNER_TEMP`.
+Analysis and upload both use that directory, never a checked-in `reports/rea` or
+other workspace files. The upload step uses `always()` when that directory was
+prepared, so available diagnostics survive an analysis failure. If installation
+or the build failed before analysis began, it is empty and upload warns rather
+than publishing stale results or inventing a successful result. Runner loss or
+cancellation can still prevent upload.
 
 `--json --full-output` selects a machine-readable envelope; it does **not** mean
 that analysis was complete. A successful operation can retain partial analysis,

@@ -14,12 +14,18 @@ jobs:
     env:
       ARTIFACT_PATH: build/rea-ci-demo
     steps:
+      - name: Prepare isolated report directory
+        id: reports
+        shell: bash
+        run: |
+          directory=$(mktemp -d "${RUNNER_TEMP:?}/rea-analysis.XXXXXX")
+          printf 'directory=%s\n' "${directory}" >> "${GITHUB_OUTPUT:?}"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24.18.0"
+          node-version: "24.22.1"
       - name: Install pinned REA
         run: |
           npm install --prefix "${RUNNER_TEMP}/rea-tool" --no-audit --no-fund --ignore-scripts --save-exact rea-agents@6.7.0
@@ -34,20 +40,21 @@ jobs:
       - name: Analyze and retain the original exit status
         id: analyze
         shell: bash
+        env:
+          REPORT_DIR: ${{ steps.reports.outputs.directory }}
         run: |
-          mkdir -p reports/rea
           set +e
           rea analyze-javascript-application "${GITHUB_WORKSPACE}/${ARTIFACT_PATH}" --json --full-output \
-            > reports/rea/analysis.json 2> reports/rea/analysis.stderr
+            > "${REPORT_DIR}/analysis.json" 2> "${REPORT_DIR}/analysis.stderr"
           status=$?
           set -e
-          printf '%s\n' "${status}" > reports/rea/exit-code.txt
+          printf '%s\n' "${status}" > "${REPORT_DIR}/exit-code.txt"
           exit "${status}"
       - name: Upload available reports, including after analysis failure
-        if: ${{ always() }}
+        if: ${{ always() && steps.reports.outputs.directory != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-analysis
-          path: reports/rea/
+          path: ${{ steps.reports.outputs.directory }}
           if-no-files-found: warn
           retention-days: 7
