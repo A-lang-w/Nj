@@ -18,6 +18,7 @@ import {
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { delayedInstanceFieldValue } from "./javascriptSemanticEvaluationOrder.js";
 import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
@@ -225,13 +226,14 @@ const isNavigationDataEdge = (node: t.Node, parent: t.Node | null): boolean => {
 };
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
 /**
- * Report whether an initializer provably runs after an alias read.
+ * Report whether an alias read cannot be proven to see its initializer.
  *
- * Only a later declaration in the same function or program activation is
- * provably uninitialized at the read; a read inside an enclosing block or
- * function still observes an earlier declaration.
+ * Only a declaration earlier in the same statement list or enclosing block is
+ * proven to run first. A read in a function body or a delayed instance field
+ * executes at a call or construction point this scan cannot order, and a later
+ * declaration in the same activation has not run yet; both stay unknown.
  */
-const initializerFollowsRead = (
+const initializerUnprovenAtRead = (
   read: t.Node,
   initializer: t.Node,
   parents: WeakMap<t.Node, t.Node>,
@@ -241,12 +243,14 @@ const initializerFollowsRead = (
     for (;;) {
       const parent = parents.get(current);
       if (parent === undefined) return current;
-      if (t.isFunction(parent)) return parent;
+      if (t.isFunction(parent) || delayedInstanceFieldValue(parent, current))
+        return parent;
       current = parent;
     }
   };
+  const readActivation = activation(read);
   return (
-    activation(read) === activation(initializer) &&
+    readActivation !== activation(initializer) ||
     (read.start ?? 0) < (initializer.start ?? 0)
   );
 };
@@ -1022,7 +1026,7 @@ export class JavaScriptRouteScan {
           // initializer has run in this activation. Declarations from an
           // enclosing function still apply; a later one in the same
           // activation does not.
-          initializerFollowsRead(
+          initializerUnprovenAtRead(
             node,
             initializer.node,
             index.bindings.parentsByNode,

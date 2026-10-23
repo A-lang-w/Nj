@@ -67,15 +67,27 @@ it.each([
     expect.objectContaining({ reason: expect.stringContaining("index flag") }),
   ]);
 });
+it("resolves an index alias read from an enclosing block", () => {
+  const facts = analyze(
+    "const INDEX=true; { createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]); }",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/", "/child"]);
+  expect(facts.unresolved).toEqual([]);
+});
 it.each([
-  "const INDEX=true; { createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]); }",
   "const INDEX=true; function make(){ return createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]); }",
+  "function make(){createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);}make();var INDEX=true;",
+  "class Routes{router=createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);}const INDEX=true;new Routes();",
 ])(
-  "resolves an index alias read from an enclosing block or function: %s",
+  "keeps an index alias whose execution point is not ordered by the source unknown: %s",
   (source) => {
     const facts = analyze(source);
-    expect(facts.candidates.map(({ path }) => path)).toEqual(["/", "/child"]);
-    expect(facts.unresolved).toEqual([]);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/child"]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("index flag"),
+      }),
+    ]);
   },
 );
 it.each([
