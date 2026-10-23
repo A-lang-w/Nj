@@ -73,6 +73,33 @@ export const SIGROK_PROVIDER_IDENTITY = {
 } as const;
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
+/** A completed version probe exited nonzero; the limiter may own the status, not sigrok-cli. */
+class SigrokVersionProbeFailure extends Error {
+  constructor(readonly capturedOutput: AnalysisCapturedOutput) {
+    super(
+      `The resource-limited sigrok version probe exited with status ${String(capturedOutput.exit_code)}; the status may come from the limiter or from sigrok-cli, so inspect both selected installations.`,
+    );
+  }
+}
+
+const configurationFailure = (
+  operation: string,
+  cause: unknown,
+  capturedOutput: AnalysisCapturedOutput | undefined,
+): AnalysisError => {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  return new AnalysisCapabilityUnavailableError(
+    SIGROK_PROVIDER_IDENTITY.id,
+    operation,
+    reason,
+    {
+      cause,
+      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
+    },
+  );
+};
+
 /** Decode selected recordings only, retaining cleanup ownership across failures. */
 export class SigrokRecordingProvider implements SignalRecordingPort {
   readonly #resources: ArtifactAnalysisResources;
@@ -246,9 +273,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           );
         // A completed probe that fails is a configuration fault, not an adapter failure.
         if (output.exitCode !== 0 && phase === "configuration")
-          throw new Error(
-            `sigrok-cli --version exited with status ${String(output.exitCode)}; inspect the selected installation.`,
-          );
+          throw new SigrokVersionProbeFailure(capturedOutput);
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
             SIGROK_PROVIDER_IDENTITY.id,
@@ -433,6 +458,8 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     operation = OPERATION,
   ): AnalysisError {
     if (cause instanceof AnalysisError) return cause;
+    if (cause instanceof SigrokVersionProbeFailure)
+      return configurationFailure(operation, cause, cause.capturedOutput);
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
       return this.#resources.cleanupFailure(
         cause,
@@ -511,18 +538,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       });
     }
     if (phase === "configuration")
-      return new AnalysisCapabilityUnavailableError(
-        SIGROK_PROVIDER_IDENTITY.id,
-        operation,
-        reason,
-        {
-          cause,
-          ...(observedOutput === undefined
-            ? {}
-            : { capturedOutput: observedOutput }),
-          userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
-        },
-      );
+      return configurationFailure(operation, cause, observedOutput);
     if (
       phase === "artifact" &&
       cause instanceof ArtifactReaderFailure &&

@@ -53,6 +53,15 @@ else { if(readFileSync('recording', 'utf8') !== 'recording bytes') throw Error('
   const configuredCommand =
     mode === "symlink" ? join(directory, "configured-tool") : script;
   if (mode === "symlink") await symlink(script, configuredCommand);
+  // A separate limiter that refuses to start the wrapped tool.
+  const limiter = join(directory, "limiter.mjs");
+  if (mode === "limiter-refused") {
+    await writeFile(
+      limiter,
+      "console.error('prlimit: failed to execute sigrok-cli'); process.exitCode = 1;\n",
+    );
+    await chmod(limiter, 0o700);
+  }
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
@@ -62,7 +71,8 @@ else { if(readFileSync('recording', 'utf8') !== 'recording bytes') throw Error('
     {
       ...process.env,
       REA_SIGROK_COMMAND: configuredCommand,
-      REA_SIGROK_PRLIMIT_COMMAND: configuredCommand,
+      REA_SIGROK_PRLIMIT_COMMAND:
+        mode === "limiter-refused" ? limiter : configuredCommand,
     },
     async (input) => {
       calls++;
@@ -85,7 +95,10 @@ else { if(readFileSync('recording', 'utf8') !== 'recording bytes') throw Error('
       const spawned = await spawnOwnedProviderProcess({
         ...input,
         command: process.execPath,
-        arguments: [script, ...input.arguments],
+        arguments: [
+          mode === "limiter-refused" ? limiter : script,
+          ...input.arguments,
+        ],
         expectedCommand: process.execPath,
       });
       if (mode === "wait" && !input.arguments.includes("--version"))
@@ -704,6 +717,7 @@ it("attributes discovery admission failures to discovery while sharing the decod
 it.each([
   "bad-version",
   "failed-version",
+  "limiter-refused",
   "nonzero",
   "overflow",
   "line-budget",
@@ -733,7 +747,7 @@ it.each([
       stdout: "sigrok-cli 0.7.1\n",
       stderr: "version warning\n",
     });
-  if (mode === "failed-version") {
+  if (mode === "failed-version" || mode === "limiter-refused") {
     const decoded = await f.service.decode({ path: f.path, decoders: "uart" });
     if (decoded.ok) throw new Error("Expected decode failure");
     for (const error of [result.error, decoded.error]) {
@@ -741,13 +755,26 @@ it.each([
       expect(projected).toMatchObject({
         code: "capability_unavailable",
         details: {
-          captured_output: {
-            exit_code: 1,
-            stdout: "sigrok-cli 0.7.2\nlibsigrokdecode 0.5.3\n",
-            stderr: "version warning\n",
-          },
+          captured_output:
+            mode === "failed-version"
+              ? {
+                  exit_code: 1,
+                  stdout: "sigrok-cli 0.7.2\nlibsigrokdecode 0.5.3\n",
+                  stderr: "version warning\n",
+                }
+              : {
+                  exit_code: 1,
+                  stdout: "",
+                  stderr: "prlimit: failed to execute sigrok-cli\n",
+                },
         },
       });
+      // The limiter wraps the probe, so the status is not attributed to sigrok-cli alone.
+      expect(projected.message).toContain(
+        "resource-limited sigrok version probe exited with status 1",
+      );
+      expect(projected.message).toContain("limiter or from sigrok-cli");
+      expect(projected.message).not.toContain("sigrok-cli --version exited");
       expect(projected.message).toContain("REA_SIGROK_COMMAND");
       expect(projected.message).toContain("REA_SIGROK_PRLIMIT_COMMAND");
     }
