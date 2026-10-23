@@ -262,8 +262,8 @@ export const createGoBinaryDiagnosticFixtures = () => {
     bytes.write(signature, 64, "ascii");
     unsupported.push({ name: signature.toLowerCase(), bytes });
   }
-  const damagedPe = createGoBinaryFixture({ format: "pe" }).bytes;
-  damagedPe.write("NO", 128, "ascii");
+  const unsignedPe = createGoBinaryFixture({ format: "pe" }).bytes;
+  unsignedPe.write("NO", 128, "ascii");
   const highBitSignatures = ["NE", "LE", "LX", "PE"].map((signature) => {
     const bytes = createGoBinaryFixture({ format: "pe" }).bytes;
     bytes.set(
@@ -288,8 +288,21 @@ export const createGoBinaryDiagnosticFixtures = () => {
       details: { operation: "inspect_go_binary" },
     })),
     ...[
-      { name: "damaged-pe", bytes: damagedPe },
+      { name: "unsigned-pe-signature", bytes: unsignedPe },
       ...highBitSignatures,
+    ].map((fixture) => ({
+      ...fixture,
+      code: "unsupported_target" as const,
+      details: {
+        operation: "inspect_go_binary",
+        reason: "MZ Windows new-header candidate is unresolved",
+      },
+    })),
+    ...[
+      {
+        name: "damaged-pe",
+        bytes: createGoBinaryFixture({ format: "pe" }).bytes.subarray(0, 144),
+      },
       { name: "absent-directories", bytes: absentDirectories },
       ...shortOptionalHeaders,
     ].map((fixture) => ({
