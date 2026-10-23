@@ -8,9 +8,9 @@ and keeps the same complete parent accessible through Evidence export.
 
 ## Pinned inputs and correctness
 
-- Baseline: `9fd78a74f84a8e924bd58e7deaf5934bfb24f53c` (main, including the ELF
+- Baseline: `f713087132021d235682f908a1c0f3bc6ab8762d` (main, including the ELF
   unknown-coverage fix #6827). Candidate and experiment driver:
-  `fd23b89b0b1727b483050025e7af344145c1fd91`.
+  `c7a90b742a29328e5b0069c6f8a34381e0c11e57`.
 - Linux x86-64, Node 24.22.1, npm 11.16.0; package and kernel versions are in
   [the receipt](native-export-views.json). Each runtime's compiled files and
   entrypoints were SHA-256 checked before and after every task. Source checkouts
@@ -43,10 +43,10 @@ stops, OOM events, process-limit events or owned payload processes remaining.
 
 | Artifact / workflow | Calls | Reply bytes | Projected tokens | Elapsed seconds, median [range] | Family CPU seconds, median [range] | Kernel family peak MiB, median [range] |
 | ------------------- | ----: | ----------: | ---------------: | ------------------------------- | ---------------------------------- | -------------------------------------- |
-| libc / complete     |     2 |   1,653,409 |          289,912 | 16.132 [15.726–32.588]          | 15.564 [15.332–28.761]             | 1,008.8 [971.4–1,013.4]                |
-| libc / selected     |     5 |      25,946 |           58,253 | 17.646 [17.239–20.287]          | 16.108 [15.866–19.899]             | 938.5 [938.3–950.2]                    |
-| LLVM / complete     |     2 |  28,986,221 |        4,355,448 | 89.863 [87.839–153.857]         | 85.856 [84.154–151.773]            | 1,870.2 [1,795.2–1,927.5]              |
-| LLVM / selected     |     4 |      19,689 |           57,346 | 21.477 [20.463–23.885]          | 19.610 [19.483–20.138]             | 1,266.1 [1,239.9–1,297.9]              |
+| libc / complete     |     2 |   1,653,415 |          289,912 | 18.848 [18.657–30.361]          | 17.260 [15.342–29.125]             | 993.1 [962.6–1,048.7]                  |
+| libc / selected     |     5 |      25,952 |           58,253 | 18.858 [17.044–32.088]          | 17.476 [15.765–31.440]             | 928.6 [922.2–939.7]                    |
+| LLVM / complete     |     2 |  28,986,227 |        4,355,448 | 97.516 [94.112–119.443]         | 88.030 [84.867–111.504]            | 1,833.8 [1,806.6–1,861.8]              |
+| LLVM / selected     |     4 |      19,695 |           57,346 | 37.094 [29.132–39.676]          | 32.645 [19.386–38.746]             | 1,142.6 [1,123.0–1,233.6]              |
 
 These are scripted SDK tasks, with the full 220-tool directory discovered once.
 The `cl100k_base` estimate (tiktoken 0.12.0) counts a fixed task description,
@@ -54,7 +54,7 @@ every tool name/description/input schema once, all call arguments and text
 replies, including Evidence export. It excludes host injection and history
 replay. No actual model ran; these are neither billable usage nor investigation
 quality measurements. The SDK also receives output schemas: the entire raw
-catalog costs 812,145 tokens before and 815,054 after if a host injects all of it.
+catalog costs 812,145 tokens before and 815,046 after if a host injects all of it.
 That cost is reported separately. With only the three task tools injected,
 estimated task totals are 238,857 → 7,198 for libc and 4,304,393 → 6,291 for LLVM.
 Tokenizer work ran separately from the twelve task measurements.
@@ -66,12 +66,13 @@ the selected task completed. The failed complete task is preserved and excluded
 from successful-task timing statistics. These boundary probes establish behavior,
 not an additional performance pair.
 
-The selected libc task has extra calls and is slightly slower at the median.
+The selected libc task has extra calls and shows no established latency gain;
+its medians are essentially equal within the observed ranges.
 LLVM has substantial observed task savings, but the result does not identify a
 faster native parser: both workflows still analyze and retain the full table.
 The `inspect` RPC includes analysis, Evidence, validation and delivery; no
-internal phase attribution was measured. First selected-page calls in the first
-pairs took about 243–246 ms, while later retained calls took about 9–23 ms.
+internal phase attribution was measured. Per-call timings are retained for each pair; first selected-page calls validate
+the retained parent, while later queries reuse that checked representation.
 The weak cache holds validation of an exact immutable retained report, not live
 filesystem state. Unfiltered pages slice the original order; filtered pages scan
 the retained rows and preserve every matching alternative.
@@ -112,12 +113,12 @@ Evidence/resource logs. Its `cohort` manifest records driver and guard hashes.
 Generate token estimates with `native-export-costs.py --cohort COHORT --output
 OUTPUT CASE...`, using tiktoken 0.12.0. Raw local receipts are under
 `/tmp/rea-perf-native-exports-20261023/`; they are not committed binaries or
-portable artifact downloads. `final-cohort/index.json` and `manifest.json` bind
+portable artifact downloads. `selector-cohort/index.json` and `manifest.json` bind
 the twelve cases. Preserve these files together when rerunning the cost script.
 
 Executed functional validation of the measured implementation:
 
-- 47 selected tests passed: parser, export views, MCP schemas/retention preflight,
+- 48 selected tests passed: parser, export views, MCP schemas/retention preflight,
   and actual public CLI/stdio workflows for PE and ELF fixtures. Source deletion
   after retention still permits equivalent offline CLI and retained MCP views.
 - `npm run check`, documentation generation/check and test-discovery verification
@@ -126,10 +127,39 @@ Executed functional validation of the measured implementation:
   was also checked; the complete bundle retains 44,459 exports.
 - Earlier assertion spelling mistakes, an architecture-boundary test placement
   violation and a concurrent-worker timeout are retained in the local logs.
-  The test was moved to the native layer; final bounded tests and static gates
-  passed. No real Hopper/Ghidra/IDA behavior changed or was qualified here.
+  The test was moved to the native layer. A later field-omission regression
+  reproduced source defaults leaking into projected columns; the projection
+  schema now removes those defaults, while complete source normalization retains
+  them. Final bounded tests and static gates passed. No real Hopper/Ghidra/IDA behavior changed or was qualified here.
 
 Partial/unsupported source coverage, duplicate names/versions, PE ordinal-only
 exports, forwarded exports, field projection, malformed retained input and older
 encoding metadata are covered by deterministic boundary regressions. Those tests
 supplement the real ELF tasks; they are not real PE provider measurements.
+
+## Initial CI attribution
+
+[CI run 40015745440](https://github.com/morluto/rea/actions/runs/40015745440)
+tested head `5e9a17bea7a6bc5931df60256eef61010a9c67e1`, merge
+`e6f10a331aed5228504ed45ca6244b9498548cb9`, against main
+`f713087132021d235682f908a1c0f3bc6ab8762d`. Static checks, build, docs and selected
+real-format qualification jobs passed. Source tests and built tests failed.
+Every cancelled shard's log was inspected: 11 source and 46 built failures were
+actually observed, including the ADB floating-point regex rejected in `v` mode.
+
+Bounded serial controls compared that exact main base with implementation
+`c7a90b742a29328e5b0069c6f8a34381e0c11e57`. The source selection reproduced all
+11 failures on both. A broader built selection executed 52 cases on both, with
+48 failures and four passes; it includes every observed CI built failure. The
+two extra failures and four passes in this selection are not presented as CI
+observations. All selected case identities, statuses and full failure messages
+were identical after replacing only the two checkout roots, including the
+physical path of their shared dependency symlink. No assertion text was removed.
+All 57 actual CI failures were therefore reproduced on the base and candidate.
+
+Local `ci-attribution.json`, `ci-observed-case-identities.json`,
+`ci-control-index.json`, the four control reports and their resource logs under
+the receipt directory retain commands, pinned revisions, complete differences
+and SHA-256 bindings. Controls had no resource stop or OOM and verified payload
+cleanup. This attribution applies to that initial CI run and those revisions;
+later CI results must be inspected separately.
