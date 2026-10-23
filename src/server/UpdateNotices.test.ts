@@ -1,15 +1,22 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  InMemoryTransport,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { z } from "zod";
 
 import { ok, err } from "../domain/result.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
-  configuredUpdateNotices,
+  configuredUpdateNoticeFactory,
   lookupLatestRelease,
   UpdateNotices,
 } from "./UpdateNotices.js";
+
+import { serveStreamableHttp } from "./http/serveStreamableHttp.js";
+import { TARGET_CONTENT_RESULT_META } from "./toolResultEncoding.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -19,26 +26,37 @@ afterEach(async () => {
 });
 
 it("keeps networking opt-in", () => {
-  expect(configuredUpdateNotices({})).toBeUndefined();
+  expect(configuredUpdateNoticeFactory({})).toBeUndefined();
   expect(
-    configuredUpdateNotices({ REA_MCP_UPDATE_CHECK: "0" }),
+    configuredUpdateNoticeFactory({ REA_MCP_UPDATE_CHECK: "0" }),
   ).toBeUndefined();
   expect(
-    configuredUpdateNotices({ REA_MCP_UPDATE_CHECK: "typo" }),
+    configuredUpdateNoticeFactory({ REA_MCP_UPDATE_CHECK: "typo" }),
   ).toBeUndefined();
-  expect(configuredUpdateNotices({ REA_MCP_UPDATE_CHECK: "1" })).toBeInstanceOf(
-    UpdateNotices,
-  );
+  const factory = configuredUpdateNoticeFactory({ REA_MCP_UPDATE_CHECK: "1" });
+  expect(factory?.()).toBeInstanceOf(UpdateNotices);
+  expect(factory?.()).not.toBe(factory?.());
 });
 
-const connect = async (notices: UpdateNotices, budget = 16384) => {
+const receivedNotices = new WeakMap<Client, unknown[]>();
+const createClient = () => {
+  const client = new Client({ name: "update-test", version: "1" });
+  const notices: unknown[] = [];
+  client.setNotificationHandler("notifications/message", (message) => {
+    notices.push(message.params);
+  });
+  receivedNotices.set(client, notices);
+  return client;
+};
+
+const createFixtureServer = (factory: () => UpdateNotices, budget = 16384) => {
   const server = new EvidenceMcpServerCore(
     { name: "update-test", version: "1" },
     { capabilities: {} },
     undefined,
     new ToolResultDelivery(budget),
   );
-  server.updateNotices = notices;
+  server.updateNoticeFactory = factory;
   server.registerTool(
     "fixture",
     {
@@ -51,12 +69,18 @@ const connect = async (notices: UpdateNotices, budget = 16384) => {
         : {
             content: [{ type: "text", text: '{"result":42}' }],
             structuredContent: { result: 42 },
+            _meta: { ...TARGET_CONTENT_RESULT_META, retained: "fixture" },
           },
   );
+  return server;
+};
+
+const connect = async (notices: UpdateNotices, budget = 16384) => {
+  const server = createFixtureServer(() => notices, budget);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "update-test", version: "1" });
+  const client = createClient();
   await client.connect(clientTransport);
   cleanups.push(async () => {
     await client.close();
@@ -83,13 +107,22 @@ it("does not block a tool or discovery, preserves structured output and announce
   await vi.waitFor(() => expect(lookup).toHaveResolved());
   const second = await client.callTool({ name: "fixture", arguments: {} });
   expect(second.structuredContent).toEqual(first.structuredContent);
-  expect(second.content).toEqual([
-    { type: "text", text: '{"result":42}' },
-    { type: "text", text: expect.stringContaining("latest published 1.1.0") },
+  expect(second).toEqual(first);
+  expect(second._meta).toEqual({
+    ...TARGET_CONTENT_RESULT_META,
+    retained: "fixture",
+  });
+  expect(receivedNotices.get(client)).toEqual([
+    {
+      level: "notice",
+      logger: "rea.update",
+      data: expect.stringContaining("latest published 1.1.0"),
+    },
   ]);
   const third = await client.callTool({ name: "fixture", arguments: {} });
   expect(third).toEqual(first);
   expect(lookup).toHaveBeenCalledTimes(1);
+  expect(receivedNotices.get(client)).toHaveLength(1);
 });
 
 it("leaves errors unchanged and retains notices when the receive budget is full", async () => {
@@ -113,6 +146,7 @@ it("leaves errors unchanged and retains notices when the receive budget is full"
   expect(success.content).toHaveLength(1);
   expect(success.structuredContent).toEqual({ result: 42 });
   expect(notices.peek()).toBeDefined();
+  expect(receivedNotices.get(client)).toHaveLength(0);
 });
 
 it("backs off failures for 24 hours, retries on demand, and ignores malformed or older versions", async () => {
@@ -188,7 +222,8 @@ it("shares one lookup and one notice across concurrent requests", async () => {
       client.callTool({ name: "fixture", arguments: {} }),
     ),
   );
-  expect(replies.filter((reply) => reply.content.length === 2)).toHaveLength(1);
+  expect(replies.every((reply) => reply.content.length === 1)).toBe(true);
+  expect(receivedNotices.get(client)).toHaveLength(1);
   expect(
     replies.every(
       (reply) => JSON.stringify(reply.structuredContent) === '{"result":42}',
@@ -246,9 +281,13 @@ it("server shutdown owns pending lookups even without a remaining SDK transport"
     undefined,
     new ToolResultDelivery(16384),
   );
-  server.updateNotices = notices;
+  server.updateNoticeFactory = () => notices;
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
   notices.refresh();
   await vi.waitFor(() => expect(signal).toBeDefined());
+  await clientTransport.close();
   let closed = false;
   const closing = server.close().then(() => {
     closed = true;
@@ -259,4 +298,156 @@ it("server shutdown owns pending lookups even without a remaining SDK transport"
   await closing;
   expect(closed).toBe(true);
   expect(notices.peek()).toBeUndefined();
+});
+
+it.each(["DELETE", "replacement"])(
+  "announces again after HTTP session %s on the same listener",
+  async (ending) => {
+    const lookup = vi.fn(async () => ok("1.1.0"));
+    const factory = vi.fn(() => new UpdateNotices("1.0.0", lookup));
+    const server = createFixtureServer(factory);
+    const served = await serveStreamableHttp({
+      host: "127.0.0.1",
+      port: 0,
+      createMcpServer: () => server,
+    });
+    cleanups.push(() => served.close());
+    const open = async () => {
+      const client = createClient();
+      const transport = new StreamableHTTPClientTransport(new URL(served.url));
+      cleanups.push(() => client.close());
+      await client.connect(transport);
+      return { client, transport };
+    };
+    const announce = async (client: Client, count: number) => {
+      const first = await client.callTool({ name: "fixture", arguments: {} });
+      await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(count));
+      await vi.waitFor(async () => {
+        const next = await client.callTool({ name: "fixture", arguments: {} });
+        expect(next).toEqual(first);
+        expect(receivedNotices.get(client)).toHaveLength(1);
+      });
+      expect(receivedNotices.get(client)).toEqual([
+        {
+          level: "notice",
+          logger: "rea.update",
+          data: expect.stringContaining("latest published 1.1.0"),
+        },
+      ]);
+    };
+    const first = await open();
+    await announce(first.client, 1);
+    if (ending === "DELETE") await first.transport.terminateSession();
+    const second = await open();
+    await announce(second.client, 2);
+    expect(factory).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("honors the client's logging threshold and does not retry filtered notices", async () => {
+  const notices = new UpdateNotices("1.0.0", async () => ok("1.1.0"));
+  notices.refresh();
+  await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+  const client = await connect(notices);
+  await client.setLoggingLevel("error");
+  const first = await client.callTool({ name: "fixture", arguments: {} });
+  expect(receivedNotices.get(client)).toHaveLength(0);
+  expect(notices.peek()).toBeUndefined();
+  await client.setLoggingLevel("notice");
+  expect(await client.callTool({ name: "fixture", arguments: {} })).toEqual(
+    first,
+  );
+  expect(receivedNotices.get(client)).toHaveLength(0);
+});
+
+it.each(["reject", "throw", "pending"])(
+  "keeps analysis working when advisory delivery is %s and never retries uncertain delivery",
+  async (failure) => {
+    const notices = new UpdateNotices("1.0.0", async () => ok("1.1.0"));
+    notices.refresh();
+    await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+    const server = createFixtureServer(() => notices);
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const original = serverTransport.send.bind(serverTransport);
+    let attempts = 0;
+    const sending = vi
+      .spyOn(serverTransport, "send")
+      .mockImplementation((message, options) => {
+        if ("method" in message && message.method === "notifications/message") {
+          attempts++;
+          if (failure === "throw") throw new Error("advisory failure");
+          return failure === "reject"
+            ? Promise.reject(new Error("advisory failure"))
+            : new Promise<void>(() => undefined);
+        }
+        return original(message, options);
+      });
+    await server.connect(serverTransport);
+    const client = createClient();
+    cleanups.push(async () => {
+      await client.close();
+      await server.close();
+      sending.mockRestore();
+    });
+    await client.connect(clientTransport);
+    const first = await client.callTool({ name: "fixture", arguments: {} });
+    expect(first.isError).not.toBe(true);
+    expect(first.structuredContent).toEqual({ result: 42 });
+    expect(await client.callTool({ name: "fixture", arguments: {} })).toEqual(
+      first,
+    );
+    expect(attempts).toBe(1);
+  },
+);
+
+it("retains a disconnected lookup through a new connection and joins both at shutdown", async () => {
+  const releases: Array<() => void> = [];
+  const signals: AbortSignal[] = [];
+  const factory = () =>
+    new UpdateNotices("1.0.0", async (signal) => {
+      signals.push(signal);
+      await new Promise<void>((resolve) => {
+        releases.push(resolve);
+      });
+      return ok("1.1.0");
+    });
+  const server = createFixtureServer(factory);
+  const open = async () => {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = createClient();
+    await client.connect(clientTransport);
+    await client.callTool({ name: "fixture", arguments: {} });
+    return client;
+  };
+  let closing: Promise<void> | undefined;
+  const first = await open();
+  try {
+    await first.close();
+    expect(signals[0]?.aborted).toBe(true);
+    const second = await open();
+    try {
+      let closed = false;
+      closing = server.close().then(() => {
+        closed = true;
+      });
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      releases[1]?.();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      releases[0]?.();
+      await closing;
+      expect(closed).toBe(true);
+      expect(receivedNotices.get(second)).toHaveLength(0);
+    } finally {
+      await second.close();
+    }
+  } finally {
+    for (const release of releases) release();
+    await closing;
+    await first.close();
+    await server.close();
+  }
 });

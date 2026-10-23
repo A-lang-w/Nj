@@ -506,11 +506,17 @@ silently backs off for 24 hours and never changes the analysis result.
 
 The cache is in memory per connection (including failures), refreshed on the
 next tool request after 24 hours. Reconnecting starts a fresh cache. Once ready,
-a newer release is announced in a separate text block on the next successful
-tool response with room in its existing receive budget. Structured output,
-Evidence and catalog schemas stay unchanged. Discovery alone does not start a
-lookup. A connection attempts each version notice at most once, including when
-transport delivery fails; uncertain delivery is not retried.
+a newer release is announced as an independent MCP `notifications/message`
+with level `notice` and logger `rea.update`, alongside the next successful tool
+response. Its complete notification must fit the configured receive budget.
+Analysis results, their target-content provenance markers, Evidence and catalog
+schemas stay unchanged; the server-authored notification is outside that marker.
+Clients may filter logging notices or omit them from the AI context; delivery
+does not establish that an AI or user saw the notice. MCP logging is deprecated
+in protocol 2026-07-28 but remains supported by the pinned SDK during its
+compatibility window. Discovery alone does not start a lookup. A connection
+attempts each version notice at most once, including when filtered by the client
+or when transport delivery fails; uncertain delivery is not retried.
 
 The notice compares the running version with a published release, not the
 installation on disk. It suggests `rea update` for global installations and

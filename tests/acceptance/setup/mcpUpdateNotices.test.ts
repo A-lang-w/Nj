@@ -49,6 +49,10 @@ for (const mode of ["offline", "deferred", "eager"] as const)
       name: "update-notice-acceptance",
       version: "1",
     });
+    const notices: unknown[] = [];
+    client.setNotificationHandler("notifications/message", (message) => {
+      notices.push(message.params);
+    });
     try {
       await client.connect(transport);
       expect(
@@ -72,14 +76,19 @@ for (const mode of ["offline", "deferred", "eager"] as const)
       expect(first.structuredContent).toBeDefined();
       expect(second.structuredContent).toEqual(first.structuredContent);
       expect(third.structuredContent).toEqual(first.structuredContent);
-      const notices = [first, second, third]
-        .flatMap((reply) => reply.content)
-        .filter(
-          (item) =>
-            item.type === "text" &&
-            item.text.includes("latest published 9999.0.0"),
+      expect(second).toEqual(first);
+      expect(third).toEqual(first);
+      if (mode !== "offline")
+        await vi.waitFor(() =>
+          expect(notices).toEqual([
+            {
+              level: "notice",
+              logger: "rea.update",
+              data: expect.stringContaining("latest published 9999.0.0"),
+            },
+          ]),
         );
-      expect(notices).toHaveLength(mode === "offline" ? 0 : 1);
+      else expect(notices).toHaveLength(0);
       if (mode === "offline")
         await expect(readFile(marker, "utf8")).rejects.toMatchObject({
           code: "ENOENT",

@@ -129,7 +129,9 @@ export class UpdateNotices {
 }
 
 /** Networking is explicitly opt-in; omission, 0 and unknown values stay offline. */
-export const configuredUpdateNotices = (
+export const configuredUpdateNoticeFactory = (
   environment: Readonly<NodeJS.ProcessEnv>,
-): UpdateNotices | undefined =>
-  environment.REA_MCP_UPDATE_CHECK === "1" ? new UpdateNotices() : undefined;
+): (() => UpdateNotices) | undefined =>
+  environment.REA_MCP_UPDATE_CHECK === "1"
+    ? () => new UpdateNotices()
+    : undefined;
