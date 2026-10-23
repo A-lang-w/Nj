@@ -24,13 +24,25 @@ preserve that exact selection:
 ## Observations
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
-`import_directory` and `delay_import_directory` are the file-offset data
-directories, or `null` when a directory is absent or zero.
+`import_directory` and `delay_import_directory` report the data directory RVA
+and size, or `null` when a directory is absent or zero. Their `locations` are
+the file spans actually read for the descriptor array and its terminator. When
+consecutive descriptors map to discontiguous file bytes (for example across a
+section boundary), each span is reported separately, and each becomes its own
+Evidence file-offset range.
 
 Each `imports[]` item reports the DLL name, descriptor RVAs, and named or
 ordinal functions with ILT/IAT RVAs. `delay_imports[]` reports RVA-based
-delay-load descriptors separately. `imphash` is the pefile algorithm over the
-standard import table only; delay-load rows do not participate.
+delay-load descriptors separately. `imphash` is pefile's `get_imphash()` over
+the standard import table only; delay-load rows do not participate. Ordinal
+imports use pefile's ordinal name tables and otherwise its `ord<decimal>`
+fallback.
+
+`imphash.md5` is `null` with a `reason` whenever the value would not be
+pefile's hash of this image: the standard import table is partial, or pefile
+would read a different row sequence (names it treats as invalid or truncates,
+ordinal 0, descriptors without functions, or tables its bounds and import
+symbol cap truncate). Delay-load issues do not withhold the hash.
 
 A missing import directory is observed absence of that table. It is not proof
 the image never imported APIs through another table or overlay.
@@ -41,9 +53,17 @@ The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 256 import and delay-load descriptors are examined by default (4096 maximum),
 and at most 8192 functions across every table (262144 maximum). Malformed PE
 headers and exhausted DLL or function budgets fail without partial success.
+Decoded DLL and function names are limited to a fixed 16 MiB of retained text
+with no runtime override; `max_file_bytes`, `max_dlls` and `max_functions` do
+not raise it. Resource failures report the exhausted allowance as `limit`
+(`dlls`, `functions` or `retained_text`) with matching recovery.
+
 Unreadable DLL names, hint/name entries, or thunks are reported as partial
-coverage with `issues`. Delay-load descriptors that store virtual addresses
-rather than RVAs are recorded as `unsupported_form` and are not decoded.
+coverage with `issues`. A descriptor whose required table RVA is zero (a
+standard `FirstThunk`, or a delay-load import address or name table) is
+reported as `malformed_entry` with no functions, never as a complete empty
+inventory. Delay-load descriptors that store virtual addresses rather than RVAs
+are recorded as `unsupported_form` and are not decoded.
 
 This workflow does not resolve bound imports, loaded IAT contents, or
 export-forward names in another DLL.

@@ -13,6 +13,8 @@ export const MAX_INSPECT_PE_IMPORT_FILE_BYTES = 536870912;
 export const MAX_INSPECT_PE_IMPORT_DLLS = 4096;
 /** Hard ceiling on named and ordinal functions across every table. */
 export const MAX_INSPECT_PE_IMPORT_FUNCTIONS = 262144;
+/** Fixed ceiling on decoded DLL and function name text retained in one report. */
+export const MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES = 16 * 1024 * 1024;
 
 /** Complete bounded inspection of PE import and delay-load tables. */
 export const inspectPeImportsInputSchema = z.strictObject({
@@ -83,11 +85,16 @@ const peDelayImportDllSchema = z.strictObject({
   functions: z.array(peImportFunctionSchema),
 });
 
+/**
+ * `locations` are the file spans the parser actually consumed for the
+ * descriptor array and its terminator, in RVA order. Consecutive descriptors
+ * that map to discontiguous file bytes produce separate spans.
+ */
 const directorySchema = z
   .strictObject({
     rva: uint,
     size: uint,
-    location: range,
+    locations: z.array(range).min(1),
   })
   .nullable();
 

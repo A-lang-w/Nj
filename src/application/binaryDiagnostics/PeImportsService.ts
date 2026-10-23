@@ -117,13 +117,11 @@ const fileRange = (
 }[] =>
   directory === null
     ? []
-    : [
-        {
-          kind: "file-offset-range",
-          start: directory.location.offset,
-          end: directory.location.offset + directory.location.bytes,
-        },
-      ];
+    : directory.locations.map(({ offset, bytes }) => ({
+        kind: "file-offset-range" as const,
+        start: offset,
+        end: offset + bytes,
+      }));
 
 const validReport = (
   report: PeImports,
@@ -150,16 +148,12 @@ const validReport = (
     functionCount > input.max_functions
   )
     return false;
-  if (
-    report.import_directory !== null &&
-    !inside(report.import_directory.location)
-  )
-    return false;
-  if (
-    report.delay_import_directory !== null &&
-    !inside(report.delay_import_directory.location)
-  )
-    return false;
+  for (const directory of [
+    report.import_directory,
+    report.delay_import_directory,
+  ]) {
+    if (directory !== null && !directory.locations.every(inside)) return false;
+  }
   const descriptorsFit = (
     rows: readonly { location: { offset: number; bytes: number } }[],
   ) => rows.every((row) => inside(row.location));

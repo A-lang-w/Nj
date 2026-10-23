@@ -2,6 +2,11 @@ const SECTION_RVA = 0x1000;
 const SECTION_OFFSET = 0x400;
 const SECTION_BYTES = 0x800;
 const HEADER_BYTES = 0x400;
+const SPLIT_GAP_BYTES = 0x200;
+
+/** File offset of an RVA in an unsplit fixture image. */
+export const peImportFixtureOffset = (rva: number): number =>
+  rva - SECTION_RVA + SECTION_OFFSET;
 
 export type PeImportFixtureFunction =
   | { readonly name: string; readonly hint?: number }
@@ -15,6 +20,10 @@ export interface PeImportFixtureDll {
 /**
  * Minimal PE32/PE32+ image whose `.idata` section holds IMAGE_IMPORT_DESCRIPTOR
  * and optional IMAGE_DELAYLOAD_DESCRIPTOR tables at RVA 0x1000.
+ *
+ * `splitAt` keeps the RVA layout but moves section bytes from that section
+ * offset onward into a second section at a later, discontiguous file offset,
+ * filling the vacated file bytes with 0xcc.
  */
 export const peImportImage = (
   options: {
@@ -24,8 +33,11 @@ export const peImportImage = (
     readonly delayAttributes?: number;
     readonly importDirectory?: boolean;
     readonly delayDirectory?: boolean;
+    readonly sectionBytes?: number;
+    readonly splitAt?: number;
   } = {},
 ): Buffer => {
+  const sectionBytes = options.sectionBytes ?? SECTION_BYTES;
   const bits = options.bits ?? 64;
   const dlls = options.dlls ?? [
     {
@@ -37,7 +49,7 @@ export const peImportImage = (
     },
   ];
   const delayDlls = options.delayDlls ?? [];
-  const bytes = Buffer.alloc(SECTION_OFFSET + SECTION_BYTES);
+  const bytes = Buffer.alloc(SECTION_OFFSET + sectionBytes);
   const wide = bits === 64;
   const thunkSize = wide ? 8 : 4;
   bytes.write("MZ", 0, "ascii");
@@ -56,9 +68,9 @@ export const peImportImage = (
   bytes.writeUInt32LE(HEADER_BYTES, optional + 60);
   const section = optional + optionalSize;
   bytes.write(".idata", section, "ascii");
-  bytes.writeUInt32LE(SECTION_BYTES, section + 8);
+  bytes.writeUInt32LE(sectionBytes, section + 8);
   bytes.writeUInt32LE(SECTION_RVA, section + 12);
-  bytes.writeUInt32LE(SECTION_BYTES, section + 16);
+  bytes.writeUInt32LE(sectionBytes, section + 16);
   bytes.writeUInt32LE(SECTION_OFFSET, section + 20);
   bytes.writeUInt32LE(0x40000040, section + 36);
 
@@ -137,7 +149,25 @@ export const peImportImage = (
     bytes.writeUInt32LE(ilt, descriptor + 16);
   });
 
-  return bytes;
+  if (options.splitAt === undefined) return bytes;
+  const head = options.splitAt;
+  const tail = sectionBytes - head;
+  const moved = SECTION_OFFSET + sectionBytes + SPLIT_GAP_BYTES;
+  const split = Buffer.alloc(moved + tail);
+  bytes.copy(split, 0, 0, SECTION_OFFSET + head);
+  split.fill(0xcc, SECTION_OFFSET + head, moved);
+  bytes.copy(split, moved, SECTION_OFFSET + head);
+  split.writeUInt16LE(2, 134);
+  split.writeUInt32LE(head, section + 8);
+  split.writeUInt32LE(head, section + 16);
+  const second = section + 40;
+  split.write(".idata2", second, "ascii");
+  split.writeUInt32LE(tail, second + 8);
+  split.writeUInt32LE(SECTION_RVA + head, second + 12);
+  split.writeUInt32LE(tail, second + 16);
+  split.writeUInt32LE(moved, second + 20);
+  split.writeUInt32LE(0x40000040, second + 36);
+  return split;
 };
 
 /** PE image whose optional header admits no import data directory. */

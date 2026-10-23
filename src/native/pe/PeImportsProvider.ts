@@ -18,11 +18,14 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  type ResourceConstraintRecovery,
 } from "../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_IMPORT_DLLS,
   MAX_INSPECT_PE_IMPORT_FILE_BYTES,
   MAX_INSPECT_PE_IMPORT_FUNCTIONS,
+  MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
   type InspectPeImportsInput,
 } from "../../domain/native/peImports.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -33,7 +36,11 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
-import { parsePeImports } from "./PeImportParser.js";
+import {
+  parsePeImports,
+  PeImportLimitFailure,
+  type PeImportLimit,
+} from "./PeImportParser.js";
 
 const OPERATION = "inspect_pe_imports";
 
@@ -73,7 +80,7 @@ export class PeImportsProvider implements PeImportsPort {
           this.#resources,
         );
         assertArtifactReadActive(options?.signal);
-        const report = parsePeImports(
+        const report = await parsePeImports(
           snapshot.bytes,
           {
             path: input.path,
@@ -81,6 +88,7 @@ export class PeImportsProvider implements PeImportsPort {
             bytes: snapshot.bytes.length,
           },
           input,
+          options?.signal,
         );
         assertArtifactReadActive(options?.signal);
         return ok(report);
@@ -106,6 +114,32 @@ const functionRemediation = (input: InspectPeImportsInput): string =>
     ? `The image exceeds the ${String(MAX_INSPECT_PE_IMPORT_FUNCTIONS)}-entry imported-function ceiling this operation accepts; select a smaller artifact.`
     : `Raise max_functions above ${String(input.max_functions)} or select a smaller artifact; the limit is the caller-selected function budget.`;
 
+/** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
+const limitRecovery = (
+  limit: PeImportLimit | null,
+  input: InspectPeImportsInput,
+): ResourceConstraintRecovery => {
+  switch (limit) {
+    case "dlls":
+      return { retryable: false, remediationAction: dllRemediation(input) };
+    case "functions":
+      return {
+        retryable: false,
+        remediationAction: functionRemediation(input),
+      };
+    case "retained_text":
+      return fixedAllowanceOptions(
+        `The ${String(MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)}-byte PE import retained-text allowance (this release has no runtime override; max_file_bytes, max_dlls and max_functions do not raise it)`,
+        "bytes",
+      );
+    case null:
+      return fixedAllowanceOptions(
+        "The PE structural decoding allowance",
+        "parser",
+      );
+  }
+};
+
 const peImportsFailurePrimary = (
   cause: unknown,
   input: InspectPeImportsInput,
@@ -123,21 +157,13 @@ const peImportsFailurePrimary = (
       cause: artifactFileCancellationCause(cause),
     });
   if (cause instanceof BinaryResourceFailure) {
-    const dllBudget = cause.message.includes("descriptors");
+    const limit = cause instanceof PeImportLimitFailure ? cause.limit : null;
     return new AnalysisResourceConstraintError(
       OPERATION,
       "capacity",
       `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
-        cause,
-        retryable: false,
-        remediationAction: dllBudget
-          ? dllRemediation(input)
-          : cause.message.includes("functions")
-            ? functionRemediation(input)
-            : fileSizeRemediation(input),
-      },
+      { boundary: cause.boundary, maximum: cause.maximum_bytes, limit },
+      { cause, ...limitRecovery(limit, input) },
     );
   }
   if (cause instanceof BinaryFormatFailure)

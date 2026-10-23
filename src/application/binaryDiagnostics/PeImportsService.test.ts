@@ -6,6 +6,7 @@ import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 
 const identity = PE_IMPORTS_PROVIDER;
@@ -89,4 +90,47 @@ it("discards an observation if the caller cancels while the provider completes",
   );
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+});
+
+it("publishes every consumed directory span as its own Evidence location", async () => {
+  const split: PeImports = {
+    ...report,
+    import_directory: {
+      rva: 0x1000,
+      size: 40,
+      locations: [
+        { offset: 0x100, bytes: 20 },
+        { offset: 0x1e0, bytes: 20 },
+      ],
+    },
+  };
+  const result = await new PeImportsService({
+    identity,
+    inspect: () => Promise.resolve(ok(split)),
+  }).inspect({ path: report.artifact.path });
+  if (!result.ok) throw result.error;
+  expect(result.value.locations).toEqual([
+    { kind: "artifact-path", path: report.artifact.path },
+    { kind: "file-offset-range", start: 0x100, end: 0x114 },
+    { kind: "file-offset-range", start: 0x1e0, end: 0x1f4 },
+  ]);
+  const outside = await new PeImportsService({
+    identity,
+    inspect: () =>
+      Promise.resolve(
+        ok({
+          ...split,
+          import_directory: {
+            rva: 0x1000,
+            size: 40,
+            locations: [
+              { offset: 0x100, bytes: 20 },
+              { offset: 0x1f8, bytes: 20 },
+            ],
+          },
+        }),
+      ),
+  }).inspect({ path: report.artifact.path });
+  expect(outside.ok).toBe(false);
+  if (!outside.ok) expect(outside.error).toBeInstanceOf(AnalysisOutputError);
 });

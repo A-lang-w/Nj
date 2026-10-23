@@ -1,69 +1,64 @@
-import { createHash } from "node:crypto";
+import { setImmediate } from "node:timers/promises";
+import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
-  mappedFileOffset,
+  fileMappingLookup,
 } from "../metadata/BinaryContainer.js";
 import { readPeImage } from "../metadata/PeImage.js";
-import type {
-  InspectPeImportsInput,
-  PeDelayImportDll,
-  PeImportDll,
-  PeImportFunction,
-  PeImportIssue,
-  PeImports,
+import {
+  MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
+  type InspectPeImportsInput,
+  type PeDelayImportDll,
+  type PeImportDll,
+  type PeImportFunction,
+  type PeImportIssue,
+  type PeImports,
 } from "../../domain/native/peImports.js";
+import {
+  IMPORT_DESCRIPTOR_BYTES,
+  PEFILE_MAX_IMPORT_SYMBOLS,
+  pefileImphash,
+} from "./pefileImphash.js";
 
 type Artifact = PeImports["artifact"];
 
 const PE_IMPORT_DIRECTORY = 1;
 const PE_DELAY_IMPORT_DIRECTORY = 13;
-const IMPORT_DESCRIPTOR_BYTES = 20;
 const DELAY_DESCRIPTOR_BYTES = 32;
 const MAXIMUM_NAME_BYTES = 4096;
-const MAXIMUM_RETAINED_TEXT_BYTES = 16 * 1024 * 1024;
+/** Table entries decoded between event-loop yields and cancellation checks. */
+const ENTRIES_PER_YIELD = 1024;
 const ORDINAL_FLAG32 = 0x80000000n;
 const ORDINAL_FLAG64 = 0x8000000000000000n;
-
-/** pefile-compatible ordinal names for the two DLLs it always resolves. */
-const ORDINAL_NAMES: Readonly<
-  Record<string, Readonly<Record<number, string>>>
-> = {
-  "oleaut32.dll": {
-    2: "SysAllocString",
-    6: "SysFreeString",
-    9: "VariantClear",
-  },
-  "ws2_32.dll": {
-    1: "accept",
-    2: "bind",
-    3: "closesocket",
-    4: "connect",
-    16: "recv",
-    19: "send",
-  },
-  "wsock32.dll": {
-    1: "accept",
-    2: "bind",
-    3: "closesocket",
-    4: "connect",
-    16: "recv",
-    19: "send",
-  },
-};
 
 const PE_LIMITATIONS = [
   "Rows reproduce the PE import and delay-load directories; they do not establish that an import is bound, forwarded or reachable at runtime.",
   "Bound import snapshots, the import address table as loaded, and export-forward resolution in another DLL remain unobserved.",
 ];
 
+/** The parser-owned allowance an image exhausted. */
+export type PeImportLimit = "dlls" | "functions" | "retained_text";
+
+/** Structured parser allowance refusal; consumers branch on `limit`, never on prose. */
+export class PeImportLimitFailure extends BinaryResourceFailure {
+  constructor(
+    readonly limit: PeImportLimit,
+    readonly allowance: number,
+    message: string,
+  ) {
+    super("structure", allowance, message);
+    this.name = "PeImportLimitFailure";
+  }
+}
+
 const hex = (value: bigint | number): string => `0x${value.toString(16)}`;
 
 const dllBudget = (count: number, max: number): void => {
   if (count > max)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new PeImportLimitFailure(
+      "dlls",
       max,
       `Import inventory declares ${String(count)} descriptors, above the ${String(max)}-entry DLL allowance`,
     );
@@ -71,8 +66,8 @@ const dllBudget = (count: number, max: number): void => {
 
 const functionBudget = (count: number, max: number): void => {
   if (count > max)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new PeImportLimitFailure(
+      "functions",
       max,
       `Import inventory declares ${String(count)} functions, above the ${String(max)}-entry function allowance`,
     );
@@ -80,13 +75,13 @@ const functionBudget = (count: number, max: number): void => {
 
 const createRetention = () => {
   let text = 0;
-  return (value: string | null): void => {
-    text += value?.length ?? 0;
-    if (text > MAXIMUM_RETAINED_TEXT_BYTES)
-      throw new BinaryResourceFailure(
-        "structure",
-        MAXIMUM_RETAINED_TEXT_BYTES,
-        `Import names exceed the ${String(MAXIMUM_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
+  return (value: string): void => {
+    text += value.length;
+    if (text > MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)
+      throw new PeImportLimitFailure(
+        "retained_text",
+        MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
+        `Import names exceed the fixed ${String(MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
       );
   };
 };
@@ -96,54 +91,16 @@ const failureMessage = (cause: unknown): string => {
   throw cause;
 };
 
-const stripImportExtension = (name: string): string => {
-  const lower = name.toLowerCase();
-  for (const extension of [".dll", ".sys", ".ocx"]) {
-    if (lower.endsWith(extension)) return lower.slice(0, -extension.length);
-  }
-  return lower;
-};
-
-const ordinalName = (dll: string, ordinal: number): string | null =>
-  ORDINAL_NAMES[dll.toLowerCase()]?.[ordinal] ?? null;
-
-const imphashOf = (imports: readonly PeImportDll[]): PeImports["imphash"] => {
-  if (imports.length === 0)
-    return {
-      algorithm: "pefile",
-      md5: null,
-      reason: "IMAGE_DIRECTORY_ENTRY_IMPORT is absent or empty.",
-    };
-  const parts: string[] = [];
-  for (const dll of imports) {
-    if (dll.name === null)
-      return {
-        algorithm: "pefile",
-        md5: null,
-        reason: "An import descriptor DLL name could not be read.",
-      };
-    const library = stripImportExtension(dll.name);
-    for (const imported of dll.functions) {
-      const functionName =
-        imported.name?.toLowerCase() ??
-        (imported.ordinal === null
-          ? null
-          : (ordinalName(dll.name, imported.ordinal)?.toLowerCase() ?? null));
-      if (functionName === null)
-        return {
-          algorithm: "pefile",
-          md5: null,
-          reason:
-            "An ordinal-only import has no pefile-compatible name, so the import hash is not computed.",
-        };
-      parts.push(`${library}.${functionName}`);
-    }
-  }
-  return {
-    algorithm: "pefile",
-    md5: createHash("md5").update(parts.join(","), "utf8").digest("hex"),
-    reason: null,
-  };
+/** Append one consumed file span, merging it into the previous span when contiguous. */
+const consume = (
+  spans: { offset: number; bytes: number }[],
+  offset: number,
+  bytes: number,
+): void => {
+  const last = spans.at(-1);
+  if (last !== undefined && last.offset + last.bytes === offset)
+    last.bytes += bytes;
+  else spans.push({ offset, bytes });
 };
 
 const coverage = (
@@ -168,23 +125,18 @@ const coverage = (
         delay_imports: delayImports,
       };
 
-const directoryResult = (
-  rva: number,
-  size: number,
-  offset: number,
-  bytes: number,
-): NonNullable<PeImports["import_directory"]> => ({
-  rva,
-  size,
-  location: { offset, bytes },
-});
-
-/** Read PE import and delay-load directories without executing the image. */
-export const parsePeImports = (
+/**
+ * Read PE import and delay-load directories without executing the image.
+ * Yields to the event loop and honors cancellation every
+ * `ENTRIES_PER_YIELD` descriptors or thunks.
+ */
+export const parsePeImports = async (
   bytes: Buffer,
   artifact: Artifact,
   input: InspectPeImportsInput,
-): PeImports => {
+  signal?: AbortSignal,
+): Promise<PeImports> => {
+  assertArtifactReadActive(signal);
   const image = readPeImage(bytes);
   if (image.bits !== 32 && image.bits !== 64)
     throw new BinaryFormatFailure(
@@ -194,12 +146,14 @@ export const parsePeImports = (
   const bits = image.bits;
   const base = image.image_base ?? 0n;
   const reader = new BinaryReader(bytes, true);
-  const mappings =
+  const lookup = fileMappingLookup(
     image.pe_header_mapping === undefined
       ? image.mappings
-      : [image.pe_header_mapping, ...image.mappings];
+      : [image.pe_header_mapping, ...image.mappings],
+    image.zero_fills,
+  );
   const map = (rva: number, size: number): number =>
-    mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
+    lookup(base + BigInt(rva), size);
   const format = bits === 64 ? ("pe32-plus" as const) : ("pe32" as const);
   const result = {
     artifact,
@@ -212,6 +166,13 @@ export const parsePeImports = (
   const retain = createRetention();
   let examinedDlls = 0;
   let examinedFunctions = 0;
+  let entries = 0;
+  const checkpoint = async (): Promise<void> => {
+    entries += 1;
+    if (entries % ENTRIES_PER_YIELD !== 0) return;
+    await setImmediate();
+    assertArtifactReadActive(signal);
+  };
 
   const cString = (rva: number): string => {
     const start = map(rva, 1);
@@ -227,14 +188,30 @@ export const parsePeImports = (
     return bytes.toString("latin1", start, start + end);
   };
 
-  const readFunctions = (
+  const readName = (rva: number, label: string): string | null => {
+    try {
+      const name = cString(rva);
+      retain(name);
+      return name;
+    } catch (cause) {
+      issues.push({
+        code: "name_unreadable",
+        location: hex(rva),
+        message: `${label}: ${failureMessage(cause)}`,
+      });
+      return null;
+    }
+  };
+
+  const readFunctions = async (
     nameTableRva: number,
     addressTableRva: number,
-  ): PeImportFunction[] => {
+  ): Promise<PeImportFunction[]> => {
     const thunkWidth = bits === 64 ? 8 : 4;
     const ordinalFlag = bits === 64 ? ORDINAL_FLAG64 : ORDINAL_FLAG32;
     const functions: PeImportFunction[] = [];
     for (let index = 0; ; index++) {
+      await checkpoint();
       const nameRva = nameTableRva + index * thunkWidth;
       const iatRva = addressTableRva + index * thunkWidth;
       let thunk: bigint;
@@ -288,19 +265,67 @@ export const parsePeImports = (
     return functions;
   };
 
+  // pefile counts every ILT and IAT thunk iteration against one image-wide cap
+  // and silently truncates tables past it. Replay that count (reading IAT
+  // entries only until the cap) to know when its import hash covers a prefix.
+  let pefileThunkReads = 0;
+  let pefileTruncatedDescriptor: number | null = null;
+  const pefileTableWalk = (rva: number, entries: number | null): number => {
+    const width = bits === 64 ? 8 : 4;
+    let processed = 0;
+    for (let index = 0; ; index++) {
+      if (pefileThunkReads > PEFILE_MAX_IMPORT_SYMBOLS) break;
+      pefileThunkReads += 1;
+      if (entries !== null) {
+        if (index === entries) break;
+      } else {
+        let word: bigint;
+        try {
+          word = reader.word(map(rva + index * width, width), bits);
+        } catch {
+          break;
+        }
+        if (word === 0n) break;
+      }
+      processed += 1;
+    }
+    return processed;
+  };
+  const replayPefileSymbolCap = (
+    index: number,
+    originalFirstThunk: number,
+    firstThunk: number,
+    entries: number,
+  ): void => {
+    const table =
+      originalFirstThunk === 0
+        ? pefileTableWalk(firstThunk, entries)
+        : pefileTableWalk(originalFirstThunk, entries);
+    if (originalFirstThunk !== 0) pefileTableWalk(firstThunk, null);
+    if (table < entries) pefileTruncatedDescriptor ??= index;
+  };
+
+  const missingTable = (descriptorRva: number, message: string): [] => {
+    issues.push({
+      code: "malformed_entry",
+      location: hex(descriptorRva),
+      message,
+    });
+    return [];
+  };
+
   const importDirectory = image.pe_data_directories?.[PE_IMPORT_DIRECTORY];
   const delayDirectory = image.pe_data_directories?.[PE_DELAY_IMPORT_DIRECTORY];
   const imports: PeImportDll[] = [];
   let importDirectoryResult: PeImports["import_directory"] = null;
   if (importDirectory !== undefined && importDirectory.virtual_address !== 0) {
-    let importOffset: number | undefined;
-    let importBytes = 0;
+    const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
+      await checkpoint();
       const descriptorRva =
         importDirectory.virtual_address + index * IMPORT_DESCRIPTOR_BYTES;
       const descriptor = map(descriptorRva, IMPORT_DESCRIPTOR_BYTES);
-      importOffset ??= descriptor;
-      importBytes += IMPORT_DESCRIPTOR_BYTES;
+      consume(spans, descriptor, IMPORT_DESCRIPTOR_BYTES);
       const originalFirstThunk = reader.u32(descriptor);
       const timeDateStamp = reader.u32(descriptor + 4);
       const forwarderChain = reader.u32(descriptor + 8);
@@ -316,19 +341,26 @@ export const parsePeImports = (
         break;
       examinedDlls += 1;
       dllBudget(examinedDlls, input.max_dlls);
-      let name: string | null = null;
-      try {
-        name = cString(nameRva);
-        retain(name);
-      } catch (cause) {
-        issues.push({
-          code: "name_unreadable",
-          location: hex(nameRva),
-          message: `Import descriptor DLL name: ${failureMessage(cause)}`,
-        });
-      }
-      const lookupRva =
-        originalFirstThunk === 0 ? firstThunk : originalFirstThunk;
+      const name = readName(nameRva, "Import descriptor DLL name");
+      const functions =
+        firstThunk === 0
+          ? missingTable(
+              descriptorRva,
+              originalFirstThunk === 0
+                ? "Import descriptor declares neither a lookup table nor an import address table (FirstThunk is zero); its functions are unknown"
+                : `Import descriptor has a zero FirstThunk (import address table RVA); its lookup table at ${hex(originalFirstThunk)} is not decoded`,
+            )
+          : await readFunctions(
+              originalFirstThunk === 0 ? firstThunk : originalFirstThunk,
+              firstThunk,
+            );
+      if (firstThunk !== 0)
+        replayPefileSymbolCap(
+          index,
+          originalFirstThunk,
+          firstThunk,
+          functions.length,
+        );
       imports.push({
         index,
         name,
@@ -341,32 +373,27 @@ export const parsePeImports = (
           offset: descriptor,
           bytes: IMPORT_DESCRIPTOR_BYTES,
         },
-        functions:
-          lookupRva === 0 || firstThunk === 0
-            ? []
-            : readFunctions(lookupRva, firstThunk),
+        functions,
       });
     }
-    if (importOffset !== undefined)
-      importDirectoryResult = directoryResult(
-        importDirectory.virtual_address,
-        importDirectory.size,
-        importOffset,
-        importBytes,
-      );
+    importDirectoryResult = {
+      rva: importDirectory.virtual_address,
+      size: importDirectory.size,
+      locations: spans,
+    };
   }
+  const standardIssues = issues.length;
 
   const delayImports: PeDelayImportDll[] = [];
   let delayDirectoryResult: PeImports["delay_import_directory"] = null;
   if (delayDirectory !== undefined && delayDirectory.virtual_address !== 0) {
-    let delayOffset: number | undefined;
-    let delayBytes = 0;
+    const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
+      await checkpoint();
       const descriptorRva =
         delayDirectory.virtual_address + index * DELAY_DESCRIPTOR_BYTES;
       const descriptor = map(descriptorRva, DELAY_DESCRIPTOR_BYTES);
-      delayOffset ??= descriptor;
-      delayBytes += DELAY_DESCRIPTOR_BYTES;
+      consume(spans, descriptor, DELAY_DESCRIPTOR_BYTES);
       const attributes = reader.u32(descriptor);
       const nameRva = reader.u32(descriptor + 4);
       const moduleHandleRva = reader.u32(descriptor + 8);
@@ -397,19 +424,7 @@ export const parsePeImports = (
         });
         continue;
       }
-      let name: string | null = null;
-      try {
-        name = cString(nameRva);
-        retain(name);
-      } catch (cause) {
-        issues.push({
-          code: "name_unreadable",
-          location: hex(nameRva),
-          message: `Delay-load DLL name: ${failureMessage(cause)}`,
-        });
-      }
-      const lookupRva =
-        importNameTableRva === 0 ? importAddressTableRva : importNameTableRva;
+      const name = readName(nameRva, "Delay-load DLL name");
       delayImports.push({
         index,
         name,
@@ -423,18 +438,24 @@ export const parsePeImports = (
         time_date_stamp: timeDateStamp,
         location: { offset: descriptor, bytes: DELAY_DESCRIPTOR_BYTES },
         functions:
-          lookupRva === 0 || importAddressTableRva === 0
-            ? []
-            : readFunctions(lookupRva, importAddressTableRva),
+          importAddressTableRva === 0
+            ? missingTable(
+                descriptorRva,
+                "Delay-load descriptor has a zero import address table RVA; its functions are not decoded",
+              )
+            : importNameTableRva === 0
+              ? missingTable(
+                  descriptorRva,
+                  "Delay-load descriptor has a zero import name table RVA; its address table holds loader thunks rather than names, so its functions are not decoded",
+                )
+              : await readFunctions(importNameTableRva, importAddressTableRva),
       });
     }
-    if (delayOffset !== undefined)
-      delayDirectoryResult = directoryResult(
-        delayDirectory.virtual_address,
-        delayDirectory.size,
-        delayOffset,
-        delayBytes,
-      );
+    delayDirectoryResult = {
+      rva: delayDirectory.virtual_address,
+      size: delayDirectory.size,
+      locations: spans,
+    };
   }
 
   const limitations =
@@ -451,7 +472,13 @@ export const parsePeImports = (
     delay_import_directory: delayDirectoryResult,
     imports,
     delay_imports: delayImports,
-    imphash: imphashOf(imports),
+    imphash: pefileImphash(imports, {
+      standardIssues,
+      truncatedDescriptor: pefileTruncatedDescriptor,
+      bits,
+      directoryRva: importDirectory?.virtual_address ?? 0,
+      fileBytes: bytes.length,
+    }),
     coverage: coverage(
       issues,
       examinedDlls,
