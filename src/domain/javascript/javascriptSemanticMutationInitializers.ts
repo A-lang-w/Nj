@@ -6,6 +6,7 @@ import {
   semanticBranchMayBeSkipped,
   semanticIterationCardinality,
   semanticPatternInitializationPrecedesRead,
+  type SemanticExecutionFrame,
 } from "./javascriptSemanticEvaluationOrder.js";
 
 import {
@@ -677,6 +678,36 @@ const bindingReadPosition = (
     cache.set(node, result);
   }
   return result;
+};
+
+/** Source order cannot protect a capture reused by another activation. */
+export const semanticCaptureActivationIsSingle = (
+  frames: readonly SemanticExecutionFrame[],
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const owners = new Set<t.Node>();
+  for (const { owner, point } of frames) {
+    if (bindingReadPosition(point, state.parentsByNode).repeating) return false;
+    // Even identical source points can represent separate recursive calls.
+    if (owners.has(owner)) return false;
+    owners.add(owner);
+  }
+  // An unproven caller, recursive activation, or suspended outer activation
+  // does not establish one execution. Keep its captured identity unknown.
+  if (![...owners].some((owner) => t.isProgram(owner))) return false;
+  for (const owner of owners) {
+    if (!t.isFunction(owner)) continue;
+    state.memberMutationFactsPhase ??= "requested";
+    if (state.memberMutationFactsPhase !== "indexed") return false;
+    // An escaped callable can reenter through callers outside the owned graph.
+    if (
+      state.literalMemberEffects
+        ?.get(owner)
+        ?.some(({ kind, path }) => kind === "escape" && path.length === 0)
+    )
+      return false;
+  }
+  return true;
 };
 
 /** Select a local alias at its read, before any later straight-line reassignment. */

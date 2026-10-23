@@ -12,6 +12,150 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "escaped-capture-0.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}function unknown(fn){fn(false)}unknown(run);run(true);',
+  },
+  {
+    file: "escaped-capture-1.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}const alias=run;function unknown(fn){fn(false)}unknown(alias);run(true);',
+  },
+  {
+    file: "escaped-capture-2.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}unknown(run);run(true);',
+  },
+
+  {
+    file: "repeated-capture-0.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};for(let i=0;i<2;i++){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+  },
+  {
+    file: "repeated-capture-1.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};let i=0;while(i<2){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");i++;}',
+  },
+  {
+    file: "repeated-capture-2.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};let i=0;do{const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");i++;}while(i<2);',
+  },
+  {
+    file: "repeated-capture-3.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};for(const i of [0,1]){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+  },
+  {
+    file: "repeated-capture-4.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};for(const key in {a:0,b:1}){const i=key==="a"?0:1;const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+  },
+  {
+    file: "repeated-capture-5.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};for(let outer=0;outer<1;outer++)for(let i=0;i<2;i++){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+  },
+  {
+    file: "repeated-capture-6.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};for(let i=0;i<2;i++){const {WebSocket:Socket}=globalThis;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+  },
+  {
+    file: "repeated-capture-7.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(){for(let i=0;i<2;i++){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}}run();',
+  },
+  {
+    file: "repeated-capture-8.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}for(let i=0;i<2;i++)run(i);',
+  },
+  {
+    file: "repeated-capture-9.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}run(0);run(1);',
+  },
+  {
+    file: "repeated-capture-10.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const run=i=>{const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");};run(0);run(1);',
+  },
+  {
+    file: "repeated-capture-11.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}function outer(i){run(i)}for(let i=0;i<2;i++)outer(i);',
+  },
+  {
+    file: "repeated-capture-12.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}function outer(i){run(i)}outer(0);outer(1);',
+  },
+  {
+    file: "repeated-capture-13.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");if(i===0)run(1)}run(0);',
+  },
+  {
+    file: "repeated-capture-14.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const client={run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}};client.run(0);client.run(1);',
+  },
+  {
+    file: "repeated-capture-15.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};class Client{run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}}const client=new Client();client.run(0);client.run(1);',
+  },
+  {
+    file: "repeated-capture-16.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;for(let i=0;i<2;i++){replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+    endpoint: "wss://example.test/repeated-capture",
+  },
+  {
+    file: "repeated-capture-17.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;let i=0;while(i++<2){replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+    endpoint: "wss://example.test/repeated-capture",
+  },
+  {
+    file: "repeated-capture-18.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;do{replace(globalThis);new Socket("wss://example.test/repeated-capture")}while(false);',
+    endpoint: "wss://example.test/repeated-capture",
+  },
+  {
+    file: "repeated-capture-19.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;for(const i of [0,1]){replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+    endpoint: "wss://example.test/repeated-capture",
+  },
+  {
+    file: "repeated-capture-20.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};({run(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/repeated-capture")}}).run();',
+    endpoint: "wss://example.test/repeated-capture",
+  },
+  {
+    file: "repeated-capture-21.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};new(class{run(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/repeated-capture")}})().run();',
+    endpoint: "wss://example.test/repeated-capture",
+  },
+  {
+    file: "repeated-capture-22.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;function run(){replace(globalThis);new Socket("wss://example.test/repeated-capture")}run();run();',
+    endpoint: "wss://example.test/repeated-capture",
+  },
+  {
+    file: "repeated-capture-23.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};function run(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+  },
+
+  {
     file: "function-capture-0.mjs",
     source:
       'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
@@ -33,13 +177,11 @@ const sources = [
     file: "function-capture-3.mjs",
     source:
       'function replace(root){root.WebSocket=class{}};const client={connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}};client.connect();',
-    endpoint: "wss://example.test/function-capture",
   },
   {
     file: "function-capture-4.mjs",
     source:
       'function replace(root){root.WebSocket=class{}};class Client{connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}}new Client().connect();',
-    endpoint: "wss://example.test/function-capture",
   },
   {
     file: "function-capture-5.mjs",

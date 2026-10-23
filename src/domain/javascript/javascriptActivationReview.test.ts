@@ -5,6 +5,143 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "escaped function can reenter before a visible call",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}function unknown(fn){fn(false)}unknown(run);run(true);',
+    [],
+  ],
+  [
+    "escaped alias can reenter before a visible call",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}const alias=run;function unknown(fn){fn(false)}unknown(alias);run(true);',
+    [],
+  ],
+  [
+    "opaque callback can reenter before a visible call",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}unknown(run);run(true);',
+    [],
+  ],
+
+  [
+    "for second iteration captures replacement",
+    'function replace(root){root.WebSocket=class{}};for(let i=0;i<2;i++){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+    [],
+  ],
+  [
+    "while second iteration captures replacement",
+    'function replace(root){root.WebSocket=class{}};let i=0;while(i<2){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");i++;}',
+    [],
+  ],
+  [
+    "do second iteration captures replacement",
+    'function replace(root){root.WebSocket=class{}};let i=0;do{const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");i++;}while(i<2);',
+    [],
+  ],
+  [
+    "for-of second iteration captures replacement",
+    'function replace(root){root.WebSocket=class{}};for(const i of [0,1]){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+    [],
+  ],
+  [
+    "for-in second iteration captures replacement",
+    'function replace(root){root.WebSocket=class{}};for(const key in {a:0,b:1}){const i=key==="a"?0:1;const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+    [],
+  ],
+  [
+    "nested second iteration captures replacement",
+    'function replace(root){root.WebSocket=class{}};for(let outer=0;outer<1;outer++)for(let i=0;i<2;i++){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+    [],
+  ],
+  [
+    "destructured repeated capture",
+    'function replace(root){root.WebSocket=class{}};for(let i=0;i<2;i++){const {WebSocket:Socket}=globalThis;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}',
+    [],
+  ],
+  [
+    "function-local repeated capture",
+    'function replace(root){root.WebSocket=class{}};function run(){for(let i=0;i<2;i++){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}}run();',
+    [],
+  ],
+  [
+    "single caller in loop repeats capture",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}for(let i=0;i<2;i++)run(i);',
+    [],
+  ],
+  [
+    "two direct callers repeat capture",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}run(0);run(1);',
+    [],
+  ],
+  [
+    "two arrow callers repeat capture",
+    'function replace(root){root.WebSocket=class{}};const run=i=>{const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");};run(0);run(1);',
+    [],
+  ],
+  [
+    "nested caller in loop repeats capture",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}function outer(i){run(i)}for(let i=0;i<2;i++)outer(i);',
+    [],
+  ],
+  [
+    "nested two callers repeat capture",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}function outer(i){run(i)}outer(0);outer(1);',
+    [],
+  ],
+  [
+    "recursive caller repeats capture",
+    'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");if(i===0)run(1)}run(0);',
+    [],
+  ],
+  [
+    "unknown stored object callers cannot prove single capture",
+    'function replace(root){root.WebSocket=class{}};const client={run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}};client.run(0);client.run(1);',
+    [],
+  ],
+  [
+    "unknown class callers cannot prove single capture",
+    'function replace(root){root.WebSocket=class{}};class Client{run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i===1)new Socket("wss://example.test/repeated-capture");}}const client=new Client();client.run(0);client.run(1);',
+    [],
+  ],
+  [
+    "capture before entire for survives",
+    'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;for(let i=0;i<2;i++){replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+    ["wss://example.test/repeated-capture"],
+  ],
+  [
+    "capture before entire while survives",
+    'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;let i=0;while(i++<2){replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+    ["wss://example.test/repeated-capture"],
+  ],
+  [
+    "capture before entire do survives",
+    'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;do{replace(globalThis);new Socket("wss://example.test/repeated-capture")}while(false);',
+    ["wss://example.test/repeated-capture"],
+  ],
+  [
+    "capture before entire for-of survives",
+    'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;for(const i of [0,1]){replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+    ["wss://example.test/repeated-capture"],
+  ],
+  [
+    "single direct object method capture survives",
+    'function replace(root){root.WebSocket=class{}};({run(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/repeated-capture")}}).run();',
+    ["wss://example.test/repeated-capture"],
+  ],
+  [
+    "single direct class method capture survives",
+    'function replace(root){root.WebSocket=class{}};new(class{run(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/repeated-capture")}})().run();',
+    ["wss://example.test/repeated-capture"],
+  ],
+  [
+    "outer capture survives repeated function",
+    'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket;function run(){replace(globalThis);new Socket("wss://example.test/repeated-capture")}run();run();',
+    ["wss://example.test/repeated-capture"],
+  ],
+  [
+    "unproven deferred caller cannot prove single capture",
+    'function replace(root){root.WebSocket=class{}};function run(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/repeated-capture")}',
+    [],
+  ],
+
+  [
     "saved constructor in function",
     'function replace(root){root.WebSocket=class{}};function connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}connect();',
     ["wss://example.test/function-capture"],
@@ -20,14 +157,14 @@ const cases = [
     ["wss://example.test/function-capture"],
   ],
   [
-    "saved constructor in object method",
+    "saved constructor in object method has unproven caller cardinality",
     'function replace(root){root.WebSocket=class{}};const client={connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}};client.connect();',
-    ["wss://example.test/function-capture"],
+    [],
   ],
   [
-    "saved constructor in class method",
+    "saved constructor in class method has unproven caller cardinality",
     'function replace(root){root.WebSocket=class{}};class Client{connect(){const Socket=globalThis.WebSocket;replace(globalThis);new Socket("wss://example.test/function-capture")}}new Client().connect();',
-    ["wss://example.test/function-capture"],
+    [],
   ],
   [
     "saved constructor through nested block",

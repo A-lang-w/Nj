@@ -533,6 +533,13 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
     receivers,
     *indexAmbientWritesSteps() {
       yield* indexSemanticAmbientWritesSteps(state);
+      // Captured ambient constructors need callable escape facts before either
+      // consumer can prove a single activation. Discovery precedes this stream.
+      if (
+        receivers.hasWebSocketEndpointCandidate &&
+        state.ambientEscapes.covers(["global", "WebSocket"])
+      )
+        yield* indexSemanticMemberMutationFactsSteps(state);
     },
     *indexMemberMutationFactsSteps() {
       yield* indexSemanticMemberMutationFactsSteps(state);

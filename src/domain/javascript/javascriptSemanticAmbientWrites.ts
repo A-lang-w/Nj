@@ -22,10 +22,14 @@ import {
   semanticBindingAtRead,
   semanticEffectFollowsReference,
   semanticTopLevelEffectFollowsCapture,
+  semanticCaptureActivationIsSingle,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
-import { semanticInitializerPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
+import {
+  semanticInitializerPrecedesRead,
+  type SemanticExecutionFrame,
+} from "./javascriptSemanticEvaluationOrder.js";
 import { webSocketExecutionContexts } from "./javascriptWebSocketExecution.js";
 import {
   semanticIterationSources,
@@ -724,6 +728,16 @@ export const isUnmodifiedGlobalReference = (
 ): boolean => {
   const path: readonly [string, ...string[]] =
     typeof name === "string" ? [name] : name;
+  let singleCapture: readonly SemanticExecutionFrame[] | null | undefined;
+  const singleCaptureFrames = () => {
+    if (singleCapture === undefined) {
+      const frames = webSocketExecutionContexts(capture, state);
+      singleCapture = semanticCaptureActivationIsSingle(frames, state)
+        ? frames
+        : null;
+    }
+    return singleCapture;
+  };
   // Escaping an ambient receiver lets user code replace any selected member.
   // A constructor already captured before that escape keeps its identity.
   const modified = (selected: readonly string[]): boolean =>
@@ -747,11 +761,12 @@ export const isUnmodifiedGlobalReference = (
           !semanticEffectFollowsReference(capture, node, state.parentsByNode) &&
           !(
             node !== undefined &&
+            singleCaptureFrames() !== null &&
             semanticInitializerPrecedesRead({
               initializer: capture,
               read: node,
               parents: state.parentsByNode,
-              initializerContexts: webSocketExecutionContexts(capture, state),
+              initializerContexts: singleCaptureFrames() ?? [],
               readContexts: webSocketExecutionContexts(node, state),
             }) === true
           ),
