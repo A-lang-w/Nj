@@ -105,6 +105,18 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
         Method initialize = bridge.getClass().getDeclaredMethod("initializeDecompiler");
         initialize.setAccessible(true);
         initialize.invoke(bridge);
+
+        // Exercise the real production error factory, without claiming a natural regex overflow.
+        Method regexFactory = bridge.getClass().getDeclaredMethod(
+            "regexStackExhausted", String.class, String.class);
+        regexFactory.setAccessible(true);
+        Throwable regexFailure = (Throwable) regexFactory.invoke(null, "(a+)+$", "matching");
+        require("regex_failure_preserves_stage_and_pattern",
+                failureCode(regexFailure).equals("regex_stack_exhausted") &&
+                regexFailure.getMessage().contains("matching pattern (a+)+$."));
+        require("regex_failure_leaves_lifecycle_to_provider",
+                !regexFailure.getMessage().contains("session") &&
+                !regexFailure.getMessage().contains("Use literal"));
         Class<?> requestType = Class.forName(bridge.getClass().getName() + "$Request", true, bridge.getClass().getClassLoader());
         Class<?> descriptorType = Class.forName(bridge.getClass().getName() + "$SessionDescriptor", true, bridge.getClass().getClassLoader());
         Constructor<?> requestConstructor = requestType.getDeclaredConstructor(int.class, String.class, JsonObject.class);

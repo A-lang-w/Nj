@@ -142,6 +142,8 @@ try {
     assert.equal(probe.target_sha256, targetDigest);
     assert.equal(probe["ReaGhidraBridge.java"], bridgeDigest);
     for (const check of [
+      "regex_failure_preserves_stage_and_pattern",
+      "regex_failure_leaves_lifecycle_to_provider",
       "pseudocode_unavailable_with_failure",
       "native_api_unavailable_with_failure",
       "native_value_flow_unavailable_with_failure",

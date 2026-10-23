@@ -1413,6 +1413,9 @@ describe("Ghidra decompiler failure projection", () => {
       expect(action).toContain("analyze_function");
       expect(action).toContain("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS");
       expect(action).toContain("tool-call deadline");
+      expect(action).toContain("new Codex/Kimi registrations");
+      expect(action).toContain("preserves existing positive values");
+      expect(action).toContain("edit existing deadlines yourself");
       expect(action).not.toContain("rea doctor");
     }
   });
@@ -1421,28 +1424,49 @@ describe("Ghidra decompiler failure projection", () => {
 describe("Ghidra failures during cancellation cleanup", () => {
   it.each(
     [
-      { remoteCode: "decompile_failed", projectedCode: "execution_failure" },
-      { remoteCode: "decompile_timed_out", projectedCode: "provider_timeout" },
+      {
+        remoteCode: "decompile_failed",
+        projectedCode: "execution_failure",
+        message: "Ghidra decompilation failed: Injected backend failure",
+      },
+      {
+        remoteCode: "decompile_timed_out",
+        projectedCode: "provider_timeout",
+        message:
+          "Ghidra decompilation of 0x401000 exceeded the 5-second limit set by REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+      },
       {
         remoteCode: "regex_stack_exhausted",
         projectedCode: "resource_constraint",
+        message:
+          "Ghidra's Java regex engine exhausted its stack while matching pattern (a+)+$.",
       },
-    ].flatMap((entry) =>
-      [false, true].map((cleanupFailed) => ({ ...entry, cleanupFailed })),
-    ),
+    ].flatMap((entry) => [
+      { ...entry, cancelled: false, cleanupFailed: false },
+      { ...entry, cancelled: true, cleanupFailed: false },
+      { ...entry, cancelled: true, cleanupFailed: true },
+    ]),
   )(
-    "reports cancellation session state for $remoteCode (cleanup failed: $cleanupFailed)",
-    async ({ remoteCode, projectedCode, cleanupFailed }) => {
-      const message = "Observed Ghidra failure";
+    "reports observed session state for $remoteCode (cancelled: $cancelled, cleanup failed: $cleanupFailed)",
+    async ({
+      remoteCode,
+      projectedCode,
+      message,
+      cancelled,
+      cleanupFailed,
+    }) => {
       const cleanup = new ProviderCleanupError("ghidra", ["owned session"], {
         reason: "Fixture cleanup still needs retry",
       });
-      const remote = new GhidraSessionError(
+      const observed = new GhidraSessionError(
         "remote",
         message,
         { remote_code: remoteCode },
         { remoteCode },
-      ).withConcurrentCancellation({ reason: "client deadline" });
+      );
+      const remote = cancelled
+        ? observed.withConcurrentCancellation({ reason: "client deadline" })
+        : observed;
       const ghidra = provider(
         installationHost(),
         () => ({
@@ -1468,6 +1492,15 @@ describe("Ghidra failures during cancellation cleanup", () => {
         cleanupFailed ? "cleanup_incomplete" : projectedCode,
       );
       expect(projected.message).toContain(message);
+      if (!cancelled) {
+        expect(projected.message).toContain(
+          remoteCode === "regex_stack_exhausted"
+            ? "remain available"
+            : "remains usable",
+        );
+        expect(projected.remediation.action).not.toContain("remain available");
+        return;
+      }
       const explanation = JSON.stringify(projected);
       expect(explanation).not.toContain("remains usable");
       expect(explanation).not.toContain("remain available");
@@ -4112,7 +4145,15 @@ describe("Ghidra SIGKILL projection", () => {
       memory_cgroup: cgroup(1, 3_221_225_472),
     });
     expect(projected.code).toBe("execution_failure");
-    expect(projected.message).not.toContain("SIGKILL");
+    expect(projected.message).toContain("SIGKILL");
+    expect(projected.message).toContain("does not establish its cause");
+    expect(projected.message).not.toContain("before REA stopped it");
+    expect(projected.message).not.toContain("oom_kill");
+    expect(projected.details?.diagnostics).toMatchObject({
+      ...killed,
+      stop_requested: true,
+      memory_cgroup: cgroup(1, 3_221_225_472),
+    });
   });
 
   it.each([

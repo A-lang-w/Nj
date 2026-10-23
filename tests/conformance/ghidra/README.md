@@ -53,7 +53,10 @@ binaries and Ghidra projects are never committed.
   `analyze_function` returns the listing facets with pseudocode unavailable and
   a live cache policy, `procedure_pseudo_code` fails with a message naming the
   setting, and the same session then decompiles `rea_small`. Set
-  `REA_DECOMPILE_TIMEOUT_BRANCHES` to change the fixture size.
+  `REA_DECOMPILE_TIMEOUT_BRANCHES` to change the fixture size. The verifier
+  budgets 1 MiB for generated C source and derives the maximum branch count
+  from the worst-case line size before allocating the source. Larger or
+  invalid counts are rejected before installation inspection or compilation.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The

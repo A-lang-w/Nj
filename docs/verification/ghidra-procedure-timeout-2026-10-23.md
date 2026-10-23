@@ -155,6 +155,56 @@ notices, JavaScript artifact graph findings, reconstruction journey findings,
 IDA doctor source/CLI tests, and native UI MCP tests. Blob identities are
 retained in the raw receipt. This full gate is not reported as passing.
 
+## Review follow-up verification
+
+The Java regex error factory now reports the engine failure, stage and caller
+pattern without promising a session lifetime or prescribing recovery. The
+provider's existing queue-aware continuation owner adds session state for
+healthy, concurrently cancelled and cleanup-incomplete outcomes. The boundary
+matrix now uses actual producer wording for all three failure families and
+covers nine state combinations.
+
+The timeout remediation distinguishes new Codex/Kimi registrations from
+existing positive client deadlines, which setup preserves. It directs callers
+to edit an existing deadline explicitly.
+
+- Updated source/boundary tests: 235 passed; two unchanged main SIGKILL wording
+  assertions still fail as reproduced on the exact base.
+- Full `npm run check` passed on the review follow-up integrated with main
+  `ba9c5bc6867272d02d2fcc9d5c7c2ea83f234067`.
+- The real Ghidra producer probe passed 41 checks with complete cleanup,
+  including the real regex factory's selector/stage and fact-only wording.
+  This invokes the actual factory and is not a natural regex stack-overflow
+  reproduction. The whole probe took 42.416 s elapsed, 55.326 s waited CPU and
+  788.5 MiB sampled family RSS.
+- Negative controls retained old production source at
+  `b4e105a48c381f1f1f86e277f771edf98e37ea6a` with updated verification inputs.
+  The deadline assertion fails on the old hint, and the corrected real Java
+  control fails specifically at
+  `regex_failure_leaves_lifecycle_to_provider`.
+  The initial producer-control harness did not compile and is excluded from
+  regression proof; the final control's assertion and complete diagnostics
+  are retained separately.
+
+The completed-task timing/context pair above was not repeated after these
+wording changes or subsequent main integration. Those later costs are
+unmeasured; the earlier estimates remain tied to their pinned source.
+
+## Verifier fixture budget
+
+The optional branch-count override is bounded before source allocation by a
+1 MiB generated-source budget and a conservative maximum line size, including
+the longest safe-integer decimal representation. The resulting maximum is
+11,272 branches; this bounds the line array, joined string and compiler input,
+not a claim about Ghidra capacity or compilation memory. Existing command
+supervision still bounds compilation time.
+
+A direct generator check admitted 1, 3,000, 6,000 and 11,272 branches and rejected
+zero, negative, fractional, billion-branch and maximum-safe-integer requests
+before generation. The maximum generated 854,215 bytes. The 3,000-branch source
+remains byte-identical to the measured fixture (SHA-256 `f99074876faae8e18e45265dab007b6fcc396fe909d57efab72adc8925a960c7`).
+These checks do not repeat the real-provider measurements above.
+
 ## Validation and limits
 
 - The initial selected source/boundary run passed 310 tests with 10 platform
