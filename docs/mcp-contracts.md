@@ -938,8 +938,10 @@ discovery and each tools/call) also contributes to that allowance.
 An explicit `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` is added to the Ghidra startup
 allowance as a single-decompile estimate. A multi-function call needs a client
 deadline covering every attempted decompile plus other work; the static
-registration value does not bound an arbitrary batch. Existing caller deadlines
-remain unchanged.
+registration value does not bound an arbitrary batch or `trace_native_values`
+traversal. Split batches, use `decompile_all` limit/resume, or reduce the trace
+`max_functions` to select work for the whole-call deadline. Existing caller
+deadlines remain unchanged.
 
 For an already connected client using the pinned SDK, request options are the
 **second** argument of `callTool`:

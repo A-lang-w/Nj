@@ -407,7 +407,7 @@ describe("client activation keys", () => {
   );
 });
 
-describe("Ghidra batch deadline registration advice", () => {
+describe("Ghidra multi-function deadline registration advice", () => {
   it.each([
     { provider: "ghidra", timeout: 10, hasBatchScope: true },
     { provider: "ghidra", timeout: 1800, hasBatchScope: true },
@@ -430,6 +430,8 @@ describe("Ghidra batch deadline registration advice", () => {
       if (hasBatchScope) {
         expect(status?.advisory).toContain("single-decompile estimate");
         expect(status?.advisory).toContain("every attempted function");
+        expect(status?.advisory).toContain("trace_native_values");
+        expect(status?.advisory).toContain("max_functions");
       } else expect(status?.advisory).toBeUndefined();
       const configured = await configureClientConfiguration(
         { name: "codex", format: "toml", configPath },

@@ -228,7 +228,24 @@ try {
     assert.ok(
       !result.value.limitations.some((item) => item.includes(injected)),
     );
+    const functionLimitCapability = result.value.limitations.find((item) =>
+      item.includes("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS"),
+    );
+    assert.ok(functionLimitCapability?.includes("per-function limit"));
+    assert.ok(
+      functionLimitCapability.includes(
+        "caller cancellation requests session closure",
+      ),
+    );
+    assert.ok(
+      !result.value.limitations.some((item) =>
+        item.includes(
+          "lets each decompilation run until it completes or the caller cancels",
+        ),
+      ),
+    );
     healthy = {
+      function_limit_capability: functionLimitCapability,
       pseudocode_available: true,
       native_api_available: value.native_api.available,
     };

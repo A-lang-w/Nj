@@ -496,7 +496,7 @@ const timeoutAdvisory = (
     timeoutInputs.ghidraDecompileTimeoutMs !== undefined &&
     (timeoutInputs.analysisProvider === "ghidra" ||
       timeoutInputs.analysisProvider === "auto")
-      ? "The derived Ghidra deadline is a single-decompile estimate. For batch_decompile or decompile_all, allow startup plus every attempted function's limit and other work; split calls or select a larger client deadline when needed. Explicit caller deadlines remain unchanged."
+      ? "The derived Ghidra deadline is a single-decompile estimate. For multi-function workflows such as batch_decompile, decompile_all or trace_native_values, allow startup plus every attempted function's limit and other work; split calls, reduce trace_native_values max_functions, or select a larger client deadline when needed. Explicit caller deadlines remain unchanged."
       : undefined;
   if (toolTimeoutMs >= providerAllowance) return batchScope;
   const setting = isKimi ? "toolTimeoutMs" : "tool_timeout_sec";
@@ -540,8 +540,7 @@ const clientEvidencePresent = async (
   Result<boolean, { readonly path: string; readonly detail: string }>
 > => {
   let unavailable:
-    | { readonly path: string; readonly detail: string }
-    | undefined;
+    { readonly path: string; readonly detail: string } | undefined;
   for (const path of clientEvidencePaths(client)) {
     try {
       await lstat(path);

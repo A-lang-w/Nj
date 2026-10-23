@@ -1200,7 +1200,8 @@ finishes. The limit is read when a Ghidra session
 starts, and Codex/Kimi registrations derived by `rea setup` add it to the tool
 deadline as a single-decompile estimate. A bulk call can need that limit for
 every attempted function plus listing and file work; select the client deadline
-for the workload, split batches, or use `decompile_all` limit/resume. Ghidra's own interactive default is 30 seconds. Unresolved computed calls
+for the workload, split batches, use `decompile_all` limit/resume, or reduce
+`trace_native_values` `max_functions` to select fewer serial decompiles. Ghidra's own interactive default is 30 seconds. Unresolved computed calls
 remain unknown, reference-kind provenance is preserved, and provider-specific
 pseudocode is never treated as original source or Hopper-equivalent text.
 
