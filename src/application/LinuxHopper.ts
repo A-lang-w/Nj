@@ -1,6 +1,6 @@
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 import { execFileBoundedOutput } from "../process/ExecFileBoundedOutput.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
@@ -387,7 +387,7 @@ export const installLinuxHopper = async (
 
 /** Canonical launcher path for a legacy user-local Linux Hopper installation. */
 export const linuxHopperLauncherPath = (home: string): string =>
-  join(home, ".local/share/rea/hopper/bin/Hopper");
+  posix.join(home.replaceAll("\\", "/"), ".local/share/rea/hopper/bin/Hopper");
 
 /** REA's managed Linux install path, preferred when no explicit launcher is set. */
 export const REA_MANAGED_LINUX_HOPPER_LAUNCHER = "/opt/hopper/bin/Hopper";

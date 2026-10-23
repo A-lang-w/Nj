@@ -1,5 +1,8 @@
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { posix } from "node:path";
+
+const { join } = posix;
+const toPosix = (path: string): string => path.replaceAll("\\", "/");
 
 export const MAC_HOPPER_APPLICATION_DIRECTORY = "/Applications";
 export const MAC_HOPPER_APPLICATION_NAME = "Hopper Disassembler.app";
@@ -13,7 +16,7 @@ export const MAC_HOPPER_SYSTEM_LAUNCHER = join(
 
 export const macHopperUserApplicationPath = (homeDirectory: string): string =>
   join(
-    homeDirectory,
+    toPosix(homeDirectory),
     MAC_HOPPER_USER_APPLICATIONS_DIRECTORY,
     MAC_HOPPER_APPLICATION_NAME,
   );
@@ -22,7 +25,7 @@ export const macHopperApplicationRoots = (
   homeDirectory: string,
 ): readonly string[] => [
   MAC_HOPPER_APPLICATION_DIRECTORY,
-  join(homeDirectory, MAC_HOPPER_USER_APPLICATIONS_DIRECTORY),
+  join(toPosix(homeDirectory), MAC_HOPPER_USER_APPLICATIONS_DIRECTORY),
 ];
 
 export const macHopperCanonicalLauncherCandidates = (
