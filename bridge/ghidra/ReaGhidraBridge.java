@@ -180,7 +180,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private DecompInterface decompiler;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
-    private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = 86_400;
+    // DecompileProcess converts seconds to an int millisecond timer delay.
+    private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
     private static AddressSpace sessionDefaultAddressSpace;
 

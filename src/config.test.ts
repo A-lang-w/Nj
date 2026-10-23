@@ -494,6 +494,8 @@ describe("Ghidra decompile limit configuration", () => {
     ["1", 1],
     ["30", 30],
     ["86400", 86_400],
+    ["86401", 86_401],
+    ["2147483", 2_147_483],
   ] as const)(
     "reads the Ghidra decompile limit %j as %j seconds",
     (value, expected) => {
@@ -507,7 +509,7 @@ describe("Ghidra decompile limit configuration", () => {
     },
   );
 
-  it.each(["", "0", "-1", "1.5", "30s", "86401"])(
+  it.each(["", "0", "-1", "1.5", "30s", "2147484", "2147483647"])(
     "rejects malformed Ghidra decompile limit %j with its setting",
     (value) => {
       const result = parseConfig({

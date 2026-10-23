@@ -61,9 +61,10 @@ describe("MCP tool deadline allowance for a Ghidra decompile limit", () => {
       ghidraDecompileTimeoutMs: 600_000,
     });
     // 330 s default startup + 600 s limit + 120 s operation headroom.
-    expect(recommendedMcpToolTimeoutSeconds(details.value.timeoutInputs)).toBe(
-      1050,
-    );
+    const timeoutInputs = details.value.timeoutInputs;
+    if (timeoutInputs === undefined)
+      throw new Error("Expected resolved decompile timeout inputs");
+    expect(recommendedMcpToolTimeoutSeconds(timeoutInputs)).toBe(1050);
   });
 
   it("forwards an explicit decompile limit into setup registrations", () => {

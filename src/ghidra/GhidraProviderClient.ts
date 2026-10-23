@@ -930,7 +930,10 @@ const projectPrimarySessionError = (
   if (failure.kind === "remote" && failure.remoteCode === "decompile_failed")
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
-      userMessage: `${failure.message.trim().replace(/\.$/u, "")}. Only the decompiler failed for this procedure; the Ghidra session remains usable.`,
+      userMessage: `${failure.message.trim().replace(/\.$/u, "")}. ${ghidraSessionContinuationMessage(
+        failure,
+        "Only the decompiler failed for this procedure; the Ghidra session remains usable.",
+      )}`,
       remediationAction:
         "Call analyze_function (CLI: `rea function`) for the same procedure. It returns assembly, callers, callees, references and basic blocks from the Ghidra listing and records this decompiler failure under facet_availability.pseudocode. Repeating the unchanged decompile request is not expected to succeed.",
     });
@@ -947,11 +950,10 @@ const projectPrimarySessionError = (
       limits.ghidraDecompileTimeoutSeconds * 1000,
       {
         ...context,
-        userMessage: `${failure.message.trim().replace(/\.$/u, "")}. ${
-          failure.concurrentCancellation === undefined
-            ? "Only this procedure's decompilation was stopped; the Ghidra session remains usable."
-            : "The request was also cancelled before the timeout settled, so REA closed the Ghidra session; the next request starts a new session and repeats import and analysis."
-        }`,
+        userMessage: `${failure.message.trim().replace(/\.$/u, "")}. ${ghidraSessionContinuationMessage(
+          failure,
+          "Only this procedure's decompilation was stopped; the Ghidra session remains usable.",
+        )}`,
         remediationAction: ghidraDecompileTimeoutRemediation(
           limits.ghidraDecompileTimeoutSeconds,
         ),
@@ -974,8 +976,10 @@ const projectPrimarySessionError = (
       null,
       {
         ...context,
-        remediationAction:
-          "Retry this search in literal mode or simplify the regex. The active analysis session and annotations remain available.",
+        remediationAction: `Retry this search in literal mode or simplify the regex. ${ghidraSessionContinuationMessage(
+          failure,
+          "The active analysis session and annotations remain available.",
+        )}`,
       },
     );
   if (
@@ -1140,6 +1144,17 @@ const projectObservedJvmMemoryFailure = (
         : {}),
     },
   );
+};
+
+/** Interpret the queue's observed cancellation and cleanup outcome once. */
+const ghidraSessionContinuationMessage = (
+  failure: GhidraSessionError,
+  healthyMessage: string,
+): string => {
+  if (failure.concurrentCancellation === undefined) return healthyMessage;
+  return failure.cleanupFailure === undefined
+    ? "The request was also cancelled before the failure settled, so REA closed the Ghidra session; the next request starts a new session and repeats import and analysis."
+    : "The request was also cancelled, and Ghidra session shutdown left cleanup unconfirmed. Close the target to retry retained cleanup before starting another Ghidra session.";
 };
 
 /** Name the setting and MCP deadline that bound one native decompile. */

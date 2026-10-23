@@ -1126,9 +1126,11 @@ Operations run until a result, caller cancellation, or provider shutdown; there
 is no fixed per-operation or response-size ceiling. Cancelling an operation that
 is already running stops the Ghidra session, so one function whose
 decompilation runs past the MCP client's deadline costs the whole import.
-`REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` (an integer from 1 to 86,400; absent by
+`REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` (an integer from 1 to 2,147,483; absent by
 default, which leaves decompilation unbounded) bounds each native decompile
-instead. Ghidra stops that one decompile and starts a fresh decompiler process
+instead. This maximum keeps Ghidra’s signed 32-bit seconds-to-milliseconds
+conversion from overflowing. The client must still support a deadline covering
+startup, that limit and operation headroom. Ghidra stops that one decompile and starts a fresh decompiler process
 for the next request. `analyze_function` still returns the function's assembly,
 references and basic blocks, with pseudocode, `native_api` and
 `native_value_flow` unavailable for the reason "exceeded the N-second limit",

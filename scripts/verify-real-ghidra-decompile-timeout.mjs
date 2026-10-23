@@ -115,13 +115,22 @@ try {
   const targetDigest = digest(await readFile(targetPath));
 
   // One real provider session over the read-only authenticated TCP bridge.
+  let bridgeClient;
   const provider = new GhidraProvider(
     config.value,
     silentLogger,
     environment,
     undefined,
-    (options) =>
-      new GhidraClient({ ...options, transport: "authenticated-loopback-tcp" }),
+    (options) => {
+      // This verifier has no caller-selected run ID: each new launch receives
+      // a fresh owner-generated identity, so equality detects session restarts.
+      assert.equal(options.runId, undefined);
+      bridgeClient = new GhidraClient({
+        ...options,
+        transport: "authenticated-loopback-tcp",
+      });
+      return bridgeClient;
+    },
   );
   const target = await parseBinaryTarget(targetPath);
   if (!target.ok) throw target.error;
@@ -146,6 +155,11 @@ try {
     };
     const slowEntry = entry("rea_slow");
     const smallEntry = entry("rea_small");
+    assert.ok(bridgeClient);
+    const initialSession = await bridgeClient.ping();
+    if (!initialSession.ok) throw initialSession.error;
+    assert.equal(initialSession.value.target.sha256, targetDigest);
+    observed.initial_session_run_id = initialSession.value.run_id;
     const limitText = `exceeded the ${String(LIMIT_SECONDS)}-second limit set by REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`;
     let started = performance.now();
     const slow = await client.execute("analyze_function", {
@@ -160,6 +174,7 @@ try {
       dossier.facet_availability.pseudocode.reason,
     );
     assert.equal(dossier.native_api.available, false);
+    assert.equal(dossier.native_value_flow.available, false);
     assert.ok(dossier.assembly.length > BRANCHES);
     assert.ok(dossier.basic_blocks.length > 0);
     assert.equal(slow.value.cachePolicy, "live");
@@ -199,6 +214,11 @@ try {
     });
     if (!small.ok) throw small.error;
     assert.ok(String(small.value.result).includes("rea_state"));
+    const continuedSession = await bridgeClient.ping();
+    if (!continuedSession.ok) throw continuedSession.error;
+    assert.equal(continuedSession.value.run_id, initialSession.value.run_id);
+    assert.equal(continuedSession.value.target.sha256, targetDigest);
+    observed.final_session_run_id = continuedSession.value.run_id;
     observed.same_session_next_decompile = "succeeded";
   } catch (cause) {
     failures.push(cause);
