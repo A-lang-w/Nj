@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { TraceMap } from "@jridgewell/trace-mapping";
 
 import {
   createJavaScriptApplicationGraph,
@@ -434,7 +433,7 @@ describe("source to bundle path syntax", () => {
   });
 });
 
-describe("source-map resolver interpretation", () => {
+describe("source-map declaration resolution", () => {
   it("keeps an empty virtual host distinct from a host without a file path", () => {
     const mapUrl = "file:///artifact/dist/main.js.map";
     expect(resolveJavaScriptSourceMapUrl("a.js", "webpack://", mapUrl)).toBe(
@@ -455,42 +454,56 @@ describe("source-map resolver interpretation", () => {
     },
     {
       sourceRoot: "https://cdn.example/src//",
-      expectedSource: "https://cdn.example/src/a.js",
-      expectedResolution: { kind: "suffix", path: "cdn.example/src/a.js" },
+      expectedSource: "https://cdn.example/src//a.js",
+      expectedResolution: { kind: "suffix", path: "cdn.example/src//a.js" },
     },
     {
       sourceRoot: "webpack://",
-      expectedSource: "webpack:///a.js",
-      // ECMA-426 joins an already slash-terminated root directly: webpack://a.js
-      // names a host with no file path. TraceMap's legacy extra slash is not the oracle.
+      expectedSource: "webpack://a.js",
       expectedResolution: {
         kind: "unresolved",
-        reason: "Source reference names a directory rather than a file.",
+        reason:
+          "Source reference uses a non-hierarchical URL without a file pathname.",
       },
     },
+    {
+      sourceRoot: "webpack:///",
+      expectedSource: "webpack:///a.js",
+      expectedResolution: { kind: "suffix", path: "a.js" },
+    },
+    {
+      sourceRoot: "../src/",
+      expectedSource: "file:///artifact/src/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "src/a.js" },
+    },
+    {
+      sourceRoot: "",
+      expectedSource: "file:///a.js",
+      expectedResolution: { kind: "suffix", path: "a.js" },
+    },
+    {
+      sourceRoot: null,
+      expectedSource: "file:///artifact/dist/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "dist/a.js" },
+    },
   ])(
-    "preserves producer and comparison semantics for sourceRoot $sourceRoot",
+    "applies ECMA-426 sourceRoot $sourceRoot consistently to URLs and graph facts",
     ({ sourceRoot, expectedSource, expectedResolution }) => {
-      const producerSource = new TraceMap(
-        {
-          version: 3,
-          file: "main.js",
+      expect(
+        resolveJavaScriptSourceMapUrl(
+          "a.js",
           sourceRoot,
-          sources: ["a.js"],
-          names: [],
-          mappings: "",
-        },
-        "file:///artifact/dist/main.js.map",
-      ).resolvedSources[0];
-      const reference = sourceMapReference(
-        "a.js",
-        sourceRoot,
-        "dist/main.js.map",
-      );
-
-      expect(producerSource).toBe(expectedSource);
-      expect(reference.source_root).toBe(sourceRoot);
-      expect(reference.resolution).toEqual(expectedResolution);
+          "file:///artifact/dist/main.js.map",
+        ),
+      ).toBe(expectedSource);
+      expect(
+        sourceMapReference("a.js", sourceRoot, "dist/main.js.map"),
+      ).toEqual({
+        source_name: "a.js",
+        source_root: sourceRoot,
+        map_path: "dist/main.js.map",
+        resolution: expectedResolution,
+      });
     },
   );
 });
