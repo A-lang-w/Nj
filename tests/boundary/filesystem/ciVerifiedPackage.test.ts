@@ -170,23 +170,25 @@ async function preparePublication(fixture: Fixture, published = "false") {
       join(scripts, name),
     );
   }
-  await writeFile(
-    join(fixture.directory, "registry-state.json"),
-    JSON.stringify({
-      status: published === "unknown" ? 503 : published === "false" ? 404 : 200,
-      body: {
-        name: "rea-agents",
-        versions: {
-          [fixture.version]: {
-            name: "rea-agents",
-            version: fixture.version,
-            dist: { integrity: fixture.integrity },
+  if (published !== "retain")
+    await writeFile(
+      join(fixture.directory, "registry-state.json"),
+      JSON.stringify({
+        status:
+          published === "unknown" ? 503 : published === "false" ? 404 : 200,
+        body: {
+          name: "rea-agents",
+          versions: {
+            [fixture.version]: {
+              name: "rea-agents",
+              version: fixture.version,
+              dist: { integrity: fixture.integrity },
+            },
           },
+          "dist-tags": { [fixture.tag]: fixture.version },
         },
-        "dist-tags": { [fixture.tag]: fixture.version },
-      },
-    }),
-  );
+      }),
+    );
   await writeFile(
     join(scripts, "invoke.mjs"),
     `
@@ -257,14 +259,34 @@ it("retains same-run reuse and rejects failed registry lookups", async () => {
   );
 });
 
-it("refreshes registry identity after a partial publication instead of reusing earlier absence", async () => {
+it("refreshes registry identity when an accepted upload reports a failed command", async () => {
   const fixture = await createFixture();
   await preparePublication(fixture, "false");
   expect(await readFile(fixture.output, "utf8")).toBe(
     "tag=latest\npublished=false\n",
   );
+  // A fake npm producer accepts the archive, then fails before reporting success.
+  // The next publisher attempt must discover the committed registry state.
+  await expect(
+    executeWorkflowFixture(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+import { readFile, writeFile } from "node:fs/promises";
+const path = "registry-state.json";
+const state = JSON.parse(await readFile(path, "utf8"));
+state.status = 200;
+await writeFile(path, JSON.stringify(state));
+process.exitCode = 1;
+`,
+      ],
+      { cwd: fixture.directory },
+    ),
+  ).rejects.toMatchObject({ code: 1 });
   await writeFile(fixture.output, "");
-  await preparePublication(fixture, "true");
+  await preparePublication(fixture, "retain");
   expect(await readFile(fixture.output, "utf8")).toBe(
     "tag=latest\npublished=true\n",
   );
