@@ -3,7 +3,9 @@
 Executed on macOS with Node v22.23.1, one change at a time on main, over the 50 published capture-built environments
 (each app's latest capture). The served smoke rebuilds each manifest with the tree under test and applies every served
 write tool; the serving check answers every recorded read made before the capture's first write through state serving
-and compares it with the recording.
+and compares it with the recording. The serving check reads no records from the five browser-scenario captures (Art
+Institute collection, LoC photos, Lychee, PhotoPrism, Pinry), so its read counts cover 45 apps; their 41 views count
+among the state-backed views.
 
 ## Gates
 
@@ -11,7 +13,7 @@ and compares it with the recording.
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
 - `npm run jscpd`: 3.49% duplicated lines over 4074 files.
-- `npx vitest run --project domain --project services`: 8987 passed, 6 pre-existing skips.
+- `npx vitest run --project domain --project services`: 8992 passed, 6 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 88 passed.
@@ -52,6 +54,11 @@ write tool is lost.
 - **Third round:** Mailpit's send, a linked create that was never observed, loses its target: other writes (marking
   messages read, tagging) ran between it and the item read naming its id. No served write, read view or matching read
   changes.
+- **Fourth round:** no verdict, read view or recorded read changes. A purge of temporary files removed 32 of the local
+  captures, so this round was measured on captures restored from the published datasets, byte-identical where a local
+  copy survived; Baserow's, Grocy's and Keycloak's published captures predate the ones measured above. On that set the
+  previous head and this one both give 187 write tools, 62 served (smoke 62 of 62), 1,151 views and 2,085 of 2,155
+  recorded reads matching.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
