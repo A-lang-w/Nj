@@ -12,6 +12,8 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
   projectPlistValue,
   binaryDatePrecisionOverlapLimitation,
+  negativeZeroRealLimitation,
+  nonFiniteRealLimitation,
   unknownDateLimitation,
   unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
@@ -44,6 +46,7 @@ import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
+  UnsupportedBinaryPlistUidError,
   type BinaryPlistScalarDecodePlan,
 } from "./PlistScalars.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
@@ -75,6 +78,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const unknownDates = new Map<string, number>();
   const datePrecisionOverlaps = new Map<string, number>();
   const unknownScalars = new Map<string, number>();
+  const nonFiniteReals = new Map<string, number>();
+  const negativeZeroReals = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
   let aggregateInputBytes = 0;
@@ -128,6 +133,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           reachableWideIntegerOffsets: [],
           overlappingWideIntegerOffsets: [],
           reachableNumericOffsets: [],
+          uidOffsetsToNormalize: [],
         };
         let datePrecisionOverlapCount = 0;
         if (isNibArchive) {
@@ -186,6 +192,10 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           incompleteHierarchies.set(entry.path, nib.omitted);
         if (nib !== null && nib.unresolvedConnections > 0)
           unresolvedConnections.set(entry.path, nib.unresolvedConnections);
+        if (nib !== null && nib.nonFiniteRealCount > 0)
+          nonFiniteReals.set(entry.path, nib.nonFiniteRealCount);
+        if (nib !== null && nib.negativeZeroRealCount > 0)
+          negativeZeroReals.set(entry.path, nib.negativeZeroRealCount);
         if (omittedPrototypeKeys !== 0)
           prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         if (unknownDateCount !== 0)
@@ -217,6 +227,12 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           recordOmittedArchive(entry.path, cause.reason);
           continue;
         }
+        if (cause instanceof UnsupportedBinaryPlistUidError) {
+          decodeBudget.release(plistReservation);
+          omitted += 1;
+          recordOmittedArchive(entry.path, "unsupported_uid_exact_range");
+          continue;
+        }
         invalid.push(
           `${entry.path}: ${cause instanceof Error ? cause.message : "archive decode failed"}`,
         );
@@ -241,6 +257,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
     unknownDates,
     datePrecisionOverlaps,
     unknownScalars,
+    nonFiniteReals,
+    negativeZeroReals,
     invalid,
     omittedArchives,
     unreportedOmittedArchives,
@@ -312,6 +330,8 @@ const finalizeHierarchyCoverage = (
     unknownDates: ReadonlyMap<string, number>;
     datePrecisionOverlaps: ReadonlyMap<string, number>;
     unknownScalars: ReadonlyMap<string, number>;
+    nonFiniteReals: ReadonlyMap<string, number>;
+    negativeZeroReals: ReadonlyMap<string, number>;
     invalid: readonly string[];
     omittedArchives: readonly { path: string; reason: string }[];
     unreportedOmittedArchives: number;
@@ -326,6 +346,8 @@ const finalizeHierarchyCoverage = (
     unknownDates,
     datePrecisionOverlaps,
     unknownScalars,
+    nonFiniteReals,
+    negativeZeroReals,
     invalid,
     omittedArchives,
     unreportedOmittedArchives,
@@ -420,6 +442,12 @@ const finalizeHierarchyCoverage = (
       ...[...unknownScalars].map(
         ([path, count]) => `${path}: ${unknownScalarLimitation(count)}`,
       ),
+      ...[...nonFiniteReals].map(
+        ([path, count]) => `${path}: ${nonFiniteRealLimitation(count)}`,
+      ),
+      ...[...negativeZeroReals].map(
+        ([path, count]) => `${path}: ${negativeZeroRealLimitation(count)}`,
+      ),
       ...omittedArchives.map(
         ({ path, reason }) =>
           `${path}: omitted because ${reason.replaceAll("_", " ")}.`,
@@ -484,6 +512,21 @@ const projectNibArchive = (
     archive.classes.length * 96,
     "NIBArchive class projection exceeds the aggregate Interface Builder decode budget",
   );
+  let nonFiniteRealCount = 0;
+  let negativeZeroRealCount = 0;
+  const projectedValues = new Map<
+    number,
+    Readonly<Record<string, JsonValue>>
+  >();
+  for (const object of archive.objects) {
+    const projected = projectPlistValue(object.values);
+    nonFiniteRealCount += projected.nonFiniteRealCount;
+    negativeZeroRealCount += projected.negativeZeroRealCount;
+    projectedValues.set(
+      object.id,
+      projected.value as Readonly<Record<string, JsonValue>>,
+    );
+  }
   const dereference = (value: JsonValue | undefined): JsonValue | undefined => {
     if (typeof value !== "object" || value === null || Array.isArray(value))
       return value;
@@ -566,10 +609,12 @@ const projectNibArchive = (
         }
         budget.reserveJsonStringOccurrence(name);
         const nibValues = Object.fromEntries(
-          Object.entries(object.values).map(([key, value]) => {
-            budget.reserveJsonPropertyNameOccurrence(key);
-            return [key, dereference(value) ?? null];
-          }),
+          Object.entries(projectedValues.get(object.id) ?? {}).map(
+            ([key, value]) => {
+              budget.reserveJsonPropertyNameOccurrence(key);
+              return [key, dereference(value) ?? null];
+            },
+          ),
         );
         // Normalize only recognized scalar fields at the format owner. A keyed
         // archive's authored nibValues dictionary must not gain this meaning.
@@ -715,6 +760,8 @@ const projectNibArchive = (
   return {
     omitted: viewHierarchy.omitted + hierarchyOmitted + merged.omitted,
     unresolvedConnections,
+    nonFiniteRealCount,
+    negativeZeroRealCount,
     raw: jsonValueSchema.parse({
       "com.apple.ibtool.document.objects": objects,
       "com.apple.ibtool.document.connections": connections,

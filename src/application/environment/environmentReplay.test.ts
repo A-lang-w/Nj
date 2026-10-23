@@ -17,7 +17,6 @@ import {
   type RecordedExchange,
 } from "./environmentSource.js";
 import {
-  pathValueMatches,
   replayEnvironmentTool,
   selectReplayExchange,
 } from "./environmentReplay.js";
@@ -115,17 +114,116 @@ describe("replay argument mapping and query admission", () => {
   });
 });
 
-describe("pathValueMatches", () => {
-  it("matches one decode of either side and not a second decode of both", () => {
-    expect(pathValueMatches("2", "%32")).toBe(true);
-    expect(pathValueMatches("%32", "2")).toBe(true);
-    expect(pathValueMatches("book1", "book%2531")).toBe(false);
-    expect(pathValueMatches("book%2531", "book1")).toBe(false);
-    expect(pathValueMatches("book%31", "book%2531")).toBe(true);
-  });
+describe("encoded replay path segments", () => {
+  it.each([
+    ["2", "%32", true],
+    ["%32", "2", true],
+    ["book1", "book%2531", false],
+    ["book%2531", "book1", false],
+    ["book%31", "book%2531", true],
+  ] as const)(
+    "matches %s against %s by at most one decode",
+    (segment, value, exact) => {
+      const users = tool("get_users_by_id");
+      const ordinal = users.record_ordinals[0]!;
+      const exchange = {
+        ...source.exchanges.get(ordinal)!,
+        path: `/api/users/${segment}`,
+      };
+      expect(
+        selectReplayExchange(users, new Map([[ordinal, exchange]]), {
+          id: value,
+        }),
+      ).toMatchObject({
+        exchange,
+        exact,
+      });
+    },
+  );
 });
 
 describe("replayEnvironmentTool selection", () => {
+  it("uses observed cross-name query order and marks ambiguous key-wise replay inexact", () => {
+    const search = tool("get_search");
+    const [first, second] = search.record_ordinals;
+    if (first === undefined || second === undefined)
+      throw new Error("Fixture search tool must cite two records");
+    const exchanges = new Map<number, RecordedExchange>([
+      [
+        first,
+        {
+          ordinal: first,
+          path: "/api/search",
+          query: "?query=a&type=b&query=c",
+          status: 200,
+          contentType: null,
+          bodyText: "first",
+        },
+      ],
+      [
+        second,
+        {
+          ordinal: second,
+          path: "/api/search",
+          query: "?query=a&query=c&type=b",
+          status: 200,
+          contentType: null,
+          bodyText: "second",
+        },
+      ],
+    ]);
+    const args = { query: ["a", "c"], type: "b" };
+    expect(
+      selectReplayExchange(search, exchanges, args, "?query=a&type=b&query=c"),
+    ).toMatchObject({ exchange: { ordinal: first }, exact: true });
+    expect(
+      selectReplayExchange(search, exchanges, args, "?query=a&query=c&type=b"),
+    ).toMatchObject({ exchange: { ordinal: second }, exact: true });
+    expect(selectReplayExchange(search, exchanges, args)).toMatchObject({
+      exchange: { ordinal: first },
+      exact: false,
+    });
+    const translated = new Map([
+      [
+        first,
+        {
+          ...exchanges.get(first)!,
+          query: "?query=seed&type=b&query=c",
+        },
+      ],
+    ]);
+    expect(
+      selectReplayExchange(
+        search,
+        translated,
+        { query: ["seed", "c"], type: "b" },
+        "?query=live&type=b&query=c",
+      ),
+    ).toMatchObject({ exchange: { ordinal: first }, exact: true });
+  });
+  it("selects the record only when every repeated query occurrence matches", () => {
+    const base = source.exchanges.get(tool("get_search").record_ordinals[0]!);
+    if (base === undefined) throw new Error("Missing search fixture exchange");
+    const search = {
+      ...tool("get_search"),
+      query_parameter_names: ["tag"],
+      record_ordinals: [901, 902],
+    };
+    const exchanges = new Map<number, RecordedExchange>([
+      [901, { ...base, ordinal: 901, query: "?tag=a&tag=b" }],
+      [902, { ...base, ordinal: 902, query: "?tag=a&tag=c" }],
+    ]);
+    expect(
+      selectReplayExchange(search, exchanges, { tag: ["a", "c"] }),
+    ).toMatchObject({
+      exchange: { ordinal: 902, query: "?tag=a&tag=c" },
+      exact: true,
+    });
+    expect(
+      selectReplayExchange(search, exchanges, { tag: ["a", "d"] }),
+    ).toMatchObject({ exchange: { ordinal: 901 }, exact: false });
+  });
+
   it("replays the record whose path segments equal the supplied parameters as an exact match", () => {
     const result = replay("get_users_by_id", { id: "2" });
     expect(result).toMatchObject({
@@ -184,7 +282,9 @@ describe("replayEnvironmentTool selection", () => {
     expect(unmatched.replay.exact_match).toBe(false);
     expect(unmatched.replay.recorded_query).toBe("?query=probe&type=dash-db");
   });
+});
 
+describe("replay selection precedence", () => {
   it("prefers a recorded segment equal to the argument over one that only matches after decoding", () => {
     const users = { ...tool("get_users_by_id"), record_ordinals: [901, 902] };
     const exchange = (ordinal: number, path: string): RecordedExchange => ({

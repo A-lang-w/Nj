@@ -143,6 +143,289 @@ describe("managed reference instruction comparison", () => {
   });
 });
 
+describe("managed field target comparison", () => {
+  it("compares observed field targets for aligned field instructions", () => {
+    const il = Buffer.from([0x7b, 1, 0, 0, 4, 0x26, 0x2a]);
+    const bytes = buildManagedPeFixture({
+      ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+    });
+    const base = inspect(bytes, "/tmp/field-target-base.dll");
+    const counterpart = inspect(bytes, "/tmp/field-target-counterpart.dll");
+    const changedTarget = {
+      ...counterpart,
+      result: managedMemberInspectionSchema.parse({
+        ...counterpart.result,
+        field_accesses: counterpart.result.field_accesses.map((access) => ({
+          ...access,
+          field_name: "differentField",
+        })),
+      }),
+    };
+
+    const comparison = compareManagedMembers(base, changedTarget);
+    expect(comparison.methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: expect.arrayContaining(["field-target"]),
+    });
+
+    const unavailableTarget = {
+      ...counterpart,
+      result: managedMemberInspectionSchema.parse({
+        ...counterpart.result,
+        field_accesses: counterpart.result.field_accesses.map((access) => ({
+          ...access,
+          field_name: null,
+          field_declaring_type: null,
+        })),
+      }),
+    };
+    expect(
+      compareManagedMembers(base, unavailableTarget).methods[0],
+    ).toMatchObject({
+      status: "unknown",
+      dimensions: expect.arrayContaining(["availability"]),
+    });
+  });
+});
+
+describe("managed exception target comparison", () => {
+  it("compares resolved catch names without comparing build-local tokens", () => {
+    const bytes = buildManagedPeFixture({ ilBody: Buffer.from([0x06, 0x2a]) });
+    const base = inspect(bytes, "/tmp/catch-target-base.dll");
+    const counterpart = inspect(bytes, "/tmp/catch-target-counterpart.dll");
+    const withCatch = (
+      source: typeof base,
+      token: string,
+      classType: string | null,
+      identityResolved = true,
+    ) => ({
+      ...source,
+      result: managedMemberInspectionSchema.parse({
+        ...source.result,
+        methods: source.result.methods.map((method) => ({
+          ...method,
+          body: {
+            ...method.body,
+            exception_regions: [
+              {
+                flags: 0,
+                try_offset: 0,
+                try_length: 1,
+                handler_offset: 1,
+                handler_length: 1,
+                class_token: token,
+                class_type: classType,
+                class_type_name_sha256:
+                  classType === null ? null : hash(Buffer.from(classType)),
+                class_type_identity_resolved: identityResolved,
+                filter_offset: null,
+              },
+            ],
+          },
+        })),
+      }),
+    });
+    const sameType = compareManagedMembers(
+      withCatch(base, "0x02000001", "Fixture.Error"),
+      withCatch(counterpart, "0x02000002", "Fixture.Error"),
+    );
+    expect(sameType.methods[0]).toMatchObject({ status: "unchanged" });
+    expect(sameType.methods[0]?.dimensions).not.toContain("exception-shape");
+    expect(sameType.methods[0]?.dimensions).not.toContain("exception-target");
+
+    const changedType = compareManagedMembers(
+      withCatch(base, "0x02000001", "Fixture.Error"),
+      withCatch(counterpart, "0x02000001", "Fixture.OtherError"),
+    );
+    expect(changedType.methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: expect.arrayContaining(["exception-target"]),
+    });
+
+    const differentNamesWithUnresolvedScope = compareManagedMembers(
+      withCatch(base, "0x01000001", "Fixture.Error", false),
+      withCatch(counterpart, "0x01000002", "Fixture.OtherError", false),
+    );
+    expect(differentNamesWithUnresolvedScope.methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: expect.arrayContaining(["exception-target", "availability"]),
+    });
+
+    const unresolved = compareManagedMembers(
+      withCatch(base, "0x02000001", "Fixture.Error"),
+      withCatch(counterpart, "0x01000002", "Fixture.Error", false),
+    );
+    expect(unresolved.methods[0]).toMatchObject({ status: "unknown" });
+
+    const missingDisplay = compareManagedMembers(
+      withCatch(base, "0x02000001", null),
+      withCatch(counterpart, "0x02000002", "Fixture.Error"),
+    );
+    expect(missingDisplay.methods[0]).toMatchObject({ status: "unknown" });
+  });
+
+  it("keeps equal TypeRef catch names unknown when valid AssemblyRef scopes differ", () => {
+    const catchMethodBody = () => {
+      const header = Buffer.alloc(12);
+      header.writeUInt16LE(0x300b, 0);
+      header.writeUInt16LE(8, 2);
+      header.writeUInt32LE(1, 4);
+      const section = Buffer.alloc(16);
+      section[0] = 0x01;
+      section[1] = section.length;
+      section.writeUInt16LE(0, 4);
+      section.writeUInt16LE(0, 6);
+      section[8] = 1;
+      section.writeUInt16LE(0, 9);
+      section[11] = 1;
+      section.writeUInt32LE(0x0100_0001, 12);
+      return Buffer.concat([
+        header,
+        Buffer.from([0x2a]),
+        Buffer.alloc(3),
+        section,
+      ]);
+    };
+    const observe = (scope: number, path: string) =>
+      inspect(
+        buildManagedPeFixture({
+          ilBody: catchMethodBody(),
+          references: ["Scope.One", "Scope.Two"],
+          typeRefScopeRaw: scope,
+        }),
+        path,
+      );
+    const left = observe((1 << 2) | 2, "/tmp/catch-scope-one.dll");
+    const right = observe((2 << 2) | 2, "/tmp/catch-scope-two.dll");
+
+    expect(left.result.methods[0]?.body.exception_regions[0]).toMatchObject({
+      class_token: "0x01000001",
+      class_type: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      class_type_identity_resolved: false,
+    });
+    expect(right.result.methods[0]?.body.exception_regions[0]).toMatchObject({
+      class_type: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      class_type_identity_resolved: false,
+    });
+    expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
+      status: "unknown",
+      dimensions: expect.arrayContaining(["availability"]),
+    });
+  });
+});
+
+describe("managed exception target scoped identity", () => {
+  it("compares catch TypeDef nesting and assembly scope separately", () => {
+    const catchBody = () => {
+      const header = Buffer.alloc(12);
+      header.writeUInt16LE(0x300b, 0);
+      header.writeUInt16LE(8, 2);
+      header.writeUInt32LE(1, 4);
+      const section = Buffer.alloc(16);
+      section[0] = 0x01;
+      section[1] = section.length;
+      section[8] = 0;
+      section.writeUInt16LE(0, 9);
+      section[11] = 1;
+      section.writeUInt32LE(0x0200_0002, 12);
+      return Buffer.concat([
+        header,
+        Buffer.from([0x2a]),
+        Buffer.alloc(3),
+        section,
+      ]);
+    };
+    const observe = (
+      path: string,
+      options: Parameters<typeof buildManagedPeFixture>[0],
+    ) =>
+      inspect(buildManagedPeFixture({ ilBody: catchBody(), ...options }), path);
+    const topLevelOuter = observe("/tmp/catch-nested-base.dll", {
+      typeName: "Outer",
+      typeNamespace: "Game",
+      additionalEmptyTypes: 2,
+      nestedTypes: [[2, 1]],
+    });
+    const nestedOuter = observe("/tmp/catch-nested-parent-change.dll", {
+      typeName: "Outer",
+      typeNamespace: "Game",
+      additionalEmptyTypes: 2,
+      nestedTypes: [
+        [1, 3],
+        [2, 1],
+      ],
+    });
+    const otherAssembly = observe("/tmp/catch-nested-other-assembly.dll", {
+      typeName: "Outer",
+      typeNamespace: "Game",
+      additionalEmptyTypes: 2,
+      nestedTypes: [[2, 1]],
+      assemblyName: "Fixture.Other",
+    });
+    const differentJitFlags = observe("/tmp/catch-nested-jit-flags.dll", {
+      typeName: "Outer",
+      typeNamespace: "Game",
+      additionalEmptyTypes: 2,
+      nestedTypes: [[2, 1]],
+      assemblyFlags: 0x0000_4000,
+    });
+    const retargetableAssembly = observe("/tmp/catch-nested-retargetable.dll", {
+      typeName: "Outer",
+      typeNamespace: "Game",
+      additionalEmptyTypes: 2,
+      nestedTypes: [[2, 1]],
+      assemblyFlags: 0x0000_0100,
+    });
+    const noAssembly = observe("/tmp/catch-nested-no-assembly.dll", {
+      typeName: "Outer",
+      typeNamespace: "Game",
+      additionalEmptyTypes: 2,
+      nestedTypes: [[2, 1]],
+      assemblyRowCount: 0,
+    });
+    expect(differentJitFlags.result.assembly).toMatchObject({
+      flags: 0x4000,
+      hash_algorithm: 0x8004,
+    });
+    expect(retargetableAssembly.result.assembly?.flags).toBe(0x100);
+    const baseRegion =
+      topLevelOuter.result.methods[0]?.body.exception_regions[0];
+    const nestedRegion =
+      nestedOuter.result.methods[0]?.body.exception_regions[0];
+    expect(baseRegion?.class_type).toBe(nestedRegion?.class_type);
+    expect(baseRegion?.class_type_name_sha256).not.toBe(
+      nestedRegion?.class_type_name_sha256,
+    );
+    expect(
+      compareManagedMembers(topLevelOuter, nestedOuter).methods[0],
+    ).toMatchObject({
+      status: "changed",
+      dimensions: expect.arrayContaining(["exception-target"]),
+    });
+    expect(
+      compareManagedMembers(topLevelOuter, otherAssembly).methods[0],
+    ).toMatchObject({
+      status: "changed",
+      dimensions: expect.arrayContaining(["exception-target"]),
+    });
+    expect(
+      compareManagedMembers(topLevelOuter, differentJitFlags).methods[0],
+    ).toMatchObject({ status: "unchanged" });
+    expect(
+      compareManagedMembers(topLevelOuter, retargetableAssembly).methods[0],
+    ).toMatchObject({
+      status: "changed",
+      dimensions: expect.arrayContaining(["exception-target"]),
+    });
+    expect(
+      compareManagedMembers(topLevelOuter, noAssembly).methods[0],
+    ).toMatchObject({
+      status: "unknown",
+      dimensions: expect.arrayContaining(["availability"]),
+    });
+  });
+});
+
 describe("managed member structural matching", () => {
   it("keeps unequal constants from becoming a structural remap", () => {
     const observe = (
@@ -254,14 +537,13 @@ describe("managed member comparison", () => {
     });
   });
 
-  it("remaps renamed methods by exact CIL/signature without using names", () => {
+  it("remaps renamed methods by exact CIL while retaining field target changes", () => {
     const leftBytes = buildManagedPeFixture();
     const rightBytes = buildManagedPeFixture({
       mvid: Buffer.from("00112233445566778899aabbccddeefe", "hex"),
       typeName: "A",
       typeNamespace: "X",
       methodName: "b",
-      fieldName: "c",
     });
     const left = inspect(leftBytes, "/tmp/left.dll");
     const right = inspect(rightBytes, "/tmp/right.dll");
@@ -276,7 +558,7 @@ describe("managed member comparison", () => {
     expect(result.matching.exact_il_signature).toBe(1);
     expect(result.methods).toEqual([
       expect.objectContaining({
-        status: "unchanged",
+        status: "changed",
         left: expect.objectContaining({ token: "0x06000001", name: "Main" }),
         right: expect.objectContaining({ token: "0x06000001", name: "b" }),
         match: expect.objectContaining({
@@ -284,7 +566,7 @@ describe("managed member comparison", () => {
           basis: "exact-il-signature",
           confidence: "exact",
         }),
-        dimensions: [],
+        dimensions: ["field-target"],
       }),
     ]);
     expect(result.limitations).toContain(

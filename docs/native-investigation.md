@@ -447,6 +447,19 @@ complete observation.
   emits no bytes. Character references retain their source spelling for data
   decoding. Non-ASCII content, child markup and self-closing `<data/>` are format
   failures; explicit `<data></data>` represents empty data.
+  Each XML dictionary key must have a following value element; a final key
+  without one is malformed. An explicit empty string remains a value.
+  Binary UID payloads may use nonminimal byte widths. REA normalizes them only
+  in a private decoder copy; archive digests still identify the original bytes.
+  Positive binary-plist offset and object-reference table widths are read from
+  the source; nonstandard widths are normalized only in that private copy for
+  the pinned decoder. [Foundation's table checks](https://github.com/swiftlang/swift-corelibs-foundation/blob/swift-6.2.3-RELEASE/Sources/CoreFoundation/CFBinaryPList.c#L759-L789)
+  accept positive widths subject to extent/reference bounds, and its
+  [sized-integer reader](https://github.com/swiftlang/swift-corelibs-foundation/blob/swift-6.2.3-RELEASE/Sources/CoreFoundation/CFBinaryPList.c#L707-L730)
+  handles non-power sizes. Widths over eight bytes follow its unsigned 64-bit
+  accumulator semantics.
+  UID values above JavaScript's exact integer range return an unsupported-target
+  outcome instead of rounded reference identities.
   UID 0 cannot distinguish conditional nil from ordinary nil. Limits are
   64 MiB of input, 200,000 objects/references and 128 nesting levels.
   XML dictionary entries decoded as `__proto__` are omitted with an explicit
@@ -808,8 +821,13 @@ attributes; exact and ambiguous projection counts cover emitted attribute values
 Integral reals stay numbers, and ambiguous or incompletely observed values retain
 explicit precision limitations. Before plist decoding, the existing aggregate
 decode budget reserves estimated room for number metadata and attribute
-projection; these estimates are not a hard process-memory bound. Native
-NIBArchive decoding is unchanged by this plist-specific representation.
+projection; these estimates are not a hard process-memory bound. Keyed-archive
+object identities come from their original `$objects` table indices unless an
+explicit `objectID` or `object-id` is present. An authored `archiveUID` field
+remains ordinary object data and does not change identity. NIBArchive float32
+and float64 values retain non-finite values and negative zero through projection
+as the same typed real wrappers used for plist values; per-document limitations
+count those values. NIBArchive nil remains JSON null.
 
 Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`.
 XML dates require a complete UTC spelling with fixed two-digit month, day and
