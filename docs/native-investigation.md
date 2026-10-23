@@ -181,7 +181,10 @@ output directory, capped failure reasons, provider identity, and the
 analysis-profile digest. The manifest and `decompile-index.json` do not contain
 pseudocode. Each file records the provider name, canonical address, inclusive
 body ranges when `procedure_info` supplies them, and the `procedure_info` and
-pseudocode limitations for that function, truncated after 4,000 characters.
+pseudocode limitations for that function. Header values are abbreviated to
+2,000 characters per value and the joined limitation line to 4,000 characters;
+the index retains the complete selected names, addresses, provider facts and
+caveats.
 Each function's `decompile-index.json` record, whatever its status, keeps the
 complete limitations of the observations it used. The returned Evidence keeps
 at most eight first-observed distinct per-function provider limitations within an 8,000-character text budget and counts omitted observations. Repeated omitted text is counted per observation, not as a distinct caveat. This summary does not retain every omitted string in memory. A fresh output directory must not already exist. `--resume`
