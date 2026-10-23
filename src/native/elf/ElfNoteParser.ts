@@ -13,6 +13,7 @@ import {
   elfObjectTypeName,
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
+import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -20,7 +21,7 @@ const SHT_STRTAB = 3;
 const HEX_DESCRIPTOR_LIMIT = 64;
 
 interface TextBudget {
-  readonly limit: number;
+  limit: number;
   used: number;
   hashed: number;
   scanned: number;
@@ -323,6 +324,7 @@ export const parseElfNotes = (
     scans: new Map(),
   };
   let shstrtab: Buffer | null = null;
+  let sectionNameLimitation: string | undefined;
   if (shnum !== 0 && shstrndx !== 0) {
     if (shstrndx >= shnum)
       return fail("ELF section name index is out of range.");
@@ -331,7 +333,32 @@ export const parseElfNotes = (
       return fail("ELF section name table is not a string table.");
     const strOff = reader.word(namesHeader + (wide ? 24 : 16));
     const strSize = reader.word(namesHeader + (wide ? 32 : 20));
-    shstrtab = reader.slice(strOff, strSize);
+    const rawNames = reader.slice(strOff, strSize);
+    const flags = reader.word(namesHeader + 8);
+    const decoded = decodeElfSectionNameTable(
+      rawNames,
+      BigInt(flags),
+      header.elfClass,
+      reader.little,
+      input.max_file_bytes - bytes.length,
+    );
+    if (decoded.state === "malformed") return fail(decoded.message);
+    if (decoded.state === "limit")
+      throw new ArtifactReaderFailure(
+        "limit",
+        `ELF source and compressed section names exceed the ${String(input.max_file_bytes)}-byte memory budget.`,
+        { boundary: "memory" },
+      );
+    if (decoded.state === "unsupported") {
+      shstrtab = null;
+      sectionNameLimitation = `ELF section names are unavailable because compression type ${String(decoded.compressionType)} is unsupported.`;
+    } else {
+      shstrtab = decoded.bytes;
+      if (decoded.compressed) text.limit = bytes.length + shstrtab.length;
+    }
+  } else if (shnum !== 0) {
+    sectionNameLimitation =
+      "ELF section names are unavailable because no section-name string table is declared.";
   }
   const tables: ElfNotes["tables"] = [];
   const parsed: ReturnType<typeof toEntry>[] = [];
@@ -409,7 +436,10 @@ export const parseElfNotes = (
       examined_tables: tables.length,
       examined_entries: examined.count,
     },
-    limitations: [...(absent ? ABSENT_LIMITATIONS : LIMITATIONS)],
+    limitations: [
+      ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
+      ...(sectionNameLimitation === undefined ? [] : [sectionNameLimitation]),
+    ],
   };
 };
 

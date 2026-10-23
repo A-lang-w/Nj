@@ -341,13 +341,21 @@ count and SHA-256.
   report null for the newly added encoding fields. `version` is null for an
   unversioned symbol. A versioned
   symbol reports its GNU index, a name resolved from `.gnu.version_d` or
-  `.gnu.version_r`, and the `hidden` flag from `.gnu.version`. `"unknown"`
+  `.gnu.version_r`, the corresponding `name_bytes_base64` and
+  `name_utf8_decodable` facts, and the `hidden` flag from `.gnu.version`.
+  Version names use the same UTF-8-when-valid, otherwise byte-preserving
+  Latin-1 display mapping as symbol names; ELF does not declare either
+  string's text encoding. Older retained results report null for the added
+  version-name encoding fields. `"unknown"`
   means the symbol-version table could not be read. A hidden version is not
   the default version that a by-name `dlsym` lookup selects.
   Definition names take precedence when both tables name the same index.
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+PE export names are bounded null-terminated byte strings and may continue
+across adjacent file-backed section mappings when the virtual bytes are
+unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
 Unresolved symbol versions keep their rows: the version name is null when no
 definition or requirement names the index, and `version` is
 `"unknown"` when the version table cannot be read; coverage is likewise

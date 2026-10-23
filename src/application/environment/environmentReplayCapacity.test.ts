@@ -5,7 +5,7 @@ import {
   selectReplayExchange,
 } from "./environmentReplay.js";
 
-it("matches a late repeated query and a distant path coordinate without full tuple/segment arrays", () => {
+it("matches a distant path coordinate and every repeated query occurrence", () => {
   const source = environmentServeSourceWithBody("{}", "application/json");
   const original = source.manifest.tools.find(
     (tool) => tool.name === "get_users_by_id",
@@ -22,10 +22,14 @@ it("matches a late repeated query and a distant path coordinate without full tup
     path: `/${"literal/".repeat(20000)}wanted`,
     query: `?${"q=miss&".repeat(20000)}q=hit`,
   };
+  const exchanges = new Map([[ordinal, retained]]);
   expect(
-    selectReplayExchange(tool, new Map([[ordinal, retained]]), {
+    selectReplayExchange(tool, exchanges, { id: "wanted", q: "hit" }),
+  ).toEqual({ exchange: retained, exact: false });
+  expect(
+    selectReplayExchange(tool, exchanges, {
       id: "wanted",
-      q: "hit",
+      q: [...Array.from({ length: 20000 }, () => "miss"), "hit"],
     }),
   ).toEqual({ exchange: retained, exact: true });
 });

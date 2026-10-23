@@ -9,6 +9,7 @@ import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { createHistoricalSourceGraph } from "../referenceSourceGraph.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { compareSourceToBundle } from "./sourceToBundleComparison.js";
+import { resolveJavaScriptSourceMapUrl } from "./javascriptSourceMapPaths.js";
 import {
   SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS,
   sourceToBundleComparisonResultSchema,
@@ -433,7 +434,19 @@ describe("source to bundle path syntax", () => {
   });
 });
 
-describe("source-map resolver equivalence", () => {
+describe("source-map resolver interpretation", () => {
+  it("keeps an empty virtual host distinct from a host without a file path", () => {
+    const mapUrl = "file:///artifact/dist/main.js.map";
+    expect(resolveJavaScriptSourceMapUrl("a.js", "webpack://", mapUrl)).toBe(
+      "webpack://a.js",
+    );
+    expect(resolveJavaScriptSourceMapUrl("a.js", "webpack:///", mapUrl)).toBe(
+      "webpack:///a.js",
+    );
+    expect(
+      sourceMapReference("a.js", "webpack:///", "dist/main.js.map").resolution,
+    ).toEqual({ kind: "suffix", path: "a.js" });
+  });
   it.each([
     {
       sourceRoot: "https://cdn.example/src/",
@@ -448,10 +461,15 @@ describe("source-map resolver equivalence", () => {
     {
       sourceRoot: "webpack://",
       expectedSource: "webpack:///a.js",
-      expectedResolution: { kind: "suffix", path: "a.js" },
+      // ECMA-426 joins an already slash-terminated root directly: webpack://a.js
+      // names a host with no file path. TraceMap's legacy extra slash is not the oracle.
+      expectedResolution: {
+        kind: "unresolved",
+        reason: "Source reference names a directory rather than a file.",
+      },
     },
   ])(
-    "matches TraceMap for sourceRoot $sourceRoot",
+    "preserves producer and comparison semantics for sourceRoot $sourceRoot",
     ({ sourceRoot, expectedSource, expectedResolution }) => {
       const producerSource = new TraceMap(
         {

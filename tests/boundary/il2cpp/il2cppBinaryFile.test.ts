@@ -8,6 +8,7 @@ import { readIl2cppMetadataForLinking } from "../../../src/il2cpp/Il2cppMetadata
 import {
   createElfFixture,
   createIl2cppBinaryFixture,
+  createIl2cppDyldBindFixture,
   createUniversalFixture,
   createSplitPointerPeFixture,
   FIXTURE_BINARY_BASE,
@@ -15,10 +16,13 @@ import {
   FIXTURE_RETURN_TYPE_NAME,
   type Il2cppBinaryFixtureOptions,
 } from "../../fixtures/il2cpp/binary.js";
-import { createIl2cppMetadataFixture } from "../../fixtures/il2cpp/metadata.js";
+import {
+  createIl2cppMetadataFixture,
+  createLinkedIl2cppMetadataFixture,
+} from "../../fixtures/il2cpp/metadata.js";
 
 const { metadata, link: facts } = readIl2cppMetadataForLinking(
-  createIl2cppMetadataFixture().bytes,
+  createLinkedIl2cppMetadataFixture().bytes,
 );
 const expectedAddress = (value: bigint | "no-body" | "unknown") =>
   typeof value === "bigint"
@@ -230,6 +234,38 @@ it("reports type indices without names for metadata version 27", () => {
   expect(rows.every((row) => row.name === null)).toBe(true);
   expect(link(createIl2cppBinaryFixture()).return_types[0]?.name).toBe(
     FIXTURE_RETURN_TYPE_NAME,
+  );
+});
+
+it("renders nested generic arguments on the components that declare them", () => {
+  const renderedName = (
+    typeNames: Readonly<Record<number, string>>,
+    genericTypeArgumentCounts: Readonly<Record<number, number>>,
+    genericArgumentTypeIndices: readonly number[],
+  ) => {
+    const { metadata: nestedMetadata, link: nestedFacts } =
+      readIl2cppMetadataForLinking(
+        createLinkedIl2cppMetadataFixture({
+          typeNames,
+          typeNamespaces: { 0: "Game", 1: "" },
+          genericTypeArgumentCounts,
+        }).bytes,
+      );
+    return linkIl2cppBinary(
+      createIl2cppBinaryFixture({
+        genericDefinitionTypeIndex: 1,
+        genericArgumentTypeIndices,
+      }),
+      nestedMetadata,
+      nestedFacts,
+    ).return_types[0]?.name;
+  };
+
+  expect(
+    renderedName({ 0: "Outer`1", 1: "Inner`2" }, { 0: 1, 1: 2 }, [3, 3]),
+  ).toBe("Game.Outer<int>+Inner<int>[]");
+  expect(renderedName({ 0: "Outer`1", 1: "Leaf`1" }, { 0: 1, 1: 1 }, [3])).toBe(
+    "Game.Outer<int>+Leaf[]",
   );
 });
 
@@ -486,6 +522,11 @@ it("rejects a recursive binary type graph without overflowing the JavaScript sta
 });
 
 it("guards a shared generic expansion before concatenating unchecked text", () => {
+  const expanded = readIl2cppMetadataForLinking(
+    createLinkedIl2cppMetadataFixture({
+      genericTypeArgumentCounts: { 3: 2 },
+    }).bytes,
+  );
   const bytes = Buffer.alloc(0x4000);
   createIl2cppBinaryFixture().copy(bytes);
   bytes.writeBigUInt64LE(BigInt(bytes.length), 64);
@@ -506,11 +547,17 @@ it("guards a shared generic expansion before concatenating unchecked text", () =
   }
   bytes.writeBigUInt64LE(prior, 0x900);
   const stopped = new Error("type text admission");
-  const steps = linkIl2cppBinarySteps(bytes, metadata, facts, undefined, {
-    beforeText: (size) => {
-      if (size > 1024) throw stopped;
+  const steps = linkIl2cppBinarySteps(
+    bytes,
+    expanded.metadata,
+    expanded.link,
+    undefined,
+    {
+      beforeText: (size) => {
+        if (size > 1024) throw stopped;
+      },
     },
-  });
+  );
   expect(() => {
     for (;;) {
       if (steps.next().done) break;
@@ -529,6 +576,22 @@ it("reports a symbol-relocated method slot as unknown rather than no-body", () =
   const linked = link(bytes);
   expect(linked.method_addresses[1]).toEqual(expectedAddress("unknown"));
   expect(linked.method_addresses[0]).toEqual(expectedAddresses[0]);
+});
+
+it.each([0n, FIXTURE_BINARY_BASE + 0x210n])(
+  "keeps a dyld-bound method slot unknown regardless of its raw word %s",
+  (raw) => {
+    const linked = link(createIl2cppDyldBindFixture(raw));
+    expect(linked.method_addresses[1]).toEqual(expectedAddress("unknown"));
+    expect(linked.method_addresses[0]).toEqual(expectedAddresses[0]);
+    expect(linked.method_addresses[4]).toEqual(expectedAddress("no-body"));
+  },
+);
+
+it("keeps unbound Mach-O method words classified from their values", () => {
+  const linked = link(createIl2cppBinaryFixture());
+  expect(linked.method_addresses[1]).toEqual(expectedAddresses[1]);
+  expect(linked.method_addresses[4]).toEqual(expectedAddress("no-body"));
 });
 
 it.each([
