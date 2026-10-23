@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -17,15 +18,14 @@ import {
   type RecordedExchange,
 } from "./environmentSource.js";
 import {
-  pathValueMatches,
   replayEnvironmentTool,
   selectReplayExchange,
 } from "./environmentReplay.js";
 
 const source = environmentServeSource();
 
-const tool = (name: string) => {
-  const found = source.manifest.tools.find((entry) => entry.name === name);
+const tool = (name: string, from: EnvironmentSource = source) => {
+  const found = from.manifest.tools.find((entry) => entry.name === name);
   if (found === undefined) throw new Error(`Fixture manifest lacks ${name}`);
   return found;
 };
@@ -35,36 +35,37 @@ const replay = (
   args: Readonly<Record<string, unknown>>,
   from: EnvironmentSource = source,
 ) => {
-  const result = replayEnvironmentTool(from, tool(name), args);
+  const result = replayEnvironmentTool(from, tool(name, from), args);
   if (!result.ok) throw result.error;
   return result.value;
 };
 
 /** The fixture source with /api/users/2's response replaced by HAR base64 content the decoder retained. */
 const base64Source = async (bytes: Buffer): Promise<EnvironmentSource> => {
-  const capture = environmentManifestCaptureFixture();
-  const record = capture.records.find(
-    (entry) =>
-      typeof entry.reported === "object" &&
-      entry.reported !== null &&
-      "request" in entry.reported &&
-      JSON.stringify(entry.reported).includes("/api/users/2"),
-  );
+  const encoded = bytes.toString("base64");
+  const capture = environmentManifestCaptureFixture([
+    {
+      request: { method: "GET", url: "http://grafana.example/api/users/2" },
+      response: {
+        status: 200,
+        content: {
+          mimeType: "application/json",
+          text: encoded,
+          encoding: "base64",
+        },
+      },
+    },
+  ]);
+  const record = capture.records[0];
   if (record === undefined) throw new Error("Fixture lacks /api/users/2");
-  const reported = structuredClone(record.reported) as {
-    response: { content: { text: string; encoding?: string } };
-  };
-  reported.response.content.text = bytes.toString("base64");
-  reported.response.content.encoding = "base64";
-  record.reported = reported;
   record.binary_fields = [
     {
       pointer: "/response/content/text",
       representation: "har-base64-content",
       state: "retained",
-      content_base64: bytes.toString("base64"),
+      content_base64: encoded,
       bytes: bytes.length,
-      sha256: "0".repeat(64),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
     },
   ];
   const evidence = analysisViewCaptureEvidence(capture);
@@ -115,14 +116,32 @@ describe("replay argument mapping and query admission", () => {
   });
 });
 
-describe("pathValueMatches", () => {
-  it("matches one decode of either side and not a second decode of both", () => {
-    expect(pathValueMatches("2", "%32")).toBe(true);
-    expect(pathValueMatches("%32", "2")).toBe(true);
-    expect(pathValueMatches("book1", "book%2531")).toBe(false);
-    expect(pathValueMatches("book%2531", "book1")).toBe(false);
-    expect(pathValueMatches("book%31", "book%2531")).toBe(true);
-  });
+describe("encoded replay path segments", () => {
+  it.each([
+    ["2", "%32", true],
+    ["%32", "2", true],
+    ["book1", "book%2531", false],
+    ["book%2531", "book1", false],
+    ["book%31", "book%2531", true],
+  ] as const)(
+    "matches %s against %s by at most one decode",
+    (segment, value, exact) => {
+      const users = tool("get_users_by_id");
+      const ordinal = users.record_ordinals[0]!;
+      const exchange = {
+        ...source.exchanges.get(ordinal)!,
+        path: `/api/users/${segment}`,
+      };
+      expect(
+        selectReplayExchange(users, new Map([[ordinal, exchange]]), {
+          id: value,
+        }),
+      ).toMatchObject({
+        exchange,
+        exact,
+      });
+    },
+  );
 });
 
 describe("replayEnvironmentTool selection", () => {

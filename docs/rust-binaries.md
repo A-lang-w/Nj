@@ -93,8 +93,10 @@ container format, architecture, word size, and byte order. When a `.dep-v0`
 section is present, `auditable_metadata` contains:
 
 - `section_name`, `.dep-v0` for ELF and PE or `__DATA,.dep-v0` for Mach-O;
-- `file_offset` and `section_bytes`, the exact file range of the compressed section;
-- `compressed_bytes` and `uncompressed_bytes`;
+- `file_offset` and `section_bytes`, the exact file range of the dependency
+  section in the selected artifact, including accepted PE file-alignment bytes;
+- `compressed_bytes`, the zlib stream length used for the inflate-ratio limit,
+  and `uncompressed_bytes`;
 - `format_version`, the embedded integer, or `null` when the field is omitted;
 - `packages`, in the section's original order, with `name`, `version`, `source`,
   `kind`, `dependencies`, `features`, and `root`;
@@ -123,12 +125,19 @@ distinct hashes leave a single commit unknown.
 
 ## Limits and failures
 
-The selected file is limited to 256 MiB. A dependency section is limited to 1
-MiB compressed. Inflated JSON is limited to the smaller of 8 MiB and 64 times
-the compressed size. The complete report is limited to 8 MiB. Empty sections,
-truncated or trailing zlib bytes, invalid JSON, unknown fields, dependency
+The selected file is limited to 256 MiB. A dependency section's zlib stream is
+limited to 1 MiB compressed. Inflated JSON is limited to the smaller of 8 MiB
+and 64 times the compressed stream length. The complete report is limited to
+8 MiB. Empty sections,
+truncated streams, nonpadding bytes after a zlib stream, invalid JSON, duplicate
+object fields, unknown fields, dependency
 indices outside the package list, more than one root package, and compressed
 dependency sections are typed failures. A cycle is reported and is not walked.
+
+For PE images with `VirtualSize` zero, the raw-size fallback can include file
+alignment bytes. REA excludes a zero suffix only when the raw section size is
+the zlib stream length rounded up to the declared `FileAlignment`; nonzero or
+oversized suffixes and truncated streams remain failures.
 
 A missing section returns success with `auditable_metadata: null` and a
 limitation. Absence of `.dep-v0` does not mean the binary has no dependencies.
