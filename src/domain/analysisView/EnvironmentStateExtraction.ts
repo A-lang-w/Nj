@@ -21,6 +21,7 @@ import {
   locateList,
   projectsFields,
   rootOf,
+  selectsSomeFields,
   same,
   scalarText,
   writeSpanCheck,
@@ -203,8 +204,9 @@ export class EnvironmentStateExtraction {
 
   /** Leave each plan's representation variants to replay: out of its lines, the observed entities and the membership changes. */
   #dropVariants(): void {
-    const shapes = lineShapes(this.#entities.values());
-    this.#retain(ENTRY_BYTES * (shapes.size + 1));
+    const shapes = lineShapes(this.#entities.values(), (bytes) =>
+      this.#retain(bytes),
+    );
     const dropped = new Set<number>();
     for (const [index, plan] of this.#plans.entries()) {
       const split = withoutVariants(plan, {
@@ -507,8 +509,8 @@ export class EnvironmentStateExtraction {
     const { tool, type } = candidate;
     const initial = this.#initRecordingsOf(candidate);
     if (initial === undefined) return;
-    // Beside a line showing whole entities, one asking for some fields only is replayed and proves nothing.
-    const whole = initial.filter((record) => !projectsFields(record.query));
+    // Beside a line showing whole entities, one asking for some fields only is replayed and proves nothing; one asking for all is whole.
+    const whole = initial.filter((record) => !selectsSomeFields(record.query));
     const recordings = whole.length > 0 ? whole : initial;
     const proved = this.#identity.get(type)?.field;
     const fieldsOf = (items: readonly JsonObject[]): string[] =>

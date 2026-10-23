@@ -25,7 +25,7 @@ import type { WriteIo } from "./environmentStateWriteEffects.js";
 export class UnseenEntities {
   /** Targets of the entities the copy has held: the initial ones and any a modelled write or an adoption touched. */
   readonly #held: Set<string>;
-  /** Timeline indexes of successful writes no built plan models. */
+  /** Timeline indexes of writes no built plan models, and of redirected or unanswered ones. */
   readonly #unplannedAt: number[] = [];
 
   constructor(
@@ -52,7 +52,7 @@ export class UnseenEntities {
     this.#held.add(key);
   }
 
-  /** Note a successful write no built plan models. */
+  /** Note a write no built plan models, or one redirected or unanswered. */
   unplanned(index: number): void {
     this.facts.io.retain(ENTRY_BYTES);
     this.#unplannedAt.push(index);

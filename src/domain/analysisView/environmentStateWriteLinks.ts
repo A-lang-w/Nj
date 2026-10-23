@@ -5,6 +5,8 @@ import {
   isObject,
   isParam,
   lastSegmentValue,
+  listItems,
+  locateList,
   normalizedPath,
   scalarText,
   segmentsOf,
@@ -69,41 +71,58 @@ const identitiesIn = (root: JsonValue | undefined): Set<string> => {
   return shown;
 };
 
-/** The identity-named scalar values a read's body shows at any depth, or its path's id for an item read. */
+/** The ids a list read shows: its listed entities' own identity members, or any it shows at any depth when it lists none. */
+const listedIds = (body: JsonValue | undefined): Set<string> => {
+  const pointer = body === undefined ? undefined : locateList(body, undefined);
+  const items =
+    body === undefined || pointer === undefined
+      ? undefined
+      : listItems(body, pointer);
+  return items === undefined
+    ? identitiesIn(body)
+    : new Set(items.flatMap(identityValues));
+};
+
+/** The ids a read shows: its listed entities' for a list read, or its path's id for an item read. */
 const shownIds = (
   record: StateRecordFacts,
   item: boolean,
   body: () => JsonValue | undefined,
 ): Set<string> =>
-  item ? new Set([lastSegmentValue(record.path)]) : identitiesIn(body());
+  item ? new Set([lastSegmentValue(record.path)]) : listedIds(body());
 
-/** One read of a type: where it ran, whether it reads one item, and the ids it shows. */
+/** One read of a type: where it ran, when it finished, whether it reads one item, and the ids it shows. */
 interface ShownRead {
   readonly at: number;
+  readonly end: number;
   readonly item: boolean;
   readonly ids: ReadonlySet<string>;
 }
 
 /**
- * The ids a POST at `at` made that a type's reads show only after it, before `end`. A short id may be
- * any type's, so it counts only when the type was read before the POST and an item read names it after.
+ * The ids a POST at `post.at` made that a type's reads show only after it began, before `until`: a
+ * read finished before the POST began shows what was there, and one still running may show its
+ * effect. A short id may be any type's, so it counts only when the type was read before the POST
+ * and an item read names it after.
  */
 const freshIds = (
   ids: readonly string[],
   shown: readonly ShownRead[],
-  at: number,
-  end: number,
+  post: { readonly at: number; readonly start: number },
+  until: number,
 ): string[] => {
-  const seen = shown.some((read) => read.at < at);
+  const before = (read: ShownRead): boolean =>
+    read.at < post.at && read.end <= post.start;
+  const seen = shown.some(before);
   return ids.filter((id) => {
     const short = id.length < MIN_ID_LENGTH;
     return (
       (!short || seen) &&
-      !shown.some((read) => read.at < at && read.ids.has(id)) &&
+      !shown.some((read) => before(read) && read.ids.has(id)) &&
       shown.some(
         (read) =>
-          read.at > at &&
-          read.at < end &&
+          !before(read) &&
+          read.at < until &&
           (!short || read.item) &&
           read.ids.has(id),
       )
@@ -173,6 +192,7 @@ export const creationLimit = (
         : [
             {
               at: reads.position(record),
+              end: record.end,
               item,
               ids: shownIds(record, item, () => reads.body(ordinal)),
             },
@@ -184,7 +204,8 @@ export const creationLimit = (
   )) {
     const at = reads.position(creation.record);
     if (at >= end) break;
-    if (freshIds(creation.ids, shown, at, end).length > 0)
+    const post = { at, start: creation.record.start };
+    if (freshIds(creation.ids, shown, post, end).length > 0)
       return creation.record;
   }
   return undefined;
@@ -192,13 +213,14 @@ export const creationLimit = (
 
 /**
  * The state type and collection a POST whose path names none creates into: that of the first later
- * successful item read naming an id its first successful call returned, when neither the initial
- * state nor any earlier read of that id, its type's lists or its collection showed that id. A short
- * id may be any type's, so it links only to a type read before the call.
+ * successful item read naming an id its first successful call returned, before any other tool's
+ * write, when neither the initial state nor any earlier read of that id, its type's lists or its
+ * collection showed that id. A short id may be any type's, so it links only to a type read before the call.
  */
 export const linkedCreate = (input: {
   readonly tool: StateToolFacts;
   readonly records: readonly StateRecordFacts[];
+  readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly entities: readonly StateEntity[];
   readonly respondedIds: (ordinal: number) => readonly string[];
@@ -220,6 +242,8 @@ export const linkedCreate = (input: {
     )
       return undefined;
   for (const record of records.slice(first + 1)) {
+    // Another write may have made what a later read shows, so the search ends there.
+    if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
     const view = input.viewOf(record.ordinal);
     if (
       record.method !== "GET" ||
@@ -298,6 +322,7 @@ export const linkedTarget = (
   classified: { readonly effect: WriteEffect; readonly target: string | null },
   input: {
     readonly records: readonly StateRecordFacts[];
+    readonly isWrite: (record: StateRecordFacts) => boolean;
     readonly viewOf: (ordinal: number) => StateView | undefined;
     readonly entities: readonly StateEntity[];
     readonly io: {
@@ -317,10 +342,11 @@ export const linkedTarget = (
       ? linkedCreate({
           tool,
           records: input.records,
+          isWrite: input.isWrite,
           viewOf: input.viewOf,
           entities: input.entities,
           respondedIds: (ordinal) => input.io.withBody(ordinal, respondedIds),
-          shownIds: (ordinal) => input.io.withBody(ordinal, identitiesIn),
+          shownIds: (ordinal) => input.io.withBody(ordinal, listedIds),
         })
       : undefined;
   return link === undefined

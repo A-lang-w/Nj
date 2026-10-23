@@ -1,4 +1,5 @@
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
+import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import type { StatePlan } from "./environmentStateGate.js";
 import type { ObservedEntity } from "./environmentStateMerge.js";
 import {
@@ -55,9 +56,10 @@ const shapingNames = (query: string | null | undefined): string[] =>
     (name) => !PAGING.has(name.toLowerCase()),
   );
 
-/** The shape each observed recording showed of its entities, by ordinal. */
+/** The shape each observed recording showed of its entities, by ordinal, each part counted against the budget before it is kept. */
 export const lineShapes = (
   entities: Iterable<ObservedEntity>,
+  retain: (bytes: number) => void,
 ): Map<number, LineShape> => {
   const shapes = new Map<
     number,
@@ -67,19 +69,27 @@ export const lineShapes = (
       common: Set<string> | undefined;
     }
   >();
+  retain(ENTRY_BYTES);
   for (const entity of entities)
     for (const observation of entity.observations) {
       const members = Object.keys(observation.object);
       let shape = shapes.get(observation.ordinal);
       if (shape === undefined) {
+        // The shape's own entry and containers, with room for the members every object carries.
+        retain(ENTRY_BYTES * (4 + members.length));
         shape = { entities: new Map(), carried: new Set(), common: undefined };
         shapes.set(observation.ordinal, shape);
       }
-      shape.entities.set(
-        JSON.stringify([entity.type, entity.collection, entity.id]),
-        [...members].sort(compare).join(","),
-      );
-      for (const member of members) shape.carried.add(member);
+      const key = JSON.stringify([entity.type, entity.collection, entity.id]);
+      const signature = [...members].sort(compare).join(",");
+      if (!shape.entities.has(key))
+        retain(ENTRY_BYTES + textBytes(key.length + signature.length));
+      shape.entities.set(key, signature);
+      for (const member of members)
+        if (!shape.carried.has(member)) {
+          retain(ENTRY_BYTES);
+          shape.carried.add(member);
+        }
       shape.common =
         shape.common === undefined
           ? new Set(members)

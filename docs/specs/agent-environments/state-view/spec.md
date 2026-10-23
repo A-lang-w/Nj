@@ -28,9 +28,12 @@ later increments.
   whose URL was redacted bounds every type, with a limitation counting it. A
   successful `POST` elsewhere bounds a type's state too when its response named
   an id (an identity member, or a bare or sole scalar of four characters or
-  more) that the type's reads show only after it: the `POST` made that entity,
-  so it is not in the initial state. An id shorter than four characters counts
-  only when the type was read before the `POST` and an item read names it after.
+  more) that the type's reads show only once it began: the `POST` made that
+  entity, so it is not in the initial state. A read finished before the `POST`
+  began shows what was there, and one still running may show its effect. A list
+  read shows the ids its listed entities carry as their own identity members, not
+  those of entities they nest. An id shorter than four characters counts only
+  when the type was read before the `POST` and an item read names it after.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that
   every listed item carries distinctly, which needs at least one listed item.
@@ -38,7 +41,8 @@ later increments.
   `select`, `$select`) and does not return the item is left out of the proof
   and of the view's checks; the view lists it in `projected_record_ordinals`.
   Beside a line showing whole entities, a list line asking for some fields only
-  is listed there too, and proves no identity or membership. On a view with
+  (a projection value other than `*`, which asks for all) is listed there too,
+  and proves no identity or membership. On a view with
   such replayed reads, serving replays a call naming a projection parameter for
   an entity the state holds unless every value it gives is `*` or one a checked
   line gave, and no replayed read gave it. The write gate leaves out exactly

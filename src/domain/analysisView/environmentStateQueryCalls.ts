@@ -10,6 +10,7 @@ import {
   type StateRecordFacts,
   type StateToolFacts,
 } from "./environmentStateRules.js";
+import { isAbsence } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
 
 /** The words of a segment or operation name: split on `_`, `-`, `.` and camelCase, in lower case. */
@@ -57,6 +58,8 @@ const WRITE_OPERATION_WORDS = new Set([
   "create",
   "insert",
   "update",
+  "modify",
+  "replace",
   "delete",
   "remove",
   "upsert",
@@ -144,10 +147,10 @@ const readsOnly = (operation: string): boolean => {
 
 /**
  * POST tools whose recorded calls read state rather than change it, by the strongest evidence that
- * applies: a response repeating the latest read of the same path with no write between, an RPC
- * tunnel naming only read operations, a last path word naming a lookup, or a session segment. A
- * tool with a redirected or unanswered call stays a write, as does one a read line its path relates
- * to changes across, no write but the other read-only tools' calls between.
+ * applies: a response repeating the latest read of the same path finished before it, with no write
+ * between, an RPC tunnel naming only read operations, a last path word naming a lookup, or a session
+ * segment. A tool with a redirected or unanswered call stays a write, as does one a read line its
+ * path relates to changes across or finds gone after, no write but the other read-only tools' calls between.
  */
 export const readOnlyTools = (
   tools: readonly StateToolFacts[],
@@ -203,7 +206,7 @@ interface Timeline {
   readonly io: QueryCallIo;
 }
 
-/** Every successful call answers as the latest earlier successful GET of its path did, with no write between. */
+/** Every successful call answers as the latest successful GET of its path finished before it began did, with no write between. */
 const repeatsRead = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
@@ -217,7 +220,8 @@ const repeatsRead = (
         (record) =>
           record.method === "GET" &&
           record.path === call.path &&
-          succeeded(record),
+          succeeded(record) &&
+          record.end <= call.start,
       );
     if (read === undefined || between(position.get(read.ordinal)!, at))
       return false;
@@ -254,7 +258,11 @@ const namesLookup = (template: string): boolean => {
 const lastMeaningfulWord = (segment: string): string | undefined =>
   words(segment).findLast((word) => !NEUTRAL_WORDS.has(word));
 
-/** A GET line whose path a call's path relates to reads differently just before and just after it, with no other write between. */
+/**
+ * A GET line whose path a call's path relates to reads differently, or finds its entity present on one
+ * side only, just before and just after it, with no other write between: the reads finished before it
+ * began and began after it ended, since one overlapping it may show either state.
+ */
 const changesReadsAcross = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
@@ -267,22 +275,28 @@ const changesReadsAcross = (
     const related = records.filter(
       (record) =>
         record.method === "GET" &&
-        succeeded(record) &&
+        (succeeded(record) || isAbsence(record.status)) &&
         prefixRelated(call.path, record.path),
     );
     return [...new Set(related.map(lineOf))].some((line) => {
       const before = related.findLast(
         (record) =>
-          lineOf(record) === line && position.get(record.ordinal)! < at,
+          lineOf(record) === line &&
+          position.get(record.ordinal)! < at &&
+          record.end <= call.start,
       );
       const after = related.find(
         (record) =>
-          lineOf(record) === line && position.get(record.ordinal)! > at,
+          lineOf(record) === line &&
+          position.get(record.ordinal)! > at &&
+          record.start >= call.end,
       );
       if (before === undefined || after === undefined) return false;
       const from = position.get(before.ordinal)!;
       const to = position.get(after.ordinal)!;
       if (between(from, at) || between(at, to)) return false;
+      if (succeeded(before) !== succeeded(after)) return true;
+      if (!succeeded(before)) return false;
       const earlier = io.response(before.ordinal);
       const later = io.response(after.ordinal);
       return (

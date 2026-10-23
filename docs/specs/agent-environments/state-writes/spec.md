@@ -39,8 +39,9 @@ gets no plan, stays a recorded view with the reason `query-body`, is served by
 replay, and its calls bound no initial-recording window and end no observation
 search. The capture shows it by the first of these that applies:
 
-1. every successful call answers as the latest earlier successful `GET` of its
-   path did, with no write between (a status lookup posting the jobs it names);
+1. every successful call answers as the latest successful `GET` of its path
+   that finished before the call began did, with no write between (a status
+   lookup posting the jobs it names);
 2. every call names read operations only, in its body's `operation` or
    `operations[].operation`, else its query's `operation`, `op` or `action`
    (`batch` and similar only wrap them, in either place, so a call needs at
@@ -49,7 +50,8 @@ search. The capture shows it by the first of these that applies:
    write); an operation reads when its words name one of `list`,
    `get`, `count`, `aggregate`, `info`, `search`, `find`, `read`, `query`,
    `schema`, `describe`, `fetch` or `lookup`, and none of `create`, `insert`,
-   `update`, `delete`, `remove`, `upsert`, `add`, `set`, `save` and similar;
+   `update`, `modify`, `replace`, `delete`, `remove`, `upsert`, `add`, `set`,
+   `save` and similar, so `findAndModify` and `findOneAndReplace` stay writes;
 3. the path's last literal segment has a query word as its last meaningful
    word, split on `_`, `-`, `.` and case and skipping trailing `data`, `info`
    and `results` (`search`, `query`, `list`, `find`, `lookup`, `count`,
@@ -63,9 +65,12 @@ search. The capture shows it by the first of these that applies:
 A tool stays a write when one of its calls was redirected or went unanswered,
 since nothing shows what it did. It also stays a write when a `GET` line whose
 path its call's path relates to (segment by segment, a parameter matching any
-value) reads differently just before and just after one of its calls with no
-other write between; the other read-only tools' calls are no writes there, so
-the tools are dropped until none is vetoed. Reads of unrelated paths do not
+value) reads differently just before and just after one of its calls, or finds
+its entity on one side only (a 400, 404 or 410 on the other), with no other
+write between; the other read-only tools' calls are no writes there, so the
+tools are dropped until none is vetoed. Those reads are the latest that
+finished before the call began and the first that began after it ended, since
+one overlapping the call may show either state. Reads of unrelated paths do not
 count, so a session renewal stays read-only although an endpoint under the
 same root regenerates values on every read.
 
@@ -83,10 +88,12 @@ A `POST` whose path gives it no target is a `create` into the type its returned
 id is read under: its exemplar's response names an id (an identity member of the
 body or of an object member, or a scalar body or sole member of four characters
 or more), and the first later successful item read naming that id belongs to a
-state type. The entity must be new: neither the initial state nor any earlier
-read holds that id, whether an item read of it, a list read of its type, or any
-read of the item read's collection, with or without a query, whose body shows it
-under an identity member. An id shorter than four characters may be any type's,
+state type. That read must come before any other tool's write, which may have
+made what it shows, as a publish call makes a note from a draft. The entity must
+be new: neither the initial state nor any earlier read holds that id, whether an
+item read of it, a list read of its type, or any read of the item read's
+collection, with or without a query, that lists it under an identity member of
+its own (a body with no list counts an identity member at any depth). An id shorter than four characters may be any type's,
 so it links only to a type a successful read showed before the call. The plan
 records that read's collection, and serving creates there, since the call's own
 path names no collection of the type. That collection holds only for the
@@ -279,8 +286,9 @@ of a write.
 
 A write no built plan models can also make an entity the copy never held, such
 as a row an import or a nested create added: a write of a tool with no create,
-update, delete or document plan, a call of a tool whose plan was never built, or
-a linked create's call that serving would refuse.
+update, delete or document plan, a call of a tool whose plan was never built, a
+linked create's call that serving would refuse, or any write redirected or left
+unanswered.
 A successful item read of an entity the copy has never held (no initial entity,
 and none a modelled write created, changed or removed) that names it by the
 type's identity, when such a write ran since that entity or its collection was

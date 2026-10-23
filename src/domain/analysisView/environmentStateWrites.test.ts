@@ -1588,6 +1588,42 @@ describe("creates read under another path", () => {
   });
 });
 
+describe("creates a later write may explain", () => {
+  it("links no create past a later write, which may have made what the read shows", () => {
+    const drafted = (publish: boolean): TimedCaptureRow[] => [
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      ["POST", "/api/drafts", C, 201, { title: "Gamma" }],
+      ...(publish
+        ? ([
+            [
+              "POST",
+              "/api/drafts/1003/publish",
+              { id: 1003, status: "published" },
+              201,
+            ],
+          ] as TimedCaptureRow[])
+        : []),
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ];
+    const state = stateOf(drafted(true));
+    // The publish call made the note, so the draft's POST creates none.
+    expect(planOf(state, "post_drafts")).toMatchObject({
+      effect: "none",
+      reason: "no-state-target",
+    });
+    expect(
+      state.writes.find((plan) => plan.tool !== "post_drafts"),
+    ).toMatchObject({ effect: "create", target: "/api/notes" });
+    expect(planOf(stateOf(drafted(false)), "post_drafts")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+  });
+});
+
 describe("creates whose returned id an earlier read showed", () => {
   it("links no create whose returned id a list of its collection showed before it", () => {
     const listed = (shown: JsonValue[]): TimedCaptureRow[] =>
@@ -1634,6 +1670,30 @@ describe("lines left to replay", () => {
         projected_query_keys: [{ name: "fields" }],
       },
     );
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [5],
+    });
+  });
+
+  it("checks a list line asking for every field beside the plain one, as serving answers both from the state", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books?fields=*", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books?fields=*", [FIRST_BOOK, SECOND_BOOK, created]],
+    ]);
+    const view = state.views.find(
+      (candidate) => candidate.tool === "get_books",
+    );
+    expect(view).toMatchObject({
+      shape: "list",
+      checked_record_ordinals: [0, 1],
+    });
+    expect(view).not.toHaveProperty("projected_record_ordinals");
     expect(planOf(state, "post_books")).toMatchObject({
       served: true,
       checked_record_ordinals: [5],

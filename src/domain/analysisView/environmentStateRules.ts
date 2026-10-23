@@ -146,6 +146,13 @@ export const projectsFields = (query: string | undefined): boolean =>
   query !== undefined &&
   [...new URLSearchParams(query).keys()].some(isProjectionParameter);
 
+/** Whether a recorded query asks for some fields only: a projection parameter with a value other than `*`, which asks for all. */
+export const selectsSomeFields = (query: string | undefined): boolean =>
+  query !== undefined &&
+  [...new URLSearchParams(query)].some(
+    ([name, value]) => isProjectionParameter(name) && value !== "*",
+  );
+
 export type StateListView = EntityViewPlan &
   ReplayedReads & {
     readonly shape: "list";

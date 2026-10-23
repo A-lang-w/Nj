@@ -161,6 +161,7 @@ export class EnvironmentStateWriteSimulation {
         continue;
       const link = linkedTarget(tool, classifyWrite(tool, types, documents), {
         ...this.#input,
+        isWrite: (record) => this.#isWrite(record),
         viewOf: (ordinal) =>
           this.#input.views.get(this.#toolOf.get(ordinal)?.name ?? ""),
       });
@@ -190,10 +191,11 @@ export class EnvironmentStateWriteSimulation {
 
   #step(record: StateRecordFacts, index: number): void {
     const tool = this.#toolOf.get(record.ordinal);
-    // A redirected or unanswered write may have changed state, but only a 2xx one shows its effect.
-    if (this.#isWrite(record) && !succeeded(record))
+    // A redirected or unanswered write may have changed state, even made an entity, but only a 2xx one shows its effect.
+    if (this.#isWrite(record) && !succeeded(record)) {
       this.#unmodelled(record.path, index);
-    else if (this.#isWrite(record)) this.#write(record, index, tool);
+      this.#unseen.unplanned(index);
+    } else if (this.#isWrite(record)) this.#write(record, index, tool);
     else if (tool?.method === "GET") this.#read(record, index, tool);
   }
 

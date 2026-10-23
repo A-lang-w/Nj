@@ -2253,6 +2253,21 @@ describe("entities an unmodelled write made", () => {
     });
   });
 
+  it("takes a book an import may have made though it was redirected or went unanswered", () => {
+    for (const status of [303, 0]) {
+      const unresolved: TimedCaptureRow = [
+        "POST",
+        "/api/imports",
+        { queued: true },
+        status,
+        { source: "csv" },
+      ];
+      expect(
+        gated(deletedAfterRead([RENAME, unresolved]), "delete_books_by_id"),
+      ).toMatchObject({ served: true, checked_record_ordinals: [7] });
+    }
+  });
+
   it("counts an entity it takes against the view's allowance", () => {
     let retained = 0;
     const read = { ...THIRD_BOOK, notes: "x".repeat(10_000) };

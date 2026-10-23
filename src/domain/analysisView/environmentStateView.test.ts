@@ -19,6 +19,7 @@ import {
   type AnalysisViewResult,
 } from "./analysisView.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
+import type { ObservedEntity } from "./environmentStateMerge.js";
 import {
   at,
   identityCandidates,
@@ -26,6 +27,7 @@ import {
   type JsonObject,
 } from "./environmentStateRules.js";
 import { environmentStateFields } from "./environmentStateView.js";
+import { lineShapes } from "./environmentStateVariants.js";
 
 type State = Extract<AnalysisViewResult, { kind: "environment-state" }>;
 const ALL_RULES = [
@@ -754,6 +756,34 @@ it("refuses when extraction would exceed the projection budget", () => {
       message: expect.stringContaining("Environment-state"),
     },
   });
+});
+
+it("counts the line shapes it builds against the budget as it builds them", () => {
+  const members = Object.fromEntries(
+    Array.from({ length: 40 }, (_, index) => [
+      `member_with_a_long_name_${String(index)}`,
+      index,
+    ]),
+  );
+  const entities: ObservedEntity[] = Array.from({ length: 50 }, (_, id) => ({
+    type: "/api/items",
+    collection: "/api/items",
+    id: String(id),
+    order: [0, id],
+    observations: [1, 2].map((ordinal) => ({
+      position: ordinal,
+      ordinal,
+      tool: "get_items",
+      item: false,
+      object: members,
+    })),
+  }));
+  let retained = 0;
+  lineShapes(entities, (bytes) => {
+    retained += bytes;
+  });
+  // Each of the hundred observations keeps its entity's key and the names of its members.
+  expect(retained).toBeGreaterThan(100 * Object.keys(members).join(",").length);
 });
 
 it("releases a planning pass a rewrite cut discards before extracting the state again", () => {

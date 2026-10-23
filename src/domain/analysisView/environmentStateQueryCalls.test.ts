@@ -16,9 +16,11 @@ interface Call {
   readonly request?: JsonValue;
   readonly tool: string;
   readonly template?: string;
+  readonly start?: number;
+  readonly end?: number;
 }
 
-/** The read-only tools of a timeline of calls, ordinals in order. */
+/** The read-only tools of a timeline of calls, ordinals in order; a call spans its index unless it gives its times. */
 const readOnlyOf = (calls: readonly Call[]): string[] => {
   const records: StateRecordFacts[] = calls.map((call, index) => ({
     ordinal: index,
@@ -26,8 +28,8 @@ const readOnlyOf = (calls: readonly Call[]): string[] => {
     path: call.path,
     query: call.query,
     status: call.status === undefined ? 200 : call.status,
-    start: index,
-    end: index,
+    start: call.start ?? index,
+    end: call.end ?? index,
   }));
   const tools = new Map<string, StateToolFacts>();
   calls.forEach((call, index) => {
@@ -285,5 +287,88 @@ describe("POSTs that read state but stay writes", () => {
       readOnlyOf([rpc([read, { operation: "batch", operations: [] }])]),
     ).toEqual([]);
     expect(readOnlyOf([rpc({ first: read })])).toEqual([]);
+  });
+
+  it("keeps an RPC call a write when it finds and then modifies or replaces", () => {
+    const rpc = (operation: string): Call => ({
+      method: "POST",
+      path: "/rpc",
+      tool: "post_rpc",
+      request: { operation },
+      response: {},
+    });
+    expect(readOnlyOf([rpc("findOne")])).toEqual(["post_rpc"]);
+    expect(readOnlyOf([rpc("findAndModify")])).toEqual([]);
+    expect(readOnlyOf([rpc("findOneAndReplace")])).toEqual([]);
+  });
+});
+
+describe("the reads either side of a POST", () => {
+  it("compares a POST only with reads that finished before it began or began after it ended", () => {
+    const note = (title: string): Call => ({
+      method: "GET",
+      path: "/v1/notes/7",
+      template: "/v1/notes/{id}",
+      tool: "get_note",
+      response: { id: 7, title },
+    });
+    const post: Call = {
+      method: "POST",
+      path: "/v1/notes/7",
+      template: "/v1/notes/{id}",
+      tool: "post_note",
+      request: { title: "Renamed" },
+      response: { id: 7, title: "Renamed" },
+      start: 10,
+      end: 20,
+    };
+    const at = (call: Call, start: number, end: number): Call => ({
+      ...call,
+      start,
+      end,
+    });
+    const renamed = note("Renamed");
+    const original = note("Draft");
+    expect(readOnlyOf([at(renamed, 0, 5), post, at(renamed, 40, 41)])).toEqual([
+      "post_note",
+    ]);
+    // A read still running when the POST began may already show its change.
+    expect(readOnlyOf([at(renamed, 0, 30), post, at(renamed, 40, 41)])).toEqual(
+      [],
+    );
+    // A read begun before the POST ended may not show it yet, so the later read decides.
+    expect(
+      readOnlyOf([
+        at(original, 0, 5),
+        { ...post, response: original.response! },
+        at(original, 15, 25),
+        at(renamed, 40, 41),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("keeps a POST a write when a read of its path finds the entity gone after it", () => {
+    const message = { id: 1001, body: "hello" };
+    const get = (status: number, response: JsonValue): Call => ({
+      method: "GET",
+      path: "/api/messages/1001",
+      template: "/api/messages/{id}",
+      tool: "get_message",
+      status,
+      response,
+    });
+    const post: Call = {
+      method: "POST",
+      path: "/api/messages/1001",
+      template: "/api/messages/{id}",
+      tool: "post_message",
+      response: message,
+    };
+    expect(readOnlyOf([get(200, message), post, get(200, message)])).toEqual([
+      "post_message",
+    ]);
+    expect(
+      readOnlyOf([get(200, message), post, get(404, { error: "Not found" })]),
+    ).toEqual([]);
   });
 });
