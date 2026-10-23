@@ -174,7 +174,7 @@ export const semanticProjectedSourceEligibilityAtRead = (
     false,
     memberReadAt,
     capturedSelections,
-    true,
+    { retainEligibility: true },
   )?.sources;
 
 /** Keep imported origins subject to the same selected writes as other values. */
@@ -191,7 +191,10 @@ const projectedSourceFactsAtRead = (
   includeUnknown: boolean,
   memberReadAt: t.Node = reference,
   capturedSelections: readonly SemanticCapturedSelection[] = [],
-  retainEligibility = false,
+  context: {
+    readonly retainEligibility?: boolean;
+    readonly beforeMutation?: t.Node | undefined;
+  } = {},
 ):
   | {
       readonly sources: readonly ProjectedSource[];
@@ -201,6 +204,7 @@ const projectedSourceFactsAtRead = (
       readonly hasDescendantEffects: boolean;
     }
   | undefined => {
+  const { retainEligibility = false, beforeMutation } = context;
   const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
   const captured = [
     ...read.binding.initializers,
@@ -261,6 +265,7 @@ const projectedSourceFactsAtRead = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
     includeDescendants = false,
   ) =>
+    (beforeMutation === undefined || effect.node !== beforeMutation) &&
     (effect.receiverInitializers === undefined ||
       effect.receiverInitializers.length === 0 ||
       captured.length === 0 ||

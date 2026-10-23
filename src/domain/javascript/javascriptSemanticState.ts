@@ -11,9 +11,10 @@ import {
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 
-import type {
-  JavaScriptSemanticPropertyPath,
-  SemanticPropertyPathCoverage,
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+  type SemanticPropertyPathCoverage,
 } from "./javascriptSemanticPropertyPaths.js";
 
 import type {
@@ -172,7 +173,10 @@ export interface JavaScriptSemanticAnalysisState {
   /** Ambient object identities passed to calls whose effects are not evaluated. */
   readonly ambientEscapes: SemanticPropertyPathCoverage;
   /** Ambient owner proved these native calls keep their namespace/browser receiver. */
-  readonly intrinsicReceiverCalls: WeakMap<t.Node, readonly string[]>;
+  readonly intrinsicReceiverCalls: WeakMap<
+    t.Node,
+    { readonly path: readonly string[]; readonly readAt: t.Node }
+  >;
   /** Capture sites keep later opaque effects from changing earlier copies. */
   readonly ambientEscapeEffects: JavaScriptSemanticMemberEffect[];
   /** Source sites distinguish replacement before an ambient identity capture from later writes. */
@@ -617,4 +621,47 @@ export const commonJsWrapperBindingDeclaration = (
     [...binding.declarationKinds].every((kind) => kind === "var")
     ? binding
     : undefined;
+};
+
+export const SEMANTIC_GLOBAL_OBJECT_NAMES: readonly string[] = [
+  "globalThis",
+  "global",
+  "window",
+  "self",
+];
+
+/** Global self fields select the same object identity, not another property depth. */
+export const canonicalSemanticAmbientPath = (
+  path: readonly (string | null)[],
+): readonly (string | null)[] => {
+  if (path[0] !== "global") return path;
+  let first = 1;
+  while (SEMANTIC_GLOBAL_OBJECT_NAMES.includes(path[first] ?? "")) first += 1;
+  return first === 1 ? path : ["global", ...path.slice(first)];
+};
+
+/** Query current ambient effects at their captured read; no cached validity bit. */
+export const semanticAmbientPathMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
+  path: readonly (string | null)[],
+): boolean => {
+  const selected = canonicalSemanticAmbientPath(path);
+  if (
+    !state.ambientWrites.covers(selected) &&
+    !state.ambientEscapes.covers(selected)
+  )
+    return false;
+  const affects = (
+    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  ) =>
+    semanticEffectTiming(read, effect.node, state) !== "after" &&
+    effect.path.length <= selected.length &&
+    effect.path.every((key, index) =>
+      semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+    );
+  return (
+    state.ambientWriteEffects.some(affects) ||
+    state.ambientEscapeEffects.some(affects)
+  );
 };

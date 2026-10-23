@@ -46,7 +46,13 @@ import {
   type SemanticIterationSource,
 } from "./javascriptSemanticIterationSources.js";
 import { semanticAliasSelectionChoices } from "./javascriptSemanticAliasSelections.js";
-import { semanticProjectedSourceFactsAtRead } from "./javascriptSemanticProjectedSources.js";
+import {
+  semanticProjectedSourceFactsAtRead,
+  semanticShiftCapturedSelections,
+  semanticNormalizeCapturedSelections,
+  semanticCapturedSelectionsAfterPropertyRead,
+  type SemanticCapturedSelection,
+} from "./javascriptSemanticProjectedSources.js";
 import { semanticGetterReceiverPaths } from "./javascriptSemanticGetterResults.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
@@ -125,17 +131,29 @@ const localAccessorMethods = (
       kind: "get" | "set",
     ) => boolean;
     readonly requireLocalProof?: boolean;
+    readonly effectsAt?: t.Node;
   },
 ): readonly t.ObjectMethod[] | undefined => {
   if (!selection.keyMayExist(path.at(-1), accessor)) return [];
   const methods = new Set<t.ObjectMethod>();
-  const pending = [{ node: root, path }];
+  const pending: (ReferencedValue & {
+    readonly capturedSelections?:
+      | readonly SemanticCapturedSelection[]
+      | undefined;
+  })[] = [{ node: root, path }];
   const examined = new WeakMap<t.Node, Set<string>>();
   let selections = 0;
   for (let cursor = 0; cursor < pending.length; cursor++) {
     const current = pending[cursor]!;
     const node = unwrapJavaScriptExpression(current.node).node;
-    const key = JSON.stringify(current.path);
+    const key = JSON.stringify([
+      current.path,
+      current.capturedSelections?.map(({ depth, at }) => [
+        depth,
+        at.start,
+        at.end,
+      ]),
+    ]);
     const paths = examined.get(node) ?? new Set<string>();
     if (paths.has(key)) continue;
     paths.add(key);
@@ -166,7 +184,9 @@ const localAccessorMethods = (
             path,
             state,
             true,
-            root,
+            selection.effectsAt ?? root,
+            current.capturedSelections,
+            { beforeMutation: selection.effectsAt },
           );
           if (
             facts === undefined ||
@@ -182,6 +202,7 @@ const localAccessorMethods = (
           state,
           true,
           root,
+          current.capturedSelections,
         );
         if (receiver === undefined || receiver.sources.length === 0)
           return undefined;
@@ -195,6 +216,16 @@ const localAccessorMethods = (
           pending.push({
             node: source.node,
             path: [...exactPath, current.path.at(-1)!],
+            capturedSelections: semanticNormalizeCapturedSelections([
+              ...(semanticShiftCapturedSelections(
+                current.capturedSelections,
+                exactPath.length - receiverPath.length,
+              ) ?? []),
+              ...(exactPath.length === 0
+                ? []
+                : [{ at: source.node, depth: exactPath.length }]),
+              ...(source.capturedSelections ?? []),
+            ]),
           });
         }
         continue;
@@ -228,6 +259,11 @@ const localAccessorMethods = (
           semanticStaticPropertyKey(node.property, node.computed),
           ...current.path,
         ],
+        capturedSelections: semanticNormalizeCapturedSelections([
+          ...(semanticShiftCapturedSelections(current.capturedSelections, 1) ??
+            []),
+          { at: node, depth: 1 },
+        ]),
       });
     } else if (
       current.path.length > 0 &&
@@ -250,12 +286,20 @@ const localAccessorMethods = (
         pending.push({
           node: source.node,
           path: [...source.path, ...remaining],
+          capturedSelections: semanticCapturedSelectionsAfterPropertyRead(
+            current.capturedSelections,
+            source,
+          ),
         });
     } else {
       const alternatives = branchReferenceValues(node, current.path);
       if (selection.requireLocalProof && alternatives.length === 0)
         return undefined;
-      for (const source of alternatives) pending.push(source);
+      for (const source of alternatives)
+        pending.push({
+          ...source,
+          capturedSelections: current.capturedSelections,
+        });
     }
   }
   return [...methods];
@@ -1216,7 +1260,11 @@ export function* collectSemanticMemberMutationsSteps(
           [semanticStaticPropertyKey(target.property, target.computed)],
           new Set(),
           "write",
-          { mutation, assignedSources: sourcesByTarget.get(target) ?? [] },
+          {
+            mutation,
+            originAt: target.object,
+            assignedSources: sourcesByTarget.get(target) ?? [],
+          },
         );
   };
   const completeSetterSelection = {
@@ -1250,13 +1298,10 @@ export function* collectSemanticMemberMutationsSteps(
       })
     )
       return true;
-    const setters = localAccessorMethods(
-      target.object,
-      [key],
-      "set",
-      state,
-      completeSetterSelection,
-    );
+    const setters = localAccessorMethods(target.object, [key], "set", state, {
+      ...completeSetterSelection,
+      effectsAt: source.mutation,
+    });
     return setters === undefined || setters.length > 0;
   };
   const writeOnlyMembers = new WeakSet<t.Node>();

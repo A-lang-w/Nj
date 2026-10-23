@@ -335,6 +335,16 @@ const expressionChildIndices = (
       t.isNewExpression(node)
     )
       return node.arguments;
+    if (t.isAssignmentExpression(node)) {
+      const target = unwrapJavaScriptExpression(node.left).node;
+      // References capture their base/key before the RHS. Destructuring instead
+      // evaluates the RHS value before selecting any pattern targets/defaults.
+      return t.isObjectPattern(target) || t.isArrayPattern(target)
+        ? [node.right, node.left]
+        : [node.left, node.right];
+    }
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+      return node.computed ? [node.object, node.property] : [node.object];
     if (t.isBinaryExpression(node) || t.isLogicalExpression(node))
       return [node.left, node.right];
     if (t.isConditionalExpression(node)) return [node.test];
@@ -569,6 +579,78 @@ export const semanticMutationInitializers = (
   JavaScriptSemanticBindingState,
   "initializers" | "referenceInitializers" | "directOrigins"
 > => {
+  // A property reference is selected before its assignment RHS. Keep this
+  // capture separate from effect sites, whose uncertain ordering stays broad.
+  let child = mutation;
+  let owner: t.AssignmentExpression | undefined;
+  for (
+    let parent = parents.get(child);
+    parent !== undefined;
+    parent = parents.get(child)
+  ) {
+    if (t.isFunction(parent) || t.isStatement(parent)) break;
+    if (
+      t.isAssignmentExpression(parent) &&
+      child === parent.left &&
+      t.isMemberExpression(unwrapJavaScriptExpression(parent.left).node)
+    ) {
+      owner = parent;
+      break;
+    }
+    child = parent;
+  }
+  const ownerPosition =
+    owner === undefined ? null : directMutationPosition(owner, parents);
+  if (owner !== undefined && ownerPosition !== null) {
+    const onRhs = (node: t.Node): boolean => {
+      for (
+        let current: t.Node | undefined = node;
+        current !== undefined;
+        current = parents.get(current)
+      ) {
+        if (current === owner!.right) return true;
+        if (t.isFunction(current) || t.isStatement(current)) return false;
+      }
+      return false;
+    };
+    const initializers = binding.initializers.filter(
+      ({ node }) => !onRhs(node),
+    );
+    const referenceInitializers = binding.referenceInitializers.filter(
+      ({ node }) => !onRhs(node),
+    );
+    const origins = [
+      ...initializers.map((initializer) => ({
+        initializer,
+        position: initializerPosition(initializer, parents),
+      })),
+      ...referenceInitializers.map((initializer) => ({
+        initializer,
+        position: initializerPosition(initializer, parents, true),
+      })),
+    ];
+    if (
+      origins.every(
+        ({ position }) =>
+          position !== null && positionPrecedes(position, ownerPosition),
+      )
+    ) {
+      const captured = { ...binding, initializers, referenceInitializers };
+      const ordered = semanticBindingAtRead(captured, mutation, parents);
+      if (ordered.status === "ordered") {
+        const { replacesEntry } = retainedInitializerOrigins(
+          origins,
+          binding,
+          parents,
+        );
+        return {
+          initializers: ordered.binding.initializers,
+          referenceInitializers: ordered.binding.referenceInitializers,
+          directOrigins: replacesEntry ? [] : binding.directOrigins,
+        };
+      }
+    }
+  }
   const mutationPosition =
     directMutationPosition(mutation, parents) ??
     referenceInitializerPosition(mutation, parents);
