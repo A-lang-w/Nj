@@ -60,7 +60,7 @@ Viu uma funcionalidade em um aplicativo que gostaria de ter no seu próprio prod
 
 O REA conecta seu agente a ferramentas para inspecionar binários nativos, aplicativos JavaScript e Electron, assemblies .NET e sites. Você também pode usar as mesmas ferramentas pelo terminal. A análise acontece localmente, e os resultados incluem as evidências e limitações por trás de cada conclusão.
 
-A configuração registra o REA no seu agente e instala as instruções de fluxo de trabalho correspondentes. A análise nativa pode usar uma instalação existente do Hopper ou do Ghidra; a configuração também pode instalar o Hopper opcionalmente, mediante aprovação. A análise estática de JavaScript não precisa de nenhum dos dois motores.
+A configuração registra o REA no seu agente e instala as instruções de fluxo de trabalho correspondentes. A análise nativa pode usar uma instalação existente do Hopper, do Ghidra ou do IDA; a configuração também pode instalar o Hopper opcionalmente, mediante aprovação. A análise estática de JavaScript não precisa de um motor de análise nativa.
 
 > **[Visite o site do REA](https://rea.tools/pt-BR/)** para instruções de configuração, guias ilustrados e estudos de caso reais.
 
@@ -145,7 +145,7 @@ O REA requer Node.js 22.x (>=22.19), 24.x (>=24.11) ou 26+, além do npm. As fer
 | Estrutura ELF sem execução  | Seções, segmentos, símbolos/relocações originais e possíveis mecanismos de mitigação identificados por análise estática | pwntools fornecido pelo chamador no Linux x64; [diagnóstico de binários](../binary-diagnostics.md)                                |
 | PE certificates             | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                            | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
 | Bytecode EVM                | Seletores de despacho, offsets de bytes, argumentos inferidos e mutabilidade                                            | Entrada local com bytes brutos ou representação hexadecimal no Linux x64; [guia de EVM sem execução](../evm-bytecode.md)          |
-| Rust binaries               | Embedded cargo-auditable dependency list                                                                                | [Rust binaries](../rust-binaries.md)                                                                                              |
+| Binários Rust               | Nomes, versões, origens e relações de dependência dos crates incorporados pelo cargo-auditable                          | Inspeção estática integrada de ELF/PE/Mach-O thin; [binários Rust](../rust-binaries.md)                                                                                              |
 | ELF notes                   | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                         | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
 | Erlang BEAM                 | IFF chunks, atoms, exports, and tables                                                                                  | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
 | Falhas do Linux registradas | Registros note brutos, registradores/sinais de cada thread registrada e candidatos opcionais a mapeamentos              | pwntools fornecido pelo chamador no Linux x64; GDB/pwndbg opcionais; [falhas registradas](../recorded-crashes.md)                 |
@@ -175,7 +175,7 @@ Os formatos nativos e os sistemas anfitriões compatíveis variam por provedor. 
 
 ## Casos de uso
 
-[![Ilustrações dos estudos de panoramização de áudio do DX-Ball, da ponte da área de transferência do Notion e do anel de projéteis do TH04](../assets/rea-showcases.png)](https://rea.tools/pt-BR/showcase/)
+[![Ilustrações dos estudos de panorâmica de áudio do DX-Ball, da ponte da área de transferência do Notion e do anel de projéteis do TH04](../assets/rea-showcases.png)](https://rea.tools/pt-BR/showcase/)
 
 ### DX-Ball: reconstruir um cálculo de panorâmica de áudio
 
@@ -297,9 +297,9 @@ Consulte [DISCLAIMER.md](../../DISCLAIMER.md) para orientações sobre o uso res
 
 O REA destina-se à pesquisa, à educação, à interoperabilidade, à preservação de software e à análise de software que você possui ou está autorizado a examinar, dentro da lei.
 
-The project's position on illegal or unauthorized use covers all REA
-versions, distribution channels, and platforms; each copy retains its
-applicable licenses.
+A posição do projeto sobre uso ilegal ou não autorizado abrange todas as
+versões, canais de distribuição e plataformas do REA; cada cópia mantém as
+licenças aplicáveis.
 
 ## Contribuir
 
@@ -311,14 +311,15 @@ Consulte [CONTRIBUTING.md](../../CONTRIBUTING.md) para configurar o ambiente de 
 
 [MIT](../../LICENSE)
 
-REA-authored code is licensed under MIT. Third-party material retains its own
-licenses and copyright notices; see [Third-party notices](../../THIRD_PARTY_NOTICES.md)
-for the dependency inventory, preserved license texts, and external-tool terms.
+O código de autoria do REA é licenciado sob a MIT. Materiais de terceiros mantêm
+suas próprias licenças e avisos de direitos autorais; consulte os [avisos de terceiros](../../THIRD_PARTY_NOTICES.md)
+para o inventário de dependências, os textos de licença preservados e os termos das ferramentas externas.
 
-**You must legally obtain and be authorized to use commercial tools**, including
-IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
-REA grants no tool license, key, or activation entitlement. Trials and demos
-remain subject to vendor terms, including user, feature, automation, and output
-sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
-and bypassing license restrictions are not authorized. This guidance does not
-amend MIT or third-party licenses.
+**Você precisa obter legalmente e estar autorizado a usar as ferramentas comerciais**,
+incluindo IDA Pro / descompiladores Hex-Rays, Hopper e JEB, conforme as licenças aplicáveis.
+O REA não concede licença, chave nem direito de ativação de nenhuma ferramenta. Versões de
+avaliação e de demonstração continuam sujeitas aos termos dos fornecedores, incluindo
+restrições de usuários, funcionalidades, automação e compartilhamento de resultados.
+Cópias crackeadas, chaves roubadas, compartilhamento não autorizado de chaves e contorno
+de restrições de licença não são autorizados. Esta orientação não altera a licença MIT
+nem as licenças de terceiros.
