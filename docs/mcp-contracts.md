@@ -44,12 +44,18 @@ root deltas. Missing graph members yield `truncated`; unknown traversal coverage
 or unavailable occurrence hashes retain uncertainty. Integrity mismatches remain
 contradictions. Static artifact equality does not establish unchanged runtime
 behavior.
+Source-map relation deltas include the content identity of the mapped source,
+so an unchanged map file is reported when its target source bytes change.
 
 Exhausted traversals with deliberately omitted filesystem entries retain
 `unknown` coverage and identify each omitted path/type in `limitations`; FIFO,
 socket and device entries are not opened. Case-distinct archive members remain
 separate observations. Their case-insensitive materialization diagnostic does
 not reduce traversal coverage when both spellings were read.
+PyInstaller inventory also preserves distinct table rows that share a logical
+path, including decoded children beneath a colliding file/directory path.
+Inventory coverage describes observed archive facts; extraction still refuses
+destinations where those paths cannot coexist.
 
 Current inventory Evidence requires scoped `coverage` with a `complete` or
 `unknown` status. Consumers use this producer-owned fact and reject records
@@ -80,6 +86,12 @@ can observe backend recovery; healthy dossiers keep their existing cache policy.
 `procedure_pseudo_code` still fails for that function. Hopper's unavailable reference-kind metadata and reported unresolved
 calls still prevent equality conclusions for those dimensions. Analysis profiles
 version these declarations so older snapshots are not reused as current results.
+For `strings_names`, a string marked with `decoding.available: false` keeps its
+provider display text in the source Evidence, but that text is not compared as
+decoded content. If no independently known string, name, or literal fact differs,
+the dimension remains `unknown` with the decoding reason. Known content and typed
+string-object differences can establish a change; missing typed metadata remains
+unknown, and `encoding_status` describes provenance rather than content.
 IDA declares the facets its selected adapter cannot provide; an empty
 unsupported array does not prove observed absence.
 Evidence and bundle imports reject unsupported fields in their envelopes,
@@ -95,11 +107,15 @@ optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
 do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
-the operation and the REA server/provider deadline; inspect partial Evidence
-and reported cleanup state, then follow producer-specific remediation or reduce
-supported work. Generic errors do not assume adjustable timeout controls. Raising
-only the MCP client's deadline cannot extend this budget. These hints never
-include the complete catalog or caller arguments.
+the operation and the REA server/provider deadline. Inspect partial Evidence
+and reported cleanup state, then follow the returned remediation. Change a
+request field or REA_* setting only when the returned remediation explicitly
+recommends that change. Restart REA when that text says the value is read at
+startup. A mention that a control does not raise the deadline is not a
+recommendation to change it. When it names no setting, reduce supported work;
+do not invent one. Raising only the MCP
+client's deadline cannot extend this budget. These hints never include the
+complete catalog or caller arguments.
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
@@ -234,11 +250,14 @@ The destination changes only when a complete export is atomically published.
 
 Clients that explicitly configure a larger receive buffer can set the REA
 server's `REA_MCP_MAX_RESPONSE_BYTES` environment variable to the same byte
-count. This setting must be a safe decimal integer at least 10485760; REA
-reserves 1024 bytes for the envelope. Raising it restores complete inline
-delivery for responses that fit that buffer and Node's single-string limit.
-It does not change the client's buffer, analysis coverage, or retained content.
-Ordinary responses keep their existing complete result contract.
+count. This setting must be a safe decimal integer at least 10485760 (10 MiB);
+REA reserves 1024 bytes for the envelope. The value is read when the REA
+process starts, so a change requires a restart and a matching client receive
+buffer. Raising it restores complete inline delivery for responses that fit
+that buffer. It does not raise REA's reserved single-string limit, which is
+1024 UTF-16 code units below Node's single-string ceiling, and it does not
+raise that Node ceiling. It does not change analysis coverage or retained
+content. Ordinary responses keep their existing complete result contract.
 
 ### Error recovery and deadline ownership
 
@@ -307,7 +326,9 @@ that complete Evidence in the session and returns the derived
 `normalized_result.parent_evidence_id` and `evidence_links` name the retained
 analysis, so later views and application workflows read it without repeating
 analysis or moving the complete record through the response. A server without
-session retention refuses summary detail with `capability_unavailable`.
+session retention refuses summary detail with `capability_unavailable`;
+`inspect_artifact`, `inspect_wasm_artifact`, `inspect_macho` and
+`decode_interface_builder` refuse before any analysis starts.
 For `inspect_artifact`, omission also keeps the original request parameters and
 complete output shape. Delivery selection never reaches the inventory engine;
 the complete inspection and its atomic inventory Evidence remain retained.
@@ -329,7 +350,7 @@ See [environment manifests](web-network-captures.md#environment-manifest).
 
 `inspect_analysis_view` also accepts `environment-state` for the same parents,
 extracting the initial state the recorded reads observed: entity types with an
-identity field, entities, documents for written non-entity paths, and a render
+identity field, entities, documents for non-entity reads, and a render
 plan per read tool that reproduces its recordings from the state or names why it
 cannot. Types and identity are inferences, so the Evidence is always inferred.
 See [environment state](web-network-captures.md#environment-state).
@@ -351,6 +372,35 @@ recorded property values and source locations; summaries include parent
 application and semantic coverage. The result carries a digest of the selected
 facts. Actual serialized size determines MCP transport admission: reduce the
 page size or export retained Evidence if the view is too large.
+
+`compare_source_to_bundle` accepts the committed historical graph inline or as
+`reference: {"kind":"file","path":"/absolute/reference.json"}`. The shared
+reader checks resource bounds and the graph's root commitment on every read. File-backed
+comparison Evidence records `parameters.reference_source`: the exact
+`requested_path` and the reader's absolute selected `path`, preserving POSIX
+`..`/symlink semantics. Normalized comparison facts and mapping identities agree
+with inline input; Evidence IDs distinguish caller-selected file origins.
+Omitting `view` preserves the complete comparison. For a compact initial reply,
+select `view: {"kind":"summary"}` or a `source-to-bundle` page; the session retains
+the complete comparison before delivery. Later calls use `inspect_analysis_view`
+with the returned `parent_evidence_id`.
+
+A `source-to-bundle` view selects `collection: "mappings"` or `"candidates"` with
+exact `source_paths`, `mapping_ids`, `statuses`, `fields`, `offset` and `limit`.
+Omitted filters select all; empty arrays select none. The default mapping fields
+include status, confidence, source digest/language and candidate/mapped counts.
+Candidate defaults include kind, score and confidence; request `signals` for exact
+supporting values. Mapping identity and `source_index` always remain; candidates
+also retain `current_node_id`, `candidate_index` and whether they were actually
+mapped. Indices refer to the complete comparison's item array and that item's
+candidate array. All classifications are computed before selection. The original
+`source_coverage` remains separate from page `coverage`; exhausting a page never
+turns unknown correspondence into absence or proves behavioral equivalence.
+
+The CLI accepts the same reference-file alternative (relative paths resolve from
+the working directory). Save its complete `--json` Evidence, then use
+`inspect-analysis-view` with an `evidence-file` source and the same view. Neither
+adapter executes the target or repeats analysis for retained queries.
 
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
@@ -821,7 +871,8 @@ operation headroom: 450 seconds with the default Ghidra allowance, or 2820
 seconds with `REA_GHIDRA_STARTUP_TIMEOUT_MS=2700000`. Positive caller-selected
 deadlines remain unchanged. Doctor reports an informational recommendation
 when a configured deadline is shorter than the known provider allowance. An
-explicit JEB upstream request budget also contributes to that allowance.
+explicit JEB upstream deadline (`REA_JEB_MCP_TIMEOUT_MS`, shared by catalog
+discovery and each tools/call) also contributes to that allowance.
 
 For an already connected client using the pinned SDK, request options are the
 **second** argument of `callTool`:
@@ -957,6 +1008,10 @@ on `rea extract-artifact`. With `record-and-continue` it writes the observed
 bytes and returns the `integrity_contradictions` records for the extracted
 files. An active ASAR unpacked entry whose companion file is absent cannot be
 materialized; extraction fails as `unavailable` with that logical path.
+
+Extraction materializes regular files exposed by the active archive reader.
+When that reader exposes a nested archive as a file, extraction copies the
+archive file; inspect and extract that file separately to unpack its contents.
 
 Packaging tools commonly sign or strip `.asar.unpacked` native binaries after
 writing the archive header, so their declared hashes no longer match. Electron

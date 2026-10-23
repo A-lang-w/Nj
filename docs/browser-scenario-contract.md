@@ -23,9 +23,21 @@ that rejection does not roll back browser effects. REA removes its owned
 future-document scripts, restores live frame methods, then disconnects.
 Add secret declarations, storage seeds, and additional artifact or event
 capture only when needed. Action, secret, and storage counts are not capped.
-Duration, action, and navigation timeouts remain fixed provider-owned liveness
-limits. `capture.limits` controls retained event and network-content budgets;
-it does not change those liveness deadlines.
+Duration, action, and navigation timeouts remain separate from CDP command
+deadlines. `command_timeout_ms` (default 20000; omit it to keep that default
+and leave it out of Evidence) bounds launch startup, the connect-over-CDP
+handshake, target lookup, environment commands, and storage CDP commands,
+including replies from attached child targets. Set it in the scenario JSON.
+`capture-browser-scenario` has no `--command-timeout-ms` option.
+It does not change action `timeout_ms`, `wait_for_timeout.duration_ms`, or
+navigation. Service-worker restoration keeps a fixed 5000 ms grace and does
+not inherit a raised `command_timeout_ms`. CDP discovery stays on its own
+fixed deadline. When service workers are blocked, the registration check
+before discovery has its own fixed 10000 ms deadline; `command_timeout_ms`
+does not apply because discovery has not started. The discovery deadline
+covers endpoint discovery only. The following WebSocket handshake and
+`Target.attachToTarget` each use `command_timeout_ms`. `capture.limits` controls retained event and network-content
+budgets; it does not change those liveness deadlines.
 
 ## Minimal launch example
 
@@ -375,6 +387,24 @@ observed) and excludes the sequence reference from normalization.
 Playwright scenario capture does not supply initiator stacks; passive CDP
 observation retains its own initiator evidence.
 
+## Storage value fingerprints
+
+New storage snapshots include `fingerprint_version: 2`. Non-secret, well-formed
+JavaScript strings retain their SHA-256 over UTF-8. Strings with unpaired UTF-16
+surrogates use SHA-256 over a raw `0xff` byte followed by their exact UTF-16LE
+code units; this prefix cannot occur in UTF-8. Declared secrets remain
+`redacted-secret` with a null digest, without a second or legacy digest.
+
+A missing version identifies legacy UTF-8 fingerprints, which replaced unpaired
+surrogates and cannot establish value identity. Storage containing any legacy
+hashed value is conservatively compared as `unknown`, including old-to-old
+comparisons; recapture both sides to compare reliably. This also conservatively
+withholds some otherwise provable legacy differences. Empty or entirely
+secret-redacted storage keeps its existing comparison semantics. The version is
+checked before normalization and excluded from content comparison: changing
+encoding metadata alone does not establish a website change. Existing captures
+and their completeness records are not rewritten.
+
 ## Scenario comparison
 
 `compare_web_captures` and `compare-web-captures` also accept two complete
@@ -406,6 +436,15 @@ replacements over named artifact kinds. Rules and artifact-kind lists are
 sorted canonically before application, making the same policy reproducible
 regardless of input order. Rules operate only on already-redacted durable
 capture fields and are preserved in the result.
+
+Cookies, local storage, and session storage are compared as unordered inventories
+after caller literal rules apply. Enumeration order alone does not establish a
+storage change. Canonical ordering uses the complete entry, preserving cookie
+scope/flags, value fingerprints, and duplicate entries even when redaction or
+literal rules make names collide. Captured storage arrays retain their original
+order. The `compare_storage_entries_as_unordered_collection` built-in rule
+participates in the normalization commitment; new storage comparison digests
+therefore differ from earlier order-sensitive comparisons.
 
 Each aligned step reports changed, unchanged, or unknown. Changed and unknown
 action, screenshot, DOM, accessibility, URL, history, storage, and event

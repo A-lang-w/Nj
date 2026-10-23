@@ -20,6 +20,7 @@ interface ParsedSegment {
 }
 
 interface ParsedLoadCommands {
+  readonly cpuType: number | null;
   readonly commands: Array<{
     index: number;
     kind: string;
@@ -135,7 +136,7 @@ export const parseOtoolLoadCommands = (raw: string) => {
   const header = parseHeader(output);
   if (header === undefined)
     throw new TypeError("otool output is missing the Mach header");
-  const state = createLoadCommandState(header.flags);
+  const state = createLoadCommandState(header.flags, header.cpuType);
   for (const block of output.split(/(?=^Load command \d+$)/mu))
     parseLoadCommand(block, state);
   validateLoadCommandFraming(header, state.commands);
@@ -264,7 +265,9 @@ const validateLoadCommandFraming = (
 
 const createLoadCommandState = (
   headerFlags: readonly string[] | undefined,
+  cpuType: number | null,
 ): ParsedLoadCommands => ({
+  cpuType,
   commands: [],
   segments: [],
   dependencies: [],
@@ -403,13 +406,33 @@ const collectBuild = (
     });
     return;
   }
-  if (kind.startsWith("LC_VERSION_MIN_"))
+  if (kind.startsWith("LC_VERSION_MIN_")) {
+    const platform = kind.slice("LC_VERSION_MIN_".length) || null;
     state.builds.push({
-      platform: kind.slice("LC_VERSION_MIN_".length) || null,
+      platform: legacySimulatorPlatform(platform, state.cpuType),
       minimum_os: stringField(fields, "version"),
       sdk: stringField(fields, "sdk"),
       tools: [],
     });
+  }
+};
+
+// Apple dyld interprets legacy iOS/tvOS/watchOS minimum-version commands on
+// Intel slices as simulator platforms. Newer commands encode this directly.
+const legacySimulatorPlatform = (
+  platform: string | null,
+  cpuType: number | null,
+): string | null => {
+  if (![7, 0x01000007].includes(cpuType ?? -1)) return platform;
+  return (
+    (
+      {
+        IPHONEOS: "IOSSIMULATOR",
+        TVOS: "TVOSSIMULATOR",
+        WATCHOS: "WATCHOSSIMULATOR",
+      } as const
+    )[platform as "IPHONEOS" | "TVOS" | "WATCHOS"] ?? platform
+  );
 };
 
 const collectDependency = (
@@ -477,7 +500,17 @@ const parseFields = (block: string): ParsedFields => {
 /** Names and linker options are text even when they look numeric. */
 const TEXT_FIELDS = /^(?:segname|sectname|string #\d+)$/u;
 
+/**
+ * otool prints load-command strings as `<key> %s (offset %u)`: exactly one
+ * separator space on each side of the recorded string, whose own leading and
+ * trailing whitespace belongs to the Mach-O value.
+ */
+const OFFSET_STRING_FIELD = /^(name|path) (.* \(offset \d+\))$/u;
+
 const parseField = (rawLine: string): readonly [string, string] | undefined => {
+  const offsetString = OFFSET_STRING_FIELD.exec(rawLine.trimStart());
+  if (offsetString?.[1] !== undefined && offsetString[2] !== undefined)
+    return [offsetString[1], offsetString[2]];
   // otool prints each linker option as `string #n <option>`; keep the option
   // exactly, including surrounding spaces, under otool's ordinal label.
   const option = /^\s*(string #[1-9]\d*)(?: (.*))?$/u.exec(rawLine);
@@ -640,7 +673,7 @@ const hexField = (
 };
 
 const stripOffsetSuffix = (value: string | null): string =>
-  value?.replace(/\s+\(offset\s+\d+\)$/u, "") ?? "unknown";
+  value?.replace(/ \(offset \d+\)$/u, "") ?? "unknown";
 
 const sectionAlignment = (raw: string | null): number | null => {
   if (raw === null) return null;

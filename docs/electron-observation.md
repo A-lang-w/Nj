@@ -70,7 +70,10 @@ DOM node indices retain their snapshot positions. Invalid rows are omitted with
 completeness diagnostics, so `total_nodes` can exceed the retained node count
 and a parent index can refer to an omitted source node.
 
-Script metadata retains its execution-context frame ID when CDP supplies one. The capture also
+Script metadata retains its execution-context frame ID when CDP supplies one and
+the observed frame generation is authorized. Frames describe the current inventory;
+script observations can retain earlier authorized frames that have since detached.
+The capture also
 inventories worker, service-worker, and shared-worker targets with
 validated opener-target and parent-frame IDs. Worker discovery uses passive
 target metadata; REA does not attach to or execute code in those targets.
@@ -245,4 +248,10 @@ application path and capture outcome to the static graph, while frames, scripts,
 workers, and execution claims remain unavailable until a separate passive runtime
 capture provides them.
 
-ASAR observation reads the header through one open file handle, validates its declared lengths against the archive size, and limits encoded JSON headers to 16 MiB before parsing. The header cache also retains at most 16 MiB of encoded headers across eight archives. Oversized headers produce a scope refusal.
+ASAR observation reads the header through one open file handle and validates its
+declared lengths against the archive size. Header/index admission is the same
+budget used by static ASAR reads: 16 MiB / 16777216 bytes by default, or
+`REA_ASAR_MAX_HEADER_BYTES` (at most 256 MiB) when set. An oversized header is
+not parsed; selecting a member path does not bypass admission, and the page
+stays unauthorized. The header cache separately retains at most that many bytes
+of already-admitted encoded headers across eight archives. Evicting that cache does not raise admission.

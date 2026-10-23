@@ -15,11 +15,12 @@ import { streamChunkToBuffer } from "./StreamBytes.js";
 
 import {
   ArtifactPathRegistry,
-  destinationCaseCollisionMessage,
+  destinationCaseCollision,
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { SafeOutputTreeDestinationRefusal } from "./SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.js";
 import { hashOutputFile } from "./SafeOutputTreeReadback.js";
 import { removeOwnedTree } from "./SafeOutputTreeCleanup.js";
@@ -95,15 +96,16 @@ export class SafeOutputTree {
     options: { readonly acceptExistingEmpty?: boolean } = {},
   ): Promise<SafeOutputTree> {
     if (!isAbsolute(outputRoot))
-      throw new ArtifactReaderFailure(
-        "path",
+      throw new SafeOutputTreeDestinationRefusal(
         "Extraction output root must be absolute",
       );
     // Path syntax follows the host; `platform` selects only the name policy.
     const requested = absoluteCallerPath(outputRoot);
     const name = basename(requested);
     if (name === "." || name === "..")
-      throw new ArtifactReaderFailure("path", "Invalid extraction output root");
+      throw new SafeOutputTreeDestinationRefusal(
+        "Invalid extraction output root",
+      );
     const parent = await realpath(dirname(requested)).catch(
       (cause: unknown) => {
         throw new ArtifactReaderFailure(
@@ -121,8 +123,7 @@ export class SafeOutputTree {
         created = false;
         return;
       }
-      throw new ArtifactReaderFailure(
-        "path",
+      throw new SafeOutputTreeDestinationRefusal(
         "Extraction output root already exists",
         { cause },
       );
@@ -130,11 +131,24 @@ export class SafeOutputTree {
     const tree = new SafeOutputTree(canonicalOutput, platform, requested);
     tree.#createdRoot = created;
     try {
-      const rootIdentity = await readDirectoryIdentity(canonicalOutput);
+      const rootIdentity = await readDirectoryIdentity(canonicalOutput).catch(
+        (cause: unknown) => {
+          // An accepted existing root that is not a directory refuses the
+          // selection itself; a root this call created was replaced by a host race.
+          if (
+            !created &&
+            cause instanceof ArtifactReaderFailure &&
+            cause.reason === "path"
+          )
+            throw new SafeOutputTreeDestinationRefusal(cause.message, {
+              cause,
+            });
+          throw cause;
+        },
+      );
       tree.#rootIdentity = rootIdentity;
       if (!created && (await readdir(canonicalOutput)).length > 0)
-        throw new ArtifactReaderFailure(
-          "path",
+        throw new SafeOutputTreeDestinationRefusal(
           "Output directory is not empty",
         );
       if (created)
@@ -188,7 +202,8 @@ export class SafeOutputTree {
           constants.O_NOFOLLOW,
         0o600,
       ).catch(async (cause: unknown) => {
-        await throwIfDestinationCaseCollision(parent.path, path, cause);
+        if (isAlreadyExists(cause))
+          await throwIfDestinationCaseCollision(parent.path, path, cause);
         throw new ArtifactReaderFailure(
           "path",
           `Could not exclusively create extraction path: ${path}`,
@@ -482,13 +497,19 @@ export class SafeOutputTree {
         logicalParent.length === 0 ? part : `${logicalParent}/${part}`;
       current = join(current, part);
       await assertPathIdentity(parent.path, parent.identity);
-      let created = true;
-      await mkdir(current, { mode: 0o700 }).catch((cause: unknown) => {
-        if (!isAlreadyExists(cause)) throw cause;
-        created = false;
-      });
-      if (!created) {
-        await throwIfDestinationCaseCollision(parent.path, logicalPath);
+      const creation = await mkdir(current, { mode: 0o700 }).then(
+        () => ({ kind: "created" }) as const,
+        (cause: unknown) => {
+          if (!isAlreadyExists(cause)) throw cause;
+          return { kind: "existing", cause } as const;
+        },
+      );
+      if (creation.kind === "existing") {
+        await throwIfDestinationCaseCollision(
+          parent.path,
+          logicalPath,
+          creation.cause,
+        );
         const identity = this.#nestedDirectories.get(current);
         if (identity === undefined) throw replacedDirectory(current);
         await assertPathIdentity(current, identity);
@@ -684,11 +705,10 @@ const throwIfDestinationCaseCollision = async (
 ): Promise<void> => {
   const names = await readdir(parentDirectory).catch(() => undefined);
   if (names === undefined) return;
-  const message = destinationCaseCollisionMessage(logicalPath, names);
-  if (message === undefined) return;
-  throw new ArtifactReaderFailure(
-    "path",
-    message,
+  const failure = destinationCaseCollision(
+    logicalPath,
+    names,
     cause === undefined ? undefined : { cause },
   );
+  if (failure !== undefined) throw failure;
 };

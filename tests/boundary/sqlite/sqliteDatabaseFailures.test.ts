@@ -1,7 +1,9 @@
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { expect, it } from "vitest";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { sqliteDatabaseFailure } from "../../../src/sqlite/SqliteDatabaseFailures.js";
+import { SQLITE_DATABASE_LIMITS } from "../../../src/sqlite/SqliteDatabaseLimits.js";
 
 it.each([null, "owned stop unconfirmed"])(
   "preserves a selected worker deadline with cleanup=%s",
@@ -85,4 +87,41 @@ it("does not recommend a timer above the supported maximum", () => {
   expect(failure.details).toMatchObject({ timeout_ms: 2_147_483_647 });
   expect(failure.remediation.action).toContain("no higher worker deadline");
   expect(failure.remediation.action).not.toContain("Increase");
+});
+
+it("says diagnostic capture has no runtime override", () => {
+  const projected = projectAnalysisError(
+    sqliteDatabaseFailure(
+      new OwnedCommandFailure("output-limit", "diagnostics exceeded"),
+      "/selected.db",
+      "worker",
+    ),
+  );
+  expect(projected.remediation.action).toContain(
+    String(SQLITE_DATABASE_LIMITS.diagnosticBytes),
+  );
+  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected.remediation.action).toContain(
+    "worker_timeout_ms does not raise it",
+  );
+});
+
+it("does not infer cancellation from a later signal when cleanup carries no cancellation fact", () => {
+  const controller = new AbortController();
+  const cause = new ArtifactReaderFailure("io", "cleanup remains owned", {
+    cleanup: { reason: "close failed", resources: ["/owned/reply.json"] },
+  });
+  controller.abort(new Error("later caller cancellation"));
+  const failure = sqliteDatabaseFailure(
+    cause,
+    "/selected.db",
+    "worker",
+    controller.signal,
+  );
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.cleanupPrimary).toBeUndefined();
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { resources: ["/owned/reply.json"] },
+  });
 });

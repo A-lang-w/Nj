@@ -144,8 +144,22 @@ class NodeFileReader extends Reader<string> {
         `ZIP metadata read requires ${readBytes} bytes, exceeding the ${this.maximumReadBytes}-byte read budget`,
       );
     const bytes = Buffer.alloc(readBytes);
-    const read = await handle.read(bytes, 0, bytes.length, index);
-    return bytes.subarray(0, read.bytesRead);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.length - offset,
+        index + offset,
+      );
+      if (bytesRead === 0)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `ZIP source ended before its admitted extent: ${this.path}`,
+        );
+      offset += bytesRead;
+    }
+    return bytes;
   }
 
   async closeHandle(): Promise<void> {
@@ -242,7 +256,7 @@ export class ZipArtifactReader implements ArtifactReader {
         ),
       );
     const source = stored.source;
-    if (source.directory || isSymlink(source))
+    if (source.directory || source.symlink)
       return Promise.reject(
         new ArtifactReaderFailure("format", "ZIP entry is not a regular file"),
       );
@@ -271,7 +285,7 @@ const projectZipEntry = (
   entry: Entry,
   index: number,
 ): ArtifactEntry | undefined => {
-  const kind = isSymlink(entry)
+  const kind = entry.symlink
     ? "symlink"
     : entry.directory
       ? "directory"
@@ -457,9 +471,6 @@ async function* typedZipFailures<T>(
     throw typedZipFailure(cause);
   }
 }
-
-const isSymlink = (entry: Entry): boolean =>
-  entry.unixMode !== undefined && (entry.unixMode & 0o170000) === 0o120000;
 
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error("ZIP extraction failed");

@@ -1,3 +1,4 @@
+import { resolveAsarHeaderAdmission } from "./AsarHeader.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -37,7 +38,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
 import { freezeJsonSnapshot } from "../domain/immutableJson.js";
 import { createArtifactInspection } from "../domain/artifactInspection.js";
@@ -480,6 +481,7 @@ class ArtifactClient implements AnalysisClient {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
       resourceScope: this.#resourceScope,
       environment: this.environment,
+      asarHeaderAdmission: resolveAsarHeaderAdmission(this.environment),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
       integrity: { mode: parsed.integrity_policy },
     });

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { expect, it as nativeTest, onTestFinished } from "vitest";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { SqliteDatabaseProvider } from "../../../src/sqlite/SqliteDatabaseProvider.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
@@ -380,7 +381,7 @@ nativeTest(
   },
 );
 
-it.each(["late-cancellation", "cleanup-failure"])(
+it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
   "preserves completed native-worker observations across %s",
   async (scenario) => {
     const { workspace, database } = await createFixture();
@@ -406,9 +407,9 @@ it.each(["late-cancellation", "cleanup-failure"])(
         return {
           path: acquired.path,
           close: async () => {
-            if (scenario === "late-cancellation")
+            if (scenario !== "cleanup-failure")
               controller.abort(cancellationReason);
-            else if (!cleanupAllowed)
+            if (scenario !== "late-cancellation" && !cleanupAllowed)
               throw new Error("Completed snapshot cleanup denied");
             await acquired.close();
           },
@@ -460,7 +461,16 @@ it.each(["late-cancellation", "cleanup-failure"])(
       if (result.ok || result.error._tag !== "AnalysisCancelledError")
         throw new Error("Expected cancellation after final root cleanup");
       expect(result.error.cause).toBe(cancellationReason);
+      if (root === undefined) throw new Error("Missing acquired root");
+      await expectPrivateRootRemoved(root.path);
     } else {
+      // Incomplete cleanup stays primary over a cancellation observed during it.
+      expect(controller.signal.aborted).toBe(
+        scenario === "cancelled cleanup-failure",
+      );
+      expect(result.ok ? undefined : result.error).toBeInstanceOf(
+        ProviderCleanupError,
+      );
       expect(result).toMatchObject({
         ok: false,
         error: {
@@ -792,6 +802,52 @@ it("attributes table and column selection failures to their own arguments", asyn
   });
   if (!selected.ok) throw selected.error;
   expect(selected.value.result).toMatchObject({ rows: { columns: ["id"] } });
+});
+
+it("reports a projection above SQLite's result-column capacity as capacity, not invalid input", async () => {
+  const { database } = await createFixture();
+  const reader = new DatabaseSync(database.path, { readOnly: true });
+  const engineColumnLimit = (() => {
+    try {
+      return reader.limits.column;
+    } finally {
+      reader.close();
+    }
+  })();
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const columns = (count: number): string[] =>
+    Array.from({ length: count }, () => "text_value");
+  const atLimit = await provider.inspect({
+    path: database.path,
+    table: "records",
+    columns: columns(engineColumnLimit),
+    row_limit: 1,
+  });
+  if (!atLimit.ok) throw atLimit.error;
+  expect(atLimit.value.result).toMatchObject({
+    rows: { columns: columns(engineColumnLimit), returned_rows: 1 },
+  });
+
+  const overLimit = await provider.inspect({
+    path: database.path,
+    table: "records",
+    columns: columns(engineColumnLimit + 1),
+    row_limit: 1,
+  });
+  if (overLimit.ok) throw new Error("Expected a rejected projection");
+  const projection = projectAnalysisError(overLimit.error);
+  expect(projection).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "capacity",
+      reported_limits: {
+        selected_result_columns: engineColumnLimit + 1,
+        engine_result_column_limit: engineColumnLimit,
+      },
+    },
+  });
+  expect(JSON.stringify(projection)).not.toContain("invalid_format");
 });
 
 it("rejects malformed databases without altering the selected file", async () => {

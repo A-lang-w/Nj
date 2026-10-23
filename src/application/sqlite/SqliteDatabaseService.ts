@@ -1,10 +1,8 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { SqliteDatabasePort } from "./SqliteDatabasePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import {
@@ -19,6 +17,7 @@ import {
   type SqliteDatabase,
   SQLITE_ROW_LIMIT_DEFAULT,
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
+  sqliteSchemaHasObjectDeclaration,
   sqliteSchemaScope,
   sqliteInspectionParameters,
 } from "../../domain/sqlite/sqliteDatabase.js";
@@ -27,6 +26,21 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 
 const OPERATION = "inspect_sqlite_database";
+
+const matchesSelectedSchema = (
+  schema: SqliteDatabase["schema"],
+  table: string,
+): boolean =>
+  sqliteSchemaHasObjectDeclaration(table)
+    ? schema.tables.length === 1 &&
+      schema.tables[0]?.name === table &&
+      schema.indexes.every((index) => index.table === table) &&
+      schema.triggers.every((trigger) => trigger.table === table) &&
+      schema.views.length === 0
+    : schema.tables.length === 0 &&
+      schema.indexes.length === 0 &&
+      schema.views.length === 0 &&
+      schema.triggers.length === 0;
 
 const matchesSelectedDatabase = (
   report: SqliteDatabase,
@@ -43,13 +57,8 @@ const matchesSelectedDatabase = (
   (report.wal === null || report.wal.path === `${input.path}-wal`) &&
   report.schema.scope === sqliteSchemaScope(input) &&
   (report.schema.scope !== "selected_table" ||
-    (report.schema.tables.length === 1 &&
-      report.schema.tables[0]?.name === input.table &&
-      report.schema.indexes.every((index) => index.table === input.table) &&
-      report.schema.triggers.every(
-        (trigger) => trigger.table === input.table,
-      ) &&
-      report.schema.views.length === 0)) &&
+    (input.table !== undefined &&
+      matchesSelectedSchema(report.schema, input.table))) &&
   (input.table === undefined
     ? report.rows === null
     : report.rows?.table === input.table &&
@@ -86,16 +95,6 @@ export class SqliteDatabaseService {
         analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
           cause: input.error,
         }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
       );
     const inspected = await this.provider.inspect(input.data, options);
     if (!inspected.ok) return inspected;
