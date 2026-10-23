@@ -32,8 +32,10 @@ later increments.
   entity, so it is not in the initial state. A read finished before the `POST`
   began shows what was there, and one still running may show its effect. A list
   read shows the ids its listed entities carry as their own identity members, and
-  across two or more of them the first suffix-named field (`projectId`) distinct
-  on each, not those of entities they nest. An id shorter than four characters counts only
+  across two or more of them, when no id-named field (`id`, `uuid`, …; not `key`,
+  `slug` or `name`) identifies them, the first suffix-named field (`projectId`)
+  distinct on each, so a foreign key beside an `id` is none of theirs, nor are the
+  ids of entities they nest. An id shorter than four characters counts only
   when the type was read before the `POST` and an item read names it after.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that

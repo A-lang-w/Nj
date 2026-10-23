@@ -25,6 +25,9 @@ import {
 /** The shortest id that names one entity rather than counting one, or naming one of any type. */
 const MIN_ID_LENGTH = 4;
 
+/** Identity names that describe an entity rather than number it, so its own suffix-named id may sit beside them. */
+const DESCRIPTIVE_NAMES: ReadonlySet<string> = new Set(["key", "slug", "name"]);
+
 const succeeded = (record: StateRecordFacts): boolean =>
   record.status !== null && record.status >= 200 && record.status < 300;
 
@@ -75,8 +78,9 @@ const identitiesIn = (root: JsonValue | undefined): Set<string> => {
 
 /**
  * The ids a list read shows: its listed entities' own identity-named members and, across two or
- * more of them, the first suffix-named field (`projectId`) distinct on each, or any id it shows at
- * any depth when it lists none.
+ * more of them when no id-named field identifies them, the first suffix-named field (`projectId`)
+ * distinct on each, so a foreign key beside an `id` is no id of theirs; any id it shows at any depth
+ * when it lists none.
  */
 const listedIds = (body: JsonValue | undefined): Set<string> => {
   const pointer = body === undefined ? undefined : locateList(body, undefined);
@@ -85,12 +89,12 @@ const listedIds = (body: JsonValue | undefined): Set<string> => {
       ? undefined
       : listItems(body, pointer);
   if (items === undefined) return identitiesIn(body);
-  const suffixed =
-    items.length < 2
-      ? undefined
-      : identityCandidates(items).find(
-          (name) => !IDENTITY_NAMES.includes(name),
-        );
+  const candidates = items.length < 2 ? [] : identityCandidates(items);
+  const suffixed = candidates.some(
+    (name) => IDENTITY_NAMES.includes(name) && !DESCRIPTIVE_NAMES.has(name),
+  )
+    ? undefined
+    : candidates.find((name) => !IDENTITY_NAMES.includes(name));
   return new Set([
     ...items.flatMap(identityValues),
     ...(suffixed === undefined
@@ -316,29 +320,35 @@ export const linkedCollection = (
     ? plan.collection
     : undefined;
 
-/**
- * Whether a linked create's call sends the path values its exemplar did, each as recorded or in the
- * other spelling once percent-decoded: the read that linked its target followed only that call.
- */
-export const sameLinkedSource = (
+/** The values a recorded path gives its template's parameters as spelled, undecoded; undefined when it does not fit. */
+export const recordedPathValues = (
   template: string,
-  exemplar: string | undefined,
-  call: ReadonlyMap<string, string> | undefined,
-): boolean => {
-  if (
-    exemplar === undefined ||
-    call === undefined ||
-    pathValuesOf(template, exemplar) === undefined
-  )
-    return false;
-  const segments = segmentsOf(exemplar);
-  const recorded = new Map(
+  path: string,
+): Map<string, string> | undefined => {
+  if (pathValuesOf(template, path) === undefined) return undefined;
+  const segments = segmentsOf(path);
+  return new Map(
     segmentsOf(template).flatMap((segment, index) =>
       isParam(segment)
         ? [[segment.slice(1, -1), segments[index]!] as const]
         : [],
     ),
   );
+};
+
+/**
+ * Whether a linked create's call sends the path values its exemplar did, each as recorded or in the
+ * other spelling once percent-decoded: the read that linked its target followed only that call. The
+ * call's values come as spelled, so neither side is decoded twice.
+ */
+export const sameLinkedSource = (
+  template: string,
+  exemplar: string | undefined,
+  call: ReadonlyMap<string, string> | undefined,
+): boolean => {
+  const recorded =
+    exemplar === undefined ? undefined : recordedPathValues(template, exemplar);
+  if (recorded === undefined || call === undefined) return false;
   return (
     recorded.size === call.size &&
     [...recorded].every(([name, value]) => {

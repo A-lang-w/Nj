@@ -117,6 +117,29 @@ describe("creation limits", () => {
     );
   });
 
+  it("reads no suffix-named field as a list's ids when an id field already identifies its entities", () => {
+    const [list, post, later] = [
+      record(0, "GET", "/api/projects"),
+      record(1, "POST", "/api/users/user-0003/activate"),
+      record(2, "GET", "/api/projects"),
+    ];
+    const project = (id: string, ownerId: string) => ({ id, ownerId });
+    const bodies = new Map<number, JsonValue>([
+      [
+        0,
+        [project("proj-0001", "user-0001"), project("proj-0002", "user-0002")],
+      ],
+      [
+        2,
+        [project("proj-0001", "user-0003"), project("proj-0002", "user-0002")],
+      ],
+    ]);
+    // The owner the user call returned is no project the call made.
+    expect(
+      projectsLimit([list, later], post, bodies, ["user-0003"]),
+    ).toBeUndefined();
+  });
+
   it("reads the ids a list shows from its listed entities, not the entities they nest", () => {
     const [list, post, later] = [
       record(0, "GET", "/api/projects"),

@@ -15,6 +15,7 @@ import {
 } from "./environmentStateRules.js";
 import { createdFields } from "./environmentStateWriteApply.js";
 import {
+  recordedPathValues,
   respondedIds,
   sameLinkedSource,
 } from "./environmentStateWriteLinks.js";
@@ -333,7 +334,7 @@ const fromLinkedSource = (
     context.records.find(
       (record) => record.ordinal === draft.plan.exemplar_ordinal,
     )?.path,
-    pathValuesOf(step.tool.path_template, step.record.path),
+    recordedPathValues(step.tool.path_template, step.record.path),
   );
 
 /** Add a created entity to the state at the plan's insert position, or last before the plan has one. */

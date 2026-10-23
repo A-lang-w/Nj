@@ -40,8 +40,8 @@ replay, and its calls bound no initial-recording window and end no observation
 search. The capture shows it by the first of these that applies:
 
 1. every successful call answers as the successful `GET` of its path that
-   finished last before the call began did, with no write between (a status
-   lookup posting the jobs it names);
+   finished last before the call began, of those with no write between, did (a
+   status lookup posting the jobs it names);
 2. every call names read operations only, in its body's `operation` or
    `operations[].operation`, else its query's `operation`, `op` or `action`
    (`batch` and similar only wrap them, in either place, so a call needs at
@@ -69,8 +69,8 @@ value) reads differently just before and just after one of its calls, or finds
 its entity on one side only (a 400, 404 or 410 on the other), with no other
 write between; the other read-only tools' calls are no writes there, so the
 tools are dropped until none is vetoed. Those reads are the one that finished
-last before the call began and the first that began after it ended, since one
-overlapping the call may show either state. Reads of unrelated paths do not
+last before the call began, of those no other write follows, and the first that
+began after it ended, since one overlapping the call may show either state. Reads of unrelated paths do not
 count, so a session renewal stays read-only although an endpoint under the
 same root regenerates values on every read.
 

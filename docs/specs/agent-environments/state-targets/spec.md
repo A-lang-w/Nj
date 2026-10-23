@@ -34,7 +34,8 @@ its cause in the recordings and the code. The five largest shared causes:
   too. Serving creates in that read's collection, for the exemplar's path arguments only, in either spelling. A
   successful POST that returned an id a type's reads only show once it began ends that type's initial window: a read
   still running then may show it, and a list read shows its listed entities' own ids (identity-named, or a
-  suffix-named field such as `projectId` distinct across two or more), not those they nest.
+  suffix-named field such as `projectId` distinct across two or more when no id-named field identifies them), not
+  those they nest.
 - **Rewrite cuts.** When a type's reads disagree across a write under another root, the type's initial window ends at
   the earliest write within the change and the state is extracted again. The earlier of this and the creation cut wins.
 - **Variant lines.** A read line that shows the same entities in another form is a variant: it leaves the view's

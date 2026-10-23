@@ -221,7 +221,7 @@ const lastFinishedBefore = (
   return latest;
 };
 
-/** Every successful call answers as the successful GET of its path that finished last before it began did, with no write between. */
+/** Every successful call answers as the successful GET of its path that finished last before it began, of those with no write between, did. */
 const repeatsRead = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
@@ -236,7 +236,8 @@ const repeatsRead = (
           (record) =>
             record.method === "GET" &&
             record.path === call.path &&
-            succeeded(record),
+            succeeded(record) &&
+            !between(position.get(record.ordinal)!, at),
         ),
       call,
     );
@@ -296,10 +297,13 @@ const changesReadsAcross = (
         prefixRelated(call.path, record.path),
     );
     return [...new Set(related.map(lineOf))].some((line) => {
+      // A read before another write shows the state that write changed, so only later ones count.
       const before = lastFinishedBefore(
         related.filter(
           (record) =>
-            lineOf(record) === line && position.get(record.ordinal)! < at,
+            lineOf(record) === line &&
+            position.get(record.ordinal)! < at &&
+            !between(position.get(record.ordinal)!, at),
         ),
         call,
       );

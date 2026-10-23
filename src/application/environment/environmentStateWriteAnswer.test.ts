@@ -1692,6 +1692,41 @@ describe("creates read under another path", () => {
     ).toMatchObject({ status: 201 });
   });
 
+  it("counts a linked create's call from a source that names the exemplar's only after decoding twice as another source's", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma, delta] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+      note(1004, "Delta"),
+    ];
+    const other = note(2001, "Other");
+    const project = "/api/projects/team1";
+    // A second project makes the project segment a path parameter.
+    const notes = servedFrom([
+      ["GET", "/api/projects/team2/notes", [other]],
+      ["GET", "/api/projects/team2/notes/2001", other],
+      ["GET", `${project}/notes`, [alpha, beta]],
+      ["GET", `${project}/notes/1001`, alpha],
+      ["GET", `${project}/notes/1002`, beta],
+      ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", `${project}/notes/1003`, gamma],
+      ["GET", `${project}/notes`, [alpha, beta, gamma]],
+      // `team%2531` decodes once to `team%31`, another project than `team1`.
+      [
+        "POST",
+        "/api/projects/team%2531/publish",
+        delta,
+        201,
+        { title: "Delta" },
+      ],
+      ["GET", `${project}/notes`, [alpha, beta, gamma]],
+    ]);
+    expect(
+      notes.state.writes.get("post_projects_publish_by_project_id"),
+    ).toMatchObject({ served: true, contradicted_by: null });
+  });
+
   it("takes a linked create's recorded path value in either spelling, as other state-backed calls do", () => {
     const note = (id: number, title: string) => ({ id, title });
     const [alpha, beta, gamma] = [

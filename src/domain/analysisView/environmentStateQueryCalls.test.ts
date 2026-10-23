@@ -356,6 +356,53 @@ describe("the reads either side of a POST", () => {
     ).toEqual([]);
   });
 
+  it("compares a POST with a read begun after another write, which shows that write's effect", () => {
+    const message = { id: 1001, body: "hello" };
+    const get = (
+      start: number,
+      end: number,
+      status = 200,
+      response: JsonValue = message,
+    ): Call => ({
+      method: "GET",
+      path: "/api/messages/1001",
+      template: "/api/messages/{id}",
+      tool: "get_message",
+      status,
+      response,
+      start,
+      end,
+    });
+    const put: Call = {
+      method: "PUT",
+      path: "/api/messages/1001",
+      template: "/api/messages/{id}",
+      tool: "put_message",
+      response: message,
+      start: 1,
+      end: 2,
+    };
+    const consume: Call = {
+      method: "POST",
+      path: "/api/messages/1001/ids",
+      template: "/api/messages/{id}/ids",
+      tool: "post_ids",
+      response: ["1001"],
+      start: 10,
+      end: 11,
+    };
+    // The read that finished last began before the PUT; the shorter one after it shows the message survived the PUT.
+    expect(
+      readOnlyOf([
+        get(0, 9),
+        put,
+        get(3, 4),
+        consume,
+        get(12, 13, 404, { error: "Not found" }),
+      ]),
+    ).toEqual([]);
+  });
+
   it("keeps a POST a write when a read of its path finds the entity gone after it", () => {
     const message = { id: 1001, body: "hello" };
     const get = (status: number, response: JsonValue): Call => ({
