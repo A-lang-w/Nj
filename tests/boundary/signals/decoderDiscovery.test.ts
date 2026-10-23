@@ -46,3 +46,39 @@ it("bounds line expansion before constructing help records", () => {
     ),
   ).toThrow("representation budget");
 });
+
+it("matches Greek sigma in catalog names and help lines without contextual lowercasing omissions", () => {
+  const catalogText =
+    "Supported protocol decoders:\n  sample  ΟΣ\n  control  ASCII\n";
+  for (const query of ["Σ", "σ", "ς", "ΟΣ", "ascii", ""]) {
+    const input = inspectSignalDecodersInputSchema.parse({ query });
+    const result = parseDecoderDiscovery(catalogText, input);
+    if (query === "Σ" || query === "σ" || query === "ς" || query === "ΟΣ") {
+      expect(result.decoders).toEqual([{ id: "sample", name: "ΟΣ" }]);
+      expect(result.output_window.matching).toBe(1);
+    } else if (query === "ascii") {
+      expect(result.decoders).toEqual([{ id: "control", name: "ASCII" }]);
+      expect(result.output_window.matching).toBe(1);
+    } else if (query === "") {
+      expect(result.output_window.matching).toBe(2);
+    }
+  }
+
+  const helpText = "ID: sample\nName: ΟΣ\nDescription: ASCII\n";
+  for (const query of ["Σ", "σ", "ς", "ΟΣ", "ascii"]) {
+    const input = inspectSignalDecodersInputSchema.parse({
+      decoder: "sample",
+      query,
+    });
+    const result = parseDecoderDiscovery(helpText, input);
+    if (query === "Σ" || query === "σ" || query === "ς" || query === "ΟΣ") {
+      expect(result.help_lines).toEqual([{ line_number: 2, text: "Name: ΟΣ" }]);
+      expect(result.output_window.matching).toBe(1);
+    } else if (query === "ascii") {
+      expect(result.help_lines).toEqual([
+        { line_number: 3, text: "Description: ASCII" },
+      ]);
+      expect(result.output_window.matching).toBe(1);
+    }
+  }
+});

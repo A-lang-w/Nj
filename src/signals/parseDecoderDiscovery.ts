@@ -20,7 +20,13 @@ export const parseDecoderDiscovery = (
       );
   const lines = text.split(/\r?\n/u);
   if (lines.at(-1) === "") lines.pop();
-  const query = input.query.toLowerCase();
+  // Unicode case folding is independent of word context, unlike toLowerCase
+  // (a final Greek sigma lowercases differently from a standalone sigma).
+  // Escape every regex metacharacter so matching remains a literal search.
+  const queryPattern = new RegExp(
+    input.query.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
+    "iu",
+  );
   const decoders: { id: string; name: string }[] = [];
   const help: { line_number: number; text: string }[] = [];
   if (input.decoder === null) {
@@ -48,10 +54,8 @@ export const parseDecoderDiscovery = (
   }
   const catalog = input.decoder === null;
   const matching = catalog
-    ? decoders.filter(({ id, name }) =>
-        `${id} ${name}`.toLowerCase().includes(query),
-      )
-    : help.filter(({ text: line }) => line.toLowerCase().includes(query));
+    ? decoders.filter(({ id, name }) => queryPattern.test(`${id} ${name}`))
+    : help.filter(({ text: line }) => queryPattern.test(line));
   const start = Math.min(input.offset, matching.length);
   const count = Math.min(
     input.limit ?? matching.length,
