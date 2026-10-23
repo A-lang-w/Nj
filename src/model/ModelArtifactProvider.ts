@@ -46,10 +46,12 @@ import {
   modelCapacityRemediation,
   modelCapacityReportedLimits,
 } from "./ModelFormat.js";
-import { safetensorsBits } from "./ModelTensorTypes.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import {
+  isSelectedRegularFileError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 
 export const MODEL_ARTIFACT_PROVIDER_IDENTITY = {
   id: "model-artifact",
@@ -57,18 +59,6 @@ export const MODEL_ARTIFACT_PROVIDER_IDENTITY = {
   version: "1",
 } as const;
 const OPERATION = "inspect_model_artifact";
-// Codes that describe the selected path itself. Other host errors (EMFILE,
-// EIO, ...) are execution failures, not a reason to reselect the model.
-const SELECTED_TARGET_CODES = new Set([
-  "ENOENT",
-  "ENOTDIR",
-  "ELOOP",
-  "ENAMETOOLONG",
-  "EISDIR",
-  "ENOTFILE",
-  "ESTALE",
-]);
-
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
 export class ModelArtifactProvider implements ModelArtifactPort {
   readonly identity = MODEL_ARTIFACT_PROVIDER_IDENTITY;
@@ -189,11 +179,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           {},
           { cause: primary },
         );
-      else if (
-        primary instanceof Error &&
-        "code" in primary &&
-        SELECTED_TARGET_CODES.has(String(primary.code))
-      )
+      else if (isSelectedRegularFileError(primary))
         error = new BinaryTargetError(input.path, primary.message, { cause });
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
@@ -318,6 +304,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
               partial.coverage.tensors = "partial";
             },
             onTensorDeclaration: (row) => partial.tensor_declarations.push(row),
+            onLimitation: (message) => partial.limitations.push(message),
           })
         : await readSafetensorsHeader(reader, first);
     const intervals = parsed.tensors
@@ -337,6 +324,9 @@ export class ModelArtifactProvider implements ModelArtifactPort {
     partial.declared_tensor_count = parsed.tensors.length;
     partial.tensor_declarations = [];
     partial.tensors = parsed.tensors;
+    partial.limitations = [
+      ...new Set([...partial.limitations, ...parsed.limitations]),
+    ];
     partial.coverage = {
       header: "complete",
       metadata: "complete",
@@ -397,18 +387,6 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           : group.bytes + row.byte_length;
       groups.set(row.type, group);
     }
-    const unknownTypes = [
-      ...new Set(
-        parsed.tensors
-          .filter(
-            (row) =>
-              row.byte_length === null ||
-              (format === "safetensors" &&
-                safetensorsBits(row.type) === undefined),
-          )
-          .map((row) => row.type),
-      ),
-    ];
     const report = {
       artifact: {
         path: input.path,
@@ -457,11 +435,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
               "Metadata arrays retain at most eight elements per array; remaining values are omitted, with exact declared counts and source byte ranges.",
             ]
           : []),
-        ...(unknownTypes.length
-          ? [
-              `Unknown tensor types prevent storage-size validation: ${unknownTypes.join(", ")}`,
-            ]
-          : []),
+        ...parsed.limitations,
       ],
     };
     if (jsonValueByteLength(report, MODEL_REPORT_BYTES) > MODEL_REPORT_BYTES)

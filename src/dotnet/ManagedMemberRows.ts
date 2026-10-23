@@ -10,6 +10,7 @@ import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   metadataSignature,
+  memberTargetIdentity,
   signatureGenericArity,
   type ManagedCallEdge,
   type ManagedExportedType,
@@ -19,13 +20,13 @@ import {
   type ManagedMethod,
   type MemberCore,
   type SignatureTypeName,
+  type DeclarationTypeName,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import {
   metadataToken,
   metadataRowCursor,
-  metadataCodedToken,
-  metadataCodedTokenInvalidReason,
+  decodeMetadataCodedIndex,
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -56,9 +57,11 @@ export const parseFields = (
   memberLists: TypeMemberListFacts,
   {
     signatureTypeName,
+    declarationTypeName,
     selected = null,
   }: {
     readonly signatureTypeName: SignatureTypeName;
+    readonly declarationTypeName: DeclarationTypeName;
     readonly selected?: SelectedTypeTokens;
   },
 ): {
@@ -103,6 +106,25 @@ export const parseFields = (
         cursor.readIndex(layout.blobIndexSize),
         layout.blob?.size ?? 0,
       );
+      const decoded = budgetedSignature(
+        sig,
+        layout,
+        signatureTypeName,
+        issues,
+        `Field:${token}.signature`,
+      );
+      core.set(token, {
+        token,
+        name,
+        declaringType: declared?.fullName ?? null,
+        kind: "field",
+        identitySha256: memberTargetIdentity(
+          name,
+          declared?.token ?? null,
+          decoded,
+          declarationTypeName,
+        ),
+      });
       fields.push({
         token,
         row_offset: cursor.start,
@@ -110,13 +132,7 @@ export const parseFields = (
         declaring_type: declared?.fullName ?? null,
         name,
         flags,
-        signature: budgetedSignature(
-          sig,
-          layout,
-          signatureTypeName,
-          issues,
-          `Field:${token}.signature`,
-        ),
+        signature: decoded,
       });
     }, issues);
   }
@@ -158,21 +174,21 @@ export const parseExportedTypes = (
         layout.codedIndexSize("Implementation"),
       );
       const token = metadataToken(39, row);
-      const implementationReason = metadataCodedTokenInvalidReason(
+      const implementation = decodeMetadataCodedIndex(
         implementationRaw,
         2,
         [38, 35, 39],
         layout.rowCounts,
       );
-      if (implementationReason !== null || implementationRaw === 0)
+      if (implementation.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.ExportedType:${token}`,
           offset: implementationOffset,
           detail:
-            implementationReason === null
+            implementation.kind === "null"
               ? "ExportedType implementation coded index 0x0 is null, but the Implementation column must reference a row"
-              : `ExportedType implementation coded index 0x${implementationRaw.toString(16)} is invalid: ${implementationReason}`,
+              : `ExportedType implementation coded index 0x${implementationRaw.toString(16)} is invalid: ${implementation.reason}`,
         });
       exportedTypes.push({
         token,
@@ -182,12 +198,8 @@ export const parseExportedTypes = (
         flags,
         forwarder: (flags & TYPE_FORWARDER_FLAG) !== 0,
         type_def_id: typeDefId,
-        implementation_token: metadataCodedToken(
-          implementationRaw,
-          2,
-          [38, 35, 39],
-          layout.rowCounts,
-        ),
+        implementation_token:
+          implementation.kind === "valid" ? implementation.token : null,
       });
     }, issues);
   }
@@ -197,8 +209,15 @@ export const parseExportedTypes = (
 export const parseMemberRefs = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  typeName: (token: string | null) => string | null,
-  signatureTypeName: SignatureTypeName,
+  {
+    typeName,
+    signatureTypeName,
+    declarationTypeName,
+  }: {
+    readonly typeName: (token: string | null) => string | null;
+    readonly signatureTypeName: SignatureTypeName;
+    readonly declarationTypeName: DeclarationTypeName;
+  },
 ): {
   readonly refs: readonly ManagedMemberRef[];
   readonly core: ReadonlyMap<string, MemberCore>;
@@ -227,28 +246,23 @@ export const parseMemberRefs = (
         layout.blob?.size ?? 0,
       );
       const token = metadataToken(10, row);
-      const parentReason = metadataCodedTokenInvalidReason(
+      const parent = decodeMetadataCodedIndex(
         parentRaw,
         3,
         [2, 1, 26, 6, 27],
         layout.rowCounts,
       );
-      if (parentReason !== null || parentRaw === 0)
+      if (parent.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.MemberRef:${token}`,
           offset: cursor.start,
           detail:
-            parentReason === null
+            parent.kind === "null"
               ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
-              : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parentReason}`,
+              : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parent.reason}`,
         });
-      const parentToken = metadataCodedToken(
-        parentRaw,
-        3,
-        [2, 1, 26, 6, 27],
-        layout.rowCounts,
-      );
+      const parentToken = parent.kind === "valid" ? parent.token : null;
       const parentName = typeName(parentToken);
       const decoded = budgetedSignature(
         sig,
@@ -271,6 +285,12 @@ export const parseMemberRefs = (
         declaringType: parentName,
         kind: decoded.kind,
         genericArity: signatureGenericArity(decoded),
+        identitySha256: memberTargetIdentity(
+          name,
+          parentToken,
+          decoded,
+          declarationTypeName,
+        ),
       });
     }, issues);
   }
@@ -283,6 +303,7 @@ interface ParseMethodsInput {
   readonly pe: ManagedPeLayout;
   readonly ranges: readonly TypeRange[];
   readonly signatureTypeName: SignatureTypeName;
+  readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
   readonly selected?: SelectedTypeTokens;
@@ -296,6 +317,7 @@ export const parseMethods = ({
   pe,
   ranges,
   signatureTypeName,
+  declarationTypeName,
   memberRefKinds,
   memberLists,
   selected = null,
@@ -375,6 +397,12 @@ export const parseMethods = ({
       core.set(token, {
         ...member,
         genericArity: signatureGenericArity(decoded),
+        identitySha256: memberTargetIdentity(
+          name,
+          declared?.token ?? null,
+          decoded,
+          declarationTypeName,
+        ),
       });
       const read = methodBody(bytes, pe, rva, {
         implementation: { implFlags, flags },
@@ -461,6 +489,8 @@ export const edges = (
           admitManagedProjection(
             {
               caller_token: method.token,
+              il_offset: anchor.il_offset,
+              target_identity_sha256: target?.identitySha256 ?? null,
               caller,
               opcode: anchor.opcode,
               target_token: operand,
@@ -477,6 +507,8 @@ export const edges = (
           admitManagedProjection(
             {
               method_token: method.token,
+              il_offset: anchor.il_offset,
+              target_identity_sha256: target?.identitySha256 ?? null,
               method: caller,
               opcode: anchor.opcode,
               field_token: operand,

@@ -36,11 +36,15 @@ interface ComparisonItemContext {
   readonly rightEvidenceId: string;
   readonly leftComplete: boolean;
   readonly rightComplete: boolean;
+  readonly leftMethodsComplete: boolean;
+  readonly rightMethodsComplete: boolean;
   /** Declaring types each side selected; null when it inspected every type. */
   readonly leftSelection: ReadonlySet<string> | null;
   readonly rightSelection: ReadonlySet<string> | null;
   /** Whether matching keyed signatures by resolved digests, not raw bytes. */
   readonly signatureResolutionExamined: boolean;
+  readonly leftAssembly: ManagedMemberInspection["assembly"];
+  readonly rightAssembly: ManagedMemberInspection["assembly"];
   readonly leftCallEdgesByCaller: CallEdgesByCaller;
   readonly rightCallEdgesByCaller: CallEdgesByCaller;
   readonly leftFieldAccessesByCaller: FieldAccessesByCaller;
@@ -78,6 +82,8 @@ const methodDimensions = (
   rightCallEdgesByCaller: CallEdgesByCaller,
   leftFieldAccessesByCaller: FieldAccessesByCaller,
   rightFieldAccessesByCaller: FieldAccessesByCaller,
+  leftAssembly: ManagedMemberInspection["assembly"],
+  rightAssembly: ManagedMemberInspection["assembly"],
 ): {
   readonly dimensions: MethodItem["dimensions"];
   readonly bodyUnknown: boolean;
@@ -153,6 +159,8 @@ const methodDimensions = (
     ? compareExceptionTargets(
         left.body.exception_regions,
         right.body.exception_regions,
+        leftAssembly,
+        rightAssembly,
       )
     : { changed: false, unknown: false };
   if (callTargets.changed) dimensions.push("call-target");
@@ -215,6 +223,8 @@ const exceptionShape = (regions: Method["body"]["exception_regions"]): string =>
 const compareExceptionTargets = (
   left: Method["body"]["exception_regions"],
   right: Method["body"]["exception_regions"],
+  leftAssembly: ManagedMemberInspection["assembly"],
+  rightAssembly: ManagedMemberInspection["assembly"],
 ): { readonly changed: boolean; readonly unknown: boolean } => {
   let changed = false;
   let unknown = false;
@@ -226,14 +236,105 @@ const compareExceptionTargets = (
       continue;
     }
     if (leftRegion.flags !== 0) continue;
-    if (leftRegion.class_type === null || rightRegion.class_type === null)
+    const leftName = leftRegion.class_type_name_sha256;
+    const rightName = rightRegion.class_type_name_sha256;
+    if (leftName !== null && rightName !== null && leftName !== rightName) {
+      changed = true;
+      if (
+        leftRegion.class_type_identity_resolved !== true ||
+        rightRegion.class_type_identity_resolved !== true
+      )
+        unknown = true;
+      continue;
+    }
+    if (leftName === null || rightName === null) {
+      if (
+        leftRegion.class_type !== null &&
+        rightRegion.class_type !== null &&
+        leftRegion.class_type !== rightRegion.class_type
+      )
+        changed = true;
       unknown = true;
-    else if (leftRegion.class_type !== rightRegion.class_type) changed = true;
+      continue;
+    }
     if (
       leftRegion.class_type_identity_resolved !== true ||
-      rightRegion.class_type_identity_resolved !== true
-    )
+      rightRegion.class_type_identity_resolved !== true ||
+      leftAssembly === null ||
+      rightAssembly === null
+    ) {
       unknown = true;
+      continue;
+    }
+    if (!sameAssemblyIdentity(leftAssembly, rightAssembly)) changed = true;
+  }
+  return { changed, unknown };
+};
+
+const sameAssemblyIdentity = (
+  left: NonNullable<ManagedMemberInspection["assembly"]>,
+  right: NonNullable<ManagedMemberInspection["assembly"]>,
+): boolean =>
+  left.name.toLowerCase() === right.name.toLowerCase() &&
+  left.version === right.version &&
+  left.culture?.toLowerCase() === right.culture?.toLowerCase() &&
+  (left.flags & 0x0f00) === (right.flags & 0x0f00) &&
+  left.public_key.kind === right.public_key.kind &&
+  left.public_key.sha256 === right.public_key.sha256 &&
+  left.public_key.token === right.public_key.token;
+
+interface ReferenceTarget {
+  readonly offset: number | null;
+  readonly opcode: string;
+  readonly token: string;
+  readonly identity: string | null;
+}
+
+/** Join each edge to its instruction site, then compare aligned instructions. */
+const compareReferenceTargets = (
+  left: Method,
+  right: Method,
+  kind: "field" | "method",
+  leftTargets: readonly ReferenceTarget[],
+  rightTargets: readonly ReferenceTarget[],
+): { readonly changed: boolean; readonly unknown: boolean } => {
+  const align = (method: Method, targets: readonly ReferenceTarget[]) => {
+    const anchors = method.body.anchors.filter(
+      (anchor) =>
+        isManagedMemberReferenceInstruction(anchor) &&
+        anchor.operand_kind === kind,
+    );
+    const byOffset = new Map<number | null, ReferenceTarget | null>();
+    for (const target of targets)
+      byOffset.set(target.offset, byOffset.has(target.offset) ? null : target);
+    let unknown = targets.length !== anchors.length;
+    const aligned = anchors.map((anchor) => {
+      const target = byOffset.get(anchor.il_offset);
+      if (
+        target == null ||
+        target.opcode !== anchor.opcode ||
+        target.token !== anchor.operand
+      ) {
+        unknown = true;
+        return null;
+      }
+      return target;
+    });
+    return { aligned, unknown };
+  };
+  const a = align(left, leftTargets);
+  const b = align(right, rightTargets);
+  let changed = false;
+  let unknown = a.unknown || b.unknown || a.aligned.length !== b.aligned.length;
+  for (
+    let index = 0;
+    index < Math.max(a.aligned.length, b.aligned.length);
+    index += 1
+  ) {
+    const leftIdentity = a.aligned[index]?.identity;
+    const rightIdentity = b.aligned[index]?.identity;
+    if (leftIdentity == null || rightIdentity == null) unknown = true;
+    else if (leftIdentity !== rightIdentity) changed = true;
   }
   return { changed, unknown };
 };
@@ -243,94 +344,48 @@ const compareFieldTargets = (
   right: Method,
   leftAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
   rightAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
-): { readonly changed: boolean; readonly unknown: boolean } => {
-  const fieldAnchors = (method: Method) =>
-    method.body.anchors.filter(
-      (instruction) =>
-        isManagedMemberReferenceInstruction(instruction) &&
-        instruction.operand_kind === "field",
-    );
-  const leftAnchors = fieldAnchors(left);
-  const rightAnchors = fieldAnchors(right);
-  if (leftAnchors.length !== rightAnchors.length)
-    return { changed: false, unknown: true };
-  if (
-    leftAccesses.length !== leftAnchors.length ||
-    rightAccesses.length !== rightAnchors.length ||
-    leftAccesses.some(
-      (edge, index) => edge.opcode !== leftAnchors[index]?.opcode,
-    ) ||
-    rightAccesses.some(
-      (edge, index) => edge.opcode !== rightAnchors[index]?.opcode,
-    )
-  )
-    return { changed: false, unknown: true };
-
-  let changed = false;
-  let unknown = false;
-  for (let index = 0; index < leftAccesses.length; index += 1) {
-    const leftAccess = leftAccesses[index];
-    const rightAccess = rightAccesses[index];
-    if (leftAccess === undefined || rightAccess === undefined) {
-      unknown = true;
-      continue;
-    }
-    for (const field of ["field_name", "field_declaring_type"] as const) {
-      const leftValue = leftAccess[field];
-      const rightValue = rightAccess[field];
-      if (leftValue === null || rightValue === null) unknown = true;
-      else if (leftValue !== rightValue) changed = true;
-    }
-  }
-  return { changed, unknown };
-};
+) =>
+  compareReferenceTargets(
+    left,
+    right,
+    "field",
+    leftAccesses.map((edge) => ({
+      offset: edge.il_offset,
+      opcode: edge.opcode,
+      token: edge.field_token,
+      identity: edge.target_identity_sha256,
+    })),
+    rightAccesses.map((edge) => ({
+      offset: edge.il_offset,
+      opcode: edge.opcode,
+      token: edge.field_token,
+      identity: edge.target_identity_sha256,
+    })),
+  );
 
 const compareCallTargets = (
   left: Method,
   right: Method,
   leftEdges: readonly ManagedMemberInspection["call_edges"][number][],
   rightEdges: readonly ManagedMemberInspection["call_edges"][number][],
-): { readonly changed: boolean; readonly unknown: boolean } => {
-  const callAnchors = (method: Method) =>
-    method.body.anchors.filter(
-      (instruction) =>
-        isManagedMemberReferenceInstruction(instruction) &&
-        instruction.operand_kind === "method",
-    );
-  const leftAnchors = callAnchors(left);
-  const rightAnchors = callAnchors(right);
-  if (leftAnchors.length !== rightAnchors.length)
-    return { changed: false, unknown: true };
-  if (
-    leftEdges.length !== leftAnchors.length ||
-    rightEdges.length !== rightAnchors.length ||
-    leftEdges.some(
-      (edge, index) => edge.opcode !== leftAnchors[index]?.opcode,
-    ) ||
-    rightEdges.some(
-      (edge, index) => edge.opcode !== rightAnchors[index]?.opcode,
-    )
-  )
-    return { changed: false, unknown: true };
-
-  let changed = false;
-  let unknown = false;
-  for (let index = 0; index < leftEdges.length; index++) {
-    const leftEdge = leftEdges[index];
-    const rightEdge = rightEdges[index];
-    if (leftEdge === undefined || rightEdge === undefined) {
-      unknown = true;
-      continue;
-    }
-    for (const field of ["target_name", "target_declaring_type"] as const) {
-      const leftValue = leftEdge[field];
-      const rightValue = rightEdge[field];
-      if (leftValue === null || rightValue === null) unknown = true;
-      else if (leftValue !== rightValue) changed = true;
-    }
-  }
-  return { changed, unknown };
-};
+) =>
+  compareReferenceTargets(
+    left,
+    right,
+    "method",
+    leftEdges.map((edge) => ({
+      offset: edge.il_offset,
+      opcode: edge.opcode,
+      token: edge.target_token,
+      identity: edge.target_identity_sha256,
+    })),
+    rightEdges.map((edge) => ({
+      offset: edge.il_offset,
+      opcode: edge.opcode,
+      token: edge.target_token,
+      identity: edge.target_identity_sha256,
+    })),
+  );
 
 const callShape = (anchors: Method["body"]["anchors"]): string =>
   JSON.stringify(
@@ -387,7 +442,7 @@ const methodOnlyItem = (
   if (member.left !== undefined) {
     const limitations = absenceLimitations(member.left, identity, {
       oppositeComplete: inventoryCovers(
-        context.rightComplete,
+        context.rightMethodsComplete,
         context.rightSelection,
         member.left,
       ),
@@ -410,7 +465,7 @@ const methodOnlyItem = (
 
   const limitations = absenceLimitations(member.right, identity, {
     oppositeComplete: inventoryCovers(
-      context.leftComplete,
+      context.leftMethodsComplete,
       context.leftSelection,
       member.right,
     ),
@@ -669,6 +724,8 @@ export const buildMethodItems = (
       context.rightCallEdgesByCaller,
       context.leftFieldAccessesByCaller,
       context.rightFieldAccessesByCaller,
+      context.leftAssembly,
+      context.rightAssembly,
     );
     const dimensions = [
       ...observedDimensions,
@@ -716,12 +773,12 @@ export const buildMethodItems = (
           : []),
         ...(callTargetUnknown
           ? [
-              "One or more call targets are unavailable because the observed method edges do not cover aligned call instructions or lack a target name or declaring type.",
+              "One or more call targets are unavailable because the observed method edges do not cover aligned call instructions or lack a resolved nominal target identity or instruction site.",
             ]
           : []),
         ...(fieldTargetUnknown
           ? [
-              "One or more field targets are unavailable because observed field accesses do not cover aligned field instructions or lack a target name or declaring type.",
+              "One or more field targets are unavailable because observed field accesses do not cover aligned field instructions or lack a resolved nominal target identity or instruction site.",
             ]
           : []),
         ...(exceptionTargetUnknown

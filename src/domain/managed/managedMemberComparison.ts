@@ -10,6 +10,7 @@ import {
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
+  hasCompleteMethodRows,
   buildComparisonMatching,
   buildComparisonSummary,
   comparisonLimitations,
@@ -268,11 +269,19 @@ export const compareManagedMembers = (
     rightEvidenceId: right.evidenceId,
     leftComplete: left.result.metadata.status === "complete",
     rightComplete: right.result.metadata.status === "complete",
+    leftMethodsComplete:
+      left.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(left.result),
+    rightMethodsComplete:
+      right.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(right.result),
     leftSelection: selectedTypes(left.result),
     rightSelection: selectedTypes(right.result),
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
+    leftAssembly: left.result.assembly,
+    rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
     leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),
