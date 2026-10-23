@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { readElfBuildIds } from "../../../src/flutter/ElfBuildId.js";
 import {
+  elfNote,
+  elfNoteFixture,
+} from "../../../src/native/elf/ElfNotes.fixture.js";
+import {
   appendElfRanges,
   engineFixtureImage,
 } from "../../../src/flutter/FlutterBuild.fixture.js";
@@ -11,6 +15,40 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const note = Buffer.from(
   "040000000800000003000000474e55000123456789abcdef",
   "hex",
+);
+
+it.each([32, 64] as const)(
+  "reads aligned consecutive notes in ELF%d",
+  async (bits) => {
+    for (const alignment of [4, 8]) {
+      for (const table of ["program", "section", "both"] as const) {
+        const ids = ["11".repeat(20), "22".repeat(20)];
+        const image = elfNoteFixture({
+          bits,
+          alignment,
+          ownership: table === "program" ? "program" : "both",
+          notes: Buffer.concat(
+            ids.map((id) =>
+              elfNote("GNU", 3, Buffer.from(id, "hex"), true, alignment),
+            ),
+          ),
+        });
+        if (table === "section") image.writeUInt32LE(1, bits === 64 ? 64 : 52);
+        const root = await createTestTempDirectory("rea-flutter-alignment-");
+        const path = join(root, "engine.so");
+        await writeFile(path, image);
+        const file = await open(path, "r");
+        try {
+          expect(
+            await readElfBuildIds(file, image.length, undefined),
+            `${bits}/${table}/${alignment}`,
+          ).toEqual({ candidates: ids, failures: [] });
+        } finally {
+          await file.close();
+        }
+      }
+    }
+  },
 );
 
 it.each([
