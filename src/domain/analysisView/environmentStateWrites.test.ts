@@ -1704,6 +1704,26 @@ describe("item lines first recorded after a write, against the lines left", () =
   });
 });
 
+describe("reads overlapping a linked create", () => {
+  it("links a create whose id only a list still running when it began showed before", () => {
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      // Begun before the publish and finished after it, so it may show what the publish made.
+      ["GET", "/api/notes", [A, B, C], 200, undefined, 2500],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", C],
+      ["GET", "/api/notes", [A, B, C]],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+    });
+    expect(notesOf(state)).toEqual(["1001", "1002"]);
+  });
+});
+
 describe("what a linked create observes", () => {
   it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
     const D = note(1004, "Delta");
