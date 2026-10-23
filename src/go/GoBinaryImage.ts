@@ -41,6 +41,8 @@ export interface GoBinaryImage {
   readonly bits: 32 | 64;
   readonly byte_order: "little" | "big";
   readonly build_info: GoBuildInfo | null;
+  /** Native section-name coverage, retained for discovery limitations. */
+  readonly section_names_limitation?: string;
 }
 
 /** Inspect bounded executable bytes using native mappings, without loading or executing code. */
@@ -50,6 +52,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
   let selected: { search: FileMapping; header: number } | null = null;
   const searched = new Set<string>();
   let remainingSearchBytes = MAX_HEADER_SEARCH_BYTES;
+  const sectionNamesLimitation = container.section_names_limitation;
   for (const search of goBuildInfoSearch(bytes, container)) {
     // Identical file spans and alignment inspect the same candidate bytes.
     // Partially overlapping spans still consume a cumulative work budget.
@@ -70,7 +73,16 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
     }
   }
   if (selected === null)
-    return { format, architecture, bits, byte_order, build_info: null };
+    return {
+      format,
+      architecture,
+      bits,
+      byte_order,
+      build_info: null,
+      ...(sectionNamesLimitation === undefined
+        ? {}
+        : { section_names_limitation: sectionNamesLimitation }),
+    };
   const { search, header } = selected;
   const verifyMapping = (size: number): void => {
     const address = search.address + BigInt(header - search.offset);
@@ -104,10 +116,10 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
   const encoding = (flags & 2) !== 0 ? "inline" : "pointer";
   const readInline = (offset: number, remaining: number) =>
     readInlineString(reader, offset, remaining);
-  const sourceEnd = search.offset + search.size;
   let version: LocatedString;
   let module: LocatedString;
   if (encoding === "inline") {
+    const sourceEnd = inlineDataEnd(header, search, container);
     version = readInline(header + 32, sourceEnd - header - 32);
     const next = version.location.offset + version.location.bytes;
     module = readInline(next, sourceEnd - next);
@@ -175,7 +187,33 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       version_location: version.location,
       module_location: module.location,
     },
+    ...(sectionNamesLimitation === undefined
+      ? {}
+      : { section_names_limitation: sectionNamesLimitation }),
   };
+};
+
+/** Inline strings follow the header in mapped Go build-info data, even when
+ * the named ELF discovery section ends immediately after the header.
+ */
+const inlineDataEnd = (
+  header: number,
+  search: FileMapping,
+  container: BinaryContainer,
+): number => {
+  if (container.format !== "elf") return search.offset + search.size;
+  const address = search.address + BigInt(header - search.offset);
+  let end = search.offset + search.size;
+  for (const { mapping } of container.load_regions ?? []) {
+    const delta = address - mapping.address;
+    if (
+      delta >= 0n &&
+      delta < BigInt(mapping.size) &&
+      mapping.offset + Number(delta) === header
+    )
+      end = Math.max(end, mapping.offset + mapping.size);
+  }
+  return Math.min(end, header + 32 + MAX_BUILD_INFO_BYTES);
 };
 
 const observedText = (bytes: Buffer): string | null => {

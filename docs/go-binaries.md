@@ -130,7 +130,13 @@ For ELF images without a named build-info section, discovery checks each
 nonempty writable, non-executable load segment in program-header order. This
 includes sectionless PIE images with metadata in a later data segment. Named
 sections retain priority, and alignment, file mapping and record validation
-remain required.
+remain required. When ELF section names are unreadable, limitations report that
+coverage gap; the fallback search policy is unchanged.
+
+A named ELF build-info section selects the record's discovery range. For inline
+encoding, the following version and module strings may continue past that
+section into its file-backed load mapping; their bytes are still checked
+against the mapping and the existing aggregate string limit.
 
 Historical moduleless Go binaries can store their empty module-string header in
 declared zero-initialized virtual memory rather than file-backed bytes. The reader

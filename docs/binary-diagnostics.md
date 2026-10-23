@@ -332,15 +332,30 @@ count and SHA-256.
 - ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
   (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`
-  and `binding`. `version` is null for an unversioned symbol. A versioned
+  and `binding`. ELF string tables do not declare a text encoding. Names that
+  contain non-ASCII bytes are decoded as UTF-8 when those bytes form valid
+  UTF-8; `name_utf8_decodable` records whether the non-ASCII name bytes are
+  valid UTF-8 and `name_bytes_base64` retains those exact bytes (`null` for
+  ASCII names). When they are not valid UTF-8, `name` uses a byte-preserving
+  Latin-1 mapping and the raw bytes remain available. Older retained results
+  report null for the newly added encoding fields. `version` is null for an
+  unversioned symbol. A versioned
   symbol reports its GNU index, a name resolved from `.gnu.version_d` or
-  `.gnu.version_r`, and the `hidden` flag from `.gnu.version`. `"unknown"`
+  `.gnu.version_r`, the corresponding `name_bytes_base64` and
+  `name_utf8_decodable` facts, and the `hidden` flag from `.gnu.version`.
+  Version names use the same UTF-8-when-valid, otherwise byte-preserving
+  Latin-1 display mapping as symbol names; ELF does not declare either
+  string's text encoding. Older retained results report null for the added
+  version-name encoding fields. `"unknown"`
   means the symbol-version table could not be read. A hidden version is not
   the default version that a by-name `dlsym` lookup selects.
   Definition names take precedence when both tables name the same index.
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+PE export names are bounded null-terminated byte strings and may continue
+across adjacent file-backed section mappings when the virtual bytes are
+unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
 Unresolved symbol versions keep their rows: the version name is null when no
 definition or requirement names the index, and `version` is
 `"unknown"` when the version table cannot be read; coverage is likewise

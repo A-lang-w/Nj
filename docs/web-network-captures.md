@@ -137,6 +137,10 @@ chunks. Its offsets refer to **base64-decoded body bytes**; other offsets refer
 to retained body bytes. Every field has a body-scoped `field_id` derived from
 its byte offset, a `frame_index`, and a `parent_field_id` for schema-driven
 nested messages or groups. Repeated field numbers remain separate occurrences.
+Trailer blocks are parsed as HTTP field bytes. Valid UTF-8 values are retained;
+when a field contains opaque non-UTF-8 bytes, that field is omitted and the
+trailer frame is partial, while other valid trailer fields remain available.
+The retained body and frame byte range preserve the original opaque value.
 
 Without a schema, varints and fixed-width values retain exact unsigned decimal
 representations. Length-delimited UTF-8, nested-message and packed readings
@@ -820,7 +824,7 @@ by null; there is no single events pointer shared by all traces.
 | Original event and loss declaration | Observed endpoint report; `recovery:packet_lost` does not prove actual network loss. Missing packet number/type remains unknown.                                                                                                                                              |
 | STREAM ranges and byte totals       | Derived per trace and direction from reported offsets and lengths using exact integer arithmetic. `unique_bytes` unions intervals; `frame_length_sum` includes overlaps; `repeated_bytes` is their difference. Overlap alone does not prove retransmission or equal contents. |
 | FIN final sizes                     | Reported offset plus length where FIN is true; multiple conflicting sizes remain visible. A final size does not establish complete coverage or a received body.                                                                                                               |
-| Incomplete fact records             | Ordinals with omitted/redacted interpretable frame metadata; usable fields in other records survive. An empty list does not establish complete logging or capture.                                                                                                            |
+| Incomplete fact records             | Ordinals with omitted/redacted interpretable frame metadata, including an unknown STREAM FIN; usable fields such as known ranges in that record survive. An empty list does not establish complete logging or capture.                                                        |
 | HTTP bodies and causality           | `body_bytes: "not-reported"`; lengths and headers are metadata, with no reconstructed body, hash, timing causality or live process attribution.                                                                                                                               |
 
 QUIC integer fields interpreted here accept exact nonnegative JSON integer

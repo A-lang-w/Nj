@@ -2149,10 +2149,125 @@ it("waits for the prior command and preserves cancellation and queue failures", 
   ).rejects.toBe(queueFailure);
 });
 
+it("retains a multi-run console command through its completion query before dispatching a follower", async () => {
+  let completionToken = "";
+  let sourceToken = "";
+  const commands: string[] = [];
+  const fake = createFakeSpawner((child, token, command) => {
+    commands.push(command);
+    if (command.includes("source commands.gdb")) {
+      sourceToken = token;
+      child.stdout.write(
+        `${token}^running\n*running,thread-id="all"\n(gdb) \n`,
+      );
+      child.stdout.write('*stopped,reason="exited-normally"\n');
+    } else if (command === "-gdb-show mi-async") completionToken = token;
+    else if (command.includes("REA_NEXT_COMMAND"))
+      child.stdout.write(`~"REA_NEXT_COMMAND\\n"\n${token}^done\n`);
+    else
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager);
+  let settled = false;
+  const source = manager.execute(
+    started.value.session_id,
+    "source commands.gdb",
+  );
+  void source.then(() => {
+    settled = true;
+  });
+  const follower = manager.execute(
+    started.value.session_id,
+    "echo REA_NEXT_COMMAND\\n",
+  );
+  await expect.poll(() => completionToken).not.toBe("");
+  expect(settled).toBe(false);
+  expect(commands.some((command) => command.includes("REA_NEXT_COMMAND"))).toBe(
+    false,
+  );
+
+  const child = fake.children[0]!;
+  child.stdout.write(
+    '*running,thread-id="all"\n*stopped,reason="exited-normally"\n',
+  );
+  child.stdout.write('~"REA_SOURCE_TAIL\\n"\n(gdb) \n');
+  expect(settled).toBe(false);
+  child.stdout.write(`${completionToken}^done,value="off"\n(gdb) \n`);
+  const result = await source;
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    mi: `${sourceToken}^running`,
+    completion_status: "complete",
+    output_truncated: false,
+    console: '~"REA_SOURCE_TAIL\\n"',
+  });
+  expect(
+    result.value.result.records.filter((record) =>
+      record.startsWith("*stopped"),
+    ),
+  ).toHaveLength(2);
+  expect(result.value.result.records).toContain(
+    `${completionToken}^done,value="off"`,
+  );
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    console: result.value.result.console,
+  });
+  const next = await follower;
+  if (!next.ok) throw next.error;
+  expect(next.value.result.console).toBe('~"REA_NEXT_COMMAND\\n"');
+  expect(
+    next.value.result.records.some((record) => record.startsWith("*stopped")),
+  ).toBe(false);
+  expect(next.value.evidence.normalized_result).toMatchObject({
+    console: next.value.result.console,
+  });
+});
+
+it("retains unknown completion and partial Evidence when the completion query fails", async () => {
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes("source commands.gdb"))
+      child.stdout.write(
+        `${token}^running\n*stopped,reason="exited-normally"\n~"REA_SOURCE_TAIL\\n"\n`,
+      );
+    else if (command === "-gdb-show mi-async")
+      child.stdout.write(`${token}^error,msg="completion query failed"\n`);
+    else child.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async () => ({ status: "stopped" }),
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const result = await manager.execute(
+    started.value.session_id,
+    "source commands.gdb",
+  );
+  if (result.ok) throw new Error("Expected unavailable command completion");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    partialObservation: {
+      normalized_result: {
+        completion_status: "unknown",
+        console: '~"REA_SOURCE_TAIL\\n"',
+      },
+    },
+  });
+  expect(
+    await manager.execute(started.value.session_id, "show version"),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+});
+
 it("correlates command output records and reports invalid or cancelled requests", async () => {
   const manager = await managerFor(
     responsiveProvider(`
-      if (match[2].includes('auto-load off')) process.stdout.write(match[1] + '^done\\n');
+      if (match[2].includes('auto-load off') || match[2] === '-gdb-show mi-async') process.stdout.write(match[1] + '^done\\n');
       else {
         process.stdout.write('=thread-created,id="1"\\n');
         process.stdout.write('~"console\\n"\\n@"target\\n"\\n&"log\\n"\\n');
@@ -2236,49 +2351,65 @@ it.each([
   },
 );
 
-it("detaches a live inferior before the shared stop helper signals GDB", async () => {
-  const tty = "/dev/pts/42";
-  const commands: string[] = [];
-  let detached = false;
-  const fake = createFakeSpawner((_child, token, command) => {
-    commands.push(command);
-    if (command.includes("inferior-tty-show"))
-      fake.children[0]?.stdout.write(
-        `${token}^done,inferior_tty_terminal=${JSON.stringify(tty)}\n`,
-      );
-    else if (command.includes("list-thread-groups"))
-      fake.children[0]?.stdout.write(
-        detached
-          ? `${token}^done,groups=[]\n`
-          : `${token}^done,groups=[{id="i1",pid="123"}]\n`,
-      );
-    else {
-      if (command.includes("target-detach")) detached = true;
-      fake.children[0]?.stdout.write(`${token}^done\n`);
-    }
-  });
-  const manager = managerWithFakeSpawner(fake.spawnProcess);
-  const started = await expectGdbSessionStarted(manager, undefined, {
-    inferiorTty: tty,
-  });
+it.each([false, true])(
+  "detaches a live inferior with a queued follower: %s",
+  async (withFollower) => {
+    const tty = "/dev/pts/42";
+    const commands: string[] = [];
+    let detached = false;
+    const fake = createFakeSpawner((_child, token, command) => {
+      commands.push(command);
+      if (command.includes("inferior-tty-show"))
+        fake.children[0]?.stdout.write(
+          `${token}^done,inferior_tty_terminal=${JSON.stringify(tty)}\n`,
+        );
+      else if (command.includes("list-thread-groups"))
+        fake.children[0]?.stdout.write(
+          detached
+            ? `${token}^done,groups=[]\n`
+            : `${token}^done,groups=[{id="i1",pid="123"}]\n`,
+        );
+      else {
+        if (command.includes("target-detach")) detached = true;
+        fake.children[0]?.stdout.write(`${token}^done\n`);
+      }
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess);
+    const started = await expectGdbSessionStarted(manager, undefined, {
+      inferiorTty: tty,
+    });
 
-  const closed = await manager.close(started.value.session_id);
+    const closing = manager.close(started.value.session_id);
+    const follower = withFollower
+      ? manager.execute(started.value.session_id, "show version")
+      : undefined;
+    const closed = await closing;
+    if (follower !== undefined)
+      expect(await follower).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError" },
+      });
+    expect(commands.some((command) => command.includes("show version"))).toBe(
+      false,
+    );
+    expect(manager.status(started.value.session_id)).toBeUndefined();
 
-  expect(closed).toMatchObject({
-    ok: true,
-    value: { target_state: "unknown" },
-  });
-  expect(commands).toContain("-list-thread-groups --recurse 1");
-  expect(commands).toContain("-target-detach");
-  expect(
-    commands.filter((command) => command.includes("target-detach")),
-  ).toHaveLength(1);
-  expect(commands).not.toContain("-gdb-exit");
-  expect(commands.indexOf("-inferior-tty-show")).toBeLessThan(
-    commands.indexOf("-target-detach"),
-  );
-  expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
-});
+    expect(closed).toMatchObject({
+      ok: true,
+      value: { target_state: "unknown" },
+    });
+    expect(commands).toContain("-list-thread-groups --recurse 1");
+    expect(commands).toContain("-target-detach");
+    expect(
+      commands.filter((command) => command.includes("target-detach")),
+    ).toHaveLength(1);
+    expect(commands).not.toContain("-gdb-exit");
+    expect(commands.indexOf("-inferior-tty-show")).toBeLessThan(
+      commands.indexOf("-target-detach"),
+    );
+    expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
+  },
+);
 
 it("reports none observed when the inferior disappears before detach", async () => {
   const tty = "/dev/pts/42";

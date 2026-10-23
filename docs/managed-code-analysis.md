@@ -51,6 +51,11 @@ This keeps the complete source in the session and returns a distinct linked
 evidence, metadata status, module/MVID, assembly, frameworks, returned-row counts,
 coverage/issues and limitations. No assembly is loaded or executed.
 
+ECMA-335 permits empty metadata streams to be omitted. An absent `#Blob`
+stream therefore does not prevent module or assembly identity from being read
+when all blob indexes are zero; a nonzero reference to that missing heap is
+reported as a missing-stream issue.
+
 Use `normalized_result.parent_evidence_id` to page original rows:
 
 ```json
@@ -386,6 +391,22 @@ constants, and bounded shape context. It reports all candidates at the winning
 score and remains ambiguous when the evidence does not distinguish them. The
 digest does not itself remap metadata tokens.
 
+Matched methods also compare aligned references. `call-shape` and
+`field-shape` report opcode and operand-kind differences; `call-target` and
+`field-target` report differences in the observed target declaring type or
+name from `call_edges` and `field_accesses`. Target tokens remain build-local
+and are not compared across artifacts. Missing or unaligned edges and missing
+target names leave that facet unknown; equal names do not establish overload
+identity or runtime dispatch. `exception-shape` compares clause flags and
+ranges, while `exception-target` records changes to observed catch type names.
+When those names differ but scoped identity is unavailable, the change remains
+visible alongside `availability` and an identity limitation.
+Exception tokens remain in the source facts but are not cross-build identity;
+an unresolved catch type leaves that facet unknown. The method body retains the
+resolved `class_type` name and whether its local token identity could be
+resolved. TypeRef names omit resolution-scope identity, so equal TypeRef names
+leave the comparison unknown even when each local scope is valid.
+
 Tokens are always remapped through observed structure. A caller cannot carry
 `0x06001234` into a new MVID and assume it names the same method.
 
@@ -436,7 +457,10 @@ point identities with supplied native export or function evidence. Name/module
 matches establish declaration links; they do not establish that a call executed.
 When either side lacks a usable module identity, a matching name remains
 unresolved and retains the candidate evidence; REA reports a module mismatch
-only when both identities are available and differ.
+only when both identities are available and their format-specific comparison
+establishes a difference. ELF module names retain case, PE module names compare
+case-insensitively, and a case-only match for Mach-O or an unknown format stays
+unresolved because the available Evidence does not establish case behavior.
 
 Metadata tokens are not native addresses. Native body mapping for C++/CLI,
 ReadyToRun, NativeAOT, and IL2CPP requires separately verified format and provider
@@ -568,7 +592,8 @@ exception semantics, and does not replace the raw CIL digest. Cross-build
 comparison requires equal raw CIL digests as well for exact CIL/signature
 matches and reports ambiguity when structural evidence is insufficient.
 
-For example, a decoded `nop; ret` body serializes exactly as
+For example, a present body (including any valid declared locals signature)
+whose IL is `nop; ret` serializes exactly as
 `[["nop","none",null],["ret","none",null]]` and has digest
 `5e5fad7741cb44bca3a4f045546b7449990da343f612f5f34c0ca30e9eee0636`.
 This vector specifies the tuple order, `null` handling, absence of whitespace,

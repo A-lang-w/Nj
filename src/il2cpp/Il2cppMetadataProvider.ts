@@ -10,9 +10,8 @@ import {
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  ArtifactFileCleanupFailure,
   artifactFilePrimaryFailure,
-  ArtifactFileCancelled,
+  artifactFileCompletion,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
@@ -535,7 +534,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               ? "Field, parameter and return types are not recovered without binary_path; type indices refer to the native binary."
               : decoded.metadata_version === 27
                 ? "Field, parameter and return type names are null for metadata version 27: versions 27.0 to 27.2 share that header number but place the Il2CppType byref flag differently, so a name could gain or lose & without warning; type indices are still reported."
-                : "Field, parameter and return type names are rendered from the binary's Il2CppType table in a C#-like form (keywords for primitives, Namespace.Outer+Inner, generic parameters by metadata name); custom modifiers, array bounds and attributes are not reported.",
+                : "Field, parameter and return type names are rendered from the binary's Il2CppType table in a C#-like form (keywords for primitives, Namespace.Outer+Inner, generic parameters by metadata name); nested generic arguments stay with the type component that declares them. Custom modifiers, array bounds and attributes are not reported.",
             ...(linked.binary !== null &&
             linked.binary.code_gen_modules_field === null
               ? [
@@ -593,16 +592,11 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
       observe(sourceArtifact(path, snapshot));
       return snapshot;
     } catch (cause) {
-      const outcome =
-        cause instanceof ArtifactFileCleanupFailure
-          ? (cause as ArtifactFileCleanupFailure<StableArtifactSnapshot>)
-              .fileCleanupFailure.outcome
-          : cause instanceof ArtifactFileCancelled
-            ? (cause as ArtifactFileCancelled<StableArtifactSnapshot>)
-                .fileCancellation.outcome
-            : undefined;
-      if (outcome?.kind === "completed")
-        observe(sourceArtifact(path, outcome.value));
+      const completion = artifactFileCompletion(cause);
+      if (completion !== undefined)
+        observe(
+          sourceArtifact(path, completion.value as StableArtifactSnapshot),
+        );
       throw cause;
     }
   }

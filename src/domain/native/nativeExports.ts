@@ -49,6 +49,10 @@ const peExportSchema = z.strictObject({
  */
 const elfExportSchema = z.strictObject({
   name: z.string().min(1),
+  /** Exact non-ASCII name bytes; ELF string tables do not declare text encoding. */
+  name_bytes_base64: z.string().nullable().default(null),
+  /** Whether `name` was decoded as UTF-8; null means this field was not recorded in older Evidence. */
+  name_utf8_decodable: z.boolean().nullable().default(null),
   /** `st_value` as stored; on 32-bit ARM, bit 0 of a function marks Thumb code. */
   value: address,
   size: z.string().regex(/^[0-9]+$/u),
@@ -60,6 +64,10 @@ const elfExportSchema = z.strictObject({
     z.strictObject({
       index: z.number().int().min(2).max(0x7fff),
       name: z.string().min(1).nullable(),
+      /** Exact non-ASCII version-name bytes; ELF strings do not declare encoding. */
+      name_bytes_base64: z.string().nullable().default(null),
+      /** Null means older Evidence did not retain version-name encoding facts. */
+      name_utf8_decodable: z.boolean().nullable().default(null),
       hidden: z.boolean(),
     }),
   ]),
