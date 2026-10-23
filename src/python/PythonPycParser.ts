@@ -276,6 +276,8 @@ class MarshalReader {
   readonly #codeEquality = new WeakMap<CodeNode, CodeEquality>();
   /** Python hashability per code object. False while that check is in progress. */
   readonly #codeHashable = new WeakMap<CodeNode, boolean>();
+  /** Tuples whose items are still being read; CPython cannot hash them yet. */
+  readonly #readingTuples = new WeakSet<MarshalValue>();
   /** Code objects whose const summaries wait until the graph is fully decoded. */
   readonly #codes: CodeNode[] = [];
   /**
@@ -801,12 +803,14 @@ class MarshalReader {
     const value: MarshalValue =
       kind === "tuple" ? { kind: "tuple", items } : { kind: "list", items };
     this.#publish(slot, value);
+    if (kind === "tuple") this.#readingTuples.add(value);
     for (let index = 0; index < count; index += 1) {
       const item = this.readObject(depth + 1);
       if (item.kind === "null")
         malformed("NULL object in marshal data for sequence.");
       items.push(item);
     }
+    this.#readingTuples.delete(value);
     return value;
   }
 
@@ -920,6 +924,9 @@ class MarshalReader {
       this.#takeKeyStep();
       const frame = frames[frames.length - 1];
       if (frame === undefined) break;
+      // A tuple still being read has missing items; CPython cannot hash it.
+      if (mode === "hash" && this.#readingTuples.has(frame.value))
+        frame.failed = true;
       const items =
         frame.value.kind === "tuple" || frame.value.kind === "frozenset"
           ? frame.value.items
