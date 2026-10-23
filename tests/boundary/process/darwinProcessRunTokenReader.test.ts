@@ -306,7 +306,8 @@ it.skipIf(process.platform === "win32")(
       [
         "#!/bin/sh",
         `script='process.stderr.write("fatal: segmentation fault during type checking\\n"); process.kill(process.pid, "SIGSEGV")'`,
-        'command -v prlimit >/dev/null && exec prlimit --core=1:1 node -e "$script"',
+        // prlimit cannot raise an inherited hard limit of 0; cores are already off then.
+        'command -v prlimit >/dev/null && [ "$(ulimit -Hc)" != 0 ] && exec prlimit --core=1:1 node -e "$script"',
         'exec node -e "$script"',
         "",
       ].join("\n"),

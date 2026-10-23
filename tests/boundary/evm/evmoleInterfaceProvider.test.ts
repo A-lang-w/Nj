@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { access, readFile, symlink, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -10,6 +9,7 @@ import { EvmoleInterfaceProvider } from "../../../src/evm/EvmoleInterfaceProvide
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
+import { corelessPrlimit as prlimit } from "../../fixtures/corelessPrlimit.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
@@ -17,8 +17,6 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
-
-const prlimit = existsSync("/usr/bin/prlimit") ? "/usr/bin/prlimit" : undefined;
 
 const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
 const requestSchema = z.strictObject({

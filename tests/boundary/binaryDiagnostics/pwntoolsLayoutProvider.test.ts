@@ -3,7 +3,6 @@ import {
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
 import { access, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { expect, it, onTestFinished } from "vitest";
@@ -11,12 +10,11 @@ import { PwntoolsLayoutProvider } from "../../../src/native/pwntools/PwntoolsLay
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
+import { corelessPrlimit as prlimit } from "../../fixtures/corelessPrlimit.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-
-const prlimit = existsSync("/usr/bin/prlimit") ? "/usr/bin/prlimit" : undefined;
 
 const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
 const requestSchema = z.strictObject({
