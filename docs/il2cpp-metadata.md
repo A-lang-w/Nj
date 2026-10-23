@@ -204,9 +204,13 @@ assembly image. Each module record starts with its module name, its method
 pointer count and its method pointer array. The reader finds, for every metadata
 image, the single record whose name pointer reaches that image's name string and
 whose count equals the image's method count. It then requires exactly one
-`codeGenModulesCount`/`codeGenModules` pair that lists exactly those records. No
-symbols are needed, so stripped builds work. A method's token row id selects its
-slot in the module's method pointer array. Within one image, each method must
+`codeGenModulesCount`/`codeGenModules` pair that lists exactly those records.
+`codeGenModulesCount` and module method counts own four bytes, followed by
+alignment padding before their eight-byte pointers. Unresolved loader writes
+overlapping those four bytes prevent the registration from being established;
+padding outside the field is neither required nor interpreted as part of its
+count. No symbols are needed, so stripped builds work. A method's token row id
+selects its slot in the module's method pointer array. Within one image, each method must
 claim a distinct MethodDef token row; duplicate rows are refused before any
 linked method table or seed output is published. Row ids may repeat across
 different images, and distinct rows may still resolve to the same address when
@@ -265,12 +269,26 @@ The result adds:
   metadata name (`TKey`). Nested generic arguments stay with the component
   that declares them, for example `Game.Outer<int>+Inner<string>` or
   `Game.Outer<int>+Leaf` when the nested type adds no parameters. A trailing
-  `&` marks a by-reference type. `name` is `null` only for type index `-1`.
+  `&` marks a by-reference type. `name` is `null` for type index `-1`, metadata
+  version 27 as described below, or an unresolved type-table slot. A dyld bind
+  or unresolved ELF relocation retains the type index without interpreting its
+  stored word as a resolved pointer. If an unresolved loader value occurs
+  inside a type graph, linking is refused with `unsupported-pointer-encoding`;
+  a concrete name is not synthesized from that placeholder.
 
 `binary` also records `types_field` and `types_count`: the address of
 `Il2CppMetadataRegistration.typesCount` and its value. That record is found as
 the single place whose `fieldOffsetsCount` and `typeDefinitionsSizesCount` both
 equal the metadata type-definition count and whose type table is file mapped.
+The complete 128-byte registration must have unambiguous loader coverage. Its
+used fields through byte 112 must be file-backed; a trailing declared zero-fill
+range can cover the final unused fields. An unmapped or conflicting tail is
+refused. These layouts follow the versioned [Unity 2022.3.8f1 producer header](https://github.com/MlgmXyysd/libil2cpp/blob/master/libil2cpp/Unity_2022.3/2022.3.8f1/il2cpp-class-internals.h#L596-L637)
+(redistributed source) and the [AArch64 aggregate alignment rules](https://github.com/ARM-software/abi-aa/blob/2025Q1/aapcs64/aapcs64.rst#aggregates).
+Dyld pointer ownership comes from the parsed bind stream, as in Apple's
+[dyld analyzer](https://github.com/apple-oss-distributions/dyld/blob/dyld-1165.3/common/MachOAnalyzer.cpp#L1508-L1511), rather than the slot's placeholder word.
+The padding, zero-fill-tail and unresolved-type cases have authored regression
+fixtures; they do not add real Unity-build verification to the checks above.
 
 Without `binary_path`, `binary` is `null` and the four binary collections are
 empty in the complete producer report to indicate unrequested observations. Their summary counts, including state counts, are `null`, and native page requests report unavailable observations. This does not establish an empty native inventory. Missing native fields in historical Evidence remain unknown too.
@@ -303,6 +321,8 @@ Format and selection failures name `binary_path`; capacity refusals remain typed
 Scans yield cooperatively in bounded batches. Name-address retention and reverse-trie construction are each limited to65,536 entries/nodes and fallback module-array candidates to64 (`native-index-capacity`); exceeding capacity does not prove absence. Rendered type text has a64MiB UTF-8 cache-workspace guard, separate from the64MiB encoded-report admission, and64 nested rendering frames (`native-type-text-capacity` / `type-nesting-capacity`). Genuine cycles are malformed; unsupported type kinds are explicit coverage failures. Native row/text admission runs before allocation or retention. Unused generic parameter names are read on demand from the same stable metadata snapshot. There is no cross-inspection file cache; validated immutable Evidence is reused for session views.
 
 ELF RELATIVE writes into zero-fill are kept as a private virtual-pointer overlay. Unresolved supported-width symbol relocations, including RELA PLT entries, remain unknown only for the bytes their ELF ABI relocation type covers; an adjacent 32-bit relocation does not make a separate 64-bit method slot unknown. Stored zeros never establish no-body. COPY, TLS descriptor, REL, packed APS2 and other unsupported relocation encodings fail closed. Input bytes are unchanged.
+
+ELF relocation tables and file-backed destinations may span adjacent load ranges when every range agrees on the file translation. Any overlapping zero-fill declaration makes those bytes ambiguous; REA refuses the table or relocation destination instead of choosing the stored file bytes. Missing file bytes remain distinct from conflicting owners: supported unresolved relocations outside file-backed memory retain their unknown overlay, while ambiguous destinations refuse linking. Registration coverage uses the same file/zero-fill ownership checks as pointer reads.
 
 Native address queries batch exact64-bit hexadecimal `addresses` and `states` (`code`, `no-body`, `unknown`), intersecting indices and pagination. Numerically equal address spellings match; original row indices and every shared-body alternative survive:
 
