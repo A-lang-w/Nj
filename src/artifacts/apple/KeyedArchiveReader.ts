@@ -311,6 +311,10 @@ const selectedArchiveReadFailure = (
     cause.systemCode,
     {
       cause,
+      // The cleanup observation, not just the leases, makes the projection
+      // report an unresolved resource; binding leases alone would claim the
+      // denied open left nothing owned.
+      ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
       ...(cause.partialObservation === undefined
         ? {}
         : { partialObservation: cause.partialObservation }),

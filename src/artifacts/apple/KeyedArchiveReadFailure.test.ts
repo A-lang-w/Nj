@@ -155,4 +155,32 @@ describe("directory reader entry refusal", () => {
     expect(failure.systemCode).toBe("EPERM");
     expect(failure.entryPath).toBe(selectedPath);
   });
+
+  it("carries an unresolved cleanup owner into the typed denial", async () => {
+    const root = await bundle();
+    const cleanup = {
+      reason: "close failed after the refused open",
+      resources: [join(root, selectedPath)],
+    };
+    const spy = refuseSelectedOpen(
+      (entry) =>
+        new DirectoryArtifactEntryAccessDenied(
+          "EACCES",
+          entry.path,
+          "Could not open entry (EACCES): permission denied",
+          { cleanup },
+        ),
+    );
+    try {
+      const rejected = await inspect(root).catch((cause: unknown) => cause);
+      expect(rejected).toBeInstanceOf(AnalysisAccessDeniedError);
+      if (!(rejected instanceof AnalysisAccessDeniedError))
+        throw new Error("expected a host access denial");
+      // A denial that left a resource owned must not project as fully cleaned.
+      expect(rejected.cleanupIncomplete).toBe(true);
+      expect(rejected.cleanupResources).toContain(join(root, selectedPath));
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
