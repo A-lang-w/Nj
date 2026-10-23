@@ -36,22 +36,24 @@ export interface BunInstallationHost {
   isFile(path: string): Promise<boolean>;
 }
 
-/** Maximum retained output bytes before an update subprocess is terminated. */
-export const MAX_UPDATE_COMMAND_OUTPUT_BYTES = 2 * 1024 * 1024;
-
-/** Grace period before an uncooperative update subprocess is escalated to SIGKILL. */
+/** Grace period before an uncooperative update subprocess is terminated and escalated to SIGKILL. */
 export const DEFAULT_UPDATE_TERMINATION_GRACE_MS = 1_000;
 
 /** Aggregate raw-byte retention policy for package-manager replies and diagnostics. */
 export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 
-/** Complete metadata queries share launch and collection with diagnostic-only installs. */
+/**
+ * Complete metadata queries share launch and collection with diagnostic-only installs.
+ * Oversized complete replies are drained up to `maxOutputBytes` (defaults to
+ * `UPDATE_COMMAND_OUTPUT_BYTES`, 4 MiB) and given `terminationGraceMs` to exit cleanly
+ * before terminating an uncooperative writer (`SIGTERM`, then `SIGKILL` after `terminationGraceMs`).
+ */
 export const runUpdateCommand = (
   command: readonly string[],
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   output: UpdateOutput = "structured",
   workingDirectory: string | undefined = undefined,
-  maxOutputBytes: number = MAX_UPDATE_COMMAND_OUTPUT_BYTES,
+  maxOutputBytes: number = UPDATE_COMMAND_OUTPUT_BYTES,
   terminationGraceMs: number = DEFAULT_UPDATE_TERMINATION_GRACE_MS,
 ): Promise<Result<string, string>> =>
   runUpdateProcess(
@@ -70,7 +72,7 @@ const runUpdateProcess = async (
   output: UpdateOutput,
   workingDirectory: string | undefined,
   retention: "complete" | "diagnostics",
-  maxOutputBytes?: number,
+  maxOutputBytes: number = UPDATE_COMMAND_OUTPUT_BYTES,
   terminationGraceMs: number = DEFAULT_UPDATE_TERMINATION_GRACE_MS,
 ): Promise<Result<string, string>> => {
   const [executable, ...args] = command;
@@ -83,11 +85,14 @@ const runUpdateProcess = async (
     ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
   });
   let processFailure: string | undefined;
-  let observedBytes = 0;
-  let exceeded = false;
+  let drainGraceTimer: NodeJS.Timeout | undefined;
   let killTimer: NodeJS.Timeout | undefined;
 
-  const clearKillTimer = (): void => {
+  const clearTimers = (): void => {
+    if (drainGraceTimer !== undefined) {
+      clearTimeout(drainGraceTimer);
+      drainGraceTimer = undefined;
+    }
     if (killTimer !== undefined) {
       clearTimeout(killTimer);
       killTimer = undefined;
@@ -95,11 +100,13 @@ const runUpdateProcess = async (
   };
 
   const onExit = (): void => {
-    clearKillTimer();
+    clearTimers();
   };
 
   const terminate = (): void => {
     if (child.exitCode !== null || child.signalCode !== null) return;
+    child.stdout?.destroy();
+    child.stderr?.destroy();
     try {
       child.kill("SIGTERM");
     } catch {
@@ -127,22 +134,39 @@ const runUpdateProcess = async (
     }
   };
 
+  const scheduleTerminationAfterDrainGrace = (): void => {
+    if (
+      drainGraceTimer !== undefined ||
+      killTimer !== undefined ||
+      child.exitCode !== null ||
+      child.signalCode !== null
+    )
+      return;
+    if (terminationGraceMs <= 0) {
+      terminate();
+      return;
+    }
+    drainGraceTimer = setTimeout(() => {
+      drainGraceTimer = undefined;
+      terminate();
+    }, terminationGraceMs);
+    drainGraceTimer.unref?.();
+  };
+
   child.once("exit", onExit);
 
   const supervisor = new ProviderProcessSupervisor(
     { process: child, ownsProcessLifetime: true },
     {
-      maxDiagnosticBytes: maxOutputBytes ?? UPDATE_COMMAND_OUTPUT_BYTES,
+      maxDiagnosticBytes: maxOutputBytes,
       onDiagnostic: (event) => {
         if (event.type === "error") processFailure ??= event.message;
-        if (maxOutputBytes !== undefined && event.type === "output") {
-          observedBytes += event.bytes;
-          if (observedBytes > maxOutputBytes && !exceeded) {
-            exceeded = true;
-            child.stdout?.destroy();
-            child.stderr?.destroy();
-            terminate();
-          }
+        if (
+          retention === "complete" &&
+          event.type === "output" &&
+          event.truncated === true
+        ) {
+          scheduleTerminationAfterDrainGrace();
         }
       },
     },
@@ -154,22 +178,20 @@ const runUpdateProcess = async (
       if (stream !== null) progress.pipe(stream);
   }
   try {
-    // Drain even an oversized reply. Verbosity must not interrupt a package install.
-    // Keep the existing launch/signal policy; this collector owns no process-tree authority.
+    // Drain oversized replies so finite writers and verbose installs finish normally;
+    // complete-output metadata queries terminate an uncooperative writer if it stays open past terminationGraceMs.
     await supervisor.waitForOutputClose();
     const progressFailure = await progress?.close();
     const snapshot = supervisor.snapshot();
-    if (exceeded)
+    // An overflow can trigger stream destruction and child termination after the drain grace window,
+    // so the complete-output budget error takes precedence over subsequent teardown stream or process errors.
+    if (retention === "complete" && snapshot.diagnosticTruncated === true)
       return err(
-        `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
+        `Update command output exceeded the ${String(maxOutputBytes)}-byte complete-output retention budget; reply was not accepted.`,
       );
     if (processFailure !== undefined) return err(processFailure);
     if (snapshot.outputIncomplete === true)
       return err("Update command output did not close completely.");
-    if (retention === "complete" && snapshot.diagnosticTruncated === true)
-      return err(
-        `Update command output exceeded the ${UPDATE_COMMAND_OUTPUT_BYTES}-byte complete-output retention budget; reply was not accepted.`,
-      );
     if (snapshot.exitCode !== 0 || snapshot.signal !== null) {
       const detail =
         snapshot.stderr.text.trim() ||
@@ -181,7 +203,7 @@ const runUpdateProcess = async (
             : "Update command failed without a recorded exit status.");
       return err(
         snapshot.diagnosticTruncated
-          ? `${detail}\n[Update diagnostics truncated at ${UPDATE_COMMAND_OUTPUT_BYTES} bytes; later output omitted.]`
+          ? `${detail}\n[Update diagnostics truncated at ${String(maxOutputBytes)} bytes; later output omitted.]`
           : detail,
       );
     }
@@ -196,7 +218,7 @@ const runUpdateProcess = async (
       return err(`Update progress output failed: ${progressFailure.message}`);
     return ok(retention === "diagnostics" ? "" : snapshot.stdout.text.trim());
   } finally {
-    clearKillTimer();
+    clearTimers();
     child.removeListener("exit", onExit);
     // Reached only after physical close; no child or inherited pipe remains pending.
     supervisor.dispose();

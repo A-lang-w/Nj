@@ -11,7 +11,6 @@ import {
   planIntegrationMaintenance,
 } from "../../src/application/UpdateMaintenance.js";
 import {
-  MAX_UPDATE_COMMAND_OUTPUT_BYTES,
   runUpdateCommand,
   UPDATE_COMMAND_OUTPUT_BYTES,
   systemUpdateHost,
@@ -472,18 +471,18 @@ describe("update subprocess boundaries", () => {
 });
 
 describe("update subprocess output collection limits", () => {
-  it("terminates the subprocess and reports an explicit error when output exceeds the collection limit", async () => {
+  it("rejects oversized finite output and reports the retention budget error", async () => {
     const result = await runUpdateCommand(
       [
         process.execPath,
         "-e",
-        'process.stdout.write("x".repeat(3 * 1024 * 1024))',
+        `process.stdout.write("x".repeat(${String(UPDATE_COMMAND_OUTPUT_BYTES + 1)}))`,
       ],
       process.env,
     );
     expect(result).toEqual(
       err(
-        `Update command output exceeded the collection limit of ${String(MAX_UPDATE_COMMAND_OUTPUT_BYTES)} bytes.`,
+        `Update command output exceeded the ${String(UPDATE_COMMAND_OUTPUT_BYTES)}-byte complete-output retention budget; reply was not accepted.`,
       ),
     );
   });
@@ -503,7 +502,7 @@ describe("update subprocess output collection limits", () => {
     );
     expect(result).toEqual(
       err(
-        `Update command output exceeded the collection limit of ${String(MAX_UPDATE_COMMAND_OUTPUT_BYTES)} bytes.`,
+        `Update command output exceeded the ${String(UPDATE_COMMAND_OUTPUT_BYTES)}-byte complete-output retention budget; reply was not accepted.`,
       ),
     );
   });
@@ -521,7 +520,9 @@ describe("update subprocess output collection limits", () => {
       1024,
     );
     expect(result).toEqual(
-      err("Update command output exceeded the collection limit of 1024 bytes."),
+      err(
+        "Update command output exceeded the 1024-byte complete-output retention budget; reply was not accepted.",
+      ),
     );
   });
 
@@ -539,7 +540,29 @@ describe("update subprocess output collection limits", () => {
       200,
     );
     expect(result).toEqual(
-      err("Update command output exceeded the collection limit of 1024 bytes."),
+      err(
+        "Update command output exceeded the 1024-byte complete-output retention budget; reply was not accepted.",
+      ),
+    );
+  });
+
+  it("escalates immediately to SIGKILL when terminationGraceMs is zero", async () => {
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'while (true) process.stdout.write("excessive output chunk ");',
+    ].join(" ");
+    const result = await runUpdateCommand(
+      [process.execPath, "-e", script],
+      process.env,
+      "structured",
+      undefined,
+      1024,
+      0,
+    );
+    expect(result).toEqual(
+      err(
+        "Update command output exceeded the 1024-byte complete-output retention budget; reply was not accepted.",
+      ),
     );
   });
 
@@ -558,7 +581,9 @@ describe("update subprocess output collection limits", () => {
       100,
     );
     expect(result).toEqual(
-      err("Update command output exceeded the collection limit of 100 bytes."),
+      err(
+        "Update command output exceeded the 100-byte complete-output retention budget; reply was not accepted.",
+      ),
     );
   });
 
