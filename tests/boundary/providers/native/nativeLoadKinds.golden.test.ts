@@ -316,6 +316,37 @@ it("normalizes legacy version-minimum commands into build metadata", () => {
   ]);
 });
 
+it("labels legacy Intel version-minimum images as simulators", () => {
+  const i386 = 7;
+  const x86_64 = 16777223;
+  const arm64 = 16777228;
+  const platform = (cpuType: number, os: string) =>
+    parseOtoolLoadCommands(
+      withOtoolMachHeader(
+        [
+          "Load command 0",
+          `      cmd LC_VERSION_MIN_${os}`,
+          "  cmdsize 16",
+          "    version 12.0",
+          "        sdk 12.1",
+          "",
+        ].join("\n"),
+        cpuType,
+      ),
+    ).builds.map((build) => build.platform);
+  expect(platform(x86_64, "IPHONEOS")).toEqual(["IOSSIMULATOR"]);
+  expect(platform(i386, "IPHONEOS")).toEqual(["IOSSIMULATOR"]);
+  expect(platform(x86_64, "TVOS")).toEqual(["TVOSSIMULATOR"]);
+  expect(platform(x86_64, "WATCHOS")).toEqual(["WATCHOSSIMULATOR"]);
+  expect(platform(i386, "WATCHOS")).toEqual(["WATCHOSSIMULATOR"]);
+  // dyld only treats x86_64 tvOS as the simulator.
+  expect(platform(i386, "TVOS")).toEqual(["TVOS"]);
+  expect(platform(x86_64, "MACOSX")).toEqual(["MACOSX"]);
+  expect(platform(arm64, "IPHONEOS")).toEqual(["IPHONEOS"]);
+  expect(platform(arm64, "TVOS")).toEqual(["TVOS"]);
+  expect(platform(arm64, "WATCHOS")).toEqual(["WATCHOS"]);
+});
+
 it("names numeric build-version platforms and tools", () => {
   const load = parseOtoolLoadCommands(
     withOtoolMachHeader(

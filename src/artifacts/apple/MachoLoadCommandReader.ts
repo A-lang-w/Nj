@@ -73,7 +73,20 @@ const CPU_TYPE_X86_64 = 0x01000007;
  * Legacy `LC_VERSION_MIN_*` commands predate explicit simulator platform
  * IDs. Per Apple's dyld rules the image CPU type distinguishes simulator
  * from device: Intel images are simulator, ARM images are device
- * (tvOS simulator applies to x86_64 only). `LC_BUILD_VERSION` platform
+ * (tvOS simulator applies to x86_64 only). `os` is the command name after
+ * `LC_VERSION_MIN_`.
+ */
+export const isLegacyVersionMinSimulator = (
+  os: string,
+  cpuType: number | null,
+): boolean =>
+  os === "TVOS"
+    ? cpuType === CPU_TYPE_X86_64
+    : (os === "IPHONEOS" || os === "WATCHOS") &&
+      (cpuType === CPU_TYPE_I386 || cpuType === CPU_TYPE_X86_64);
+
+/**
+ * `PLATFORM_*` number for a legacy command. `LC_BUILD_VERSION` platform
  * numbers are preserved verbatim; unknown future numbers stay unknown
  * downstream, never mapped to nearest.
  */
@@ -81,18 +94,21 @@ const legacyVersionMinPlatform = (
   command: number,
   cpuType: number,
 ): number | undefined => {
-  const isIntel = cpuType === CPU_TYPE_I386 || cpuType === CPU_TYPE_X86_64;
   switch (command) {
     case LC_VERSION_MIN_MACOSX:
       return PLATFORM_MACOS;
     case LC_VERSION_MIN_IPHONEOS:
-      return isIntel ? PLATFORM_IOSSIMULATOR : PLATFORM_IOS;
+      return isLegacyVersionMinSimulator("IPHONEOS", cpuType)
+        ? PLATFORM_IOSSIMULATOR
+        : PLATFORM_IOS;
     case LC_VERSION_MIN_TVOS:
-      return cpuType === CPU_TYPE_X86_64
+      return isLegacyVersionMinSimulator("TVOS", cpuType)
         ? PLATFORM_TVOSSIMULATOR
         : PLATFORM_TVOS;
     case LC_VERSION_MIN_WATCHOS:
-      return isIntel ? PLATFORM_WATCHOSSIMULATOR : PLATFORM_WATCHOS;
+      return isLegacyVersionMinSimulator("WATCHOS", cpuType)
+        ? PLATFORM_WATCHOSSIMULATOR
+        : PLATFORM_WATCHOS;
     default:
       return undefined;
   }

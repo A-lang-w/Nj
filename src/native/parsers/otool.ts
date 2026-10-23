@@ -1,3 +1,5 @@
+import { isLegacyVersionMinSimulator } from "../../artifacts/apple/MachoLoadCommandReader.js";
+
 interface ParsedSection {
   readonly segment: string;
   readonly name: string;
@@ -40,6 +42,7 @@ interface ParsedLoadCommands {
     tools: Array<{ name: string; version: string }>;
   }>;
   uuid: string | null;
+  readonly cpuType: number | null;
   readonly flags: Set<string>;
   readonly omittedDependencyCommands: string[];
 }
@@ -101,6 +104,12 @@ const BUILD_PLATFORM_NAMES: ReadonlyMap<string, string> = new Map([
   ["23", "VISIONOS_EXCLAVECORE"],
   ["24", "VISIONOS_EXCLAVEKIT"],
 ]);
+/** Simulator names for legacy commands, matching the LC_BUILD_VERSION names. */
+const LEGACY_SIMULATOR_NAMES: ReadonlyMap<string, string> = new Map([
+  ["IPHONEOS", "IOSSIMULATOR"],
+  ["TVOS", "TVOSSIMULATOR"],
+  ["WATCHOS", "WATCHOSSIMULATOR"],
+]);
 const BUILD_TOOL_NAMES: ReadonlyMap<string, string> = new Map([
   ["1", "CLANG"],
   ["2", "SWIFT"],
@@ -135,7 +144,7 @@ export const parseOtoolLoadCommands = (raw: string) => {
   const header = parseHeader(output);
   if (header === undefined)
     throw new TypeError("otool output is missing the Mach header");
-  const state = createLoadCommandState(header.flags);
+  const state = createLoadCommandState(header.flags, header.cpuType);
   for (const block of output.split(/(?=^Load command \d+$)/mu))
     parseLoadCommand(block, state);
   validateLoadCommandFraming(header, state.commands);
@@ -264,6 +273,7 @@ const validateLoadCommandFraming = (
 
 const createLoadCommandState = (
   headerFlags: readonly string[] | undefined,
+  cpuType: number | null,
 ): ParsedLoadCommands => ({
   commands: [],
   segments: [],
@@ -271,6 +281,7 @@ const createLoadCommandState = (
   entrypoints: [],
   builds: [],
   uuid: null,
+  cpuType,
   flags: new Set(headerFlags ?? []),
   omittedDependencyCommands: [],
 });
@@ -403,13 +414,18 @@ const collectBuild = (
     });
     return;
   }
-  if (kind.startsWith("LC_VERSION_MIN_"))
+  if (kind.startsWith("LC_VERSION_MIN_")) {
+    const os = kind.slice("LC_VERSION_MIN_".length);
+    const simulator = isLegacyVersionMinSimulator(os, state.cpuType)
+      ? LEGACY_SIMULATOR_NAMES.get(os)
+      : undefined;
     state.builds.push({
-      platform: kind.slice("LC_VERSION_MIN_".length) || null,
+      platform: simulator ?? (os || null),
       minimum_os: stringField(fields, "version"),
       sdk: stringField(fields, "sdk"),
       tools: [],
     });
+  }
 };
 
 const collectDependency = (

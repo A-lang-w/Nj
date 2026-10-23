@@ -136,7 +136,10 @@ export const nativeFixture = (name: string): Promise<string> =>
   readFile(new URL(`./native-macos/${name}`, import.meta.url), "utf8");
 
 /** Add consistent Mach command-count metadata to a command-only test capture. */
-export const withOtoolMachHeader = (output: string): string => {
+export const withOtoolMachHeader = (
+  output: string,
+  cpuType = 16777228,
+): string => {
   const count = [...output.matchAll(/^Load command (\d+)$/gmu)].length;
   const sizes = [...output.matchAll(/^\s*cmdsize\s+(\d+)\s*$/gmu)].map(
     ([, size]) => Number(size),
@@ -147,7 +150,7 @@ export const withOtoolMachHeader = (output: string): string => {
   return [
     "Mach header",
     "      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
-    ` 0xfeedfacf 16777228 0 0x00 2 ${count} ${bytes} 0x00000000`,
+    ` 0xfeedfacf ${cpuType} 0 0x00 2 ${count} ${bytes} 0x00000000`,
     output,
   ].join("\n");
 };
