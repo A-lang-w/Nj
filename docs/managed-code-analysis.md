@@ -386,6 +386,13 @@ constants, and bounded shape context. It reports all candidates at the winning
 score and remains ambiguous when the evidence does not distinguish them. The
 digest does not itself remap metadata tokens.
 
+Matched methods also compare aligned call sites. `call-shape` reports opcode and
+operand-kind differences; `call-target` reports differences in the observed
+target declaring-type or method name from `call_edges`. Target tokens remain
+build-local and are not compared across artifacts. Missing or unaligned call
+edges and missing target names leave that facet unknown; equal names do not
+establish overload identity or runtime dispatch.
+
 Tokens are always remapped through observed structure. A caller cannot carry
 `0x06001234` into a new MVID and assume it names the same method.
 
@@ -568,7 +575,8 @@ exception semantics, and does not replace the raw CIL digest. Cross-build
 comparison requires equal raw CIL digests as well for exact CIL/signature
 matches and reports ambiguity when structural evidence is insufficient.
 
-For example, a decoded `nop; ret` body serializes exactly as
+For example, a present body (including any valid declared locals signature)
+whose IL is `nop; ret` serializes exactly as
 `[["nop","none",null],["ret","none",null]]` and has digest
 `5e5fad7741cb44bca3a4f045546b7449990da343f612f5f34c0ca30e9eee0636`.
 This vector specifies the tuple order, `null` handling, absence of whitespace,

@@ -145,7 +145,18 @@ const declaration = (
   size: number | null;
   align: number | null;
 } => {
-  const values = source[0] === ".param" ? source.slice(1) : source;
+  const values = (source[0] === ".param" ? source.slice(1) : source).flatMap(
+    (value) =>
+      value.startsWith(".ptr.")
+        ? [
+            ".ptr",
+            ...value
+              .slice(5)
+              .split(".")
+              .map((part) => `.${part}`),
+          ]
+        : [value],
+  );
   let at = 0;
   const explicit = values[at] === ".align";
   const alignment = explicit ? integer(values[++at]) : null;
@@ -153,10 +164,56 @@ const declaration = (
   const vector = values[at] === ".v2" ? 2 : values[at] === ".v4" ? 4 : 1;
   if (vector !== 1) at++;
   const scalar = values[at++],
-    unit = sizeOf(scalar),
-    candidate = values[at++];
-  const name =
-    candidate !== undefined && identifier.test(candidate) ? candidate : null;
+    unit = sizeOf(scalar);
+  let pointer = false,
+    layoutKnown = unit !== null && (!explicit || alignment !== null);
+  while (values[at]?.startsWith(".")) {
+    const qualifier = values[at++]!;
+    if (qualifier === ".ptr") {
+      if (pointer) layoutKnown = false;
+      pointer = true;
+    } else if (
+      pointer &&
+      [".const", ".global", ".local", ".shared"].includes(qualifier)
+    ) {
+      // Address-space qualifiers describe the pointed-to object.
+    } else if (pointer && qualifier === ".align") {
+      const alignmentToken = values[at];
+      if (alignmentToken !== undefined && /^[0-9]+$/u.test(alignmentToken))
+        at++;
+      const pointeeAlignment = integer(alignmentToken);
+      if (
+        pointeeAlignment === null ||
+        pointeeAlignment <= 0 ||
+        !Number.isInteger(Math.log2(pointeeAlignment))
+      )
+        layoutKnown = false;
+    } else layoutKnown = false;
+  }
+  let nameIndex = values.length - 1;
+  let arrayStart: number | null = null;
+  if (values[nameIndex] === "]") {
+    let depth = 0;
+    for (let index = nameIndex; index >= at; index--) {
+      if (values[index] === "]") depth++;
+      else if (values[index] === "[" && --depth === 0) {
+        arrayStart = index;
+        break;
+      }
+    }
+    if (arrayStart !== null) nameIndex = arrayStart - 1;
+  } else {
+    const opening = values.indexOf("[", at);
+    if (opening >= 0) {
+      arrayStart = opening;
+      nameIndex = opening - 1;
+      layoutKnown = false;
+    }
+  }
+  const name = identifier.test(values[nameIndex] ?? "")
+    ? values[nameIndex]!
+    : null;
+  if (name === null || nameIndex !== at) layoutKnown = false;
   let size = unit === null ? null : unit * vector;
   const type =
     scalar === undefined
@@ -164,24 +221,27 @@ const declaration = (
       : vector === 1
         ? scalar
         : `.v${vector} ${scalar}`;
-  const align = explicit ? alignment : size;
-  if (values[at] === "[") {
-    const count = integer(values[at + 1]);
-    size =
+  const parameterAlignment = explicit ? alignment : size;
+  const align = parameterAlignment;
+  if (arrayStart !== null) {
+    const count = integer(values[arrayStart + 1]);
+    if (
+      arrayStart !== nameIndex + 1 ||
+      arrayStart + 2 !== values.length - 1 ||
       count === null ||
       size === null ||
-      values[at + 2] !== "]" ||
       !Number.isSafeInteger(count * size)
-        ? null
-        : count * size;
-    at += 3;
+    )
+      layoutKnown = false;
+    else size *= count;
   }
   if (
-    at !== values.length ||
+    (arrayStart === null && values.length !== nameIndex + 1) ||
     name === null ||
     align === null ||
     align <= 0 ||
-    !Number.isInteger(Math.log2(align))
+    !Number.isInteger(Math.log2(align)) ||
+    !layoutKnown
   )
     return { name, type, size: null, align: null };
   return { name, type, size, align };
@@ -326,6 +386,14 @@ export function* readPtxKernels(
           end = t.end;
           continue;
         }
+        // Call prototypes contain formal .reg/.param declarations, not entry resources.
+        if (t.value === ".callprototype") {
+          for (t = next(); t.value !== ";"; t = next()) {
+            if (t.value === "}") rejectGpu("Malformed PTX call prototype");
+          }
+          end = t.end;
+          continue;
+        }
         if (t.value !== ".reg" && t.value !== ".shared") continue;
         if (t.value === ".reg") {
           const { type, count } = registerDeclaration(next);
@@ -453,7 +521,7 @@ export const readPtxTarget = (text: string): string | null => {
         const value = stream.next();
         target =
           !value.done &&
-          /^(?:sm|compute)_[0-9]+[a-z]?$/u.test(value.value.value)
+          /^(?:sm_[0-9]+(?:a|f)?|compute_[0-9]+)$/u.test(value.value.value)
             ? value.value.value
             : null;
       }
