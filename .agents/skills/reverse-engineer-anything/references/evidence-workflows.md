@@ -104,6 +104,11 @@ each plan states why in its `reason`. It replays the capture instead with
 `--replay-only` or when the state is unavailable (not derivable, or a catalog
 over the discovery budget), and its stopped document's `state` says which
 applied.
+Use `view: {kind: "environment-coverage"}` with the same rules to see what an
+environment built from a capture would serve: read tools answered from the
+state or replayed with their reason, and each write tool served or withheld
+with a hint about what to record next. `rea environment-build <capture.har>
+<dir>` inspects, projects and exports in one step and prints the same coverage.
 
 For a PE/ELF export question, `inspect_native_exports` accepts `detail: "summary"`
 and retains the complete table. Query `inspect_analysis_view` with
