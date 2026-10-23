@@ -99,7 +99,9 @@ records that read's collection, and serving creates there, since the call's own
 path names no collection of the type. That collection holds only for the
 exemplar's path arguments, compared segment by segment, each as recorded or in
 the other spelling once percent-decoded: serving refuses a call with others, and the gate counts such a
-recorded call as a write no built plan models. A linked create's call is
+recorded call as a write no built plan models. Its path fields take the
+exemplar's path values decoded once, the source it accepts, whichever spelling
+the call sends. A linked create's call is
 observed only in a read of an id its response returned, at the top or in an
 envelope member, so another unseen item's read is never taken for it.
 

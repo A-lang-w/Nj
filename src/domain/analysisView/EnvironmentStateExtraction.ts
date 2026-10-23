@@ -63,9 +63,14 @@ import {
 } from "./environmentStateWriteLinks.js";
 import { extractWrites } from "./environmentStateWrites.js";
 import {
+  addLine,
   dropObservations,
   lineShapes,
+  namesNewParameter,
+  noLines,
+  showsOtherMembers,
   withoutVariants,
+  type LineTotals,
 } from "./environmentStateVariants.js";
 import { stateWritesOf } from "./environmentStateQueryCalls.js";
 
@@ -84,6 +89,12 @@ const entityKey = (type: string, collection: string, id: string): string =>
 
 const requestLine = (record: StateRecordFacts): string =>
   record.path + (record.query ?? "");
+
+/** The member names of the object at a pointer, none when it holds no object. */
+const membersAt = (body: JsonValue, pointer: string): Set<string> => {
+  const object = at(body, pointer);
+  return new Set(isObject(object) ? Object.keys(object) : []);
+};
 
 /** Derive the init state and render plans from manifest tools and timeline-ordered records. */
 export class EnvironmentStateExtraction {
@@ -409,11 +420,16 @@ export class EnvironmentStateExtraction {
     });
   }
 
-  /** Later identity-free projections are evidence of replay, never initial entities. Read only those query bodies. */
+  /**
+   * Later identity-free projections, and later lines that show the entity in another representation
+   * than the planned lines (a new shaping parameter, members theirs lack or always carry), are
+   * evidence of replay, never initial entities. Read only those query bodies.
+   */
   #addLateProjections(
     tool: StateToolFacts,
     type: string,
     projected: number[],
+    planned: LineTotals,
   ): void {
     const limit = this.#initLimit(type);
     if (limit === undefined) return;
@@ -424,18 +440,23 @@ export class EnvironmentStateExtraction {
         record.status === null ||
         record.status < 200 ||
         record.status >= 300 ||
-        !projectsFields(record.query) ||
         this.#beforeInitLimit(record, limit)
       )
         continue;
-      if (
-        this.#withBody(
-          ordinal,
-          (body) =>
-            body !== undefined &&
-            locateItem(body, lastSegmentValue(record.path)) === undefined,
-        )
-      ) {
+      const projecting = projectsFields(record.query);
+      if (!projecting && !namesNewParameter(record.query, planned)) continue;
+      const replayed = this.#withBody(ordinal, (body) => {
+        if (body === undefined) return false;
+        const located = locateItem(body, lastSegmentValue(record.path));
+        if (projecting) return located === undefined;
+        if (located === undefined) return false;
+        const members = membersAt(body, located.pointer);
+        return showsOtherMembers(
+          { carried: members, common: members },
+          planned,
+        );
+      });
+      if (replayed) {
         this.#retain(ENTRY_BYTES);
         projected.push(ordinal);
       }
@@ -451,12 +472,19 @@ export class EnvironmentStateExtraction {
     let keys: string[] | undefined;
     const kept: StateRecordFacts[] = [];
     const projected: number[] = [];
+    // The planned lines' representation, which a later line's is compared with.
+    const planned = noLines();
     for (const record of recordings) {
-      const located = this.#withBody(record.ordinal, (body) =>
-        body === undefined
-          ? null
-          : locateItem(body, lastSegmentValue(record.path)),
-      );
+      const located = this.#withBody(record.ordinal, (body) => {
+        if (body === undefined) return null;
+        const found = locateItem(body, lastSegmentValue(record.path));
+        if (found !== undefined) {
+          const members = membersAt(body, found.pointer);
+          this.#retain(ENTRY_BYTES * (1 + members.size));
+          addLine(planned, record.query, { carried: members, common: members });
+        }
+        return found;
+      });
       if (located === null) {
         this.#recorded(tool, "body-unusable");
         return;
@@ -494,7 +522,7 @@ export class EnvironmentStateExtraction {
       return;
     }
     this.#identity.set(type, { field, basis: "path-parameter" });
-    this.#addLateProjections(tool, type, projected);
+    this.#addLateProjections(tool, type, projected, planned);
     projected.sort(
       (left, right) => this.#position.get(left)! - this.#position.get(right)!,
     );
@@ -623,12 +651,19 @@ export class EnvironmentStateExtraction {
     for (const object of objects)
       if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
     if (previous.ids.size > 0) changed = true;
-    if (earlier !== undefined && changed && this.#writeWithin(earlier, record))
+    if (
+      earlier !== undefined &&
+      changed &&
+      this.#writeWithin(earlier, record)
+    ) {
+      // Each kept span is charged as an entity change's is.
+      this.#retain(ENTRY_BYTES * 4);
       this.#spans.push({
         type: plan.type,
         earlier: earlier.ordinal,
         later: record.ordinal,
       });
+    }
     previous.ids.clear();
     for (const object of objects) previous.ids.add(scalarText(object[field])!);
     previous.record = record;

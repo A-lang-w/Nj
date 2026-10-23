@@ -219,6 +219,22 @@ export const itemCall = (
 };
 
 /** The entity an item call names, preferring verbatim collection spellings as replay does; the id is tried percent-decoded, then as written. */
+/** Whether the state started with the item a call names, which a served delete may since have removed. */
+const startedWithItem = (
+  store: EnvironmentStateStore,
+  type: string,
+  call: ItemCall,
+): boolean => {
+  const ids = new Set([decodedSegment(call.id), call.id]);
+  return store
+    .startedWith(type)
+    .some(
+      (entity) =>
+        ids.has(entity.id) &&
+        collectionMatch(entity.collection, call.segments) !== undefined,
+    );
+};
+
 export const namedEntity = (
   store: EnvironmentStateStore,
   type: string,
@@ -306,14 +322,23 @@ const answerItem = (
   if (call === undefined)
     return err(refused(tool, `Tool ${tool.name} needs every path argument.`));
   const entity = namedEntity(store, view.type, call);
-  if (entity === undefined)
+  // A projection or another representation of an entity the state holds replays as the capture's reads did.
+  const replayed = replayedCall(source, view, callQuery(tool, args));
+  if (entity === undefined) {
+    // An item only a replayed line showed, which the state never started with, answers with its own recording.
+    if (
+      replayed !== undefined &&
+      !startedWithItem(store, view.type, call) &&
+      selectReplayExchange(tool, source.exchanges, args, observedQuery)
+        ?.exact === true
+    )
+      return fromRecording(source, tool, args, replayed, observedQuery);
     return missingAnswer(serving, tool, {
       type: view.type,
       collection: `/${call.segments.map(({ text }) => text).join("/")}`,
       id: call.id,
     });
-  // A projection or another representation of an entity the state holds replays as the capture's reads did.
-  const replayed = replayedCall(source, view, callQuery(tool, args));
+  }
   if (replayed !== undefined)
     return fromRecording(source, tool, args, replayed, observedQuery);
   const shown = shownEntity(

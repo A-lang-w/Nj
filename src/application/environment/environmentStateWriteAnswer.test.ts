@@ -321,6 +321,27 @@ describe("wider write coverage", () => {
   });
 });
 
+describe("items only a replayed line showed", () => {
+  it("replays the recorded read of an item only a variant line showed, and still finds an unrecorded one missing", () => {
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+      ["GET", "/api/books/2?expand=shelf", expandedBook(SECOND_BOOK)],
+    ]);
+    expect(
+      books.answer("get_books_by_id", { id: "2", expand: "shelf" }),
+    ).toMatchObject({
+      status: 200,
+      body: expandedBook(SECOND_BOOK),
+      state: { source: "recording", reason: "variant" },
+    });
+    expect(
+      books.call("get_books_by_id", { id: "3", expand: "shelf" }),
+    ).not.toMatchObject({ ok: true, value: { status: 200 } });
+  });
+});
+
 describe("field selections beside replayed reads", () => {
   it("replays a field selection no checked line gave, and answers a selection of every field from the state", () => {
     const books = servedFrom([
@@ -1832,5 +1853,44 @@ describe("path values of creates read under another path", () => {
           body: { title: "Delta" },
         }),
       ).toMatchObject({ status: 201 });
+  });
+});
+
+describe("path fields of creates read under another path", () => {
+  it("fills a linked create's path field from its exemplar decoded once, whichever accepted spelling the call uses", () => {
+    const note = (id: number, title: string) => ({
+      id,
+      title,
+      project: "team%31",
+    });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const other = { id: 2001, title: "Other", project: "team2" };
+    // The recorded segment `team%2531` names the project `team%31`.
+    const project = "/api/projects/team%2531";
+    for (const spelling of ["team%2531", "team%31"]) {
+      const notes = servedFrom([
+        ["GET", "/api/projects/team2/notes", [other]],
+        ["GET", "/api/projects/team2/notes/2001", other],
+        ["GET", `${project}/notes`, [alpha, beta]],
+        ["GET", `${project}/notes/1001`, alpha],
+        ["GET", `${project}/notes/1002`, beta],
+        ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+        ["GET", `${project}/notes/1003`, gamma],
+        ["GET", `${project}/notes`, [alpha, beta, gamma]],
+        ["POST", "/api/projects/team2/publish", { ok: true }, 200, {}],
+      ]);
+      notes.answer("post_projects_publish_by_project_id", {
+        project_id: spelling,
+        body: { title: "Delta" },
+      });
+      const created = notes.store
+        .snapshot()
+        .rea_state.entities.filter((entity) => entity.fields.title === "Delta");
+      expect(created).toMatchObject([{ fields: { project: "team%31" } }]);
+    }
   });
 });

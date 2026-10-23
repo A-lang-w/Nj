@@ -906,6 +906,52 @@ it("leaves every line checked when comparing many mostly empty lines would excee
   expect(reads).toBeLessThan(10 * lines.length);
 });
 
+/** The smallest allowance, to a KiB, a capture's state projects within. */
+const allowance = (parent: AnalysisViewParent): number => {
+  const fits = (bytes: number): boolean =>
+    projectAnalysisView(
+      parent,
+      { kind: "environment-state", template_rules: [...ALL_RULES] },
+      { state: new EnvironmentStateAccumulator(bytes, [...ALL_RULES]) },
+    ).ok;
+  let [low, high] = [0, 8 * 1024];
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (fits(middle * 1024)) high = middle;
+    else low = middle;
+  }
+  return high * 1024;
+};
+
+it("counts each change of a line's membership across a write against the budget", () => {
+  const tags = 64;
+  // Each tag's list is read three times across two writes; the third read shows the first book again or keeps the second.
+  const capture = (third: number) =>
+    captureOf([
+      ...Array.from({ length: tags }, (_, tag): TimedCaptureRow => [
+        "GET",
+        `/api/books?tag=${String(tag)}`,
+        [{ id: 1 }],
+      ]),
+      ["POST", "/api/view-log", { ok: true }, 200, { tag: 0 }],
+      ...Array.from({ length: tags }, (_, tag): TimedCaptureRow => [
+        "GET",
+        `/api/books?tag=${String(tag)}`,
+        [{ id: 2 }],
+      ]),
+      ["POST", "/api/view-log", { ok: true }, 200, { tag: 1 }],
+      ...Array.from({ length: tags }, (_, tag): TimedCaptureRow => [
+        "GET",
+        `/api/books?tag=${String(tag)}`,
+        [{ id: third }],
+      ]),
+    ]);
+  // Both captures keep the same entities and observations; only the second change of each line differs.
+  expect(allowance(capture(1)) - allowance(capture(2))).toBeGreaterThanOrEqual(
+    tags * 256,
+  );
+});
+
 it("releases a planning pass a rewrite cut discards before extracting the state again", () => {
   const recipe = (id: number, views: number) => ({
     id,
@@ -921,22 +967,6 @@ it("releases a planning pass a rewrite cut discards before extracting the state 
       ["POST", "/api/view-log", { ok: true }, 200, { recipe: 1 }],
       ["GET", "/api/recipes/1", recipe(1, views)],
     ]);
-  const fits = (parent: AnalysisViewParent, bytes: number): boolean =>
-    projectAnalysisView(
-      parent,
-      { kind: "environment-state", template_rules: [...ALL_RULES] },
-      { state: new EnvironmentStateAccumulator(bytes, [...ALL_RULES]) },
-    ).ok;
-  /** The smallest allowance, to a KiB, the capture's state projects within. */
-  const allowance = (parent: AnalysisViewParent): number => {
-    let [low, high] = [0, 8 * 1024];
-    while (high - low > 1) {
-      const middle = Math.floor((low + high) / 2);
-      if (fits(parent, middle * 1024)) high = middle;
-      else low = middle;
-    }
-    return high * 1024;
-  };
   expect(stateOf(capture(2)).types).toMatchObject([
     { collection_template: "/api/recipes", init_before_ordinal: 2 },
   ]);

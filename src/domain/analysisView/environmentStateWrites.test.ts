@@ -1642,6 +1642,26 @@ describe("state order after a variant line is dropped", () => {
   });
 });
 
+describe("item lines first recorded after a write", () => {
+  it("replays an item line that shows another representation, though first recorded after a write", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", created],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({
+      projected_record_ordinals: [5],
+      projected_query_keys: [{ name: "expand" }],
+    });
+  });
+});
+
 describe("what a linked create observes", () => {
   it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
     const D = note(1004, "Delta");

@@ -303,6 +303,15 @@ const pathArguments = (
   );
 };
 
+/** The path of the recorded call a plan was built from. */
+const exemplarPath = (
+  serving: StateServing,
+  plan: StateWritePlan,
+): string | undefined =>
+  plan.exemplar_ordinal === null
+    ? undefined
+    : serving.source.exchanges.get(plan.exemplar_ordinal)?.path;
+
 /** The collection a create writes into: a linked plan's, only for its exemplar's path arguments, else the one the call's path selects. */
 const writtenCollection = (
   serving: StateServing,
@@ -314,14 +323,10 @@ const writtenCollection = (
     return ok(
       createdCollection(serving, tool, request.args, plan.target ?? ""),
     );
-  const exemplar =
-    plan.exemplar_ordinal === null
-      ? undefined
-      : serving.source.exchanges.get(plan.exemplar_ordinal);
   // No read showed where other path arguments create.
   return sameLinkedSource(
     tool.path_template,
-    exemplar?.path,
+    exemplarPath(serving, plan),
     pathArguments(tool, request.args),
   )
     ? ok(linked)
@@ -331,6 +336,36 @@ const writtenCollection = (
           `Tool ${tool.name} creates into ${linked} only with the path arguments its recording sent.`,
         ),
       );
+};
+
+/**
+ * The path values a create's path fields take, decoded once as the gate learned them: a linked
+ * create accepts its exemplar's source only, so it takes that; another the collection this call
+ * selects, else its own arguments.
+ */
+const createdPathValues = (
+  serving: StateServing,
+  request: WriteRequest,
+  call: WriteCall,
+  collection: string,
+): ReadonlyMap<string, string> => {
+  const { tool, plan } = request;
+  const exemplar =
+    linkedCollection(plan, tool.path_template) === undefined
+      ? undefined
+      : exemplarPath(serving, plan);
+  return (
+    (exemplar === undefined
+      ? undefined
+      : pathValuesOf(tool.path_template, exemplar)) ??
+    pathValuesOf(tool.path_template, collection) ??
+    new Map(
+      [...call.pathValues].map(([name, value]) => [
+        name,
+        decodedSegment(value),
+      ]),
+    )
+  );
 };
 
 const answerCreate = (
@@ -365,17 +400,9 @@ const answerCreate = (
     collection: members,
     observed,
   });
-  // The gate learned path rules from the recorded path, decoded once; the collection is this call's, else its own arguments.
   const created = {
     ...call,
-    pathValues:
-      pathValuesOf(tool.path_template, collection) ??
-      new Map(
-        [...call.pathValues].map(([name, value]) => [
-          name,
-          decodedSegment(value),
-        ]),
-      ),
+    pathValues: createdPathValues(serving, request, call, collection),
   };
   const fields = createdFields(plan, observed, created, values.generate);
   if (!fields.ok) return err(refused(tool, fields.error));

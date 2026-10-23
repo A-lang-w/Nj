@@ -45,7 +45,10 @@ later increments.
   and of the view's checks; the view lists it in `projected_record_ordinals`.
   Beside a line showing whole entities, a list line asking for some fields only
   (a projection value other than `*`, which asks for all) is listed there too,
-  and proves no identity or membership. On a view with
+  and proves no identity or membership. So is an item line first recorded after
+  the type's initial reads that names a shaping parameter none of the planned
+  lines named while its object carries or lacks members theirs do not, such as a
+  later `?expand=shelf` read. On a view with
   such replayed reads, serving replays a call naming a projection parameter for
   an entity the state holds unless every value it gives is `*` or one a checked
   line gave, and no replayed read gave it. The write gate leaves out exactly

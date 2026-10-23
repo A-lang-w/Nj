@@ -115,30 +115,60 @@ const conflicts = (left: LineShape, right: LineShape): boolean =>
       right.entities.has(key) && right.entities.get(key) !== members,
   );
 
-/** The base lines so far, with their shaping parameter names, the members their objects carry and those every one carries. */
-interface BaseLines {
-  readonly lines: StateRecordFacts[];
+/** What lines compared later are compared with: the shaping parameter names they named, the members their objects carried, and those every one carried. */
+export interface LineTotals {
   readonly names: Set<string>;
   readonly carried: Set<string>;
   common: Set<string> | undefined;
 }
 
-/** Add a base line, keeping the totals a later line is compared with. */
-const addBase = (
-  base: BaseLines,
-  record: StateRecordFacts,
-  shape: LineShape,
+/** Totals over no lines yet. */
+export const noLines = (): LineTotals => ({
+  names: new Set(),
+  carried: new Set(),
+  common: undefined,
+});
+
+/** Count one more line into the totals. */
+export const addLine = (
+  totals: LineTotals,
+  query: string | null | undefined,
+  shape: Pick<LineShape, "carried" | "common">,
 ): void => {
-  base.lines.push(record);
-  for (const name of shapingNames(record.query)) base.names.add(name);
-  for (const member of shape.carried) base.carried.add(member);
+  for (const name of shapingNames(query)) totals.names.add(name);
+  for (const member of shape.carried) totals.carried.add(member);
   const { common } = shape;
   if (common !== undefined)
-    base.common =
-      base.common === undefined
+    totals.common =
+      totals.common === undefined
         ? new Set(common)
-        : new Set([...base.common].filter((member) => common.has(member)));
+        : new Set([...totals.common].filter((member) => common.has(member)));
 };
+
+/** Whether a query names a shaping parameter, paging aside, that none of the counted lines named. */
+export const namesNewParameter = (
+  query: string | null | undefined,
+  totals: LineTotals,
+): boolean => shapingNames(query).some((name) => !totals.names.has(name));
+
+/** Whether a line's objects carry a member the counted lines' never did, or lack one theirs always carried. */
+export const showsOtherMembers = (
+  shape: Pick<LineShape, "carried" | "common">,
+  totals: LineTotals,
+): boolean => {
+  const { common } = shape;
+  return (
+    [...shape.carried].some((member) => !totals.carried.has(member)) ||
+    (common !== undefined &&
+      totals.common !== undefined &&
+      [...totals.common].some((member) => !common.has(member)))
+  );
+};
+
+/** The base lines so far, with their totals. */
+interface BaseLines extends LineTotals {
+  readonly lines: StateRecordFacts[];
+}
 
 /**
  * The latest lines that show the plan's entities in another representation than its base lines, as
@@ -184,17 +214,15 @@ export const variantLines = (
     const differs = a.findIndex((value, index) => value !== b[index]);
     return differs === -1 ? 0 : a[differs]! - b[differs]!;
   });
-  const base: BaseLines = {
-    lines: [],
-    names: new Set(),
-    carried: new Set(),
-    common: undefined,
-  };
+  const base: BaseLines = { ...noLines(), lines: [] };
   const variants: StateRecordFacts[] = [];
   for (const record of ordered) {
     if (base.lines.length > 0 && isVariant(record, base, shape))
       variants.push(record);
-    else addBase(base, record, shape(record));
+    else {
+      base.lines.push(record);
+      addLine(base, record.query, shape(record));
+    }
   }
   return variants;
 };
@@ -207,15 +235,7 @@ const isVariant = (
 ): boolean => {
   const mine = shape(record);
   if (base.lines.some((line) => conflicts(mine, shape(line)))) return true;
-  if (!shapingNames(record.query).some((name) => !base.names.has(name)))
-    return false;
-  const { common } = mine;
-  return (
-    [...mine.carried].some((member) => !base.carried.has(member)) ||
-    (common !== undefined &&
-      base.common !== undefined &&
-      [...base.common].some((member) => !common.has(member)))
-  );
+  return namesNewParameter(record.query, base) && showsOtherMembers(mine, base);
 };
 
 /** The keys that tell replayed lines from base lines: a parameter or value only replayed lines give, or a parameter every base line names that one leaves out. */
