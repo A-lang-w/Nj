@@ -5,6 +5,7 @@ import { expect } from "vitest";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import {
   createResidualUnknown,
   updateResidualUnknown,
@@ -95,6 +96,55 @@ cliTest(
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toEqual({ imported: 2, unknowns_added: 2, total: 2 });
+  },
+);
+
+cliTest(
+  "selects own __proto__ members without inventing inherited ones",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-own-proto-");
+    const path = join(root, "bundle.json");
+    // JSON.parse creates an own __proto__ member; an object literal would not.
+    const result = JSON.parse(
+      '{"__proto__":{"answer":7},"normal":{"answer":7}}',
+    ) as JsonValue;
+    const record = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "ordinary-json", parameters: {}, result },
+    );
+    await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
+    const select = async (filter: string) => {
+      const output = await cli.run({
+        arguments: [
+          "inspect-evidence-bundle",
+          JSON.stringify({ path, detail: "complete" }),
+          "--json",
+          "--filter-output",
+          filter,
+        ],
+      });
+      expect(output.exitCode).toBe(0);
+      return output.json;
+    };
+    const selected = "records[0,1].normalized_result";
+    expect(await select(`${selected}.__proto__.answer`)).toEqual(
+      JSON.parse(
+        '{"records":[{"normalized_result":{"__proto__":{"answer":7}}}]}',
+      ),
+    );
+    expect(
+      await select(`${selected}.__proto__,${selected}.normal.answer`),
+    ).toEqual(
+      JSON.parse(
+        '{"records":[{"normalized_result":{"__proto__":{"answer":7},"normal":{"answer":7}}}]}',
+      ),
+    );
+    // Absent own members match an ordinary missing key, never Object.prototype.
+    expect(await select(`${selected}.normal.__proto__`)).toEqual(
+      await select(`${selected}.normal.missing`),
+    );
+    expect(await select("__proto__")).toEqual(await select("missing"));
   },
 );
 

@@ -449,7 +449,12 @@ const applyCliOutputFilter = (value: unknown, paths: FilterPaths): unknown => {
     "key" in paths[0][0]
   ) {
     const key = paths[0][0].key;
-    if (typeof value !== "object" || value === null) return undefined;
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !Object.hasOwn(value, key)
+    )
+      return undefined;
     const selected = (value as Record<string, unknown>)[key];
     return typeof selected !== "object" || selected === null
       ? selected
@@ -470,31 +475,33 @@ const projectObjectPaths = (value: unknown, paths: FilterPaths): unknown => {
     byKey.set(segment.key, siblings);
   }
 
-  const result: Record<string, unknown> = {};
+  // Object.fromEntries keeps a selected "__proto__" member as own JSON data.
+  const result: [string, unknown][] = [];
   for (const key of [...byKey.keys()].sort()) {
     const siblings = byKey.get(key)!;
+    if (!Object.hasOwn(value, key)) continue;
     const child = (value as Record<string, unknown>)[key];
     if (child === undefined) continue;
     // Selecting a parent retains its complete original subtree and dominates
     // any narrower selections below it, independent of path order.
     if (siblings.some((path) => path.length === 0)) {
-      result[key] = child;
+      result.push([key, child]);
       continue;
     }
     const slicePaths = siblings.filter(
       (path) => path[0] !== undefined && "start" in path[0],
     );
     if (slicePaths.length > 0 && Array.isArray(child)) {
-      result[key] = projectArraySlices(child, slicePaths);
+      result.push([key, projectArraySlices(child, slicePaths)]);
       continue;
     }
     const objectPaths = siblings.filter(
       (path) => path[0] !== undefined && "key" in path[0],
     );
     if (objectPaths.length > 0 && typeof child === "object" && child !== null)
-      result[key] = projectObjectPaths(child, objectPaths);
+      result.push([key, projectObjectPaths(child, objectPaths)]);
   }
-  return result;
+  return Object.fromEntries(result);
 };
 
 /** Union sliced rows by their original index, then emit them in source order. */

@@ -313,3 +313,19 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
     expect(projectionSource).toEqual(before);
   },
 );
+
+it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
+  "retains a selected own __proto__ member in %s",
+  async (format) => {
+    // JSON.parse creates an own __proto__ member; an object literal would not.
+    const value: unknown = JSON.parse(
+      '{"row":{"__proto__":{"k":1},"n":2,"other":3}}',
+    );
+    const expected: unknown = JSON.parse('{"row":{"__proto__":{"k":1},"n":2}}');
+    const output = await runFilteredCli(value, format, "row.__proto__.k,row.n");
+    if (format === "json" || format === "jsonl")
+      expect(JSON.parse(output)).toEqual(expected);
+    else expect(output).toBe(`${Formatter.format(expected, format)}\n`);
+    expect(output).toContain("__proto__");
+  },
+);
