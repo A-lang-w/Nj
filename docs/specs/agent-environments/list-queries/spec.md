@@ -51,8 +51,9 @@ merge: lines that disagree drop the parameter, inert values gather, search field
 named like its parameter (`shelf`, or `shelf_id`, for `shelf`) can match by coincidence, so it stands only when lines
 giving the parameter two different values agree on it; otherwise the parameter takes no role. The merged query keeps the
 lines it reproduces, envelope and fields included; any other line keeps its recorded members. The view's `query` names
-the roles, those lines, and the envelope members that count every match before paging (`totals`); a `number`-of-items
-member such as `numberOfElements` counts the page.
+the roles, those lines, and the envelope members that count every match before paging (`totals`), top-level or one
+level down in a paging object (`/pageInfo/totalRows`); a `number`-of-items member such as `numberOfElements` counts the
+page.
 
 ## Serving and the write gate
 

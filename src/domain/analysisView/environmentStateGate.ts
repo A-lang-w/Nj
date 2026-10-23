@@ -19,6 +19,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { counterPath } from "./environmentStateCounters.js";
 import {
   evaluateQuery,
   learnQuery,
@@ -37,7 +38,7 @@ import {
   type MintedMembers,
 } from "./environmentStateResponseMembers.js";
 import {
-  isItemTotal,
+  itemTotals,
   listFacts,
   nameTokens,
 } from "./environmentStateListFacts.js";
@@ -336,12 +337,12 @@ const listQuery = (
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
       counts.set(
         record.ordinal,
-        Object.keys(parent).flatMap((name): [string, number][] => {
-          const count = isItemTotal(name)
-            ? queryTotalCount(parent[name])
-            : undefined;
-          return count === undefined ? [] : [[name, count]];
-        }),
+        itemTotals(parent, plan.pointer).flatMap(
+          ([name, value]): [string, number][] => {
+            const count = queryTotalCount(value);
+            return count === undefined ? [] : [[name, count]];
+          },
+        ),
       );
     });
   }
@@ -361,7 +362,7 @@ const listQuery = (
     // Absence says nothing about another envelope's counter. Only a present
     // count that disagrees invalidates the shared total interpretation.
     for (const [name, count] of counts.get(line.ordinal) ?? []) {
-      if (nameTokens(name).includes("number")) continue;
+      if (nameTokens(counterPath(name).at(-1)!).includes("number")) continue;
       if (count === total) totals.add(name);
       else contradicted.add(name);
     }

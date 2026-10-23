@@ -83,7 +83,7 @@ const listQuerySchema = z.strictObject({
   totals: z
     .array(z.string())
     .describe(
-      "Observed envelope members with reproducible counts of every match before paging; absent or unknown representations stay recorded.",
+      "Observed envelope members with reproducible counts of every match before paging, named as counters are; absent or unknown representations stay recorded.",
     ),
 });
 const checkedSchema = z
@@ -182,7 +182,9 @@ const viewSchema = z.discriminatedUnion("shape", [
       ),
     counters: z
       .array(z.string())
-      .describe("Envelope members that count the listed entities."),
+      .describe(
+        "Envelope members that count the listed entities: a top-level member's name, or a JSON pointer to one in a top-level object beside the list (`/pageInfo/totalRows`).",
+      ),
     query: listQuerySchema
       .optional()
       .describe(

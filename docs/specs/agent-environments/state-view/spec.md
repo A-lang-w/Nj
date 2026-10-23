@@ -120,8 +120,12 @@ later increments.
   parameter (`random`, `rand`, `shuffle`, `seed`); a collection without such a
   line keeps its entities' earliest sightings.
 - A list has `all` membership only when no item-total envelope member (`total`,
-  `count` and their compounds, not page counts) differs from the number of
-  entities it lists and no `has_more`, `next` or next-page token is set.
+  `count` and their compounds, not page counts), at the top level or in a
+  top-level object beside the list such as `pageInfo.totalRows`, differs from
+  the number of entities it lists and no `has_more`, `next` or next-page token
+  is set. Such a member that equals the number listed is a counter; a nested
+  one is named by its pointer (`/pageInfo/totalRows`), and members beside it
+  such as `isLastPage` stay as recorded.
 - Keep an item or list plan only when it reproduces each request line's latest
   initial recording from the state, comparing JSON values without regard to
   member order; otherwise record the tool with a reason. Parse bodies only when

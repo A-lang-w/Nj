@@ -8,6 +8,7 @@ import {
   type ClockFormat,
 } from "./environmentStateWriteValues.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
+import { counterAt, withCounter } from "./environmentStateCounters.js";
 
 /** How records are ordered: by recorded start time, or by record order when any start time is missing. */
 export type StateTimeline = "recorded-start-time" | "record-order";
@@ -690,8 +691,8 @@ export const renderStateList = (
   const listed = listItems(base, view.pointer)?.length;
   return view.counters.reduce(
     (body, name) =>
-      at(base, pointerTo(name)) === listed
-        ? replaceAt(body, pointerTo(name), items.length)
+      counterAt(base, name) === listed
+        ? withCounter(body, name, items.length)
         : body,
     replaceAt(base, view.pointer, [...items]),
   );

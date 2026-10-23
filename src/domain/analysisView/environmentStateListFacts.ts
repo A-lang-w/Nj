@@ -10,6 +10,8 @@ import {
   collectionPathOf,
   isObject,
   listItems,
+  pointerTo,
+  pointerTokens,
   same,
   scalarText,
   type JsonObject,
@@ -39,18 +41,20 @@ export const listFacts = (
         minted.add(name);
       items.forEach((item) => union.add(item));
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
-      const counted = Object.keys(parent).filter(
-        (name) => isItemTotal(name) && countOf(parent[name]) !== undefined,
+      const counted = itemTotals(parent, plan.pointer).filter(
+        ([, value]) => countOf(value) !== undefined,
       );
       counting.set(
         record.ordinal,
-        counted.filter((name) => parent[name] === items.length),
+        counted
+          .filter(([, value]) => value === items.length)
+          .map(([counter]) => counter),
       );
       // Only a line that pages at most can hold its whole collection; a total that differs from
       // the number listed, or a next page, shows it is partial.
       if (
         !startsAtBeginning(record.query) ||
-        counted.some((name) => countOf(parent[name]) !== items.length) ||
+        counted.some(([, value]) => countOf(value) !== items.length) ||
         Object.keys(parent).some((name) => continues(name, parent[name]))
       )
         return;
@@ -64,6 +68,25 @@ export const listFacts = (
   // renderStateList updates only one the selected base actually counted.
   const counters = [...new Set([...counting.values()].flat())].sort(compare);
   return { whole, counters, minted: [...minted].sort(compare) };
+};
+
+/**
+ * A list envelope's item totals, each by its counter: a top-level member's name, or the pointer to one in a
+ * top-level object beside the list, such as `/pageInfo/totalRows`.
+ */
+export const itemTotals = (
+  parent: JsonObject,
+  listPointer: string,
+): [counter: string, value: JsonValue | undefined][] => {
+  const root = pointerTokens(listPointer)[0];
+  const totals: [string, JsonValue | undefined][] = [];
+  for (const [name, value] of Object.entries(parent))
+    if (isItemTotal(name)) totals.push([name, value]);
+    else if (isObject(value) && name !== root)
+      for (const [inner, count] of Object.entries(value))
+        if (isItemTotal(inner))
+          totals.push([`${pointerTo(name)}${pointerTo(inner)}`, count]);
+  return totals;
 };
 
 export const nameTokens = (name: string): string[] =>

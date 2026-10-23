@@ -4,14 +4,13 @@ import { literalSubstringPredicate } from "../analysisSearch.js";
 import { directionOf, orderRole } from "./environmentStateOrderParameters.js";
 import {
   isObject,
-  pointerTo,
   renderStateList,
-  replaceAt,
   scalarText,
   type JsonObject,
   type StateEntity,
   type StateListView,
 } from "./environmentStateRules.js";
+import { counterAt, withCounter } from "./environmentStateCounters.js";
 
 /** What one list query parameter does to a list, learned from the recorded lines it explains. */
 export type QueryParameter =
@@ -599,15 +598,15 @@ export const renderQueryList = (
   total: number,
 ): JsonValue =>
   view.query.totals.reduce(
-    (body, name) =>
-      isObject(base) &&
-      Object.hasOwn(base, name) &&
-      queryTotalCount(base[name]) !== undefined
-        ? replaceAt(
+    (body, name) => {
+      const recorded = counterAt(base, name);
+      return queryTotalCount(recorded) === undefined
+        ? body
+        : withCounter(
             body,
-            pointerTo(name),
-            typeof base[name] === "string" ? String(total) : total,
-          )
-        : body,
+            name,
+            typeof recorded === "string" ? String(total) : total,
+          );
+    },
     renderStateList(view, base, items),
   );
