@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
+  type ArtifactReaderTraversal,
 } from "../ArtifactReader.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
@@ -12,16 +14,24 @@ import {
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
 } from "../../domain/apple/appleAssetCatalog.js";
-import { execFileOutput } from "../../process/ExecFileOutput.js";
+import {
+  ExecFileOutputCancelledError,
+  execFileOutput,
+} from "../../process/ExecFileOutput.js";
 
 const ASSETUTIL = "/usr/bin/assetutil";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_METADATA_BYTES = 64 * 1024 * 1024;
 
+/** The command owner wraps the exact caller reason; do not replace it with the wrapper. */
+const cancellationCause = (cause: unknown, signal?: AbortSignal): unknown =>
+  cause instanceof ExecFileOutputCancelledError ? cause.cause : signal?.reason;
+
 /** Inspect compiled asset catalog metadata without extracting rendition bytes. */
 export const analyzeAppleAssetCatalogs = async (input: {
   readonly bundlePath: string;
-  readonly targetSha256: string;
+  readonly targetSha256: string | null;
+  readonly resourceRoot?: import("../../domain/apple/bundleResourceRoot.js").BundleResourceRoot;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly page?: unknown;
   readonly signal?: AbortSignal;
@@ -46,6 +56,9 @@ export const analyzeAppleAssetCatalogs = async (input: {
   )({
     bundlePath: input.bundlePath,
     targetSha256: input.targetSha256,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resourceRoot: input.resourceRoot }),
     signal:
       input.signal === undefined
         ? interfaceBuilderCancel.signal
@@ -56,8 +69,9 @@ export const analyzeAppleAssetCatalogs = async (input: {
   );
   let catalogs: Awaited<ReturnType<typeof collectAssetCatalogs>>["catalogs"];
   let uninspected: readonly string[];
+  let traversal: ArtifactReaderTraversal;
   try {
-    ({ catalogs, uninspected } = await collectAssetCatalogs(input));
+    ({ catalogs, uninspected, traversal } = await collectAssetCatalogs(input));
   } catch (cause: unknown) {
     interfaceBuilderCancel.abort();
     await interfaceBuilderAnalysis;
@@ -71,7 +85,11 @@ export const analyzeAppleAssetCatalogs = async (input: {
   );
   const result = projectAppleAssetCatalogPage({
     targetSha256: input.targetSha256,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resourceRoot: input.resourceRoot }),
     catalogs,
+    inventoryCoverage: { scope: "container-entries", status: traversal.status },
     offset: page.offset,
     limit: page.limit,
     resourceReferences,
@@ -80,6 +98,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
     ...result,
     limitations: [
       ...result.limitations,
+      ...traversal.limitations,
       // An app without a compiled catalog is an observed empty inventory, not
       // a missing host tool.
       ...(catalogs.length === 0
@@ -119,9 +138,27 @@ const collectAssetCatalogs = async (input: {
     records: ReturnType<typeof parseAppleAssetCatalogRecords>;
   }[] = [];
   const uninspected: string[] = [];
+  const traversal = new ArtifactTraversalObservation();
+  let symlinks = 0;
+  let firstSymlink: string | undefined;
   let totalMetadataBytes = 0;
   try {
-    for await (const entry of reader.entries(input.signal)) {
+    for await (const entry of reader.entries(input.signal, {
+      onCoverage: traversal.onCoverage,
+      onOmission: (omission) => {
+        traversal.onOmission(omission);
+        const { path, kind } = omission;
+        if (path.split("/").at(-1) === "Assets.car")
+          uninspected.push(`${path} (${kind})`);
+      },
+    })) {
+      if (
+        entry.kind === "symlink" &&
+        entry.path.split("/").at(-1) !== "Assets.car"
+      ) {
+        symlinks += 1;
+        firstSymlink ??= entry.path;
+      }
       // Reader paths are `/`-separated; only an entry named exactly
       // Assets.car is a compiled catalog, not e.g. NotAssets.car.
       if (entry.path.split("/").at(-1) !== "Assets.car") continue;
@@ -148,6 +185,15 @@ const collectAssetCatalogs = async (input: {
   } finally {
     await reader.close();
   }
+  if (symlinks > 0)
+    traversal.onCoverage({
+      // Source entries are represented even when their link targets were not
+      // inspected. Keep that inventory scope separate from catalog discovery.
+      status: "complete",
+      limitations: [
+        `Asset catalog discovery did not follow ${symlinks} symlink(s); catalogs beneath them may remain uninspected. First path: ${JSON.stringify(firstSymlink)}.`,
+      ],
+    });
   // Without any readable catalog, unmatched resource keys would overstate an
   // absence that a skipped catalog entry may contradict.
   if (catalogs.length === 0 && uninspected.length > 0)
@@ -155,7 +201,7 @@ const collectAssetCatalogs = async (input: {
       "path",
       `Asset catalog entries are not regular files and were not inspected: ${uninspected.join(", ")}`,
     );
-  return { catalogs, uninspected };
+  return { catalogs, uninspected, traversal: traversal.snapshot() };
 };
 
 const inspectAssetCatalogEntry = async (input: {
@@ -260,6 +306,7 @@ const runAssetUtil = async (
         env: environment,
         timeout: 60_000,
         maxBuffer: MAX_CATALOG_BYTES,
+        stopSignal: "SIGTERM",
         ...(signal === undefined ? {} : { signal }),
       })
     ).stdout;
@@ -268,6 +315,7 @@ const runAssetUtil = async (
       throw new ArtifactReaderFailure(
         "cancelled",
         "Asset catalog inspection cancelled",
+        { cause: cancellationCause(cause, signal) },
       );
     const code =
       typeof cause === "object" && cause !== null && "code" in cause
@@ -303,6 +351,7 @@ const digestBounded = async (
       throw new ArtifactReaderFailure(
         "cancelled",
         "Asset catalog inspection cancelled",
+        { cause: signal.reason },
       );
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += bytes.length;

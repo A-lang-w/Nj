@@ -1,10 +1,8 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PeResourcesPort } from "./PeResourcesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -37,23 +35,15 @@ export class PeResourcesService {
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "inspect_pe_resources";
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(operation));
+      return err(
+        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+      );
     const input = inspectPeResourcesInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
         analysisInputErrorFromIssues(operation, input.error.issues, rawInput, {
           cause: input.error,
         }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(operation, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
       );
     const result = await this.provider.inspect(input.data, options);
     if (!result.ok) return result;
@@ -123,6 +113,8 @@ const validReport = (
 ): boolean => {
   const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
     offset <= report.artifact.bytes - bytes;
+  const identityInside = (identity: PeResourceIdentity): boolean =>
+    identity.kind === "id" || inside(identity.location);
   if (
     report.artifact.bytes > maxBytes ||
     report.coverage.resources !== report.resources.length ||
@@ -145,7 +137,16 @@ const validReport = (
       !inside(report.directory.data_directory_location))
   )
     return false;
-  if (!report.directories.every((item) => inside(item.location))) return false;
+  if (
+    !report.directories.every(
+      (item) =>
+        inside(item.location) &&
+        item.path.length === item.entry_locations.length &&
+        item.entry_locations.every(inside) &&
+        item.path.every(identityInside),
+    )
+  )
+    return false;
   if (
     !report.resources.every(
       (item, index) =>
@@ -153,9 +154,7 @@ const validReport = (
         inside(item.data_entry_location) &&
         inside(item.payload.location) &&
         item.entry_locations.every(inside) &&
-        [item.type, item.name, item.language].every(
-          (identity) => identity.kind === "id" || inside(identity.location),
-        ),
+        [item.type, item.name, item.language].every(identityInside),
     )
   )
     return false;
