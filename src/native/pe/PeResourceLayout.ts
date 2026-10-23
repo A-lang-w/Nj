@@ -1,4 +1,12 @@
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  peVirtualExtent,
+  readPeImageLayout,
+  type PeSection,
+} from "./PeImageLayout.js";
+
+/** Data Directory index of the resource directory. */
+const RESOURCE_DIRECTORY_INDEX = 2;
 
 export const peFailure = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -21,138 +29,33 @@ export const requirePeRange = (
     );
 };
 
-interface Section {
-  readonly rva: number;
-  readonly virtualSize: number;
-  readonly offset: number;
-  readonly size: number;
-}
-
-// RVA ownership follows the declared virtual extent. Raw size describes
-// initialized file bytes and can include file-alignment padding; loaders may
-// map page-rounded tails, but those bytes are outside the declared section.
-const virtualExtent = (section: Section): number =>
-  section.virtualSize === 0 ? section.size : section.virtualSize;
-
-// Intersection normalized with those ownership rules: a section without
-// virtual extent owns no byte and never conflicts, while an empty resource
-// owns exactly its start point, so a positive-extent section starting there
-// conflicts with header-backed ownership of the same RVA.
-const intersectsResource = (
-  section: Section,
-  rva: number,
-  size: number,
-): boolean => {
-  const extent = virtualExtent(section);
-  return (
-    extent > 0 &&
-    section.rva < rva + Math.max(size, 1) &&
-    rva < section.rva + extent
-  );
-};
-
-/** Shared PE header admission: signature, optional header, data directories, and a section table that fits inside SizeOfHeaders. */
-export const readPeHeaders = (bytes: Buffer) => {
-  requirePeRange(bytes, 0, 64);
-  if (bytes.readUInt16LE(0) !== 0x5a4d) peFailure("Expected an MZ PE image.");
-  const pe = bytes.readUInt32LE(60);
-  requirePeRange(bytes, pe, 24);
-  if (bytes.readUInt32LE(pe) !== 0x4550) peFailure("Expected a PE signature.");
-  const sectionCount = bytes.readUInt16LE(pe + 6);
-  const optionalSize = bytes.readUInt16LE(pe + 20);
-  const optional = pe + 24;
-  requirePeRange(bytes, optional, optionalSize);
-  if (optionalSize < 64) peFailure("Truncated PE optional header.");
-  const magic = bytes.readUInt16LE(optional);
-  if (magic !== 0x10b && magic !== 0x20b)
-    peFailure("Unsupported PE optional header magic.");
-  const countAt = magic === 0x10b ? 92 : 108;
-  const directoriesAt = countAt + 4;
-  if (optionalSize < directoriesAt)
-    peFailure("Truncated PE data directory count.");
-  const directoryCount = bytes.readUInt32LE(optional + countAt);
-  if (directoryCount > Math.floor((optionalSize - directoriesAt) / 8))
-    peFailure("PE directory count exceeds its optional header.");
-  const headerSize = bytes.readUInt32LE(optional + 60);
-  const table = optional + optionalSize;
-  requirePeRange(bytes, table, sectionCount * 40);
-  if (headerSize < table + sectionCount * 40 || headerSize > bytes.length)
-    peFailure("Invalid PE SizeOfHeaders.");
-  return {
-    pe,
-    sectionCount,
-    optional,
-    magic,
-    directoriesAt,
-    directoryCount,
-    headerSize,
-    table,
-  };
-};
-
-/** Header admission and unambiguous file-backed RVA mapping, independent of section names. */
+/**
+ * Header admission and unambiguous file-backed RVA mapping for the resource
+ * tree, independent of section names.
+ *
+ * PE header, section-table and data-directory facts come from the shared
+ * `readPeImageLayout` owner; only the resource-specific mapping rules and
+ * their messages are decided here.
+ */
 export const readPeResourceLayout = (bytes: Buffer) => {
-  const {
-    pe,
-    sectionCount,
-    optional,
-    magic,
-    directoriesAt,
-    directoryCount,
-    headerSize,
-    table,
-  } = readPeHeaders(bytes);
-  const sections: Section[] = [];
-  for (let index = 0; index < sectionCount; index++) {
-    const at = table + index * 40;
-    const section = {
-      rva: bytes.readUInt32LE(at + 12),
-      virtualSize: bytes.readUInt32LE(at + 8),
-      offset: bytes.readUInt32LE(at + 20),
-      size: bytes.readUInt32LE(at + 16),
-    };
-    if (section.rva + virtualExtent(section) > 0x100000000)
-      peFailure("PE section RVA range overflows.");
-    if (section.size > 0) {
-      requirePeRange(bytes, section.offset, section.size);
-      if (section.offset < headerSize)
-        peFailure("PE section raw bytes overlap headers.");
-    }
-    sections.push(section);
-  }
-  const backed = sections
-    .filter(({ size }) => size > 0)
-    .sort((left, right) => left.offset - right.offset);
-  for (let index = 1; index < backed.length; index++) {
-    const previous = backed[index - 1];
-    const current = backed[index];
-    if (
-      previous !== undefined &&
-      current !== undefined &&
-      current.offset < previous.offset + previous.size
-    )
-      peFailure("PE sections have overlapping raw file ranges.");
-  }
+  const parsed = readPeImageLayout(bytes);
+  if (!parsed.ok) return peFailure(parsed.error.reason);
+  const layout = parsed.value;
+  const { sections } = layout;
+  const headerSize = layout.sizeOfHeaders;
   const map = (rva: number, size: number): number => {
     if (rva + size > 0x100000000) peFailure("Resource RVA range overflows.");
-    const containing = sections.filter(
+    const candidates = sections.filter(
       (section) =>
-        rva >= section.rva && rva - section.rva < virtualExtent(section),
+        rva >= section.rva && rva - section.rva < peVirtualExtent(section),
     );
-    // An empty interval reads no bytes, so the Windows resource loader also
-    // resolves it exactly at a section's virtual end. A section starting at
-    // that RVA still owns it.
-    const candidates =
-      size === 0 && containing.length === 0
-        ? sections.filter(
-            (section) =>
-              virtualExtent(section) > 0 &&
-              rva - section.rva === virtualExtent(section),
-          )
-        : containing;
     if (rva < headerSize) {
       if (
-        sections.some((section) => intersectsResource(section, rva, size)) ||
+        sections.some(
+          (section) =>
+            section.rva < rva + size &&
+            section.rva + peVirtualExtent(section) > rva,
+        ) ||
         size > headerSize - rva
       )
         peFailure("Ambiguous resource header RVA mapping.");
@@ -164,15 +67,17 @@ export const readPeResourceLayout = (bytes: Buffer) => {
     const section = candidates[0];
     if (section === undefined) return peFailure("Missing resource section.");
     const within = rva - section.rva;
-    if (size > virtualExtent(section) - within)
+    if (size > peVirtualExtent(section) - within)
       peFailure("Resource range leaves its section's virtual size.");
     if (within > section.size || size > section.size - within)
       peFailure("Resource range is not entirely file-backed in one section.");
-    // A second section with virtual extent inside the requested interval is
-    // ambiguous too; a zero-extent section owns no byte there.
+    // A second section starting inside the requested interval is ambiguous too.
     if (
       sections.some(
-        (other) => other !== section && intersectsResource(other, rva, size),
+        (other: PeSection) =>
+          other !== section &&
+          other.rva < rva + size &&
+          other.rva + peVirtualExtent(other) > rva,
       )
     )
       peFailure("Resource interval intersects overlapping virtual sections.");
@@ -180,15 +85,15 @@ export const readPeResourceLayout = (bytes: Buffer) => {
     requirePeRange(bytes, offset, size);
     return offset;
   };
-  const directoryAt = optional + directoriesAt + 16;
-  const rva = directoryCount > 2 ? bytes.readUInt32LE(directoryAt) : 0;
-  const size = directoryCount > 2 ? bytes.readUInt32LE(directoryAt + 4) : 0;
+  const resource = layout.directory(RESOURCE_DIRECTORY_INDEX);
+  const rva = resource?.rva ?? 0;
+  const size = resource?.size ?? 0;
   if ((rva === 0) !== (size === 0))
     peFailure("Inconsistent PE resource directory RVA/size.");
   return {
-    format: magic === 0x10b ? ("pe32" as const) : ("pe32-plus" as const),
-    machine: bytes.readUInt16LE(pe + 4),
-    directoryAt,
+    format: layout.format,
+    machine: layout.machine,
+    directoryAt: layout.directoryOffset(RESOURCE_DIRECTORY_INDEX),
     rva,
     size,
     map,
