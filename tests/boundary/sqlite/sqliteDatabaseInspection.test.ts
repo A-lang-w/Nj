@@ -602,6 +602,60 @@ it("samples above 1000 rows and safe integer limits within the byte budget", asy
   }
 });
 
+it("attributes result-column limits to column selection instead of reporting format failure", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE records(id INTEGER, email TEXT);
+    INSERT INTO records VALUES (1, 'sample');
+  `);
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "records",
+      columns: Array(2001).fill("email"),
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      reason: "column-selection",
+      message: expect.stringContaining("too many columns in result set"),
+    }),
+  );
+});
+
+it("does not misclassify an unavailable function named after column limits as a result-column limit", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-column-limit-name-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const path = workspace.path("private.db");
+  const producer = new DatabaseSync(path);
+  try {
+    producer.function(
+      "too many columns in result set",
+      { deterministic: true },
+      (value) => String(value),
+    );
+    producer.exec(`
+      CREATE TABLE t(
+        id INTEGER,
+        payload TEXT GENERATED ALWAYS AS ("too many columns in result set"(id)) VIRTUAL
+      );
+      INSERT INTO t(id) VALUES (1);
+    `);
+  } finally {
+    producer.close();
+  }
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "t",
+      columns: ["payload", "id"],
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      reason: "column-evaluation",
+      readableColumns: ["id"],
+    }),
+  );
+});
+
 nativeTest.skipIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "rejects a runtime without native limits before querying the snapshot",
   async () => {
