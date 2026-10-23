@@ -38,7 +38,11 @@ const sazContentType = (
     const unfolded = parsed.data.value_unfolded;
     if (unfolded !== undefined && typeof unfolded !== "string")
       return undefined;
-    value = { value: unfolded ?? raw, sourceLength: raw.length };
+    const contentType = unfolded ?? raw;
+    // Only SAZ's HTTP parser establishes valid continuations. A remaining
+    // line break makes this header unknown, including in ignored parameters.
+    if (/[\r\n]/u.test(contentType)) return undefined;
+    value = { value: contentType, sourceLength: raw.length };
   }
   return value;
 };

@@ -145,10 +145,21 @@ it.each([
     "\r\napplication/json",
     "\n\u00a0application/json",
     "application/\r\n json",
+    "application/json;\n charset=utf-8",
   ].map((value) => ({
     status: "200",
     headers: [{ name: "Content-Type", value }],
   })),
+  {
+    status: "200",
+    headers: [
+      {
+        name: "Content-Type",
+        value: "\r\n application/json;\n charset=utf-8",
+        value_unfolded: " application/json;\n charset=utf-8",
+      },
+    ],
+  },
 ])(
   "preserves unknown or ambiguous SAZ response content types: %j",
   (response) => {

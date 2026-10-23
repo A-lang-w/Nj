@@ -63,8 +63,6 @@ export const textBytes = (length: number): number => 32 + length * 14;
 
 /** Lowercase type/subtype without parameters; malformed essences are unknown. */
 export const mediaTypeEssence = (reported: string): string | null => {
-  // Remaining line breaks were not accepted by the owning HTTP parser.
-  if (/[\r\n]/u.test(reported)) return null;
   const separator = reported.indexOf(";");
   let start = 0;
   let end = separator < 0 ? reported.length : separator;
