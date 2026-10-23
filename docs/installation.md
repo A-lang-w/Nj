@@ -1137,7 +1137,9 @@ references and basic blocks, with pseudocode, `native_api` and
 and that dossier is not saved to analysis snapshots. `procedure_pseudo_code`
 fails with `provider_timeout` and that message; other Ghidra tools stay
 available. If the caller also cancels while the timeout settles, the session
-still closes and the message says so. The limit is read when a Ghidra session
+still closes and the message says so. Session reuse concerns an active MCP or
+library session; a standalone CLI command still closes its own session when it
+finishes. The limit is read when a Ghidra session
 starts, and Codex/Kimi registrations derived by `rea setup` add it to the tool
 deadline as a single-decompile estimate. A bulk call can need that limit for
 every attempted function plus listing and file work; select the client deadline

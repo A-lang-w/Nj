@@ -1416,7 +1416,9 @@ describe("Ghidra decompiler failure projection", () => {
       expect(action).not.toContain("rea doctor");
     }
   });
+});
 
+describe("Ghidra failures during cancellation cleanup", () => {
   it.each(
     [
       { remoteCode: "decompile_failed", projectedCode: "execution_failure" },

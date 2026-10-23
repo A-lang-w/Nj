@@ -386,6 +386,44 @@ describe("client activation keys", () => {
   );
 });
 
+describe("Ghidra batch deadline registration advice", () => {
+  it.each([
+    { provider: "ghidra", timeout: 10, hasBatchScope: true },
+    { provider: "ghidra", timeout: 1800, hasBatchScope: true },
+    { provider: "hopper", timeout: 1800, hasBatchScope: false },
+  ])(
+    "preserves a selected $timeout-second $provider deadline and describes its scope",
+    async ({ provider, timeout, hasBatchScope }) => {
+      const home = await createTestTempDirectory("rea-codex-decompile-scope-");
+      await mkdir(join(home, ".codex"));
+      const entry = resolve("scripts/rea.mjs");
+      const configPath = join(home, ".codex/config.toml");
+      // Two 600-second Ghidra decompiles plus startup/headroom would need an
+      // estimated 1650 seconds. A caller's shorter or longer choice stays theirs.
+      const original = `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = ${timeout}\n[mcp_servers.rea.env]\nREA_ANALYSIS_PROVIDER = "${provider}"\nREA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = "600"\n`;
+      await writeFile(configPath, original);
+      const [status] = await readClientRegistrationStatuses(home, entry, {
+        environment: {},
+      });
+      expect(status).toMatchObject({ client: "codex", state: "aligned" });
+      if (hasBatchScope) {
+        expect(status?.advisory).toContain("single-decompile estimate");
+        expect(status?.advisory).toContain("every attempted function");
+      } else expect(status?.advisory).toBeUndefined();
+      const configured = await configureClientConfiguration(
+        { name: "codex", format: "toml", configPath },
+        {},
+        [process.execPath, entry, "mcp"],
+      );
+      expect(configured).toMatchObject({ status: "unchanged" });
+      expect(await readFile(configPath, "utf8")).toBe(original);
+      await expect(readFile(`${configPath}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+});
+
 describe("Node-wrapped registration policy", () => {
   it.each([1, 30])(
     "accepts Codex caller-selected startup timeout %d independently of launcher",
@@ -426,42 +464,6 @@ describe("Node-wrapped registration policy", () => {
       advisory: expect.stringContaining("tool_timeout_sec = 450 seconds"),
     });
   });
-
-  it.each([
-    { provider: "ghidra", timeout: 10, hasBatchScope: true },
-    { provider: "ghidra", timeout: 1800, hasBatchScope: true },
-    { provider: "hopper", timeout: 1800, hasBatchScope: false },
-  ])(
-    "preserves a selected $timeout-second $provider deadline and describes its scope",
-    async ({ provider, timeout, hasBatchScope }) => {
-      const home = await createTestTempDirectory("rea-codex-decompile-scope-");
-      await mkdir(join(home, ".codex"));
-      const entry = resolve("scripts/rea.mjs");
-      const configPath = join(home, ".codex/config.toml");
-      // Two 600-second Ghidra decompiles plus startup/headroom would need an
-      // estimated 1650 seconds. A caller's shorter or longer choice stays theirs.
-      const original = `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = ${timeout}\n[mcp_servers.rea.env]\nREA_ANALYSIS_PROVIDER = "${provider}"\nREA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = "600"\n`;
-      await writeFile(configPath, original);
-      const [status] = await readClientRegistrationStatuses(home, entry, {
-        environment: {},
-      });
-      expect(status).toMatchObject({ client: "codex", state: "aligned" });
-      if (hasBatchScope) {
-        expect(status?.advisory).toContain("single-decompile estimate");
-        expect(status?.advisory).toContain("every attempted function");
-      } else expect(status?.advisory).toBeUndefined();
-      const configured = await configureClientConfiguration(
-        { name: "codex", format: "toml", configPath },
-        {},
-        [process.execPath, entry, "mcp"],
-      );
-      expect(configured).toMatchObject({ status: "unchanged" });
-      expect(await readFile(configPath, "utf8")).toBe(original);
-      await expect(readFile(`${configPath}.rea.backup`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    },
-  );
 
   it.each([1, 30])(
     "checks Grok Build startup timeout %d independently of launcher",
