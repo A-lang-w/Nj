@@ -978,3 +978,105 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "keeps IL2CPP rank-one arrays distinct from vectors in CLI type rows",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-array-kind-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "GameAssembly.dylib");
+    await writeFile(path, createIl2cppMetadataFixture({ version: 31 }).bytes);
+
+    const makeBinary = (kind: "vector" | "array", rank = 1) => {
+      const bytes = createIl2cppBinaryFixture();
+      // Type record 0 is the returned type; slot 3 is the fixture's `int`.
+      const typeRecord = 0x980;
+      const intType = FIXTURE_BINARY_BASE + 0x9b0n;
+      if (kind === "vector") {
+        bytes.writeBigUInt64LE(intType, typeRecord);
+        return bytes;
+      }
+      // ARRAY points to Il2CppArrayType: element pointer, then rank byte.
+      const arrayType = 0xb00;
+      bytes.writeBigUInt64LE(
+        FIXTURE_BINARY_BASE + BigInt(arrayType),
+        typeRecord,
+      );
+      bytes.writeUInt32LE(0x14 << 16, typeRecord + 8);
+      bytes.writeBigUInt64LE(intType, arrayType);
+      bytes.writeUInt8(rank, arrayType + 8);
+      return bytes;
+    };
+
+    const inspect = async (binary: Buffer) => {
+      await writeFile(binaryPath, binary);
+      const result = await runFileCli(cli, {
+        arguments: [
+          "inspect-il2cpp-metadata",
+          path,
+          "--binary",
+          binaryPath,
+          "--json",
+        ],
+      });
+      return result;
+    };
+
+    const vector = await inspect(makeBinary("vector"));
+    expect(vector.exitCode, vector.stderr).toBe(0);
+    const vectorType = parseCliMetadata(vector.json).return_types[0];
+    expect(vectorType?.name).toBe("int[]");
+
+    const rankOne = await inspect(makeBinary("array", 1));
+    expect(rankOne.exitCode, rankOne.stderr).toBe(0);
+    const rankOneType = parseCliMetadata(rankOne.json).return_types[0];
+    expect(rankOneType?.name).toBe("int[*]");
+    expect(rankOneType?.type).toBe(vectorType?.type);
+
+    const rankTwo = await inspect(makeBinary("array", 2));
+    expect(rankTwo.exitCode, rankTwo.stderr).toBe(0);
+    expect(parseCliMetadata(rankTwo.json).return_types[0]?.name).toBe("int[,]");
+
+    const malformed = await inspect(makeBinary("array", 0));
+    expect(malformed.exitCode).not.toBe(0);
+    expect(JSON.stringify(malformed.json)).toContain("array rank is zero");
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "refuses a Ghidra seed path below a regular file as caller input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-seeds-parent-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "libil2cpp.so");
+    const parent = join(root, "regular-file");
+    await writeFile(path, createIl2cppMetadataFixture().bytes);
+    await writeFile(binaryPath, createElfFixture(createIl2cppBinaryFixture()));
+    await writeFile(parent, "unchanged");
+    const result = await runFileCli(cli, {
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--binary",
+        binaryPath,
+        "--ghidra-seeds",
+        join(parent, "seeds.tsv"),
+        "--json",
+      ],
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["ghidra_seeds"],
+            message: expect.stringContaining("not a directory"),
+          },
+        ],
+      },
+    });
+    expect(await readFile(parent, "utf8")).toBe("unchanged");
+  },
+);

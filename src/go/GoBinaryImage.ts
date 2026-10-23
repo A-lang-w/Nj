@@ -104,10 +104,10 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
   const encoding = (flags & 2) !== 0 ? "inline" : "pointer";
   const readInline = (offset: number, remaining: number) =>
     readInlineString(reader, offset, remaining);
-  const sourceEnd = search.offset + search.size;
   let version: LocatedString;
   let module: LocatedString;
   if (encoding === "inline") {
+    const sourceEnd = inlineDataEnd(header, search, container);
     version = readInline(header + 32, sourceEnd - header - 32);
     const next = version.location.offset + version.location.bytes;
     module = readInline(next, sourceEnd - next);
@@ -118,16 +118,12 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
         "malformed",
         "Go build-info pointer width must be 4 or 8",
       );
-    if (ptrSize * 8 !== bits)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Go build-info pointer width disagrees with the image",
-      );
-    const pointerBits = ptrSize === 8 ? 64 : 32;
+    const pointerBits = ptrSize === 4 ? 32 : 64;
     version = readPointerString(
       reader,
       container,
       reader.word(header + 16, pointerBits),
+      pointerBits,
     );
     const moduleField = header + 16 + ptrSize;
     module = readOptionalModuleString(
@@ -135,6 +131,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       container,
       reader.word(moduleField, pointerBits),
       moduleField,
+      pointerBits,
     );
   }
   if (version.location.bytes + module.location.bytes > MAX_BUILD_INFO_BYTES)
@@ -179,6 +176,29 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       module_location: module.location,
     },
   };
+};
+
+/** Inline strings follow the header in mapped Go build-info data, even when
+ * the named ELF discovery section ends immediately after the header.
+ */
+const inlineDataEnd = (
+  header: number,
+  search: FileMapping,
+  container: BinaryContainer,
+): number => {
+  if (container.format !== "elf") return search.offset + search.size;
+  const address = search.address + BigInt(header - search.offset);
+  let end = search.offset + search.size;
+  for (const { mapping } of container.load_regions ?? []) {
+    const delta = address - mapping.address;
+    if (
+      delta >= 0n &&
+      delta < BigInt(mapping.size) &&
+      mapping.offset + Number(delta) === header
+    )
+      end = Math.max(end, mapping.offset + mapping.size);
+  }
+  return Math.min(end, header + 32 + MAX_BUILD_INFO_BYTES);
 };
 
 const observedText = (bytes: Buffer): string | null => {
@@ -267,12 +287,13 @@ const readPointerString = (
   reader: BinaryReader,
   container: BinaryContainer,
   address: bigint,
+  pointerBits: 32 | 64,
 ): LocatedString => {
-  const { mappings, zero_fills: zeroFills, bits } = container;
-  const width = bits / 8;
+  const { mappings, zero_fills: zeroFills } = container;
+  const width = pointerBits / 8;
   const header = mappedFileOffset(mappings, address, width * 2, zeroFills);
-  const valueAddress = reader.word(header, bits);
-  const length = reader.word(header + width, bits);
+  const valueAddress = reader.word(header, pointerBits);
+  const length = reader.word(header + width, pointerBits);
   if (length > BigInt(MAX_BUILD_INFO_BYTES))
     throw new BinaryResourceFailure(
       "build-info",
@@ -296,15 +317,16 @@ const readOptionalModuleString = (
   container: BinaryContainer,
   address: bigint,
   pointerField: number,
+  pointerBits: 32 | 64,
 ): LocatedString =>
   isZeroFilledSpan(
     container.mappings,
     container.zero_fills,
     address,
-    (container.bits / 8) * 2,
+    (pointerBits / 8) * 2,
   )
     ? { bytes: Buffer.alloc(0), location: { offset: pointerField, bytes: 0 } }
-    : readPointerString(reader, container, address);
+    : readPointerString(reader, container, address, pointerBits);
 
 /** Decode metadata text without replacing invalid bytes or stripping an initial BOM. */
 export const observedUtf8 = (bytes: Buffer, label: string): string => {

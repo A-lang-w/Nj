@@ -562,6 +562,7 @@ export const addJavaScriptPackageNodes = (
           context: "package-entrypoint",
           runtimePathKind: "node-entrypoint",
           files: context.filesByPath,
+          jsonDocuments: context.analysis.jsonDocuments,
           directoryPaths: context.directoryPaths,
           unanalyzedFiles: context.unanalyzedFiles,
         }),
@@ -612,7 +613,12 @@ const createFileTarget = (
             javascript?.parse_status ?? (skipped ? "skipped" : null),
           json_parse_status: json?.status ?? null,
           json_top_level_keys: json?.top_level_keys ?? [],
-          omitted_json_top_level_keys: json?.omitted_top_level_keys ?? 0,
+          omitted_json_top_level_keys:
+            json === undefined
+              ? file.kind === "json" || file.kind === "package-json"
+                ? null
+                : 0
+              : json.omitted_top_level_keys,
           vendor_markers: javascript?.vendors ?? [],
         },
         evidence: artifactObservationEvidence({
@@ -684,6 +690,7 @@ const addPackageRole = (
       ? { runtimePathKind: "node-entrypoint" as const }
       : {}),
     files: context.filesByPath,
+    jsonDocuments: context.analysis.jsonDocuments,
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
   });

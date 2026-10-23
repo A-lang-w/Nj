@@ -43,7 +43,7 @@
     "rea-agents": "scripts/rea.mjs"
   },
   "engines": {
-    "node": "^22.19.0 || ^24.11.0 || >=26.0.0"
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
   "packageManager": "npm@11.16.0",
   "files": [
@@ -301,6 +301,7 @@
     "verify:wasm:package": "npm run build:cached && node scripts/verify-packaged-wasm-artifact.mjs",
     "verify:wasm-interface-comparison": "npm run build:cached && node scripts/verify-wasm-interface-comparison.mjs",
     "verify:wasm:artifact": "npm run build:cached && node scripts/verify-wasm-artifact.mjs",
+    "verify:apk-signature": "npm run build:cached && node scripts/verify-apk-signature.mjs",
     "verify:evm:interface": "npm run build:cached && node scripts/verify-evm-interface.mjs",
     "verify:solidity:metadata": "npm run build:cached && node scripts/verify-solidity-metadata.mjs",
     "verify:recorded:crash": "npm run build:cached && node scripts/verify-recorded-crash.mjs",
@@ -321,8 +322,8 @@
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [
-      "oxfmt",
-      "oxlint --fix"
+      "oxlint --fix",
+      "oxfmt"
     ],
     "*.{json,md,yml,yaml}": "oxfmt --no-error-on-unmatched-pattern"
   },

@@ -132,8 +132,11 @@ const methodComparisonItemSchema = comparisonItemSchema(
         "cil",
         "opcode-shape",
         "call-shape",
+        "call-target",
         "field-shape",
+        "field-target",
         "exception-shape",
+        "exception-target",
         "availability",
         "body-coverage",
       ]),
@@ -164,8 +167,8 @@ export const managedMemberComparisonResultSchema = z.strictObject({
     mvid: cliMetadataGuidSchema.nullable(),
     module_name: z.string().nullable(),
     metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
-    methods_total: z.number().int().min(0),
-    fields_total: z.number().int().min(0),
+    methods_total: z.int().min(0),
+    fields_total: z.int().min(0),
   }),
   right: z.strictObject({
     evidence_id: evidenceIdSchema,
@@ -173,23 +176,23 @@ export const managedMemberComparisonResultSchema = z.strictObject({
     mvid: cliMetadataGuidSchema.nullable(),
     module_name: z.string().nullable(),
     metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
-    methods_total: z.number().int().min(0),
-    fields_total: z.number().int().min(0),
+    methods_total: z.int().min(0),
+    fields_total: z.int().min(0),
   }),
   summary: z.strictObject({
-    unchanged: z.number().int().min(0),
-    changed: z.number().int().min(0),
-    added: z.number().int().min(0),
-    removed: z.number().int().min(0),
-    unknown: z.number().int().min(0),
+    unchanged: z.int().min(0),
+    changed: z.int().min(0),
+    added: z.int().min(0),
+    removed: z.int().min(0),
+    unknown: z.int().min(0),
   }),
   matching: z.strictObject({
-    exact_il_signature: z.number().int().min(0),
-    exact_signature: z.number().int().min(0),
-    structural_method_shape: z.number().int().min(0),
-    field_signature: z.number().int().min(0),
-    ambiguous: z.number().int().min(0),
-    unmatched: z.number().int().min(0),
+    exact_il_signature: z.int().min(0),
+    exact_signature: z.int().min(0),
+    structural_method_shape: z.int().min(0),
+    field_signature: z.int().min(0),
+    ambiguous: z.int().min(0),
+    unmatched: z.int().min(0),
   }),
   methods: z.array(methodComparisonItemSchema),
   fields: z.array(fieldComparisonItemSchema),
@@ -202,9 +205,6 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   limitations: z.array(boundedTextSchema),
 });
 
-export type CompareManagedMembersInput = z.infer<
-  typeof compareManagedMembersInputSchema
->;
 export type ManagedMemberComparisonResult = z.infer<
   typeof managedMemberComparisonResultSchema
 >;
@@ -219,6 +219,43 @@ const selectedTypes = (
   result: ManagedMemberInspection,
 ): ReadonlySet<string> | null =>
   result.selection === null ? null : new Set(result.selection.type_names);
+
+const callEdgesByCaller = (
+  result: ManagedMemberInspection,
+): ReadonlyMap<
+  string,
+  readonly ManagedMemberInspection["call_edges"][number][]
+> => {
+  const edges = new Map<
+    string,
+    ManagedMemberInspection["call_edges"][number][]
+  >();
+  for (const edge of result.call_edges) {
+    const callerEdges = edges.get(edge.caller_token);
+    if (callerEdges === undefined) edges.set(edge.caller_token, [edge]);
+    else callerEdges.push(edge);
+  }
+  return edges;
+};
+
+const fieldAccessesByCaller = (
+  result: ManagedMemberInspection,
+): ReadonlyMap<
+  string,
+  readonly ManagedMemberInspection["field_accesses"][number][]
+> => {
+  const accesses = new Map<
+    string,
+    ManagedMemberInspection["field_accesses"][number][]
+  >();
+  for (const access of result.field_accesses) {
+    const callerAccesses = accesses.get(access.method_token);
+    if (callerAccesses === undefined)
+      accesses.set(access.method_token, [access]);
+    else callerAccesses.push(access);
+  }
+  return accesses;
+};
 
 /** Compare managed members with constrained exact and structural identities. */
 export const compareManagedMembers = (
@@ -236,6 +273,10 @@ export const compareManagedMembers = (
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
+    leftCallEdgesByCaller: callEdgesByCaller(left.result),
+    rightCallEdgesByCaller: callEdgesByCaller(right.result),
+    leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),
+    rightFieldAccessesByCaller: fieldAccessesByCaller(right.result),
   };
   const methodItems = buildMethodItems(methodMatches, itemContext);
   const fieldItems = buildFieldItems(fieldMatches, itemContext);

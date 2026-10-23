@@ -10,8 +10,8 @@ import {
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  ArtifactFileCleanupFailure,
-  ArtifactFileCancelled,
+  artifactFilePrimaryFailure,
+  artifactFileCompletion,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
@@ -67,9 +67,9 @@ const OUTPUT_BYTES = 64 * 1024 * 1024;
 const failureForPrimary = (
   cause: unknown,
   path: string,
-  signal?: AbortSignal,
   field: "path" | "binary_path" = "path",
   maximum = INPUT_BYTES,
+  metadataPath = path,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "capacity")
@@ -91,8 +91,11 @@ const failureForPrimary = (
     cause instanceof Il2cppMetadataFormatFailure
   ) {
     const binary = cause instanceof Il2cppBinaryFormatFailure;
+    // Metadata names are read on demand while linking, so a metadata failure
+    // can surface while path still names the binary.
+    const target = binary ? path : metadataPath;
     return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
+      ? new AnalysisUnsupportedTargetError(OPERATION, target, cause.message, {
           cause,
         })
       : new AnalysisInputError(OPERATION, { cause }, [
@@ -100,8 +103,8 @@ const failureForPrimary = (
             path: [binary ? field : "path"],
             reason: "invalid_format",
             message: binary
-              ? `Selected binary ${path} does not link to the metadata: ${cause.message}`
-              : `Selected artifact ${path} is corrupt: ${cause.message}`,
+              ? `Selected binary ${target} does not link to the metadata: ${cause.message}`
+              : `Selected artifact ${target} is corrupt: ${cause.message}`,
           },
         ]);
   }
@@ -164,23 +167,17 @@ const failureForPrimary = (
 const failureFor = (
   cause: unknown,
   path: string,
-  signal?: AbortSignal,
   field: "path" | "binary_path" = "path",
   maximum = INPUT_BYTES,
+  metadataPath = path,
 ): AnalysisError => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? failureForPrimary(
-          cause.fileCleanupFailure.outcome.cause,
-          path,
-          signal,
-          field,
-          maximum,
-        )
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path, signal, field, maximum);
+  const primary = failureForPrimary(
+    artifactFilePrimaryFailure(cause),
+    path,
+    field,
+    maximum,
+    metadataPath,
+  );
   if (
     cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
@@ -511,9 +508,9 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             const failure = failureFor(
               cause,
               binaryPath,
-              options?.signal,
               "binary_path",
               BINARY_BYTES,
+              input.path,
             );
             failure.partialObservation = metadataSourceEvidence(
               artifact,
@@ -595,16 +592,11 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
       observe(sourceArtifact(path, snapshot));
       return snapshot;
     } catch (cause) {
-      const outcome =
-        cause instanceof ArtifactFileCleanupFailure
-          ? (cause as ArtifactFileCleanupFailure<StableArtifactSnapshot>)
-              .fileCleanupFailure.outcome
-          : cause instanceof ArtifactFileCancelled
-            ? (cause as ArtifactFileCancelled<StableArtifactSnapshot>)
-                .fileCancellation.outcome
-            : undefined;
-      if (outcome?.kind === "completed")
-        observe(sourceArtifact(path, outcome.value));
+      const completion = artifactFileCompletion(cause);
+      if (completion !== undefined)
+        observe(
+          sourceArtifact(path, completion.value as StableArtifactSnapshot),
+        );
       throw cause;
     }
   }

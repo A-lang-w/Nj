@@ -44,12 +44,18 @@ root deltas. Missing graph members yield `truncated`; unknown traversal coverage
 or unavailable occurrence hashes retain uncertainty. Integrity mismatches remain
 contradictions. Static artifact equality does not establish unchanged runtime
 behavior.
+Source-map relation deltas include the content identity of the mapped source,
+so an unchanged map file is reported when its target source bytes change.
 
 Exhausted traversals with deliberately omitted filesystem entries retain
 `unknown` coverage and identify each omitted path/type in `limitations`; FIFO,
 socket and device entries are not opened. Case-distinct archive members remain
 separate observations. Their case-insensitive materialization diagnostic does
 not reduce traversal coverage when both spellings were read.
+PyInstaller inventory also preserves distinct table rows that share a logical
+path, including decoded children beneath a colliding file/directory path.
+Inventory coverage describes observed archive facts; extraction still refuses
+destinations where those paths cannot coexist.
 
 Current inventory Evidence requires scoped `coverage` with a `complete` or
 `unknown` status. Consumers use this producer-owned fact and reject records
@@ -95,11 +101,15 @@ optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
 do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
-the operation and the REA server/provider deadline; inspect partial Evidence
-and reported cleanup state, then follow producer-specific remediation or reduce
-supported work. Generic errors do not assume adjustable timeout controls. Raising
-only the MCP client's deadline cannot extend this budget. These hints never
-include the complete catalog or caller arguments.
+the operation and the REA server/provider deadline. Inspect partial Evidence
+and reported cleanup state, then follow the returned remediation. Change a
+request field or REA_* setting only when the returned remediation explicitly
+recommends that change. Restart REA when that text says the value is read at
+startup. A mention that a control does not raise the deadline is not a
+recommendation to change it. When it names no setting, reduce supported work;
+do not invent one. Raising only the MCP
+client's deadline cannot extend this budget. These hints never include the
+complete catalog or caller arguments.
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
@@ -310,7 +320,9 @@ that complete Evidence in the session and returns the derived
 `normalized_result.parent_evidence_id` and `evidence_links` name the retained
 analysis, so later views and application workflows read it without repeating
 analysis or moving the complete record through the response. A server without
-session retention refuses summary detail with `capability_unavailable`.
+session retention refuses summary detail with `capability_unavailable`;
+`inspect_artifact`, `inspect_wasm_artifact`, `inspect_macho` and
+`decode_interface_builder` refuse before any analysis starts.
 For `inspect_artifact`, omission also keeps the original request parameters and
 complete output shape. Delivery selection never reaches the inventory engine;
 the complete inspection and its atomic inventory Evidence remain retained.
@@ -990,6 +1002,10 @@ on `rea extract-artifact`. With `record-and-continue` it writes the observed
 bytes and returns the `integrity_contradictions` records for the extracted
 files. An active ASAR unpacked entry whose companion file is absent cannot be
 materialized; extraction fails as `unavailable` with that logical path.
+
+Extraction materializes regular files exposed by the active archive reader.
+When that reader exposes a nested archive as a file, extraction copies the
+archive file; inspect and extract that file separately to unpack its contents.
 
 Packaging tools commonly sign or strip `.asar.unpacked` native binaries after
 writing the archive header, so their declared hashes no longer match. Electron

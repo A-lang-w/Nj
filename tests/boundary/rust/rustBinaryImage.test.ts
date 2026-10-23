@@ -19,6 +19,7 @@ const packages = [
     source: "crates.io",
     kind: null,
     dependencies: [],
+    features: null,
     root: false,
   },
   {
@@ -27,6 +28,7 @@ const packages = [
     source: "local",
     kind: null,
     dependencies: [0],
+    features: null,
     root: true,
   },
 ];
@@ -70,6 +72,37 @@ it("reads a Mach-O __DATA,.dep-v0 section", () => {
   });
 });
 
+it("preserves the arm64_32 Mach-O CPU family when dependency metadata is absent", () => {
+  const bytes = createRustImage({
+    format: "macho",
+    omitSection: true,
+    includeRustc: false,
+  });
+  bytes.writeUInt32LE(0x0200000c, 4);
+
+  expect(readRustBinaryImage(bytes)).toMatchObject({
+    format: "macho",
+    architecture: "arm64_32",
+    bits: 64,
+    auditable_metadata: null,
+    rustc_commit: null,
+  });
+});
+
+it("uses the shared ELF classifier for Rust image architecture", () => {
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    includeRustc: true,
+  });
+  bytes.writeUInt16LE(164, 18); // ELF EM_HEXAGON.
+  expect(readRustBinaryImage(bytes)).toMatchObject({
+    format: "elf",
+    architecture: "hexagon",
+    auditable_metadata: null,
+  });
+});
+
 it("ignores PE file-alignment padding after the dependency content", () => {
   const bytes = createRustImage({ format: "pe", includeRustc: false });
   const payloadBytes = rustDependencyPayload().length;
@@ -92,6 +125,29 @@ it("returns null metadata when the dependency section is absent", () => {
   expect(image.rustc_commit?.hashes).toEqual([
     { hash: RUSTC_HASH, file_offset: 2048 },
   ]);
+});
+
+it("finds rustc paths in read-only ELF load data without section headers", () => {
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    includeRustc: true,
+  });
+  bytes.writeBigUInt64LE(0n, 40);
+  bytes.writeUInt16LE(0, 60);
+  bytes.writeUInt16LE(0, 62);
+  bytes.writeUInt32LE(4, 132); // PF_R, no write or execute permission.
+
+  expect(readRustBinaryImage(bytes)).toMatchObject({
+    auditable_metadata: null,
+    rustc_commit: {
+      evidence_kind: "inferred",
+      hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
+    },
+  });
+
+  bytes.writeUInt32LE(6, 132); // PF_R | PF_W is not read-only data.
+  expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
 });
 
 it("refuses a universal Mach-O container", () => {

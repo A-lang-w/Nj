@@ -46,8 +46,10 @@ import {
   isMachOFormat,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
-import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadata.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import {
+  isAppleDispatchMetadataTarget,
+  nativeDispatchMetadataInputSchema,
+} from "../domain/native/objcSwiftMetadata.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
@@ -270,7 +272,7 @@ class NativeMacOSClient implements AnalysisClient {
         ),
       );
     if (operation === "inspect_native_dispatch_metadata") {
-      const input = toolContract(operation).inputSchema.safeParse(parameters);
+      const input = nativeDispatchMetadataInputSchema.safeParse(parameters);
       if (!input.success)
         return err(
           analysisInputErrorFromIssues(
@@ -296,9 +298,13 @@ class NativeMacOSClient implements AnalysisClient {
             this.target,
             input.data.max_records,
             this.#dispatchResources,
-            options?.signal,
-            input.data.objc_class_import_addresses,
-            input.data.objc_class_import_addresses_complete ?? true,
+            {
+              signal: options?.signal,
+              objcClassImportAddresses: input.data.objc_class_import_addresses,
+              objcClassImportAddressesComplete:
+                input.data.objc_class_import_addresses_complete ?? true,
+              maxInputBytes: input.data.max_input_bytes,
+            },
           ),
         );
         return ok(

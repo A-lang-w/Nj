@@ -155,6 +155,49 @@ dependency edges, and the section's file range. A missing `.dep-v0` section is
 null metadata, not proof that the binary has no dependencies. See
 [Rust binaries](rust-binaries.md).
 
+Inspect a PE Authenticode certificate table without executing the image or
+verifying signatures:
+
+```bash
+rea inspect-pe-certificates /absolute/path/to/application.exe --json
+```
+
+The workflow reports `WIN_CERTIFICATE` entries and, for PKCS#7 signedData,
+embedded X.509 serial, issuer, subject, and validity fields. A missing security
+directory is observed absence of that table. See
+[PE Authenticode certificate tables](pe-certificates.md).
+
+Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
+
+```bash
+rea inspect-elf-notes /absolute/path/to/program --json
+```
+
+The workflow reports note owners, types, descriptor hashes, and GNU build-id
+or ABI-tag fields when those descriptors match. A missing note table is
+observed absence of those declarations. See [ELF note tables](elf-notes.md).
+
+Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects
+without executing bytecode or installing Python:
+
+```bash
+rea inspect-python-pyc /absolute/path/to/module.pyc --json
+```
+
+The workflow reports the pinned CPython version for the magic, PEP 552 hash or
+mtime/size fields, nested function names, and bytecode SHA-256. Bytecode is
+not decompiled. See [CPython pyc inspection](python-pyc.md).
+
+Inspect an Erlang BEAM file without executing bytecode:
+
+```bash
+rea inspect-erlang-beam /absolute/path/to/app.beam --json
+```
+
+The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
+and the Code chunk header. Missing optional tables stay null. See
+[Erlang BEAM files](erlang-beam.md).
+
 Configure [Hopper or Ghidra](installation.md#hopper), the
 [IDA adapter](ida-provider.md), or [Kuna](kuna-provider.md) before analyzing a
 native target. Substitute
@@ -355,11 +398,30 @@ Entries that change during an import retain an unavailable-entry diagnostic
 alongside readable siblings. If enumeration of an already admitted root fails,
 the graph keeps its observed children and records the root failure as a
 top-level limitation. That partial inventory does not establish absence among
-unexamined children.
+unexamined children. POSIX directory-entry bytes that are not valid UTF-8 cannot
+be represented as graph paths; the containing directory (or root) is marked
+unsupported, and REA does not access the entry through a replacement-character
+name. Readable siblings remain inventoried.
 
 JavaScript and TypeScript import parsing requires valid UTF-8. Malformed source
 bytes retain their original hashes and sizes with a decoding diagnostic; REA
-does not infer module targets from replacement characters.
+does not infer module targets from replacement characters. Exact dynamic-import
+strings, expression-free templates and runtime-transparent TypeScript wrappers
+retain their targets; computed imports remain unknown. TypeScript import-equals
+dependencies remain `requires` relationships whether or not they are exported.
+
+REA derives historical CommonJS paths only when the selected loader and its
+base are proven: this includes the exact
+`createRequire(new URL("./file.cjs", import.meta.url))` form and
+`require.resolve` with `{ paths: [__dirname] }`. Other custom bases and search
+options remain partial with unknown resolution and the literal requested
+specifier. Overwritten resolver methods retain that uncertainty; they are not
+attributed to Node. `require.main` is a module object, so calling it does not
+establish a loader reference. These relationships do not establish execution;
+Node's [`require.resolve`](https://nodejs.org/docs/v24.22.1/api/modules.html#requireresolverequest-options)
+performs lookup without loading the target. An excluded `package.json`
+also leaves package-directory selection unknown rather than treating the
+manifest as absent and applying an `index` fallback.
 
 Historical-source import requires safe no-follow file opens on Linux or
 macOS. Native Windows returns `unsupported_host`; use Linux REA inside WSL
@@ -414,7 +476,8 @@ evidence file's `evidence_id`; otherwise the command refuses with
 `invalid_request` before binding. Before binding it derives the
 `environment-state` view of the capture with the manifest's `template_rules`,
 as `inspect-analysis-view` would, and serves from it: read tools whose views
-are state-backed answer from a live state, write tools are not served, and
+are state-backed answer from a live state, write tools are served only where
+the capture's later reads confirmed their effect, and
 `/agentenv` serves `data/reset`, `data/add` and `data/get`. When the state
 cannot be derived, or its catalog exceeds the discovery reservation, it logs a
 warning with the error code and message and serves replay; `--replay-only` serves replay without deriving. In replay every
@@ -470,6 +533,22 @@ of the serve command's stopped document. See
 [agent environments](agent-environments.md#export-a-bundle) for the folder
 layout and what the smoke task checks.
 
+## Compare an environment with its application
+
+`rea environment-compare <manifest.json> --evidence <capture.json> --probe <probe.json> [--probe <probe.json> ...]`
+compares the environment the pair serves with probe captures of the application it came from. Each probe is capture
+Evidence of one call sequence recorded against the application after a reset; the environment's state is reset before
+each probe, every request to the application's origin is answered as the served environment answers it, and the
+answer is compared with the application's after ids are mapped and clocks and generated values are normalised. The command reads files only and
+makes no network call. It prints the report and exits `0`, or prints a structured `invalid_request` error and exits `1`
+for the same pair refusals as `environment-serve`, a probe that is not capture Evidence, or a browser probe captured
+without response bodies, or without the request bodies its writes need. See
+[agent environments](agent-environments.md#measure-fidelity-against-the-application) for the report.
+
+```sh
+rea environment-compare manifest.json --evidence capture.json --probe probe.json --json
+```
+
 ## Output and exit status
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
@@ -492,6 +571,13 @@ operation status.
 retain their complete typed diagnostic projection even when the selector matches
 a field such as `code` or `message`, or names a missing field. `--full-output`
 controls whether the outer `{ok, error, meta}` envelope is included.
+
+Sibling array slices that select different fields are combined by original row
+index and emitted in source order, regardless of selector order. Selecting a
+whole parent row keeps that row intact and takes precedence over narrower fields
+selected from the same row. For example, `rows[0,2].name,rows[1,3].version`
+combines both fields for overlapping rows, while `rows[0,2],rows[1,3].version`
+retains rows 0 and 1 whole.
 
 For `cutter-command`, `--json-output` requests command-specific JSON from
 Cutter when available. This is separate from `--format json`, which selects the

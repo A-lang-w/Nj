@@ -25,10 +25,14 @@ export interface Il2cppBinaryFixtureOptions {
   readonly chainedFixups?: boolean;
   /** Omit the CodeRegistration module count and array pointer. */
   readonly codeRegistration?: boolean;
+  /** Write a second distinct CodeRegistration module count and array pair. */
+  readonly duplicateCodeRegistration?: boolean;
   /** Write a RIP-relative `lea rax, [module array]`, as an inlined build loads it. */
   readonly codeReference?: boolean;
   /** Omit the MetadataRegistration type table. */
   readonly metadataRegistration?: boolean;
+  /** Write a second distinct MetadataRegistration candidate. */
+  readonly duplicateMetadataRegistration?: boolean;
   /** Byte written before each image name instead of NUL (MSVC pads with 0xFF). */
   readonly namePadding?: number;
   /** Text written directly before mscorlib.dll, making it the tail of a longer name. */
@@ -125,6 +129,10 @@ export const createIl2cppBinaryFixture = (
   if (options.codeRegistration !== false) {
     bytes.writeBigUInt64LE(2n, REGISTRATION);
     bytes.writeBigUInt64LE(address(MODULE_ARRAY), REGISTRATION + 8);
+    if (options.duplicateCodeRegistration === true) {
+      bytes.writeBigUInt64LE(2n, REGISTRATION + 0x80);
+      bytes.writeBigUInt64LE(address(MODULE_ARRAY), REGISTRATION + 0x88);
+    }
   }
   // Il2CppType records: 8-byte data, then attrs:16 and type:8 bits.
   const types: readonly [kind: number, data: bigint][] = [
@@ -156,6 +164,15 @@ export const createIl2cppBinaryFixture = (
     word(11, address(TYPE_POINTERS));
     word(12, 4n);
     word(13, address(TYPE_POINTERS));
+    if (options.duplicateMetadataRegistration === true) {
+      const duplicate = METADATA_REGISTRATION + 0x80;
+      bytes.writeBigUInt64LE(BigInt(types.length), duplicate + 6 * 8);
+      bytes.writeBigUInt64LE(address(TYPE_POINTERS), duplicate + 7 * 8);
+      bytes.writeBigUInt64LE(4n, duplicate + 10 * 8);
+      bytes.writeBigUInt64LE(address(TYPE_POINTERS), duplicate + 11 * 8);
+      bytes.writeBigUInt64LE(4n, duplicate + 12 * 8);
+      bytes.writeBigUInt64LE(address(TYPE_POINTERS), duplicate + 13 * 8);
+    }
   }
   return bytes;
 };
@@ -223,6 +240,11 @@ export interface ElfFixtureOptions {
   readonly dynamic?: boolean;
   /** Give every relocation a symbol index, so none is RELATIVE-only. */
   readonly symbolRelocations?: boolean;
+  /** Add unresolved dynamic relocations at offsets relative to the load base. */
+  readonly unresolvedRelocations?: readonly {
+    readonly offset: number;
+    readonly kind: number;
+  }[];
   /** Write DT_RELA twice. */
   readonly duplicateRela?: boolean;
   /** Override DT_RELASZ or DT_RELAENT. */
@@ -243,7 +265,7 @@ export const createElfFixture = (
 ): Buffer => {
   const body = Buffer.from(image);
   body.fill(0, 0, 0x100);
-  const relocations: [slot: bigint, value: bigint][] = [];
+  const relocations: [slot: bigint, value: bigint, kind?: number][] = [];
   for (let at = 0x100; at + 8 <= SIZE; at += 8) {
     const value = body.readBigUInt64LE(at);
     if (
@@ -254,6 +276,12 @@ export const createElfFixture = (
     relocations.push([FIXTURE_BINARY_BASE + BigInt(at), value]);
     body.writeBigUInt64LE(0n, at);
   }
+  for (const relocation of options.unresolvedRelocations ?? [])
+    relocations.push([
+      FIXTURE_BINARY_BASE + BigInt(relocation.offset),
+      0n,
+      relocation.kind,
+    ]);
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +
@@ -266,11 +294,12 @@ export const createElfFixture = (
     entry[1] = FIXTURE_BINARY_BASE + BigInt(fileSize);
   }
   const rela = Buffer.alloc(relocations.length * 24);
-  relocations.forEach(([slot, value], index) => {
+  relocations.forEach(([slot, value, kind], index) => {
     rela.writeBigUInt64LE(slot, index * 24);
     rela.writeBigUInt64LE(
-      (options.symbolRelocations === true ? 1n << 32n : 0n) |
-        (options.machine === 62 ? 8n : 1027n),
+      (options.symbolRelocations === true || kind !== undefined
+        ? 1n << 32n
+        : 0n) | BigInt(kind ?? (options.machine === 62 ? 8 : 1027)),
       index * 24 + 8,
     );
     rela.writeBigInt64LE(value, index * 24 + 16);
