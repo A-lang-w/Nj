@@ -153,6 +153,23 @@ export const analyzeAndProjectJavaScriptArtifactFiles = async (
   return finalizeArtifactAnalysis(state);
 };
 
+const isSignalAborted = (signal?: AbortSignal): boolean =>
+  signal?.aborted === true;
+
+const translateAnalysisInterruption = (
+  cause: unknown,
+  signal?: AbortSignal,
+): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+    return translateArtifactFailure("analyze_javascript_application", cause);
+  if (signal?.aborted === true && cause === signal.reason)
+    return new AnalysisCancelledError("analyze_javascript_application", {
+      cause,
+    });
+  throw cause;
+};
+
 /** Analyze sources behind a hard heap boundary, retaining collected facts on interruption. */
 export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   fileSet: JavaScriptArtifactFileSet,
@@ -195,10 +212,23 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
           null,
           "incomplete-module",
         );
-        if (signal?.aborted === true) {
+        if (isSignalAborted(signal)) {
           interruption = new AnalysisCancelledError(
             "analyze_javascript_application",
-            { cause: signal.reason },
+            { cause: signal?.reason },
+          );
+          break;
+        }
+        try {
+          await beforeFile(file, selectedFileIndex++, selectedFileCount);
+        } catch (cause: unknown) {
+          interruption = translateAnalysisInterruption(cause, signal);
+          break;
+        }
+        if (isSignalAborted(signal)) {
+          interruption = new AnalysisCancelledError(
+            "analyze_javascript_application",
+            { cause: signal?.reason },
           );
           break;
         }
@@ -293,21 +323,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         break;
       }
     } catch (cause: unknown) {
-      if (cause instanceof AnalysisError) interruption = cause;
-      else if (
-        cause instanceof ArtifactReaderFailure &&
-        cause.reason === "cancelled"
-      )
-        interruption = translateArtifactFailure(
-          "analyze_javascript_application",
-          cause,
-        );
-      else if (signal?.aborted === true && cause === signal.reason)
-        interruption = new AnalysisCancelledError(
-          "analyze_javascript_application",
-          { cause },
-        );
-      else throw cause;
+      interruption = translateAnalysisInterruption(cause, signal);
       const scope = javascriptArtifactAnalysisScopes[file.kind];
       state.files.push({
         file,

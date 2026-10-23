@@ -588,6 +588,43 @@ it("preserves cancellation reason when cancelled before an invalid-utf8 source",
   });
 });
 
+it("invokes progress and honors progress-driven cancellation on an invalid-only input", async () => {
+  const root = await createTestTempDirectory("rea-javascript-invalid-only-");
+  await writeFile(join(root, "bad.js"), Buffer.from([0xff, 0xfe, 0xff]));
+  const controller = new AbortController();
+  const reason = { request: "cancel on invalid-only progress" };
+  const progress: string[] = [];
+  const failure = await reconstructJavaScriptArtifact(
+    { input_path: root },
+    controller.signal,
+    {
+      report: async (event) => {
+        if (event.phase === "parse_javascript_source") {
+          progress.push(event.message);
+          controller.abort(reason);
+        }
+      },
+    },
+  ).then(
+    () => {
+      throw new Error("Expected cancellation");
+    },
+    (cause: unknown) => cause,
+  );
+  if (!(failure instanceof AnalysisError)) throw failure;
+  expect(failure.cause).toBe(reason);
+  expect(progress).toHaveLength(1);
+  expect(progress[0]).toContain("bad.js");
+  expect(progress[0]).toContain("(1/1)");
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cancelled",
+    category: "cancelled",
+    details: {
+      partial_observation: { operation: "analyze_javascript_application" },
+    },
+  });
+});
+
 it("preserves graph commitments and export shapes when consuming file-local IR", async () => {
   const root = await fixtureDirectory();
   await writeFile(
