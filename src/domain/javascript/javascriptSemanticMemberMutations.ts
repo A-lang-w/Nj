@@ -230,6 +230,13 @@ const localAccessorMethods = (
         : remaining.length === 0
           ? semanticObjectAccessorReferences(node, selected!, state, accessor)
           : semanticObjectPropertyReferences(node, [selected!], state);
+      // An unresolved intermediate receiver cannot prove absence of a setter.
+      if (
+        selection.requireLocalProof &&
+        remaining.length > 0 &&
+        references.length === 0
+      )
+        return undefined;
       for (const source of references)
         pending.push({
           node: source.node,
