@@ -97,7 +97,7 @@ const fixture = async (
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), content);
   }
-  return { base, root, common, gitdir, head, initialHead, git };
+  return { base, root, common, gitdir, head, initialHead, git, commit };
 };
 
 const observe = async (root: string) => {
@@ -407,6 +407,82 @@ describe.skipIf(process.platform === "win32")(
       await expectGitInventory(repository, true);
       await git(root, "checkout", "--quiet", "--detach", initialHead);
       await expectGitInventory({ ...repository, head: initialHead }, true);
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "reference source Git ref identities",
+  () => {
+    it.each([
+      { namespace: "refs/heads/", suffix: "\u00a0", ending: "\n" },
+      { namespace: "refs/heads/", suffix: "\u2003", ending: "\r\n" },
+      { namespace: "refs/heads/", suffix: "\ufeff", ending: "" },
+      { namespace: "refs/worktree/", suffix: "\u00a0", ending: "\n" },
+    ])(
+      "preserves a linked $namespace ref's Unicode whitespace",
+      async ({ namespace, suffix, ending }) => {
+        const repository = await fixture("linked", "metadata");
+        const { root, gitdir, git, head, initialHead } = repository;
+        expect(head).not.toBe(initialHead);
+        const ref = `${namespace}target${suffix}`;
+        await git(root, "update-ref", ref, head);
+        await git(root, "update-ref", ref.trimEnd(), initialHead);
+        await git(root, "symbolic-ref", "HEAD", ref);
+        await writeFile(join(gitdir, "HEAD"), `ref: ${ref}${ending}`);
+        await expectGitInventory(repository, true);
+      },
+    );
+
+    it.each([
+      { kind: "ordinary" as const, form: "loose" },
+      { kind: "separate" as const, form: "loose" },
+      { kind: "linked" as const, form: "packed" },
+      { kind: "linked" as const, form: "recursive" },
+    ])(
+      "keeps $kind $form HEAD unknown when the dependency would change its identity",
+      async ({ kind, form }) => {
+        const repository = await fixture(kind, "metadata");
+        const { root, git, initialHead } = repository;
+        if (kind !== "linked") await repository.commit(root);
+        const head = (await git(root, "rev-parse", "HEAD")).trim();
+        expect(head).not.toBe(initialHead);
+        const ref = "refs/heads/z-target\u00a0";
+        await git(root, "update-ref", ref, head);
+        await git(root, "update-ref", ref.trimEnd(), initialHead);
+        await git(root, "symbolic-ref", "HEAD", ref);
+        if (form === "packed") await git(root, "pack-refs", "--all", "--prune");
+        if (form === "recursive") {
+          await git(root, "symbolic-ref", "refs/heads/intermediate", ref);
+          await git(root, "symbolic-ref", "HEAD", "refs/heads/intermediate");
+        }
+        expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(head);
+        const { vcs, graph } = await observe(root);
+        expect(vcs).toEqual({ info: unknownVcs, ignoreCase: true });
+        expect(graph.vcs).toEqual(unknownVcs);
+        expect(graph.limitations).not.toContain(UNKNOWN_CASE);
+        expect(graph.entries.map(({ path }) => path)).toContain("visible.ts");
+      },
+    );
+
+    it("does not select a replacement-character sibling from invalid HEAD UTF-8", async () => {
+      const repository = await fixture("linked", "metadata");
+      const { root, gitdir, git, initialHead } = repository;
+      await git(root, "update-ref", "refs/heads/target\ufffd", initialHead);
+      await writeFile(
+        join(gitdir, "HEAD"),
+        Buffer.concat([
+          Buffer.from("ref: refs/heads/target"),
+          Buffer.from([0xff, 0x0a]),
+        ]),
+      );
+      await expect(git(root, "rev-parse", "HEAD")).rejects.toMatchObject({
+        code: 128,
+      });
+      const { vcs, graph } = await observe(root);
+      expect(vcs).toEqual({ info: unknownVcs, ignoreCase: true });
+      expect(graph.vcs).toEqual(unknownVcs);
+      expect(graph.limitations).not.toContain(UNKNOWN_CASE);
     });
   },
 );

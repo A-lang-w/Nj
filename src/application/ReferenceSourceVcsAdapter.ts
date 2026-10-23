@@ -163,14 +163,20 @@ const readGitMetadataPath = async (
 ): Promise<string> => {
   // Git strips trailing CR/LF record terminators, not path whitespace. Decode
   // strictly so invalid UTF-8 cannot select a different replacement-character path.
-  const record = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
-    .decode(await readOwnedMetadataBytes(path, resources, signal))
-    .replace(/[\r\n]+$/u, "");
+  const record = decodeGitMetadataRecord(
+    await readOwnedMetadataBytes(path, resources, signal),
+  );
   const target = record.slice(prefix.length);
   if (!record.startsWith(prefix) || target === "" || target.includes("\0"))
     throw new Error("Invalid Git metadata directory pointer");
   return target;
 };
+
+// Metadata record terminators are not part of an identity; Unicode whitespace is.
+const decodeGitMetadataRecord = (bytes: Buffer): string =>
+  new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+    .decode(bytes)
+    .replace(/[\r\n]+$/u, "");
 
 // Git config syntax uses ASCII whitespace; Unicode whitespace remains data.
 const trimGitConfigWhitespace = (value: string): string =>
@@ -398,7 +404,7 @@ const resolveSourceHead = async (
     }
   };
   const readMetadataText = async (path: string): Promise<string> =>
-    (await readMetadataBytes(path)).toString("utf8");
+    decodeGitMetadataRecord(await readMetadataBytes(path));
   const throwCleanupFailures = (primary: unknown): never => {
     const observations = cleanupFailures.flatMap((failure) =>
       failure.cleanup === undefined ? [] : [failure.cleanup],
@@ -458,7 +464,15 @@ const resolveSourceHead = async (
           if (encoding === undefined || encoding === null) return bytes;
           if (typeof encoding !== "string" || !Buffer.isEncoding(encoding))
             throw new TypeError("Unsupported Git metadata text encoding");
-          return bytes.toString(encoding);
+          // The dependency trims loose and packed refs with JavaScript's
+          // Unicode whitespace rules. Reject text whose identity it would
+          // change rather than report a different, trimmed sibling's HEAD.
+          const text = decodeGitMetadataRecord(bytes);
+          if (text.trim() !== text.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, ""))
+            throw new Error("Git ref identity cannot be preserved");
+          return encoding === "utf8" || encoding === "utf-8"
+            ? text
+            : bytes.toString(encoding);
         } catch (cause: unknown) {
           if (cause instanceof ArtifactReaderFailure) {
             cleanupFailures.push(cause);
@@ -489,7 +503,7 @@ const resolveSourceHead = async (
   };
   const { gitdir, commonDirectory } = metadata;
   if (commonDirectory === undefined) return readRef({ gitdir, ref: "HEAD" });
-  const head = (await readMetadataText(join(gitdir, "HEAD"))).trim();
+  const head = await readMetadataText(join(gitdir, "HEAD"));
   if (!head.startsWith("ref: ")) return readRef({ gitdir, ref: "HEAD" });
   const ref = head.slice(5);
   const privateRef = ["refs/bisect/", "refs/rewritten/", "refs/worktree/"].some(

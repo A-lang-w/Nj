@@ -378,7 +378,10 @@ other facts. No fixed output-size or runtime improvement is promised.
 The import records hashes and metadata for the supplied files, separately
 from observations of the current app. For a directory inside a Git checkout,
 it records the HEAD of the nearest enclosing repository; whether the working
-tree matches that commit remains unknown. It loads `.gitignore` files inside the
+tree matches that commit remains unknown. Linked-worktree HEAD parsing preserves
+legal Unicode whitespace in branch names. If the reference library would trim
+Unicode whitespace from a ref record, HEAD remains unknown.
+It loads `.gitignore` files inside the
 selected root as it enters each directory. Child rules apply within that directory
 and can override inherited project rules; excluded directories are not traversed.
 Ignore files above the selected root and Git's global excludes are not loaded.
