@@ -1,4 +1,5 @@
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
@@ -8,7 +9,8 @@ import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
-  signature,
+  metadataSignature,
+  memberTargetIdentity,
   signatureGenericArity,
   type ManagedCallEdge,
   type ManagedExportedType,
@@ -28,7 +30,10 @@ import {
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+import {
+  appendManagedParseIssues,
+  readManagedValue,
+} from "./ManagedReaderFailure.js";
 import { methodBody } from "./ManagedMethodBodyReader.js";
 import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
@@ -97,8 +102,27 @@ export const parseFields = (
         bytes,
         layout,
         cursor.readIndex(layout.blobIndexSize),
-        layout.blob.size,
+        layout.blob?.size ?? 0,
       );
+      const decoded = budgetedSignature(
+        sig,
+        layout,
+        signatureTypeName,
+        issues,
+        `Field:${token}.signature`,
+      );
+      core.set(token, {
+        token,
+        name,
+        declaringType: declared?.fullName ?? null,
+        kind: "field",
+        identitySha256: memberTargetIdentity(
+          name,
+          declared?.token ?? null,
+          decoded,
+          signatureTypeName,
+        ),
+      });
       fields.push({
         token,
         row_offset: cursor.start,
@@ -106,7 +130,7 @@ export const parseFields = (
         declaring_type: declared?.fullName ?? null,
         name,
         flags,
-        signature: budgetedSignature(sig, layout, signatureTypeName),
+        signature: decoded,
       });
     }, issues);
   }
@@ -214,7 +238,7 @@ export const parseMemberRefs = (
         bytes,
         layout,
         cursor.readIndex(layout.blobIndexSize),
-        layout.blob.size,
+        layout.blob?.size ?? 0,
       );
       const token = metadataToken(10, row);
       const parentReason = metadataCodedTokenInvalidReason(
@@ -240,7 +264,13 @@ export const parseMemberRefs = (
         layout.rowCounts,
       );
       const parentName = typeName(parentToken);
-      const decoded = budgetedSignature(sig, layout, signatureTypeName);
+      const decoded = budgetedSignature(
+        sig,
+        layout,
+        signatureTypeName,
+        issues,
+        `MemberRef:${token}.signature`,
+      );
       refs.push({
         token,
         row_offset: cursor.start,
@@ -255,6 +285,12 @@ export const parseMemberRefs = (
         declaringType: parentName,
         kind: decoded.kind,
         genericArity: signatureGenericArity(decoded),
+        identitySha256: memberTargetIdentity(
+          name,
+          parentToken,
+          decoded,
+          signatureTypeName,
+        ),
       });
     }, issues);
   }
@@ -267,6 +303,7 @@ interface ParseMethodsInput {
   readonly pe: ManagedPeLayout;
   readonly ranges: readonly TypeRange[];
   readonly signatureTypeName: SignatureTypeName;
+  readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
   readonly selected?: SelectedTypeTokens;
   readonly methodOffset?: number;
@@ -279,6 +316,7 @@ export const parseMethods = ({
   pe,
   ranges,
   signatureTypeName,
+  memberRefKinds,
   memberLists,
   selected = null,
   methodOffset = 0,
@@ -344,21 +382,34 @@ export const parseMethods = ({
         bytes,
         layout,
         cursor.readIndex(layout.blobIndexSize),
-        layout.blob.size,
+        layout.blob?.size ?? 0,
       );
       cursor.readIndex(layout.tableIndexSize(8));
-      const decoded = budgetedSignature(sig, layout, signatureTypeName);
+      const decoded = budgetedSignature(
+        sig,
+        layout,
+        signatureTypeName,
+        issues,
+        `MethodDef:${token}.signature`,
+      );
       core.set(token, {
         ...member,
         genericArity: signatureGenericArity(decoded),
+        identitySha256: memberTargetIdentity(
+          name,
+          declared?.token ?? null,
+          decoded,
+          signatureTypeName,
+        ),
       });
-      const read = methodBody(
-        bytes,
-        pe,
-        rva,
-        { implFlags, flags },
-        managedDecodeBudget(layout),
-      );
+      const read = methodBody(bytes, pe, rva, {
+        implementation: { implFlags, flags },
+        budget: managedDecodeBudget(layout),
+        metadataLayout: layout,
+        methodToken: token,
+        memberRefKinds,
+      });
+      appendManagedParseIssues(issues, read.issues);
       if (!read.scanned) unscannedMethods += 1;
       methods.push({
         token,
@@ -421,18 +472,14 @@ export const edges = (
   const fieldAccesses: ManagedFieldAccess[] = [];
   for (const method of methods) {
     const derives = method.body.anchors.some(
-      (anchor) =>
-        anchor.opcode !== "ldtoken" &&
-        anchor.operand !== null &&
-        (anchor.operand_kind === "method" || anchor.operand_kind === "field"),
+      isManagedMemberReferenceInstruction,
     );
     if (derives) budget.admitTransient(callerNameBytes(method), null);
     // Built once per method, only after its exact size was admitted.
     const caller = derives ? callerName(method) : method.name;
     for (const anchor of method.body.anchors) {
-      if (anchor.opcode === "ldtoken") continue;
+      if (!isManagedMemberReferenceInstruction(anchor)) continue;
       const { operand } = anchor;
-      if (operand === null) continue;
       const target = namedTarget(members, anchor.operand_kind, operand);
       if (anchor.operand_kind === "method") {
         // Each derived record is admitted before the graph grows further.
@@ -440,6 +487,8 @@ export const edges = (
           admitManagedProjection(
             {
               caller_token: method.token,
+              il_offset: anchor.il_offset,
+              target_identity_sha256: target?.identitySha256 ?? null,
               caller,
               opcode: anchor.opcode,
               target_token: operand,
@@ -456,6 +505,8 @@ export const edges = (
           admitManagedProjection(
             {
               method_token: method.token,
+              il_offset: anchor.il_offset,
+              target_identity_sha256: target?.identitySha256 ?? null,
               method: caller,
               opcode: anchor.opcode,
               field_token: operand,
@@ -490,12 +541,23 @@ const budgetedSignature = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   signatureTypeName: SignatureTypeName,
-): ReturnType<typeof signature> => {
+  issues: ManagedParseIssue[],
+  scope: string,
+): ReturnType<typeof metadataSignature> => {
   const budget = managedDecodeBudget(layout);
-  budget.admitTransient(bytes.length * 256, layout.blob.offset);
+  budget.admitTransient(
+    bytes.length * 256,
+    layout.blob?.offset ?? layout.rootOffset,
+  );
   try {
     return admitManagedProjection(
-      signature(bytes, budget.digest(bytes, "sha256"), signatureTypeName),
+      metadataSignature(bytes, {
+        rawSha256: budget.digest(bytes, "sha256"),
+        typeName: signatureTypeName,
+        layout,
+        issues,
+        scope,
+      }),
       budget,
     );
   } finally {

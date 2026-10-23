@@ -1,25 +1,20 @@
-import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
 } from "./artifactInventoryEvidence.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import {
-  assertComparisonFindingLinks,
-  comparisonSourceEvidenceSides,
-} from "./comparisonSourceEvidence.js";
+import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
+import { readComparisonResult } from "./comparisonEvidenceResult.js";
 import type { Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
 import { readEvidenceBundle } from "./evidenceBundle.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
-import { projectInputIssues } from "./inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
-import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import { assessFunctionCallCoverage } from "./functionCallCoverage.js";
-import { processCaptureComparisonSchema } from "./process/processComparison.js";
 import { processCaptureSchema } from "./process/processCapture.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
@@ -58,10 +53,11 @@ export const verifyReconstruction = (
   const parsedSpecification =
     reconstructionSpecificationSchema.safeParse(specificationInput);
   if (!parsedSpecification.success)
-    throw new AnalysisInputError(
+    throw analysisInputErrorFromIssues(
       "verify_reconstruction",
+      parsedSpecification.error.issues,
+      specificationInput,
       { cause: parsedSpecification.error },
-      projectInputIssues(parsedSpecification.error.issues, specificationInput),
     );
   const specification = parsedSpecification.data;
   const bundleResult = readEvidenceBundle(bundleInput);
@@ -285,12 +281,9 @@ const comparisonObservation = (
   readonly hasIndependentFunctionChange?: boolean;
 } => {
   if (claim.kind === "behavioral") {
-    const parsed = readEvidencePayload(
-      processCaptureComparisonSchema,
-      evidence.normalized_result,
-    );
+    const parsed = readComparisonResult(evidence, "compare_process_captures");
     if (!parsed.ok) throw parsed.error;
-    const result = parsed.value;
+    const result = parsed.value.result;
     if (claim.dimension !== "overall")
       return { status: result[claim.dimension], limitations: [] };
     if (
@@ -307,16 +300,9 @@ const comparisonObservation = (
     };
   }
   if (claim.kind === "structural-function") {
-    const parsed = readEvidencePayload(
-      functionComparisonResultSchema,
-      evidence.normalized_result,
-    );
+    const parsed = readComparisonResult(evidence, "compare_functions");
     if (!parsed.ok) throw parsed.error;
-    const result = parsed.value;
-    assertComparisonFindingLinks(
-      evidence,
-      result.dimensions.flatMap(({ evidence_links }) => evidence_links),
-    );
+    const result = parsed.value.result;
     if (claim.dimension === "overall")
       return {
         status: result.status,
@@ -344,16 +330,9 @@ const comparisonObservation = (
     }
     return { status: dimension.status, limitations: dimension.limitations };
   }
-  const parsed = readEvidencePayload(
-    artifactComparisonResultSchema,
-    evidence.normalized_result,
-  );
+  const parsed = readComparisonResult(evidence, "compare_artifacts");
   if (!parsed.ok) throw parsed.error;
-  const result = parsed.value;
-  assertComparisonFindingLinks(
-    evidence,
-    result.changes.flatMap(({ evidence_links }) => evidence_links),
-  );
+  const result = parsed.value.result;
   return { status: result.status, limitations: [] };
 };
 

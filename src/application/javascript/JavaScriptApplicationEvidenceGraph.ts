@@ -2,12 +2,9 @@ import {
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
-} from "../InvestigationProviders.js";
-import {
-  isImmutableEvidence,
-  parseEvidence,
-  type Evidence,
-} from "../../domain/evidence.js";
+} from "../../domain/investigationProviders.js";
+import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import {
   type AnalysisInputIssue,
   AnalysisInputError,
@@ -355,12 +352,9 @@ const parseEvidenceInput = (
   input: unknown,
   path: readonly (string | number)[],
 ): Evidence => {
-  try {
-    return parseEvidence(input);
-  } catch (cause: unknown) {
-    if (cause instanceof z.ZodError) throw zodInputFailure(cause, input, path);
-    throw cause;
-  }
+  const parsed = safeParseEvidence(input);
+  if (parsed.ok) return parsed.value;
+  throw zodInputFailure(parsed.error, input, path);
 };
 
 const parseCallerValue = <Value>(

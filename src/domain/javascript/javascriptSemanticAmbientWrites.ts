@@ -85,6 +85,35 @@ const canonicalAmbientPath = (
 
 type AmbientPath = readonly (string | null)[];
 
+const retainedAmbientEffects = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  Map<t.Node | undefined, Set<string>>
+>();
+
+/** Retain canonical ambient effects once, whether discovered by syntax or receiver expansion. */
+export const retainSemanticAmbientEffect = (
+  state: JavaScriptSemanticAnalysisState,
+  kind: "write" | "escape",
+  path: AmbientPath,
+  node: t.Node | undefined,
+): boolean => {
+  const selected = kind === "escape" ? [...path, null] : path;
+  const byNode = retainedAmbientEffects.get(state) ?? new Map();
+  const keys = byNode.get(node) ?? new Set<string>();
+  const key = JSON.stringify([kind, selected]);
+  if (keys.has(key)) return false;
+  keys.add(key);
+  byNode.set(node, keys);
+  retainedAmbientEffects.set(state, byNode);
+  if (kind === "write") {
+    state.ambientWrites.retain(selected);
+  } else {
+    state.ambientEscapes.retain(selected);
+  }
+  state.ambientReferenceEffects.push({ path: selected, node, kind });
+  return true;
+};
+
 /** Undefined means a cyclic or conflicting projection can select any depth. */
 type AmbientProjection = AmbientPath | undefined;
 
@@ -679,25 +708,14 @@ export function* indexJavaScriptAmbientWritesSteps(
             ...path.slice(2),
           ]);
     for (const resolved of paths) {
-      state.ambientWrites.retain(resolved);
-      state.ambientReferenceEffects.push({
-        path: resolved,
-        node,
-        kind: "write",
-      });
+      retainSemanticAmbientEffect(state, "write", resolved, node);
     }
   }
   for (const { node, target, browserReceiver, projection } of escapes)
     for (const path of ambientWrites(target, node, true, projection))
       // Only proven browser APIs keep their global receiver from user code.
       if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
-        const escaped = [...path, null];
-        state.ambientEscapes.retain(escaped);
-        state.ambientReferenceEffects.push({
-          path: escaped,
-          node,
-          kind: "escape",
-        });
+        retainSemanticAmbientEffect(state, "escape", path, node);
       }
   // A function may call a browser method replaced later in source order.
   if (
@@ -705,29 +723,15 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWrites.covers(["global", method]),
     )
   ) {
-    state.ambientEscapes.retain(["global", null]);
-    state.ambientReferenceEffects.push({
-      path: ["global", null],
-      node: undefined,
-      kind: "escape",
-    });
+    retainSemanticAmbientEffect(state, "escape", ["global"], undefined);
   }
 }
 
-/**
- * Recognize an ambient property path, optionally through a global object, without a visible
- * source-local overwrite or unordered receiver escape. This is a syntax-local identity fact, not proof that
- * the runtime's globals have never been patched by other code.
- */
-export const isUnmodifiedGlobalReference = (
-  callee: t.Node,
+/** One capture query shares activation proofs across its selected ambient paths. */
+export const createSemanticAmbientModificationQuery = (
   state: JavaScriptSemanticAnalysisState,
-  name: string | readonly [string, ...string[]],
-  projection: readonly string[] = [],
-  capture: t.Node = callee,
-): boolean => {
-  const path: readonly [string, ...string[]] =
-    typeof name === "string" ? [name] : name;
+  capture: t.Node,
+): ((selected: readonly string[]) => boolean) => {
   let singleCapture: readonly SemanticExecutionFrame[] | null | undefined;
   const singleCaptureFrames = () => {
     if (singleCapture === undefined) {
@@ -740,7 +744,7 @@ export const isUnmodifiedGlobalReference = (
   };
   // Escaping an ambient receiver lets user code replace any selected member.
   // A constructor already captured before that escape keeps its identity.
-  const modified = (selected: readonly string[]): boolean =>
+  return (selected: readonly string[]): boolean =>
     state.ambientWrites.covers(selected) ||
     (state.ambientEscapes.covers(selected) &&
       state.ambientReferenceEffects.some(
@@ -771,6 +775,23 @@ export const isUnmodifiedGlobalReference = (
             }) === true
           ),
       ));
+};
+
+/**
+ * Recognize an ambient property path, optionally through a global object, without a visible
+ * source-local overwrite or unordered receiver escape. This is a syntax-local identity fact, not proof that
+ * the runtime's globals have never been patched by other code.
+ */
+export const isUnmodifiedGlobalReference = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  name: string | readonly [string, ...string[]],
+  projection: readonly string[] = [],
+  capture: t.Node = callee,
+): boolean => {
+  const path: readonly [string, ...string[]] =
+    typeof name === "string" ? [name] : name;
+  const modified = createSemanticAmbientModificationQuery(state, capture);
   if (modified(["global", ...path])) return false;
   const { root, members } = electronMemberPath(callee);
   const selected = [...members, ...projection];

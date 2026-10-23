@@ -151,6 +151,38 @@ alias.unrelated = replacement;`,
     specifier: "./worker.js",
   },
   {
+    name: "repeated global self projections before an unrelated write",
+    setup: `let alias = globalThis; alias = alias.globalThis.globalThis;
+alias.unrelated = replacement;`,
+    specifier: "./worker.js",
+  },
+  {
+    name: "a global self alias before an unrelated write",
+    setup: `let alias = globalThis; alias = alias.global;
+alias.unrelated = replacement;`,
+    specifier: "./worker.js",
+  },
+  {
+    name: "a replaced constructor through repeated global self projections",
+    setup: `let alias = globalThis; alias = alias.globalThis.globalThis;
+alias.URL = replacement;`,
+    specifier: null,
+  },
+  {
+    name: "a possible ambient receiver alongside a local allocation",
+    setup: `const local = { globalThis: {} };
+const selected = flag ? globalThis : local;
+selected.globalThis.URL = replacement;`,
+    specifier: null,
+  },
+  {
+    name: "a shadowed global self name with only local receivers",
+    setup: `const globalThis = { globalThis: {} };
+let alias = globalThis; alias = alias.globalThis;
+alias.unrelated = replacement;`,
+    specifier: "./worker.js",
+  },
+  {
     name: "an exact empty projection into a shallow copy",
     setup: `const copy = { ...globalThis };
 const selected = flag ? copy : copy; selected.URL = replacement;`,
@@ -165,3 +197,74 @@ new Worker(new URL("./worker.js", import.meta.url));`;
   );
   expect(worker?.specifier).toBe(specifier);
 });
+
+it("retains getter-derived ambient escapes once per invoked read site", () => {
+  const source = `const box={loader:require,get trigger(){this.loader.resolve=this.loader;return 0}};
+box.trigger;
+box.trigger;`;
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected getter fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const effects = index.bindings.ambientReferenceEffects.filter(
+    ({ path, kind }) =>
+      kind === "escape" &&
+      JSON.stringify(path) === JSON.stringify(["global", "require", null]),
+  );
+  expect(
+    effects.map(({ node }) =>
+      node === undefined ? null : source.slice(node.start ?? 0, node.end ?? 0),
+    ),
+  ).toEqual(["box.trigger", "box.trigger"]);
+  expect(effects[0]?.node).not.toBe(effects[1]?.node);
+});
+
+it.each([
+  {
+    source:
+      'Object.defineProperty({}, "x", { value: 1 }); Object.defineProperty({}, "y", { value: 2 });',
+    path: ["global", "Object", "defineProperty"],
+    escaped: false,
+  },
+  {
+    source: 'const O = Object; O.defineProperty({}, "x", { value: 1 });',
+    path: ["global", "Object", "defineProperty"],
+    escaped: false,
+  },
+  {
+    source:
+      "window.fetch(endpoint); globalThis.fetch(endpoint); self.fetch(endpoint);",
+    path: ["global", "URL"],
+    escaped: false,
+  },
+  {
+    source:
+      'Object.defineProperty = replacement; Object.defineProperty({}, "x", {});',
+    path: ["global", "Object", "defineProperty"],
+    escaped: true,
+  },
+  {
+    source: 'inspect(Object); Object.defineProperty({}, "x", {});',
+    path: ["global", "Object", "defineProperty"],
+    escaped: true,
+  },
+  {
+    source: "Object[method]();",
+    path: ["global", "Object", "defineProperty"],
+    escaped: true,
+  },
+])(
+  "preserves receiver escape proof for $source",
+  ({ source, path, escaped }) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected receiver fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    expect(index.bindings.ambientEscapes.covers(path)).toBe(escaped);
+  },
+);
