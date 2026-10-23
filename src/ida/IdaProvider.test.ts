@@ -153,43 +153,87 @@ describe("IDA provider analysis profile", () => {
     entryPointSource: null,
   } as const;
 
-  const registrationDigest = async (
-    registration: Record<string, unknown>,
-  ): Promise<unknown> => {
+  const resolveRegistration = async (registration: Record<string, unknown>) => {
     const root = await createTestTempDirectory("rea-ida-profile-");
     const path = join(root, "registration.json");
     await writeFile(path, JSON.stringify(registration));
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;
-    const profile = await new IdaProvider(config.value, {}, () => {
+    return new IdaProvider(config.value, {}, () => {
       throw new Error("Unexpected provider startup");
     }).resolveAnalysisProfile(target);
-    if (!profile.ok) throw profile.error;
-    return profile.value.profile.parameters.registration_digest;
   };
 
-  it("commits HTTP header names but not header values", async () => {
-    const http = (headers: Record<string, string>) =>
-      registrationDigest({
+  const identity = async (registration: Record<string, unknown>) => {
+    const resolved = await resolveRegistration(registration);
+    if (!resolved.ok) throw resolved.error;
+    return {
+      digest: resolved.value.profile?.parameters.registration_digest,
+      bindingKey: resolved.value.bindingKey,
+    };
+  };
+
+  it("withholds only marked HTTP header values from the public digest", async () => {
+    const http = (headers: Record<string, string>, sensitive: string[]) =>
+      identity({
         url: "http://127.0.0.1:8745/mcp",
         mode: "headless",
         headers,
+        sensitive,
       });
 
-    const bearer = await http({ Authorization: "Bearer first-token" });
-    expect(bearer).toMatch(/^[a-f0-9]{64}$/u);
-    expect(await http({ Authorization: "Bearer second-token" })).toBe(bearer);
-    expect(await http({ Cookie: "Bearer first-token" })).not.toBe(bearer);
-    expect(await http({})).not.toBe(bearer);
+    const first = await http(
+      { Authorization: "Bearer first-token", "X-Backend": "a" },
+      ["Authorization"],
+    );
+    expect(first.digest).toMatch(/^[a-f0-9]{64}$/u);
+    // A rotated credential keeps the public profile but not the live binding.
+    const rotated = await http(
+      { Authorization: "Bearer second-token", "X-Backend": "a" },
+      ["Authorization"],
+    );
+    expect(rotated.digest).toBe(first.digest);
+    expect(rotated.bindingKey).not.toBe(first.bindingKey);
+    // An unmarked, result-affecting value changes both.
+    const rerouted = await http(
+      { Authorization: "Bearer first-token", "X-Backend": "b" },
+      ["Authorization"],
+    );
+    expect(rerouted.digest).not.toBe(first.digest);
+    expect(rerouted.bindingKey).not.toBe(first.bindingKey);
+    // Unmarked values, including credentials, stay committed.
+    const unmarked = await http(
+      { Authorization: "Bearer first-token", "X-Backend": "a" },
+      [],
+    );
+    expect(unmarked.digest).not.toBe(first.digest);
   });
 
-  it("commits stdio environment names but not environment values", async () => {
-    const stdio = (args: readonly string[], env: Record<string, string>) =>
-      registrationDigest({ command: "ida-mcp", args, env });
+  it("withholds only marked stdio environment values from the public digest", async () => {
+    const stdio = (env: Record<string, string>) =>
+      identity({ command: "ida-mcp", env, sensitive: ["IDA_API_KEY"] });
 
-    const token = await stdio(["--stdio"], { IDA_MCP_TOKEN: "first" });
-    expect(await stdio(["--stdio"], { IDA_MCP_TOKEN: "second" })).toBe(token);
-    expect(await stdio(["--stdio"], { IDA_MCP_KEY: "first" })).not.toBe(token);
-    expect(await stdio(["--sse"], { IDA_MCP_TOKEN: "first" })).not.toBe(token);
+    const first = await stdio({ IDA_API_KEY: "first", IDADIR: "/opt/ida-9.1" });
+    const rotated = await stdio({
+      IDA_API_KEY: "second",
+      IDADIR: "/opt/ida-9.1",
+    });
+    expect(rotated.digest).toBe(first.digest);
+    expect(rotated.bindingKey).not.toBe(first.bindingKey);
+    // IDADIR selects the IDA installation, so it remains part of the profile.
+    const otherInstall = await stdio({
+      IDA_API_KEY: "first",
+      IDADIR: "/opt/ida-9.3",
+    });
+    expect(otherInstall.digest).not.toBe(first.digest);
+  });
+
+  it("rejects a sensitive name that the registration does not define", async () => {
+    const resolved = await resolveRegistration({
+      command: "ida-mcp",
+      env: { IDADIR: "/opt/ida" },
+      sensitive: ["IDA_API_KEY"],
+    });
+    expect(resolved.ok).toBe(false);
   });
 });

@@ -34,6 +34,11 @@ const common = {
     .string()
     .refine(isAbsolute, "workspaceRoot must be absolute on the REA host")
     .optional(),
+  /**
+   * Names of `headers` (HTTP) or `env` (stdio) entries whose values are
+   * secret. Only these values are withheld from the public registration digest.
+   */
+  sensitive: z.array(z.string().min(1)).optional(),
 };
 const registrationSchema = z
   .union([
@@ -66,7 +71,11 @@ const registrationSchema = z
   .refine(
     (config) => config.protocol !== "native" || config.mode === "attached",
     "The native IDA MCP protocol requires attached mode",
-  );
+  )
+  .refine((config) => {
+    const names = Object.keys("url" in config ? config.headers : config.env);
+    return (config.sensitive ?? []).every((name) => names.includes(name));
+  }, "Each sensitive name must be a header (HTTP) or env (stdio) entry of the same registration");
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
@@ -77,26 +86,43 @@ export const idaProtocol = (config: IdaConfiguration) =>
 
 const REDACTED_REGISTRATION_VALUE = "[REDACTED]";
 
-const redactedValues = (
+const redactSensitive = (
   values: Readonly<Record<string, string>>,
+  sensitive: readonly string[],
 ): Record<string, string> =>
   Object.fromEntries(
-    Object.keys(values).map((name) => [name, REDACTED_REGISTRATION_VALUE]),
+    Object.entries(values).map(([name, value]) => [
+      name,
+      sensitive.includes(name) ? REDACTED_REGISTRATION_VALUE : value,
+    ]),
   );
 
-/** Digest the registration without header or environment values.
- * Their names stay committed, so adding or removing one changes the digest.
+const registrationSha256 = (value: unknown): string =>
+  createHash("sha256")
+    .update(canonicalize(value) ?? "")
+    .digest("hex");
+
+/**
+ * Public registration identity, recorded in the analysis profile. Values of
+ * entries named in `sensitive` are withheld; every other value, every name and
+ * the `sensitive` list itself stay committed.
  */
 export const idaRegistrationDigest = (config: IdaConfiguration): string =>
-  createHash("sha256")
-    .update(
-      canonicalize(
-        "url" in config
-          ? { ...config, headers: redactedValues(config.headers) }
-          : { ...config, env: redactedValues(config.env) },
-      ) ?? "",
-    )
-    .digest("hex");
+  registrationSha256(
+    "url" in config
+      ? {
+          ...config,
+          headers: redactSensitive(config.headers, config.sensitive ?? []),
+        }
+      : { ...config, env: redactSensitive(config.env, config.sensitive ?? []) },
+  );
+
+/**
+ * Private identity of the live connection settings, including sensitive
+ * values. Compared to decide client reuse and never serialized.
+ */
+export const idaRegistrationBindingKey = (config: IdaConfiguration): string =>
+  registrationSha256(config);
 
 /** Read one explicit registration without starting or installing a provider. */
 export const readIdaConfiguration = (

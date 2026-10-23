@@ -28,6 +28,7 @@ import {
   readIdaConfiguration,
   type IdaConfiguration,
   idaConfigurationError,
+  idaRegistrationBindingKey,
   idaRegistrationDigest,
 } from "./IdaConfiguration.js";
 import {
@@ -362,6 +363,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
     return ok({
       profile,
       createClient,
+      bindingKey: idaRegistrationBindingKey(registration),
     });
   }
   createClient(
