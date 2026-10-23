@@ -2,7 +2,7 @@ import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
   at,
   isObject,
-  jsonBytes,
+  stateValueRetentionBytes,
   scalarText,
   type StateEntity,
   type StateRecordFacts,
@@ -99,7 +99,9 @@ export class UnseenEntities {
     };
     // The copy keeps the read's object, which the body's own reservation no longer covers.
     this.facts.io.retain(
-      ENTRY_BYTES * 4 + textBytes(key.length) + jsonBytes(object),
+      ENTRY_BYTES * 4 +
+        textBytes(key.length) +
+        stateValueRetentionBytes(object),
     );
     state.put(entity);
     this.#held.add(key);
