@@ -221,6 +221,11 @@ import {
   projectEnvironmentStateView,
 } from "./environmentStateView.js";
 import {
+  environmentCoverageFields,
+  environmentCoverageViewRequestSchema,
+  projectEnvironmentCoverageView,
+} from "./environmentCoverageView.js";
+import {
   pcapViewRequestSchema,
   pcapViewPageSchema,
   pcapSummarySchema,
@@ -357,6 +362,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   apiSurfaceViewSchema,
   environmentManifestViewRequestSchema,
   environmentStateViewRequestSchema,
+  environmentCoverageViewRequestSchema,
   captureViewRequestSchema,
   protobufViewRequestSchema,
   qlogViewRequestSchema,
@@ -820,6 +826,16 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ]),
     view: environmentStateViewRequestSchema,
   }),
+  z.strictObject({
+    ...viewResultBase,
+    ...environmentCoverageFields,
+    kind: z.literal("environment-coverage"),
+    parent_operation: z.enum([
+      "inspect_web_network_capture",
+      "capture_browser_scenario",
+    ]),
+    view: environmentCoverageViewRequestSchema,
+  }),
   z.discriminatedUnion("parent_operation", [
     nativeExportsSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
@@ -1090,7 +1106,7 @@ const unsupportedParent = (
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
     parent.operation === "capture_browser_scenario"
-      ? `Parent Evidence operation "capture_browser_scenario" supports only the environment-manifest and environment-state views.`
+      ? `Parent Evidence operation "capture_browser_scenario" supports only the environment-manifest, environment-state and environment-coverage views.`
       : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed Evidence from a supported parent operation with a compatible view. For a summary receipt, use its normalized_result.parent_evidence_id rather than the receipt's own evidence_id.`,
   );
 
@@ -1151,9 +1167,16 @@ export interface AnalysisViewAccumulators {
   readonly state?: EnvironmentStateAccumulator | undefined;
 }
 
+/** Views that group a capture's records into tools. */
+export type GroupingViewKind =
+  | "api-surface"
+  | "environment-manifest"
+  | "environment-state"
+  | "environment-coverage";
+
 type GroupingViewRequest = Extract<
   AnalysisViewRequest,
-  { kind: "api-surface" | "environment-manifest" | "environment-state" }
+  { kind: GroupingViewKind }
 >;
 
 const isGroupingView = (
@@ -1161,7 +1184,8 @@ const isGroupingView = (
 ): view is GroupingViewRequest =>
   view.kind === "api-surface" ||
   view.kind === "environment-manifest" ||
-  view.kind === "environment-state";
+  view.kind === "environment-state" ||
+  view.kind === "environment-coverage";
 
 /** Views that group a capture's records, each under the budget its caller created. */
 const projectGroupingView = (
@@ -1177,6 +1201,8 @@ const projectGroupingView = (
     );
   if (view.kind === "environment-manifest")
     return projectEnvironmentManifestView(parent, view, accumulators.manifest);
+  if (view.kind === "environment-coverage")
+    return projectEnvironmentCoverageView(parent, view, accumulators.state);
   return projectEnvironmentStateView(parent, view, accumulators.state);
 };
 

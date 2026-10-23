@@ -189,7 +189,8 @@ export const inspectAnalysisViewValidated = (
         )
       : undefined;
   const stateAccumulator =
-    input.view.kind === "environment-state"
+    input.view.kind === "environment-state" ||
+    input.view.kind === "environment-coverage"
       ? new EnvironmentStateAccumulator(undefined, input.view.template_rules)
       : undefined;
   const accumulator =
@@ -377,8 +378,9 @@ const createAnalysisViewEvidence = (
       rawResult: null,
       confidence:
         // Grouping is whole-capture, so any templated group or parameter makes the result inferred;
-        // entity types and identity in an extracted state always are.
+        // entity types and identity in an extracted state, and the coverage summarizing it, always are.
         result.kind === "environment-state" ||
+        result.kind === "environment-coverage" ||
         ((result.kind === "api-surface" ||
           result.kind === "environment-manifest") &&
           result.templated_groups > 0)
