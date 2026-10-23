@@ -8,6 +8,11 @@ import {
   environmentStateServeFixture,
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
+import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
+import {
+  book,
+  bookClock,
+} from "../../../tests/fixtures/environmentStateWrites.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   REPLAY_BODY_LIMIT_BYTES,
@@ -20,6 +25,8 @@ import {
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 
 const grafana = environmentStateServeInputs();
+
+const bk = (id: number, name: string) => book(id, name, bookClock(id));
 
 const servingOf = (
   inputs: typeof grafana = grafana,
@@ -198,6 +205,29 @@ describe("item answers", () => {
     expect(itemAnswer("/api/books/{numeric}")).toMatchObject({
       body: { title: "Single separator" },
       state: { source: "state", collection: "/api/books", id: "1" },
+    });
+  });
+
+  it("creates into a collection whose route has a repeated path separator", () => {
+    const serving = servedFrom([
+      ["GET", "/api//books", [bk(1, "One"), bk(2, "Two")]],
+      ["GET", "/api//books/1", bk(1, "One")],
+      ["GET", "/api//books/2", bk(2, "Two")],
+      ["POST", "/api//books", bk(3, "Recorded"), 201, { name: "Recorded" }],
+      ["GET", "/api//books/3", bk(3, "Recorded")],
+      ["GET", "/api//books", [bk(1, "One"), bk(2, "Two"), bk(3, "Recorded")]],
+    ]);
+    const post = serving.source.manifest.tools.find(
+      (tool) => tool.method === "POST",
+    );
+    if (post === undefined) throw new Error("Fixture lacks a create tool");
+    // A generated create (an unrecorded body) builds from state and must not be
+    // refused for the empty literal segment in /api//books.
+    const result = serving.call(post.name, { body: { name: "New" } });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      status: 201,
+      state: { source: "state", view: "create", collection: "/api//books" },
     });
   });
 
