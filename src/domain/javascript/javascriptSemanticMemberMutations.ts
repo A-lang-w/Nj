@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import {
   createAmbientPathResolver,
   retainSemanticAmbientEffect,
+  semanticIntrinsicReceiverIsSafe,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import {
@@ -349,6 +350,9 @@ export function* collectSemanticMemberMutationsSteps(
   referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
 ): Generator<void, void> {
   const deferredMapReceivers = new Set<
+    t.CallExpression | t.OptionalCallExpression
+  >();
+  const deferredIntrinsicReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
   // The binding pass already retained callable nodes. Ordinary data-only code
@@ -1186,7 +1190,7 @@ export function* collectSemanticMemberMutationsSteps(
     )
       markValue(expression.object, [], new Set(), "escape", {
         mutation,
-        projectAmbientPaths: !state.intrinsicReceiverCalls.has(mutation),
+        projectAmbientPaths: !semanticIntrinsicReceiverIsSafe(mutation, state),
       });
   };
   const markTarget = (node: t.Node, mutation: t.Node): void => {
@@ -1307,6 +1311,8 @@ export function* collectSemanticMemberMutationsSteps(
           else markEscaped(argument, node);
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
+          if (state.intrinsicReceiverCalls.has(node))
+            deferredIntrinsicReceivers.add(node);
           const mapLookup = isIntrinsicMapLookup(node, state);
           if (mapLookup === undefined) deferredMapReceivers.add(node);
           else if (!mapLookup) markReceiver(node.callee, node);
@@ -1325,7 +1331,8 @@ export function* collectSemanticMemberMutationsSteps(
   while (
     pendingReferences.length > 0 ||
     iterableReferences.length > 0 ||
-    deferredMapReceivers.size > 0
+    deferredMapReceivers.size > 0 ||
+    deferredIntrinsicReceivers.size > 0
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
@@ -1421,6 +1428,12 @@ export function* collectSemanticMemberMutationsSteps(
               storeMayInvokeSetter(reference.store)),
         },
       );
+    }
+    // Recheck parsed native receiver facts when later getter/alias effects settle.
+    for (const node of deferredIntrinsicReceivers) {
+      if (semanticIntrinsicReceiverIsSafe(node, state)) continue;
+      deferredIntrinsicReceivers.delete(node);
+      markReceiver(node.callee, node);
     }
     // Native Map lookup methods do not expose their receiver to user code.
     // Settle genuine effects first, then replay every unproven receiver escape.

@@ -130,6 +130,29 @@ export const retainSemanticAmbientEffect = (
   return true;
 };
 
+/** Parsed receiver facts stay separate from mutation-dependent safety. */
+export const semanticIntrinsicReceiverIsSafe = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const path = state.intrinsicReceiverCalls.get(node);
+  if (path === undefined) return false;
+  if (!state.ambientWrites.covers(path) && !state.ambientEscapes.covers(path))
+    return true;
+  const affects = (
+    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  ) =>
+    semanticEffectTiming(node, effect.node, state) !== "after" &&
+    effect.path.length <= path.length &&
+    effect.path.every((key, index) =>
+      semanticPropertyPathKeyMatches(key, path[index] ?? ""),
+    );
+  return (
+    !state.ambientWriteEffects.some(affects) &&
+    !state.ambientEscapeEffects.some(affects)
+  );
+};
+
 /** Undefined means a cyclic or conflicting projection can select any depth. */
 type AmbientProjection = AmbientPath | undefined;
 
@@ -671,11 +694,9 @@ export function* indexJavaScriptAmbientWritesSteps(
   observeWriteSite?: (node: t.Node) => void,
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
-  const browserReceiverMethods = new Set<string>();
   const nativeReceiverCalls: {
     readonly node: t.Node;
     readonly receiver: t.Node;
-    readonly path: readonly string[];
   }[] = [];
   const storedSites = new WeakSet<t.Node>();
   const storedReferences: SemanticIterationSource[] = [];
@@ -793,12 +814,12 @@ export function* indexJavaScriptAmbientWritesSteps(
         method !== null &&
         NATIVE_NAMESPACE_METHODS[nativeNamespace].has(String(method));
       if (nativeReceiver && receiver !== undefined) {
-        state.intrinsicReceiverCalls.add(node);
-        nativeReceiverCalls.push({
-          node,
-          receiver,
-          path: ["global", nativeNamespace!, String(method)],
-        });
+        state.intrinsicReceiverCalls.set(node, [
+          "global",
+          nativeNamespace!,
+          String(method),
+        ]);
+        nativeReceiverCalls.push({ node, receiver });
       }
       if (
         !t.isNewExpression(node) &&
@@ -807,8 +828,8 @@ export function* indexJavaScriptAmbientWritesSteps(
         !nativeReceiver
       ) {
         if (browserMethod !== undefined) {
-          browserReceiverMethods.add(browserMethod);
-          state.intrinsicReceiverCalls.add(node);
+          state.intrinsicReceiverCalls.set(node, ["global", browserMethod]);
+          nativeReceiverCalls.push({ node, receiver: callee.object });
         }
         retainEscape(callee.object, browserMethod !== undefined);
       }
@@ -902,34 +923,11 @@ export function* indexJavaScriptAmbientWritesSteps(
       if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
         retainSemanticAmbientEffect(state, "escape", path, node);
       }
-  for (const { node, receiver, path } of nativeReceiverCalls) {
-    if (!state.ambientWrites.covers(path) && !state.ambientEscapes.covers(path))
-      continue;
-    const changed = [
-      ...state.ambientWriteEffects,
-      ...state.ambientEscapeEffects,
-    ].some((effect) => {
-      if (semanticEffectTiming(node, effect.node, state) === "after")
-        return false;
-      return (
-        effect.path.length <= path.length &&
-        effect.path.every((key, index) =>
-          semanticPropertyPathKeyMatches(key, path[index] ?? ""),
-        )
-      );
-    });
-    if (!changed) continue;
-    state.intrinsicReceiverCalls.delete(node);
+  for (const { node, receiver } of nativeReceiverCalls) {
+    if (semanticIntrinsicReceiverIsSafe(node, state)) continue;
     for (const identity of ambientWrites(receiver, node, true))
       retainSemanticAmbientEffect(state, "escape", identity, node);
   }
-  // A function may call a browser method replaced later in source order.
-  if (
-    [...browserReceiverMethods].some((method) =>
-      state.ambientWrites.covers(["global", method]),
-    )
-  )
-    state.ambientEscapes.retain(["global", null]);
 }
 
 /**
