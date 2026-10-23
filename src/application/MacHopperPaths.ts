@@ -2,7 +2,16 @@ import { readdirSync } from "node:fs";
 import { posix } from "node:path";
 
 const { join } = posix;
-const toPosix = (path: string): string => path.replaceAll("\\", "/");
+/**
+ * Preserve caller-supplied POSIX path characters (including literal backslashes).
+ * Convert Windows backslash separators only when running on Windows and the input
+ * path is an established Windows path (e.g. drive-letter or root-prefixed).
+ */
+export const toPosixHome = (home: string): string =>
+  process.platform === "win32" &&
+  (/^[A-Za-z]:[\\/]/u.test(home) || home.startsWith("\\"))
+    ? home.replaceAll("\\", "/")
+    : home;
 
 export const MAC_HOPPER_APPLICATION_DIRECTORY = "/Applications";
 export const MAC_HOPPER_APPLICATION_NAME = "Hopper Disassembler.app";
@@ -16,7 +25,7 @@ export const MAC_HOPPER_SYSTEM_LAUNCHER = join(
 
 export const macHopperUserApplicationPath = (homeDirectory: string): string =>
   join(
-    toPosix(homeDirectory),
+    toPosixHome(homeDirectory),
     MAC_HOPPER_USER_APPLICATIONS_DIRECTORY,
     MAC_HOPPER_APPLICATION_NAME,
   );
@@ -25,7 +34,7 @@ export const macHopperApplicationRoots = (
   homeDirectory: string,
 ): readonly string[] => [
   MAC_HOPPER_APPLICATION_DIRECTORY,
-  join(toPosix(homeDirectory), MAC_HOPPER_USER_APPLICATIONS_DIRECTORY),
+  join(toPosixHome(homeDirectory), MAC_HOPPER_USER_APPLICATIONS_DIRECTORY),
 ];
 
 export const macHopperCanonicalLauncherCandidates = (

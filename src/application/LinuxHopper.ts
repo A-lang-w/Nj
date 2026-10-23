@@ -1,6 +1,8 @@
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { posix } from "node:path";
+
+const { join } = posix;
 
 import { execFileBoundedOutput } from "../process/ExecFileBoundedOutput.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
@@ -385,9 +387,20 @@ export const installLinuxHopper = async (
   }
 };
 
+/**
+ * Preserve caller-supplied POSIX path characters (including literal backslashes).
+ * Convert Windows backslash separators only when running on Windows and the input
+ * path is an established Windows path (e.g. drive-letter or root-prefixed).
+ */
+const toPosixHome = (home: string): string =>
+  process.platform === "win32" &&
+  (/^[A-Za-z]:[\\/]/u.test(home) || home.startsWith("\\"))
+    ? home.replaceAll("\\", "/")
+    : home;
+
 /** Canonical launcher path for a legacy user-local Linux Hopper installation. */
 export const linuxHopperLauncherPath = (home: string): string =>
-  posix.join(home.replaceAll("\\", "/"), ".local/share/rea/hopper/bin/Hopper");
+  posix.join(toPosixHome(home), ".local/share/rea/hopper/bin/Hopper");
 
 /** REA's managed Linux install path, preferred when no explicit launcher is set. */
 export const REA_MANAGED_LINUX_HOPPER_LAUNCHER = "/opt/hopper/bin/Hopper";

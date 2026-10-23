@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   formatCommandForDisplay,
   installLinuxHopper,
+  linuxHopperLauncherPath,
   linuxPackageManagerCommands,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
@@ -451,6 +452,29 @@ describe("Linux Hopper temporary cleanup ownership", () => {
     ).toBeUndefined();
     expect(attempts).toBe(2);
   });
+});
+
+describe("Linux Hopper launcher paths", () => {
+  it("preserves literal backslashes in POSIX home directory paths", () => {
+    expect(linuxHopperLauncherPath("/home/alice\\work")).toBe(
+      "/home/alice\\work/.local/share/rea/hopper/bin/Hopper",
+    );
+  });
+
+  it("returns canonical POSIX launcher path for standard home directory", () => {
+    expect(linuxHopperLauncherPath("/home/alice")).toBe(
+      "/home/alice/.local/share/rea/hopper/bin/Hopper",
+    );
+  });
+
+  it.runIf(process.platform === "win32")(
+    "normalizes Windows host home path separators to POSIX",
+    () => {
+      expect(linuxHopperLauncherPath("C:\\Users\\alice")).toBe(
+        "C:/Users/alice/.local/share/rea/hopper/bin/Hopper",
+      );
+    },
+  );
 });
 
 function releasesFor(
