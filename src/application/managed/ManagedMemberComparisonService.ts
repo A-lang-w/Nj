@@ -20,6 +20,7 @@ import {
 } from "../BinaryTargetResolver.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectManagedMembersBytes } from "../../dotnet/ManagedMemberInspector.js";
+import { ManagedReaderFailure } from "../../dotnet/ManagedReaderFailure.js";
 import { readManagedSnapshot } from "../../dotnet/ManagedSnapshot.js";
 import {
   MANAGED_STATIC_PROVIDER,
@@ -116,6 +117,7 @@ export const compareManagedMemberPaths = async (
     const inspectTarget = async (
       target: BinaryTarget,
       selectedPath: string,
+      argumentPath: "leftPath" | "rightPath",
     ) => {
       const { path } = target;
       let snapshot: Awaited<ReturnType<typeof readManagedSnapshot>>;
@@ -136,9 +138,25 @@ export const compareManagedMemberPaths = async (
         );
       // Member comparison never reads literals, so it does not spend the
       // decode budget on them.
-      const inspection = inspectManagedMembersBytes(snapshot.bytes, target, {
-        userStrings: false,
-      });
+      let inspection: ReturnType<typeof inspectManagedMembersBytes>;
+      try {
+        inspection = inspectManagedMembersBytes(snapshot.bytes, target, {
+          userStrings: false,
+        });
+      } catch (cause: unknown) {
+        if (
+          cause instanceof ManagedReaderFailure &&
+          cause.issue.code !== "resource-limit"
+        )
+          throw new AnalysisInputError(operation, { cause }, [
+            {
+              path: [argumentPath],
+              reason: "invalid_format",
+              message: `Selected artifact ${selectedPath}: ${cause.issue.detail}`,
+            },
+          ]);
+        throw cause;
+      }
       const evidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
         operation: "inspect_managed_members",
         parameters: {},
@@ -149,9 +167,17 @@ export const compareManagedMemberPaths = async (
       });
       return { inspection, evidence };
     };
-    const left = await inspectTarget(leftTarget.value, input.leftPath);
+    const left = await inspectTarget(
+      leftTarget.value,
+      input.leftPath,
+      "leftPath",
+    );
     partialEvidence = left.evidence;
-    const right = await inspectTarget(rightTarget.value, input.rightPath);
+    const right = await inspectTarget(
+      rightTarget.value,
+      input.rightPath,
+      "rightPath",
+    );
     const result = compareManagedMembers(
       {
         evidenceId: left.evidence.evidence_id,
