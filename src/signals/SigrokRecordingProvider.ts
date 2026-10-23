@@ -100,6 +100,10 @@ const configurationFailure = (
   );
 };
 
+/** Signal decoding runs only on Linux; discovery and execution share this check. */
+export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
+
 /** Decode selected recordings only, retaining cleanup ownership across failures. */
 export class SigrokRecordingProvider implements SignalRecordingPort {
   readonly #resources: ArtifactAnalysisResources;
@@ -168,7 +172,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           cause: options.signal.reason,
         });
       await this.#resources.release();
-      if (this.platform !== "linux")
+      if (!sigrokHostSupported(this.platform))
         throw new Error(
           "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
         );
