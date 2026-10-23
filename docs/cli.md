@@ -410,6 +410,19 @@ strings, expression-free templates and runtime-transparent TypeScript wrappers
 retain their targets; computed imports remain unknown. TypeScript import-equals
 dependencies remain `requires` relationships whether or not they are exported.
 
+REA derives historical CommonJS paths only when the selected loader and its
+base are proven: this includes the exact
+`createRequire(new URL("./file.cjs", import.meta.url))` form and
+`require.resolve` with `{ paths: [__dirname] }`. Other custom bases and search
+options remain partial with unknown resolution and the literal requested
+specifier. Overwritten resolver methods retain that uncertainty; they are not
+attributed to Node. `require.main` is a module object, so calling it does not
+establish a loader reference. These relationships do not establish execution;
+Node's [`require.resolve`](https://nodejs.org/docs/v24.22.1/api/modules.html#requireresolverequest-options)
+performs lookup without loading the target. An excluded `package.json`
+also leaves package-directory selection unknown rather than treating the
+manifest as absent and applying an `index` fallback.
+
 Historical-source import requires safe no-follow file opens on Linux or
 macOS. Native Windows returns `unsupported_host`; use Linux REA inside WSL
 or another supported host. See

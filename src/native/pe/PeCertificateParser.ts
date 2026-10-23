@@ -40,6 +40,9 @@ const LIMITATIONS = [
   "PKCS#7 fields are decoded structurally; cryptographic validity remains unobserved.",
 ] as const;
 
+const TELETEX_LIMITATION =
+  "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.";
+
 const ABSENT_LIMITATIONS = [
   "IMAGE_DIRECTORY_ENTRY_SECURITY is absent. That is not proof the image is unsigned in every catalog or overlay sense.",
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
@@ -89,6 +92,7 @@ export const parsePeCertificates = (
   const entries: PeCertificates["entries"] = [];
   let at = 0;
   let examined = 0;
+  let teletexStringCompatibilityUsed = false;
   while (at < table.length) {
     // Alignment padding sits inside the gap before the next 8-byte boundary.
     // Bytes that remain after that boundary are a short header, including
@@ -128,6 +132,8 @@ export const parsePeCertificates = (
           fail("WIN_CERTIFICATE has invalid PKCS#7 alignment padding.");
         payload = entryPayload.subarray(0, root.end);
         const parsed = parsePkcs7SignedData(payload, root);
+        teletexStringCompatibilityUsed ||=
+          parsed.teletexStringCompatibilityUsed;
         pkcs7 = {
           content_type_oid: parsed.content_type_oid,
           content_type_name: oidName(parsed.content_type_oid),
@@ -216,6 +222,8 @@ export const parsePeCertificates = (
       examined_entries: examined,
       certificates,
     },
-    limitations: [...LIMITATIONS],
+    limitations: teletexStringCompatibilityUsed
+      ? [...LIMITATIONS, TELETEX_LIMITATION]
+      : [...LIMITATIONS],
   };
 };
