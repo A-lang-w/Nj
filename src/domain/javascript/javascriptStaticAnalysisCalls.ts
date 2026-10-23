@@ -23,6 +23,7 @@ import {
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -50,6 +51,7 @@ import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutati
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
+  semanticRequireLoaderAt,
   semanticModuleRequireCallAt,
   semanticModuleRequireReceiver,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -69,9 +71,17 @@ export const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
+  const deferredRequireResolve =
+    isRequireResolveCall(node) &&
+    semanticRequireLoaderAt(
+      node,
+      bindings,
+      accumulator.factoryRequireBindingIds,
+    ) !== "local";
   const deferredModuleRequire =
     semanticModuleRequireReceiver(node) !== undefined ||
-    semanticModuleRequireCallAt(node, bindings, false);
+    semanticModuleRequireCallAt(node, bindings, false) ||
+    deferredRequireResolve;
   if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
   const requireCall = deferredModuleRequire
     ? null
@@ -254,6 +264,7 @@ const requireCallSpecifier = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
+  resolveMemberChanged = false,
 ): { readonly specifier: string | undefined } | null => {
   const call = semanticRequireCallAt(
     node,
@@ -261,7 +272,11 @@ const requireCallSpecifier = (
     context.accumulator.factoryRequireBindingIds,
   );
   if (call === undefined || call.loader === "local") return null;
-  if (call.loader === "unknown" || !call.sourceRelative) {
+  if (
+    resolveMemberChanged ||
+    call.loader === "unknown" ||
+    !call.sourceRelative
+  ) {
     context.accumulator.unknownFindings += 1;
     return { specifier: undefined };
   }
@@ -271,10 +286,26 @@ const requireCallSpecifier = (
 /** Examine member-loader receivers only after shared alias mutation facts settle. */
 export const finishModuleRequireCalls = (
   context: FindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): void => {
   for (const node of context.accumulator.pendingModuleRequireCalls) {
-    const call = requireCallSpecifier(node, bindings, context);
+    const resolveMemberChanged =
+      isRequireResolveCall(node) &&
+      (t.isMemberExpression(node.callee) ||
+        t.isOptionalMemberExpression(node.callee)) &&
+      index
+        .effectsForReferenceAt(node, node.callee.object, ["resolve"])
+        .effects.some(
+          ({ kind, timing }) =>
+            timing !== "after" &&
+            (kind === "member-write" || kind === "escape"),
+        );
+    const call = requireCallSpecifier(
+      node,
+      index.bindings,
+      context,
+      resolveMemberChanged,
+    );
     if (call !== null)
       addReference(context, {
         node,
@@ -287,6 +318,15 @@ export const finishModuleRequireCalls = (
     (left, right) => left.offset - right.offset,
   );
 };
+
+const isRequireResolveCall = (
+  node: JavaScriptCallLike,
+): node is t.CallExpression | t.OptionalCallExpression =>
+  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+  (t.isMemberExpression(node.callee) ||
+    t.isOptionalMemberExpression(node.callee)) &&
+  semanticStaticPropertyKey(node.callee.property, node.callee.computed) ===
+    "resolve";
 
 const chunkLoadSpecifier = (
   node: JavaScriptCallLike,
@@ -434,6 +474,26 @@ export const indexVitePreloadDependencyTable = (
   return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
 };
 
+const isFetchCall = (
+  node: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean =>
+  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+  isUnmodifiedGlobalReference(node.callee, bindings, "fetch");
+
+const requestConstructorUrl = (
+  node: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const target = unwrapJavaScriptExpression(node).node;
+  if (
+    t.isNewExpression(target) &&
+    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
+  )
+    return stringValue(target.arguments[0]);
+  return undefined;
+};
+
 const inspectEndpointCall = (
   node: JavaScriptCallLike,
   name: string,
@@ -444,7 +504,11 @@ const inspectEndpointCall = (
   if (isKnownNetworkRequest(node, bindings)) {
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) return;
-    const literal = stringValue(target);
+    const literal =
+      stringValue(target) ??
+      (isFetchCall(node, bindings)
+        ? requestConstructorUrl(target, bindings)
+        : undefined);
     if (literal !== undefined) {
       addEndpoint(context, {
         node,
@@ -529,11 +593,7 @@ const isKnownNetworkRequest = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  if (
-    (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-    isUnmodifiedGlobalReference(node.callee, bindings, "fetch")
-  )
-    return true;
+  if (isFetchCall(node, bindings)) return true;
   if (
     t.isNewExpression(node) &&
     (isUnmodifiedGlobalReference(node.callee, bindings, "WebSocket") ||
@@ -655,6 +715,7 @@ const urlObjectRequestTarget = (
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
   seen = new Set<string>(),
+  isToString = false,
 ): string | undefined => {
   let target = unwrapJavaScriptExpression(node).node;
   if (
@@ -666,8 +727,10 @@ const urlObjectRequestTarget = (
       (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
       semanticStaticPropertyName(callee.property, callee.computed) ===
         "toString"
-    )
+    ) {
       target = unwrapJavaScriptExpression(callee.object).node;
+      isToString = true;
+    }
   }
   if (!t.isIdentifier(target) || index.referenceMayHaveChangedAt(site, target))
     return undefined;
@@ -688,7 +751,18 @@ const urlObjectRequestTarget = (
   if (initializer === undefined) return undefined;
   const initialized = unwrapJavaScriptExpression(initializer).node;
   if (t.isIdentifier(initialized))
-    return urlObjectRequestTarget(initialized, site, bindings, index, seen);
+    return urlObjectRequestTarget(
+      initialized,
+      site,
+      bindings,
+      index,
+      seen,
+      isToString,
+    );
+  if (!isToString && isFetchCall(site, bindings)) {
+    const requestUrl = requestConstructorUrl(initialized, bindings);
+    if (requestUrl !== undefined) return requestUrl;
+  }
   if (!t.isNewExpression(initialized)) return undefined;
   if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
     return undefined;

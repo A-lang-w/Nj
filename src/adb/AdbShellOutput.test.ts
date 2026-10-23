@@ -18,6 +18,16 @@ const packageDump = (installerLine: string | undefined): string =>
   ].join("\n");
 
 describe("parseDumpsysPackageOutput", () => {
+  it.each(["", "  My Build  ", "  ", "null"])(
+    "preserves the printed version name %j",
+    (versionName) => {
+      const result = parseDumpsysPackageOutput(
+        `  pkg=Package{abcdef com.example}\n  versionName=${versionName}\n`,
+      );
+      expect(result.versionName).toBe(versionName);
+    },
+  );
+
   it("keeps a reported installer package name", () => {
     expect(
       parseDumpsysPackageOutput(
@@ -244,6 +254,68 @@ describe("parseDumpsysPackageOutput", () => {
       ).requestedPermissions,
     ).toBe(1);
   });
+
+  it("does not count permissions in the hidden system packages section", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        [
+          "Package [com.example] (abcdef):",
+          "  pkg=Package{abcdef com.example}",
+          "  requested permissions:",
+          "    android.permission.INTERNET",
+          "Hidden system packages:",
+          "  requested permissions:",
+          "    com.android.hidden.permission",
+        ].join("\n"),
+      ).requestedPermissions,
+    ).toBe(1);
+  });
+
+  it("counts permission names containing hyphens and dollar signs", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        [
+          "Package [com.example] (abcdef):",
+          "  pkg=Package{abcdef com.example}",
+          "  requested permissions:",
+          "    com.example.permission-Hyphen",
+          "    com.example.permission$Dollar",
+        ].join("\n"),
+      ).requestedPermissions,
+    ).toBe(2);
+  });
+
+  it("counts Unicode permission names without ending the section", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        [
+          "Package [com.example] (abcdef):",
+          "  pkg=Package{abcdef com.example}",
+          "  requested permissions:",
+          "    com.example.permission-First",
+          "    com.example.permission.ÉCRIRE WITH SPACE",
+          "    android.permission.CAMERA",
+          "  install permissions:",
+          "    android.permission.CAMERA: granted=true",
+        ].join("\n"),
+      ).requestedPermissions,
+    ).toBe(3);
+  });
+
+  it("ends requested permissions at a same-indent field", () => {
+    expect(
+      parseDumpsysPackageOutput(
+        [
+          "Package [com.example] (abcdef):",
+          "  pkg=Package{abcdef com.example}",
+          "  requested permissions:",
+          "    android.permission.INTERNET",
+          "  gids=[1000]",
+          "    android.permission.CAMERA",
+        ].join("\n"),
+      ).requestedPermissions,
+    ).toBe(1);
+  });
 });
 
 describe("parseWmDensityOutput", () => {
@@ -342,6 +414,64 @@ describe("parseAmStartOutput", () => {
     ).toMatchObject({
       status: "refused",
       reason: "Activity class does not exist",
+    });
+  });
+
+  it("refuses an unprefixed Java exception even when Starting is present", () => {
+    expect(
+      parseAmStartOutput(
+        `${starting}\njava.lang.SecurityException: Permission Denial\n`,
+      ),
+    ).toMatchObject({
+      status: "refused",
+      reason: "java.lang.SecurityException: Permission Denial",
+    });
+  });
+
+  it("refuses a message-free Java exception even when Starting is present", () => {
+    expect(
+      parseAmStartOutput(`${starting}\njava.lang.NullPointerException\n`),
+    ).toMatchObject({
+      status: "refused",
+      reason: "java.lang.NullPointerException",
+    });
+  });
+
+  it("recognizes a base Java exception type with a message", () => {
+    expect(
+      parseAmStartOutput(`${starting}\njava.lang.Exception: failure\n`),
+    ).toMatchObject({
+      status: "refused",
+      reason: "java.lang.Exception: failure",
+    });
+  });
+
+  it("prefers a specific Java exception over generic error headers", () => {
+    expect(
+      parseAmStartOutput(
+        [
+          starting,
+          "Error type 3",
+          "Exception occurred while executing command",
+          "java.lang.SecurityException: Permission Denial",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      status: "refused",
+      reason: "java.lang.SecurityException: Permission Denial",
+    });
+
+    expect(
+      parseAmStartOutput(
+        [
+          starting,
+          "Error: Generic launch failure",
+          "java.lang.SecurityException: Permission Denial",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      status: "refused",
+      reason: "java.lang.SecurityException: Permission Denial",
     });
   });
 

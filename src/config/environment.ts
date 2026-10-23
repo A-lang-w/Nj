@@ -19,6 +19,7 @@ import { mcpInputSchemaProfileSchema } from "./mcpInputSchemaProfile.js";
 import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
+import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
 import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
 import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
 import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
@@ -29,9 +30,11 @@ import {
   mcpToolsListBudgetMsSchema,
 } from "./mcpStartupBudgets.js";
 import { parseLoaderArgs, parseStringArray } from "./parsers.js";
+import { processStartConfigurationSchema } from "./processStart.js";
 
 const environmentSchema = z.object({
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
+  REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema.optional(),
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
   REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema.optional(),
   REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
@@ -91,9 +94,7 @@ const environmentSchema = z.object({
   HOPPER_TARGET_PATH: z.string().min(1).optional(),
   HOPPER_TARGET_KIND: z.enum(["executable", "database"]).default("executable"),
   HOPPER_LOADER_ARGS_JSON: z.string().optional(),
-  REA_LOG_LEVEL: z
-    .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
-    .default("info"),
+  REA_LOG_LEVEL: processStartConfigurationSchema.shape.REA_LOG_LEVEL,
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
 
@@ -118,7 +119,7 @@ export const parseJebMcpTimeoutMs = (
   );
 };
 
-type Environment = Omit<
+export type Environment = Omit<
   z.infer<typeof environmentSchema>,
   "HOPPER_LOADER_ARGS_JSON" | "REA_REFERENCE_SECRET_PATTERNS_JSON"
 > & {
