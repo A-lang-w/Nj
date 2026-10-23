@@ -189,8 +189,10 @@ with `inspect_android_method` using its `class_name` (the lookup name, which JAD
 - `r_fields` lists `R$type` declarations; `origin: "jadx_generated"` marks an R
   class JADX synthesized from the resource table because the APK has none.
 - `total_sites` and `total_r_fields` are exact; `coverage: "partial"` means
-  `max_sites_per_resource` or the bridge's 8 MiB transport budget bounded the
-  returned `sites` or `r_fields`.
+  `max_sites_per_resource` or the scan's 2 MiB admission budget bounded the
+  returned `sites` or `r_fields`. That budget is smaller than the bridge's 8 MiB
+  frame because the MCP result repeats every site as raw, normalized and
+  structured-plus-text copies.
 - The scan does not read layout XML, data binding, or reflection
   (`getIdentifier`), and a literal equal to an id is not proof of a view
   lookup. Views referenced only from layouts can show zero code sites.

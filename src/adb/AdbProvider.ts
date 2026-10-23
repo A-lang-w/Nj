@@ -3069,6 +3069,7 @@ export class AdbProvider {
               limitations: [
                 "Boot completion is sys.boot_completed=1 as the device reports it; services and the launcher may still be settling",
                 "Probe failures while the device is unreachable are retried until the deadline; only the last one is reported",
+                "timeout_ms bounds the polling schedule; the final probe at the deadline keeps a 1 s floor, so waited_ms can exceed timeout_ms by up to about one second",
               ],
             },
           ),
