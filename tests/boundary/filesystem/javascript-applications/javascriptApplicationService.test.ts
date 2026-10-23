@@ -91,7 +91,8 @@ describe("JavaScript source selection cancellation boundary", () => {
 it("resolves lazy package and JSON facts without completing their skipped observations", async () => {
   const root = await createTestTempDirectory("rea-js-lazy-json-facts-");
   await writeFixtureFiles(root, {
-    "app/first.cjs": 'require("late-pkg"); require("./config.json");\n',
+    "app/first.cjs":
+      'const pkg = require("late-pkg"); const config = require("./config.json");\n',
     "app/second.cjs": "module.exports = 2;\n",
     "app/config.json": "true",
     "app/node_modules/late-pkg/package.json": JSON.stringify({
@@ -193,7 +194,9 @@ it("resolves lazy package and JSON facts without completing their skipped observ
     expect(
       graph.edges.find(
         ({ relation, properties }) =>
-          relation === "imports" && properties.specifier === "./config.json",
+          relation === "imports" &&
+          properties.module_link_kind === "require" &&
+          properties.specifier === "./config.json",
       )?.properties,
     ).toMatchObject({
       target_file_kind: "json",

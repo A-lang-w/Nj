@@ -144,7 +144,7 @@ describe.each<BodySource>(["request", "response", "base64 response"])(
         before + " ".repeat(length - Buffer.byteLength(before)),
         after + " ".repeat(length - Buffer.byteLength(after)),
       );
-      const result = await compareCaptures(...captures);
+      const result = await compareCompleteRequestInventories(...captures);
       expect(result.dimensions.network).toMatchObject({
         status: "changed",
         total_changes: 1,
@@ -167,7 +167,7 @@ describe.each<BodySource>(["request", "response", "base64 response"])(
           Buffer.byteLength(beforeBody) - Buffer.byteLength(changedBody),
         );
       const [before, after] = comparableCaptures(source, beforeBody, afterBody);
-      const result = await compareCaptures(before, after);
+      const result = await compareCompleteRequestInventories(before, after);
 
       expect(result.overall_status).toBe("changed");
       expect(result.dimensions.network).toEqual({
@@ -369,6 +369,29 @@ const compareCaptures = async (
   const evidence = parseEvidence(JSON.parse(JSON.stringify(result.value)));
   expect(evidence.operation).toBe("compare_web_captures");
   return webCaptureDiffSchema.parse(evidence.normalized_result);
+};
+
+/** Keep live attachment uncertainty separate from complete-inventory shape controls. */
+const compareCompleteRequestInventories = async (
+  before: WebPageInspection,
+  after: WebPageInspection,
+) => {
+  expect(
+    (await compareCaptures(before, after)).dimensions.network,
+  ).toMatchObject({
+    status: "unknown",
+    total_changes: 0,
+    changes: [],
+  });
+  const complete = [before, after].map((capture) => {
+    const copy = structuredClone(capture);
+    copy.completeness.attach_limited_sections =
+      copy.completeness.attach_limited_sections.filter(
+        (section) => section !== "network_requests",
+      );
+    return copy;
+  });
+  return compareCaptures(complete[0]!, complete[1]!);
 };
 
 const captureBody = (
