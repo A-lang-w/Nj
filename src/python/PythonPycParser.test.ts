@@ -72,6 +72,46 @@ it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
   );
 });
 
+it("preserves signed co_firstlineno in code objects and code constants", () => {
+  const nested = marshalCode("py311", {
+    name: "inner",
+    firstlineno: -7,
+  });
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      firstlineno: -1,
+      consts: [nested],
+    }),
+  ]);
+  const report = parse(bytes);
+  expect(root(report).firstlineno).toBe(-1);
+  expect(root(report).consts).toContainEqual({
+    kind: "code",
+    name: "inner",
+    firstlineno: -7,
+  });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+  expect(
+    pythonPycSchema.safeParse({
+      ...report,
+      code_objects: [
+        { ...root(report), firstlineno: -0x8000_0001 },
+        ...report.code_objects.slice(1),
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    pythonPycSchema.safeParse({
+      ...report,
+      code_objects: [
+        { ...root(report), firstlineno: 0x8000_0000 },
+        ...report.code_objects.slice(1),
+      ],
+    }).success,
+  ).toBe(false);
+});
+
 it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
   const bytes = pythonPycFixture("py311", {
     flaggedCode: true,
@@ -97,6 +137,21 @@ it("fails unknown magics and truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
     PythonPycFormatFailure,
   );
+});
+
+it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
+  for (const magic of [3390, 3391]) {
+    const header = Buffer.alloc(12);
+    header.writeUInt16LE(magic);
+    header[2] = 0x0d;
+    header[3] = 0x0a;
+    expect(() => parse(Buffer.concat([header, marshalCode("py37")]))).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: expect.stringContaining("unsupported 12-byte CPython header"),
+      }),
+    );
+  }
 });
 
 const u32 = (value: number): Buffer => {
@@ -951,6 +1006,68 @@ it("rejects code keys and members whose consts are unhashable", () => {
   expect(hashable.coverage.status).toBe("complete");
 });
 
+it("uses the code equality fields for each CPython layout", () => {
+  const codeCollections = (
+    layout: "py38" | "py311",
+    different: boolean,
+  ): [Buffer, Buffer] => {
+    const lineA = marshalCode(layout, {
+      name: "f",
+      filename: "fixture.py",
+      firstlineno: 1,
+      linetable: Buffer.from([2, 1]),
+    });
+    const lineB = marshalCode(layout, {
+      name: "f",
+      filename: "fixture.py",
+      firstlineno: 1,
+      linetable: Buffer.from([2, different ? 2 : 1]),
+    });
+    const frozenSet = Buffer.concat([
+      Buffer.from([0x3e]),
+      u32(2),
+      lineA,
+      lineB,
+    ]);
+    const dict = Buffer.concat([
+      Buffer.from([0x7b]),
+      lineA,
+      Buffer.from([0x4e]),
+      lineB,
+      Buffer.from([0x54, 0x30]),
+    ]);
+    return [frozenSet, dict];
+  };
+  for (const [magic, layout] of [
+    [3413, "py38"],
+    [3439, "py38"],
+  ] as const) {
+    const [frozenSet, dict] = codeCollections(layout, true);
+    const report = parse(
+      Buffer.concat([
+        pythonPycHeader(magic),
+        marshalCode(layout, { consts: [frozenSet, dict] }),
+      ]),
+    );
+    expect(root(report).consts).toEqual([
+      { kind: "frozenset", length: 1 },
+      { kind: "dict", length: 1 },
+    ]);
+  }
+
+  const [frozenSet, dict] = codeCollections("py311", true);
+  const py312 = parse(
+    Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", { consts: [frozenSet, dict] }),
+    ]),
+  );
+  expect(root(py312).consts).toEqual([
+    { kind: "frozenset", length: 2 },
+    { kind: "dict", length: 2 },
+  ]);
+});
+
 it("keeps the first dictionary key when a later key compares equal", () => {
   const key = (filename: string): Buffer =>
     marshalCode("py311", {
@@ -1376,6 +1493,12 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   expect(() => parse(file("py37", 3394, { argcount: 1 }))).toThrow(
     /co_varnames is too small/,
   );
+  expect(() => parse(file("py311", 3531, { flags: 0x80000000 }))).toThrow(
+    /co_flags is negative/,
+  );
+  expect(() => parse(file("py37", 3401, { flags: 0x80000000 }))).toThrow(
+    /co_flags is negative/,
+  );
 
   const valid = parse(
     file("py311", 3531, {
@@ -1389,6 +1512,14 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   );
   expect(root(valid).argcount).toBe(1);
   expect(valid.coverage.status).toBe("complete");
+  const unknownPositiveFlags = parse(
+    file("py311", 3531, { flags: 0x40000000 }),
+  );
+  expect(root(unknownPositiveFlags).flags).toBe(0x40000000);
+  expect(unknownPositiveFlags.coverage.status).toBe("complete");
+  const negativePy37Flags = parse(file("py37", 3394, { flags: 0x80000000 }));
+  expect(root(negativePy37Flags).flags).toBe(-0x80000000);
+  expect(pythonPycSchema.safeParse(negativePy37Flags).success).toBe(true);
   const py37 = parse(
     file("py37", 3394, {
       argcount: 1,
