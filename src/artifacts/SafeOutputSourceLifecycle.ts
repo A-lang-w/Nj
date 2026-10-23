@@ -112,20 +112,27 @@ const retainUnsettledSource = (
   });
 };
 
-/** Wake on close, or poll a silent source, without keeping the process alive. */
+/**
+ * Wake on close, or poll a silent source, without keeping the process alive.
+ * Each wait settles and is released, so a source that never closes retains
+ * only one pending wait and one close listener.
+ */
 const observeClosure = async (source: Readable): Promise<void> => {
-  let onClose!: () => void;
-  const closeEvent = new Promise<void>((resolve) => {
-    onClose = resolve;
-  });
+  let wake: (() => void) | undefined;
+  const onClose = (): void => wake?.();
   source.once("close", onClose);
   try {
     while (!source.closed)
-      await Promise.race([
-        closeEvent,
-        setTimeout(SOURCE_CLOSURE_POLL_MS, undefined, { ref: false }),
-      ]);
+      await new Promise<void>((resolve) => {
+        const timer = globalThis.setTimeout(resolve, SOURCE_CLOSURE_POLL_MS);
+        timer.unref();
+        wake = () => {
+          globalThis.clearTimeout(timer);
+          resolve();
+        };
+      });
   } finally {
+    wake = undefined;
     source.off("close", onClose);
   }
 };

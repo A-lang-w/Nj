@@ -312,6 +312,9 @@ it.each(
       // Only observed closure releases the retained owner; a late error keeps it.
       const [lease] = (unsettled as ArtifactReaderFailure).cleanupLeases ?? [];
       finishDestroy?.(destruction === "late-error" ? failure : null);
+      // The closure observer releases the owner itself, by close event or poll.
+      if (destruction === "late-close")
+        await expect.poll(() => translated.cleanupIncomplete).toBe(false);
       if (destruction === "late-error")
         await expect(lease?.release()).rejects.toBe(failure);
       else await lease?.release();
