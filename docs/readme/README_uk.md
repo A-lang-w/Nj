@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · **Українська** · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md)
 
 # REA: Реверс-інжиніринг будь-чого
 
@@ -137,15 +137,17 @@ npx rea-agents@latest setup
 
 ## Що можна аналізувати
 
-REA потребує Node.js 22.x (>=22.19), 24.x (>=24.11) або 26+, а також npm. Додаткові інструменти й підтримувані системи залежать від цілі:
+REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26.12.1), а також npm. Додаткові інструменти й підтримувані системи залежать від цілі:
 
 | Ціль                                 | Що повертає REA                                                                                                   | Вимоги й посібник                                                                                                                                 |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Нативні бінарні файли                | Псевдокод, асемблерний код, рядки, символи, виклики й посилання                                                   | Hopper, Ghidra або IDA; [нативний аналіз](../native-investigation.md)                                                                             |
 | Структура ELF без запуску            | Секції, сегменти, початкові символи/релокації та можливі захисні механізми за даними статичного аналізу           | pwntools, наданий стороною, що викликає інструмент, у Linux x64; [діагностика бінарних файлів](../binary-diagnostics.md)                          |
+| PE certificates                      | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                      | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                           |
 | Байт-код EVM                         | Селектори диспетчеризації, зміщення байтів, виведені припущення про аргументи та змінюваність стану               | Локальні необроблені байти або шістнадцяткове представлення у Linux x64; [посібник EVM без запуску](../evm-bytecode.md)                           |
 | Rust binaries                        | Embedded cargo-auditable dependency list                                                                          | [Rust binaries](../rust-binaries.md)                                                                                                              |
 | ELF notes                            | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                      |
+| Erlang BEAM                          | IFF chunks, atoms, exports, and tables                                                                            | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                 |
 | Записані аварійні завершення в Linux | Необроблені записи note, регістри/сигнали кожного записаного потоку й необов'язкові кандидати зіставлення пам'яті | pwntools, наданий стороною, що викликає інструмент, у Linux x64; необов'язкові GDB/pwndbg; [записані аварійні завершення](../recorded-crashes.md) |
 | Встановлені настільні програми       | Можливі середовища виконання, файли доказів, компоненти та наступні кроки                                         | Обмежена перевірка каталогів і заголовків；[Настільні програми](../desktop-applications.md)                                                       |
 | JavaScript / Electron                | Модулі, імпорти, карти вихідного коду, маршрути, IPC і зв'язки з нативними доповненнями                           | Node.js і npm; [аналіз застосунків](../javascript-application-workflows.md)                                                                       |

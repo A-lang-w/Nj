@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
+import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -165,6 +166,70 @@ cliTest(
         },
       });
     }
+
+    const hintedPath = join(root, "ready-to-run-with-runtime-hints.dll");
+    const hintedTarget = ".NETFramework,Version=v4.8";
+    await writeFile(
+      hintedPath,
+      buildManagedPeFixture({
+        readyToRun: true,
+        targetFramework: hintedTarget,
+        references: ["UnityEngine.CoreModule"],
+      }),
+    );
+    const hinted = await cli.run({
+      arguments: ["inspect-managed-artifact", hintedPath, "--json"],
+    });
+    expect(hinted.exitCode).toBe(0);
+    expect(hinted.json).toMatchObject({
+      normalized_result: {
+        classification: {
+          runtime_family: "modern-dotnet",
+          implementation: "cil-and-ready-to-run",
+          evidence: expect.arrayContaining([
+            expect.objectContaining({
+              code: "ready-to-run-signature-observed",
+            }),
+            expect.objectContaining({ code: "unity-reference-observed" }),
+            expect.objectContaining({ code: "target-framework-observed" }),
+          ]),
+        },
+        target_frameworks: [hintedTarget],
+      },
+    });
+  },
+);
+
+cliTest(
+  "managed CLI qualifies a local nested custom-attribute type name",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-nested-attribute-");
+    const path = join(root, "nested-attribute.dll");
+    await writeFile(
+      path,
+      buildManagedPeFixture({
+        additionalEmptyTypes: 1,
+        customAttributeTypeRaw: (1 << 3) | 2,
+        nestedTypes: [[2, 1]],
+        typeName: "InnerAttribute",
+        typeNamespace: "",
+      }),
+    );
+
+    const result = await cli.run({
+      arguments: ["inspect-managed-artifact", path, "--json"],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.json).toMatchObject({
+      normalized_result: {
+        attributes: [
+          expect.objectContaining({
+            type_name: "Empty0+InnerAttribute",
+          }),
+        ],
+        coverage: { state: "complete", issues: [] },
+      },
+    });
   },
 );
 
@@ -415,6 +480,42 @@ cliTest(
           ],
         },
       });
+    }
+  },
+);
+
+cliTest(
+  "managed CLI refuses non-PE executables as unsupported targets",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-non-pe-");
+    for (const [name, bytes, format] of [
+      ["native.elf", elf(2, 1, 0x3e), "elf"],
+      ["native.macho", thinMach(0xfeedfacf, 0x01000007), "mach-o"],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      for (const command of [
+        "inspect-managed-artifact",
+        "inspect-managed-members",
+        "inspect-managed-native-boundaries",
+      ]) {
+        const result = await cli.run({ arguments: [command, path, "--json"] });
+        expect(result.exitCode).not.toBe(0);
+        expect(result.json).toMatchObject({
+          code: "unsupported_target",
+          category: "unsupported_target",
+          retryable: false,
+          remediation: {
+            action:
+              "Select a target supported by this operation or choose an operation supporting the reported target format.",
+          },
+          details: {
+            operation: command.replaceAll("-", "_"),
+            path,
+            reason: `Managed static triage requires a PE target; observed ${format}.`,
+          },
+        });
+      }
     }
   },
 );

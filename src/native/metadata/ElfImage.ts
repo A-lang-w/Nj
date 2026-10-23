@@ -8,6 +8,7 @@ import {
   type LoadRegion,
   type ZeroFillMapping,
 } from "./BinaryContainer.js";
+import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { readNativeDirectoryFromBuffer } from "./NativeSectionDirectory.js";
 
 /** Read ELF sections and file-backed program mappings without interpreting language metadata. */
@@ -66,7 +67,7 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
       zeroFills.push({ address: address + size, size: memorySize - size });
   }
   for (const section of directory.sections) {
-    if (section.name === "" || section.name_state === "unavailable") continue;
+    if (section.name === "") continue;
     const range = declaredFileRange(bytes.length, section.offset, section.size);
     const file_backed = section.type !== 8 && range.file_backed;
     const compressed = (section.flags & 0x800n) !== 0n;
@@ -80,7 +81,7 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
     if (section.name === null && !read_only) continue;
     sections.push({
       format: "elf",
-      name: section.name ?? "",
+      name: section.name,
       type: section.type,
       address: section.address,
       declared_range: { offset: section.offset, size: section.size },
@@ -100,22 +101,35 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
     executable_mappings: executableMappings,
     zero_fills: zeroFills,
     sections,
+    ...(directory.section_names_limitation === undefined
+      ? {}
+      : { section_names_limitation: directory.section_names_limitation }),
   };
 };
 
 /** Map ELF machine identifiers to stable architecture names. */
 export const architectureForElfMachine = (machine: number): string => {
-  const names = new Map([
-    [3, "386"],
-    [8, "mips"],
-    [20, "ppc"],
-    [21, "ppc64"],
-    [22, "s390"],
-    [40, "arm"],
-    [62, "amd64"],
-    [183, "arm64"],
-    [243, "riscv"],
-    [258, "loongarch"],
-  ]);
-  return names.get(machine) ?? `elf-machine-${machine}`;
+  const architecture = elfArchitecture(machine);
+  if (architecture !== undefined) {
+    switch (architecture) {
+      case "x86":
+        return "386";
+      case "x86_64":
+        return "amd64";
+      case "powerpc":
+        return "ppc";
+      default:
+        return architecture;
+    }
+  }
+  switch (machine) {
+    case 21:
+      return "ppc64";
+    case 22:
+      return "s390";
+    case 258:
+      return "loongarch";
+    default:
+      return `elf-machine-${machine}`;
+  }
 };

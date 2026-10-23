@@ -44,12 +44,18 @@ root deltas. Missing graph members yield `truncated`; unknown traversal coverage
 or unavailable occurrence hashes retain uncertainty. Integrity mismatches remain
 contradictions. Static artifact equality does not establish unchanged runtime
 behavior.
+Source-map relation deltas include the content identity of the mapped source,
+so an unchanged map file is reported when its target source bytes change.
 
 Exhausted traversals with deliberately omitted filesystem entries retain
 `unknown` coverage and identify each omitted path/type in `limitations`; FIFO,
 socket and device entries are not opened. Case-distinct archive members remain
 separate observations. Their case-insensitive materialization diagnostic does
 not reduce traversal coverage when both spellings were read.
+PyInstaller inventory also preserves distinct table rows that share a logical
+path, including decoded children beneath a colliding file/directory path.
+Inventory coverage describes observed archive facts; extraction still refuses
+destinations where those paths cannot coexist.
 
 Current inventory Evidence requires scoped `coverage` with a `complete` or
 `unknown` status. Consumers use this producer-owned fact and reject records
@@ -80,6 +86,12 @@ can observe backend recovery; healthy dossiers keep their existing cache policy.
 `procedure_pseudo_code` still fails for that function. Hopper's unavailable reference-kind metadata and reported unresolved
 calls still prevent equality conclusions for those dimensions. Analysis profiles
 version these declarations so older snapshots are not reused as current results.
+For `strings_names`, a string marked with `decoding.available: false` keeps its
+provider display text in the source Evidence, but that text is not compared as
+decoded content. If no independently known string, name, or literal fact differs,
+the dimension remains `unknown` with the decoding reason. Known content and typed
+string-object differences can establish a change; missing typed metadata remains
+unknown, and `encoding_status` describes provenance rather than content.
 IDA declares the facets its selected adapter cannot provide; an empty
 unsupported array does not prove observed absence.
 Evidence and bundle imports reject unsupported fields in their envelopes,
@@ -95,11 +107,15 @@ optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
 do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
-the operation and the REA server/provider deadline; inspect partial Evidence
-and reported cleanup state, then follow producer-specific remediation or reduce
-supported work. Generic errors do not assume adjustable timeout controls. Raising
-only the MCP client's deadline cannot extend this budget. These hints never
-include the complete catalog or caller arguments.
+the operation and the REA server/provider deadline. Inspect partial Evidence
+and reported cleanup state, then follow the returned remediation. Change a
+request field or REA_* setting only when the returned remediation explicitly
+recommends that change. Restart REA when that text says the value is read at
+startup. A mention that a control does not raise the deadline is not a
+recommendation to change it. When it names no setting, reduce supported work;
+do not invent one. Raising only the MCP
+client's deadline cannot extend this budget. These hints never include the
+complete catalog or caller arguments.
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
@@ -310,7 +326,9 @@ that complete Evidence in the session and returns the derived
 `normalized_result.parent_evidence_id` and `evidence_links` name the retained
 analysis, so later views and application workflows read it without repeating
 analysis or moving the complete record through the response. A server without
-session retention refuses summary detail with `capability_unavailable`.
+session retention refuses summary detail with `capability_unavailable`;
+`inspect_artifact`, `inspect_wasm_artifact`, `inspect_macho` and
+`decode_interface_builder` refuse before any analysis starts.
 For `inspect_artifact`, omission also keeps the original request parameters and
 complete output shape. Delivery selection never reaches the inventory engine;
 the complete inspection and its atomic inventory Evidence remain retained.
@@ -991,6 +1009,16 @@ bytes and returns the `integrity_contradictions` records for the extracted
 files. An active ASAR unpacked entry whose companion file is absent cannot be
 materialized; extraction fails as `unavailable` with that logical path.
 
+Extraction materializes regular files exposed by the active archive reader.
+When that reader exposes a nested archive as a file, extraction copies the
+archive file; inspect and extract that file separately to unpack its contents.
+Extraction retains inventory and materialization traversal limitations in its
+result and outer Evidence. If either traversal has unknown coverage, the
+observed regular files can still be copied, but the result does not establish
+a complete source copy. For example, a POSIX filename that is not valid UTF-8
+remains omitted with its raw-name explanation; it is not replacement-decoded
+into an output filename.
+
 Packaging tools commonly sign or strip `.asar.unpacked` native binaries after
 writing the archive header, so their declared hashes no longer match. Electron
 does not check unpacked companions against those hashes at runtime. Integrity
@@ -1143,19 +1171,38 @@ block sizes and successor relationships. Text from different provider
 identities remains unknown.
 
 The `references` dimension preserves each edge's direction, endpoint identity
-and available kind facts. Within one artifact it compares exact raw endpoint
-coordinates, including the address space; hexadecimal case and zero padding
-do not change identity. Resolving an endpoint to a containing procedure does
-not replace the raw coordinate. Unparseable coordinates stay unknown.
+and available kind facts. When the subject digests match, the current comparator
+uses exact raw endpoint coordinates, including the address space; hexadecimal
+case and zero padding do not change identity. Resolving an endpoint to a
+containing procedure does not replace the raw coordinate. Unparseable
+coordinates stay unknown.
 
-Across artifacts, reference endpoints use stable procedure names. Missing or
-address-generated names remain unknown. A name observed at multiple procedure
+When the subject digests differ, reference endpoints use stable procedure names.
+Missing or address-generated names remain unknown. A name observed at multiple procedure
 entries retains its label constraint but cannot establish equal endpoints.
 Pairing preserves duplicate counts and considers alternative compatible
 pairings; array order never identifies an edge. Compatible records with
 unknown endpoint identity or kind facts remain `unknown`. Independent known
 facts that contradict every possible pairing still establish `changed`.
 Source Evidence retains the original addresses, names and unavailable facts.
+
+The `calls` dimension uses the same endpoint identity owner. Within an artifact,
+it compares procedure entry coordinates rather than display names; references
+continue to compare exact source and target coordinates. Across artifacts,
+caller and callee names are comparable only when each name identifies one
+observed procedure entry per dossier. Procedure entries retained in callers,
+callees and reference endpoints all contribute to this ambiguity check.
+Repeated rows at the same entry retain their duplicate counts. An unresolved or
+ambiguous call endpoint keeps the selected `calls` reconstruction claim unknown;
+with resolved call endpoints, distinct entries in the same artifact establish a
+changed call set.
+
+Coordinate identity requires a common executable context: artifact identity,
+selected image or architecture slice, address space, and applicable load mapping.
+Equal coordinates in different slices of one container do not establish equal
+endpoints. The current digest-only selection does not enforce that context and
+can report references and calls unchanged across distinct slices
+([#6502](https://github.com/morluto/rea/issues/6502)).
 
 ### Comparison input shapes
 

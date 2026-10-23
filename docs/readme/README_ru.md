@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · **Русский** · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md)
 
 # REA: Реверс-инжиниринг чего угодно
 
@@ -137,7 +137,7 @@ npx rea-agents@latest setup
 
 ## Что можно анализировать
 
-REA требует Node.js 22.x (>=22.19), 24.x (>=24.11) или 26+, а также npm. Дополнительные инструменты и поддерживаемые системы зависят от цели:
+REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.12.1), а также npm. Дополнительные инструменты и поддерживаемые системы зависят от цели:
 
 | Цель                                | Что возвращает REA                                                                                                         | Требования и руководство                                                                                                                 |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,7 +145,9 @@ REA требует Node.js 22.x (>=22.19), 24.x (>=24.11) или 26+, а так�
 | Структура ELF без запуска           | Секции, сегменты, исходные символы/релокации и возможные механизмы защиты по данным статического анализа                   | pwntools, предоставленный вызывающей стороной, в Linux x64; [диагностика бинарных файлов](../binary-diagnostics.md)                      |
 | Байт-код EVM                        | Селекторы диспетчеризации, смещения байтов, предполагаемые аргументы и изменяемость состояния                              | Локальные необработанные байты или шестнадцатеричное представление в Linux x64; [руководство по EVM без запуска](../evm-bytecode.md)     |
 | Rust binaries                       | Embedded cargo-auditable dependency list                                                                                   | [Rust binaries](../rust-binaries.md)                                                                                                     |
+| PE certificates                     | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                               | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                  |
 | ELF notes                           | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                            | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                             |
+| Erlang BEAM                         | IFF chunks, atoms, exports, and tables                                                                                     | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                        |
 | Записанные сбои Linux               | Необработанные записи note, регистры/сигналы каждого записанного потока и необязательные кандидаты сопоставления с памятью | pwntools, предоставленный вызывающей стороной, в Linux x64; необязательные GDB/pwndbg; [записанные сбои](../recorded-crashes.md)         |
 | Установленные настольные приложения | Возможные среды выполнения, файлы с доказательствами, компоненты и дальнейшие шаги                                         | Ограниченная проверка каталогов и заголовков；[Настольные приложения](../desktop-applications.md)                                        |
 | JavaScript / Electron               | Модули, импорты, карты исходного кода, маршруты, IPC и связи с нативными дополнениями                                      | Node.js и npm; [анализ приложений](../javascript-application-workflows.md)                                                               |

@@ -62,6 +62,51 @@ const refusal = (
   return projectAnalysisError(result.error);
 };
 
+/** A list with one proved whole line keeps an entity added to an empty later page off that page. */
+const expectAddedEntityStaysOffPage = (
+  query: string,
+  args: Readonly<Record<string, unknown>>,
+  membership: "recorded" | "query" = "query",
+): void => {
+  const alpha = { id: 1, name: "Alpha" };
+  const serving = servingFrom([
+    ["GET", "/api/orgs/1/books", [alpha]],
+    ["GET", "/api/orgs/1/books/1", alpha],
+    ["GET", `/api/orgs/2/books?${query}`, []],
+  ]);
+  expect(serving.store.state.views.get("get_orgs_books_by_id")).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+  });
+  load(serving, (entities) => [
+    ...entities,
+    {
+      type: "/api/orgs/{numeric}/books",
+      collection: "/api/orgs/2/books",
+      id: "9",
+      fields: { id: 9, name: "Added" },
+    },
+  ]);
+  expect(
+    answer(serving, "get_orgs_books_by_id", { id: "2", ...args }),
+  ).toMatchObject({
+    body: [],
+    state: { source: "state", membership, listed: 0 },
+  });
+  // Without a proved whole line here, the argument-less call keeps recorded members.
+  expect(answer(serving, "get_orgs_books_by_id", { id: "2" })).toMatchObject({
+    body: [],
+    state:
+      membership === "query"
+        ? { source: "state", membership: "recorded", listed: 0 }
+        : { source: "recording", reason: "unrecorded-request" },
+  });
+};
+
+/** A list with one proved whole line keeps an entity added to an empty start page off that page. */
+const expectAddedEntityStaysOffStartPage = (name: string): void =>
+  expectAddedEntityStaysOffPage(`${name}=1`, { [name]: "1" });
+
 /** Replace the served state with the initial one changed by `edit`. */
 const load = (
   serving: ReturnType<typeof servingOf>,
@@ -182,7 +227,46 @@ describe("item answers", () => {
   });
 });
 
+describe("loaded later pages", () => {
+  it.each(["offset", "start", "_start"])(
+    "skips an entity added under an empty ?%s=1 page without whole-collection evidence",
+    expectAddedEntityStaysOffStartPage,
+  );
+
+  it("does not list an entity added under an empty ?page=2&per_page=1 page", () => {
+    expectAddedEntityStaysOffPage(
+      "page=2&per_page=1",
+      { page: "2", per_page: "1" },
+      "recorded",
+    );
+  });
+});
+
 describe("list answers", () => {
+  it("replays repeated query values instead of applying scalar state-query semantics", () => {
+    const serving = servingFrom([
+      ["GET", "/api/items?tag=a&tag=b", { selected: "b" }],
+      ["GET", "/api/items?tag=a&tag=c", { selected: "c" }],
+    ]);
+    const tool = serving.source.manifest.tools.find(
+      (candidate) => candidate.path_template === "/api/items",
+    );
+    if (tool === undefined) throw new Error("Missing items query tool");
+    const argument = tool.query_parameter_names.find((name) => name === "tag");
+    if (argument === undefined) throw new Error("Missing tag query argument");
+    const result = answerFromState(serving, tool, { [argument]: ["a", "c"] });
+    if (!result.ok) throw result.error;
+    expect(result.value.body).toEqual({ selected: "c" });
+    expect(result.value.replay).toMatchObject({
+      exact_match: true,
+      recorded_query: "?tag=a&tag=c",
+    });
+    expect(result.value.state).toEqual({
+      source: "recording",
+      reason: "query-multiplicity",
+    });
+  });
+
   it("lists every entity of the collection in state order when membership is all", () => {
     const serving = servingOf();
     const args = { uid: "acb4v6" };
@@ -266,7 +350,9 @@ describe("list answers", () => {
       state: { source: "state", listed: 1 },
     });
   });
+});
 
+describe("list answer coverage and bounds", () => {
   it("answers an unfiltered call from a paging-only line of the parent its path arguments name", () => {
     const books = servingFrom([
       ["GET", "/api/orgs/1/books?limit=50", [{ id: 1 }, { id: 2 }]],
@@ -286,6 +372,20 @@ describe("list answers", () => {
     expect(answer(books, "get_orgs_books_by_id", { id: "9" })).toMatchObject({
       state: { source: "recording", reason: "unrecorded-request" },
     });
+  });
+
+  it("answers a recorded call that pages by two parameters as it recorded, whatever order they are supplied in", () => {
+    const books = servingFrom([
+      ["GET", "/api/books", [{ id: 1 }, { id: 2 }, { id: 3 }]],
+      ["GET", "/api/books?size=2&limit=1", [{ id: 1 }]],
+    ]);
+    expect(answer(books, "get_books", { size: "2", limit: "1" })).toMatchObject(
+      {
+        body: [{ id: 1 }],
+        replay: { record_ordinal: 1, exact_match: true },
+        state: { source: "state", membership: "query", listed: 1 },
+      },
+    );
   });
 
   it("refuses a list whose member lacks a field every recording carried, never answering a partial body", () => {
@@ -343,6 +443,59 @@ describe("recorded and document answers", () => {
       replay: { record_ordinal: 0 },
       state: { source: "recording", reason: "rendered-oversize" },
     });
+  });
+
+  it("caps a state-backed document by its exact serialized UTF-8 body bytes", () => {
+    const capture = timedCaptureEvidence([
+      ["GET", "/api/settings", { theme: "dark" }],
+      ["PUT", "/api/settings", { theme: "light" }],
+      ["GET", "/api/settings", { theme: "light" }],
+    ]);
+    const serving = servingOf(
+      environmentStateServeInputs(environmentStateServeFixture(capture)),
+    );
+    const loadDocument = (value: string) =>
+      load(serving, (entities) => entities, [
+        { tool: "get_settings", path: "/api/settings", value },
+      ]);
+
+    const exactLimit = "x".repeat(REPLAY_BODY_LIMIT_BYTES - 2);
+    expect(Buffer.byteLength(JSON.stringify(exactLimit), "utf8")).toBe(
+      REPLAY_BODY_LIMIT_BYTES,
+    );
+    loadDocument(exactLimit);
+    expect(answer(serving, "get_settings", {})).toMatchObject({
+      body: exactLimit,
+      replay: { truncated: false },
+      state: { source: "state", view: "document" },
+    });
+
+    // The content is under the limit as text, but JSON escaping makes the
+    // actual reply body exceed it. The refusal reports that encoded extent.
+    const escaped = "\n".repeat(REPLAY_BODY_LIMIT_BYTES / 2 + 1);
+    const bodyBytes = Buffer.byteLength(JSON.stringify(escaped), "utf8");
+    expect(escaped.length).toBeLessThan(REPLAY_BODY_LIMIT_BYTES);
+    expect(bodyBytes).toBeGreaterThan(REPLAY_BODY_LIMIT_BYTES);
+    loadDocument(escaped);
+    const before = serving.store.snapshot();
+    const result = answerFromState(
+      serving,
+      toolOf(serving.source, "get_settings"),
+      {},
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok)
+      throw new Error("Expected the oversized state answer to be refused");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      operation: "environment-serve",
+      resource: "capacity",
+      reportedLimits: {
+        max_body_bytes: REPLAY_BODY_LIMIT_BYTES,
+        body_bytes: bodyBytes,
+      },
+    });
+    expect(serving.store.snapshot()).toEqual(before);
   });
 
   it("answers a document's recorded line with the state's value for it", () => {

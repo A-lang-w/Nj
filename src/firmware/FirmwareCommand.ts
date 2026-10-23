@@ -1,4 +1,8 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  FIRMWARE_TOOL_REQUIREMENTS,
+  type FirmwareEngineName,
+} from "../contracts/firmware/firmwareToolRequirements.js";
 import { randomUUID } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -23,6 +27,8 @@ import {
   firmwareProcessLimitRecovery,
   firmwareSignalLimitError,
 } from "./FirmwareFailures.js";
+import { prlimitArgumentVector } from "../process/LinuxResourceLimits.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
@@ -30,7 +36,6 @@ import {
   type ProviderProcessSnapshot,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import {
   FirmwareFileAccess,
@@ -65,19 +70,22 @@ export const firmwareToolUnavailable = (
     userMessage: reason,
   });
 
+/** Firmware engines run only on Linux; discovery and execution share this check. */
+export const firmwareHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
+
 /** Resolve explicitly supplied executable paths; never install or search for engines. */
 export const resolveFirmwareCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
-  engine: "binwalk" | "unblob",
+  engine: FirmwareEngineName,
   operation: string,
   files: FirmwareFileAccess,
   signal?: AbortSignal,
 ) => {
-  const variable =
-    engine === "binwalk" ? "REA_BINWALK_COMMAND" : "REA_UNBLOB_COMMAND";
+  const variable = FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment;
   const configured = environment[variable];
   if (
-    process.platform !== "linux" ||
+    !firmwareHostSupported(process.platform) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
@@ -159,12 +167,15 @@ export const runFirmwareCommand = async (context: {
   const spawned = await (context.launcher ?? spawnOwnedProviderProcess)({
     command: context.limiter,
     arguments: [
-      `--as=${FIRMWARE_LIMITS.addressSpaceBytes}`,
-      `--fsize=${context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes}`,
-      "--core=0",
-      `--cpu=${FIRMWARE_LIMITS.cpuSeconds}`,
-      "--",
-      context.command,
+      ...prlimitArgumentVector(
+        {
+          address_space_bytes: FIRMWARE_LIMITS.addressSpaceBytes,
+          file_bytes:
+            context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes,
+          cpu_seconds: FIRMWARE_LIMITS.cpuSeconds,
+        },
+        context.command,
+      ),
       ...context.args,
     ],
     expectedCommand: null,
