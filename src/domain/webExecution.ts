@@ -10,7 +10,8 @@ import { browserVersionSchema } from "./browserObservationSchemas.js";
 
 /** Explicit instrumentation request for one finite, externally driven execution window. */
 export const observeWebExecutionInputSchema = webRuntimeScopeSchema.extend({
-  observation_ms: z.int().min(1).max(2_147_483_647).default(10_000),
+  // Incur coerces numeric argv for ZodNumber, but not ZodNumberFormat (z.int()).
+  observation_ms: z.number().int().min(1).max(2_147_483_647).default(10_000),
 });
 export type ObserveWebExecutionInput = z.infer<
   typeof observeWebExecutionInputSchema
