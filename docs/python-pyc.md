@@ -28,7 +28,8 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 - `magic`, the 16-bit little-endian field;
 - `python_version` and `code_layout`, mapped from the pinned CPython 3.7–3.13
   table (`py37`, `py38`, or `py311`); 3.11 alpha magics before 3494 used
-  other code layouts and are unsupported;
+  other code layouts and are unsupported. The 3.7.0a1/a2 magics 3390/3391
+  used 12-byte headers and are outside this reader's supported format;
 - `flags`, `hash_based`, and `check_source` from PEP 552;
 - `source_hash_hex` for hash-based pycs, or `source_mtime` and `source_size`
   for timestamp pycs.
@@ -49,7 +50,9 @@ names, locals (or `localsplusnames` on 3.11+), const
 summaries, and bytecode length plus SHA-256.
 
 Code-object equality used by sets and dictionaries follows the selected layout:
-3.7–3.10 ignore line tables, while 3.11+ include line and exception tables. The
+3.7–3.10 derive `CO_NOFREE` from the free/cell tables for equality, while
+3.11+ compare raw flags; raw `co_flags` remain in reported facts. The older
+layouts ignore line tables, while 3.11+ include line and exception tables. The
 artifact SHA-256 identifies the exact selected `.pyc` bytes independently of
 this decoded object graph. Reference slots follow each tag's CPython behavior:
 singleton values and `TYPE_REF` do not reserve new slots even when their tag
@@ -71,7 +74,9 @@ The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
 budget fails without partial success. Argument counts, positional-only counts,
 keyword-only counts, local counts, and stack size are signed CPython fields; a
-negative encoding is malformed. On the 3.11+ layout, `co_code` must cover a
+negative encoding is malformed. Code `flags` preserve signed `co_flags` values;
+CPython 3.8+ rejects negative flags, while 3.7 accepts them. On the 3.11+
+layout, `co_code` must cover a
 whole number of code units. Every layout rejects argument counts that do not
 fit the local table CPython checks (`co_varnames`, including `*args` /
 `**kwargs`, or fast locals on 3.11+). Those files are malformed, so the

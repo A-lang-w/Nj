@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { access, realpath, rm, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { expect, onTestFinished } from "vitest";
 import { createFirmwareAnalysisProvider } from "../../../src/composition/firmware.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
@@ -8,20 +8,29 @@ import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../temporaryDirectory.js";
 
-/** Exercise real subprocess ownership with synthetic pinned producer representations. */
+/** Exercise the real limiter and process ownership with synthetic pinned reports. */
 export const firmwareFixture = async (mode = "normal", banner?: string) => {
   const root = await createTestTempDirectory("rea-firmware-test-");
   const path = join(root, "input.bin");
   await writeFile(path, Buffer.from("fixture-input-data"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
-  // The injected producer owns execution; this selected command only supplies
-  // admission and identity facts. Its name deliberately identifies no engine.
-  const binwalkCommand = join(root, "selected-command");
-  await writeFile(binwalkCommand, "#!/bin/sh\nexit 99\n", { mode: 0o700 });
-  const [binwalkExecutable, unblobExecutable] = await Promise.all([
-    realpath(binwalkCommand),
-    realpath(process.execPath),
-  ]);
+  const commands = {
+    binwalk: join(root, "binwalk"),
+    unblob: join(root, "unblob"),
+  };
+  for (const engine of ["binwalk", "unblob"] as const) {
+    const invocation = [
+      process.execPath,
+      // Keep the synthetic JS producer within the real engines' address-space ceiling.
+      "--jitless",
+      fileURLToPath(new URL("./producer.mjs", import.meta.url)),
+      engine,
+    ]
+      .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
+      .join(" ");
+    await writeFile(commands[engine], `#!/bin/sh\nexec ${invocation} "$@"\n`, {
+      mode: 0o700,
+    });
+  }
   const launches: {
     cwd: string | undefined;
     pid: number | undefined;
@@ -31,40 +40,13 @@ export const firmwareFixture = async (mode = "normal", banner?: string) => {
   const provider = createFirmwareAnalysisProvider(
     {
       ...process.env,
-      REA_BINWALK_COMMAND: binwalkCommand,
-      REA_UNBLOB_COMMAND: process.execPath,
+      REA_BINWALK_COMMAND: commands.binwalk,
+      REA_UNBLOB_COMMAND: commands.unblob,
+      REA_FIRMWARE_FIXTURE_MODE: mode,
+      ...(banner === undefined ? {} : { REA_FIRMWARE_FIXTURE_VERSION: banner }),
     },
     async (options) => {
-      const start = options.arguments.indexOf("--") + 2;
-      const args = options.arguments.slice(start);
-      const selectedCommand = options.arguments[start - 1];
-      const engine =
-        selectedCommand === binwalkExecutable
-          ? "binwalk"
-          : selectedCommand === unblobExecutable
-            ? "unblob"
-            : undefined;
-      if (engine === undefined)
-        throw new Error(
-          "Unexpected executable in the firmware producer fixture",
-        );
-      const spawned = await spawnOwnedProviderProcess({
-        ...options,
-        command: process.execPath,
-        expectedCommand: process.execPath,
-        arguments: [
-          fileURLToPath(new URL("./producer.mjs", import.meta.url)),
-          ...args,
-        ],
-        env: {
-          ...options.env,
-          REA_FIRMWARE_FIXTURE_MODE: mode,
-          REA_FIRMWARE_FIXTURE_ENGINE: engine,
-          ...(banner === undefined
-            ? {}
-            : { REA_FIRMWARE_FIXTURE_VERSION: banner }),
-        },
-      });
+      const spawned = await spawnOwnedProviderProcess(options);
       launches.push({
         cwd: options.cwd,
         pid: spawned.process.pid,
@@ -101,6 +83,7 @@ export const firmwareFixture = async (mode = "normal", banner?: string) => {
     output: join(root, "output"),
     root,
     launches,
+    commands,
     close,
     restoreCleanup: () => {
       cleanupUnverified = false;
