@@ -50,7 +50,10 @@ export class ClientConfigurationPublication {
     const destination = join(parent, basename(path));
     const input = await selectedConfiguration(destination, previous);
     if (selection !== undefined) {
-      await assertRequestedConfigurationPath(path, selection.requestedPath);
+      await assertRequestedConfigurationPath(
+        destination,
+        selection.requestedPath,
+      );
       if (
         selection.state === undefined
           ? input !== undefined
@@ -91,7 +94,10 @@ export class ClientConfigurationPublication {
         throw new RegularFileChangedError(stagedPath);
       await staging.assertReadyForPublication(stagedPath);
       if (selection !== undefined)
-        await assertRequestedConfigurationPath(path, selection.requestedPath);
+        await assertRequestedConfigurationPath(
+          destination,
+          selection.requestedPath,
+        );
       await assertSelectedConfiguration(destination, input);
       if (input === undefined) {
         // An exclusive link cannot overwrite a file created after absence was checked.

@@ -166,6 +166,50 @@ describe("skill recovery byte preservation", () => {
   });
 });
 
+describe("skill home-directory aliases", () => {
+  it.each(["missing", "existing"] as const)(
+    "installs skill files through a home-directory alias with a %s manifest",
+    async (presence) => {
+      const root = await createTestTempDirectory("rea-skill-home-alias-");
+      const home = join(root, "home");
+      const alias = join(root, "alias");
+      await mkdir(home);
+      await symlink(
+        home,
+        alias,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const [destination] = skillDestinations(home, []);
+      if (destination === undefined)
+        throw new Error("Missing shared skill root");
+      const manifest = join(destination.path, "SKILL.md");
+      const original = "previously installed instructions\n";
+      if (presence === "existing") {
+        await mkdir(dirname(manifest), { recursive: true });
+        await writeFile(manifest, original);
+      }
+
+      const installed = await installCanonicalSkill(alias, []);
+      if (!installed.ok) throw installed.error;
+      expect(installed.value).toBe("installed");
+      expect(await canonicalSkillNeedsInstall(home, [])).toBe(false);
+      expect(await canonicalSkillNeedsInstall(alias, [])).toBe(false);
+      expect(await installCanonicalSkill(alias, [])).toEqual({
+        ok: true,
+        value: "unchanged",
+      });
+      if (presence === "existing")
+        expect(await readFile(`${manifest}.rea.backup`, "utf8")).toBe(original);
+      expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+      expect(
+        (await readdir(destination.path)).some((entry) =>
+          entry.startsWith(".rea-config-"),
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("skill directory admission", () => {
   it("excludes a linked references directory from update maintenance", async () => {
     const directory = await createTestTempDirectory(
