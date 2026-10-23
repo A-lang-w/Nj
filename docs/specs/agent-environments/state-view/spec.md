@@ -31,8 +31,9 @@ later increments.
   more) that the type's reads show only once it began: the `POST` made that
   entity, so it is not in the initial state. A read finished before the `POST`
   began shows what was there, and one still running may show its effect. A list
-  read shows the ids its listed entities carry as their own identity members, not
-  those of entities they nest. An id shorter than four characters counts only
+  read shows the ids its listed entities carry as their own identity members, and
+  across two or more of them the first suffix-named field (`projectId`) distinct
+  on each, not those of entities they nest. An id shorter than four characters counts only
   when the type was read before the `POST` and an item read names it after.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that

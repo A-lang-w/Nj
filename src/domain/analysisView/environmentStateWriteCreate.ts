@@ -13,7 +13,10 @@ import {
   type SuppliedSegment,
 } from "./environmentStateRules.js";
 import { createdFields } from "./environmentStateWriteApply.js";
-import { sameLinkedSource } from "./environmentStateWriteLinks.js";
+import {
+  respondedIds,
+  sameLinkedSource,
+} from "./environmentStateWriteLinks.js";
 import {
   collectionTarget,
   entityTarget,
@@ -70,7 +73,10 @@ const respondedId = (
   return members.length === 1 ? scalarText(members[0]) : undefined;
 };
 
-/** The written entity a create's response or a later read shows. */
+/**
+ * The written entity a create's response or a later read shows. A linked create's read must name an
+ * id its response returned, as the read that linked it did, envelopes included.
+ */
 const createdObservation = (
   context: EffectContext,
   step: WriteStep,
@@ -78,6 +84,7 @@ const createdObservation = (
     readonly type: string;
     readonly collection: string;
     readonly idField: string;
+    readonly linked: boolean;
   },
 ): Observed | undefined => {
   const held = (id: string) =>
@@ -86,17 +93,29 @@ const createdObservation = (
     newEntityIn(step.record.ordinal, body, target.idField, held),
   );
   if (own !== undefined) return own;
-  // A response that names the created id alone ties the later read to that id.
-  const id = context.io.withBody(step.record.ordinal, (body) =>
-    respondedId(body, target.idField),
-  );
+  const { id, ids } = context.io.withBody(step.record.ordinal, (body) => {
+    const returned = target.linked ? respondedIds(body) : [];
+    // A response that names the created id alone ties the later read to that id.
+    const named =
+      respondedId(body, target.idField) ??
+      (returned.length === 1 ? returned[0] : undefined);
+    return { id: named, ids: returned };
+  });
   const later = laterObservation(searchFrom(context, step), {
-    ...target,
+    type: target.type,
+    collection: target.collection,
+    idField: target.idField,
     ...(id === undefined ? {} : { id }),
     held,
     isWrite: context.isWrite,
   });
-  if (later !== undefined) context.observed(later.ordinal);
+  // A read named by the id is tied already; otherwise a linked create's read must name a returned id.
+  if (
+    later === undefined ||
+    (target.linked && id === undefined && !ids.includes(later.id))
+  )
+    return undefined;
+  context.observed(later.ordinal);
   return later;
 };
 
@@ -359,6 +378,7 @@ export const applyCreate = (
     type,
     collection,
     idField,
+    linked: draft.linked !== undefined,
   });
   if (observed === undefined) {
     fail(draft, step, body === undefined ? "body-unusable" : "no-observation");

@@ -1624,6 +1624,50 @@ describe("creates a later write may explain", () => {
   });
 });
 
+describe("state order after a variant line is dropped", () => {
+  it("orders entities by the lines left, so a plain list listing them in another order lists them all", () => {
+    const view = stateOf([
+      [
+        "GET",
+        "/api/books?expand=shelf",
+        [expandedBook(SECOND_BOOK), expandedBook(FIRST_BOOK)],
+      ],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    ]).views.find((candidate) => candidate.tool === "get_books");
+    expect(view).toMatchObject({
+      shape: "list",
+      membership: "all",
+      projected_record_ordinals: [0],
+    });
+  });
+});
+
+describe("what a linked create observes", () => {
+  it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
+    const D = note(1004, "Delta");
+    const state = stateOf([
+      ["GET", "/api/notes", [A, B]],
+      ["GET", "/api/notes/1001", A],
+      ["GET", "/api/notes/1002", B],
+      [
+        "POST",
+        "/api/drafts/publish",
+        { data: { id: 1003 } },
+        201,
+        { title: "Gamma" },
+      ],
+      // Another note the state never held, which the publish did not make.
+      ["GET", "/api/notes/1004", D],
+      ["GET", "/api/notes/1003", C],
+    ]);
+    expect(planOf(state, "post_drafts_publish")).toMatchObject({
+      effect: "create",
+      target: "/api/notes",
+      observation: { ordinal: 5 },
+    });
+  });
+});
+
 describe("creates whose returned id an earlier read showed", () => {
   it("links no create whose returned id a list of its collection showed before it", () => {
     const listed = (shown: JsonValue[]): TimedCaptureRow[] =>

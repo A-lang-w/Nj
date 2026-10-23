@@ -666,6 +666,7 @@ export class EnvironmentStateExtraction {
     this.#retain(ENTRY_BYTES + jsonBytes(object));
     entity.observations.push({
       position,
+      index,
       ordinal: record.ordinal,
       tool: plan.tool.name,
       item: plan.item,

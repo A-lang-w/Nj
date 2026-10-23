@@ -104,6 +104,9 @@ const EMPTY: LineShape = {
   common: undefined,
 };
 
+/** Entity lookups the pairwise variant pass may make; a plan whose lines need more keeps every line checked. */
+const VARIANT_WORK_LIMIT = 1 << 24;
+
 /** Whether two lines show a shared entity with different members. */
 const conflicts = (left: LineShape, right: LineShape): boolean =>
   [...left.entities].some(
@@ -111,14 +114,24 @@ const conflicts = (left: LineShape, right: LineShape): boolean =>
       right.entities.has(key) && right.entities.get(key) !== members,
   );
 
-/** The latest lines that show the plan's entities in another representation than its base lines, as an expanding or reducing query does. */
+/**
+ * The latest lines that show the plan's entities in another representation than its base lines, as
+ * an expanding or reducing query does; none when comparing every pair of lines would exceed the work limit.
+ */
 export const variantLines = (
   latest: readonly StateRecordFacts[],
   shapeOf: (record: StateRecordFacts) => LineShape | undefined,
 ): StateRecordFacts[] => {
   if (latest.length < 2) return [];
-  const shape = (record: StateRecordFacts): LineShape =>
-    shapeOf(record) ?? EMPTY;
+  const shapes = new Map(
+    latest.map((record) => [record, shapeOf(record) ?? EMPTY]),
+  );
+  const entities = [...shapes.values()].reduce(
+    (sum, line) => sum + line.entities.size,
+    0,
+  );
+  if (latest.length * entities > VARIANT_WORK_LIMIT) return [];
+  const shape = (record: StateRecordFacts): LineShape => shapes.get(record)!;
   const agreeing = new Map(
     latest.map((record) => [
       record,
@@ -345,7 +358,7 @@ export const withoutVariants = (
   };
 };
 
-/** Forget the observations of dropped recordings, and entities only they showed. */
+/** Forget the observations of dropped recordings, and entities only they showed; an entity is first sighted where its kept observations show it first. */
 export const dropObservations = (
   entities: Map<string, ObservedEntity>,
   dropped: ReadonlySet<number>,
@@ -355,7 +368,21 @@ export const dropObservations = (
       (observation) => !dropped.has(observation.ordinal),
     );
     if (kept.length === entity.observations.length) continue;
-    if (kept.length === 0) entities.delete(key);
-    else entities.set(key, { ...entity, observations: kept });
+    if (kept.length === 0) {
+      entities.delete(key);
+      continue;
+    }
+    const first = kept.reduce((earliest, observation) =>
+      observation.position < earliest.position ||
+      (observation.position === earliest.position &&
+        observation.index < earliest.index)
+        ? observation
+        : earliest,
+    );
+    entities.set(key, {
+      ...entity,
+      order: [first.position, first.index],
+      observations: kept,
+    });
   }
 };

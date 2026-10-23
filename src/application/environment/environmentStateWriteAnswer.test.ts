@@ -1691,4 +1691,34 @@ describe("creates read under another path", () => {
       }),
     ).toMatchObject({ status: 201 });
   });
+
+  it("takes a linked create's recorded path value in either spelling, as other state-backed calls do", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const project = "/api/projects/my%20org1";
+    const other = note(2001, "Other");
+    // A second project makes the project segment a path parameter.
+    const notes = servedFrom([
+      ["GET", "/api/projects/my%20org2/notes", [other]],
+      ["GET", "/api/projects/my%20org2/notes/2001", other],
+      ["GET", `${project}/notes`, [alpha, beta]],
+      ["GET", `${project}/notes/1001`, alpha],
+      ["GET", `${project}/notes/1002`, beta],
+      ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", `${project}/notes/1003`, gamma],
+      ["GET", `${project}/notes`, [alpha, beta, gamma]],
+      ["POST", "/api/projects/my%20org2/publish", { ok: true }, 200, {}],
+    ]);
+    for (const spelling of ["my%20org1", "my org1"])
+      expect(
+        notes.answer("post_projects_publish_by_project_id", {
+          project_id: spelling,
+          body: { title: "Delta" },
+        }),
+      ).toMatchObject({ status: 201 });
+  });
 });

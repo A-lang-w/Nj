@@ -27,7 +27,7 @@ import {
   type JsonObject,
 } from "./environmentStateRules.js";
 import { environmentStateFields } from "./environmentStateView.js";
-import { lineShapes } from "./environmentStateVariants.js";
+import { lineShapes, variantLines } from "./environmentStateVariants.js";
 
 type State = Extract<AnalysisViewResult, { kind: "environment-state" }>;
 const ALL_RULES = [
@@ -772,6 +772,7 @@ it("counts the line shapes it builds against the budget as it builds them", () =
     order: [0, id],
     observations: [1, 2].map((ordinal) => ({
       position: ordinal,
+      index: id,
       ordinal,
       tool: "get_items",
       item: false,
@@ -784,6 +785,34 @@ it("counts the line shapes it builds against the budget as it builds them", () =
   });
   // Each of the hundred observations keeps its entity's key and the names of its members.
   expect(retained).toBeGreaterThan(100 * Object.keys(members).join(",").length);
+});
+
+it("leaves every line checked rather than compare more lines than the variant pass allows", () => {
+  const lines = Array.from({ length: 3000 }, (_, ordinal) => ({
+    ordinal,
+    method: "GET",
+    path: "/api/items",
+    query: `?view=${String(ordinal)}`,
+    status: 200,
+    start: ordinal,
+    end: ordinal,
+  }));
+  const shape = {
+    entities: new Map(
+      Array.from({ length: 4 }, (_, id) => [String(id), "id,name"]),
+    ),
+    carried: new Set(["id", "name"]),
+    common: new Set(["id", "name"]),
+  };
+  let looked = 0;
+  expect(
+    variantLines(lines, () => {
+      looked += 1;
+      return shape;
+    }),
+  ).toEqual([]);
+  // Comparing every pair would look each line's shape up thousands of times.
+  expect(looked).toBeLessThan(10 * lines.length);
 });
 
 it("releases a planning pass a rewrite cut discards before extracting the state again", () => {

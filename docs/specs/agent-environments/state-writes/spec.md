@@ -39,8 +39,8 @@ gets no plan, stays a recorded view with the reason `query-body`, is served by
 replay, and its calls bound no initial-recording window and end no observation
 search. The capture shows it by the first of these that applies:
 
-1. every successful call answers as the latest successful `GET` of its path
-   that finished before the call began did, with no write between (a status
+1. every successful call answers as the successful `GET` of its path that
+   finished last before the call began did, with no write between (a status
    lookup posting the jobs it names);
 2. every call names read operations only, in its body's `operation` or
    `operations[].operation`, else its query's `operation`, `op` or `action`
@@ -68,9 +68,9 @@ path its call's path relates to (segment by segment, a parameter matching any
 value) reads differently just before and just after one of its calls, or finds
 its entity on one side only (a 400, 404 or 410 on the other), with no other
 write between; the other read-only tools' calls are no writes there, so the
-tools are dropped until none is vetoed. Those reads are the latest that
-finished before the call began and the first that began after it ended, since
-one overlapping the call may show either state. Reads of unrelated paths do not
+tools are dropped until none is vetoed. Those reads are the one that finished
+last before the call began and the first that began after it ended, since one
+overlapping the call may show either state. Reads of unrelated paths do not
 count, so a session renewal stays read-only although an endpoint under the
 same root regenerates values on every read.
 
@@ -97,8 +97,11 @@ its own (a body with no list counts an identity member at any depth). An id shor
 so it links only to a type a successful read showed before the call. The plan
 records that read's collection, and serving creates there, since the call's own
 path names no collection of the type. That collection holds only for the
-exemplar's path arguments: serving refuses a call with others, and the gate
-counts such a recorded call as a write no built plan models.
+exemplar's path arguments, each as recorded or in the other spelling once
+percent-decoded: serving refuses a call with others, and the gate counts such a
+recorded call as a write no built plan models. A linked create's call is
+observed only in a read of an id its response returned, at the top or in an
+envelope member, so another unseen item's read is never taken for it.
 
 **Exemplar.** A plan is built from its first successful (2xx) recorded call,
 the exemplar.

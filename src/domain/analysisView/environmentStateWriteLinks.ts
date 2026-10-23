@@ -2,12 +2,14 @@ import type { JsonValue } from "../jsonValue.js";
 import {
   collectionPathOf,
   IDENTITY_NAMES,
+  identityCandidates,
   isObject,
   isParam,
   lastSegmentValue,
   listItems,
   locateList,
   normalizedPath,
+  pathSegmentMatches,
   scalarText,
   segmentsOf,
   type StateEntity,
@@ -71,16 +73,30 @@ const identitiesIn = (root: JsonValue | undefined): Set<string> => {
   return shown;
 };
 
-/** The ids a list read shows: its listed entities' own identity members, or any it shows at any depth when it lists none. */
+/**
+ * The ids a list read shows: its listed entities' own identity-named members and, across two or
+ * more of them, the first suffix-named field (`projectId`) distinct on each, or any id it shows at
+ * any depth when it lists none.
+ */
 const listedIds = (body: JsonValue | undefined): Set<string> => {
   const pointer = body === undefined ? undefined : locateList(body, undefined);
   const items =
     body === undefined || pointer === undefined
       ? undefined
       : listItems(body, pointer);
-  return items === undefined
-    ? identitiesIn(body)
-    : new Set(items.flatMap(identityValues));
+  if (items === undefined) return identitiesIn(body);
+  const suffixed =
+    items.length < 2
+      ? undefined
+      : identityCandidates(items).find(
+          (name) => !IDENTITY_NAMES.includes(name),
+        );
+  return new Set([
+    ...items.flatMap(identityValues),
+    ...(suffixed === undefined
+      ? []
+      : items.flatMap((item) => scalarText(item[suffixed]) ?? [])),
+  ]);
 };
 
 /** The ids a read shows: its listed entities' for a list read, or its path's id for an item read. */
@@ -300,19 +316,35 @@ export const linkedCollection = (
     ? plan.collection
     : undefined;
 
-/** Whether a linked create's call sends the path values its exemplar did: the read that linked its target followed only that call. */
+/**
+ * Whether a linked create's call sends the path values its exemplar did, each as recorded or in the
+ * other spelling once percent-decoded: the read that linked its target followed only that call.
+ */
 export const sameLinkedSource = (
   template: string,
   exemplar: string | undefined,
   call: ReadonlyMap<string, string> | undefined,
 ): boolean => {
-  const recorded =
-    exemplar === undefined ? undefined : pathValuesOf(template, exemplar);
+  if (
+    exemplar === undefined ||
+    call === undefined ||
+    pathValuesOf(template, exemplar) === undefined
+  )
+    return false;
+  const segments = segmentsOf(exemplar);
+  const recorded = new Map(
+    segmentsOf(template).flatMap((segment, index) =>
+      isParam(segment)
+        ? [[segment.slice(1, -1), segments[index]!] as const]
+        : [],
+    ),
+  );
   return (
-    recorded !== undefined &&
-    call !== undefined &&
     recorded.size === call.size &&
-    [...recorded].every(([name, value]) => call.get(name) === value)
+    [...recorded].every(([name, value]) => {
+      const given = call.get(name);
+      return given !== undefined && pathSegmentMatches(value, given);
+    })
   );
 };
 

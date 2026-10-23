@@ -96,6 +96,27 @@ describe("creation limits", () => {
     ).toBeUndefined();
   });
 
+  it("reads a list's ids from a suffix-named field when no identity name identifies its entities", () => {
+    const [list, post, later] = [
+      record(0, "GET", "/api/projects"),
+      record(1, "POST", "/api/imports"),
+      record(2, "GET", "/api/projects"),
+    ];
+    const bodies = new Map<number, JsonValue>([
+      [0, [{ projectId: "proj-0001", name: "Alpha" }]],
+      [
+        2,
+        [
+          { projectId: "proj-0001", name: "Alpha" },
+          { projectId: "proj-0002", name: "Beta" },
+        ],
+      ],
+    ]);
+    expect(projectsLimit([list, later], post, bodies, ["proj-0002"])).toBe(
+      post,
+    );
+  });
+
   it("reads the ids a list shows from its listed entities, not the entities they nest", () => {
     const [list, post, later] = [
       record(0, "GET", "/api/projects"),

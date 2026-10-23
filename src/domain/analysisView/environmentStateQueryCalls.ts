@@ -206,7 +206,22 @@ interface Timeline {
   readonly io: QueryCallIo;
 }
 
-/** Every successful call answers as the latest successful GET of its path finished before it began did, with no write between. */
+/** Of these reads, the one that finished last before `call` began, a later one on a tie; records come in start order. */
+const lastFinishedBefore = (
+  reads: readonly StateRecordFacts[],
+  call: StateRecordFacts,
+): StateRecordFacts | undefined => {
+  let latest: StateRecordFacts | undefined;
+  for (const read of reads)
+    if (
+      read.end <= call.start &&
+      (latest === undefined || read.end >= latest.end)
+    )
+      latest = read;
+  return latest;
+};
+
+/** Every successful call answers as the successful GET of its path that finished last before it began did, with no write between. */
 const repeatsRead = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
@@ -214,15 +229,17 @@ const repeatsRead = (
 ): boolean =>
   calls.filter(succeeded).every((call) => {
     const at = position.get(call.ordinal)!;
-    const read = records
-      .slice(0, at)
-      .findLast(
-        (record) =>
-          record.method === "GET" &&
-          record.path === call.path &&
-          succeeded(record) &&
-          record.end <= call.start,
-      );
+    const read = lastFinishedBefore(
+      records
+        .slice(0, at)
+        .filter(
+          (record) =>
+            record.method === "GET" &&
+            record.path === call.path &&
+            succeeded(record),
+        ),
+      call,
+    );
     if (read === undefined || between(position.get(read.ordinal)!, at))
       return false;
     const answered = io.response(call.ordinal);
@@ -279,11 +296,12 @@ const changesReadsAcross = (
         prefixRelated(call.path, record.path),
     );
     return [...new Set(related.map(lineOf))].some((line) => {
-      const before = related.findLast(
-        (record) =>
-          lineOf(record) === line &&
-          position.get(record.ordinal)! < at &&
-          record.end <= call.start,
+      const before = lastFinishedBefore(
+        related.filter(
+          (record) =>
+            lineOf(record) === line && position.get(record.ordinal)! < at,
+        ),
+        call,
       );
       const after = related.find(
         (record) =>

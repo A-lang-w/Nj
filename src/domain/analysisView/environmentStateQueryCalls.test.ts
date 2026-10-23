@@ -345,6 +345,15 @@ describe("the reads either side of a POST", () => {
         at(renamed, 40, 41),
       ]),
     ).toEqual([]);
+    // Of the reads finished before the POST began, the one that finished last decides, not the one begun last.
+    expect(
+      readOnlyOf([
+        at(original, 0, 9),
+        at(renamed, 1, 2),
+        post,
+        at(renamed, 40, 41),
+      ]),
+    ).toEqual([]);
   });
 
   it("keeps a POST a write when a read of its path finds the entity gone after it", () => {

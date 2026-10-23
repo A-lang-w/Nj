@@ -9,6 +9,8 @@ import {
 /** One entity object as one tool recorded it. */
 export interface StateObservation {
   readonly position: number;
+  /** Where in its read the entity was listed; 0 for an item read. */
+  readonly index: number;
   readonly ordinal: number;
   readonly tool: string;
   readonly item: boolean;

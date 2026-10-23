@@ -20,7 +20,7 @@ its cause in the recordings and the code. The five largest shared causes:
 
 ## Behaviour
 
-- **Read-only calls.** A POST is not a state write when its response repeats the latest read of its path that finished
+- **Read-only calls.** A POST is not a state write when its response repeats the read of its path that finished last
   before it began, with no write between, it tunnels only read operations, its last literal segment names a lookup and
   no write, or it renews a session; it is replayed. It stays a write when one of its calls was redirected or
   unanswered, or when a related read line changes across one of its calls, or finds its entity there on one side only,
@@ -29,20 +29,24 @@ its cause in the recordings and the code. The five largest shared causes:
   models or one redirected or unanswered, puts the entity into the copy within the view's budget; an entity a modelled
   write touched is never taken back.
 - **Linked creates.** A POST whose path names no state type becomes a create into the type whose item read first names
-  an id its response returned, before any other tool's write, when the id is new: no earlier read of the id, its type's
-  lists or that collection showed it. Serving creates in that read's collection, for the exemplar's path arguments only.
-  A successful POST that returned an id a type's reads only show once it began ends that type's initial window: a read
-  still running then may show it, and a list read shows its listed entities' own ids, not those they nest.
+  an id its response returned, before any other tool's write, when the id is new: no earlier read of the id, its
+  type's lists or that collection showed it. Its observation is a read of an id its response returned, in an envelope
+  too. Serving creates in that read's collection, for the exemplar's path arguments only, in either spelling. A
+  successful POST that returned an id a type's reads only show once it began ends that type's initial window: a read
+  still running then may show it, and a list read shows its listed entities' own ids (identity-named, or a
+  suffix-named field such as `projectId` distinct across two or more), not those they nest.
 - **Rewrite cuts.** When a type's reads disagree across a write under another root, the type's initial window ends at
   the earliest write within the change and the state is extracted again. The earlier of this and the creation cut wins.
 - **Variant lines.** A read line that shows the same entities in another form is a variant: it leaves the view's
-  checks, the entity observations and the membership changes that cut a type's initial window, and the view names it
-  with the query keys that pick it out (`projected_query_keys`, on item and list views). Beside a line showing whole
-  entities, a list line asking for some fields only (a projection value other than `*`) is set aside before the
-  identity proof the same way. A call matching those keys replays its recording, so it does not show served writes; a
-  400, 404 or 410 on such a line is still evidence. A call asking for some fields only replays unless every value it
-  gives is `*` or one a checked line gave, and no replayed read gave it. The write gate skips exactly the successful
-  reads serving replays, by the same decision. A filter role whose name matches no field needs two agreeing values.
+  checks, the entity observations (an entity's first sighting comes from the lines left) and the membership changes
+  that cut a type's initial window, and the view names it with the query keys that pick it out
+  (`projected_query_keys`, on item and list views). Beside a line showing whole entities, a list line asking for some
+  fields only (a projection value other than `*`) is set aside before the identity proof the same way. A call matching
+  those keys replays its recording, so it does not show served writes; a 400, 404 or 410 on such a line is still
+  evidence. A call asking for some fields only replays unless every value it gives is `*` or one a checked line gave,
+  and no replayed read gave it. The write gate skips exactly the successful reads serving replays, by the same
+  decision. A filter role whose name matches no field needs two agreeing values. A tool whose lines would take more
+  than 2^24 entity lookups to compare pairwise keeps every line checked.
 
 ## Acceptance
 
