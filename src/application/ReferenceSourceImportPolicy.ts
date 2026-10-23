@@ -82,8 +82,17 @@ const literalIgnoreAtom = (character: string, inClass: boolean): string => {
   return inClass ? atom : `[${atom}]`;
 };
 
+// Git folds ASCII bytes, not JavaScript's Unicode case pairs. Keep filenames
+// and evidence unchanged; only matcher inputs use this representation.
+const foldGitCase = (value: string): string =>
+  value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+
 /** Normalize simple classes as members/ranges, never as independent escapes. */
-const normalizeGitClass = (pattern: string, start: number) => {
+const normalizeGitClass = (
+  pattern: string,
+  start: number,
+  ignoreCase: boolean,
+) => {
   let index = start + 1;
   const negative = pattern[index] === "!" || pattern[index] === "^";
   if (negative) index += 1;
@@ -108,9 +117,17 @@ const normalizeGitClass = (pattern: string, start: number) => {
         if (dash?.character === "-" && !dash.quoted && to !== undefined) {
           // Git retains the first member of a descending range. Avoid an
           // invalid encoded range in JavaScript's RegExp constructor.
-          if (from.charCodeAt(0) <= to.character.charCodeAt(0))
+          const lower = from.charCodeAt(0);
+          const upper = to.character.charCodeAt(0);
+          if (lower <= upper) {
             text += `${literalIgnoreAtom(from, true)}-${literalIgnoreAtom(to.character, true)}`;
-          else text += literalIgnoreAtom(from, true);
+            // Git also compares the uppercase form of a folded ASCII byte
+            // against ranges, but does not fold individual class members.
+            const asciiLower = Math.max(lower, 65);
+            const asciiUpper = Math.min(upper, 90);
+            if (ignoreCase && asciiLower <= asciiUpper)
+              text += `${literalIgnoreAtom(String.fromCharCode(asciiLower + 32), true)}-${literalIgnoreAtom(String.fromCharCode(asciiUpper + 32), true)}`;
+          } else text += literalIgnoreAtom(from, true);
           member += 2;
         } else text += literalIgnoreAtom(from, true);
       }
@@ -141,6 +158,7 @@ const normalizeGitClass = (pattern: string, start: number) => {
 const normalizeIgnorePattern = (
   sourcePattern: string,
   gitEscapes = false,
+  ignoreCase = false,
 ): string => {
   const pattern = gitEscapes
     ? sourcePattern.replace(
@@ -156,7 +174,7 @@ const normalizeIgnorePattern = (
   for (let index = 0; index < pattern.length;) {
     const character = pattern[index]!;
     if (gitEscapes && character === "[") {
-      const characterClass = normalizeGitClass(pattern, index);
+      const characterClass = normalizeGitClass(pattern, index, ignoreCase);
       result += characterClass.text;
       index = characterClass.end;
       continue;
@@ -169,8 +187,14 @@ const normalizeIgnorePattern = (
       if (gitEscapes) {
         result += literalIgnoreAtom("\\", false).repeat(Math.floor(count / 2));
         if (count % 2 === 1) {
-          if (next === undefined) return "";
-          // A quoted separator still separates path components in Git.
+          // Git removes a terminal directory separator before matching. An
+          // odd escape run there leaves a dangling escape, which never matches.
+          if (
+            next === undefined ||
+            (next === "/" && end === pattern.length - 1)
+          )
+            return "";
+          // A quoted internal separator still separates path components in Git.
           result += next === "/" ? "/" : literalIgnoreAtom(next, false);
           index = end + 1;
         } else index = end;
@@ -238,7 +262,8 @@ const normalizeIgnorePattern = (
     }
     if (!inClass && character !== " " && /\s/u.test(character))
       result += `[${character}]`;
-    else result += character;
+    else
+      result += gitEscapes && ignoreCase ? foldGitCase(character) : character;
     index += 1;
   }
   return result;
@@ -249,13 +274,15 @@ const scopedPattern = (
   sourcePattern: string,
   prefix: string | undefined,
   projectPolicy: boolean,
+  ignoreCase: boolean,
 ): string | undefined => {
   // A terminal directory globstar must consume a descendant. ignore otherwise
   // lets its zero-depth match include the named parent, including for negations.
-  const pattern = normalizeIgnorePattern(sourcePattern, projectPolicy).replace(
-    /(^!?|\/)\*\*\/(?= *$)/u,
-    "$1**/*/",
-  );
+  const pattern = normalizeIgnorePattern(
+    sourcePattern,
+    projectPolicy,
+    ignoreCase,
+  ).replace(/(^!?|\/)\*\*\/(?= *$)/u, "$1**/*/");
   if (prefix === undefined) return pattern;
   if (pattern.length === 0 || /^ *$/u.test(pattern) || pattern.startsWith("#"))
     return undefined;
@@ -271,6 +298,7 @@ const addMarkedPatterns = (
   patterns: readonly string[],
   reason: IgnoreReason,
   directory = ".",
+  ignoreCase = false,
 ): void => {
   // The reader lends this matcher only to this directory's descendants.
   // Consume that known prefix by depth: literal filenames can contain glob
@@ -296,7 +324,7 @@ const addMarkedPatterns = (
       // Git removes one terminal CR even from a final line without LF.
       // Do this only for policy files, before protecting literal whitespace.
       const line = projectPolicy ? rawLine.replace(/\r$/u, "") : rawLine;
-      const scoped = scopedPattern(line, prefix, projectPolicy);
+      const scoped = scopedPattern(line, prefix, projectPolicy, ignoreCase);
       if (scoped !== undefined)
         matcher.add({
           pattern: scoped,
@@ -474,8 +502,14 @@ export const prepareReferenceSourceImport = async (
       if (!policy.ok) return policy;
       // If Git's local setting cannot be read, use the broader matcher and
       // retain that uncertainty in graph limitations below.
-      const project = ignore({ ignoreCase: ignoreCase ?? true });
-      addMarkedPatterns(project, [policy.value], "project-ignored");
+      const project = ignore({ ignoreCase: false });
+      addMarkedPatterns(
+        project,
+        [policy.value],
+        "project-ignored",
+        ".",
+        ignoreCase ?? true,
+      );
       const overrides = ignore();
       addMarkedPatterns(
         overrides,
@@ -546,6 +580,7 @@ const createExclusionPolicy = (
       exclusions,
       secrets,
       ignore().add(project).add(overrides),
+      context.ignoreCase ?? true,
     ),
     prepareDirectory: async (directory) => {
       // Root admission already read its policy before any inventory or VCS work.
@@ -564,10 +599,14 @@ const createExclusionPolicy = (
           code: text.error.code === "cancelled" ? "cancelled" : "io",
         });
       if (text.value === "") return ok(policy);
-      const inherited = ignore({
-        ignoreCase: context.ignoreCase ?? true,
-      }).add(project);
-      addMarkedPatterns(inherited, [text.value], "project-ignored", directory);
+      const inherited = ignore({ ignoreCase: false }).add(project);
+      addMarkedPatterns(
+        inherited,
+        [text.value],
+        "project-ignored",
+        directory,
+        context.ignoreCase ?? true,
+      );
       return ok(createExclusionPolicy(inherited, context));
     },
   };
@@ -597,6 +636,7 @@ const createShouldExclude =
     exclusions: HistoricalSourceGraphInput["exclusions"],
     secrets: ReturnType<typeof ignore>,
     ignored: ReturnType<typeof ignore>,
+    ignoreCase: boolean,
   ): ((path: string, kind: ReferenceSourceExclusionKind) => boolean) =>
   (path, kind) => {
     const secretMatch = matchIgnorePath(secrets, path, kind);
@@ -614,7 +654,13 @@ const createShouldExclude =
       });
       return true;
     }
-    const match = matchIgnorePath(ignored, path, kind);
+    // Caller/default rules retain their own case-insensitive regexes. ASCII
+    // folding their input is equivalent; project rules use explicit Git folds.
+    const match = matchIgnorePath(
+      ignored,
+      ignoreCase ? foldGitCase(path) : path,
+      kind,
+    );
     if (match?.ignored !== true) return false;
     if (!match.rule)
       throw new Error(`Ignored path has no matching rule: ${path}`);

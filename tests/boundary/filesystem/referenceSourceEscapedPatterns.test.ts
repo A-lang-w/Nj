@@ -14,7 +14,7 @@ const writeTree = async (root: string, files: Record<string, string>) => {
   }
 };
 
-const gitInventory = (root: string): string[] => {
+const gitInventory = (root: string, ignoreCase = false): string[] => {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
   );
@@ -30,7 +30,7 @@ const gitInventory = (root: string): string[] => {
     return result.stdout;
   };
   git(["init", "--quiet", "--template="]);
-  git(["config", "core.ignorecase", "false"]);
+  git(["config", "core.ignorecase", String(ignoreCase)]);
   return git(["ls-files", "--others", "--exclude-standard", "-z"])
     .split("\0")
     .filter(Boolean)
@@ -292,5 +292,233 @@ describe.skipIf(process.platform === "win32")(
         policy_path: "pkg/.gitignore",
       });
     });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "reference ignore terminal separator escapes",
+  () => {
+    it.each(["", "pkg/"])(
+      "preserves terminal separator escapes in %s",
+      async (prefix) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-terminal-escape-",
+        );
+        const policyPath = `${prefix}.gitignore`;
+        await writeTree(root, {
+          [policyPath]:
+            [
+              String.raw`cache\/`,
+              String.raw`odd\\\/`,
+              String.raw`even\\/`,
+              String.raw`trim\/   `,
+              "keep/*",
+              String.raw`!keep/sub\/`,
+              String.raw`middle\/file`,
+              String.raw`space\/\ `,
+            ].join("\n") + "\n",
+          [`${prefix}cache/file.ts`]: "terminal escape must not prune\n",
+          [`${prefix}odd\\/file.ts`]: "odd escape count must not prune\n",
+          [`${prefix}even\\/file.ts`]:
+            "even escape count is a directory rule\n",
+          [`${prefix}trim/file.ts`]:
+            "unescaped spaces do not change the terminal slash\n",
+          [`${prefix}keep/sub/file.ts`]:
+            "terminal escaped negation must not reopen\n",
+          [`${prefix}middle/file`]: "internal escaped slash still matches\n",
+          [`${prefix}middle/other`]: "retained control\n",
+          [`${prefix}space/ `]: "escaped trailing space still matches\n",
+          [`${prefix}space/other`]: "retained control\n",
+        });
+        const expected = gitInventory(root);
+        for (const path of [
+          "cache/file.ts",
+          "odd\\/file.ts",
+          "trim/file.ts",
+          "middle/other",
+          "space/other",
+        ])
+          expect(expected).toContain(prefix + path);
+        for (const path of [
+          "even\\/file.ts",
+          "keep/sub/file.ts",
+          "middle/file",
+          "space/ ",
+        ])
+          expect(expected).not.toContain(prefix + path);
+        const result = await importReferenceSource({
+          root,
+          caller: "terminal-escape-test",
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        expect(
+          result.value.entries
+            .filter(({ kind }) => kind === "file")
+            .map(({ path }) => path)
+            .sort(),
+        ).toEqual(expected);
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "reference ignore ASCII case folding",
+  () => {
+    it.each([
+      { prefix: "", ignoreCase: false },
+      { prefix: "", ignoreCase: true },
+      { prefix: "pkg/", ignoreCase: false },
+      { prefix: "pkg/", ignoreCase: true },
+    ])(
+      "preserves Git case folding in $prefix (ignoreCase=$ignoreCase)",
+      async ({ prefix, ignoreCase }) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-ignore-folding-",
+        );
+        const policyPath = `${prefix}.gitignore`;
+        const patterns = [
+          "café",
+          "Ärea/",
+          "Ascii",
+          "range[A-C]",
+          "member[A]",
+          String.raw`quoted\A`,
+          "neg[!A-C]",
+          "cross[Z-a]",
+          "descending[a-Z]",
+          String.raw`lower\a`,
+          "*.tmp",
+          "!é.tmp",
+        ];
+        const paths = [
+          "café",
+          "cafÉ",
+          "Ärea/drop.ts",
+          "ärea/keep.ts",
+          "ascii",
+          "ASCII",
+          "rangea",
+          "rangeB",
+          "ranged",
+          "memberA",
+          "membera",
+          "quotedA",
+          "quoteda",
+          "negA",
+          "negb",
+          "negz",
+          "crossA",
+          "crossZ",
+          "crossb",
+          "cross_",
+          "descendingA",
+          "descendinga",
+          "descendingZ",
+          "lowerA",
+          "lowera",
+          "é.tmp",
+          "É.tmp",
+        ];
+        await writeTree(root, {
+          [policyPath]: `${patterns.join("\n")}\n`,
+          ...Object.fromEntries(
+            paths.map((path) => [prefix + path, "export {};\n"]),
+          ),
+        });
+        const expected = gitInventory(root, ignoreCase);
+        expect(expected).toContain(prefix + "cafÉ");
+        expect(expected).toContain(prefix + "ärea/keep.ts");
+        expect(expected).not.toContain(prefix + "café");
+        expect(expected).not.toContain(prefix + "Ärea/drop.ts");
+        expect(expected).not.toContain(prefix + "lowera");
+        expect(expected.includes(prefix + "lowerA")).toBe(!ignoreCase);
+        const result = await importReferenceSource({
+          root,
+          caller: "ignore-case-folding-test",
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        expect(
+          result.value.entries
+            .filter(({ kind }) => kind === "file")
+            .map(({ path }) => path)
+            .sort(),
+        ).toEqual(expected);
+        expect(result.value.exclusions).toContainEqual({
+          path: prefix + "café",
+          entry_kind: "file",
+          reason: "project-ignored",
+          pattern: "café",
+          policy_path: policyPath,
+        });
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "reference ignore case-folding precedence",
+  () => {
+    it.each([true, null])(
+      "keeps caller and secret matching separate from Git folding (%s)",
+      async (ignoreCase) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-folding-precedence-",
+        );
+        await writeTree(root, {
+          ".gitignore": "é\nBuild/\n!trace.log\n",
+          é: "reopened by caller\n",
+          É: "retained by project rules\n",
+          "CAFÉ.txt": "excluded by caller's existing Unicode folding\n",
+          "CAFÉ.secret": "excluded by secret's existing Unicode folding\n",
+          "build/drop.ts": "excluded by ASCII folding\n",
+          "trace.log": "still excluded by defaults\n",
+        });
+        gitInventory(root, true);
+        if (ignoreCase === null)
+          await writeFile(
+            join(root, ".git/config"),
+            "[core]\nignoreCase=invalid\n",
+          );
+        const result = await importReferenceSource({
+          root,
+          caller: "ignore-folding-precedence-test",
+          excludePaths: ["café.txt", "!É"],
+          policy: { secretPatterns: ["café.secret"] },
+        });
+        if (!result.ok) throw result.error;
+        expect(
+          result.value.entries
+            .filter(({ kind }) => kind === "file")
+            .map(({ path }) => path)
+            .sort(),
+        ).toEqual([".gitignore", "É", "é"]);
+        for (const expected of [
+          { path: "CAFÉ.txt", reason: "caller-excluded", pattern: "café.txt" },
+          {
+            path: "CAFÉ.secret",
+            reason: "configured-secret",
+            pattern: "café.secret",
+          },
+          {
+            path: "build",
+            reason: "project-ignored",
+            pattern: "Build/",
+            policy_path: ".gitignore",
+          },
+          { path: "trace.log", reason: "default-ignored", pattern: "*.log" },
+        ])
+          expect(result.value.exclusions).toContainEqual(
+            expect.objectContaining(expected),
+          );
+        const unknown =
+          "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.";
+        expect(result.value.limitations.includes(unknown)).toBe(
+          ignoreCase === null,
+        );
+      },
+    );
   },
 );
