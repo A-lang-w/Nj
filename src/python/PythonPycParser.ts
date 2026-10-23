@@ -274,6 +274,8 @@ class MarshalReader {
   readonly #codeKeys = new WeakMap<CodeNode, string>();
   readonly #codeIdentities = new WeakMap<CodeNode, number>();
   readonly #codeEquality = new WeakMap<CodeNode, CodeEquality>();
+  /** Python hashability per code object. False while that check is in progress. */
+  readonly #codeHashable = new WeakMap<CodeNode, boolean>();
   /** Code objects whose const summaries wait until the graph is fully decoded. */
   readonly #codes: CodeNode[] = [];
   /**
@@ -1072,6 +1074,7 @@ class MarshalReader {
         return `${prefix}${value.value.length}:${value.value.toString("hex")}`;
       }
       case "code":
+        if (mode === "hash" && !this.#isCodeHashable(value.value)) return null;
         return this.#codeKey(value.value);
       default:
         return mode === "const" ? this.#identity(value) : null;
@@ -1166,6 +1169,25 @@ class MarshalReader {
     );
     this.#codeKeys.set(node, key);
     return key;
+  }
+
+  /**
+   * CPython hashes the consts tuple itself, so one unhashable const makes the
+   * code unhashable. A const that leads back to the same code counts as
+   * unhashable instead of recursing.
+   */
+  #isCodeHashable(node: CodeNode): boolean {
+    const known = this.#codeHashable.get(node);
+    if (known !== undefined) return known;
+    this.#codeHashable.set(node, false);
+    const material =
+      this.#codeEquality.get(node) ??
+      malformed("Code object is missing equality material.");
+    const hashable = material.consts.every(
+      (item) => this.#equalityKey(item, "hash") !== null,
+    );
+    this.#codeHashable.set(node, hashable);
+    return hashable;
   }
 
   #codeIdentity(node: CodeNode): number {
