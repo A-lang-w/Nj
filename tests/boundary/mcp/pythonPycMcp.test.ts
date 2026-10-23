@@ -1,11 +1,16 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { pythonPycFixture } from "../../../src/python/PythonPyc.fixture.js";
+import {
+  marshalCode,
+  pythonPycFixture,
+  pythonPycHeader,
+} from "../../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
@@ -29,9 +34,27 @@ mcpTest(
         readOnlyHint: false,
         idempotentHint: true,
       });
+      if (advertised?.outputSchema === undefined)
+        throw new Error("Missing inspect_python_pyc output schema");
+      const outputSchema: Record<string, unknown> = advertised.outputSchema;
+      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      expect(ajv.validateSchema(outputSchema)).toBe(true);
       const root = await createTestTempDirectory("rea-python-pyc-mcp-");
       const path = join(root, "sample.pyc");
-      await writeFile(path, pythonPycFixture("py311", { nested: true }));
+      const nested = marshalCode("py311", {
+        name: "inner",
+        firstlineno: -7,
+      });
+      await writeFile(
+        path,
+        Buffer.concat([
+          pythonPycHeader(3531),
+          marshalCode("py311", {
+            firstlineno: -1,
+            consts: [nested],
+          }),
+        ]),
+      );
       const response = await client.callTool({
         name: "inspect_python_pyc",
         arguments: { path },
@@ -40,8 +63,20 @@ mcpTest(
       const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
         response.structuredContent,
       );
+      expect(
+        ajv.validate(outputSchema, response.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
       expect(evidence.normalized_result.header.python_version).toBe("3.12");
+      expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
       expect(evidence.normalized_result.code_objects[1]?.name).toBe("inner");
+      expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual(
+        {
+          kind: "code",
+          name: "inner",
+          firstlineno: -7,
+        },
+      );
     } finally {
       await session.close();
     }
@@ -64,6 +99,67 @@ mcpTest("requires an absolute path for inspect_python_pyc", async ({ mcp }) => {
     await session.close();
   }
 });
+
+mcpTest(
+  "advertised pyc output schema accepts signed legacy flags and positive unknown flags",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const advertised = (await client.listTools()).tools.find(
+        (tool) => tool.name === "inspect_python_pyc",
+      );
+      if (advertised?.outputSchema === undefined)
+        throw new Error("Missing inspect_python_pyc output schema");
+      const outputSchema: Record<string, unknown> = advertised.outputSchema;
+      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      const root = await createTestTempDirectory("rea-python-pyc-mcp-flags-");
+      for (const testCase of [
+        {
+          name: "legacy-negative",
+          magic: 3394,
+          layout: "py37" as const,
+          rawFlags: 0x80000000,
+          expectedFlags: -0x80000000,
+        },
+        {
+          name: "unknown-positive",
+          magic: 3531,
+          layout: "py311" as const,
+          rawFlags: 0x40000000,
+          expectedFlags: 0x40000000,
+        },
+      ]) {
+        const path = join(root, `${testCase.name}.pyc`);
+        await writeFile(
+          path,
+          Buffer.concat([
+            pythonPycHeader(testCase.magic),
+            marshalCode(testCase.layout, { flags: testCase.rawFlags }),
+          ]),
+        );
+        const response = await client.callTool({
+          name: "inspect_python_pyc",
+          arguments: { path },
+        });
+        expect(response.isError, JSON.stringify(response.content)).not.toBe(
+          true,
+        );
+        const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+          response.structuredContent,
+        );
+        expect(
+          ajv.validate(outputSchema, response.structuredContent),
+          JSON.stringify(ajv.errors),
+        ).toBe(true);
+        expect(evidence.normalized_result.code_objects[0]?.flags).toBe(
+          testCase.expectedFlags,
+        );
+      }
+    } finally {
+      await session.close();
+    }
+  },
+);
 
 mcpTest("reports an unknown pyc magic as unsupported", async ({ mcp }) => {
   const { client, session } = await connect(mcp);

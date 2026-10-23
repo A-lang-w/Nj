@@ -8,8 +8,9 @@ export const PYTHON_PYC_CHECK_SOURCE = 0x2;
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const index = z.number().int().nonnegative();
-/** Non-negative CPython `int` counts. `0xffffffff` is -1 and is not evidence. */
-const signedCount = z.number().int().min(0).max(0x7fffffff);
+const signedInt32 = z.number().int().min(-0x80000000).max(0x7fffffff);
+/** Non-negative CPython `int` counts. */
+const nonNegativeInt32 = z.number().int().min(0).max(0x7fffffff);
 
 /** Marshal TYPE_CODE field order for CPython 3.7, 3.8–3.10, and 3.11+. */
 export const PYTHON_PYC_CODE_LAYOUTS = ["py37", "py38", "py311"] as const;
@@ -18,14 +19,16 @@ export type PythonPycCodeLayout = (typeof PYTHON_PYC_CODE_LAYOUTS)[number];
 type MagicEntry = {
   readonly python_version: string;
   readonly code_layout: PythonPycCodeLayout;
+  readonly header_bytes: 12 | 16;
 };
 
 const magics = (
   values: readonly number[],
   python_version: string,
   code_layout: PythonPycCodeLayout,
+  header_bytes: 12 | 16 = PYTHON_PYC_HEADER_BYTES,
 ): ReadonlyArray<readonly [number, MagicEntry]> =>
-  values.map((magic) => [magic, { python_version, code_layout }]);
+  values.map((magic) => [magic, { python_version, code_layout, header_bytes }]);
 
 const consecutive = (
   start: number,
@@ -45,7 +48,8 @@ const consecutive = (
  * bytecode opcode tables.
  */
 export const PYTHON_PYC_MAGIC_TABLE: ReadonlyMap<number, MagicEntry> = new Map([
-  ...magics([3390, 3391, 3392, 3393, 3394], "3.7", "py37"),
+  ...magics([3390, 3391], "3.7", "py37", 12),
+  ...magics([3392, 3393, 3394], "3.7", "py37"),
   ...magics([3400, 3401], "3.8", "py37"),
   ...magics([3410, 3411, 3412, 3413], "3.8", "py38"),
   ...magics([3420, 3421, 3422, 3423, 3424, 3425], "3.9", "py38"),
@@ -107,9 +111,9 @@ export const inspectPythonPycInputSchema = z.strictObject({
     ),
 });
 
-const constPreviewLimit = 80;
+export const PYTHON_PYC_CONST_PREVIEW_LIMIT = 80;
 /** Integers up to 256 bits fit the 80-character preview in decimal. */
-const intPreviewBits = 256;
+export const PYTHON_PYC_INT_PREVIEW_BITS = 256;
 
 /** CPython float repr for values JSON numbers cannot carry. */
 const pythonFloatSchema = z.union([z.number(), z.enum(["inf", "-inf", "nan"])]);
@@ -120,14 +124,14 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("int"),
     bits: uint,
-    value: z.string().min(1).max(constPreviewLimit).nullable(),
+    value: z.string().min(1).max(PYTHON_PYC_CONST_PREVIEW_LIMIT).nullable(),
   }),
   z.strictObject({ kind: z.literal("float"), value: pythonFloatSchema }),
   z.strictObject({
     kind: z.literal("str"),
     bytes: uint,
     truncated: z.boolean(),
-    value: z.string().max(constPreviewLimit),
+    value: z.string().max(PYTHON_PYC_CONST_PREVIEW_LIMIT),
   }),
   z.strictObject({
     kind: z.literal("bytes"),
@@ -137,7 +141,7 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("code"),
     name: z.string(),
-    firstlineno: uint,
+    firstlineno: signedInt32,
   }),
   z.strictObject({ kind: z.literal("tuple"), length: uint }),
   z.strictObject({ kind: z.literal("list"), length: uint }),
@@ -157,13 +161,13 @@ const pythonCodeFields = {
   name: z.string(),
   qualname: z.string().nullable(),
   filename: z.string(),
-  firstlineno: uint,
-  argcount: signedCount,
-  posonlyargcount: signedCount.nullable(),
-  kwonlyargcount: signedCount,
-  nlocals: signedCount.nullable(),
-  stacksize: signedCount,
-  flags: uint,
+  firstlineno: signedInt32,
+  argcount: nonNegativeInt32,
+  posonlyargcount: nonNegativeInt32.nullable(),
+  kwonlyargcount: nonNegativeInt32,
+  nlocals: nonNegativeInt32.nullable(),
+  stacksize: nonNegativeInt32,
+  flags: signedInt32,
   names: z.array(z.string()),
   varnames: z.array(z.string()).nullable(),
   freevars: z.array(z.string()).nullable(),
@@ -293,6 +297,3 @@ export const pythonPycSchema = z
 
 export type PythonPyc = z.infer<typeof pythonPycSchema>;
 export type InspectPythonPycInput = z.infer<typeof inspectPythonPycInputSchema>;
-
-export const PYTHON_PYC_CONST_PREVIEW_LIMIT = constPreviewLimit;
-export const PYTHON_PYC_INT_PREVIEW_BITS = intPreviewBits;

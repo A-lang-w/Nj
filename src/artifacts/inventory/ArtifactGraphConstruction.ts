@@ -27,10 +27,7 @@ import {
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
-import {
-  observeMzWindowsHeader,
-  parseDosMzHeader,
-} from "../../domain/dosMz.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
@@ -657,8 +654,10 @@ export const classifyArtifactBytes = (
       prefix.length < Math.min(fileSize, 64)
     )
       return "unknown";
-    const windowsHeader = observeMzWindowsHeader(prefix, fileSize);
+    const evidence = parseMzHeaderEvidence(prefix, fileSize);
+    const { windowsHeader } = evidence;
     if (windowsHeader.state === "signature-needed") return "unknown";
+    if (windowsHeader.state === "candidate") return "unknown";
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
       if (
@@ -669,7 +668,7 @@ export const classifyArtifactBytes = (
         return "pe";
       return "unknown";
     }
-    if (parseDosMzHeader(prefix, fileSize).ok) return "dos-mz";
+    if (evidence.dos.ok) return "dos-mz";
     return "unknown";
   }
   return "file";

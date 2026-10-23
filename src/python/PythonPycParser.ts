@@ -45,9 +45,19 @@ const TYPE_ASCII_INTERNED = 0x41;
 const TYPE_SMALL_TUPLE = 0x29;
 const TYPE_SHORT_ASCII = 0x7a;
 const TYPE_SHORT_ASCII_INTERNED = 0x5a;
+const TYPES_WITHOUT_REFERENCE_SLOTS = new Set([
+  TYPE_NULL,
+  TYPE_NONE,
+  TYPE_FALSE,
+  TYPE_TRUE,
+  TYPE_STOPITER,
+  TYPE_ELLIPSIS,
+]);
 /** CPython `CO_VARARGS` / `CO_VARKEYWORDS`. Each consumes one local name. */
 const CO_VARARGS = 0x04;
 const CO_VARKEYWORDS = 0x08;
+/** CPython 3.7–3.10 derives this bit from the free/cell variable tables. */
+const CO_NOFREE = 0x40;
 /** CPython `_PyLocals_Kind` bit counted by `_PyCode_Validate` as a local. */
 const CO_FAST_LOCAL = 0x20;
 
@@ -141,6 +151,7 @@ const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
  */
 type CodeEquality = {
   readonly consts: readonly MarshalValue[];
+  readonly effectiveFlags: number;
   readonly linetable: string;
   readonly exceptiontable: string;
 };
@@ -180,14 +191,19 @@ export const parsePythonPyc = (
 ): PythonPyc => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
-  if (bytes.length < PYTHON_PYC_HEADER_BYTES)
-    malformed(
-      "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
-    );
+  if (bytes.length < 4) malformed("Selected file is shorter than a pyc magic.");
   if (bytes[2] !== 0x0d || bytes[3] !== 0x0a)
     malformed("Pyc magic is not a little-endian integer followed by CR LF.");
   const magic = bytes.readUInt16LE(0);
   const mapped = pythonPycMagicEntry(magic);
+  if (mapped !== null && mapped.header_bytes !== PYTHON_PYC_HEADER_BYTES)
+    return unsupported(
+      `Pyc magic ${magic} uses an unsupported ${mapped.header_bytes}-byte CPython header.`,
+    );
+  if (bytes.length < PYTHON_PYC_HEADER_BYTES)
+    malformed(
+      "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
+    );
   if (mapped === null)
     return unsupported(
       `Pyc magic ${magic} is outside the pinned CPython 3.7–3.13 table.`,
@@ -206,7 +222,12 @@ export const parsePythonPyc = (
     source_size: hashBased ? null : bytes.readUInt32LE(12),
   };
   const marshal = bytes.subarray(PYTHON_PYC_HEADER_BYTES);
-  const reader = new MarshalReader(marshal, mapped.code_layout, input);
+  const reader = new MarshalReader(
+    marshal,
+    mapped.code_layout,
+    input,
+    mapped.python_version !== "3.7",
+  );
   const root = reader.readObject(0);
   if (reader.offset !== marshal.length)
     malformed("Marshal stream has trailing bytes after the top-level object.");
@@ -289,6 +310,7 @@ class MarshalReader {
     readonly bytes: Buffer,
     readonly layout: PythonPycCodeLayout,
     readonly input: InspectPythonPycInput,
+    readonly rejectNegativeCodeFlags: boolean,
   ) {}
 
   readObject(depth: number): MarshalValue {
@@ -309,11 +331,13 @@ class MarshalReader {
     const raw = this.u8();
     const flagged = (raw & FLAG_REF) !== 0;
     const type = raw & ~FLAG_REF;
-    if (type === TYPE_REF) {
-      if (flagged) malformed("TYPE_REF must not also set FLAG_REF.");
-      return this.readRef();
-    }
-    const slot = flagged ? this.#intern.length : undefined;
+    // CPython masks FLAG_REF before dispatch; TYPE_REF returns its existing
+    // slot directly, and singleton tags bypass reference registration.
+    if (type === TYPE_REF) return this.readRef();
+    const slot =
+      flagged && !TYPES_WITHOUT_REFERENCE_SLOTS.has(type)
+        ? this.#intern.length
+        : undefined;
     if (slot !== undefined) this.#intern.push(undefined);
     const value = this.readTyped(type, depth, slot);
     if (slot !== undefined && this.#intern[slot] === undefined)
@@ -390,16 +414,20 @@ class MarshalReader {
   }
 
   code(depth: number): CodeNode {
-    const argcount = this.signedCount("co_argcount");
+    const argcount = this.nonNegativeInt32("co_argcount");
     const posonlyargcount =
-      this.layout === "py37" ? null : this.signedCount("co_posonlyargcount");
+      this.layout === "py37"
+        ? null
+        : this.nonNegativeInt32("co_posonlyargcount");
     if (posonlyargcount !== null && argcount < posonlyargcount)
       malformed("co_argcount is smaller than co_posonlyargcount.");
-    const kwonlyargcount = this.signedCount("co_kwonlyargcount");
+    const kwonlyargcount = this.nonNegativeInt32("co_kwonlyargcount");
     const nlocals =
-      this.layout === "py311" ? null : this.signedCount("co_nlocals");
-    const stacksize = this.signedCount("co_stacksize");
-    const flags = this.u32();
+      this.layout === "py311" ? null : this.nonNegativeInt32("co_nlocals");
+    const stacksize = this.nonNegativeInt32("co_stacksize");
+    const flags = this.i32();
+    if (this.rejectNegativeCodeFlags && flags < 0)
+      malformed("co_flags is negative.");
     const bytecode = asBytes(this.readObject(depth + 1), "co_code");
     // 3.11+ `_PyCode_Validate` rejects a length that is not a whole code unit.
     // 3.7–3.10 constructors do not, so an odd `co_code` stays readable there.
@@ -457,7 +485,7 @@ class MarshalReader {
       this.layout === "py311"
         ? asString(this.readObject(depth + 1), "co_qualname")
         : null;
-    const firstlineno = this.u32();
+    const firstlineno = this.i32();
     const linetable = asBytes(this.readObject(depth + 1), "co_linetable");
     const exceptiontable =
       this.layout === "py311"
@@ -495,8 +523,15 @@ class MarshalReader {
       consts: [],
       nested: [],
     };
+    const effectiveFlags =
+      this.layout === "py311"
+        ? flags
+        : (freevars?.length ?? 0) === 0 && (cellvars?.length ?? 0) === 0
+          ? flags | CO_NOFREE
+          : flags & ~CO_NOFREE;
     this.#codeEquality.set(node, {
       consts,
+      effectiveFlags,
       linetable: `${linetable.length}:${sha256(linetable)}`,
       exceptiontable: `${exceptiontable.length}:${sha256(exceptiontable)}`,
     });
@@ -1151,13 +1186,17 @@ class MarshalReader {
       String(node.posonlyargcount ?? 0),
       String(node.kwonlyargcount),
       node.nlocals === null ? "" : String(node.nlocals),
-      String(node.flags),
+      String(material.effectiveFlags),
       String(node.firstlineno),
       `${node.bytecode.bytes}:${node.bytecode.sha256}`,
       this.#constKeyItems(material.consts),
       ...nameTables,
-      material.linetable,
-      material.exceptiontable,
+      // CPython started including line and exception tables in code equality
+      // with the 3.11 code layout; earlier layouts still retain their digests
+      // in CodeEquality, but those fields do not affect container identity.
+      ...(this.layout === "py311"
+        ? [material.linetable, material.exceptiontable]
+        : []),
     ];
     const key = this.#boundedJoin(
       "",
@@ -1392,8 +1431,8 @@ class MarshalReader {
     return value;
   }
 
-  /** CPython `r_long` count. Negative values are rejected before Evidence. */
-  signedCount(field: string): number {
+  /** CPython `r_long` int fields must not be negative in a code object. */
+  nonNegativeInt32(field: string): number {
     const value = this.i32();
     if (value < 0) malformed(`${field} is negative.`);
     return value;
