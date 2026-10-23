@@ -112,9 +112,7 @@ interface ClientDefinitionBase {
 
 /** MiniMax Code honors explicit data-dir overrides before `~/.minimax`. */
 const minimaxDirectory = ({ home, env }: ClientPathContext): string =>
-  env.MINIMAX_DATA_DIR?.trim() ||
-  env.MAVIS_DATA_DIR?.trim() ||
-  join(home, ".minimax");
+  env.MINIMAX_DATA_DIR || env.MAVIS_DATA_DIR || join(home, ".minimax");
 
 /** XDG treats an empty config-home value as unset. */
 const xdgConfigHome = ({ home, env }: ClientPathContext): string =>

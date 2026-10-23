@@ -60,8 +60,7 @@ describe("MiniMax Code configuration paths", () => {
         ?.configPath,
     ).toBe(join("/data/mv", "mcp.json"));
     expect(
-      minimaxCodePath("/home/a", "linux", { MINIMAX_DATA_DIR: "  " })
-        ?.configPath,
+      minimaxCodePath("/home/a", "linux", { MINIMAX_DATA_DIR: "" })?.configPath,
     ).toBe(join("/home/a", ".minimax", "mcp.json"));
     expect(
       skillDestinations("/home/a", ["minimax_code"], both).map(

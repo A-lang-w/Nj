@@ -366,8 +366,8 @@ Setup preserves every other server and top-level key when it upserts `rea`.
 MiniMax Code also reads a project-level `<workspace>/.mcp.json`, which setup
 does not touch. When `MINIMAX_DATA_DIR` (or `MAVIS_DATA_DIR`) is set, setup
 uses that directory instead of `~/.minimax`. Named profiles
-(`~/.minimax-<profile>`) and the legacy `~/.mavis` directory are not detected. Run `/mcp reload` or start a new
-session to pick up the change.
+(`~/.minimax-<profile>`) and the legacy `~/.mavis` directory are not detected.
+Run `/mcp reload` or start a new session to pick up the change.
 
 ## ZCode
 
