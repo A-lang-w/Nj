@@ -8,7 +8,7 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   jadxAppSchema,
-  jadxClassPageSchema,
+  type JadxClassPage,
   jadxClassSchema,
   jadxLoadSchema,
   jadxMethodSchema,
@@ -19,6 +19,11 @@ import {
 
 /** The adapter consumes tool payloads, never provider RPC details outside this layer. */
 export interface JadxToolPort {
+  listClasses(input: {
+    readonly query: string;
+    readonly offset: number;
+    readonly limit: number;
+  }): Promise<JadxClassPage>;
   json(
     name: string,
     input: Readonly<Record<string, JsonValue>>,
@@ -144,13 +149,11 @@ const searchClasses = async (
   const pageSize = 4096;
   let offset = 0;
   do {
-    const page = jadxClassPageSchema.parse(
-      await tools.json("list_classes", {
-        query: request.input.query,
-        offset,
-        limit: pageSize,
-      }),
-    );
+    const page = await tools.listClasses({
+      query: request.input.query,
+      offset,
+      limit: pageSize,
+    });
     if (
       page.total_classes !== loaded.class_count ||
       page.offset !== offset ||

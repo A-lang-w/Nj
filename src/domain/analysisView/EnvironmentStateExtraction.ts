@@ -1,3 +1,4 @@
+import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   compareUnicodeCodePoints as compare,
@@ -15,13 +16,14 @@ import {
   isParam,
   isQueryPost,
   isStateWrite,
-  jsonBytes,
+  stateValueRetentionBytes,
   lastSegmentValue,
   STATE_BODY_LIMIT_BYTES,
   listItems,
   locateItem,
   locateList,
   normalizedPath,
+  projectsFields,
   rootOf,
   same,
   scalarText,
@@ -230,14 +232,22 @@ export class EnvironmentStateExtraction {
     return first;
   }
 
-  /** Successful recordings that finished before the first related write began. */
-  #initRecordings(tool: StateToolFacts, template: string): StateRecordFacts[] {
-    const limit = this.#initLimit(template);
-    const before = (record: StateRecordFacts): boolean =>
+  /** Initial-state admission is shared with later projection-evidence selection. */
+  #beforeInitLimit(
+    record: StateRecordFacts,
+    limit: StateRecordFacts | undefined,
+  ): boolean {
+    return (
       limit === undefined ||
       (this.#position.get(record.ordinal)! <
         this.#position.get(limit.ordinal)! &&
-        (this.#timeline === "record-order" || record.end <= limit.start));
+        (this.#timeline === "record-order" || record.end <= limit.start))
+    );
+  }
+
+  /** Successful recordings that finished before the first related write began. */
+  #initRecordings(tool: StateToolFacts, template: string): StateRecordFacts[] {
+    const limit = this.#initLimit(template);
     return tool.record_ordinals
       .map((ordinal) => this.#byOrdinal.get(ordinal))
       .filter(
@@ -246,7 +256,7 @@ export class EnvironmentStateExtraction {
           record.status !== null &&
           record.status >= 200 &&
           record.status < 300 &&
-          before(record),
+          this.#beforeInitLimit(record, limit),
       )
       .sort(
         (left, right) =>
@@ -276,13 +286,48 @@ export class EnvironmentStateExtraction {
     candidate: Candidate,
     pointer: string,
     recordings: readonly StateRecordFacts[],
+    projected: readonly number[] = [],
   ): void {
     this.#plans.push({
       ...candidate,
       pointer,
       recordings,
       latest: this.#latestPerLine(recordings),
+      projected,
     });
+  }
+
+  /** Later identity-free projections are evidence of replay, never initial entities. Read only those query bodies. */
+  #addLateProjections(
+    tool: StateToolFacts,
+    type: string,
+    projected: number[],
+  ): void {
+    const limit = this.#initLimit(type);
+    if (limit === undefined) return;
+    for (const ordinal of tool.record_ordinals) {
+      const record = this.#byOrdinal.get(ordinal);
+      if (
+        record === undefined ||
+        record.status === null ||
+        record.status < 200 ||
+        record.status >= 300 ||
+        !projectsFields(record.query) ||
+        this.#beforeInitLimit(record, limit)
+      )
+        continue;
+      if (
+        this.#withBody(
+          ordinal,
+          (body) =>
+            body !== undefined &&
+            locateItem(body, lastSegmentValue(record.path)) === undefined,
+        )
+      ) {
+        this.#retain(ENTRY_BYTES);
+        projected.push(ordinal);
+      }
+    }
   }
 
   /** Item tools prove a type's identity field by the path value their bodies repeat. */
@@ -292,6 +337,8 @@ export class EnvironmentStateExtraction {
     if (recordings === undefined) return;
     let pointer: string | undefined;
     let keys: string[] | undefined;
+    const kept: StateRecordFacts[] = [];
+    const projected: number[] = [];
     for (const record of recordings) {
       const located = this.#withBody(record.ordinal, (body) =>
         body === undefined
@@ -302,6 +349,13 @@ export class EnvironmentStateExtraction {
         this.#recorded(tool, "body-unusable");
         return;
       }
+      // A read that asked for some fields only may leave the identity out; replay answers it.
+      if (located === undefined && projectsFields(record.query)) {
+        this.#retain(ENTRY_BYTES);
+        projected.push(record.ordinal);
+        continue;
+      }
+      kept.push(record);
       if (
         located === undefined ||
         (pointer ?? located.pointer) !== located.pointer
@@ -328,7 +382,11 @@ export class EnvironmentStateExtraction {
       return;
     }
     this.#identity.set(type, { field, basis: "path-parameter" });
-    this.#addPlan(candidate, pointer, recordings);
+    this.#addLateProjections(tool, type, projected);
+    projected.sort(
+      (left, right) => this.#position.get(left)! - this.#position.get(right)!,
+    );
+    this.#addPlan(candidate, pointer, kept, projected);
   }
 
   /**
@@ -479,7 +537,7 @@ export class EnvironmentStateExtraction {
       if (position < first || (position === first && index < at))
         entity.order = [position, index];
     }
-    this.#retain(ENTRY_BYTES + jsonBytes(object));
+    this.#retain(ENTRY_BYTES + stateValueRetentionBytes(object));
     entity.observations.push({
       position,
       ordinal: record.ordinal,
@@ -585,15 +643,14 @@ export class EnvironmentStateExtraction {
       // Parsing can lengthen a body that was admitted under the recorded-text limit:
       // `1e3` is four bytes once rendered as `1000`. Serving refuses that rendering,
       // so an oversized document stays the recorded replay instead of a failing read.
-      if (
-        Buffer.byteLength(JSON.stringify(value), "utf8") >
-        STATE_BODY_LIMIT_BYTES
-      ) {
+      if (jsonByteLength(value) > STATE_BODY_LIMIT_BYTES) {
         this.#recorded(tool, "rendered-oversize");
         continue;
       }
       this.#retain(
-        ENTRY_BYTES + jsonBytes(value) + textBytes(record.path.length),
+        ENTRY_BYTES +
+          stateValueRetentionBytes(value) +
+          textBytes(record.path.length),
       );
       documents.push({
         tool: tool.name,

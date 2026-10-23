@@ -4,6 +4,7 @@ import {
   resolveArtifactPathByContext,
   type ResolveArtifactPathInput,
 } from "./JavaScriptArtifactPathResolution.js";
+import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
@@ -3184,18 +3185,20 @@ describe("url-reference directory and empty-segment semantics", () => {
     "/dist/worker.js/.",
     "./worker.js/.?cache=1#entry",
   ])("keeps directory-form URLs distinct from files: %s", (declaredPath) => {
-    expect(
-      resolve({
-        declaredPath,
-        sourcePath: "dist/app.mjs",
-        context: "url-reference",
-        files: fileMap([file("dist/worker.js", "root")]),
-      }),
-    ).toMatchObject({
-      declared_path: declaredPath,
-      resolution_status: "not-found",
-      resolved_path: null,
-    });
+    for (const context of ["url-reference", "html-reference"] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "dist/app.mjs",
+          context,
+          files: fileMap([file("dist/worker.js", "root")]),
+        }),
+        context,
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "not-found",
+        resolved_path: null,
+      });
   });
 
   it.each([
@@ -3563,8 +3566,9 @@ describe("module-backed package main host paths", () => {
   );
 });
 
-const resolve = (input: ResolveArtifactPathInput) =>
-  resolveArtifactPathByContext(input);
+const jsonDocuments = new JavaScriptJsonDocuments();
+const resolve = (input: Omit<ResolveArtifactPathInput, "jsonDocuments">) =>
+  resolveArtifactPathByContext({ ...input, jsonDocuments });
 
 const fileMap = (files: readonly JavaScriptArtifactFile[]) =>
   new Map(files.map((value) => [value.path, value]));

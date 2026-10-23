@@ -61,7 +61,7 @@ rea inspect-go-binary ./application --detail summary --evidence_output ./go-evid
 `--evidence_output` is required for CLI summary delivery and never overwrites an
 existing file. The default CLI/MCP reply remains complete.
 
-[Measured workflows](../experiments/analysis-efficiency/go-build-views.md) include
+[Measured workflows](https://github.com/morluto/rea/blob/42e1a17d6e6c0487f17be0bae248553c4caba7f7/experiments/analysis-efficiency/go-build-views.md) include
 catalog repetition and extra calls. Identity/count questions benefit from a
 single summary. In the tested Codex full-catalog configuration, a compound
 question about identity and one dependency uses fewer tokens in captured request JSON with
@@ -112,8 +112,9 @@ module record and no dependency records has an observed empty dependency list.
 The built-in TypeScript reader supports ELF, PE and thin Mach-O images, and one
 selected slice of a universal Mach-O, with Go's inline or historical pointer
 build-info encoding. Source ranges refer to the original stable file snapshot,
-including pointer-backed strings. It does not scan arbitrary byte strings as
-compiler metadata.
+including pointer-backed strings. Legacy pointer-backed fields are decoded at
+the width declared by Go's build-info record, independently of the image's ELF
+class. It does not scan arbitrary byte strings as compiler metadata.
 
 A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
 or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,

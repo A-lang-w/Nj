@@ -3,11 +3,8 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../InvestigationProviders.js";
-import {
-  isImmutableEvidence,
-  parseEvidence,
-  type Evidence,
-} from "../../domain/evidence.js";
+import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import {
   type AnalysisInputIssue,
   AnalysisInputError,
@@ -320,7 +317,7 @@ const requireProvider = (
     );
 };
 
-/** Parse unique, artifact-bound Evidence that may extend a native handoff. */
+/** Authenticate artifact-bound Evidence that may extend a native handoff. */
 export const parseNativeApplicationEvidence = (
   inputs: readonly unknown[],
   path: readonly (string | number)[] = [],
@@ -335,13 +332,6 @@ export const parseNativeApplicationEvidence = (
         [...path, withoutSubject],
         "subject",
         "Native handoff Evidence requires an artifact subject.",
-      );
-    const ids = parsed.map(({ evidence_id: id }) => id);
-    if (new Set(ids).size !== ids.length)
-      throw invalidEvidence(
-        path,
-        "evidence_id",
-        "Native handoff Evidence must be unique.",
       );
     return parsed;
   });
@@ -362,12 +352,9 @@ const parseEvidenceInput = (
   input: unknown,
   path: readonly (string | number)[],
 ): Evidence => {
-  try {
-    return parseEvidence(input);
-  } catch (cause: unknown) {
-    if (cause instanceof z.ZodError) throw zodInputFailure(cause, input, path);
-    throw cause;
-  }
+  const parsed = safeParseEvidence(input);
+  if (parsed.ok) return parsed.value;
+  throw zodInputFailure(parsed.error, input, path);
 };
 
 const parseCallerValue = <Value>(

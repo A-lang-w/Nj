@@ -132,6 +132,7 @@ const methodComparisonItemSchema = comparisonItemSchema(
         "cil",
         "opcode-shape",
         "call-shape",
+        "call-target",
         "field-shape",
         "exception-shape",
         "availability",
@@ -202,9 +203,6 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   limitations: z.array(boundedTextSchema),
 });
 
-export type CompareManagedMembersInput = z.infer<
-  typeof compareManagedMembersInputSchema
->;
 export type ManagedMemberComparisonResult = z.infer<
   typeof managedMemberComparisonResultSchema
 >;
@@ -219,6 +217,24 @@ const selectedTypes = (
   result: ManagedMemberInspection,
 ): ReadonlySet<string> | null =>
   result.selection === null ? null : new Set(result.selection.type_names);
+
+const callEdgesByCaller = (
+  result: ManagedMemberInspection,
+): ReadonlyMap<
+  string,
+  readonly ManagedMemberInspection["call_edges"][number][]
+> => {
+  const edges = new Map<
+    string,
+    ManagedMemberInspection["call_edges"][number][]
+  >();
+  for (const edge of result.call_edges) {
+    const callerEdges = edges.get(edge.caller_token);
+    if (callerEdges === undefined) edges.set(edge.caller_token, [edge]);
+    else callerEdges.push(edge);
+  }
+  return edges;
+};
 
 /** Compare managed members with constrained exact and structural identities. */
 export const compareManagedMembers = (
@@ -236,6 +252,8 @@ export const compareManagedMembers = (
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
+    leftCallEdgesByCaller: callEdgesByCaller(left.result),
+    rightCallEdgesByCaller: callEdgesByCaller(right.result),
   };
   const methodItems = buildMethodItems(methodMatches, itemContext);
   const fieldItems = buildFieldItems(fieldMatches, itemContext);

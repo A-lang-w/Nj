@@ -51,12 +51,12 @@ it("pages filtered matches independently of the examined inventory and preserves
   names[4096] = "fixture.TargetDuplicate";
   const calls: Record<string, unknown>[] = [];
   const tools: JadxToolPort = {
-    json: (name, input) => {
-      expect(name).toBe("list_classes");
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: (input) => {
       calls.push({ ...input });
       const offset = Number(input.offset);
       return Promise.resolve({
-        scope: "top_level",
+        scope: "top_level" as const,
         total_classes: 10000,
         next_offset: offset === 0 ? 8191 : 10000,
         offset,
@@ -95,7 +95,6 @@ it("pages filtered matches independently of the examined inventory and preserves
 });
 
 it.each([
-  { name: "inventory scope", query: "Target", page: { scope: "all_dex" } },
   { name: "inventory total", query: "Target", page: { total_classes: 9 } },
   { name: "out-of-range cursor", query: "Target", page: { next_offset: 11 } },
   {
@@ -117,9 +116,10 @@ it.each([
   "refuses changed $name instead of reporting complete search coverage",
   async ({ query, page }) => {
     const tools: JadxToolPort = {
-      json: () =>
+      json: () => Promise.reject(new Error("unexpected JSON call")),
+      listClasses: () =>
         Promise.resolve({
-          scope: "top_level",
+          scope: "top_level" as const,
           total_classes: 10,
           next_offset: 10,
           offset: 0,
@@ -152,9 +152,10 @@ it.each([
 
 it("accepts an examined empty inventory without requiring cursor progress", async () => {
   const tools: JadxToolPort = {
-    json: () =>
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: () =>
       Promise.resolve({
-        scope: "top_level",
+        scope: "top_level" as const,
         total_classes: 0,
         offset: 0,
         next_offset: 0,
@@ -226,6 +227,8 @@ it("requires explicit direct invoke coverage state in result evidence", () => {
 
 it("publishes exact DEX prototypes instead of discarding bridge metadata", async () => {
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: () => Promise.resolve(summary),
     text: () => Promise.reject(new Error("unexpected text call")),
   };
@@ -252,6 +255,8 @@ it("publishes exact DEX prototypes instead of discarding bridge metadata", async
 it("traces only the selected overloaded method and checks the producer identity", async () => {
   const calls: Record<string, unknown>[] = [];
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: (name, input) => {
       calls.push({ name, ...input });
       if (name === "get_class_summary") return Promise.resolve(summary);
@@ -335,6 +340,8 @@ it("rejects an ambiguous method and a producer response for a different overload
     items: [],
   };
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: (name) =>
       Promise.resolve(name === "get_class_summary" ? summary : xrefs),
     text: () => Promise.reject(new Error("unexpected text call")),
@@ -382,6 +389,8 @@ const invokeSite = {
 const traceWithReference = (fields: Record<string, unknown>) =>
   analyzeJadxRequest(
     {
+      listClasses: () =>
+        Promise.reject(new Error("unexpected class inventory call")),
       json: (name) =>
         Promise.resolve(
           name === "get_class_summary"
@@ -483,6 +492,8 @@ it.each([
     await expect(
       analyzeJadxRequest(
         {
+          listClasses: () =>
+            Promise.reject(new Error("unexpected class inventory call")),
           json: () => Promise.resolve(invalidSummary),
           text: () => Promise.reject(new Error("unexpected text call")),
         },
@@ -505,6 +516,14 @@ it.each([
     });
   },
 );
+
+/** A tool port that only answers the bridge's JSON calls. */
+const jsonPort = (json: JadxToolPort["json"]): JadxToolPort => ({
+  listClasses: () =>
+    Promise.reject(new Error("unexpected class inventory call")),
+  json,
+  text: () => Promise.reject(new Error("unexpected text call")),
+});
 
 it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
   const calls: unknown[] = [];
@@ -582,13 +601,10 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
       },
     ],
   };
-  const tools: JadxToolPort = {
-    json: (name, input) => {
-      calls.push([name, input]);
-      return Promise.resolve(scan);
-    },
-    text: () => Promise.reject(new Error("unexpected text call")),
-  };
+  const tools = jsonPort((name, input) => {
+    calls.push([name, input]);
+    return Promise.resolve(scan);
+  });
   const request = {
     operation: "trace_android_resource_references" as const,
     input: androidInputSchemas.trace_android_resource_references.parse({
@@ -645,14 +661,12 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
   // A producer answering another request is not attributed to the caller.
   await expect(
     analyzeJadxRequest(
-      {
-        json: () =>
-          Promise.resolve({
-            ...scan,
-            resources: [...scan.resources].reverse(),
-          }),
-        text: () => Promise.reject(new Error("unexpected text call")),
-      },
+      jsonPort(() =>
+        Promise.resolve({
+          ...scan,
+          resources: [...scan.resources].reverse(),
+        }),
+      ),
       request,
       {} as never,
       engine,

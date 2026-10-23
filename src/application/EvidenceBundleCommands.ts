@@ -4,20 +4,15 @@ import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 
 import {
   EvidenceFileError,
-  EvidenceIntegrityError,
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
   createImmutableEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
-import type { InspectAnalysisViewInput } from "../domain/analysisView/analysisView.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -154,53 +149,6 @@ export const publishEvidenceDelivery = async (input: {
   return ok({ delivered: input.delivered, evidenceBundle: written.value });
 };
 
-/** Resolve the caller's exact retained parent from an authenticated portable bundle. */
-export const inspectAnalysisViewFromBundle = async (
-  input: InspectAnalysisViewInput,
-  bundlePath: string,
-  resources: ArtifactResourceScope,
-  signal?: AbortSignal,
-): Promise<Result<Evidence, AnalysisError>> => {
-  if (input.source.kind !== "retained-evidence")
-    return err(
-      new AnalysisInputError("inspect_analysis_view", undefined, [
-        {
-          path: ["source", "kind"],
-          reason: "invalid_value",
-          message:
-            "--evidence-bundle requires a retained-evidence source with the exact parent evidence_id; inline Evidence already supplies its source",
-        },
-      ]),
-    );
-  const loaded = await readImmutableEvidenceBundle(
-    bundlePath,
-    signal,
-    resources,
-    "inspect_analysis_view",
-  );
-  // Authentication and projection are synchronous; dispatch queued interrupts before accepting either result.
-  await dispatchQueuedInterrupts();
-  if (!loaded.ok) return loaded;
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError("inspect_analysis_view", {
-        cause: signal.reason,
-      }),
-    );
-  const projected = inspectAnalysisViewValidated(input, (id) =>
-    loaded.value.records.find((record) => record.evidence_id === id),
-  );
-  await dispatchQueuedInterrupts();
-  if (projected.ok && signal?.aborted)
-    return err(
-      new AnalysisCancelledError("inspect_analysis_view", {
-        cause: signal.reason,
-        partialObservation: projected.value,
-      }),
-    );
-  return projected;
-};
-
 /** Publish a completed bundle and retry its exact staged-output cleanup owner. */
 const persistEvidenceBundleCommand = async (
   bundle: EvidenceBundle,
@@ -256,15 +204,7 @@ export const compareEvidenceBundlesCommand = async (input: {
   ]);
   if (!left.ok) return left;
   if (!right.ok) return right;
-  try {
-    return ok(jsonValueSchema.parse(compareBundles(left.value, right.value)));
-  } catch (cause: unknown) {
-    return err(
-      new EvidenceIntegrityError("Evidence bundle comparison failed", {
-        cause,
-      }),
-    );
-  }
+  return ok(jsonValueSchema.parse(compareBundles(left.value, right.value)));
 };
 
 const projectWrite = (

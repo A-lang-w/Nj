@@ -20,7 +20,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, realpath, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { extname, isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
@@ -72,6 +72,10 @@ export const SIGROK_PROVIDER_IDENTITY = {
   version: "sigrok-cli@0.7.2",
 } as const;
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
+
+/** Signal decoding runs only on Linux; discovery and execution share this check. */
+export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
 
 /** Decode selected recordings only, retaining cleanup ownership across failures. */
 export class SigrokRecordingProvider implements SignalRecordingPort {
@@ -141,7 +145,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           cause: options.signal.reason,
         });
       await this.#resources.release();
-      if (this.platform !== "linux")
+      if (!sigrokHostSupported(this.platform))
         throw new Error(
           "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
         );
@@ -173,7 +177,11 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
-      const snapshotPath = join(root.path, "recording");
+      // Keep the selected file's suffix as private parser metadata. sigrok's
+      // autodetection receives a filename, not just the copied bytes.
+      const snapshotName =
+        "path" in input ? `recording${extname(input.path)}` : "recording";
+      const snapshotPath = join(root.path, snapshotName);
       const execute = async (
         args: readonly string[],
         // Caller selectors this command loads; their refusals are input errors.
@@ -234,8 +242,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           );
         phase = previousPhase;
         resourcePath = "path" in input ? input.path : command;
+        // Some selected-channel refusals are diagnostics, not process failures:
+        // sigrok can emit fallback annotations and still exit successfully.
         const rejection =
-          output.exitCode === 0 || selection === undefined
+          selection === undefined
             ? undefined
             : parseSigrokSelectorRejection(output.stderr.text, selection);
         if (rejection !== undefined)
@@ -323,7 +333,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase = "producer";
         const args = [
           "--dont-scan",
-          "--input-file=recording",
+          `--input-file=${snapshotName}`,
           `--protocol-decoders=${input.decoders}`,
           "--protocol-decoder-samplenum",
           ...(input.input_format === null
