@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { apiSurfaceResponse } from "./webNetworkApiSurfaceResponse.js";
 import {
   parseRecordedTransportUrl,
   parseUrlQueryParameterNames,
@@ -45,13 +46,6 @@ export type Reserve = (bytes: number) => boolean;
 const requestSchema = z.object({
   request: z.object({ url: z.unknown(), method: z.unknown() }),
 });
-const responseSchema = z.object({
-  response: z.object({
-    status: z.unknown().optional(),
-    content: z.unknown().optional(),
-  }),
-});
-const contentSchema = z.object({ mimeType: z.unknown().optional() });
 const MEDIA_TYPE_ESSENCE =
   /^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+$/u;
 
@@ -158,6 +152,7 @@ export const readRecordedRequestLine = (
   reported: unknown,
   includeQuery: boolean,
   temporary: Reserve,
+  format: "har" | "saz" = "har",
 ): RecordedRequestLine | null => {
   const excluded = (reason: RequestLineExclusion): RecordedRequestLine => ({
     kind: "excluded",
@@ -175,21 +170,20 @@ export const readRecordedRequestLine = (
   if (typeof method !== "string" || method.length === 0)
     return excluded("method-unavailable");
   if (parsed.path === null) return excluded("url-unparseable");
-  const response = responseSchema.safeParse(reported);
-  const status = response.success ? response.data.response.status : undefined;
-  const content = contentSchema.safeParse(
-    response.success ? response.data.response.content : undefined,
-  );
-  const mime = content.success ? content.data.mimeType : undefined;
-  const rawMime = typeof mime === "string" ? mime : "";
-  if (!temporary(textBytes(rawMime.length))) return null;
+  const {
+    status,
+    mime: rawMime,
+    mimeSourceLength,
+  } = apiSurfaceResponse(reported, format);
+  if (!temporary(textBytes(Math.max(rawMime.length, mimeSourceLength))))
+    return null;
   return {
     kind: "line",
     method,
     origin: parsed.origin,
     path: parsed.path,
     query: parsed.query,
-    status: typeof status === "number" && status !== 0 ? status : null,
+    status,
     rawMime,
   };
 };
