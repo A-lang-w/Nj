@@ -3,20 +3,23 @@ import { join } from "node:path";
 import { parseBinary } from "plist";
 import { z } from "zod";
 import {
+  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
+  binaryDatePrecisionOverlapLimitation,
   negativeZeroRealLimitation,
   nonFiniteRealLimitation,
   unknownDateLimitation,
-  unknownRealLimitation,
+  unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import {
-  decodeBinaryPlistNumbers,
-  scanBinaryPlistNumberLiterals,
-} from "./PlistNumberLiterals.js";
+  decodeBinaryPlistScalars,
+  scanBinaryPlistScalars,
+  UnsupportedBinaryPlistUidError,
+} from "./PlistScalars.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
@@ -27,16 +30,20 @@ import {
   keyedArchiveResultSchema,
   projectKeyedArchive,
 } from "../../domain/apple/keyedArchive.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import {
+  DirectoryArtifactReader,
+  DirectoryArtifactEntryAccessDenied,
+} from "../DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../ArtifactFileOperation.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
-import { estimateBinaryPlistExpansion } from "./InterfaceBuilderDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
@@ -72,16 +79,20 @@ export const decodeKeyedArchiveBytes = (
         numberProjection: true,
       })
     : undefined;
-  const binaryNumberMetadata = binary
-    ? scanBinaryPlistNumberLiterals(bytes)
+  const binaryScalarMetadata = binary
+    ? scanBinaryPlistScalars(bytes, binaryExpansion)
     : undefined;
   const parsed =
     binaryExpansion !== undefined
       ? {
           value: parseBinary(
-            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+            decodeBinaryPlistScalars(
+              bytes,
+              binaryScalarMetadata!,
+              binaryExpansion!,
+            ),
           ),
-          numberLiterals: binaryNumberMetadata!.literals,
+          numberLiterals: binaryScalarMetadata!.literals,
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
             ? null
             : 0,
@@ -89,9 +100,9 @@ export const decodeKeyedArchiveBytes = (
       : parseXmlPropertyList(xmlText ?? "");
   const {
     nonFiniteRealCount,
-    unknownRealCount,
     negativeZeroRealCount,
     unknownDateCount,
+    unknownScalarCount,
     ...graph
   } = projectKeyedArchive(parsed.value, selection);
   const numbers = createPlistNumberProjection(parsed.numberLiterals);
@@ -121,15 +132,23 @@ export const decodeKeyedArchiveBytes = (
       ...(nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(nonFiniteRealCount)]),
-      ...(unknownRealCount === 0
-        ? []
-        : [unknownRealLimitation(unknownRealCount)]),
       ...(negativeZeroRealCount === 0
         ? []
         : [negativeZeroRealLimitation(negativeZeroRealCount)]),
       ...(unknownDateCount === 0
         ? []
         : [unknownDateLimitation(unknownDateCount)]),
+      ...(binaryExpansion === undefined ||
+      binaryExpansion.datePrecisionOverlapCount === 0
+        ? []
+        : [
+            binaryDatePrecisionOverlapLimitation(
+              binaryExpansion.datePrecisionOverlapCount,
+            ),
+          ]),
+      ...(unknownScalarCount === 0
+        ? []
+        : [unknownScalarLimitation(unknownScalarCount)]),
     ],
   };
 };
@@ -152,7 +171,8 @@ const keyedArchiveKindRemediation = (
 /** Read exactly one regular, contained bundle entry without following symlinks. */
 export const inspectBundleKeyedArchive = async (input: {
   bundlePath: string;
-  targetSha256: string;
+  targetSha256: string | null;
+  resourceRoot?: import("../../domain/apple/bundleResourceRoot.js").BundleResourceRoot;
   parameters: unknown;
   signal?: AbortSignal;
   /** Host whose available workflows the remediation names. */
@@ -202,7 +222,11 @@ export const inspectBundleKeyedArchive = async (input: {
         "invalid_value",
         `No regular file exists at ${selected.path} in the active app bundle.`,
       );
-    const stream = await reader.open(entry, input.signal);
+    const stream = await reader
+      .open(entry, input.signal)
+      .catch((cause: unknown) => {
+        throw selectedArchiveReadFailure(input.bundlePath, entry, cause);
+      });
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of stream) {
@@ -228,12 +252,22 @@ export const inspectBundleKeyedArchive = async (input: {
     try {
       return keyedArchiveResultSchema.parse({
         target_sha256: input.targetSha256,
+        ...(input.resourceRoot === undefined
+          ? {}
+          : { resource_root: input.resourceRoot }),
         archive_path: entry.path,
         archive_sha256: createHash("sha256").update(bytes).digest("hex"),
         ...decodeKeyedArchiveBytes(bytes, selected),
       });
     } catch (cause) {
       if (cause instanceof AnalysisInputError) throw cause;
+      if (cause instanceof UnsupportedBinaryPlistUidError)
+        throw new AnalysisUnsupportedTargetError(
+          "inspect_keyed_archive",
+          join(input.bundlePath, entry.path),
+          cause.message,
+          { cause },
+        );
       // An intact file of another kind is not a damaged archive.
       if (cause instanceof KeyedArchiveKindError)
         throw new AnalysisUnsupportedTargetError(
@@ -267,3 +301,33 @@ const archivePathError = (
   new AnalysisInputError("inspect_keyed_archive", undefined, [
     { path: ["path"], reason, message },
   ]);
+
+/**
+ * The caller selected this entry, so a refused open is a selection outcome:
+ * preserve the host's read-access denial and its system code instead of
+ * reporting a generic artifact execution failure.
+ */
+const selectedArchiveReadFailure = (
+  bundlePath: string,
+  entry: ArtifactEntry,
+  cause: unknown,
+): unknown => {
+  if (!(cause instanceof DirectoryArtifactEntryAccessDenied)) return cause;
+  const error = new AnalysisAccessDeniedError(
+    "inspect_keyed_archive",
+    join(bundlePath, entry.path),
+    cause.systemCode,
+    {
+      cause,
+      // The cleanup observation, not just the leases, makes the projection
+      // report an unresolved resource; binding leases alone would claim the
+      // denied open left nothing owned.
+      ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+      ...(cause.partialObservation === undefined
+        ? {}
+        : { partialObservation: cause.partialObservation }),
+    },
+  );
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};

@@ -315,10 +315,19 @@ A manifest binding names one owner and its exact implementation digest. Both
 }
 ```
 
-All referenced Evidence IDs must exist in the bundle. A green unit test cannot
-close a `packaged-process` obligation. A static-only source cannot close a
-runtime or process claim. Marking a claim `blocked` or `out-of-scope` records the
-disposition but does not silently count it as verified.
+A ready ledger requires every retained Evidence reference to resolve in the
+bundle, including references on optional case kinds. Unresolved references stay
+visible in the ledger and produce diagnostics; they cannot close the obligation.
+A green unit test cannot close a `packaged-process` obligation. A static-only
+source cannot close a runtime or process claim. Marking a claim `blocked` or
+`out-of-scope` records the disposition but does not silently count it as verified.
+
+The `summary` counts obligations. `by_status`, `by_application_layer`, and
+`by_source_state` place each obligation in exactly one bucket.
+`by_evidence_authority` groups obligations by the Evidence `authority` of their
+`authority_references`: an obligation counts once under each distinct authority
+it cites, so those counts can exceed `total`. A reference's own `state` and the
+obligation's `source_state` do not affect its authority bucket.
 
 The tool returns every obligation inline. Its `ledger_id` and `closure_digest`
 identify the complete result, including summaries, reports, ownership and

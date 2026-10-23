@@ -256,6 +256,10 @@ such as
 `libreactnativejni.so`, `libreactnative.so`, `libhermes.so`,
 `libhermes_executor.so`, `libflutter.so`, and `libunity.so`; unrelated names
 such as `libcommunity.so` and `libreactivity.so` do not identify those families.
+The signing list retains the `META-INF/MANIFEST.MF`, `.SF`, `.RSA`, `.DSA`, and
+`.EC` paths selected by Android's v1 verifier, including nested paths. These are
+inventory metadata candidates, not proof that a v1 signature verifies or that
+the APK is signed; use `inspect-apk-signature` for signature analysis.
 The bridge basis is inferred from the native path and repeated for each managed
 component, so it does not identify a specific JNI binding. Bridge hypotheses form a DEX/JVM-class by native-library
 Cartesian product. The projection computes the product and exact serialized
@@ -335,9 +339,12 @@ export REA_JADX_OPERATION_TIMEOUT_MS=600000
 ```
 
 The value must be a decimal millisecond count from 1 to 2147483647; anything
-else is refused before Java starts. The same deadline bounds each upstream
-call, a timeout reports the selected value, and a passing JADX configuration
-check in `rea doctor` reports the effective `operation_timeout_ms`. Explicit
+else is refused before Java starts. REA reads it from the environment captured
+at process start. A change applies on the next process start; an already
+running server keeps the deadline it started with. The same deadline bounds
+each upstream call. A timeout names `REA_JADX_OPERATION_TIMEOUT_MS`, the
+effective milliseconds, and that range. A passing JADX configuration check in
+`rea doctor` reports the effective `operation_timeout_ms`. Explicit
 cancellation still ends the operation immediately, and partial observations
 and owned-process cleanup are unchanged. Raising the deadline does not extend
 the bridge's 30-second startup handshake or the upstream **90-second**
@@ -362,6 +369,14 @@ export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.7.1
 export REA_ANDROID_TEST_APK="$PWD/_reference/apk-integration/ApiDemos-debug.apk"
 npm run verify:android
 ```
+
+The main lane and Windows Java-selection checks validate the selected JDK and
+engine archive through `validateVerifierJadxConfiguration`. This shared verifier
+boundary supplies the production validator's resource owner and waits for
+retained cleanup before proceeding. Failed closes retain their exact owners for
+retry; prerequisite failures must not be mistaken for completed bridge tests.
+Recovery checks match the typed Java or archive failure and its applicable
+remediation.
 
 The lane also uses the selected full JDK's `jlink` to create a disposable JRE
 without the compiler module. It checks real Java startup failures, missing

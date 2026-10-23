@@ -30,12 +30,23 @@ export interface SetupInitialState {
 /** Result of one backup/write/readback transaction. */
 export type ClientConfigurationResult =
   | {
+      readonly status: "failed";
+      readonly reason: "conflict";
+      readonly backupPath?: string;
+    }
+  | {
       readonly status: "unchanged" | "configured" | "skipped";
       readonly backupPath?: string;
     }
   | {
       readonly status: "failed";
       readonly reason: "path" | "target_changed" | "backup" | "write";
+    }
+  | {
+      readonly status: "failed";
+      /** Removing the member a client reads would activate an earlier duplicate. */
+      readonly reason: "shadowed_member";
+      readonly path: readonly string[];
     }
   | {
       readonly status: "failed";
