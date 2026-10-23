@@ -388,7 +388,9 @@ selected root as it enters each directory. Child rules apply within that directo
 and can override inherited project rules; excluded directories are not traversed.
 Ignore files above the selected root and Git's global excludes are not loaded.
 Project rules match UTF-8 bytes, so `?` consumes one byte rather than one
-Unicode character. They use the locally observed `core.ignoreCase` setting;
+Unicode character. Bracket expressions include Git's ASCII POSIX named classes
+(such as `[[:digit:]]`), ranges and negation; no class consumes a path separator.
+They use the locally observed `core.ignoreCase` setting;
 insensitive matching folds ASCII letters only, so `é` does not exclude `É`.
 Local Boolean settings accept Git's textual forms and portable decimal, octal
 and hexadecimal integers with optional `k`, `m` or `g` multipliers. A NUL byte

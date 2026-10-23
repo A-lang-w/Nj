@@ -90,7 +90,64 @@ const literalIgnoreAtom = (character: string, inClass: boolean): string => {
 const foldGitCase = (value: string): string =>
   value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
 
-/** Normalize simple classes as members/ranges, never as independent escapes. */
+// Git's character predicates are ASCII byte tables, independent of locale.
+// In particular, its space class excludes vertical tab and form feed.
+const gitNamedClassRanges: Readonly<
+  Record<string, readonly (readonly [number, number])[]>
+> = {
+  alnum: [
+    [48, 57],
+    [65, 90],
+    [97, 122],
+  ],
+  alpha: [
+    [65, 90],
+    [97, 122],
+  ],
+  blank: [
+    [9, 9],
+    [32, 32],
+  ],
+  cntrl: [
+    [0, 31],
+    [127, 127],
+  ],
+  digit: [[48, 57]],
+  graph: [[33, 126]],
+  lower: [[97, 122]],
+  print: [[32, 126]],
+  punct: [
+    [33, 47],
+    [58, 64],
+    [91, 96],
+    [123, 126],
+  ],
+  space: [
+    [9, 10],
+    [13, 13],
+    [32, 32],
+  ],
+  upper: [[65, 90]],
+  xdigit: [
+    [48, 57],
+    [65, 70],
+    [97, 102],
+  ],
+};
+
+const gitClassRange = (lower: number, upper: number): string => {
+  if (lower > upper) return "";
+  // Classes cannot consume a path separator, even when a named class or a
+  // numeric range contains its byte. Hex encoding also keeps regex syntax inert.
+  if (lower <= 47 && upper >= 47)
+    return gitClassRange(lower, 46) + gitClassRange(48, upper);
+  const from = literalIgnoreAtom(String.fromCharCode(lower), true);
+  return lower === upper
+    ? from
+    : `${from}-${literalIgnoreAtom(String.fromCharCode(upper), true)}`;
+};
+
+/** Parse Git classes in order: named sets and ranges reset the range endpoint. */
 const normalizeGitClass = (
   pattern: string,
   start: number,
@@ -99,62 +156,75 @@ const normalizeGitClass = (
   let index = start + 1;
   const negative = pattern[index] === "!" || pattern[index] === "^";
   if (negative) index += 1;
-  let unsupported = pattern[index] === "]";
-  const members: { character: string; quoted: boolean }[] = [];
-  if (unsupported) {
-    members.push({ character: "]", quoted: false });
-    index += 1;
-  }
+  let text = "";
+  let previous: string | undefined;
+  let first = true;
+  let unsupported = false;
   for (; index < pattern.length; index += 1) {
-    const character = pattern[index]!;
-    if (character === "]") {
+    let character = pattern[index]!;
+    if (character === "]" && !first) {
       const end = index + 1;
-      // POSIX classes and a literal initial ] retain the dependency's existing
-      // behavior; they need a broader matcher compatibility decision.
+      // An explicit slash also changes Git's path anchoring. Preserve the
+      // existing handling of that syntax rather than hide it in a hex atom.
       if (unsupported) return { text: pattern.slice(start, end), end };
-      let text = "";
-      for (let member = 0; member < members.length; member += 1) {
-        const from = members[member]!.character;
-        const dash = members[member + 1];
-        const to = members[member + 2];
-        if (dash?.character === "-" && !dash.quoted && to !== undefined) {
-          // Git retains the first member of a descending range. Avoid an
-          // invalid encoded range in JavaScript's RegExp constructor.
-          const lower = from.charCodeAt(0);
-          const upper = to.character.charCodeAt(0);
-          if (lower <= upper) {
-            text += `${literalIgnoreAtom(from, true)}-${literalIgnoreAtom(to.character, true)}`;
-            // Git also compares the uppercase form of a folded ASCII byte
-            // against ranges, but does not fold individual class members.
-            const asciiLower = Math.max(lower, 65);
-            const asciiUpper = Math.min(upper, 90);
-            if (ignoreCase && asciiLower <= asciiUpper)
-              text += `${literalIgnoreAtom(String.fromCharCode(asciiLower + 32), true)}-${literalIgnoreAtom(String.fromCharCode(asciiUpper + 32), true)}`;
-          } else text += literalIgnoreAtom(from, true);
-          member += 2;
-        } else text += literalIgnoreAtom(from, true);
-      }
-      return { text: `[${negative ? "!" : ""}${text}]`, end };
+      return {
+        text: `[${negative ? "!" : ""}${text}${negative ? "\\x2F" : ""}]`,
+        end,
+      };
     }
-    if (
-      character === "[" &&
-      [":", ".", "="].includes(pattern[index + 1] ?? "")
+    first = false;
+    if (character === "\\") {
+      index += 1;
+      if (index === pattern.length) break;
+      character = pattern[index]!;
+    } else if (
+      character === "-" &&
+      previous !== undefined &&
+      pattern[index + 1] !== undefined &&
+      pattern[index + 1] !== "]"
     ) {
-      const end = pattern.indexOf(`${pattern[index + 1]}]`, index + 2);
-      if (end !== -1) {
-        unsupported = true;
-        index = end + 1;
+      index += 1;
+      if (pattern[index] === "\\") index += 1;
+      if (index === pattern.length) break;
+      const endpoint = pattern[index]!;
+      if (endpoint === "/") unsupported = true;
+      const lower = previous.charCodeAt(0);
+      const upper = endpoint.charCodeAt(0);
+      // The preceding literal was already added, so descending ranges keep
+      // that member. Git folds range comparisons but not individual members.
+      text += gitClassRange(lower, upper);
+      const asciiLower = Math.max(lower, 65);
+      const asciiUpper = Math.min(upper, 90);
+      if (ignoreCase) text += gitClassRange(asciiLower + 32, asciiUpper + 32);
+      previous = undefined;
+      continue;
+    } else if (character === "[" && pattern[index + 1] === ":") {
+      const close = pattern.indexOf("]", index + 2);
+      if (close === -1) break;
+      if (close > index + 2 && pattern[close - 1] === ":") {
+        const name = pattern.slice(index + 2, close - 1);
+        const ranges = Object.hasOwn(gitNamedClassRanges, name)
+          ? gitNamedClassRanges[name]
+          : undefined;
+        // A syntactically complete but unknown class invalidates the whole
+        // rule, including a negated rule; it is not an empty member set.
+        if (ranges === undefined)
+          return { text: undefined, end: pattern.length };
+        for (const [lower, upper] of ranges)
+          text += gitClassRange(lower, upper);
+        if (ignoreCase && name === "upper") text += gitClassRange(97, 122);
+        index = close;
+        previous = undefined;
         continue;
       }
+      // Without the closing colon, Git treats '[' as an ordinary member and
+      // the first ']' closes the outer class. Do not consume the suffix here.
     }
     if (character === "/") unsupported = true;
-    if (character === "\\" && pattern[index + 1] !== undefined) {
-      index += 1;
-      if (pattern[index] === "/") unsupported = true;
-      members.push({ character: pattern[index]!, quoted: true });
-    } else members.push({ character, quoted: false });
+    text += literalIgnoreAtom(character, true);
+    previous = character;
   }
-  return { text: pattern.slice(start), end: pattern.length };
+  return { text: undefined, end: pattern.length };
 };
 
 /** Project policies normalize Git quoting; caller/secret rules keep their syntax. */
@@ -178,6 +248,7 @@ const normalizeIgnorePattern = (
     const character = pattern[index]!;
     if (gitEscapes && character === "[") {
       const characterClass = normalizeGitClass(pattern, index, ignoreCase);
+      if (characterClass.text === undefined) return "";
       result += characterClass.text;
       index = characterClass.end;
       continue;
