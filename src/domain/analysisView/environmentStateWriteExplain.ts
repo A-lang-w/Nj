@@ -7,6 +7,7 @@ import {
   same,
   scalarText,
   type JsonObject,
+  type StateEntity,
 } from "./environmentStateRules.js";
 import type {
   FieldRule,
@@ -25,6 +26,8 @@ import {
 } from "./environmentStateWriteValues.js";
 import {
   COPY_MIN_LENGTH,
+  instantMembers,
+  referencedMembers,
   storedMembers,
   strandedCopies,
   templateRule,
@@ -48,6 +51,8 @@ export interface CreateEvidence {
   readonly startMs: number | undefined;
   readonly collection: readonly JsonObject[];
   readonly type: readonly JsonObject[];
+  /** The entities of any type the state holds under an id. */
+  readonly named?: (id: string) => readonly StateEntity[];
 }
 
 /** What explaining a create looks values up in, built once per request body. */
@@ -240,19 +245,27 @@ export const explainCreate = (
   const templates = rules.flatMap((rule) =>
     rule.rule === "template" ? [rule.field] : [],
   );
-  // A member whose copy a template cannot rebuild is accepted only with its recorded value.
-  const stranded = strandedCopies(rules, evidence.entity, [
-    ...constants,
-    ...templates,
+  // A member whose value a template cannot rebuild, or that a constant derives from, is accepted only with its recorded value.
+  const texts = [...constants, ...templates];
+  const stranded = strandedCopies(rules, evidence.entity, texts);
+  const referenced = new Set([
+    ...referencedMembers(
+      evidence.call.body,
+      evidence.entity,
+      constants,
+      evidence.named ?? (() => []),
+    ),
+    ...instantMembers(evidence.call.body, evidence.entity, constants),
   ]);
+  const stored = storedMembers(
+    rules.filter((rule) => !stranded.has(rule.field)),
+    evidence.entity,
+  );
   return {
     rules,
     body: bodyOf(
       evidence.call.body,
-      storedMembers(
-        rules.filter((rule) => !stranded.has(rule.field)),
-        evidence.entity,
-      ),
+      new Set([...stored].filter((member) => !referenced.has(member))),
       Object.keys(evidence.call.body),
     ),
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.

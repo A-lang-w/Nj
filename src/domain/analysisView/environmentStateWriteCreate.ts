@@ -145,6 +145,7 @@ const buildCreate = (
     startMs: startOf(context, step),
     collection: members,
     type: fieldsOf(context.state.ofType(type)),
+    named: (id) => context.state.named(id),
   });
   const clocks = explained.rules.flatMap((rule) =>
     rule.rule === "clock" ? [rule.field] : [],

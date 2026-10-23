@@ -13,6 +13,7 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import { UnseenEntities } from "./environmentStateWriteAdoption.js";
+import { FailedReadBlame } from "./environmentStateWriteBlame.js";
 import { linkedTarget } from "./environmentStateWriteLinks.js";
 import { updatedEntity } from "./environmentStateWriteApply.js";
 import { projectedRead } from "./environmentStateWriteObserve.js";
@@ -121,6 +122,7 @@ export class EnvironmentStateWriteSimulation {
   readonly #placed = new Set<string>();
   /** Entities writes no plan models made, taken when an item read first shows them. */
   readonly #unseen: UnseenEntities;
+  readonly #blame: FailedReadBlame;
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
@@ -130,6 +132,17 @@ export class EnvironmentStateWriteSimulation {
       io: input.io,
       lastCheck: this.#lastCheck,
       idField: (type) => this.#types.get(type)?.id_field,
+    });
+    this.#blame = new FailedReadBlame({
+      state: this.#state,
+      io: input.io,
+      records: input.records,
+      touched: this.#touched,
+      pending: this.#touchedSince,
+      effects: this.#effects,
+      inserted: this.#inserted,
+      idField: (type) => this.#types.get(type)?.id_field,
+      volatileOf: input.volatileOf,
     });
     for (const type of input.types)
       this.#types.set(type.collection_template, type);
@@ -291,6 +304,7 @@ export class EnvironmentStateWriteSimulation {
     }
     if (result.kind === "observed") {
       this.#effects.observed(this.#touched, result.targets);
+      this.#blame.rebased(result.targets[0]!, write.index);
       // A recorded outcome replaces the entity's values, not its collection's membership.
       this.#touched.delete(result.targets[0]!);
       return;
@@ -302,8 +316,10 @@ export class EnvironmentStateWriteSimulation {
         fields: result.fields,
       });
     this.#log.push(write);
-    if (result.inserted !== undefined)
-      this.#inserted.set(result.inserted, write.tool);
+    if (result.inserted === undefined) return;
+    this.#inserted.set(result.inserted, write.tool);
+    if (result.entity !== undefined)
+      this.#blame.inserted(result.entity, write.tool);
   }
 
   /**
@@ -582,22 +598,22 @@ export class EnvironmentStateWriteSimulation {
     readonly exercised: ReadonlySet<string>;
     readonly view: StateView;
   }): void {
-    if (failed.exercised.size > 0)
-      for (const name of failed.exercised) {
-        const draft = this.#drafts.get(name)!;
-        draft.contradictedBy ??= failed.record.ordinal;
-      }
-    else {
-      const since = Math.min(
-        ...failed.keys.map((key) => this.#lastCheck.get(key) ?? -1),
-      );
+    const ordinal = failed.record.ordinal;
+    const since = Math.min(
+      ...failed.keys.map((key) => this.#lastCheck.get(key) ?? -1),
+    );
+    const blame = this.#blame.of({ ...failed, since });
+    for (const name of blame.confirmed)
+      this.#drafts.get(name)!.confirmed.push(ordinal);
+    for (const name of blame.contradicted)
+      this.#drafts.get(name)!.contradictedBy ??= ordinal;
+    if (failed.exercised.size === 0)
       for (const write of this.#log)
         if (
-          write.index > since &&
+          write.index > blame.after &&
           prefixRelated(write.path, failed.record.path)
         )
           this.#drafts.get(write.tool)!.sideEffect = true;
-    }
     if (failed.view.shape !== "item")
       for (const key of failed.keys) this.#taint.fail(key);
   }

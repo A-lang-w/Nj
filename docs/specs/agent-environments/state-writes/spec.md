@@ -152,14 +152,26 @@ identity the client sends is an echo:
    value, as a delimited token (for example a URL that ends in the new id or in
    a slug the call sent under another name). It is rebuilt around the new
    value. An echoed value is not a token, nor is a copy of one: it may recur in
-   unrelated text. A copied member whose value also sits in text no template
-   rebuilds around it (beside another source in one template, or in a constant)
-   is accepted only with its recorded value.
+   unrelated text. A copied or echoed member whose value also sits in text no
+   template rebuilds around it (beside another source in one template, or in a
+   constant) is accepted only with its recorded value.
 10. **Constant.** Otherwise the exemplar's value.
 
 When a constant, or the text a template keeps, contains a path value of the
 exemplar's call as a delimited token, the create is served only for calls
 naming the exemplar's collection.
+
+A constant may also derive from a member without holding its text, when the
+constant is named after the member: with a reference's `Id` or `_id` left off,
+one name's letters and digits begin the other's (`parentId` and `parentName`,
+`dateEndDate` and `dateEnd`), three or more of them. Such a member is accepted
+only with its recorded value when it names another entity the copy holds (by
+its id, among the types whose paths hold the member's name when any does; a
+value shorter than 8 characters only under a member named as a reference, such
+as `parentId` or `parent_id`) whose own string of 8 or more characters the
+constant repeats under another name, neither name reading as a reference; or
+when it sends a date or time that the constant's instant lies within two days
+of (an end date stored as a time in another zone).
 
 **Body members of a create.** A member is either accepted or not:
 
@@ -369,9 +381,27 @@ refuses to answer with.
   does not excuse a newer write the list shows undone. An item read checks the writes an unmodelled
   write did follow only on the members they sent, and a list with such a write
   is not checked again: the unmodelled write may explain the rest.
+- A failed item read with no such unmodelled write contradicts the writes that
+  changed the whole entity (its create or delete). When one of them is
+  exercised, each exercised update is checked instead on the fields its effect
+  holds, and confirmed when those show as the copy holds them and its latest
+  call's response shows every other field it and the read both show (but
+  volatile ones and those other updates wrote) as the read does: serving
+  answers an update from the copy, so a response that shows the entity
+  otherwise would be answered wrongly. When the read differs on a field the
+  copy holds that no exercised update wrote, any of the writes may have caused
+  it, and each is contradicted.
+- A failed item read whose field newly embeds an entity a create made (an
+  object in the field, or within it, naming it by its id and by another of its
+  strings of 3 or more characters, 8 or more when the id is shorter than 8),
+  which the copy's value lacks, contradicts that create: serving would not show
+  the change it made there.
 - A mismatch on an entity or collection that no write changed contradicts,
   as `side-effect`, the modelled writes since that previous check whose paths
-  are segment-prefix related to the read's path.
+  are segment-prefix related to the read's path. When a refused write's
+  recorded outcome since then left the entity lacking a field every recording
+  of its view carried, the create that made it is contradicted too: an outcome
+  merges only what its answer showed.
 - After a failed item check, the copy takes the read's recorded values (or
   drops the entity on a recorded absence). A list whose check failed is not
   checked again.
