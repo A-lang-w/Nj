@@ -8,7 +8,7 @@ import { ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import { publishEvidenceDelivery } from "../application/EvidenceBundleCommands.js";
-import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
+import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
@@ -104,7 +104,7 @@ export const deliverCliAnalysisEvidence = async (
 export const publishCliAnalysisEvidence = async (
   value: JsonValue,
   input: CliEvidenceDelivery,
-) => {
+): Promise<JsonValue> => {
   const { operation, signal, detail, evidenceOutput } = input;
   if (!isEvidence(value)) return value;
   const complete = parseEvidence(value);
@@ -118,7 +118,7 @@ export const publishCliAnalysisEvidence = async (
   // unreported bundle; publication then owns every post-commit outcome.
   const delivered =
     detail === "summary"
-      ? inspectAnalysisView({
+      ? inspectAnalysisViewValidated({
           source: { kind: "inline", evidence: complete },
           view: input.view ?? { kind: "summary" },
         })
@@ -146,7 +146,10 @@ export const publishCliAnalysisEvidence = async (
   return detail === "summary"
     ? {
         summary: published.value.delivered,
-        evidence_bundle: published.value.evidenceBundle,
+        evidence_bundle: {
+          path: published.value.evidenceBundle.path,
+          bytes: published.value.evidenceBundle.bytes,
+        },
       }
     : published.value.delivered;
 };
