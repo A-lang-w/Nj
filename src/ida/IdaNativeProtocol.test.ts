@@ -715,6 +715,7 @@ describe("native IDA literal matching", () => {
       "literal[bracket",
       "a\\b",
       "🧪",
+      "ΟΣ",
     ];
     producer.overrideCall = (name, args) => {
       if (name !== "find_regex") return undefined;
@@ -755,12 +756,24 @@ describe("native IDA literal matching", () => {
         case_sensitive: false,
         expected: ["İstanbul"],
       },
-      { pattern: "σ", mode: "literal", case_sensitive: false, expected: ["σ"] },
+      {
+        pattern: "σ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["σ", "ς", "ΟΣ"],
+      },
+      {
+        pattern: "Σ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["σ", "ς", "ΟΣ"],
+      },
+      { pattern: "Σ", mode: "literal", case_sensitive: true, expected: ["ΟΣ"] },
       {
         pattern: "σ",
         mode: "regex",
         case_sensitive: false,
-        expected: ["σ", "ς"],
+        expected: ["σ", "ς", "ΟΣ"],
       },
       {
         pattern: "[",
