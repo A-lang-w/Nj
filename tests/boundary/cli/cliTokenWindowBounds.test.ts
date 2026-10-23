@@ -13,6 +13,12 @@ workspaceCliTest(
       ["--token-offset", "2.5", "--token-limit", "5"],
       ["--token-limit=9007199254740992"],
       ["--token-offset=9007199254740992"],
+      ["--token-limit", "1.0000000000000001"],
+      ["--token-offset", "9007199254740991.1"],
+      ["--token-limit", "1e-400"],
+      ["--token-offset", "-1e-400"],
+      ["--token-limit", "0.99999999999999999"],
+      ["--token-limit", "9007199254740990.9"],
     ]) {
       const result = await cli.run({
         arguments: ["capabilities", "--format", "toon", ...flags],
@@ -53,6 +59,15 @@ workspaceCliTest(
       [["--token-limit", "0"], "0"],
       [["--token-offset=0", "--token-limit=5"], "5"],
       [["--token-limit", "-5", "--token-limit", "5"], "5"],
+      [["--token-limit", "1.0000000000000001", "--token-limit", "5"], "5"],
+      [["--token-limit", "5.000"], "5"],
+      [["--token-limit", "500e-2"], "5"],
+      [["--token-limit", ".5e1"], "5"],
+      [["--token-limit", "5e0"], "5"],
+      [["--token-limit", "0x5"], "5"],
+      [["--token-limit", "0b101"], "5"],
+      [["--token-limit", "0o5"], "5"],
+      [["--token-limit", "0e-999999"], "0"],
     ] as const) {
       const result = await cli.run({
         arguments: ["capabilities", "--format", "toon", ...flags],
@@ -68,6 +83,17 @@ workspaceCliTest(
       ok: false,
       error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
     });
+    const maximum = await cli.run({
+      arguments: [
+        "capabilities",
+        "--format",
+        "toon",
+        "--token-limit",
+        "9007199254740991",
+      ],
+    });
+    expect(maximum.exitCode).toBe(0);
+    expect(maximum.stdout).not.toContain("[truncated:");
   },
   60_000,
 );
