@@ -541,6 +541,25 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
 class WebsiteTranslationChecks(unittest.TestCase):
     """Exercise source edits, translated evidence and language editions at their consumers."""
 
+    def test_language_inventory_preserves_script_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "website/locales").mkdir(parents=True)
+            for code in ("ur", "ur-PK", "ur-Latn", "ur-Latn-PK", "hi-Latn"):
+                inventory = [
+                    {"code": "en", "name": "English", "readme": "README.md", "dir": "ltr"},
+                    {"code": code, "name": "Fixture", "readme": f"docs/readme/README_{code}.md", "dir": "ltr"},
+                ]
+                path = root / "website/locales/languages.json"
+                path.write_text(json.dumps(inventory))
+                with self.subTest(code=code):
+                    self.assertEqual(languages(root), inventory)
+            for code in ("ur-latn", "ur-LATN", "ur-PK-Latn", "ur/Latn"):
+                inventory[1]["code"] = code
+                path.write_text(json.dumps(inventory))
+                with self.subTest(code=code), self.assertRaisesRegex(ValueError, "Invalid or duplicate language"):
+                    languages(root)
+
     @contextlib.contextmanager
     def translated_project(self):
         with tempfile.TemporaryDirectory() as directory:
