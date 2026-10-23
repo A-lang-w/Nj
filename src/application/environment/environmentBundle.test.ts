@@ -388,46 +388,51 @@ describe("planEnvironmentBundle without a state", () => {
   });
 
   it("serves and predicts replay when the state's catalog exceeds the discovery budget that replay's fits", () => {
-    // Read tools only, so leaving out write tools saves nothing while each state description is longer.
+    // Locate the state admission boundary instead of pinning a count to description sizes.
     const reads = servedSource.manifest.tools.filter(
       ({ method }) => method === "GET",
     );
-    const sourceWithTools = (count: number) => {
-      const tools = Array.from({ length: count }, (_, index) => {
-        const tool = reads[index % reads.length]!;
-        return index < reads.length
-          ? tool
-          : { ...tool, name: `${tool.name}_${String(index)}` };
-      });
-      return { ...servedSource, manifest: { ...servedSource.manifest, tools } };
-    };
-    // Find the replay admission boundary rather than coupling the fixture to prose length.
-    let low = reads.length;
-    let high = 512;
-    expect(
-      servedCatalog(sourceWithTools(low), undefined, servedSource.manifest.name)
-        .ok,
-    ).toBe(true);
-    expect(
+    expect(reads.length).toBeGreaterThan(0);
+    const sourceAt = (count: number): EnvironmentSource => ({
+      ...servedSource,
+      manifest: {
+        ...servedSource.manifest,
+        tools: Array.from({ length: count }, (_, index) => {
+          const tool = reads[index % reads.length]!;
+          return index < reads.length
+            ? tool
+            : { ...tool, name: `${tool.name}_${String(index)}` };
+        }),
+      },
+    });
+    const stateFits = (count: number): boolean =>
       servedCatalog(
-        sourceWithTools(high),
-        undefined,
+        sourceAt(count),
+        { writes: new Map() },
         servedSource.manifest.name,
-      ).ok,
-    ).toBe(false);
-    while (low + 1 < high) {
-      const count = Math.floor((low + high) / 2);
-      if (
-        servedCatalog(
-          sourceWithTools(count),
-          undefined,
-          servedSource.manifest.name,
-        ).ok
-      )
-        low = count;
-      else high = count;
+      ).ok;
+    let fitting = 0;
+    let exceeding = reads.length;
+    // This fixture ceiling bounds setup if catalog admission stops refusing.
+    const fixtureToolLimit = 4096;
+    while (exceeding < fixtureToolLimit && stateFits(exceeding)) {
+      fitting = exceeding;
+      exceeding = Math.min(exceeding * 2, fixtureToolLimit);
     }
-    const source = sourceWithTools(low);
+    expect(
+      stateFits(exceeding),
+      "State discovery must exceed its budget within the fixture safety ceiling",
+    ).toBe(false);
+    while (exceeding - fitting > 1) {
+      const middle = Math.floor((fitting + exceeding) / 2);
+      if (stateFits(middle)) fitting = middle;
+      else exceeding = middle;
+    }
+    const source = sourceAt(exceeding);
+    expect(
+      servedCatalog(source, undefined, source.manifest.name).ok,
+      "The fixture must fit replay discovery while exceeding state discovery",
+    ).toBe(true);
     const prepared = prepareServedState(source, fixture.capture);
     expect(prepared.state).toBeUndefined();
     expect(prepared.report).toMatchObject({
@@ -444,7 +449,7 @@ describe("planEnvironmentBundle without a state", () => {
       served: false,
       code: "resource_constraint",
     });
-    expect(planned.value.toolCount).toBe(low);
+    expect(planned.value.toolCount).toBe(source.manifest.tools.length);
     expect(planned.value.check).toEqual({
       tool: "get_annotations",
       recordOrdinal: 25,
