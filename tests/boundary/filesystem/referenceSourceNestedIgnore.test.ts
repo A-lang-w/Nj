@@ -7,6 +7,47 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
+// Keep Git oracles independent of workstation config without overriding local rules.
+const createGitFixture = async () => {
+  const home = await createTestTempDirectory("rea-reference-ignore-git-home-");
+  const git = (cwd: string, args: string[]) =>
+    spawnSync(
+      "git",
+      [
+        "-C",
+        cwd,
+        "-c",
+        "init.templateDir=",
+        "-c",
+        `core.hooksPath=${join(home, "missing-hooks")}`,
+        "-c",
+        "commit.gpgsign=false",
+        ...args,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          XDG_CONFIG_HOME: home,
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_GLOBAL: join(home, "missing-global.config"),
+          GIT_CONFIG_COUNT: "0",
+          GIT_AUTHOR_NAME: "REA fixture",
+          GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+          GIT_COMMITTER_NAME: "REA fixture",
+          GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+        },
+      },
+    );
+  const succeeds = (cwd: string, args: string[]) => {
+    const result = git(cwd, args);
+    expect(result.status, result.stderr).toBe(0);
+    return result;
+  };
+  return { git, succeeds };
+};
+
 const writeTree = async (root: string, files: Record<string, string>) => {
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
@@ -15,33 +56,28 @@ const writeTree = async (root: string, files: Record<string, string>) => {
 };
 
 const testUnknownIncludedGitIgnoreCase = async () => {
+  const { git } = await createGitFixture();
   const root = await createTestTempDirectory("rea-reference-ignore-include-");
   const included = join(root, "extra.gitconfig");
   await writeTree(root, {
     "pkg/.gitignore": "generated/\n",
     "pkg/Generated/keep.ts": "retained or excluded according to Git config\n",
   });
-  expect(
-    spawnSync("git", ["init", "--quiet", root], { encoding: "utf8" }).status,
-  ).toBe(0);
+  expect(git(root, ["init", "--quiet"]).status).toBe(0);
   await writeFile(included, "[core]\n\tignoreCase = true\n");
   await writeFile(
     join(root, ".git", "config"),
     `[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n[includeIf "gitdir:${root}/"]\n\tpath = ${included}\n`,
   );
-  const configured = spawnSync(
-    "git",
-    ["-C", root, "config", "--get", "core.ignoreCase"],
-    { encoding: "utf8" },
-  );
+  const configured = git(root, ["config", "--get", "core.ignoreCase"]);
   expect(configured.status, configured.stderr).toBe(0);
   expect(configured.stdout.trim()).toBe("true");
-  const git = spawnSync(
-    "git",
-    ["-C", root, "check-ignore", "--no-index", "pkg/Generated/keep.ts"],
-    { encoding: "utf8" },
-  );
-  expect(git.status, git.stderr).toBe(0);
+  const gitResult = git(root, [
+    "check-ignore",
+    "--no-index",
+    "pkg/Generated/keep.ts",
+  ]);
+  expect(gitResult.status, gitResult.stderr).toBe(0);
 
   const result = await importReferenceSource({
     root,
@@ -64,40 +100,23 @@ const testUnknownIncludedGitIgnoreCase = async () => {
 };
 
 const testLinkedWorktreeIgnoreCaseOverride = async () => {
+  const { git, succeeds } = await createGitFixture();
   const root = await createTestTempDirectory(
     "rea-reference-worktree-ignore-case-",
   );
   const common = join(root, "common");
   const linked = join(root, "linked");
-  const git = (cwd: string, args: string[]) =>
-    spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
-  const succeeds = (cwd: string, args: string[]) => {
-    const result = git(cwd, args);
-    expect(result.status, result.stderr).toBe(0);
-    return result;
-  };
   await mkdir(common);
   await writeTree(common, {
     ".gitignore": "generated/\n",
     "pkg/Generated/keep.ts": "retained according to linked config\n",
   });
-  expect(
-    spawnSync("git", ["init", "--quiet", "--initial-branch=main", common], {
-      encoding: "utf8",
-    }).status,
-  ).toBe(0);
+  expect(git(common, ["init", "--quiet", "--initial-branch=main"]).status).toBe(
+    0,
+  );
   succeeds(common, ["add", "--", ".gitignore"]);
   succeeds(common, ["add", "--force", "--", "pkg/Generated/keep.ts"]);
-  succeeds(common, [
-    "-c",
-    "user.name=REA fixture",
-    "-c",
-    "user.email=fixture@example.invalid",
-    "commit",
-    "--quiet",
-    "-m",
-    "fixture",
-  ]);
+  succeeds(common, ["commit", "--quiet", "-m", "fixture"]);
   succeeds(common, ["config", "core.ignoreCase", "true"]);
   succeeds(common, ["config", "extensions.worktreeConfig", "true"]);
   succeeds(common, ["worktree", "add", "--quiet", "--detach", linked, "HEAD"]);
@@ -132,6 +151,7 @@ const testLinkedWorktreeIgnoreCaseOverride = async () => {
 };
 
 const testMalformedGitIgnoreConfig = async () => {
+  const { git } = await createGitFixture();
   const root = await createTestTempDirectory(
     "rea-reference-ignore-malformed-config-",
   );
@@ -139,26 +159,16 @@ const testMalformedGitIgnoreConfig = async () => {
     ".gitignore": "generated/\n",
     "pkg/Generated/keep.ts": "retained only by a case-sensitive config\n",
   });
-  expect(
-    spawnSync("git", ["init", "--quiet", "--initial-branch=main", root], {
-      encoding: "utf8",
-    }).status,
-  ).toBe(0);
-  expect(
-    spawnSync("git", ["-C", root, "config", "core.ignoreCase", "false"], {
-      encoding: "utf8",
-    }).status,
-  ).toBe(0);
+  expect(git(root, ["init", "--quiet", "--initial-branch=main"]).status).toBe(
+    0,
+  );
+  expect(git(root, ["config", "core.ignoreCase", "false"]).status).toBe(0);
   const configPath = join(root, ".git", "config");
   await writeFile(
     configPath,
     `${await readFile(configPath, "utf8")}\n[user]\n\tname = "unterminated\n`,
   );
-  expect(
-    spawnSync("git", ["-C", root, "config", "--get", "core.ignoreCase"], {
-      encoding: "utf8",
-    }).status,
-  ).not.toBe(0);
+  expect(git(root, ["config", "--get", "core.ignoreCase"]).status).not.toBe(0);
 
   const result = await importReferenceSource({
     root,
@@ -180,6 +190,7 @@ const testMalformedGitIgnoreConfig = async () => {
 };
 
 const testRepeatedInvalidIgnoreCase = async () => {
+  const { git } = await createGitFixture();
   const root = await createTestTempDirectory(
     "rea-reference-ignore-repeated-invalid-config-",
   );
@@ -188,27 +199,23 @@ const testRepeatedInvalidIgnoreCase = async () => {
     "Generated/keep.ts": "unknown case semantics must not retain this file\n",
     "generated/keep.ts": "lowercase match\n",
   });
-  expect(
-    spawnSync("git", ["init", "--quiet", "--initial-branch=main", root], {
-      encoding: "utf8",
-    }).status,
-  ).toBe(0);
+  expect(git(root, ["init", "--quiet", "--initial-branch=main"]).status).toBe(
+    0,
+  );
   const configPath = join(root, ".git", "config");
   await writeFile(
     configPath,
     `${await readFile(configPath, "utf8")}\n[core]\n\tignoreCase = auto\n\tignoreCase = false\n`,
   );
-  const gitConfig = spawnSync(
-    "git",
-    ["-C", root, "config", "--bool", "--get", "core.ignoreCase"],
-    { encoding: "utf8" },
-  );
+  const gitConfig = git(root, ["config", "--bool", "--get", "core.ignoreCase"]);
   expect(gitConfig.status).not.toBe(0);
-  const gitCheck = spawnSync(
-    "git",
-    ["-C", root, "check-ignore", "--no-index", "-v", "--", "Generated/keep.ts"],
-    { encoding: "utf8" },
-  );
+  const gitCheck = git(root, [
+    "check-ignore",
+    "--no-index",
+    "-v",
+    "--",
+    "Generated/keep.ts",
+  ]);
   expect(gitCheck.status).not.toBe(0);
 
   const result = await importReferenceSource({
@@ -231,6 +238,7 @@ const testRepeatedInvalidIgnoreCase = async () => {
 };
 
 const testCanonicalSymlinkUsesTargetRepository = async () => {
+  const { git, succeeds } = await createGitFixture();
   const root = await createTestTempDirectory("rea-reference-vcs-symlink-");
   const repositoryA = join(root, "repository-a");
   const repositoryB = join(root, "repository-b");
@@ -242,48 +250,17 @@ const testCanonicalSymlinkUsesTargetRepository = async () => {
     "packages/chosen/.gitignore": "generated/\n",
     "packages/chosen/Generated/keep.ts": "repository B source\n",
   });
-  const git = (cwd: string, args: string[]) =>
-    spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
-  const succeeds = (cwd: string, args: string[]) => {
-    const result = git(cwd, args);
-    expect(result.status, result.stderr).toBe(0);
-    return result;
-  };
   for (const repository of [repositoryA, repositoryB])
     expect(
-      spawnSync(
-        "git",
-        ["init", "--quiet", "--initial-branch=main", repository],
-        {
-          encoding: "utf8",
-        },
-      ).status,
+      git(repository, ["init", "--quiet", "--initial-branch=main"]).status,
     ).toBe(0);
   succeeds(repositoryA, ["config", "core.ignoreCase", "true"]);
   succeeds(repositoryA, ["add", "--", "selected.ts"]);
-  succeeds(repositoryA, [
-    "-c",
-    "user.name=REA fixture",
-    "-c",
-    "user.email=fixture@example.invalid",
-    "commit",
-    "--quiet",
-    "-m",
-    "repository A",
-  ]);
+  succeeds(repositoryA, ["commit", "--quiet", "-m", "repository A"]);
   succeeds(repositoryB, ["config", "core.ignoreCase", "false"]);
   succeeds(repositoryB, ["add", "--", "packages/chosen/.gitignore"]);
   succeeds(repositoryB, ["add", "--", "packages/chosen/Generated/keep.ts"]);
-  succeeds(repositoryB, [
-    "-c",
-    "user.name=REA fixture",
-    "-c",
-    "user.email=fixture@example.invalid",
-    "commit",
-    "--quiet",
-    "-m",
-    "repository B",
-  ]);
+  succeeds(repositoryB, ["commit", "--quiet", "-m", "repository B"]);
   await symlink(target, selected);
 
   const expectedHead = succeeds(repositoryB, [
@@ -309,6 +286,7 @@ const testTerminalGlobstarMatchesGit = async (
   nested: boolean,
   pattern: string,
 ) => {
+  const { git } = await createGitFixture();
   const root = await createTestTempDirectory(
     "rea-reference-terminal-globstar-",
   );
@@ -322,17 +300,11 @@ const testTerminalGlobstarMatchesGit = async (
     [nestedPath]: "export const deep = true;\n",
     [`${prefix}keep.ts`]: "export const keep = true;\n",
   });
-  const initialized = spawnSync("git", ["init", "--quiet", root], {
-    encoding: "utf8",
-  });
+  const initialized = git(root, ["init", "--quiet"]);
   expect(initialized.status, initialized.stderr).toBe(0);
 
   const gitIgnored = (path: string): boolean => {
-    const result = spawnSync(
-      "git",
-      ["-C", root, "check-ignore", "--no-index", "--", path],
-      { encoding: "utf8" },
-    );
+    const result = git(root, ["check-ignore", "--no-index", "--", path]);
     expect([0, 1], result.stderr).toContain(result.status);
     return result.status === 0;
   };
@@ -363,6 +335,7 @@ const testLiteralWhitespaceIgnoreMatchesGit = async (
   name: string,
   pattern = name,
 ) => {
+  const { git } = await createGitFixture();
   const root = await createTestTempDirectory(
     "rea-reference-literal-whitespace-ignore-",
   );
@@ -374,16 +347,16 @@ const testLiteralWhitespaceIgnoreMatchesGit = async (
     [ignoredPath]: "must be excluded by Git's literal whitespace rule\n",
     [`${prefix}keep.ts`]: "retained\n",
   });
-  const initialized = spawnSync("git", ["init", "--quiet", root], {
-    encoding: "utf8",
-  });
+  const initialized = git(root, ["init", "--quiet"]);
   expect(initialized.status, initialized.stderr).toBe(0);
-  const git = spawnSync(
-    "git",
-    ["-C", root, "check-ignore", "--no-index", "-v", "--", ignoredPath],
-    { encoding: "utf8" },
-  );
-  expect(git.status, git.stderr).toBe(0);
+  const gitResult = git(root, [
+    "check-ignore",
+    "--no-index",
+    "-v",
+    "--",
+    ignoredPath,
+  ]);
+  expect(gitResult.status, gitResult.stderr).toBe(0);
 
   const result = await importReferenceSource({
     root,
@@ -411,6 +384,7 @@ const testWhitespaceGlobCardinalityMatchesGit = async (
   nested: boolean,
   whitespace: string,
 ) => {
+  const { git } = await createGitFixture();
   const root = await createTestTempDirectory(
     "rea-reference-whitespace-glob-cardinality-",
   );
@@ -424,16 +398,16 @@ const testWhitespaceGlobCardinalityMatchesGit = async (
     [targetPaths[1]!]: "single-character glob match\n",
     [`${prefix}keep.ts`]: "retained\n",
   });
-  expect(
-    spawnSync("git", ["init", "--quiet", root], { encoding: "utf8" }).status,
-  ).toBe(0);
+  expect(git(root, ["init", "--quiet"]).status).toBe(0);
   for (const targetPath of targetPaths) {
-    const git = spawnSync(
-      "git",
-      ["-C", root, "check-ignore", "--no-index", "-v", "--", targetPath],
-      { encoding: "utf8" },
-    );
-    expect(git.status, git.stderr).toBe(0);
+    const gitResult = git(root, [
+      "check-ignore",
+      "--no-index",
+      "-v",
+      "--",
+      targetPath,
+    ]);
+    expect(gitResult.status, gitResult.stderr).toBe(0);
   }
   const result = await importReferenceSource({
     root,
@@ -451,6 +425,7 @@ const testWhitespaceGlobCardinalityMatchesGit = async (
 };
 
 const testLiteralWhitespaceSecretPattern = async () => {
+  const { git } = await createGitFixture();
   const root = await createTestTempDirectory(
     "rea-reference-literal-whitespace-secret-",
   );
@@ -459,9 +434,7 @@ const testLiteralWhitespaceSecretPattern = async () => {
     "\t": "excluded by the caller's secret rule\n",
     "keep.ts": "retained\n",
   });
-  expect(
-    spawnSync("git", ["init", "--quiet", root], { encoding: "utf8" }).status,
-  ).toBe(0);
+  expect(git(root, ["init", "--quiet"]).status).toBe(0);
   const result = await importReferenceSource({
     root,
     caller: "literal-whitespace-secret-test",
@@ -484,6 +457,7 @@ describe.skipIf(process.platform === "win32")(
     it.each([false, true])(
       "matches Git core.ignoreCase=%s for nested rules",
       async (ignoreCase) => {
+        const { git } = await createGitFixture();
         const root = await createTestTempDirectory(
           "rea-reference-ignore-case-",
         );
@@ -492,27 +466,25 @@ describe.skipIf(process.platform === "win32")(
           "pkg/Generated/keep.ts": "retained\n",
         });
 
-        const initialized = spawnSync("git", ["init", "--quiet", root], {
-          encoding: "utf8",
-        });
+        const initialized = git(root, ["init", "--quiet"]);
         expect(initialized.status, initialized.stderr).toBe(0);
-        const caseConfig = spawnSync(
-          "git",
-          ["-C", root, "config", "core.ignoreCase", String(ignoreCase)],
-          { encoding: "utf8" },
-        );
+        const caseConfig = git(root, [
+          "config",
+          "core.ignoreCase",
+          String(ignoreCase),
+        ]);
         expect(caseConfig.status, caseConfig.stderr).toBe(0);
 
-        const ignored = spawnSync(
-          "git",
-          ["-C", root, "check-ignore", "--no-index", "pkg/generated/drop.ts"],
-          { encoding: "utf8" },
-        );
-        const caseVariant = spawnSync(
-          "git",
-          ["-C", root, "check-ignore", "--no-index", "pkg/Generated/keep.ts"],
-          { encoding: "utf8" },
-        );
+        const ignored = git(root, [
+          "check-ignore",
+          "--no-index",
+          "pkg/generated/drop.ts",
+        ]);
+        const caseVariant = git(root, [
+          "check-ignore",
+          "--no-index",
+          "pkg/Generated/keep.ts",
+        ]);
         expect(ignored.status, ignored.stderr).toBe(0);
         expect(caseVariant.status).toBe(ignoreCase ? 0 : 1);
 
