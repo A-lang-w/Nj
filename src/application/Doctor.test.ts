@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { defaultHopperLauncherPath } from "../config/parseConfig.js";
@@ -1049,9 +1049,13 @@ describe("doctor installed Hopper discovery", () => {
 });
 
 describe("doctor Hopper discovery matches runtime selection", () => {
+  // Model launchers with runtime's POSIX joins; filesystem work stays native.
   const launchers = (home: string) => ({
     macSystem: MAC_HOPPER_SYSTEM_LAUNCHER,
-    renamed: join(home, "Applications/Hopper 5.app/Contents/MacOS/hopper"),
+    renamed: posix.join(
+      home,
+      "Applications/Hopper 5.app/Contents/MacOS/hopper",
+    ),
     linuxSystem: "/opt/hopper-v4/bin/hopper",
   });
   type Launcher = keyof ReturnType<typeof launchers>;
