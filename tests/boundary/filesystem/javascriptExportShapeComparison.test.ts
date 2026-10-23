@@ -571,6 +571,21 @@ describe("JavaScript export hoisted var reads", () => {
       }),
     ]);
   });
+
+  it("keeps the initializer value for a read inside a nested function", async () => {
+    const graphs = await analyzeSources({
+      left: 'export default () => ({ kind: "record" });',
+      right:
+        "var v = 1; export default function make() { return { kind: 'record', a: v }; }",
+    });
+    expect(compare(...graphs).changes).toEqual([
+      expect.objectContaining({
+        status: "added",
+        path: "/a",
+        right: { availability: "literal", value: 1 },
+      }),
+    ]);
+  });
 });
 
 describe("JavaScript export localized mutation uncertainty", () => {
