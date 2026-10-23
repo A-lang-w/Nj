@@ -70,6 +70,44 @@ export const unusableNativeCommandOutput = (
     },
   );
 
+/**
+ * Refuse admitted layout refusals that disagree with the parsed header or with
+ * each other. The header and every admitted refusal stay in the diagnostics,
+ * because together they establish the contradiction.
+ */
+export const contradictoryLayoutRefusals = (
+  targetFileType: string | null,
+  refusals: readonly NativeCommandCapture[],
+  conflicting: NativeCommandCapture,
+): AnalysisOutputError =>
+  new AnalysisOutputError(
+    "inspect_macho",
+    `dyld_info layout refusals contradict the parsed ${targetFileType} header`,
+    {
+      diagnostics: {
+        target_file_type: targetFileType,
+        refusals: refusals.map((capture) => ({
+          mode:
+            capture.arguments.find(
+              (argument) => argument === "-imports" || argument === "-exports",
+            ) ?? null,
+          admitted_file_type: targetLayoutDyldRefusal(capture),
+          exit_code: capture.exitCode,
+          stdout: capture.stdout,
+        })),
+      },
+      capturedOutput: {
+        stdout: conflicting.stdout,
+        stderr: conflicting.stderr,
+        truncated: false,
+        stdout_bytes: conflicting.stdoutBytes,
+        stderr_bytes: conflicting.stderrBytes,
+        exit_code: conflicting.exitCode,
+        signal: conflicting.signal,
+      },
+    },
+  );
+
 /** Refuse a recognized error when the independently parsed load table contradicts it. */
 export const conflictingUuidCommandEvidence = (
   command: NativeCommandCapture,

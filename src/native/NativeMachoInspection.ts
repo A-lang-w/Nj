@@ -24,6 +24,7 @@ import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   conflictingUuidCommandEvidence,
+  contradictoryLayoutRefusals,
   isMissingUuidDyldFailure,
   missingUuidLimitation,
   targetLayoutDyldRefusal,
@@ -191,7 +192,9 @@ export const inspectNativeMacho = async (
       (capture) => targetLayoutDyldRefusal(capture) !== load.fileTypeKind,
     );
     if (conflicting !== undefined)
-      return err(unusableNativeCommandOutput(conflicting));
+      return err(
+        contradictoryLayoutRefusals(load.fileType, layoutRefusals, conflicting),
+      );
     const diagnosedType = load.fileTypeKind;
     const diagnostic =
       withoutEchoedPathHeader(

@@ -560,6 +560,30 @@ describe("Mach-O target-layout refusals", () => {
           : importsDiagnostic;
       expect(result.error).toMatchObject({
         _tag: "AnalysisOutputError",
+        reason: `dyld_info layout refusals contradict the parsed ${fileType} header`,
+        diagnostics: {
+          target_file_type: fileType,
+          refusals: [
+            {
+              mode: "-imports",
+              admitted_file_type:
+                importsDiagnostic === "unknown mh.filetype 4"
+                  ? "CORE"
+                  : "FVMLIB",
+              exit_code: 1,
+              stdout: `/fixture/debug:\n${importsDiagnostic}\n`,
+            },
+            {
+              mode: "-exports",
+              admitted_file_type:
+                exportsDiagnostic === "unknown mh.filetype 4"
+                  ? "CORE"
+                  : "FVMLIB",
+              exit_code: 1,
+              stdout: `/fixture/debug:\n${exportsDiagnostic}\n`,
+            },
+          ],
+        },
         capturedOutput: {
           stdout: `/fixture/debug:\n${conflictingDiagnostic}\n`,
         },
