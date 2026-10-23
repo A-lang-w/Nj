@@ -182,3 +182,62 @@ describe("discarded POST body accounting", () => {
     expect(JSON.stringify(result.value)).not.toContain("POSTBODY");
   });
 });
+
+describe("retained request metadata accounting", () => {
+  const observeRequests = async (
+    paddings: readonly number[],
+  ): Promise<
+    Awaited<ReturnType<CdpWebRuntimeProvider["observeExecution"]>>
+  > => {
+    const browser = await startRuntimeBrowser();
+    onTestFinished(() => browser.close());
+    return new CdpWebRuntimeProvider().observeExecution(
+      observeWebExecutionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 2_000,
+      }),
+      {
+        progress: {
+          report: async (update) => {
+            if (update.completed !== 1) return;
+            paddings.forEach((padding, index) =>
+              browser.emitEvent({
+                method: "Network.requestWillBeSent",
+                sessionId: "session-1",
+                params: {
+                  requestId: `retained-${String(index)}`,
+                  frameId: "runtime-main",
+                  timestamp: 12,
+                  request: {
+                    url: `${browser.endpoint}/selected`,
+                    method: "GET",
+                  },
+                  initiator: { type: "script", padding: "i".repeat(padding) },
+                },
+              }),
+            );
+          },
+        },
+      },
+    );
+  };
+  const budgetError = expect.objectContaining({
+    message: expect.stringContaining(
+      "Request initiator evidence exceeds its complete 8 MiB event budget.",
+    ),
+  });
+
+  it("rejects one request whose retained initiator exceeds the budget", async () => {
+    const result = await observeRequests([
+      WEB_RUNTIME_LIMITS.retainedEventBytes,
+    ]);
+    expect(result).toMatchObject({ ok: false, error: budgetError });
+  });
+
+  it("rejects requests whose retained initiators together exceed the budget", async () => {
+    const padding = Math.floor(WEB_RUNTIME_LIMITS.retainedEventBytes / 3);
+    const result = await observeRequests([padding, padding, padding, padding]);
+    expect(result).toMatchObject({ ok: false, error: budgetError });
+  });
+});
