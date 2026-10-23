@@ -308,3 +308,35 @@ it.each(["99", "FUTURE_KIND"])(
     });
   },
 );
+
+it.each([
+  ["LC_VERSION_MIN_IPHONEOS", "IOSSIMULATOR"],
+  ["LC_VERSION_MIN_TVOS", "TVOSSIMULATOR"],
+  ["LC_VERSION_MIN_WATCHOS", "WATCHOSSIMULATOR"],
+])("classifies legacy Intel simulator command %s", (command, platform) => {
+  const text = [
+    "Mach header",
+    "      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+    " 0xfeedfacf 16777223 3 0x00 2 1 16 0x0",
+    "Load command 0",
+    `      cmd ${command}`,
+    "  cmdsize 16",
+    "   version 12.0",
+    "       sdk 12.1",
+  ].join("\n");
+  expect(parseOtoolLoadCommands(text).builds[0]?.platform).toBe(platform);
+});
+
+it("keeps legacy device platforms on arm64 slices", () => {
+  const text = [
+    "Mach header",
+    "      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+    " 0xfeedfacf 16777228 0 0x00 2 1 16 0x0",
+    "Load command 0",
+    "      cmd LC_VERSION_MIN_IPHONEOS",
+    "  cmdsize 16",
+    "   version 12.0",
+    "       sdk 12.1",
+  ].join("\n");
+  expect(parseOtoolLoadCommands(text).builds[0]?.platform).toBe("IPHONEOS");
+});
