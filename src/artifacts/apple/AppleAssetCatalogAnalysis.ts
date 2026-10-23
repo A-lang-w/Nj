@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
+import { AnalysisCleanupLease } from "../AnalysisCleanupLease.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
   ArtifactReaderFailure,
@@ -168,16 +169,25 @@ const collectAssetCatalogs = async (input: {
     walk = { kind: "failed", cause };
   }
   // A failed close must report unverified release without replacing the
-  // diagnosis the caller acts on, so the walk failure stays primary.
+  // diagnosis the caller acts on, so the walk failure stays primary. The reader
+  // is the only owner that can still release these handles, so it is retained
+  // as the exact cleanup owner for a later retry rather than named in prose.
   try {
     await reader.close();
   } catch (closeCause: unknown) {
-    if (walk.kind === "failed")
-      throw ArtifactReaderFailure.withCleanup(
-        walk.cause,
-        ArtifactReaderFailure.cleanupObservation(closeCause, input.bundlePath),
-      );
-    throw closeCause;
+    const cleanup = ArtifactReaderFailure.cleanupObservation(
+      closeCause,
+      input.bundlePath,
+    );
+    const leases = [
+      AnalysisCleanupLease.forCloseOwner(reader, input.bundlePath),
+    ];
+    throw ArtifactReaderFailure.withCleanup(
+      walk.kind === "failed" ? walk.cause : closeCause,
+      cleanup,
+      undefined,
+      leases,
+    );
   }
   if (walk.kind === "failed") throw walk.cause;
   // Without any readable catalog, unmatched resource keys would overstate an
