@@ -2043,6 +2043,53 @@ ${shellStub({ "am:start": "Starting: Intent { act=android.intent.action.VIEW dat
   ]);
 });
 
+it("passes integer extras with leading zeros as decimal", async () => {
+  const { binary, root } = await writeAdbStub(
+    (root) => `printf '%s\\n' "$@" >> ${join(root, "argv.log")}
+${shellStub({ "am:start": "Starting: Intent { act=android.intent.action.VIEW }\n" })(root)}`,
+  );
+  await evidenceResult(providerOver(binary), {
+    operation: "start_adb_activity",
+    input: {
+      serial: "emulator-5554",
+      action: "android.intent.action.VIEW",
+      extras: [
+        { key: "a", type: "int", value: "010" },
+        { key: "b", type: "int", value: "-010" },
+        { key: "c", type: "int", value: "08" },
+        { key: "d", type: "int", value: "0" },
+        { key: "e", type: "long", value: "007" },
+        { key: "f", type: "string", value: "007" },
+      ],
+    },
+  });
+  const logged = (await readFile(join(root, "argv.log"), "utf8"))
+    .trim()
+    .split("\n");
+  expect(logged.slice(logged.indexOf("-a"))).toEqual([
+    "-a",
+    "android.intent.action.VIEW",
+    "--ei",
+    "a",
+    "10",
+    "--ei",
+    "b",
+    "-10",
+    "--ei",
+    "c",
+    "8",
+    "--ei",
+    "d",
+    "0",
+    "--el",
+    "e",
+    "7",
+    "--es",
+    "f",
+    "007",
+  ]);
+});
+
 it("collects a device bugreport archive with its digest", async () => {
   const { binary, root } = await writeAdbStub(
     () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi

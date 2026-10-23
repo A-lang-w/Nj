@@ -2823,7 +2823,11 @@ export class AdbProvider {
       ...input.extras.flatMap((extra) => [
         extraFlags[extra.type],
         extra.key,
-        extra.value,
+        // am reads --ei with Integer.decode, where a leading 0 means octal; the schema takes
+        // decimal, so drop leading zeros ("010" is 10, not 8)
+        extra.type === "int" || extra.type === "long"
+          ? extra.value.replace(/^(-?)0+(?=\d)/u, "$1")
+          : extra.value,
       ]),
     ];
     return this.runAmStart(
