@@ -32,10 +32,9 @@ import {
 } from "../domain/webScriptExport.js";
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
-import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "./InvestigationProviders.js";
+import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "../domain/investigationProviders.js";
 import {
   readRegularFile,
-  RegularFileCleanupFailure,
   RegularFileReadFailure,
   retryRegularFileCleanup,
 } from "./RegularFileRead.js";
@@ -45,7 +44,10 @@ import {
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
 
 const OPERATION = "export_web_scripts";
 

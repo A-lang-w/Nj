@@ -1,3 +1,4 @@
+import { copyPlistUidIdentity } from "./apple/plistUid.js";
 import { parseOpenStep } from "plist";
 
 import { decodeXmlPropertyList } from "./propertyListXml.js";
@@ -47,13 +48,15 @@ export const omitPrototypeKeys = (
       item instanceof UnknownPlistScalar
     )
       return item;
-    return Object.fromEntries(
+    const projected = Object.fromEntries(
       Object.entries(item).flatMap(([name, entry]) => {
         if (name !== PROTOTYPE_KEY) return [[name, strip(entry)]];
         omitted += 1;
         return [];
       }),
     );
+    copyPlistUidIdentity(item, projected);
+    return projected;
   };
   const stripped = strip(value);
   return { value: stripped, omittedPrototypeKeys: omitted };
@@ -66,7 +69,7 @@ export const omitPrototypeKeys = (
 export const parseXmlPropertyList = (text: string): ParsedPropertyList => {
   // Preserve the pinned decoder's existing OpenStep autodetection, also used
   // by app Info.plist resolution.
-  const first = text.trimStart()[0];
+  const first = text[skipOpenStepTrivia(text, 0)];
   if (first === "{" || first === "(") {
     // The pinned decoder assigns a `__proto__` key to the object prototype, so
     // the entry is gone before the decoded value can be counted. Count keys in
@@ -210,12 +213,17 @@ const isOpenStepPrototypeKey = (token: string): boolean => {
 
 /** Skip grammar trivia without interpreting delimiter examples inside comments. */
 const skipOpenStepTrivia = (text: string, cursor: number): number => {
-  if (/\s/u.test(text[cursor] ?? "")) return cursor + 1;
-  if (!text.startsWith("//", cursor) && !text.startsWith("/*", cursor))
-    return cursor;
-  const line = text[cursor + 1] === "/";
-  const end = text.indexOf(line ? "\n" : "*/", cursor + 2);
-  return end === -1 ? text.length : end + (line ? 1 : 2);
+  while (cursor < text.length) {
+    if (/\s/u.test(text[cursor] ?? "")) {
+      cursor += 1;
+      continue;
+    }
+    if (!text.startsWith("//", cursor) && !text.startsWith("/*", cursor)) break;
+    const line = text[cursor + 1] === "/";
+    const end = text.indexOf(line ? "\n" : "*/", cursor + 2);
+    cursor = end === -1 ? text.length : end + (line ? 1 : 2);
+  }
+  return cursor;
 };
 
 /** Read the extent of one opaque scalar; the pinned decoder still owns its value. */

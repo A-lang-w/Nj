@@ -250,6 +250,10 @@ run, use `observe_native_calls` with explicit breakpoints and a bounded
 `duration_ms`/`max_events`. It launches a new process under LLDB, so the target
 runs and may change files or use the network. Hardened-runtime targets need the
 `get-task-allow` entitlement.
+Function breakpoints use exact LLDB runtime names: a Darwin C `_main` static symbol
+may be `main` at runtime. REA does not translate names. Set `module` to the image
+file name when selecting that image only; otherwise loaded system images also
+match. Inspect retained locations and module paths before attributing a call.
 
 Use `binary_session` with no arguments to check the open target, selected
 provider, and alignment. Its default `result.tool_availability` carries a
@@ -295,6 +299,35 @@ their missing coverage is acceptable and retain the resulting limitations.
 Exported C and embedded resources remain useful independent evidence, but a
 timeout does not establish complete analysis or absence of code. See the
 [deadline and client guide](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
+
+## Bridge request ceiling
+
+Hopper and Cutter share `REA_BRIDGE_MAX_REQUEST_BYTES`. Unset, both sides use
+16777216 bytes. The payload budget excludes the terminating LF. A decimal
+integer from 7464 to 536870887 raises or lowers that ceiling. The floor fits
+the largest bounded symbol-name command. A tight Cutter status still returns
+its session id and up to 64 completion receipts. Its path is included when it
+fits, and is unknown when it does not, so an older descriptor path is not
+paired with the new generation. The maximum is the encoded payload, one byte under Node's string ceiling so
+the framing LF still fits. Cutter measures, signs, and writes a fitting
+response in bounded chunks. The bridge searches only the newly read bytes
+for the framing LF. The client unescapes each socket chunk into one response
+string before parsing it, so this ceiling does not keep the paged wire frame
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
+and start Hopper or Cutter from that same environment. An out-of-band bridge
+without the setting stays at 16777216 bytes. The client reports that mismatch
+during discovery only after the hello proves a live authenticated bridge, and
+does not send a status request or the command. A stale descriptor is ignored.
+Discovery fails if any such live ceiling differs, even when another live
+session matches. A command response discarded for that ceiling stays an
+unknown execution with `output_truncated`. A hello
+that never sends its authenticated frame does not hold the accept loop.
+At most 8 connection threads run; a further accept is closed, and a failure
+to start a thread does not stop the listener. `completed_connection` is the
+longest prefix of connections that have terminated. Dense scalar replies are
+encoded in bounded batches.
+The 25000 ms Cutter request deadline and the 256-candidate discovery budget
+still have no runtime override.
 
 ## Static memory and original file bytes
 

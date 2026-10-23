@@ -1,3 +1,4 @@
+import { nativeSymbolMetadataSchema } from "./native/nativeSymbol.js";
 import { z } from "zod";
 import { fixedTupleSchema } from "./fixedTupleSchema.js";
 import { addressCoordinate } from "./native/addressCoordinate.js";
@@ -38,11 +39,6 @@ export const addressDistance = (start: string, end: string): number | null => {
   return Number(distance);
 };
 
-const procedureMapSchema = z.record(z.string(), z.string());
-const addressedNamesSchema = z.array(
-  z.object({ address: z.string(), name: z.string() }),
-);
-const addressedNameMapSchema = z.record(z.string(), z.string());
 const segmentSchema = z.object({
   name: z.string(),
   start: z.string(),
@@ -209,6 +205,7 @@ export const procedureIdentitySchema = z
   .object({
     address: z.string(),
     name: z.string(),
+    symbol: nativeSymbolMetadataSchema.nullable().exactOptional(),
     classification: procedureClassificationSchema.nullable(),
     body: functionBodySchema,
   })
@@ -221,6 +218,24 @@ export const procedureIdentitySchema = z
           "Function body entry membership disagrees with procedure identity",
       });
   });
+/** Exact containing-procedure outcome; valid absence is distinct from unreadable output. */
+export const containingProcedureResolutionSchema = z.discriminatedUnion(
+  "found",
+  [
+    z.object({
+      query_address: z.string(),
+      found: z.literal(true),
+      procedure: procedureIdentitySchema,
+    }),
+    z.object({
+      query_address: z.string(),
+      found: z.literal(false),
+      procedure: z.null(),
+      reason: z.enum(["outside_segments", "not_in_procedure"]),
+    }),
+  ],
+);
+
 export const localVariableSchema = z
   .object({
     description: z.string(),
@@ -435,7 +450,7 @@ export type FunctionDossier = z.infer<typeof functionDossierSchema>;
 /** Strictly parse a complete provider-neutral function dossier. */
 export const parseFunctionDossier = (
   value: JsonValue,
-): Result<JsonValue, AnalysisOutputError> => {
+): Result<FunctionDossier, AnalysisOutputError> => {
   const parsed = functionDossierSchema.safeParse(value);
   return parsed.success
     ? ok(parsed.data)
@@ -446,38 +461,6 @@ export const parseFunctionDossier = (
           { cause: parsed.error },
         ),
       );
-};
-
-/** Parse a provider's direct or wrapped procedure map into stable entries. */
-export const parseProcedures = (
-  value: JsonValue,
-  operation = "list_procedures",
-): Result<readonly AddressedName[], AnalysisOutputError> => {
-  const parsed = procedureMapSchema.safeParse(
-    unwrapProperty(value, "procedures"),
-  );
-  return parsed.success
-    ? ok(
-        Object.entries(parsed.data).map(([address, name]) => ({
-          address,
-          name,
-        })),
-      )
-    : invalid(operation, "procedure map", parsed.error);
-};
-
-/** Parse a provider's direct or wrapped list of address/name records. */
-export const parseNames = (
-  value: JsonValue,
-  operation = "list_names",
-): Result<readonly AddressedName[], AnalysisOutputError> => {
-  const unwrapped = unwrapProperty(value, "names");
-  const records = addressedNamesSchema.safeParse(unwrapped);
-  if (records.success) return ok(records.data);
-  const map = addressedNameMapSchema.safeParse(unwrapped);
-  return map.success
-    ? ok(Object.entries(map.data).map(([address, name]) => ({ address, name })))
-    : invalid(operation, "name list", map.error);
 };
 
 /** Parse callee/caller strings from direct or wrapped provider results. */
