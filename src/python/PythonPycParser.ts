@@ -141,6 +141,8 @@ const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
  */
 type CodeEquality = {
   readonly consts: readonly MarshalValue[];
+  /** The co_consts tuple itself, which may be a reference to an unfinished tuple. */
+  readonly constsTuple: MarshalValue;
   readonly linetable: string;
   readonly exceptiontable: string;
 };
@@ -409,7 +411,8 @@ class MarshalReader {
     // 3.7–3.10 constructors do not, so an odd `co_code` stays readable there.
     if (this.layout === "py311" && bytecode.length % 2 !== 0)
       malformed("co_code is malformed.");
-    const consts = asTuple(this.readObject(depth + 1), "co_consts");
+    const constsTuple = this.readObject(depth + 1);
+    const consts = asTuple(constsTuple, "co_consts");
     this.#chargeConsts(consts.length);
     const names = this.#nameTable(
       asTuple(this.readObject(depth + 1), "co_names"),
@@ -501,6 +504,7 @@ class MarshalReader {
     };
     this.#codeEquality.set(node, {
       consts,
+      constsTuple,
       linetable: `${linetable.length}:${sha256(linetable)}`,
       exceptiontable: `${exceptiontable.length}:${sha256(exceptiontable)}`,
     });
@@ -1190,9 +1194,7 @@ class MarshalReader {
     const material =
       this.#codeEquality.get(node) ??
       malformed("Code object is missing equality material.");
-    const hashable = material.consts.every(
-      (item) => this.#equalityKey(item, "hash") !== null,
-    );
+    const hashable = this.#equalityKey(material.constsTuple, "hash") !== null;
     this.#codeHashable.set(node, hashable);
     return hashable;
   }

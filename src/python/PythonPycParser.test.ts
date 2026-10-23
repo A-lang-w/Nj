@@ -913,14 +913,19 @@ it("rejects code keys and members whose consts are unhashable", () => {
     PythonPycFormatFailure,
   );
 
-  // A set inside a tuple that reaches the unfinished tuple, directly or
-  // through a code object's consts, while the tuple's list is still unread.
+  // A set inside a tuple that reaches the unfinished tuple, directly, inside
+  // a code object's consts, or as those consts, before the list is read.
   for (const member of [
     marshalRef(0),
     marshalCode("py311", {
       name: "u",
       qualname: "u",
       constsObject: tuple(marshalRef(0)),
+    }),
+    marshalCode("py311", {
+      name: "u",
+      qualname: "u",
+      constsObject: marshalRef(0),
     }),
   ])
     expect(() =>
