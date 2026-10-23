@@ -2,6 +2,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
+import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { pythonPycSchema } from "../../../src/domain/python/pythonPyc.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -13,6 +15,10 @@ import {
 } from "../../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+
+const completePycEvidenceSchema = toolContract(
+  "inspect_python_pyc",
+).outputSchema.and(evidenceResultOf(pythonPycSchema));
 
 const marshalInt64 = (value: bigint): Buffer => {
   const payload = Buffer.alloc(8);
@@ -66,7 +72,7 @@ mcpTest(
         expect(response.isError, JSON.stringify(response.content)).not.toBe(
           true,
         );
-        const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        const evidence = completePycEvidenceSchema.parse(
           response.structuredContent,
         );
         expect(
@@ -89,9 +95,9 @@ mcpTest(
         arguments: { path: ordinaryPath },
       });
       expect(ordinary.isError, JSON.stringify(ordinary.content)).not.toBe(true);
-      const ordinaryEvidence = toolContract(
-        "inspect_python_pyc",
-      ).outputSchema.parse(ordinary.structuredContent);
+      const ordinaryEvidence = completePycEvidenceSchema.parse(
+        ordinary.structuredContent,
+      );
       expect(
         ordinaryEvidence.normalized_result.code_objects[0]?.consts,
       ).toContainEqual({ kind: "int", bits: 6, value: "-42" });
@@ -166,7 +172,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+      const evidence = completePycEvidenceSchema.parse(
         response.structuredContent,
       );
       expect(
@@ -264,7 +270,7 @@ mcpTest(
         expect(response.isError, JSON.stringify(response.content)).not.toBe(
           true,
         );
-        const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+        const evidence = completePycEvidenceSchema.parse(
           response.structuredContent,
         );
         expect(
