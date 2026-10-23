@@ -6,6 +6,15 @@ Use a native provider to discover functions, inspect instructions and pseudocode
 follow references, and examine database types. Static resources and runtime
 observation complement that analysis when they answer a specific question.
 
+`inspect_macho` reports build platforms from the selected slice. Legacy
+`LC_VERSION_MIN_IPHONEOS`, `LC_VERSION_MIN_TVOS` and
+`LC_VERSION_MIN_WATCHOS` commands are interpreted with the Mach-O CPU type, so
+Intel slices report simulator platforms while device CPU slices keep the
+device platform. A chained-import row ending in `+0x...` is ambiguous in
+dyld's text output: it may be an addend or part of a literal symbol name. REA
+keeps the full expression in `raw_name`, sets `name` and `addend` to null, and
+marks `name_status: "ambiguous"`; it does not synthesize a symbol identity.
+
 ## Start with a function
 
 Choose an installed provider from [setup](installation.md#hopper). For Ghidra:
@@ -212,12 +221,18 @@ from the environment that starts REA, so a change needs a restart. A deadline
 failure names the effective milliseconds, whether they came from the default
 or the setting, the default, and the maximum. The worker old-generation heap
 does not raise it. Kuna regex search uses the same deadline. The worker
-requests 128
-MiB. A positive Node.js `--max-old-space-size` on the process that starts
+heap request is `REA_REGEX_WORKER_HEAP_REQUEST_MIB`, a decimal integer from
+7 to 16384 MiB. Unset uses 128 MiB. A request below 7 MiB aborts the worker
+during startup, and a larger value is refused. Invalid values are
+configuration errors and do not fall back to 128. The setting is read from
+the environment that starts REA, so a change needs a restart. A heap failure
+names the effective request, whether it came from the default or the setting,
+the default, the floor, and the maximum. A positive Node.js
+`--max-old-space-size` on the process that starts
 REA, including `NODE_OPTIONS`, overrides that request and sets the effective
 heap. `--max-old-space-size-percentage` takes precedence over that flag in
 either order. REA does not turn the percentage into a MiB, so the effective
-heap stays unestablished instead of the 128 MiB request or the absolute flag.
+heap stays unestablished instead of the worker heap request or the absolute flag.
 The reported `NODE_OPTIONS` value is the process initial environment when that
 block can be read. A later edit to the environment is not the value Node
 applied, and an unreadable initial value leaves the effective heap
@@ -229,11 +244,11 @@ buffer without a program entry leaves the effective heap unestablished.
 `--env-file` or `--env-file-if-exists` can supply `NODE_OPTIONS`
 when the initial environment has none. That file is not part of the initial
 environment block, so the effective heap stays unestablished instead of the
-128 MiB request. An initial `NODE_OPTIONS` is still used, because Node does
+worker heap request. An initial `NODE_OPTIONS` is still used, because Node does
 not let the file replace it. A positive `--max-heap-size`, including the
 underscore form and launch `NODE_OPTIONS` on Node versions that allow it,
 sets the total heap rather than the old generation and can be lower than the
-128 MiB request. The effective old generation stays unestablished while that
+worker heap request. The effective old generation stays unestablished while that
 value is in effect. A zero or empty value clears it.
 `--experimental-config-file` or `--experimental-default-config-file` can set
 `nodeOptions`, including a heap percentage, from a file that is not read
@@ -329,6 +344,15 @@ Mach-O fixtures check each case against source-owned return values.
 
 ## Static inspection
 
+`inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
+their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
+`armv7s`, and `armv7k`. These names are reconciled with the FAT CPU subtype;
+the structural reader's `arm` family label alone does not identify a slice.
+Available CPU type, subtype/capability bits, byte range, and alignment remain
+checked against the source bytes. Inventory records source ranges and hashes, and
+extraction copies those ranges without running the target. This does not
+expand any analysis provider's supported architectures.
+
 `inspect_plist.format` describes the selected source, not plutil's conversion
 format. Sources explicitly identified as XML, binary or JSON retain those
 labels. For generic text, a bounded source-prefix probe recognizes leading XML
@@ -423,6 +447,19 @@ complete observation.
   emits no bytes. Character references retain their source spelling for data
   decoding. Non-ASCII content, child markup and self-closing `<data/>` are format
   failures; explicit `<data></data>` represents empty data.
+  Each XML dictionary key must have a following value element; a final key
+  without one is malformed. An explicit empty string remains a value.
+  Binary UID payloads may use nonminimal byte widths. REA normalizes them only
+  in a private decoder copy; archive digests still identify the original bytes.
+  Positive binary-plist offset and object-reference table widths are read from
+  the source; nonstandard widths are normalized only in that private copy for
+  the pinned decoder. [Foundation's table checks](https://github.com/swiftlang/swift-corelibs-foundation/blob/swift-6.2.3-RELEASE/Sources/CoreFoundation/CFBinaryPList.c#L759-L789)
+  accept positive widths subject to extent/reference bounds, and its
+  [sized-integer reader](https://github.com/swiftlang/swift-corelibs-foundation/blob/swift-6.2.3-RELEASE/Sources/CoreFoundation/CFBinaryPList.c#L707-L730)
+  handles non-power sizes. Widths over eight bytes follow its unsigned 64-bit
+  accumulator semantics.
+  UID values above JavaScript's exact integer range return an unsupported-target
+  outcome instead of rounded reference identities.
   UID 0 cannot distinguish conditional nil from ordinary nil. Limits are
   64 MiB of input, 200,000 objects/references and 128 nesting levels.
   XML dictionary entries decoded as `__proto__` are omitted with an explicit
@@ -784,8 +821,13 @@ attributes; exact and ambiguous projection counts cover emitted attribute values
 Integral reals stay numbers, and ambiguous or incompletely observed values retain
 explicit precision limitations. Before plist decoding, the existing aggregate
 decode budget reserves estimated room for number metadata and attribute
-projection; these estimates are not a hard process-memory bound. Native
-NIBArchive decoding is unchanged by this plist-specific representation.
+projection; these estimates are not a hard process-memory bound. Keyed-archive
+object identities come from their original `$objects` table indices unless an
+explicit `objectID` or `object-id` is present. An authored `archiveUID` field
+remains ordinary object data and does not change identity. NIBArchive float32
+and float64 values retain non-finite values and negative zero through projection
+as the same typed real wrappers used for plist values; per-document limitations
+count those values. NIBArchive nil remains JSON null.
 
 Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`.
 XML dates require a complete UTC spelling with fixed two-digit month, day and

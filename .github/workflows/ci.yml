@@ -764,6 +764,7 @@ jobs:
           tests/boundary/mcp/nativeDemangleMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
+          tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
@@ -932,7 +933,7 @@ jobs:
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.19.0
+          node-version: 22.23.4
       - name: Verify native path boundaries on Node 22
         run: >-
           npx vitest run --coverage.enabled=false

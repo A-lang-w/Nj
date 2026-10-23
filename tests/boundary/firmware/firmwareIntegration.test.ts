@@ -7,6 +7,7 @@ import {
 } from "../../fixtures/firmware/provider.js";
 import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
+import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -98,6 +99,11 @@ it("binds region observations to exact bytes and preserves provider-reported unc
   const normalized = firmwareResultSchemas.inspect_firmware_regions.parse(
     result.value.normalized_result,
   );
+  expect(normalized.engine).toMatchObject({
+    name: "binwalk",
+    version: "3.1.0",
+    executable_path: fixture.commands.binwalk,
+  });
   expect(normalized.regions[0]).toMatchObject({
     offset: 2,
     reported_size: 4,
@@ -109,7 +115,11 @@ it("binds region observations to exact bytes and preserves provider-reported unc
     report: [{ Analysis: { file_map: [{ id: "hit" }] } }],
   });
   expect(fixture.launches[1]?.args).toEqual(
-    expect.arrayContaining(["--as=1073741824", "--threads", "1"]),
+    expect.arrayContaining([
+      `--as=${String(FIRMWARE_LIMITS.addressSpaceBytes)}:${String(FIRMWARE_LIMITS.addressSpaceBytes)}`,
+      "--threads",
+      "1",
+    ]),
   );
   await assertFirmwareCleanup(fixture.launches);
 });
@@ -140,6 +150,11 @@ it("extracts a selected interval with verified file identity and parent-byte lin
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
+  expect(normalized.engine).toMatchObject({
+    name: "unblob",
+    version: "26.6.4",
+    executable_path: fixture.commands.unblob,
+  });
   expect(normalized.selection).toMatchObject({ offset: 2, length: 4 });
   expect(normalized.files[0]).toMatchObject({
     relative_path: "rootfs/config",
@@ -614,6 +629,12 @@ it.each(["depth", "dependency", "link"])(
           continuation: expect.stringContaining("installs nothing"),
         },
       ]);
+    const linkLimitation = expect.stringContaining(
+      "Unblob rewrites absolute targets relative to the extraction root",
+    );
+    if (mode === "link")
+      expect(result.value.limitations).toContainEqual(linkLimitation);
+    else expect(result.value.limitations).not.toContainEqual(linkLimitation);
     if (mode === "link") {
       expect(normalized.unpublished_entries).toEqual([
         {

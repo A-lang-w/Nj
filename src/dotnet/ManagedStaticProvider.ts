@@ -10,7 +10,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
-import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
+import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import {
   MANAGED_TOOL_CONTRACTS,
   managedMembersInputSchema,
@@ -39,7 +39,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
-import { RegularFileCleanupFailure } from "../application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import {
   hashManagedSource,

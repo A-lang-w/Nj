@@ -196,8 +196,12 @@ it.each([
 it.each([
   '(module (@custom "name" "\\00\\06\\05name"))',
   '(module (@custom "name" "\\00\\05\\05name"))',
-])("rejects incomplete decoded module-name metadata: %s", (text) => {
-  expect(() => parseWabtWat(text)).toThrow(/metadata/u);
+])("retains an uninterpretable optional name section: %s", (text) => {
+  expect(parseWabtWat(text)).toMatchObject({
+    customSectionNames: ["name"],
+    debugModuleNames: [],
+    debugNameMetadata: "uninterpretable",
+  });
 });
 it("frames custom section names at their NUL-terminated objdump display", async () => {
   const text = await golden();
@@ -380,4 +384,17 @@ it("matches a CLI-selected ./ module exactly against its glue reference", () => 
       candidate_paths: ["/app/module.wasm"],
     },
   ]);
+});
+
+it("tests long multi-line glue literals for a .wasm suffix in linear time", () => {
+  const value = `${".wasm#".repeat(32_000)}\nend`;
+  const started = performance.now();
+  expect(
+    associateWasmGlue(`const s = ${JSON.stringify(value)};`, "/glue.js", []),
+  ).toEqual({ parse_status: "complete", references: [] });
+  expect(performance.now() - started).toBeLessThan(1_000);
+  expect(
+    associateWasmGlue("const s = `first\nmodule.wasm?v=1`;", "/glue.js", [])
+      .references,
+  ).toMatchObject([{ value: "first\nmodule.wasm?v=1", line: 1 }]);
 });
