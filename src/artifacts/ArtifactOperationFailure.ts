@@ -50,10 +50,11 @@ export const translateArtifactFailure = (
     for (const failure of secondary) error.retainSecondaryFailure(failure);
     return error;
   }
-  if (
-    cause instanceof ArtifactFileCleanupFailure &&
-    hasSeparatelyOwnedPrimary(cause)
-  ) {
+  const owned =
+    cause instanceof ArtifactFileCleanupFailure
+      ? separatelyOwnedPrimary(cause)
+      : undefined;
+  if (cause instanceof ArtifactFileCleanupFailure && owned !== undefined) {
     // An outer close owns only its exact file, not the source's classification
     // or cleanup lifecycle. Preserve that primary through this boundary too.
     const physical = cause.fileCleanupFailure;
@@ -75,26 +76,12 @@ export const translateArtifactFailure = (
       },
     );
     new AnalysisCleanupLeaseGroup(cleanup, [cause.cleanupLease]);
-    const primary =
-      physical.outcome.kind === "failed"
-        ? translateOwnedArtifactFailure(operation, physical.outcome.cause)
-        : physical.completionCancellation === undefined
-          ? undefined
-          : translateArtifactFailure(
-              operation,
-              new ArtifactReaderFailure(
-                "cancelled",
-                "Artifact read cancelled during close",
-                { cause: physical.completionCancellation.reason },
-              ),
-            );
-    return primary === undefined
-      ? cleanup
-      : analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          operation,
-        ).bindCleanupDependencies([primary, cleanup]);
+    const primary = translateOwnedArtifactFailure(operation, owned.cause);
+    return analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      operation,
+    ).bindCleanupDependencies([primary, cleanup]);
   }
   if (cause instanceof ArtifactReaderFailure) {
     const error = new ArtifactOperationError(
@@ -126,19 +113,22 @@ export const translateArtifactFailure = (
 
 /**
  * The file failure already projects raw and reader primaries with its exact
- * lease. Only a domain or composed source primary keeps its own translation.
+ * lease, including completion cancellation. Only a failed domain or composed
+ * source primary keeps its own translation.
  */
-const hasSeparatelyOwnedPrimary = (
+const separatelyOwnedPrimary = (
   cause: ArtifactFileCleanupFailure,
-): boolean => {
+): { readonly cause: unknown } | undefined => {
   const outcome = cause.fileCleanupFailure.outcome;
-  if (outcome.kind !== "failed") return false;
+  if (outcome.kind !== "failed") return undefined;
   const primary = outcome.cause;
-  return primary instanceof ArtifactFileCleanupFailure
-    ? hasSeparatelyOwnedPrimary(primary)
-    : primary instanceof AnalysisError ||
+  const owned =
+    primary instanceof ArtifactFileCleanupFailure
+      ? separatelyOwnedPrimary(primary) !== undefined
+      : primary instanceof AnalysisError ||
         primary instanceof SafeOutputSourceFailure ||
         primary instanceof ArtifactResourceCleanupFailure;
+  return owned ? { cause: primary } : undefined;
 };
 
 /** A domain error already owns its live cleanup state; only classify raw errors. */

@@ -51,6 +51,11 @@ This keeps the complete source in the session and returns a distinct linked
 evidence, metadata status, module/MVID, assembly, frameworks, returned-row counts,
 coverage/issues and limitations. No assembly is loaded or executed.
 
+ECMA-335 permits empty metadata streams to be omitted. An absent `#Blob`
+stream therefore does not prevent module or assembly identity from being read
+when all blob indexes are zero; a nonzero reference to that missing heap is
+reported as a missing-stream issue.
+
 Use `normalized_result.parent_evidence_id` to page original rows:
 
 ```json
@@ -177,6 +182,9 @@ declares API compatibility across multiple .NET implementations. REA preserves
 that target in `target_frameworks` and leaves `runtime_family` as `unknown`
 unless independent markers identify a runtime family, such as a ReadyToRun
 signature.
+When ReadyToRun is observed, `runtime_family` remains `modern-dotnet` even if
+Unity or target-framework hints are also present; the separate hint evidence
+is retained in the classification evidence list.
 
 ### Resource admission
 
@@ -242,7 +250,13 @@ remain an assembly-wide inventory, so output size is not guaranteed to be small.
 Coverage describes the selected members. Comparisons leave members outside the
 opposite observation's selection unknown, and application graphs report their
 selected scope as partial. Neither makes an absence claim about the whole
-assembly. Older member Evidence without `selection` remains readable.
+assembly. Older member Evidence without `selection` remains readable. The
+`method_rows` interval records the examined zero-based MethodDef offset, row
+count and full table total before type selection. A complete observation can
+cover only that interval. Comparison keeps omissions from a method page unknown:
+build-local row positions cannot prove member absence across builds. Historical
+Evidence without this interval also cannot establish method absence; observed
+pairs and field inventory comparisons remain available.
 
 For MCP callers, request `detail: "summary"` and page the `types` collection
 using the returned parent Evidence ID. Select one or more returned full names
@@ -310,6 +324,19 @@ does not load or execute the assembly. Reconstructed structure and unresolved
 native/runtime questions retain their own authority and coverage.
 
 ## Member comparison
+
+Call edges and field accesses retain `il_offset` as their instruction site within
+the caller's build-local method token and artifact identity. Their
+`target_identity_sha256` combines the existing enclosing-type nominal digest,
+member name and resolved decoded signature. Comparison joins edges to their
+instruction sites rather than array positions and compares these identities;
+display labels alone cannot establish equal targets. Same-named nested types
+under different enclosing types and different overload signatures stay distinct.
+This is nominal metadata identity, not assembly resolution or runtime binding.
+Historical edges without a site or identity, unresolved/cyclic type scopes,
+TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
+equivalence. Valid MethodSpecs combine the base member identity with the
+resolved instantiation signature, preserving generic argument distinctions.
 
 Names and semantic labels do not establish durable member identity. Comparison
 preserves observed differences, structural inferences, and unknowns separately.
@@ -386,6 +413,24 @@ constants, and bounded shape context. It reports all candidates at the winning
 score and remains ambiguous when the evidence does not distinguish them. The
 digest does not itself remap metadata tokens.
 
+Matched methods also compare aligned references. `call-shape` and
+`field-shape` report opcode and operand-kind differences; `call-target` and
+`field-target` report differences in the observed target declaring type or
+name from `call_edges` and `field_accesses`. Target tokens remain build-local
+and are not compared across artifacts. Missing or unaligned edges and missing
+target names leave that facet unknown; equal names do not establish overload
+identity or runtime dispatch. `exception-shape` compares clause flags and
+ranges. `exception-target` compares the nested nominal catch-type name digest;
+for resolved TypeDefs it also compares the enclosing assembly identity. A
+different known name or assembly scope establishes a change. Equal TypeRef
+names remain unknown because their resolution scope is not resolved here.
+Exception tokens remain in the source facts but are not cross-build identity;
+an unresolved catch type leaves that facet unknown. The method body retains the
+display `class_type`, nested `class_type_name_sha256`, and whether its local
+token identifies a TypeDef. A TypeDef digest alone does not prove identity
+without matching assembly identity. Missing assembly identity and equal TypeRef
+names leave the comparison unknown.
+
 Tokens are always remapped through observed structure. A caller cannot carry
 `0x06001234` into a new MVID and assume it names the same method.
 
@@ -436,7 +481,20 @@ point identities with supplied native export or function evidence. Name/module
 matches establish declaration links; they do not establish that a call executed.
 When either side lacks a usable module identity, a matching name remains
 unresolved and retains the candidate evidence; REA reports a module mismatch
-only when both identities are available and differ.
+only when both identities are available and their format-specific comparison
+establishes a difference. ELF module names retain case, PE module names compare
+case-insensitively, and a case-only match for Mach-O or an unknown format stays
+unresolved because the available Evidence does not establish case behavior.
+For PE imports, `.dll`, `.exe`, a trailing period, and absolute paths suppress
+appending `.dll`; other names may also be tried with `.dll`. Unix loaders use
+the platform suffix (`.so` or `.dylib`) and `lib` prefix variations. A suffix
+already present at the end of the name or before a period still gets an
+appended-suffix variation, so Linux can match `nativedep.so.6` with
+`libnativedep.so.6`. The `lib` prefix is omitted when the name contains `/`, and
+absolute paths are used as supplied. POSIX paths keep backslashes as literal
+characters. These candidates follow [Microsoft's native library loading rules](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/native-library-loading).
+These filename rules compare declared and observed identities; they do not
+establish which library the runtime loaded.
 
 Metadata tokens are not native addresses. Native body mapping for C++/CLI,
 ReadyToRun, NativeAOT, and IL2CPP requires separately verified format and provider
@@ -506,6 +564,10 @@ preserving readable member and attribute facts.
 The retained inverse indexes are admitted against the existing representation
 budget before allocation.
 
+Custom-attribute `type_name` uses `Outer+Nested` when its local TypeDef or
+TypeRef enclosing chain is readable. It remains `null` when the constructor's
+type or required enclosing facts cannot be resolved.
+
 `exported_types` reports ExportedType rows as declared. Facade assemblies such
 as .NET `System.Runtime.dll` provide their types this way: `forwarder: true`
 marks a type forwarder, and `implementation_token` names the AssemblyRef, File,
@@ -519,6 +581,19 @@ CLI `#GUID` heap values retain their exact 16-byte GUID text. REA does not impos
 RFC 4122 UUID version or variant bits on MVID, EncId, or EncBaseId because
 ECMA-335 metadata does not require those bit patterns. Tokens and RVAs are
 build-local coordinates, not durable cross-build identities or native addresses.
+Field and method signatures validate embedded TypeDefOrRefOrSpec operands
+against the artifact's metadata tables. An invalid operand leaves the member
+name and raw signature digest available while marking that signature malformed
+and coverage partial.
+A fat method header's nonzero LocalVarSigTok must name an existing StandAloneSig
+row whose blob is a structurally valid LocalVarSig. REA validates its local
+types and exact blob coverage but does not project their identities. An invalid
+token or malformed signature leaves decoded CIL anchors intact but marks the
+body malformed and coverage partial. Unsupported local type encodings retain
+the readable body with partial coverage. Zero continues to mean no locals
+signature. Comparison detects whether a locals declaration is present, but raw
+table tokens are not cross-build identities and local type contents are not
+compared.
 
 ## Decoded-CIL fingerprint
 
@@ -544,6 +619,10 @@ Tuple operands use these exact projections:
 - signed integer and variable operands: decimal strings; floating-point
   operands: JavaScript's `String` representation of the decoded IEEE value.
 
+For `ldtoken` MemberRef operands, `operand_kind` follows the parsed member
+signature (`field` or `method`); if that signature does not establish the kind,
+the anchor keeps the generic `token` classification.
+
 Opcode names retain short/long forms and prefix opcodes. This makes the value a
 reproducible decoded-tuple fingerprint, not a canonical semantic CIL identity:
 it does not resolve tokens across MVIDs, does not commit full control flow or
@@ -551,7 +630,8 @@ exception semantics, and does not replace the raw CIL digest. Cross-build
 comparison requires equal raw CIL digests as well for exact CIL/signature
 matches and reports ambiguity when structural evidence is insufficient.
 
-For example, a decoded `nop; ret` body serializes exactly as
+For example, a present body (including any valid declared locals signature)
+whose IL is `nop; ret` serializes exactly as
 `[["nop","none",null],["ret","none",null]]` and has digest
 `5e5fad7741cb44bca3a4f045546b7449990da343f612f5f34c0ca30e9eee0636`.
 This vector specifies the tuple order, `null` handling, absence of whitespace,
@@ -712,6 +792,10 @@ Managed member comparisons report a `metadata` dimension when an observed
 MethodDef flags or implementation flags value differs, including accessibility
 or synchronization changes. Observed method-body `init_locals` and `max_stack`
 differences also contribute to `metadata`, even when CIL decoding is incomplete.
+For complete bodies, presence or absence of a locals signature also contributes;
+the locals table token is build-local and is not compared. Local type contents
+are not currently compared, so this facet does not establish equivalent locals
+declarations.
 An unavailable header value keeps body coverage unknown rather than establishing
 equality or a difference. These comparisons are separate from the CIL/signature
 matching tiers: identical instructions do not establish unchanged method metadata.

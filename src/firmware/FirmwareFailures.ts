@@ -6,6 +6,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { SafeOutputSourceFailure } from "../artifacts/SafeOutputSourceFailure.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -178,14 +179,15 @@ export const firmwareFailure = (
       { operation: context.operation, cause },
     );
     new AnalysisCleanupLeaseGroup(cleanup, [cause.cleanupLease]);
+    const cancellation = artifactFileCompletion(cause)?.cancellation;
     const primary =
       physical.outcome.kind === "failed"
         ? firmwareFailure(physical.outcome.cause, context)
-        : physical.completionCancellation === undefined
+        : cancellation === undefined
           ? undefined
           : firmwareCancellation(
               context.operation,
-              physical.completionCancellation.reason,
+              cancellation.reason,
               context.deadline,
               context.publication,
             );

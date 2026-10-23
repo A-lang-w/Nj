@@ -112,8 +112,9 @@ module record and no dependency records has an observed empty dependency list.
 The built-in TypeScript reader supports ELF, PE and thin Mach-O images, and one
 selected slice of a universal Mach-O, with Go's inline or historical pointer
 build-info encoding. Source ranges refer to the original stable file snapshot,
-including pointer-backed strings. It does not scan arbitrary byte strings as
-compiler metadata.
+including pointer-backed strings. Legacy pointer-backed fields are decoded at
+the width declared by Go's build-info record, independently of the image's ELF
+class. It does not scan arbitrary byte strings as compiler metadata.
 
 A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
 or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
@@ -129,7 +130,13 @@ For ELF images without a named build-info section, discovery checks each
 nonempty writable, non-executable load segment in program-header order. This
 includes sectionless PIE images with metadata in a later data segment. Named
 sections retain priority, and alignment, file mapping and record validation
-remain required.
+remain required. When ELF section names are unreadable, limitations report that
+coverage gap; the fallback search policy is unchanged.
+
+A named ELF or Mach-O build-info section selects the record's discovery range.
+For inline encoding, the following version and module strings may continue past
+that section into its file-backed load mapping; their bytes are still checked
+against the mapping and the existing aggregate string limit.
 
 Historical moduleless Go binaries can store their empty module-string header in
 declared zero-initialized virtual memory rather than file-backed bytes. The reader
@@ -156,10 +163,12 @@ and `reported_limits.maximum_input_bytes`. Select a suitable input within that
 fixed allowance; changing an output-write or transport budget does not admit it.
 
 Resource guards bound the selected file and cumulative header searches to 256 MiB
-each, aggregate embedded strings
-to 1 MiB, structural table decoding to 16 MiB and the complete normalized metadata
-report to 8 MiB. Identical search spans with the same virtual alignment are
-searched once; partially overlapping spans consume the cumulative search budget
+each, aggregate embedded string contents to 1 MiB (varint length prefixes are
+framing and do not count toward this allowance), structural table decoding to
+16 MiB and the complete normalized metadata report to 8 MiB. Inline strings must
+also fit within their actual mapped source range. Identical search spans with
+the same virtual alignment are searched once; partially overlapping spans
+consume the cumulative search budget
 and fail with a CPU resource constraint when it is exhausted. Oversized results
 fail without partial success. MCP also applies
 its [response transport budget](mcp-contracts.md), which counts both text and
