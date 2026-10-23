@@ -31,12 +31,33 @@ import { hasXmlPlistSignature } from "../../../src/domain/apple/appleArchiveForm
 import { parseExecutableHeader } from "../../../src/domain/binaryTarget.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import {
   arArchive,
   CPU,
   fatImage,
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
+
+it.each([4000, 9000])(
+  "refuses a JVM class with %i unused constant bytes without claiming FAT identity",
+  async (constantBytes) => {
+    const directory = await createTestTempDirectory("rea-class-target-");
+    const path = join(directory, "input.class");
+    await writeFile(path, javaClassFile(constantBytes));
+    const resolved = await parseBinaryTarget(path);
+    expect(resolved).toMatchObject({
+      ok: false,
+      error: { reason: "unsupported binary format" },
+    });
+    if (resolved.ok) throw new Error("JVM class was admitted as executable");
+    expect(projectAnalysisError(resolved.error)).toMatchObject({
+      code: "target_unavailable",
+      category: "unsupported_target",
+      details: { reason: "unsupported binary format" },
+    });
+  },
+);
 
 it.each([0x01c0, 0x01c2, 0x01c4, 0xaa64])(
   "retains original PE COFF machine %i through file-backed target resolution",
@@ -1118,6 +1139,93 @@ describe("binary Info.plist app bundle targets", () => {
 });
 
 describe("DOS binary target I/O", () => {
+  it("retains the declared PE signature when its overlapping layout is unsupported", async () => {
+    const directory = await createTestTempDirectory("rea-overlapping-pe-");
+    const path = join(directory, "overlap.exe");
+    await writeFile(path, pe(0x014c, 4));
+    const result = await parseBinaryTarget(path);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining("Unsupported overlapping PE header"),
+        diagnostics: {
+          unsupported_layout: true,
+          mz_windows_header: { state: "declared", offset: 4, signature: "PE" },
+        },
+      },
+    });
+  });
+
+  it("retains valid DOS facts while refusing automatic selection for an unresolved pointer", async () => {
+    const directory = await createTestTempDirectory("rea-ambiguous-mz-target-");
+    const path = join(directory, "legacy.exe");
+    const bytes = Buffer.alloc(128);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(128, 2);
+    bytes.writeUInt16LE(1, 4);
+    bytes.writeUInt16LE(2, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(28, 24);
+    bytes.write("ABCD", 60, "ascii");
+    await writeFile(path, bytes);
+
+    const result = await parseBinaryTarget(path);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "MZ Windows new-header candidate is unresolved",
+        diagnostics: {
+          mz_windows_header: {
+            state: "candidate",
+            offset: 0x44434241,
+            signature: "unobserved",
+          },
+          mz_dos: {
+            state: "valid",
+            header_bytes: 64,
+            image_bytes: 128,
+            module_bytes: 64,
+            relocation_count: 2,
+            relocation_table_offset: 28,
+          },
+        },
+      },
+    });
+  });
+
+  it("validates ambiguous DOS facts after extending the bounded prefix for relocations", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-ambiguous-mz-relocations-",
+    );
+    const path = join(directory, "legacy.exe");
+    const bytes = Buffer.alloc(8192);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(16, 4);
+    bytes.writeUInt16LE(1010, 6);
+    bytes.writeUInt16LE(257, 8);
+    bytes.writeUInt16LE(64, 24);
+    bytes.write("ABCD", 60, "ascii");
+    await writeFile(path, bytes);
+
+    const result = await parseBinaryTarget(path);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "MZ Windows new-header candidate is unresolved",
+        diagnostics: {
+          mz_dos: {
+            state: "valid",
+            header_bytes: 4112,
+            image_bytes: 8192,
+            module_bytes: 4080,
+            relocation_count: 1010,
+            relocation_table_offset: 64,
+          },
+        },
+      },
+    });
+  });
+
   it("resolves a short-header PE signature beyond the bounded prefix", async () => {
     const directory = await createTestTempDirectory(
       "rea-short-stub-pe-target-",

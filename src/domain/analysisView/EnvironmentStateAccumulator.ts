@@ -1,6 +1,11 @@
 import { z } from "zod";
+import {
+  compareClockInstants,
+  readClock,
+} from "./environmentStateWriteValues.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseExactJson } from "../exactJsonNumber.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { ok, type Result } from "../result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -14,7 +19,10 @@ import {
 import { EnvironmentStateExtraction } from "./EnvironmentStateExtraction.js";
 import type { TemplateRule } from "./environmentManifestRules.js";
 import {
+  deeperThan,
+  hasPrototypeKey,
   isStateWrite,
+  STATE_BODY_LIMIT_BYTES,
   type ParsedBody,
   type StateRecordFacts,
   type StateTimeline,
@@ -22,6 +30,7 @@ import {
 import {
   base64PrefixChars,
   readRecordedResponseBody,
+  type RecordedResponseBody,
 } from "./recordedResponseBody.js";
 import {
   ENTRY_BYTES,
@@ -41,13 +50,41 @@ type StateFields = Pick<
   | "entities"
   | "documents"
   | "views"
+  | "writes"
+  | "write_clock"
   | "unknowns"
   | "coverage"
   | "limitations"
 >;
 
-/** Bodies beyond this many UTF-8 bytes are not parsed into state; their views stay recorded. */
-export const STATE_BODY_LIMIT_BYTES = 256 * 1024;
+/**
+ * Levels the state's own nesting adds above a recorded value: Evidence, a `data/get` reply and a
+ * JSON-RPC response hold a body's members about ten levels down, so a body must leave this much
+ * room under the JSON depth limit to be sealed and served.
+ */
+const STATE_NESTING_DEPTH = 16;
+
+/** A recorded response body as state JSON: a JSON-like media type, complete UTF-8 text within the state body limit, exact numbers and no `__proto__` member; otherwise undefined. */
+export const stateBodyJson = (
+  contentType: string | null,
+  body: RecordedResponseBody,
+): JsonValue | undefined => {
+  if (
+    contentType === null ||
+    !isJsonLike(mediaTypeEssence(contentType)) ||
+    body.bodyText === null ||
+    body.bodyEncoding === "base64" ||
+    body.bodyCut === true ||
+    Buffer.byteLength(body.bodyText, "utf8") > STATE_BODY_LIMIT_BYTES
+  )
+    return undefined;
+  const value = parseExactJson(body.bodyText);
+  return value === undefined ||
+    hasPrototypeKey(value) ||
+    deeperThan(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
+    ? undefined
+    : value;
+};
 
 const timingSchema = z.object({
   startedDateTime: z.string(),
@@ -60,6 +97,11 @@ const redactedWriteSchema = z.object({
 const contentSchema = z.object({
   response: z.object({ content: z.object({ text: z.string() }) }),
 });
+const requestSchema = z.object({
+  request: z.object({
+    postData: z.object({ mimeType: z.string(), text: z.string() }),
+  }),
+});
 
 interface RecordEntry {
   readonly facts: StateRecordFacts;
@@ -67,6 +109,7 @@ interface RecordEntry {
   readonly origin: string | null;
   readonly contentType: string;
   readonly timed: boolean;
+  readonly subMillisecond: number;
   readonly record: WebNetworkCaptureRecord;
 }
 
@@ -84,7 +127,7 @@ const UNKNOWNS: StateView["unknowns"] = [
   {
     kind: "state-transition",
     statement:
-      "The state is one snapshot from before the first related recorded write; it states no effects of writes.",
+      "The state is one snapshot from before the first related recorded write; write effects are modelled only from the calls the capture recorded, and served only where its later reads confirmed them.",
   },
 ];
 
@@ -111,16 +154,21 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       const line = readRecordedRequestLine(record.reported, true, this.scratch);
       if (line === null) return this.overBudget();
       const timing = timingSchema.safeParse(record.reported);
-      const start = timing.success
-        ? Date.parse(timing.data.startedDateTime)
-        : Number.NaN;
-      const timed = timing.success && Number.isFinite(start);
+      const clock = timing.success
+        ? readClock(timing.data.startedDateTime)
+        : undefined;
+      const start = clock?.ms ?? record.ordinal;
+      const timed = timing.success && clock !== undefined;
       if (line.kind === "excluded")
         return line.reason === "url-redacted"
           ? this.#redactedWrite(
               record,
               timing.success && timed
-                ? { start, end: start + timing.data.time }
+                ? {
+                    start,
+                    end: start + timing.data.time,
+                    subMillisecond: clock.subMillisecond,
+                  }
                 : undefined,
             )
           : ok(undefined);
@@ -151,6 +199,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         origin: line.origin,
         contentType: line.rawMime,
         timed,
+        subMillisecond: clock?.subMillisecond ?? 0,
         record,
       });
       return ok(undefined);
@@ -162,7 +211,13 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   /** Keep a successful write whose URL was redacted, with an empty path whose root relates to every type. */
   #redactedWrite(
     record: WebNetworkCaptureRecord,
-    timing: { readonly start: number; readonly end: number } | undefined,
+    timing:
+      | {
+          readonly start: number;
+          readonly end: number;
+          readonly subMillisecond: number;
+        }
+      | undefined,
   ): Result<void, AnalysisError> {
     const parsed = redactedWriteSchema.safeParse(record.reported);
     if (!parsed.success) return ok(undefined);
@@ -184,14 +239,16 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       origin: null,
       contentType: "",
       timed: timing !== undefined,
+      subMillisecond: timing?.subMillisecond ?? 0,
       record,
     });
     return ok(undefined);
   }
 
-  /** Parse one retained response body as exact JSON, charging its decoding and tree as temporary work. */
+  /** Parse one retained response body as state JSON, charging its decoding and tree as temporary work. */
   #body(ordinal: number): ParsedBody | null {
     const entry = this.#entries.get(ordinal);
+    // A body that is not JSON-like is refused before its decoding is charged.
     if (entry === undefined || !isJsonLike(mediaTypeEssence(entry.contentType)))
       return { kind: "unusable" };
     const content = contentSchema.safeParse(entry.record.reported);
@@ -202,16 +259,50 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       return { kind: "unusable" };
     if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(length) * 4))
       return null;
-    const body = readRecordedResponseBody(entry.record, STATE_BODY_LIMIT_BYTES);
+    const value = stateBodyJson(
+      entry.contentType,
+      readRecordedResponseBody(entry.record, STATE_BODY_LIMIT_BYTES),
+    );
+    return value === undefined ? { kind: "unusable" } : { kind: "json", value };
+  }
+
+  /** Parse one recorded request body as state JSON, as response bodies are admitted. */
+  #requestBody(ordinal: number): ParsedBody | null {
+    const entry = this.#entries.get(ordinal);
+    const request = requestSchema.safeParse(entry?.record.reported);
     if (
-      body.bodyText === null ||
-      body.bodyEncoding === "base64" ||
-      body.bodyCut === true ||
-      Buffer.byteLength(body.bodyText, "utf8") > STATE_BODY_LIMIT_BYTES
+      entry === undefined ||
+      !request.success ||
+      !isJsonLike(mediaTypeEssence(request.data.request.postData.mimeType))
     )
       return { kind: "unusable" };
-    const value = parseExactJson(body.bodyText);
-    return value === undefined ? { kind: "unusable" } : { kind: "json", value };
+    const { mimeType, text } = request.data.request.postData;
+    if (Buffer.byteLength(text, "utf8") > STATE_BODY_LIMIT_BYTES)
+      return { kind: "unusable" };
+    if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4))
+      return null;
+    try {
+      const value = stateBodyJson(mimeType, { bodyText: text });
+      return value === undefined
+        ? { kind: "unusable" }
+        : { kind: "json", value };
+    } finally {
+      this.releaseTemporary();
+    }
+  }
+
+  /** Whether a record's response carried no body: a 204, or known decoded empty content. */
+  #emptyResponse(ordinal: number): boolean {
+    const entry = this.#entries.get(ordinal);
+    if (entry === undefined) return false;
+    if (entry.facts.status === 204) return true;
+    // Emptiness needs only a tiny decoded prefix; never decode a whole body outside the state budget.
+    const body = readRecordedResponseBody(entry.record, 0);
+    return (
+      body.bodyText === "" &&
+      body.bodyEncoding === undefined &&
+      body.bodyCut !== true
+    );
   }
 
   /** Project the init state of the manifest's primary origin; records keep timeline order. */
@@ -230,12 +321,15 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         ? "recorded-start-time"
         : "record-order";
     const records = entries
-      .map((entry) => entry.facts)
       .sort((left, right) =>
         timeline === "record-order"
-          ? left.ordinal - right.ordinal
-          : left.start - right.start || left.ordinal - right.ordinal,
+          ? left.facts.ordinal - right.facts.ordinal
+          : compareClockInstants(
+              { ms: left.facts.start, subMillisecond: left.subMillisecond },
+              { ms: right.facts.start, subMillisecond: right.subMillisecond },
+            ) || left.facts.ordinal - right.facts.ordinal,
       )
+      .map((entry) => entry.facts)
       .map((facts) =>
         timeline === "record-order"
           ? { ...facts, start: facts.ordinal, end: facts.ordinal }
@@ -247,6 +341,8 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       timeline,
       budget: {
         body: (ordinal) => this.#body(ordinal),
+        requestBody: (ordinal) => this.#requestBody(ordinal),
+        emptyResponse: (ordinal) => this.#emptyResponse(ordinal),
         retain: (bytes) => this.retain(bytes),
         release: () => this.releaseTemporary(),
       },

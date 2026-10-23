@@ -51,6 +51,7 @@ export const resolveAdbBinary = (
 export type AdbConfigurationFailureCode =
   | "not_absolute"
   | "binary_missing"
+  | "binary_not_executable"
   | "version_unresolved";
 
 export class AdbConfigurationFailure extends Error {
@@ -141,7 +142,7 @@ export const inspectAdbClient = async (
         ? {}
         : { capturedOutput: adbCommandCapturedOutput(failure) }),
     };
-    if (failure?.outputTruncated === true)
+    if (failure?.outputTruncated === true) {
       throw new AnalysisResourceConstraintError(
         "inspect_adb_client",
         "memory",
@@ -150,17 +151,18 @@ export const inspectAdbClient = async (
         {
           ...options,
           ...fixedAllowanceOptions(
-            "The adb version-output capture allowance",
+            `The adb version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes (this release has no runtime override)`,
             "capture",
           ),
         },
       );
+    }
     if (failure?.code === "ETIMEDOUT")
-      throw new AnalysisTimeoutError(
-        "inspect_adb_client",
-        VERSION_TIMEOUT_MS,
-        options,
-      );
+      throw new AnalysisTimeoutError("inspect_adb_client", VERSION_TIMEOUT_MS, {
+        ...options,
+        userMessage: `adb version probe reached its ${String(VERSION_TIMEOUT_MS)} ms deadline (deadlineExpired). This release has no runtime override.`,
+        remediationAction: `This ${String(VERSION_TIMEOUT_MS)} ms adb version probe has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+      });
     if (failure?.code === "ENOENT")
       throw new AdbConfigurationFailure(
         "binary_missing",
@@ -169,6 +171,18 @@ export const inspectAdbClient = async (
           selected_binary: selection.binary,
           path_source: selection.pathSource,
           remediation: `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
+        },
+        { cause },
+      );
+    if (failure?.code === "EACCES" || failure?.code === "EPERM")
+      throw new AdbConfigurationFailure(
+        "binary_not_executable",
+        `Execution of the selected adb binary was denied (${failure.code}): ${selection.binary}`,
+        {
+          selected_binary: selection.binary,
+          path_source: selection.pathSource,
+          filesystem_error: failure.code,
+          remediation: `Check file type and execute permission for ${ADB_BINARY_ENV} or select an executable adb binary`,
         },
         { cause },
       );
@@ -195,7 +209,7 @@ const rejectionCodeOf = (
 ): ProviderRejectionCode =>
   code === "binary_missing"
     ? "executable_missing"
-    : code === "not_absolute"
+    : code === "not_absolute" || code === "binary_not_executable"
       ? "not_configured"
       : "version_unresolved";
 

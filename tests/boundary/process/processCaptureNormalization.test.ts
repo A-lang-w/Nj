@@ -93,7 +93,7 @@ itWithCaptureCapability(
       ),
     ).toBe(true);
     expect(capture.manifest.comparison_contract).toMatchObject({
-      port_normalization_version: "contextual-endpoints-v2",
+      port_normalization_version: "contextual-endpoints-v3",
       rendered_line_format: "trailing-spaces-trimmed-v1",
     });
     expect(capture.manifest.comparison_contract).not.toHaveProperty(
@@ -262,7 +262,7 @@ itWithCaptureCapability(
     ).toBe(original.replaceAll("\n", "\r\n"));
     expect(capture.manifest.comparison_contract).toHaveProperty(
       "path_normalization_version",
-      "longest-original-paths-v1",
+      "path-component-boundaries-v2",
     );
     const legacyContract = { ...capture.manifest.comparison_contract };
     delete legacyContract.path_normalization_version;
@@ -281,6 +281,25 @@ itWithCaptureCapability(
         ],
       }),
     );
+    const formerPathSemantics = {
+      ...capture,
+      manifest: {
+        ...capture.manifest,
+        comparison_contract: {
+          ...capture.manifest.comparison_contract,
+          path_normalization_version: "longest-original-paths-v1",
+        },
+        comparison_contract_sha256: digestProcessCommitment({
+          ...capture.manifest.comparison_contract,
+          path_normalization_version: "longest-original-paths-v1",
+        }),
+      },
+    };
+    expect(() => compareProcessCaptures(formerPathSemantics, capture)).toThrow(
+      expect.objectContaining({
+        issues: [expect.objectContaining({ path: ["right"] })],
+      }),
+    );
     expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });
     expect(capture.cleanup).toMatchObject({
       owned_process_group: "verified",
@@ -288,4 +307,92 @@ itWithCaptureCapability(
     });
   },
   20_000,
+);
+
+itWithCaptureCapability(
+  "keeps sibling executable names distinct in actual PTY Evidence",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-sibling-path-");
+    const executable = join(root, "original", "tool");
+    await mkdir(join(root, "original"), { recursive: true });
+    await symlink(process.execPath, executable);
+    const sibling = `${executable}-helper`;
+    const scenario = parseProcessScenario({
+      executable,
+      working_directory: root,
+      arguments: ["-e", `process.stdout.write(${JSON.stringify(sibling)})`],
+      normalization: { paths: true, pids: false, ports: false, patterns: [] },
+      settle_ms: 100,
+    });
+    const result = await captureProcessScenario(scenario);
+    if (!result.ok) throw result.error;
+    const capture = parseProcessCapture(
+      createProcessCaptureEvidence(scenario, result.value).normalized_result,
+    );
+    expect(capture.frames.map(({ data }) => data).join("")).toBe(
+      `<working-directory>/original/tool-helper`,
+    );
+  },
+);
+
+itWithCaptureCapability.each([false, true])(
+  "normalizes a sampled child in raw and rendered terminal projections, pids=%s",
+  async (pids) => {
+    const root = await createTestTempDirectory("rea-sampled-terminal-pids-");
+    const scenario = parseProcessScenario({
+      executable: process.execPath,
+      working_directory: root,
+      arguments: [
+        "-e",
+        `const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setTimeout(()=>{},600)'],{stdio:'inherit'});console.log('rootpid='+process.pid+' childpid='+child.pid);setTimeout(()=>{},700);`,
+      ],
+      timeout_ms: 3000,
+      settle_ms: 100,
+      normalization: {
+        paths: false,
+        ports: false,
+        pids,
+        time_bucket_ms: 10000,
+        patterns: [{ pattern: "<pid>", replacement: "<selected-pid>" }],
+      },
+    });
+    const result = await captureProcessScenario(scenario);
+    if (!result.ok) throw result.error;
+    const capture = result.value;
+    const raw = capture.frames
+      .map(({ data, raw_data }) => raw_data ?? data)
+      .join("");
+    const match = /rootpid=(\d+) childpid=(\d+)/u.exec(raw);
+    if (match === null)
+      throw new Error("Expected exact root and child PID observations");
+    expect(
+      capture.process_samples.some((row) =>
+        pids
+          ? row.parent_pid === 1 && row.pid !== 1
+          : row.pid === Number(match[2]),
+      ),
+    ).toBe(true);
+    const expected = pids
+      ? "rootpid=<selected-pid> childpid=<selected-pid>"
+      : match[0];
+    expect(capture.frames.map(({ data }) => data).join("")).toContain(expected);
+    expect(
+      capture.rendered_frames.some(
+        ({ lines, serialized_state }) =>
+          lines.includes(expected) && serialized_state.includes(expected),
+      ),
+    ).toBe(true);
+    if (pids)
+      expect(
+        capture.manifest.comparison_contract.pid_normalization_version,
+      ).toBe("sampled-identifiers-v2");
+    else
+      expect(capture.manifest.comparison_contract).not.toHaveProperty(
+        "pid_normalization_version",
+      );
+    expect(capture.cleanup).toMatchObject({
+      owned_process_group: "verified",
+      temporary_root: "removed",
+    });
+  },
 );

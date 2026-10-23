@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import * as processOutput from "../../process/ExecFileOutput.js";
 import { encodeNibArchiveFixture } from "./NibArchive.fixture.js";
 import type { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
@@ -12,6 +13,54 @@ import {
   analyzeAppleAssetCatalogs,
   collectInterfaceBuilderResourceKeys,
 } from "./AppleAssetCatalogAnalysis.js";
+
+describe("Apple asset catalog traversal coverage", () => {
+  it.for([false, true])(
+    "retains catalog traversal coverage with invalid-byte entries: %s",
+    async (invalidName, context) => {
+      if (invalidName && process.platform !== "linux") context.skip();
+      const bundle = await createTestTempDirectory("rea-asset-traversal-");
+      if (invalidName)
+        await writeFile(
+          Buffer.concat([Buffer.from(`${bundle}/`), Buffer.from([0xff])]),
+          "unrepresented",
+        );
+      const result = await analyzeAppleAssetCatalogs({
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        environment: {},
+        runAssetUtil: async () => {
+          throw new Error("no catalog was admitted");
+        },
+      });
+      expect(result.inventory_coverage).toEqual({
+        scope: "container-entries",
+        status: invalidName ? "unknown" : "complete",
+      });
+      if (invalidName)
+        expect(result.limitations).toContainEqual(
+          expect.stringContaining("not valid UTF-8"),
+        );
+    },
+  );
+
+  it("keeps represented symlinks distinct from catalog-target inspection", async () => {
+    const bundle = await createTestTempDirectory("rea-asset-subtree-");
+    await symlink("unexamined", join(bundle, "Resources"));
+    const result = await analyzeAppleAssetCatalogs({
+      bundlePath: bundle,
+      targetSha256: "a".repeat(64),
+      environment: {},
+      runAssetUtil: async () => "[]",
+    });
+    expect(result.inventory_coverage.status).toBe("complete");
+    expect(result.catalog_coverage).toMatchObject({ status: "unknown" });
+    expect(result.resource_key_coverage).toMatchObject({ status: "unknown" });
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("catalogs beneath them may remain uninspected"),
+    );
+  });
+});
 
 describe("Apple asset catalog application workflow", () => {
   it("joins only explicit resource-key fields with archive provenance", () => {
@@ -137,6 +186,11 @@ describe("Apple asset catalog application workflow", () => {
     expect(result.catalogs.map(({ path }) => path)).toEqual([
       "Contents/Resources/Assets.car",
     ]);
+    expect(result.catalog_coverage).toEqual({
+      status: "partial",
+      reason: "catalog_entries_uninspected",
+    });
+    expect(result.resource_key_coverage.status).toBe("partial");
     expect(result.limitations).toContainEqual(
       expect.stringContaining("Contents/Resources/Nested/Assets.car (symlink)"),
     );
@@ -145,6 +199,34 @@ describe("Apple asset catalog application workflow", () => {
     );
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "qualifies UI resource joins when a symlinked nib was not decoded",
+  async () => {
+    const bundle = await createTestTempDirectory("rea-asset-ui-symlink-");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(
+      join(resources, "Panel.data"),
+      encodeNibArchiveFixture({
+        classes: ["NSView"],
+        objects: [{ classIndex: 0, values: { title: "Panel" } }],
+      }),
+    );
+    await symlink("Panel.data", join(resources, "Panel.nib"));
+    const result = await analyzeAppleAssetCatalogs({
+      bundlePath: bundle,
+      environment: {},
+      targetSha256: "a".repeat(64),
+      runAssetUtil: () => {
+        throw new Error("No catalog is present");
+      },
+    });
+    expect(result.limitations).toContain(
+      "Interface Builder resource-key joins may be incomplete because the decoded UI graph was truncated.",
+    );
+  },
+);
 
 it.each([0, 1, 5])(
   "keeps an empty assetutil inventory complete at offset %i",
@@ -330,4 +412,135 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
     finishCatalog("[]");
     await expect(analysis).rejects.toThrow("interface builder failed");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "settles a cancelled assetutil run only after its process exits",
+    async () => {
+      const bundle = await catalogBundle();
+      const work = await createTestTempDirectory("rea-assetutil-stop-");
+      const ready = join(work, "ready");
+      const exited = join(work, "exited");
+      const script = `const fs=require("node:fs");process.on("SIGTERM",()=>{setTimeout(()=>{fs.writeFileSync(process.argv[2],"exited");process.exit(0)},500)});fs.writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000);`;
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      const realExecFileOutput = processOutput.execFileOutput;
+      Object.defineProperty(process, "platform", {
+        ...platform,
+        value: "darwin",
+      });
+      const spy = vi
+        .spyOn(processOutput, "execFileOutput")
+        .mockImplementation((_command, _args, options) =>
+          realExecFileOutput(
+            process.execPath,
+            ["-e", script, ready, exited],
+            options,
+          ),
+        );
+      const controller = new AbortController();
+      let settled: Promise<unknown> | undefined;
+      try {
+        settled = analyzeAppleAssetCatalogs({
+          environment: {},
+          bundlePath: bundle,
+          targetSha256: "a".repeat(64),
+          signal: controller.signal,
+          analyzeInterfaceBuilder: async () => emptyGraph,
+        }).catch((cause: unknown) => cause);
+        await vi.waitFor(() => expect(access(ready)).resolves.toBeUndefined());
+        controller.abort("stop asset inspection");
+        expect(await settled).toMatchObject({ reason: "cancelled" });
+        await expect(access(exited)).resolves.toBeUndefined();
+      } finally {
+        controller.abort("stop asset inspection");
+        await settled;
+        spy.mockRestore();
+        Object.defineProperty(process, "platform", platform);
+      }
+    },
+  );
 });
+
+it.each(["not json", "{}", "[null]"])(
+  "preserves successful assetutil output failures for %s",
+  async (output) => {
+    const bundle = await createTestTempDirectory("rea-asset-output-");
+    await writeFile(join(bundle, "Assets.car"), "inert catalog");
+    await expect(
+      analyzeAppleAssetCatalogs({
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        environment: {},
+        runAssetUtil: async () => output,
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      capturedOutput: { stdout: output, exit_code: 0 },
+    });
+  },
+);
+it.each(["ETIMEDOUT", 1] as const)(
+  "preserves assetutil command failure %s and diagnostics",
+  async (code) => {
+    const bundle = await createTestTempDirectory("rea-asset-command-");
+    await writeFile(join(bundle, "Assets.car"), "inert catalog");
+    const cause = Object.assign(new Error("native refusal"), {
+      code,
+      stdout: "",
+      stderr: "specific catalog diagnostic",
+      signal: code === "ETIMEDOUT" ? "SIGTERM" : null,
+    });
+    await expect(
+      analyzeAppleAssetCatalogs({
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        environment: {},
+        runAssetUtil: async () => {
+          throw cause;
+        },
+      }),
+    ).rejects.toMatchObject({
+      _tag:
+        code === "ETIMEDOUT" ? "AnalysisTimeoutError" : "AnalysisOutputError",
+      capturedOutput: { stderr: "specific catalog diagnostic" },
+      ...(code === "ETIMEDOUT" ? { timeoutMs: 60000 } : {}),
+    });
+  },
+);
+
+it.each(["Toolbar", "MissingToolbar"])(
+  "retains AppKit NSCustomResource image key %s with its archive identity",
+  async (name) => {
+    const bundle = await createTestTempDirectory("rea-asset-custom-resource-");
+    await writeFile(
+      join(bundle, "Panel.nib"),
+      encodeNibArchiveFixture({
+        classes: ["NSIBObjectData", "NSCustomResource", "NSString"],
+        objects: [
+          { classIndex: 0, values: { NSRoot: { ref: 1 } } },
+          {
+            classIndex: 1,
+            values: { NSClassName: { ref: 2 }, NSResourceName: { ref: 3 } },
+          },
+          { classIndex: 2, values: { "NS.bytes": "NSImage" } },
+          { classIndex: 2, values: { "NS.bytes": name } },
+        ],
+      }),
+    );
+    await writeFile(join(bundle, "Assets.car"), "inert catalog");
+    const result = await analyzeAppleAssetCatalogs({
+      bundlePath: bundle,
+      targetSha256: "a".repeat(64),
+      environment: {},
+      runAssetUtil: async () => JSON.stringify([{ Name: "Toolbar" }]),
+    });
+    expect(result.resource_key_matches).toMatchObject([
+      {
+        field: "NSResourceName",
+        key: name,
+        source_path: "Panel.nib",
+        status: name === "Toolbar" ? "matched" : "unmatched",
+      },
+    ]);
+    expect(result.resource_key_coverage.status).toBe("complete");
+  },
+);

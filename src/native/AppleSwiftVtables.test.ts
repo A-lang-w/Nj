@@ -2,23 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
-import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
+import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
+import {
+  decodeSwiftNominalTypes,
+  createSwiftContextReader,
+  type SwiftNominalReaders,
+} from "./AppleSwiftNominalTypes.js";
 import { decodeSwiftDispatchFacets } from "./AppleSwiftDispatchFacets.js";
 import type { DispatchRecordBudget } from "./AppleSwiftDispatchFacets.js";
 import { issue } from "./AppleDispatchDecodeFacts.js";
 
 it("preserves unsupported type-metadata tag reasons instead of reporting null", () => {
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
-  const facts = decodeSwiftClassVtables({
-    entries: [0x100n],
+  const vtables = createSwiftClassVtableDecoder({
     result,
     readers: {
       u32: () => 0,
-      relative: () => ({
-        kind: "unknown",
-        reason: "Unsupported Swift type metadata record tag 2",
-      }),
-      string: () => "unused",
+      relative: () => ({ kind: "null" }),
       location: (address) => ({
         address: `0x${address.toString(16)}`,
         file_offset: Number(address),
@@ -28,11 +28,41 @@ it("preserves unsupported type-metadata tag reasons instead of reporting null", 
       admit: () => true,
     },
   });
+  const nominalReaders: SwiftNominalReaders = {
+    u32: () => 0,
+    relative: () => ({
+      kind: "unknown",
+      reason: "Unsupported Swift type metadata record tag 2",
+    }),
+    string: () => "unused",
+    location: (address) => ({
+      address: `0x${address.toString(16)}`,
+      file_offset: Number(address),
+    }),
+    evidence: () => [],
+    executable: () => false,
+    admit: () => true,
+  };
+  const nominal = decodeSwiftNominalTypes({
+    entries: [0x100n],
+    result,
+    visitor: vtables.visitor,
+    readers: nominalReaders,
+    contextReader: createSwiftContextReader(nominalReaders),
+  });
+  const facts = vtables.facts();
 
+  expect(nominal.issues).toMatchObject([
+    {
+      code: "type_decode_failed",
+      message: "Unsupported Swift type metadata record tag 2",
+    },
+  ]);
   expect(facts.issues).toMatchObject([
     {
       code: "vtable_decode_failed",
       message: "Unsupported Swift type metadata record tag 2",
+      location: "0x100",
     },
   ]);
   expect(facts.issues[0]?.message).not.toContain("Null Swift");
@@ -49,6 +79,10 @@ it("preserves a required conformance pointer's unknown reason", () => {
       resolvePointer: () => ({ kind: "raw", target: 0n }),
       string: () => "unused",
       location: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      targetLocation: (address) => ({
         address: `0x${address.toString(16)}`,
         file_offset: Number(address),
       }),
@@ -85,17 +119,11 @@ it("counts examined slots and reports an unresolved async slot", () => {
     [0x21cn, 2], // descriptor positive words
     [0x234n, 0x40], // async method flag
   ]);
-  const facts = decodeSwiftClassVtables({
-    entries: [0x100n],
+  const vtables = createSwiftClassVtableDecoder({
     result,
     readers: {
       u32: (address) => values.get(address) ?? 0,
-      relative: (address) => ({
-        kind: "target",
-        target:
-          address === 0x100n ? 0x200n : address === 0x208n ? 0x300n : 0x400n,
-      }),
-      string: () => "Widget",
+      relative: () => ({ kind: "target", target: 0x400n }),
       location: (address) => ({
         address: `0x${address.toString(16)}`,
         file_offset: Number(address),
@@ -116,6 +144,21 @@ it("counts examined slots and reports an unresolved async slot", () => {
       admit: () => true,
     },
   });
+  vtables.visitor.descriptor({
+    record: 0x100n,
+    descriptor: 0x200n,
+    flags: 0x80000010,
+    name: "Widget",
+    context: {
+      module: "Test",
+      path: "Widget",
+      depth: 2,
+      anonymous: false,
+      reason: null,
+      walkLimited: false,
+    },
+  });
+  const facts = vtables.facts();
 
   expect(result.swift_dispatch_slots[0]?.decode.status).toBe("partial");
   expect(result.swift_dispatch_slots[1]?.decode.status).toBe("decoded");
@@ -147,6 +190,14 @@ it("counts examined slots and reports an unresolved async slot", () => {
       legacyRebaseStreams: 0,
       legacyBindStreams: 0,
       unreadRebaseBytes: 0,
+      hasUnresolvedLegacyBytes: () => false,
+    },
+    declarations: {
+      facet: "swift_declarations",
+      examined: 0,
+      decoded: 0,
+      exhaustive: true,
+      issues: [],
     },
     swift: {
       facet: "swift_conformances_static_witness_slots",
@@ -200,6 +251,10 @@ it("returns a located issue for an emitted unresolved witness slot", () => {
       }),
       string: (address) => (address === 0x600n ? "Proto" : "Widget"),
       location: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      targetLocation: (address) => ({
         address: `0x${address.toString(16)}`,
         file_offset: Number(address),
       }),
@@ -274,6 +329,14 @@ describe("Swift vtable coverage facts: unsupported pointer fixup coverage", () =
         legacyRebaseStreams: 0,
         legacyBindStreams: 0,
         unreadRebaseBytes: 0,
+        hasUnresolvedLegacyBytes: () => false,
+      },
+      declarations: {
+        facet: "swift_declarations",
+        examined: 0,
+        decoded: 0,
+        exhaustive: true,
+        issues: [],
       },
       swift: {
         facet: "swift_conformances_static_witness_slots",
