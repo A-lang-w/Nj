@@ -63,6 +63,8 @@ it("merges every inventory substep from inspect_artifact Evidence", async () => 
           firstSubstep,
           {
             ...firstSubstep,
+            // Only uniqueness and schema shape matter here; the parser under test
+            // joins retained Evidence by evidence_id rather than substep_id content.
             substep_id: `ais_${"0".repeat(64)}`,
             evidence_id: second.evidence_id,
             evidence: second,
