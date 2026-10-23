@@ -35,7 +35,7 @@ export const appleIpsReport = (
   const arch = options.arch === undefined ? "arm64" : options.arch;
   const base = options.base ?? 4294967296;
   const imageOffset = options.imageOffset ?? 824;
-  const register = options.registerValue ?? "9587749362346101060";
+  const register = options.registerValue ?? "9594637537912899908";
   const reasons =
     options.terminationReasons === undefined
       ? ""

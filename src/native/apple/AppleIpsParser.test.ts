@@ -37,7 +37,7 @@ it("reads a 309 crash report, uppercase UUID, and lossless register", () => {
   expect(report.threads[0]?.registers[0]).toMatchObject({
     name: "x0",
     value: {
-      decimal: "9587749362346101060",
+      decimal: "9594637537912899908",
       hex: "0x8527000193ed4944",
     },
   });
