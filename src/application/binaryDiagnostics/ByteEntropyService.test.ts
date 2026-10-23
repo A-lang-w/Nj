@@ -82,6 +82,7 @@ it.skipIf(process.platform === "win32")(
         path: join(root, name),
       });
       if (result.ok) throw new Error(`Expected ${code} to fail`);
+      expect(result.error.cause).toMatchObject({ code, syscall: "stat" });
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "invalid_request",
         details: {
