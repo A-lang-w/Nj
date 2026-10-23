@@ -121,6 +121,8 @@ Executed functional validation of the measured implementation:
 - 48 selected tests passed: parser, export views, MCP schemas/retention preflight,
   and actual public CLI/stdio workflows for PE and ELF fixtures. Source deletion
   after retention still permits equivalent offline CLI and retained MCP views.
+  Sparse field checks also recompute the returned view digest in the native
+  regression and actual MCP acceptance workflow.
 - `npm run check`, documentation generation/check and test-discovery verification
   passed; 2,180 tests were discovered exactly once.
 - Real LLVM public CLI summary → full Evidence bundle → offline selected view

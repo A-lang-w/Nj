@@ -5,6 +5,8 @@ import { z } from "zod";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import {
   elfExportImage,
@@ -128,10 +130,11 @@ cliTest.for(["pe", "elf"] as const)(
       },
     });
     expect(projected.isError).not.toBe(true);
-    expect(
+    const projectedView = analysisViewResultSchema.parse(
       viewContract.outputSchema.parse(projected.structuredContent)
         .normalized_result,
-    ).toHaveProperty("items", [
+    );
+    expect(projectedView).toHaveProperty("items", [
       {
         source_index: 1,
         ...(format === "elf"
@@ -139,6 +142,8 @@ cliTest.for(["pe", "elf"] as const)(
           : { ordinal: expect.any(Number) }),
       },
     ]);
+    const { view_digest, ...content } = projectedView;
+    expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
   },
 );
 

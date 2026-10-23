@@ -5,6 +5,7 @@ import {
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import {
   analysisViewRequestSchema,
   projectAnalysisView,
@@ -131,17 +132,18 @@ it("qualifies projected names with exact encoding facts and normalizes historica
 });
 
 it("does not fill historical name defaults into a projection that omits names", () => {
-  expect(
-    project(elf(), {
-      kind: "native-exports",
-      collection: "exports",
-      names: ["same"],
-      fields: ["value"],
-    }),
-  ).toHaveProperty("items", [
+  const result = project(elf(), {
+    kind: "native-exports",
+    collection: "exports",
+    names: ["same"],
+    fields: ["value"],
+  });
+  expect(result).toHaveProperty("items", [
     { source_index: 0, value: "0x1234" },
     { source_index: 2, value: "0x1234" },
   ]);
+  const { view_digest, ...content } = result;
+  expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
 });
 
 it("preserves PE ordinal-only, forwarder, alias and same-address distinctions", () => {
