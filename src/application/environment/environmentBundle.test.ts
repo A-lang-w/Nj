@@ -21,7 +21,7 @@ import {
   type EnvironmentBundleOptions,
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
-import { prepareServedState } from "./environmentState.js";
+import { prepareServedState, servedCatalog } from "./environmentState.js";
 import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 
@@ -389,20 +389,45 @@ describe("planEnvironmentBundle without a state", () => {
 
   it("serves and predicts replay when the state's catalog exceeds the discovery budget that replay's fits", () => {
     // Read tools only, so leaving out write tools saves nothing while each state description is longer.
-    // 300 sits between the two catalogs on this fixture: replay still fits and the state catalog does not.
     const reads = servedSource.manifest.tools.filter(
       ({ method }) => method === "GET",
     );
-    const tools = Array.from({ length: 300 }, (_, index) => {
-      const tool = reads[index % reads.length]!;
-      return index < reads.length
-        ? tool
-        : { ...tool, name: `${tool.name}_${String(index)}` };
-    });
-    const source = {
-      ...servedSource,
-      manifest: { ...servedSource.manifest, tools },
+    const sourceWithTools = (count: number) => {
+      const tools = Array.from({ length: count }, (_, index) => {
+        const tool = reads[index % reads.length]!;
+        return index < reads.length
+          ? tool
+          : { ...tool, name: `${tool.name}_${String(index)}` };
+      });
+      return { ...servedSource, manifest: { ...servedSource.manifest, tools } };
     };
+    // Find the replay admission boundary rather than coupling the fixture to prose length.
+    let low = reads.length;
+    let high = 512;
+    expect(
+      servedCatalog(sourceWithTools(low), undefined, servedSource.manifest.name)
+        .ok,
+    ).toBe(true);
+    expect(
+      servedCatalog(
+        sourceWithTools(high),
+        undefined,
+        servedSource.manifest.name,
+      ).ok,
+    ).toBe(false);
+    while (low + 1 < high) {
+      const count = Math.floor((low + high) / 2);
+      if (
+        servedCatalog(
+          sourceWithTools(count),
+          undefined,
+          servedSource.manifest.name,
+        ).ok
+      )
+        low = count;
+      else high = count;
+    }
+    const source = sourceWithTools(low);
     const prepared = prepareServedState(source, fixture.capture);
     expect(prepared.state).toBeUndefined();
     expect(prepared.report).toMatchObject({
@@ -419,7 +444,7 @@ describe("planEnvironmentBundle without a state", () => {
       served: false,
       code: "resource_constraint",
     });
-    expect(planned.value.toolCount).toBe(300);
+    expect(planned.value.toolCount).toBe(low);
     expect(planned.value.check).toEqual({
       tool: "get_annotations",
       recordOrdinal: 25,
