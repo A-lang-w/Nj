@@ -52,17 +52,6 @@ its cause in the recordings and the code. The five largest shared causes:
   new shaping parameter and its object carries or lacks members theirs do not, or selects some fields and leaves out
   members they always show, and an item only a replayed line showed, which the state never started with, answers with
   its own recording.
-- **Item actions.** A write to an item path plus a literal segment that names no collection, whose calls answer nothing
-  or the entity (never a 201, and with every field its item read always shows), updates that entity; a scalar it
-  changes without sending is set on every call. It is served only once a call found every field it sets already at
-  that value, so a toggle is never served. An action never takes a read another write to the entity still needs.
-- **Bulk writes.** A write at a type's collection whose body names entities by id, as an id array or objects carrying
-  the id field, deletes or updates each one; serving takes the body as recorded, a `DELETE` included.
-- **Per-response members.** A top-level member whose value is a UUID or a clock is minted per response on a path when
-  it differs on every repeat of that path's successful GET lines with no write between, and across the capture it
-  differed on at least two repeats and never stayed the same. Only views of that path, or item views whose collection
-  is that path, leave it out: item envelopes, and the write gate's item, list and document reads, compare without it.
-  The view names it in `per_response_members`, and serving keeps the recorded value.
 
 ## Acceptance
 
