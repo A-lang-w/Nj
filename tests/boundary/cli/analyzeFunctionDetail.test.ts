@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { inspectAnalysisViewWithFiles } from "../../../src/application/analysisView/AnalysisViewService.js";
+import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
@@ -36,6 +36,7 @@ const harness = () => {
     cli as unknown as CliInstance,
     pino({ enabled: false }),
     runDirectAnalysis as never,
+    {},
   );
   const command = Cli.toCommands.get(cli)?.get(CLI_COMMANDS.function);
   if (command === undefined)
@@ -95,7 +96,7 @@ it("summary delivery returns the compact view and writes a bundle inspect-analys
   expect((await stat(destination)).size).toBeGreaterThan(0);
   // The saved bundle is the evidence-file source inspect-analysis-view reads back.
   const parentId = out.summary.normalized_result.parent_evidence_id;
-  const page = await inspectAnalysisViewWithFiles({
+  const page = await inspectAnalysisView({
     source: { kind: "evidence-file", path: destination, evidence_id: parentId },
     view: { kind: "native", facet: "pseudocode", offset: 0, limit: 16 },
   });

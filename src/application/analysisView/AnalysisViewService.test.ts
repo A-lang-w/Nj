@@ -184,7 +184,7 @@ it("projects a small native view from an authenticated >10 MiB retained dossier"
     { kind: "address", address: "0x401000" },
   ]);
   // The summary describes the same function, so its envelope keeps the address.
-  const summary = inspectAnalysisView(
+  const summary = await inspectAnalysisView(
     { source: input.source, view: { kind: "summary" } },
     (id) => (id === parent.evidence_id ? parent : undefined),
   );

@@ -34,7 +34,7 @@ const selectionError = (message: string): AnalysisInputError =>
   );
 
 /** Listed identities stay bounded so a large bundle cannot grow the error itself. */
-const LISTED_RECORD_IDS = 20;
+const RECORD_REFERENCE_PREVIEW_BYTES = 2048;
 
 /** Select the one record a view projects from an authenticated bundle. */
 const selectBundleRecord = (
@@ -67,11 +67,32 @@ const selectBundleRecord = (
 };
 
 const listRecordIds = (records: readonly Evidence[]): string => {
-  const listed = records
-    .slice(0, LISTED_RECORD_IDS)
-    .map((record) => record.evidence_id)
-    .join(", ");
-  const omitted = records.length - LISTED_RECORD_IDS;
+  const labels: string[] = [];
+  let bytes = 0;
+  for (const record of records) {
+    const separator = labels.length === 0 ? "" : ", ";
+    const remaining = RECORD_REFERENCE_PREVIEW_BYTES - bytes;
+    let label = `${record.evidence_id} (operation omitted)`;
+    // UTF-8/JSON cannot use fewer bytes than the source UTF-16 code units.
+    // Reject a label before copying it when even that lower bound cannot fit.
+    if (record.operation.length <= remaining) {
+      const complete = `${record.evidence_id} (${record.operation})`;
+      if (
+        Buffer.byteLength(JSON.stringify(separator + complete), "utf8") <=
+        remaining
+      )
+        label = complete;
+    }
+    const encodedBytes = Buffer.byteLength(
+      JSON.stringify(separator + label),
+      "utf8",
+    );
+    if (encodedBytes > remaining) break;
+    labels.push(label);
+    bytes += encodedBytes;
+  }
+  const omitted = records.length - labels.length;
+  const listed = labels.join(", ");
   return omitted > 0 ? `${listed} and ${String(omitted)} more` : listed;
 };
 

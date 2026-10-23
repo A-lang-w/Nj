@@ -16,6 +16,7 @@ import {
 import { JsonInputPhysicalReadFailure } from "../JsonInputFile.js";
 import { failFileReadAfterAbort } from "../../../tests/support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../../tests/support/holdFirstFileRead.js";
+import { createEvidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { readEvidenceFileSource } from "./evidenceFileSource.js";
 
@@ -97,14 +98,13 @@ describe("evidence-file source reads", () => {
       },
     });
 
-    // A bundle-shaped file that is not a valid bundle is a wrong-kind file, not Evidence.
+    // Bundle authentication uses the same integrity classification as bundle import.
     const invalid = join(root, "invalid.json");
     await writeFile(invalid, JSON.stringify({ records: [{ hello: 1 }] }));
     expect(await readEvidenceFileSource(invalid)).toMatchObject({
       ok: false,
       error: {
-        _tag: "EvidenceFileError",
-        reason: "wrong-kind",
+        _tag: "EvidenceIntegrityError",
         userMessage: expect.stringContaining("Evidence bundle"),
       },
     });
@@ -226,4 +226,53 @@ describe("evidence-file read failure provenance", () => {
       vi.restoreAllMocks();
     }
   });
+});
+
+it("honors an explicit identity for a single-record Evidence file", async () => {
+  const root = await createTestTempDirectory("rea-evidence-file-selection-");
+  const path = join(root, "record.json");
+  const record = analysisViewNativeEvidence();
+  const other = analysisViewCaptureEvidence();
+  await writeFile(path, JSON.stringify(record));
+  expect(
+    await readEvidenceFileSource(path, {}, record.evidence_id),
+  ).toMatchObject({ ok: true });
+  expect(
+    await readEvidenceFileSource(path, {}, other.evidence_id),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["source", "evidence_id"] }],
+    },
+  });
+});
+
+it("keeps bundle-selection errors useful when operation labels exceed the reply budget", async () => {
+  const root = await createTestTempDirectory("rea-evidence-file-labels-");
+  const path = join(root, "records.json");
+  const operation = '\u0000"'.repeat(50_000);
+  const records = [1, 2].map((ordinal) =>
+    createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation,
+        parameters: {},
+        result: { ordinal },
+      },
+    ),
+  );
+  await writeFile(path, JSON.stringify(createEvidenceBundle(records)));
+  const read = await readEvidenceFileSource(path);
+  expect(read).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  if (read.ok) throw new Error("Expected a record-selection error");
+  const encoded = JSON.stringify(read);
+  expect(Buffer.byteLength(encoded, "utf8")).toBeLessThan(8192);
+  for (const record of records) expect(encoded).toContain(record.evidence_id);
+  expect(encoded).toContain("operation omitted");
+  expect(encoded).not.toContain(operation);
 });

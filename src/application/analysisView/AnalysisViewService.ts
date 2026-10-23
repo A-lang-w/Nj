@@ -367,6 +367,12 @@ const createAnalysisViewEvidence = (
             ? {}
             : { architecture: parent.subject.architecture }),
         };
+  const nativeFunctionView =
+    result.kind === "native" ||
+    (result.kind === "summary" &&
+      result.parent_operation === "analyze_function")
+      ? result
+      : undefined;
   return createEvidence(
     target,
     ANALYSIS_VIEW_PROVIDER,
@@ -390,17 +396,23 @@ const createAnalysisViewEvidence = (
           : "derived",
       authority: parent.authority,
       limitations: result.limitations,
-      ...(result.kind === "native" && parent.relationship_coverage !== null
+      ...(nativeFunctionView !== undefined &&
+      parent.relationship_coverage !== null
         ? { relationshipCoverage: parent.relationship_coverage }
         : {}),
       locations: [
         ...(result.artifact != null && result.artifact.path.length > 0
           ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
           : []),
-        ...(result.kind === "native" &&
-        result.procedure_address !== null &&
-        result.procedure_address.length > 0
-          ? [{ kind: "address" as const, address: result.procedure_address }]
+        ...(nativeFunctionView !== undefined &&
+        nativeFunctionView.procedure_address !== null &&
+        nativeFunctionView.procedure_address.length > 0
+          ? [
+              {
+                kind: "address" as const,
+                address: nativeFunctionView.procedure_address,
+              },
+            ]
           : []),
       ],
       evidenceLinks: [parent.evidence_id],

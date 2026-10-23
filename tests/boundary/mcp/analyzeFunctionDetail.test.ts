@@ -84,9 +84,14 @@ const connect = async (retain = true, result = dossier) => {
 
 it("defaults to a retained summary and strips delivery detail before the provider", async () => {
   const { client, ledger, execute } = await connect();
-  const reply = await client.callTool({
-    name: "analyze_function",
-    arguments: { procedure: "main" },
+  const progress: number[] = [];
+  const reply = await client.callTool(
+    { name: "analyze_function", arguments: { procedure: "main" } },
+    { onprogress: (update) => progress.push(update.progress) },
+  );
+  expect(progress.length).toBeGreaterThanOrEqual(2);
+  progress.forEach((value, index) => {
+    expect(value).toBeGreaterThan(progress[index - 1] ?? 0);
   });
   const evidence = parseEvidence(reply.structuredContent);
   expect(evidence.normalized_result).toMatchObject({
