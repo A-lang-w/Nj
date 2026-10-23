@@ -252,6 +252,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             { capturedOutput, userMessage: rejection.message },
             [rejection],
           );
+        if (output.exitCode !== 0 && phase === "configuration")
+          throw new Error(
+            "The selected sigrok-cli installation failed its --version probe; inspect its captured output.",
+          );
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
             SIGROK_PROVIDER_IDENTITY.id,

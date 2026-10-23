@@ -1,12 +1,11 @@
+import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
 const MISSING_UUID_DIAGNOSTIC = "missing LC_UUID load command";
-const DSYM_SECTION_DIAGNOSTIC =
-  "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
-/** Admit one exact diagnostic, without discarding additional command errors. */
+/** Return one settled dyld diagnostic without discarding other output. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
 ): string | null => {
@@ -14,35 +13,44 @@ const dyldFailureDiagnostic = (
     capture.tool !== "dyld_info" ||
     capture.exitCode === null ||
     capture.exitCode === 0 ||
-    capture.signal !== null ||
-    capture.stderr.trim().length !== 0
+    capture.signal !== null
   )
     return null;
-  const lines = withoutEchoedPathHeader(
-    capture.stdout,
-    capture.arguments.at(-1),
-  )
-    .split(/\r?\n/u)
+  const diagnostics = [capture.stdout, capture.stderr]
+    .flatMap((output) =>
+      withoutEchoedPathHeader(output, capture.arguments.at(-1)).split(/\r?\n/u),
+    )
     .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
     .filter(Boolean);
-  return lines.length === 1 ? (lines[0] ?? null) : null;
+  return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
 };
 
-/** Narrow dyld_info refusals for readable Mach-O layouts, subject to otool confirmation. */
-export const targetLayoutDyldRefusal = (
-  capture: NativeCommandCapture,
-): "DSYM" | "CORE" | "FVMLIB" | null => {
-  const diagnostic = dyldFailureDiagnostic(capture);
-  if (diagnostic === DSYM_SECTION_DIAGNOSTIC) return "DSYM";
-  if (diagnostic === "unknown mh.filetype 4") return "CORE";
-  if (diagnostic === "unknown mh.filetype 3") return "FVMLIB";
-  return null;
-};
-
-/** Recognize only dyld_info's target-specific missing-UUID refusal. */
+/** Keep missing-UUID admission limited to its observed stdout-only refusal. */
 export const isMissingUuidDyldFailure = (
   capture: NativeCommandCapture,
-): boolean => dyldFailureDiagnostic(capture) === MISSING_UUID_DIAGNOSTIC;
+): boolean =>
+  capture.stderr.trim().length === 0 &&
+  dyldFailureDiagnostic(capture) === MISSING_UUID_DIAGNOSTIC;
+
+/** Admit the observed dSYM refusal only when no other diagnostic is present. */
+export const isUnbackedTextDyldFailure = (
+  capture: NativeCommandCapture,
+): boolean =>
+  dyldFailureDiagnostic(capture) ===
+  "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
+
+/** Complete captures come from the settled native command owner. */
+export const nativeMachoCapturedOutput = (
+  capture: NativeCommandCapture,
+): AnalysisCapturedOutput => ({
+  stdout: capture.stdout,
+  stderr: capture.stderr,
+  truncated: false,
+  stdout_bytes: capture.stdoutBytes,
+  stderr_bytes: capture.stderrBytes,
+  exit_code: capture.exitCode,
+  signal: capture.signal,
+});
 
 /** Keep the exact target diagnostic beside the incomplete collection. */
 export const missingUuidLimitation = (mode: "imports" | "exports"): string =>
@@ -58,53 +66,7 @@ export const unusableNativeCommandOutput = (
     "inspect_macho",
     `${capture.tool} did not produce a usable inspection result`,
     {
-      capturedOutput: {
-        stdout: capture.stdout,
-        stderr: capture.stderr,
-        truncated: false,
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-        exit_code: capture.exitCode,
-        signal: capture.signal,
-      },
-    },
-  );
-
-/**
- * Refuse admitted layout refusals that disagree with the parsed header or with
- * each other. The header and every admitted refusal stay in the diagnostics,
- * because together they establish the contradiction.
- */
-export const contradictoryLayoutRefusals = (
-  targetFileType: string | null,
-  refusals: readonly NativeCommandCapture[],
-  conflicting: NativeCommandCapture,
-): AnalysisOutputError =>
-  new AnalysisOutputError(
-    "inspect_macho",
-    `dyld_info layout refusals contradict the parsed ${targetFileType} header`,
-    {
-      diagnostics: {
-        target_file_type: targetFileType,
-        refusals: refusals.map((capture) => ({
-          mode:
-            capture.arguments.find(
-              (argument) => argument === "-imports" || argument === "-exports",
-            ) ?? null,
-          admitted_file_type: targetLayoutDyldRefusal(capture),
-          exit_code: capture.exitCode,
-          stdout: capture.stdout,
-        })),
-      },
-      capturedOutput: {
-        stdout: conflicting.stdout,
-        stderr: conflicting.stderr,
-        truncated: false,
-        stdout_bytes: conflicting.stdoutBytes,
-        stderr_bytes: conflicting.stderrBytes,
-        exit_code: conflicting.exitCode,
-        signal: conflicting.signal,
-      },
+      capturedOutput: nativeMachoCapturedOutput(capture),
     },
   );
 
@@ -116,14 +78,6 @@ export const conflictingUuidCommandEvidence = (
     "inspect_macho",
     "dyld_info reported a missing LC_UUID despite an observed LC_UUID load command",
     {
-      capturedOutput: {
-        stdout: command.stdout,
-        stderr: command.stderr,
-        truncated: false,
-        stdout_bytes: command.stdoutBytes,
-        stderr_bytes: command.stderrBytes,
-        exit_code: command.exitCode,
-        signal: command.signal,
-      },
+      capturedOutput: nativeMachoCapturedOutput(command),
     },
   );

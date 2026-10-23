@@ -139,7 +139,10 @@ cliTest(
           code: "invalid_request",
           details: {
             issues: [
-              { path: ["protobuf", "schema"], reason: "invalid_format" },
+              {
+                path: ["protobuf", "schema", "descriptor_set_path"],
+                reason: "invalid_format",
+              },
             ],
           },
         };

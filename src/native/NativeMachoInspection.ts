@@ -17,17 +17,17 @@ import {
   selectMachoArchitectureName,
 } from "./MachoArchitectureSelection.js";
 import { parseDyldExports, parseDyldImports } from "./parsers/dyldInfo.js";
-import { parseLipoOutput, type LipoArchitecture } from "./parsers/lipo.js";
+import { parseLipoCapture, type LipoArchitecture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import { parseOtoolLoadCommands } from "./parsers/otool.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   conflictingUuidCommandEvidence,
-  contradictoryLayoutRefusals,
   isMissingUuidDyldFailure,
+  isUnbackedTextDyldFailure,
+  nativeMachoCapturedOutput,
   missingUuidLimitation,
-  targetLayoutDyldRefusal,
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
 
@@ -86,10 +86,13 @@ export const inspectNativeMacho = async (
   }
   const lipo = captures.find(({ tool }) => tool === "lipo");
   if (lipo === undefined) throw new TypeError("Missing lipo capture");
-  const { format, architectures } = parseLipoOutput(
-    lipo.stdout,
+  const parsedLipo = parseLipoCapture(
+    lipo,
+    "inspect_macho",
     context.target.path,
   );
+  if (!parsedLipo.ok) return parsedLipo;
+  const { format, architectures } = parsedLipo.value;
   const selection = selectArchitecture(context.target, architectures);
   if (selection.status === "absent")
     return err(
@@ -115,7 +118,7 @@ export const inspectNativeMacho = async (
       tool === "dyld_info"
         ? (capture) =>
             isMissingUuidDyldFailure(capture) ||
-            targetLayoutDyldRefusal(capture) !== null
+            isUnbackedTextDyldFailure(capture)
         : undefined,
     );
   // vtool knows no variant subtypes, so no spelling selects an arm64e.x1 slice.
@@ -136,7 +139,7 @@ export const inspectNativeMacho = async (
     if (
       (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
       !isMissingUuidDyldFailure(captured.value) &&
-      targetLayoutDyldRefusal(captured.value) === null
+      !isUnbackedTextDyldFailure(captured.value)
     )
       return err(unusableNativeCommandOutput(captured.value));
     captures.push(captured.value);
@@ -150,89 +153,6 @@ export const inspectNativeMacho = async (
   else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
-  const otool = captures.find(({ tool }) => tool === "otool");
-  if (otool === undefined) throw new TypeError("Missing otool capture");
-  let load: ReturnType<typeof parseOtoolLoadCommands>;
-  try {
-    load = parseOtoolLoadCommands(sliceOutput(otool));
-  } catch (cause: unknown) {
-    return err(
-      new AnalysisOutputError(
-        "inspect_macho",
-        "Malformed otool load-command output",
-        {
-          cause,
-          capturedOutput: {
-            stdout: otool.stdout,
-            stderr: otool.stderr,
-            truncated: false,
-            stdout_bytes: otool.stdoutBytes,
-            stderr_bytes: otool.stderrBytes,
-            exit_code: otool.exitCode,
-            signal: otool.signal,
-          },
-        },
-      ),
-    );
-  }
-  const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
-  if (
-    uuidlessDyldFailure !== undefined &&
-    load.commands.some(({ kind }) => kind === "LC_UUID")
-  )
-    return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
-  const layoutRefusals = captures.filter(
-    (capture) => targetLayoutDyldRefusal(capture) !== null,
-  );
-  const layoutRefusal = layoutRefusals[0];
-  if (layoutRefusal !== undefined) {
-    // Every admitted command must agree with the independently parsed header.
-    // Selecting only the first would hide contradictory imports/exports facts.
-    const conflicting = layoutRefusals.find(
-      (capture) => targetLayoutDyldRefusal(capture) !== load.fileTypeKind,
-    );
-    if (conflicting !== undefined)
-      return err(
-        contradictoryLayoutRefusals(load.fileType, layoutRefusals, conflicting),
-      );
-    const diagnosedType = load.fileTypeKind;
-    const diagnostic =
-      withoutEchoedPathHeader(
-        layoutRefusal.stdout,
-        layoutRefusal.arguments.at(-1),
-      )
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .at(-1) ?? "";
-    return err(
-      new AnalysisUnsupportedTargetError(
-        "inspect_macho",
-        context.target.path,
-        `dyld_info cannot inspect this ${diagnosedType} layout: ${diagnostic}`,
-        {
-          remediationAction:
-            diagnosedType === "DSYM"
-              ? "Inspect the matching executable for code facts; use a supported dSYM attachment workflow for source symbols."
-              : "Select a loadable Mach-O image for inspect-macho; this file type is outside native dyld inspection.",
-          diagnostics: {
-            tool: layoutRefusal.tool,
-            exit_code: layoutRefusal.exitCode,
-            target_file_type: load.fileType,
-          },
-          capturedOutput: {
-            stdout: layoutRefusal.stdout,
-            stderr: layoutRefusal.stderr,
-            truncated: false,
-            stdout_bytes: layoutRefusal.stdoutBytes,
-            stderr_bytes: layoutRefusal.stderrBytes,
-            exit_code: layoutRefusal.exitCode,
-            signal: layoutRefusal.signal,
-          },
-        },
-      ),
-    );
-  }
   const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
   const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
   if (nmIndex < 0 || dyldExports === undefined)
@@ -248,6 +168,46 @@ export const inspectNativeMacho = async (
     if (!withDyldInfo.ok) return err(withDyldInfo.error);
     captures[nmIndex] = withDyldInfo.value;
   }
+  const otool = captures.find(({ tool }) => tool === "otool");
+  if (otool === undefined) throw new TypeError("Missing otool capture");
+  let load: ReturnType<typeof parseOtoolLoadCommands>;
+  try {
+    load = parseOtoolLoadCommands(sliceOutput(otool));
+  } catch (cause: unknown) {
+    return err(
+      new AnalysisOutputError(
+        "inspect_macho",
+        "Malformed otool load-command output",
+        {
+          cause,
+          capturedOutput: nativeMachoCapturedOutput(otool),
+        },
+      ),
+    );
+  }
+  const unbackedTextFailure = captures.find(isUnbackedTextDyldFailure);
+  if (unbackedTextFailure !== undefined) {
+    if (!["10", "DSYM", "MH_DSYM"].includes(load.fileType ?? ""))
+      return err(unusableNativeCommandOutput(unbackedTextFailure));
+    return err(
+      new AnalysisUnsupportedTargetError(
+        "inspect_macho",
+        context.target.path,
+        "The selected Mach-O is a dSYM companion whose unbacked text sections are unsupported by dyld_info inspection",
+        {
+          capturedOutput: nativeMachoCapturedOutput(unbackedTextFailure),
+          remediationAction:
+            "Select the matching linked Mach-O executable for native inspection; this operation does not inspect dSYM companions with unbacked text sections.",
+        },
+      ),
+    );
+  }
+  const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
+  if (
+    uuidlessDyldFailure !== undefined &&
+    load.commands.some(({ kind }) => kind === "LC_UUID")
+  )
+    return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
   const selectedArchitectureName =
     selectedArchitecture ??
     (architectures.length === 1 ? (architectures[0]?.name ?? null) : null);

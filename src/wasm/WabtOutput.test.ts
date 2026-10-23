@@ -480,3 +480,44 @@ it("tests long multi-line glue literals for a .wasm suffix in linear time", () =
       .references,
   ).toMatchObject([{ value: "first\nmodule.wasm?v=1", line: 1 }]);
 });
+
+it("retains earlier module names for objdump framing when a later optional subsection is malformed", async () => {
+  const parsed = parseWabtWat(
+    '(module $hello (@custom "name" "\\00\\06\\05hello\\01\\02\\01"))',
+  );
+  expect(parsed).toMatchObject({
+    debugModuleNames: ["hello"],
+    debugNameMetadata: "uninterpretable",
+  });
+  const text = (await golden()).replace(
+    "\n\nSections:",
+    "\nmodule name: <hello>\n\nSections:",
+  );
+  expect(
+    parseWabtOutput(text, 76, ["test"], parsed.debugModuleNames).sections,
+  ).toHaveLength(7);
+});
+
+it.each([
+  'import source module from "./module.wasm";',
+  'const module = await import.source("./module.wasm");',
+  'import * as module from "./module.wasm";',
+  'const module = await import("./module.wasm");',
+])("retains source-phase and ordinary WASM import literals: %s", (source) => {
+  const offset = source.indexOf('"./module.wasm"');
+  expect(
+    associateWasmGlue(source, "/app/glue.mjs", ["/app/module.wasm"]),
+  ).toEqual({
+    parse_status: "complete",
+    references: [
+      {
+        value: "./module.wasm",
+        line: 1,
+        column: offset,
+        candidate_paths: ["/app/module.wasm"],
+        association: "local-path-candidate",
+        evidence_kind: "static-literal",
+      },
+    ],
+  });
+});

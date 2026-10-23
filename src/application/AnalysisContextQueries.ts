@@ -70,21 +70,12 @@ export const getNavigationContext = async (
     executionOptions(signal),
   );
   if (!procedure.ok) return procedure;
-  const resolution = containingProcedureResolutionSchema.safeParse(
-    procedure.value.result,
-  );
-  if (!resolution.success)
-    return err(
-      new AnalysisOutputError(
-        "resolve_containing_procedure",
-        "expected a containing-procedure resolution",
-        { cause: resolution.error },
-      ),
-    );
+  const resolution = readContainingProcedure(procedure.value.result);
+  if (!resolution.ok) return resolution;
   return ok({
     document: documentName,
     address: address.value.result,
-    procedure: resolution.data.found ? resolution.data.procedure.name : null,
+    procedure: resolution.value.found ? resolution.value.procedure.name : null,
   });
 };
 
@@ -121,7 +112,13 @@ export const inspectAddressContext = async (
     if (!result.ok && isRequestLevelFailure(result.error)) return result;
   }
   const name = facet(results[0], operations[0]);
-  const procedure = facet(results[1], operations[1]);
+  const procedureResult = results[1];
+  const resolution = procedureResult?.ok
+    ? readContainingProcedure(procedureResult.value.result)
+    : procedureResult;
+  const procedure: Facet = resolution?.ok
+    ? { state: "available", value: resolution.value }
+    : unavailableFacet(resolution?.error, operations[1]);
   const comment = facet(results[2], operations[2]);
   const inlineComment = facet(results[3], operations[3]);
   const bookmarks = facet(results[4], operations[4]);
@@ -136,7 +133,7 @@ export const inspectAddressContext = async (
       bookmarks.state === "available"
         ? matchingBookmarks(
             bookmarks.value,
-            resolvedAddress(results[1], input.address),
+            resolution?.ok ? resolution.value.query_address : input.address,
           )
         : bookmarks,
   });
@@ -148,28 +145,33 @@ const facet = (
 ): Facet =>
   result?.ok === true
     ? { state: "available", value: result.value.result }
-    : {
-        state: "unavailable",
-        reason: result?.error.message ?? `${operation} returned no result`,
-        remediation: `Call ${operation} directly to inspect provider availability and diagnostics.`,
-      };
+    : unavailableFacet(result?.error, operation);
+
+const unavailableFacet = (
+  error: AnalysisError | undefined,
+  operation: AnalysisOperation,
+): Facet => ({
+  state: "unavailable",
+  reason: error?.message ?? `${operation} returned no result`,
+  remediation: `Call ${operation} directly to inspect provider availability and diagnostics.`,
+});
 
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
   error._tag === "NoBinaryOpenError";
 
-const resolvedAddress = (
-  result: Result<AnalysisExecution, AnalysisError> | undefined,
-  fallback: string,
-): string => {
-  if (result?.ok !== true) return fallback;
-  const value = result.value.result;
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return fallback;
-  return typeof value.query_address === "string"
-    ? value.query_address
-    : fallback;
+const readContainingProcedure = (value: JsonValue) => {
+  const parsed = containingProcedureResolutionSchema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
+        new AnalysisOutputError(
+          "resolve_containing_procedure",
+          "expected a containing-procedure resolution",
+          { cause: parsed.error },
+        ),
+      );
 };
 
 const matchingBookmarks = (value: JsonValue, address: string): Facet => {

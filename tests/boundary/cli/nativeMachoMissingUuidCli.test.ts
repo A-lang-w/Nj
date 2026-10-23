@@ -101,8 +101,6 @@ describe.skipIf(process.platform !== "darwin")(
         expect(report.load_commands).toEqual(missingUuid.load_commands);
         expect((await call("close_binary", {})).isError).not.toBe(true);
       },
-      // Real native-tool CLI controls and MCP inspection share this case's budget.
-      120_000,
     );
   },
 );

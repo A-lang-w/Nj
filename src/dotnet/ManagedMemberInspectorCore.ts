@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  appendManagedParseIssues,
   managedFailure,
   ManagedReaderFailure,
   readManagedValue,
@@ -27,6 +28,7 @@ import {
   decodeMetadataCodedIndex,
   metadataCodedIndexCoordinate,
   type MetadataCodedIndexCoordinate,
+  type MetadataTokenFact,
   metadataToken,
   readMetadataString,
   sha256Bytes,
@@ -35,6 +37,12 @@ import { memberListTable } from "./ManagedMemberPointers.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
 
 export type ManagedType = ManagedMemberInspection["types"][number];
+/** A renderable TypeDef projection paired with its original source row. */
+export interface DecodedTypeDefinition {
+  readonly row: number;
+  readonly type: ManagedType;
+}
+
 export type ManagedExportedType = NonNullable<
   ManagedMemberInspection["exported_types"]
 >[number];
@@ -91,19 +99,19 @@ export interface MemberCore {
 
 export const memberTargetIdentity = (
   name: string,
-  declaringToken: string | null,
+  declaringType: Pick<MetadataTokenFact, "table" | "row"> | null,
   signature: ManagedSignature,
   typeName: DeclarationTypeName,
 ): string | null => {
   if (
-    declaringToken === null ||
+    declaringType === null ||
     signature.resolved_sha256 === null ||
     signature.parse_status !== "decoded"
   )
     return null;
-  const table = Number.parseInt(declaringToken.slice(2, 4), 16);
+  const { table, row } = declaringType;
   if (table !== 1 && table !== 2) return null;
-  const owner = typeName(table, Number.parseInt(declaringToken.slice(4), 16));
+  const owner = typeName(table, row);
   return owner === null
     ? null
     : createHash("sha256")
@@ -119,6 +127,21 @@ export interface ParsedInstruction {
   readonly opcode: string;
   readonly operandKind: ManagedInstructionAnchor["operand_kind"];
   readonly operand: string | null;
+  readonly reference: MetadataTokenFact | null;
+}
+
+export type ParsedTokenInstruction = ParsedInstruction & {
+  readonly reference: MetadataTokenFact;
+};
+
+export const isParsedTokenInstruction = (
+  instruction: ParsedInstruction,
+): instruction is ParsedTokenInstruction => instruction.reference !== null;
+
+export interface DecodedMethod {
+  readonly method: ManagedMethod;
+  readonly tokenInstructions: readonly ParsedTokenInstruction[];
+  readonly catchTokens: ReadonlyMap<number, MetadataTokenFact>;
 }
 
 const rowRange = (
@@ -190,7 +213,7 @@ export const readTypeDefinitions = (
   issues: ManagedParseIssue[],
   memberLists: TypeMemberListFacts,
 ): readonly TypeDefinition[] => {
-  issues.push(...memberLists.issues);
+  appendManagedParseIssues(issues, memberLists.issues);
   const typeTable = layout.table(2);
   const definitions: TypeDefinition[] = [];
   for (let row = 1; row <= (typeTable?.rowCount ?? 0); row += 1)
@@ -209,13 +232,13 @@ export const parseTypes = (
   layout: ManagedMetadataLayout,
   definitions: readonly TypeDefinition[],
 ): {
-  readonly types: readonly ManagedType[];
+  readonly types: readonly DecodedTypeDefinition[];
   readonly issues: readonly ManagedParseIssue[];
   readonly nesting: ManagedTypeNesting;
 } => {
   const fields = memberListTable(layout, 4);
   const methods = memberListTable(layout, 6);
-  const items: ManagedType[] = [];
+  const items: DecodedTypeDefinition[] = [];
   const issues: ManagedParseIssue[] = [];
   const nesting = readManagedTypeNesting(bytes, layout, issues);
   for (const definition of definitions) {
@@ -256,26 +279,31 @@ export const parseTypes = (
         detail: `TypeDef Extends coded index 0x${extendsRaw.toString(16)} is invalid: ${extendsIndex.reason}`,
       });
     const enclosingRow = nesting.enclosing.get(row);
+    managedDecodeBudget(layout).reserve(128, cursor.start);
     items.push({
-      token,
-      row_offset: cursor.start,
-      namespace,
-      name,
-      full_name: definition.fullName,
-      flags,
-      extends_token: extendsIndex.kind === "valid" ? extendsIndex.token : null,
-      enclosing_type_token:
-        enclosingRow === undefined ? null : metadataToken(2, enclosingRow),
-      name_sha256: null,
-      field_list: {
-        first_row: fieldRange.first,
-        last_row: fieldRange.last,
-        count: fieldRange.count,
-      },
-      method_list: {
-        first_row: methodRange.first,
-        last_row: methodRange.last,
-        count: methodRange.count,
+      row,
+      type: {
+        token,
+        row_offset: cursor.start,
+        namespace,
+        name,
+        full_name: definition.fullName,
+        flags,
+        extends_token:
+          extendsIndex.kind === "valid" ? extendsIndex.token : null,
+        enclosing_type_token:
+          enclosingRow === undefined ? null : metadataToken(2, enclosingRow),
+        name_sha256: null,
+        field_list: {
+          first_row: fieldRange.first,
+          last_row: fieldRange.last,
+          count: fieldRange.count,
+        },
+        method_list: {
+          first_row: methodRange.first,
+          last_row: methodRange.last,
+          count: methodRange.count,
+        },
       },
     });
   }
@@ -291,7 +319,7 @@ export const readCompressed = (
     throw managedFailure(
       "invalid-blob",
       "signature",
-      decoded.error.kind === "truncated" && decoded.error.width === 1
+      decoded.error.kind === "truncated"
         ? "truncated compressed integer"
         : "reserved compressed integer",
       offset,
@@ -1121,21 +1149,32 @@ export const metadataSignature = (
     layout,
     issues,
     scope,
+    expectedKind,
   }: {
     readonly rawSha256: string;
     readonly typeName: SignatureTypeName;
     readonly layout: ManagedMetadataLayout;
     readonly issues: ManagedParseIssue[];
     readonly scope: string;
+    readonly expectedKind?: "field" | "method";
   },
 ): ManagedSignature => {
   const operands: TypeOperand[] = [];
-  const decoded = decodeSignature(
+  let decoded = decodeSignature(
     blob,
     layout,
     operands,
     (issue) => issues.push(issue),
     scope,
   );
+  if (
+    expectedKind !== undefined &&
+    decoded.kind !== "unknown" &&
+    decoded.kind !== expectedKind
+  ) {
+    const detail = `Expected ${expectedKind} signature; decoded ${decoded.kind}${decoded.issue === null ? "" : `: ${decoded.issue}`}`;
+    issues.push({ code: "invalid-blob", scope, offset: null, detail });
+    decoded = { ...decoded, parse_status: "malformed", issue: detail };
+  }
   return projectSignature(blob, rawSha256, typeName, decoded, operands);
 };

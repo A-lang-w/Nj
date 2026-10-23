@@ -157,7 +157,6 @@ export const parseOtoolLoadCommands = (raw: string) => {
     wordSize: WORD_SIZES.get(header.magic ?? "") ?? null,
     endian: header.cpuType === null ? null : cpuEndian(header.cpuType),
     fileType: header.fileType,
-    fileTypeKind: canonicalFileType(header.fileType),
     flags: [...state.flags].sort(),
     uuid: state.uuid,
     commands: state.commands,
@@ -168,28 +167,6 @@ export const parseOtoolLoadCommands = (raw: string) => {
     builds: state.builds,
   };
 };
-
-/** Known MH_* file types from <mach-o/loader.h>; raw text remains separate. */
-const FILE_TYPE_NAMES = [
-  "OBJECT",
-  "EXECUTE",
-  "FVMLIB",
-  "CORE",
-  "PRELOAD",
-  "DYLIB",
-  "DYLINKER",
-  "BUNDLE",
-  "DYLIB_STUB",
-  "DSYM",
-  "KEXT_BUNDLE",
-  "FILESET",
-] as const;
-const canonicalFileType = (
-  raw: string | null,
-): (typeof FILE_TYPE_NAMES)[number] | null =>
-  FILE_TYPE_NAMES.find(
-    (name, index) => raw === name || raw === String(index + 1),
-  ) ?? null;
 
 /** otool prints the selected slice's magic in host order, symbolic with -v. */
 const WORD_SIZES: ReadonlyMap<string, 32 | 64> = new Map<string, 32 | 64>([
@@ -550,6 +527,8 @@ const parseField = (rawLine: string): readonly [string, string] | undefined => {
   // exactly, including surrounding spaces, under otool's ordinal label.
   const option = /^\s*(string #[1-9]\d*)(?: (.*))?$/u.exec(rawLine);
   if (option?.[1] !== undefined) return [option[1], option[2] ?? ""];
+  const fixedName = /^\s*(segname|sectname) (.*)$/u.exec(rawLine);
+  if (fixedName?.[1] !== undefined) return [fixedName[1], fixedName[2] ?? ""];
   const line = rawLine.trim();
   // These are the compound field labels used by otool. Keeping this list
   // explicit prevents a one-word field value such as `sectname version` from

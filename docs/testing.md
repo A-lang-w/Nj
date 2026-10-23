@@ -25,6 +25,7 @@ behavior, and complete CI evidence before merging.
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
+| `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
 
 The general source suite above runs on Linux in CI, and Windows CI runs a
 curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).
@@ -33,6 +34,12 @@ change, such as POSIX fixture paths, `#!/bin/sh` tool stubs, or POSIX rename
 semantics. Compare failures against the base revision, or run the suite on
 Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
 Windows source checkouts.
+
+The CI documentation lane runs both `docs:check` and `docs:build` when the
+existing change classifier selects documentation or its producing inputs.
+Generated facts and rendered page links have separate checks. VitePress does not
+establish that every external URL or GitHub-rendered localized heading exists;
+verify those destinations when editing them.
 
 For example:
 
@@ -784,6 +791,13 @@ behavior requires the applicable `verify:*` lanes; packaging and installation
 changes also require `npm run verify:package`. The full-gate benchmark measures
 that explicit lane, not the routine iteration requirement.
 
+The package-update registry fixture retains its first proxy/body failure and
+aborts the owned updater command. It joins the helper and installer descendants
+before workspace removal. Incomplete process cleanup retains the exact owner
+and workspace rather than reporting successful removal. The controlled
+`packageUpdateRegistryFailure` regression needs built process modules, uses no
+public registry, and checks both the primary failure and live descendant absence.
+
 ## Real-toolchain verification lanes
 
 Linux Rizin debugger ownership changes require a separate real-provider gate on
@@ -890,8 +904,13 @@ After import, deleting that source must preserve the captured database identity.
 Instruction inspection and containing-function lookup also agree across
 hexadecimal case, leading zeros, and encoded default address-space spellings.
 The same source-acquisition workflow exercises missing and directory-replaced
-inputs, plus real read-permission denial on a non-root host. Root runs report
-that permission-denial check as unverified. Filesystem integration separately checks selected-platform routing and exclusive creation.
+inputs, plus real read-permission denial on a host that enforces it. Permission
+fixtures must probe the relevant read, write or search operation before relying
+on POSIX mode bits: a non-root Linux process may bypass DAC through capabilities.
+`requirePermissionDenial` reports an explicit skip when the host permits the
+probe; it restores the probe's permissions before skipping. Such a skip leaves
+real permission coverage unverified. Filesystem integration separately checks
+selected-platform routing and exclusive creation.
 Namespace annotation probes compile a separate host C fixture with C++ ABI
 symbols, avoiding a C++ runtime prerequisite. Real Ghidra demangling supplies
 duplicate leaf names in two top-level namespaces and a nested namespace. The
@@ -1685,7 +1704,7 @@ conformance/vtable fixture.
   allows a host-permission-boundary-only result and explicitly reports
   `positive_e2e: false`; it must not be reported as capture/action proof.
   Both commands reject a changed executable digest and clean up the fixture
-  process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
+  process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md).
 
 `npm run verify:native-calls` needs macOS with Command Line Tools (`clang`,
 `lldb`, `codesign`, `nm`) and actual debugger access to the owned fixtures.

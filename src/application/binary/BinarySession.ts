@@ -1034,6 +1034,7 @@ export class BinarySession
       requestActivitySnapshots: client?.requestActivitySnapshots?.() ?? [],
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
       cleanupPending:
+        this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#pendingCleanup !== undefined ||
         this.#pendingBundleResourceCleanup.length > 0 ||
         this.hasPendingFileResources ||
@@ -1424,8 +1425,7 @@ export class BinarySession
     const started = await client.execute("health", {});
     if (started.ok) {
       this.#active = {
-        target: previous.target,
-        profile: previous.profile,
+        ...previous,
         ...run,
         nativeSourceAdmitted: false,
       };

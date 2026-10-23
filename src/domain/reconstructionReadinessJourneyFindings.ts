@@ -1,3 +1,4 @@
+import { compositeKey } from "./unicodeCodePointOrder.js";
 import {
   addMissingEvidenceFindings,
   readinessFinding as finding,
@@ -349,7 +350,9 @@ const outcomeFindings = (
       evidenceIds,
     );
   }
-  for (const [key, outcomes] of groupedOutcomes(input)) {
+  for (const outcomes of groupedOutcomes(input).values()) {
+    const first = outcomes[0]!;
+    const label = `${first.operation}:${first.call_kind}`;
     const surfaces = new Set(outcomes.map(({ surface }) => surface));
     const outcomeEvidence = outcomes.flatMap(
       ({ evidence_ids }) => evidence_ids,
@@ -360,7 +363,7 @@ const outcomeFindings = (
           "surface-parity-missing",
           "export-replay",
           "fail",
-          `CLI/MCP outcome pair is incomplete: ${key}.`,
+          `CLI/MCP outcome pair is incomplete: ${label}.`,
           outcomeEvidence,
         ),
       );
@@ -387,7 +390,10 @@ const outcomeFindings = (
           "surface-semantic-drift",
           "export-replay",
           "fail",
-          `CLI/MCP structured outcomes disagree: ${key}.`,
+          `CLI/MCP structured outcomes disagree: ${label}; sequences ${outcomes
+            .map(({ sequence }) => sequence)
+            .sort((left, right) => left - right)
+            .join(", ")}.`,
           outcomeEvidence,
         ),
       );
@@ -406,7 +412,7 @@ const groupedOutcomes = (
     ReconstructionReadinessInput["operation_outcomes"]
   >();
   for (const outcome of input.operation_outcomes) {
-    const key = `${outcome.operation}:${outcome.call_kind}`;
+    const key = compositeKey([outcome.operation, outcome.call_kind]);
     const outcomes = grouped.get(key);
     if (outcomes === undefined) grouped.set(key, [outcome]);
     else outcomes.push(outcome);

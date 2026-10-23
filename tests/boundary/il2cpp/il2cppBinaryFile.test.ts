@@ -740,3 +740,59 @@ it("reads type attributes without requiring file-backed alignment padding", () =
     Array.from({ length: 5 }, () => "int"),
   );
 });
+
+it("ignores CodeRegistration count alignment padding", () => {
+  const bytes = createIl2cppBinaryFixture();
+  bytes.fill(0xff, 0x604, 0x608);
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it.each([0, 8, 16])(
+  "finds registration with %s file-backed trailing zero bytes",
+  (tail) => {
+    const original = createIl2cppBinaryFixture();
+    const bytes = Buffer.alloc(0x1000 + tail);
+    original.copy(bytes);
+    original.copy(bytes, 0xf90, 0x800, 0x880);
+    bytes.fill(0, 0x800, 0x880);
+    bytes.writeBigUInt64LE(0x2000n, 64);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    const linked = link(bytes);
+    expect(linked.types_field).toBe(FIXTURE_BINARY_BASE + 0xfc0n);
+    expect(linked.method_addresses).toEqual(expectedAddresses);
+    expect(linked.return_types).toEqual(link(original).return_types);
+    if (tail === 0) {
+      const missingTail = Buffer.from(bytes);
+      missingTail.writeBigUInt64LE(BigInt(bytes.length), 64);
+      expect(failure(missingTail).reason).toBe(
+        "metadata-registration-not-found",
+      );
+    }
+  },
+);
+
+it.each([0n, FIXTURE_BINARY_BASE + 0x980n, FIXTURE_BINARY_BASE + 0x9b0n])(
+  "retains unknown dyld-bound type names regardless of raw word %s",
+  (raw) => {
+    const control = link(createIl2cppBinaryFixture());
+    expect(control.return_types[0]).toEqual({
+      type: 0,
+      name: FIXTURE_RETURN_TYPE_NAME,
+    });
+    expect(control.method_addresses).toEqual(expectedAddresses);
+    const bytes = createIl2cppDyldBindFixture(raw, 0x900);
+    const linked = link(bytes);
+    for (const collection of [
+      "return_types",
+      "field_types",
+      "parameter_types",
+    ] as const)
+      expect(linked[collection]).toEqual(
+        control[collection].map((row) =>
+          row.type === 0 ? { type: row.type, name: null } : row,
+        ),
+      );
+    expect(linked.method_addresses).toEqual(control.method_addresses);
+    expect(bytes.readBigUInt64LE(0x900)).toBe(raw);
+  },
+);

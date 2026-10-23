@@ -173,8 +173,11 @@ const entityOf = (
   return { scope, at, identity, rules };
 };
 
-const fromState = (answer: ReplayResult): boolean =>
-  (answer as Partial<StateAnswer>).state?.source === "state";
+const fromState = (answer: ReplayResult): boolean => {
+  const state = (answer as Partial<StateAnswer>).state;
+  // Missing-item selection comes from state, but its response is a recording.
+  return state?.source === "state" && state.view !== "missing";
+};
 
 /** Identity facts come from decoded JSON or text scalars, never binary presentations or truncated bodies. */
 const identityValue = (body: ReplayedBody): JsonValue | undefined => {
