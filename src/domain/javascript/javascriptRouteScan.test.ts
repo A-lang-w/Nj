@@ -52,6 +52,20 @@ it.each([
   },
 );
 it.each([
+  "createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);var INDEX=true;",
+  "createBrowserRouter([{index:(INDEX as boolean),children:[{path:'child'}]}]);const INDEX=true;",
+  "const FLAG=INDEX;var INDEX=true;createBrowserRouter([{index:FLAG,children:[{path:'child'}]}]);",
+  "var FLAG=INDEX,INDEX=true;createBrowserRouter([{index:FLAG,children:[{path:'child'}]}]);",
+  "var INDEX=true;createBrowserRouter([{index:FLAG,children:[{path:'child'}]}]);var FLAG=INDEX;",
+  "const routes=[{index:INDEX,children:[{path:'child'}]}];var INDEX=true;createBrowserRouter(routes);",
+])("does not read a later initializer through an index alias: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/child"]);
+  expect(facts.unresolved).toEqual([
+    expect.objectContaining({ reason: expect.stringContaining("index flag") }),
+  ]);
+});
+it.each([
   ["", "false"],
   ["const INDEX=false;", "INDEX"],
   ["", "(false as const)"],

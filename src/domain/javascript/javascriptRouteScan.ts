@@ -975,6 +975,7 @@ export class JavaScriptRouteScan {
     node: t.Node,
     site: t.Node | undefined,
     index: JavaScriptBindingIndex,
+    selection: "source" | "at-read" = "source",
   ): t.Node | undefined {
     const seen = new Set<t.Node>();
     for (;;) {
@@ -982,10 +983,20 @@ export class JavaScriptRouteScan {
       if (!t.isIdentifier(node)) return node;
       if (seen.has(node) || !this.#queue(node)) return;
       seen.add(node);
-      const initializer = semanticStableInitializer(
-        index.bindingForReferenceAt(node),
-        index.bindings,
-      );
+      let binding = index.bindingForReferenceAt(node);
+      if (binding === undefined) return;
+      if (selection === "at-read") {
+        // Ownership discovery retains possible sources; boolean values need
+        // initialization proof at every alias read, not at the later route call.
+        const read = semanticBindingAtRead(
+          binding,
+          node,
+          index.bindings.parentsByNode,
+        );
+        if (read.status !== "ordered" || !read.hasDefiniteInitializer) return;
+        binding = read.binding;
+      }
+      const initializer = semanticStableInitializer(binding, index.bindings);
       if (
         initializer === undefined ||
         initializer.projection.length !== 0 ||
@@ -1437,7 +1448,7 @@ export class JavaScriptRouteScan {
         const value =
           field === undefined
             ? undefined
-            : this.#resolve(field.value, site, index);
+            : this.#resolve(field.value, site, index, "at-read");
         emit = t.isBooleanLiteral(value) && value.value;
         if (
           (field !== undefined && !t.isBooleanLiteral(value)) ||
