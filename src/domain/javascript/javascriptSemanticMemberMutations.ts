@@ -1190,7 +1190,20 @@ export function* collectSemanticMemberMutationsSteps(
       ["Object", "Array", "Function"].some((owner) => {
         const path = ["global", owner, "prototype", key];
         return (
-          state.ambientWrites.covers(path) || state.ambientEscapes.covers(path)
+          state.ambientWrites.covers(path) ||
+          state.ambientEscapes.covers(path) ||
+          state.ambientWrites.overlaps([
+            "global",
+            owner,
+            "prototype",
+            "__proto__",
+          ]) ||
+          state.ambientEscapes.overlaps([
+            "global",
+            owner,
+            "prototype",
+            "__proto__",
+          ])
         );
       })
     )
