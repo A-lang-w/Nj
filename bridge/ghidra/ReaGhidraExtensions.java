@@ -43,9 +43,8 @@ final class ReaGhidraExtensions implements AutoCloseable {
                 String measured = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));
                 if (!measured.equals(digest)) throw new IllegalArgumentException("Private extension digest mismatch: " + id);
                 loader = new URLClassLoader(new java.net.URL[] { path.toUri().toURL() }, getClass().getClassLoader());
-                // entry is already validated above to equal the single allowlisted class name,
-                // but load the literal name here so the reflective call is never driven by
-                // attacker-controlled input even if the allowlist above is loosened later.
+                // entry is validated above to equal NATIVE_AOT_ENTRY; load the constant so the
+                // reflective call never takes descriptor input, even if that check is loosened.
                 Class<?> type = Class.forName(NATIVE_AOT_ENTRY, true, loader);
                 Object instance = type.getConstructor().newInstance();
                 Object response = type.getMethod("analyze", Program.class, TaskMonitor.class).invoke(instance, program, monitor);
