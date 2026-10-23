@@ -755,7 +755,20 @@ describe("native IDA literal matching", () => {
         case_sensitive: false,
         expected: ["İstanbul"],
       },
-      { pattern: "σ", mode: "literal", case_sensitive: false, expected: ["σ"] },
+      {
+        pattern: "σ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["σ", "ς"],
+      },
+      {
+        pattern: "Σ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["σ", "ς"],
+      },
+      { pattern: "σ", mode: "literal", case_sensitive: true, expected: ["σ"] },
+      { pattern: "ς", mode: "literal", case_sensitive: true, expected: ["ς"] },
       {
         pattern: "σ",
         mode: "regex",
