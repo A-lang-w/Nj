@@ -21,7 +21,7 @@ Baseline main was `5d2c8c2b78d2552da0e13a11d3e2678efb69810d`.
 The feature branch integrates original PR head
 `d3a207038cfc00d58a97b86b06af1368839bec99` on that base, with the maintenance
 changes described below. The frozen integration is `c566cace04d24f8ccb3d54353ababf95b96c8830`,
-including refreshed main `bded9c628de23643aab81f98959b6a473318a240`. Each variant ran through the public production
+including refreshed main `bded9c628de23643aab81f98959b6a473318a240`. The review fixes were verified on `d3e0e96821a09a447785d100f3d85139b6e77e96`. Each variant ran through the public production
 `scripts/rea.mjs mcp` entrypoint and the installed MCP SDK client.
 
 The baseline called `list_procedures`, then `procedure_info` for each addressed
@@ -54,34 +54,34 @@ caveats stayed in the index, and no pseudocode was returned in the manifest.
 | Completed workflow                             | Before: public primitives + local files | After: directory workflow |
 | ---------------------------------------------- | --------------------------------------: | ------------------------: |
 | Cold export: MCP calls                         |                                     536 |                         1 |
-| Cold export: request + response token estimate |                               1,375,776 |                     3,786 |
-| Cold export: elapsed                           |                                50.940 s |                  28.907 s |
-| Cold export: sampled family RSS peak           |                              1754.5 MiB |                1697.2 MiB |
+| Cold export: request + response token estimate |                               1,375,776 |                     3,800 |
+| Cold export: elapsed                           |                                50.940 s |                  39.155 s |
+| Cold export: sampled family RSS peak           |                              1754.5 MiB |                1709.3 MiB |
 | Warm export: MCP calls                         |                                     536 |                         1 |
-| Warm export: request + response token estimate |                               1,377,486 |                     3,786 |
-| Warm export: elapsed                           |                                 8.566 s |                   7.424 s |
-| Warm export: sampled family RSS peak           |                              1779.4 MiB |                1664.0 MiB |
+| Warm export: request + response token estimate |                               1,377,486 |                     3,800 |
+| Warm export: elapsed                           |                                 8.566 s |                   8.058 s |
+| Warm export: sampled family RSS peak           |                              1779.4 MiB |                1710.6 MiB |
 
 The identical two-export task, including the full catalog discovery, open and
-close, used **3,723,191 → 981,643 estimated tokens (73.63% fewer)**.
+close, used **3,723,191 → 981,913 estimated tokens (73.63% fewer)**.
 The extra verified-resume call is excluded from that comparison. The catalog
 itself grew from 969,665 to
-973,807 estimated tokens. All 220 existing tool definitions
+974,049 estimated tokens. All 220 existing tool definitions
 were identical; only `decompile_all` was added. The per-export request/reply
 reduction is about 99.72%; applying that percentage to the entire task would
 overstate the benefit. A client which injects the entire catalog still pays its
 large fixed context cost.
 
-The full verifier process family took 85.697 → 50.235 s elapsed,
-111.166 → 69.313 s waited CPU, and
-1779.4 → 1697.2 MiB sampled peak RSS. The after run additionally includes
-verified resume (0.158 s). These are observed final-pair measurements;
+The full verifier process family took 85.697 → 62.034 s elapsed,
+111.166 → 68.185 s waited CPU, and
+1779.4 → 1713.7 MiB sampled peak RSS. The after run additionally includes
+verified resume (0.266 s). These compare the retained baseline with the final review-fix run;
 **no general CPU or elapsed-time speedup is claimed**. Earlier maintenance
-trials ranged 56–83 s elapsed and 65–118 s CPU; they used earlier source
+trials ranged 50–83 s elapsed and 65–118 s CPU; they used earlier source
 revisions and are retained separately. Full-run figures include SDK, verifier
 formatting/hash checks and token estimation as well as REA and its provider.
-Per-phase sampled CPU was 70.19 → 43.30 s cold and
-6.15 → 4.93 s warm, subject to delayed child accounting. The
+Per-phase sampled CPU was 70.19 → 43.16 s cold and
+6.15 → 4.42 s warm, subject to delayed child accounting. The
 integration decision rests on equivalent results with far fewer agent-facing
 calls and estimated context, plus bounded auxiliary accumulators.
 
@@ -158,7 +158,7 @@ positive safe integer and does not allocate according to its numeric value.
 
 ## Validation
 
-`npm run check` passed on frozen integration `c566cace0`: type checking,
+`npm run check` passed after the review fixes on `d3e0e9682`: type checking,
 lint, formatting, dependency/metadata checks, module boundaries and architecture
 guards. `npm run docs:check` also passed, including nine README conformance cases. After the main refresh, 226 tests passed across ten files, including the
 four Ghidra profile suites and the six CLI/MCP/workflow/schema files. Earlier
