@@ -311,8 +311,7 @@ describe("reference-source outline-depth input schema", () => {
   });
 });
 
-const EQUAL_OR_CONFLICT =
-  "Equal positional and named values are accepted; conflicting values fail.";
+const EQUAL_OR_CONFLICT = "Equal values are accepted; conflicts fail.";
 const atLeastOneSelector = (
   alternatives: string,
   agreement = EQUAL_OR_CONFLICT,
@@ -322,7 +321,7 @@ const ADDRESS_OR_PROCEDURE = atLeastOneSelector(
 );
 const DECOMPILE_SELECTORS = atLeastOneSelector(
   "the positional address, --procedure, or --file-offset",
-  "Equal positional and --procedure values are accepted; conflicting values fail. --file-offset is a source-file offset, not an analysis address, so use it without another selector.",
+  "Equal positional and --procedure values are accepted; conflicts fail. Use --file-offset alone.",
 );
 const NAMED_ADDRESS = atLeastOneSelector("the positional address or --address");
 const QUERY_SELECTOR = atLeastOneSelector("the positional query or --query");

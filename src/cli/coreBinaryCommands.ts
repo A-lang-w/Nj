@@ -25,15 +25,15 @@ import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.j
  */
 const requiredSelectorGuidance = (
   alternatives: string,
-  agreement = "Equal positional and named values are accepted; conflicting values fail.",
-): string => [`Supply at least one of ${alternatives}.`, agreement].join(" ");
+  agreement = "Equal values are accepted; conflicts fail.",
+): string => `Supply at least one of ${alternatives}. ${agreement}`;
 
 const addressOrProcedureGuidance = requiredSelectorGuidance(
   "the positional address or --procedure",
 );
 const decompileSelectorGuidance = requiredSelectorGuidance(
   "the positional address, --procedure, or --file-offset",
-  "Equal positional and --procedure values are accepted; conflicting values fail. --file-offset is a source-file offset, not an analysis address, so use it without another selector.",
+  "Equal positional and --procedure values are accepted; conflicts fail. Use --file-offset alone.",
 );
 const namedAddressGuidance = requiredSelectorGuidance(
   "the positional address or --address",
