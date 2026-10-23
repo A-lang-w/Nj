@@ -74,6 +74,27 @@ const scenarioCompleteness = {
   missing_sections: [],
   truncated_sections: [],
 };
+// A connected capture cannot recover pre-attach events, so the producer
+// always reports capture-wide "events" as missing and attaches the
+// limitations below; only per-step records can be complete. Mirrored from
+// globalCompleteness and browserScenarioLimitations.
+const attachedScenarioCompleteness = {
+  status: "incomplete",
+  equality_eligible: false,
+  missing_sections: ["events"],
+  truncated_sections: [],
+};
+const attachedScenarioLimitations = [
+  "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
+  "Network content is retained only when selected; Playwright response-body bytes are API results and are not guaranteed to match wire bytes.",
+  "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+  "Network content reads settle within 5 seconds each and the observer does not request bodies from unfinished responses.",
+  "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
+  "Storage values are hashed only after declared-secret redaction.",
+  "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",
+  "Attached locale en-US applies to Intl formatting only; navigator.language(s) and Accept-Language remain caller-controlled. Use launch mode for matching page and request languages.",
+  "Detaching a CDP page session may clear caller-owned navigator.platform emulation. REA cannot snapshot the caller's complete user-agent/client-hint state before attachment; use launch mode to avoid mutating that external browser.",
+];
 const scenarioArtifacts = {
   screenshot: { state: "not_requested" },
   dom: { state: "not_requested" },
@@ -143,8 +164,8 @@ const exampleScenarioCapture = () => ({
       network_transaction_range: null,
     },
   },
-  completeness: scenarioCompleteness,
-  limitations: [],
+  completeness: attachedScenarioCompleteness,
+  limitations: attachedScenarioLimitations,
 });
 
 /** Passive browser reverse-engineering contracts. */

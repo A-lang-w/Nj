@@ -56,7 +56,7 @@ async function capturePassivePair(
 }
 
 describe("browser comparison input boundary", () => {
-  it("advertises complete producer captures and agrees with SDK validation on both comparison families", async () => {
+  it("advertises producer-emittable captures and agrees with SDK validation on both comparison families", async () => {
     const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
     const server = new McpServer({ name: "capture-input", version: "0" });
     const client = new Client({ name: "capture-input", version: "0" });
@@ -196,7 +196,7 @@ describe("browser comparison input boundary", () => {
       expect(parsedScenario).toHaveProperty("normalization", { rules: [] });
       expect(compareBrowserCaptures(parsedScenario)).toMatchObject({
         comparison_kind: "browser_scenario",
-        overall_status: "unchanged",
+        overall_status: "unknown",
       });
     } finally {
       await Promise.allSettled([
@@ -205,5 +205,25 @@ describe("browser comparison input boundary", () => {
         browser.close(),
       ]);
     }
+  });
+});
+
+describe("compare_web_captures advertised example", () => {
+  it("advertises the attached scenario capture in the producer's state", () => {
+    const example = contract.examples[0]?.input;
+    if (example === undefined) throw new Error("Missing scenario example");
+    const capture = browserScenarioCaptureSchema.parse(example.before_scenario);
+    // Connected captures cannot recover pre-attach events, so the producer
+    // always reports capture-wide "events" as missing, keeps equality
+    // ineligible, and attaches the attachment limitations.
+    expect(capture.completeness).toEqual({
+      status: "incomplete",
+      equality_eligible: false,
+      missing_sections: ["events"],
+      truncated_sections: [],
+    });
+    expect(capture.limitations.join("\n")).toContain(
+      "CDP attachment cannot recover pre-attach events",
+    );
   });
 });
