@@ -1,6 +1,12 @@
 /** Maximum admitted vendor response bytes, shared by Hopper setup adapters. */
 export const HOPPER_DOWNLOAD_BYTES = 100_000_000;
 
+/** Whether the response a fetch produced came from the origin the caller validated. */
+const isExpectedOrigin = (response: Response, expectedOrigin: string): boolean =>
+  typeof response.url !== "string" ||
+  response.url === "" ||
+  new URL(response.url).origin === expectedOrigin;
+
 /** Bound observed response bytes before retaining them, including chunked bodies. */
 export const downloadHopperPackage = async (
   url: string,
@@ -21,6 +27,8 @@ export const downloadHopperPackage = async (
     maxBytes > HOPPER_DOWNLOAD_BYTES
   )
     throw new RangeError("Invalid Hopper response byte budget");
+  const refused = { ok: false, bytes: new Uint8Array() };
+  const expectedOrigin = new URL(url).origin;
   const response = await fetch(url, {
     headers: { accept: "application/json", "user-agent": "rea-installer" },
     signal:
@@ -28,7 +36,12 @@ export const downloadHopperPackage = async (
         ? deadline
         : AbortSignal.any([options.signal, deadline]),
   });
-  const refused = { ok: false, bytes: new Uint8Array() };
+  // Redirects may leave the validated origin; only the initial URL was checked
+  // by callers, so refuse a response another origin ultimately produced.
+  if (!isExpectedOrigin(response, expectedOrigin)) {
+    await response.body?.cancel();
+    return refused;
+  }
   if (
     !response.ok ||
     Number(response.headers.get("content-length")) > maxBytes
