@@ -224,6 +224,17 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     rule: z.literal("clock"),
     format: clockFormatSchema,
   }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("nested-clock"),
+    members: z.array(z.string()).min(1),
+    format: clockFormatSchema,
+  }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("held-clock"),
+    format: clockFormatSchema,
+  }),
   z.strictObject({ ...ruled, rule: z.literal("echo") }),
   z.strictObject({ ...ruled, rule: z.literal("copy"), from: z.string() }),
   z.strictObject({ ...ruled, rule: z.literal("path"), from: z.string() }),
@@ -234,6 +245,18 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     ...ruled,
     rule: z.literal("constant"),
     value: jsonValueSchema,
+  }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("stamp"),
+    value: jsonValueSchema,
+  }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("derived"),
+    value: jsonValueSchema,
+    from: jsonValueSchema,
+    member: z.string(),
   }),
 ]);
 const insertRuleSchema = z.union([
@@ -297,10 +320,11 @@ const writePlanSchema = z.strictObject({
           kind: z.enum(["array", "boolean", "number", "object", "string"]),
         }),
       ),
+      envelope: z.string().optional(),
     })
     .nullable()
     .describe(
-      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), and the JSON type a later call stored an accepted member as when the observation does not show it (kinds).",
+      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), the JSON type a later call stored an accepted member as when the observation does not show it (kinds), and the member a call wraps its object in as a one-element array (envelope).",
     ),
   rules: z
     .array(fieldRuleSchema)

@@ -47,6 +47,19 @@ export type GeneratedRule =
       readonly field: string;
       readonly rule: "clock";
       readonly format: ClockFormat;
+    }
+  /** An object value whose members hold the write's clock, the others kept. */
+  | {
+      readonly field: string;
+      readonly rule: "nested-clock";
+      readonly members: string[];
+      readonly format: ClockFormat;
+    }
+  /** A sent clock the application stamps anew, which a call must send as the entity holds it. */
+  | {
+      readonly field: string;
+      readonly rule: "held-clock";
+      readonly format: ClockFormat;
     };
 
 /** How one field of a written entity gets its value; fields no rule names keep the observed value. */
@@ -63,6 +76,20 @@ export type FieldRule =
       readonly field: string;
       readonly rule: "constant";
       readonly value: JsonValue;
+    }
+  /** An update stores `value`, the acting user's, without being sent it. */
+  | {
+      readonly field: string;
+      readonly rule: "stamp";
+      readonly value: JsonValue;
+    }
+  /** An update that sends `member` stores `value`, derived from it, on an entity holding `from` there. */
+  | {
+      readonly field: string;
+      readonly rule: "derived";
+      readonly value: JsonValue;
+      readonly from: JsonValue;
+      readonly member: string;
     };
 
 /** Where a create places its entity in its collection's order. */
@@ -86,6 +113,8 @@ export interface WriteBody {
   readonly identity: string | null;
   /** The JSON type a later call stored an accepted member as, for members the observation does not show. */
   readonly kinds: { readonly member: string; readonly kind: JsonKind }[];
+  /** The member a call wraps its object in, as a one-element array. */
+  readonly envelope?: string | undefined;
 }
 
 /** What a write answers: the written entity or its identity rendered into a recorded body, no body, or the recorded body. */

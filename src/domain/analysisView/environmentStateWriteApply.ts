@@ -20,6 +20,7 @@ import type {
   WriteCall,
   WriteResponse,
 } from "./environmentStateWriteRules.js";
+import { stampProblem } from "./environmentStateWriteStamps.js";
 import {
   integerOf,
   isUuid,
@@ -127,7 +128,7 @@ export const bodyProblem = (
     }
     if (fixed.has(member)) {
       if (!same(fixed.get(member), value))
-        return `Member ${member} is accepted only with the value the capture sent, because the application stored it differently (${bodyContract(body)}).`;
+        return `Member ${member} is accepted only with the value the capture sent, because the application stored it differently or other recorded fields go with it (${bodyContract(body)}).`;
       continue;
     }
     if (!body.accepted.includes(member))
@@ -183,6 +184,8 @@ const ruledValue = (
     case "unique":
     case "renewed":
     case "clock":
+    case "nested-clock":
+    case "held-clock":
       return generate(rule);
     case "echo":
       return ok(Object.hasOwn(body, rule.field) ? body[rule.field] : undefined);
@@ -223,7 +226,7 @@ const templated = (
     : undefined;
 };
 
-/** Apply the rules that derive from fields already written: slugs and templates. */
+/** Apply the rules that derive from fields already written or the call: slugs, templates and stamps. */
 const derive = (
   rules: readonly FieldRule[],
   observed: JsonObject,
@@ -237,7 +240,9 @@ const derive = (
     } else if (rule.rule === "template") {
       const value = templated(observed, written, rule);
       if (value !== undefined) written[rule.field] = value;
-    }
+    } else if (rule.rule === "stamp") written[rule.field] = rule.value;
+    else if (rule.rule === "derived" && Object.hasOwn(sent, rule.member))
+      written[rule.field] = rule.value;
   }
 };
 
@@ -278,6 +283,20 @@ export const createdFields = (
   return ok(written);
 };
 
+/** Rules an update gives a new value on every call. */
+const REGENERATED: ReadonlySet<FieldRule["rule"]> = new Set([
+  "clock",
+  "nested-clock",
+  "held-clock",
+  "unique",
+]);
+const regenerated = (
+  rule: FieldRule,
+): rule is Extract<
+  GeneratedRule,
+  { rule: "clock" | "nested-clock" | "held-clock" | "unique" }
+> => REGENERATED.has(rule.rule);
+
 /** The fields of an updated entity: sent echoed members, the constants the plan recorded, generated and derived changes. */
 export const updatedFields = (
   plan: Pick<StateWritePlan, "rules" | "body">,
@@ -288,10 +307,11 @@ export const updatedFields = (
   const { before, observed } = entity;
   if (plan.body === null) return err("The tool has no modelled body.");
   const sent = call.body ?? {};
-  const problem = bodyProblem(plan.body, call, {
-    entity: { ...observed, ...before },
-    id: call.id,
-  });
+  const problem =
+    bodyProblem(plan.body, call, {
+      entity: { ...observed, ...before },
+      id: call.id,
+    }) ?? stampProblem(plan.rules, before, sent);
   if (problem !== undefined) return err(problem);
   const members = Object.keys(sent).filter(
     (member) => member !== plan.body?.identity,
@@ -311,8 +331,7 @@ export const updatedFields = (
       if (was !== undefined)
         written[rule.field] = spelledLike(before[rule.field]!, was + 1);
     } else if (
-      rule.rule === "clock" ||
-      rule.rule === "unique" ||
+      regenerated(rule) ||
       // Child rows are renewed only on an entity that holds them.
       (rule.rule === "renewed" && Object.hasOwn(before, rule.field))
     ) {

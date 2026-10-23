@@ -675,14 +675,19 @@ explains it: generated `identity` (a sequence, UUID or token, by the recorded
 value's shape), `echo` of a body member, `copy` of a body string of 8 or more
 characters, a `path` value, a `slug` of a body member, a `clock` value within 10
 minutes of the request in its recorded format, a `sequence` one past the
-largest value of its collection or type, a `unique` UUID, or a `template` around
-a generated value; other fields keep the observed value. An update's members
+largest value of its collection or type, a `unique` UUID or opaque token, a
+`nested-clock` object whose clocks the request stamped, or a `template` around
+a generated value; other fields keep the observed value. A body that wraps one
+object in a one-element array is that object, wrapped so on every call
+(`body.envelope`). An update's members
 echo when stored as sent; a member stored differently is accepted only with its
 recorded value (`body.fixed`) and stores the value the call that showed it
 recorded (the `value` of its `constant` rule), and a field it changed without
-sending must be a clock, an increment or a slug, or the plan is
-`unexplained-change`; an increment or slug must hold for every call of the
-tool. Every member the first call sent is required, except by `PATCH` and
+sending must be a clock, a nested clock, an increment, a slug, a fresh `unique`
+value, a `stamp` of the acting user or a value `derived` from the one member it
+stores nowhere, or the plan is `unexplained-change`; an increment, slug, stamp
+or derived value must hold for every call of the tool. A write is served only
+with the query its first call sent. Every member the first call sent is required, except by `PATCH` and
 `POST` updates.
 
 A read on a line `query` answers is checked against the query evaluated over

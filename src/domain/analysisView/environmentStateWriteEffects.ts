@@ -41,6 +41,11 @@ import {
   viewFields,
   type Observed,
 } from "./environmentStateWriteObserve.js";
+import {
+  envelopeMember,
+  plannedObject,
+  restampedFields,
+} from "./environmentStateWriteStamps.js";
 import { readClock } from "./environmentStateWriteValues.js";
 import {
   pathValuesOf,
@@ -191,13 +196,22 @@ export const refuse = (
   if (!step.observeOnly) draft.plan.reason = reason;
 };
 
+/** A call's body object; an entity write's is unwrapped from a one-element envelope, and once its plan is built only one sent with the exemplar's query and wrapping counts, as serving takes it. */
 export const requestObject = (
   context: EffectContext,
   record: StateRecordFacts,
-): JsonObject | undefined => {
-  const body = context.io.requestBody(record.ordinal);
-  return isObject(body) ? body : undefined;
-};
+  draft?: WriteDraft,
+): JsonObject | undefined =>
+  plannedObject(
+    { body: context.io.requestBody(record.ordinal), query: record.query },
+    draft && {
+      built: built(draft),
+      envelope: draft.plan.body?.envelope,
+      query: context.records.find(
+        (other) => other.ordinal === draft.plan.exemplar_ordinal,
+      )?.query,
+    },
+  );
 
 export const callOf = (
   step: WriteStep,
@@ -221,6 +235,25 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   viewOf: context.viewOf,
   withBody: context.io.withBody,
   queryOf: context.io.queryOf,
+});
+
+/** The later item reads of the entity a write resolved, as a forward search finds them. */
+const itemReads = (
+  context: EffectContext,
+  entity: {
+    readonly type: string;
+    readonly idField: string;
+    readonly collection: string;
+    readonly id: string;
+  },
+) => ({
+  ...entity,
+  held: () => true,
+  isWrite: context.isWrite,
+  sameItem: (record: StateRecordFacts) => {
+    const found = itemTarget(context.state, entity.type, record);
+    return found.collection === entity.collection && found.id === entity.id;
+  },
 });
 
 /** The entity an update's response shows, located by its identity, else a later item read of the target the write resolved. */
@@ -258,16 +291,7 @@ const updatedObservation = (
   )
     return own;
   const later = laterObservation(searchFrom(context, step), {
-    type: entity.type,
-    collection: entity.collection,
-    idField: entity.idField,
-    id: entity.id,
-    held: () => true,
-    isWrite: context.isWrite,
-    sameItem: (record) => {
-      const found = itemTarget(context.state, entity.type, record);
-      return found.collection === entity.collection && found.id === entity.id;
-    },
+    ...itemReads(context, entity),
     // With an answer or without one, only a read whose view shows every learned clock shows what this call stamped.
     covers: (view) => required.every((field) => view.fields.includes(field)),
   });
@@ -346,7 +370,10 @@ const buildUpdate = (
         id: evidence.after.id,
       }),
     ),
-    body: evidence.explained.body,
+    body: {
+      ...evidence.explained.body,
+      ...envelopeMember(context.io.requestBody(ordinal)),
+    },
     rules: evidence.explained.rules,
   });
   draft.observed = evidence.after.object;
@@ -393,7 +420,7 @@ export const applyUpdate = (
     );
     return { kind: "observed", targets, entity: target };
   };
-  const body = requestObject(context, step.record);
+  const body = requestObject(context, step.record, draft);
   if (step.observeOnly || body === undefined) {
     fail(draft, step, "body-unusable");
     return recorded();
@@ -425,12 +452,18 @@ export const applyUpdate = (
     return recorded();
   }
   buildUpdate(context, draft, step, { after, explained, idField });
+  const stored = restampedFields(
+    searchFrom(context, step),
+    itemReads(context, { type, idField, collection, id }),
+    after.object,
+    draft.plan.rules,
+  );
   // Serving reads the plan's observation, so the gate does too; generated values are this call's.
   const written = updatedFields(
     draft.plan,
     { before: entity.fields, observed: draft.observed! },
     { ...call, id },
-    (rule) => ok(after.object[rule.field]),
+    (rule) => ok(stored[rule.field]),
   );
   const kept = keptFields(entity.fields, after.object);
   const disagrees =

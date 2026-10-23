@@ -15,6 +15,11 @@ import {
 } from "../../domain/analysisView/environmentStateWriteExplain.js";
 import { callRenewal } from "../../domain/analysisView/environmentStateWriteGenerated.js";
 import {
+  nestedClockValue,
+  queryProblem,
+  unenveloped,
+} from "../../domain/analysisView/environmentStateWriteStamps.js";
+import {
   linkedCollection,
   sameLinkedSource,
 } from "../../domain/analysisView/environmentStateWriteLinks.js";
@@ -26,9 +31,7 @@ import {
 } from "../../domain/analysisView/environmentStateWriteRules.js";
 import {
   formatClock,
-  isUuid,
-  seededToken,
-  seededUuid,
+  seededLike,
   spelledLike,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
@@ -49,7 +52,7 @@ import {
   type ReplayArguments,
 } from "./environmentReplay.js";
 import type { EnvironmentManifestTool } from "./environmentSource.js";
-import { callSegments } from "./environmentStateCallLines.js";
+import { callQuery, callSegments } from "./environmentStateCallLines.js";
 import {
   itemCall,
   missingAnswer,
@@ -111,15 +114,25 @@ const unloadable = (
     `${holder} would hold a value that is not exactly representable JSON, which data/add could not load back.`,
   );
 
-/** The call's body: an object, nothing, or a refusal for any other value or one holding a value the state cannot hold. */
+/** The call's body: an object, unwrapped from the envelope the capture sent it in, nothing, or a refusal for any other value or one holding a value the state cannot hold. */
 const callBody = ({
   tool,
   args,
+  plan,
 }: WriteRequest): Result<JsonObject | undefined, AnalysisError> => {
   const name = environmentToolArguments(tool).body;
-  const value = name === undefined ? undefined : args[name];
-  if (value === undefined) return ok(undefined);
-  if (!isObject(value as JsonValue))
+  const sent = name === undefined ? undefined : args[name];
+  if (sent === undefined) return ok(undefined);
+  const envelope = plan.body?.envelope ?? "";
+  const value = unenveloped(sent as JsonValue, plan.body?.envelope);
+  if (value === undefined)
+    return err(
+      refused(
+        tool,
+        `Tool ${tool.name} takes its JSON object body wrapped as {"${envelope}":[{...}]}, as the capture sent it.`,
+      ),
+    );
+  if (!isObject(value))
     return err(refused(tool, `Tool ${tool.name} takes a JSON object body.`));
   const member = unloadableMember(value as JsonObject);
   return member === undefined
@@ -207,7 +220,14 @@ const generator = (
       `${store.state.evidenceId}:${request.tool.name}:${rule.field}:${String(write.count)}:${String(attempt)}`;
     switch (rule.rule) {
       case "clock":
+      case "held-clock":
         return ok(formatClock(write.clockMs, rule.format));
+      case "nested-clock":
+        return nestedClockValue(
+          (target.current ?? target.observed)[rule.field],
+          rule,
+          formatClock(write.clockMs, rule.format),
+        );
       case "sequence":
         return ok(
           spelledLike(
@@ -226,7 +246,7 @@ const generator = (
         );
       case "unique":
         return unused(rule.field, (attempt) =>
-          seededUuid(seed(attempt), String(exemplar)),
+          seededLike(seed(attempt), exemplar),
         );
       case "renewed":
         return ok(
@@ -252,9 +272,7 @@ const generator = (
             ),
           );
         return unused(rule.field, (attempt) =>
-          rule.generator === "uuid" || isUuid(exemplar)
-            ? seededUuid(seed(attempt), String(exemplar))
-            : seededToken(seed(attempt), String(exemplar)),
+          seededLike(seed(attempt), exemplar, rule.generator === "uuid"),
         );
     }
   };
@@ -630,6 +648,12 @@ export const answerWrite = (
         "The state write model cannot apply repeated query parameters; the state is unchanged.",
       ),
     );
+  const query = queryProblem(
+    serving.source.exchanges.get(request.plan.exemplar_ordinal ?? -1)?.query,
+    callQuery(request.tool, request.args),
+  );
+  if (query !== undefined)
+    return err(refused(request.tool, `Tool ${request.tool.name} ${query}`));
   const body = callBody(request);
   if (!body.ok) return body;
   const call: WriteCall = {

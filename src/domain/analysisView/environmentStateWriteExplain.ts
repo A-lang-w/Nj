@@ -38,9 +38,16 @@ import {
   GENERATED,
   renewedRule,
 } from "./environmentStateWriteGenerated.js";
-
-/** A clock value counts as written by the request when it lies this close to the request's start. */
-const CLOCK_WINDOW_MS = 10 * 60_000;
+import {
+  createdNestedClock,
+  createdToken,
+  derivedRule,
+  freshToken,
+  isClockNear,
+  nestedClockRule,
+  pinnedEchoes,
+  stampRule,
+} from "./environmentStateWriteStamps.js";
 
 /** What explaining a create reads: the observed entity, the call that wrote it and the entities it joined. */
 export interface CreateEvidence {
@@ -53,6 +60,8 @@ export interface CreateEvidence {
   readonly type: readonly JsonObject[];
   /** The entities of any type the state holds under an id. */
   readonly named?: (id: string) => readonly StateEntity[];
+  /** Members whose values the tool's recorded calls varied. */
+  readonly varied?: ReadonlySet<string>;
 }
 
 /** What explaining a create looks values up in, built once per request body. */
@@ -95,18 +104,6 @@ const indexBody = (body: JsonObject): BodyIndex => {
       if (slug !== sent && !slugs.has(slug)) slugs.set(slug, member);
     }
   return { copies, slugs };
-};
-
-const isClockNear = (
-  value: JsonValue,
-  startMs: number | undefined,
-): boolean => {
-  const clock = readClock(value);
-  return (
-    clock !== undefined &&
-    startMs !== undefined &&
-    Math.abs(clock.ms - startMs) <= CLOCK_WINDOW_MS
-  );
 };
 
 /** One more than the largest integer the members hold in the field, or undefined when none holds one. */
@@ -183,7 +180,9 @@ const generatedRule = (
     evidence.type.every((member) => member[field] !== value)
   )
     return { field, rule: "unique" };
-  return undefined;
+  if (createdToken(field, evidence.entity, evidence.type))
+    return { field, rule: "unique" };
+  return createdNestedClock(field, value, evidence);
 };
 
 /** Body members the application stored as sent, and the others with what they were sent. */
@@ -257,6 +256,10 @@ export const explainCreate = (
     ),
     ...instantMembers(evidence.call.body, evidence.entity, constants),
   ]);
+  const pinned = pinnedEchoes(evidence.entity, evidence.call.body, {
+    type: evidence.type,
+    varied: evidence.varied ?? new Set(),
+  });
   const stored = storedMembers(
     rules.filter((rule) => !stranded.has(rule.field)),
     evidence.entity,
@@ -265,7 +268,11 @@ export const explainCreate = (
     rules,
     body: bodyOf(
       evidence.call.body,
-      new Set([...stored].filter((member) => !referenced.has(member))),
+      new Set(
+        [...stored].filter(
+          (member) => !referenced.has(member) && !pinned.has(member),
+        ),
+      ),
       Object.keys(evidence.call.body),
     ),
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
@@ -303,6 +310,12 @@ const changeRule = (
   if (readClock(after) !== undefined && isClockNear(after, evidence.startMs))
     return { field, rule: "clock", format: readClock(after)!.format };
   if (freshUuid(evidence, field)) return { field, rule: "unique" };
+  // A renamed slug is spelled like a token, so the slug comes first.
+  const member = typeof after === "string" ? slugs.get(after) : undefined;
+  if (member !== undefined) return { field, rule: "slug", from: member };
+  if (freshToken(evidence, field)) return { field, rule: "unique" };
+  const nested = nestedClockRule(field, { before, after }, evidence);
+  if (nested !== undefined) return nested;
   // Child rows only: a single UUID that changed is a reference or a generated value, judged above.
   const renewed =
     Array.isArray(before) || isObject(before)
@@ -312,10 +325,45 @@ const changeRule = (
   const was = integerOf(before);
   if (was !== undefined && integerOf(after) === was + 1)
     return { field, rule: "increment" };
-  const member = typeof after === "string" ? slugs.get(after) : undefined;
-  return member === undefined
-    ? undefined
-    : { field, rule: "slug", from: member };
+  return stampRule(evidence, field) ?? derivedRule(evidence, field);
+};
+
+/** A sent clock the call left as it was, stored in whole seconds and naming the second the call ran in: the application stamps it anew, and the client sent back the one it read. */
+const heldClock = (
+  evidence: UpdateEvidence,
+  member: string,
+  sent: JsonValue,
+): boolean => {
+  const clock = readClock(sent);
+  return (
+    clock !== undefined &&
+    evidence.startMs !== undefined &&
+    clock.ms % 1000 === 0 &&
+    clock.subMillisecond === 0 &&
+    Math.abs(clock.ms - evidence.startMs) < 1000 &&
+    same(evidence.before[member], sent) &&
+    same(evidence.after[member], sent)
+  );
+};
+
+/** How an update stored a sent member: stamped anew as the one held clock it sent back, echoed, renewed as a fresh UUID, or as a constant. */
+const sentRule = (
+  evidence: UpdateEvidence,
+  member: string,
+  held: readonly string[],
+): FieldRule => {
+  const sent = evidence.call.body[member]!;
+  if (held.length === 1 && held[0] === member)
+    return {
+      field: member,
+      rule: "held-clock",
+      format: readClock(sent)!.format,
+    };
+  if (same(evidence.after[member], sent))
+    return { field: member, rule: "echo" };
+  return freshUuid(evidence, member)
+    ? { field: member, rule: "unique" }
+    : { field: member, rule: "constant", value: evidence.after[member]! };
 };
 
 /** Each slug an echoed string member slugs to, from the first such member. */
@@ -347,6 +395,11 @@ export const explainUpdate = (
   // A member the application replaces with a value it generates is accepted with any value.
   const generated = new Set<string>();
   let identity: string | null = null;
+  // Two clocks sent back unchanged in the call's second cannot both be ones it stamps anew, as a whole-object PUT shows.
+  const held = Object.keys(body).filter(
+    (member) =>
+      member !== evidence.idField && heldClock(evidence, member, body[member]!),
+  );
   for (const [member, sent] of Object.entries(body)) {
     // The identity is the entity's key: the path's id repeated is the identity member; another value is one the application ignored, or used to re-key the entity, which no rule models.
     if (member === evidence.idField) {
@@ -356,18 +409,10 @@ export const explainUpdate = (
       continue;
     }
     if (!Object.hasOwn(evidence.after, member)) continue;
-    if (same(evidence.after[member], sent)) {
-      echoed.add(member);
-      rules.push({ field: member, rule: "echo" });
-    } else if (freshUuid(evidence, member)) {
-      generated.add(member);
-      rules.push({ field: member, rule: "unique" });
-    } else
-      rules.push({
-        field: member,
-        rule: "constant",
-        value: evidence.after[member]!,
-      });
+    const rule = sentRule(evidence, member, held);
+    rules.push(rule);
+    if (rule.rule === "echo") echoed.add(member);
+    else if (rule.rule !== "constant") generated.add(member);
   }
   // Serving keeps every field an update does not write, so one a read shows the update removed is a change no rule models.
   if (evidence.readFields !== undefined)
@@ -392,11 +437,12 @@ export const explainUpdate = (
   }
   // Serving renews one UUID alike in every field, so the call must have.
   unexplained.push(...unexplainedRenewals(rules, evidence));
+  const pinned = pinnedEchoes(evidence.after, body, { varied: new Set() });
   const shaped = bodyOf(
     Object.fromEntries(
       Object.entries(body).filter(([member]) => member !== identity),
     ),
-    new Set([...echoed, ...generated]),
+    new Set([...echoed, ...generated].filter((member) => !pinned.has(member))),
     evidence.method === "PUT"
       ? Object.keys(body).filter((member) => member !== identity)
       : [],

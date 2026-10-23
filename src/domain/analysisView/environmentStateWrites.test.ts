@@ -1829,3 +1829,77 @@ describe("field selections the gate reads as serving answers them", () => {
     });
   });
 });
+
+/** A create and an update whose bodies and responses wrap the book in a one-element array. */
+const ENVELOPED_ROWS: readonly TimedCaptureRow[] = [
+  ...BOOK_INIT_ROWS,
+  [
+    "POST",
+    "/api/books",
+    { books: [THIRD_BOOK] },
+    201,
+    { books: [{ name: "Third Book" }] },
+  ],
+  ["GET", "/api/books/3", THIRD_BOOK],
+  [
+    "PATCH",
+    "/api/books/1",
+    { books: [RENAMED_BOOK] },
+    200,
+    { books: [{ name: "Renamed Book" }] },
+  ],
+  ["GET", "/api/books/1", RENAMED_BOOK],
+];
+
+/** A card whose edit info an update restamps: its response and its read-back name instants milliseconds apart. */
+const cardEdit = (milliseconds: number) => ({
+  at: new Date(Date.parse(bookClock(3)) + milliseconds).toISOString(),
+  by: "rea",
+});
+const FIRST_CARD = {
+  id: 1,
+  name: "First Card",
+  edit: { at: "2026-10-01T09:00:00.000Z", by: "rea" },
+};
+const SECOND_CARD = { ...FIRST_CARD, id: 2, name: "Second Card" };
+
+describe("values an application stamps", () => {
+  it("serves a create and an update whose bodies wrap the book in a one-element array, as the capture sent them", () => {
+    const state = stateOf(ENVELOPED_ROWS);
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      body: { accepted: ["name"], envelope: "books" },
+    });
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      body: { accepted: ["name"], envelope: "books" },
+    });
+  });
+
+  it("serves an update that restamps a nested clock, storing the instant its read-back shows", () => {
+    const edited = { ...FIRST_CARD, name: "First Card (edited)" };
+    const state = stateOf([
+      ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+      ["GET", "/api/cards/1", FIRST_CARD],
+      ["GET", "/api/cards/2", SECOND_CARD],
+      [
+        "PUT",
+        "/api/cards/1",
+        { ...edited, edit: cardEdit(64) },
+        200,
+        { name: "First Card (edited)" },
+      ],
+      ["GET", "/api/cards/1", { ...edited, edit: cardEdit(53) }],
+    ]);
+    expect(planOf(state, "put_cards_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({
+          field: "edit",
+          rule: "nested-clock",
+          members: ["at"],
+        }),
+      ]),
+    });
+  });
+});

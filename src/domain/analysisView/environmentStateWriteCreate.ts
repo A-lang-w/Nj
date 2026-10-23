@@ -15,6 +15,12 @@ import {
 } from "./environmentStateRules.js";
 import { createdFields } from "./environmentStateWriteApply.js";
 import {
+  envelopeMember,
+  envelopeOf,
+  isOpaqueToken,
+  variedMembers,
+} from "./environmentStateWriteStamps.js";
+import {
   recordedPathValues,
   respondedIds,
   sameLinkedSource,
@@ -146,6 +152,12 @@ const buildCreate = (
     collection: members,
     type: fieldsOf(context.state.ofType(type)),
     named: (id) => context.state.named(id),
+    varied: variedMembers(
+      step.tool.record_ordinals.map((ordinal) => {
+        const body = context.io.requestBody(ordinal);
+        return envelopeOf(body)?.object ?? body;
+      }),
+    ),
   });
   const clocks = explained.rules.flatMap((rule) =>
     rule.rule === "clock" ? [rule.field] : [],
@@ -174,7 +186,10 @@ const buildCreate = (
         { idField, id: evidence.observed.id },
       ),
     ),
-    body: explained.body,
+    body: {
+      ...explained.body,
+      ...envelopeMember(context.io.requestBody(step.record.ordinal)),
+    },
     rules: explained.rules,
     collection:
       explained.tied || draft.linked !== undefined ? evidence.collection : null,
@@ -228,7 +243,7 @@ const followsSequences = (
     );
   });
 
-/** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values and UUID identities as UUIDs, and sequences in order. */
+/** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values as the exemplar's kind of token, UUID identities as UUIDs, and sequences in order. */
 const followsGenerated = (
   context: EffectContext,
   draft: WriteDraft,
@@ -240,9 +255,16 @@ const followsGenerated = (
       return (
         JSON.stringify(readClock(value)?.format) === JSON.stringify(rule.format)
       );
+    if (rule.rule === "nested-clock")
+      return rule.members.every(
+        (member) =>
+          isObject(value ?? null) &&
+          JSON.stringify(readClock((value as JsonObject)[member])?.format) ===
+            JSON.stringify(rule.format),
+      );
     if (rule.rule === "unique")
       return (
-        isUuid(value) &&
+        (isUuid(value) || isOpaqueToken(value, draft.observed?.[rule.field])) &&
         !context.state
           .ofType(created.type)
           .some((held) => held.fields[rule.field] === value)
@@ -376,7 +398,7 @@ export const applyCreate = (
       (draft.linked !== undefined && !fromLinkedSource(context, draft, step)))
   )
     return UNKNOWN;
-  const body = requestObject(context, step.record);
+  const body = requestObject(context, step.record, draft);
   const observed = createdObservation(context, step, {
     type,
     collection,

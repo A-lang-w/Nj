@@ -111,7 +111,16 @@ the exemplar.
 - **Request body.** The exemplar's request body must be a JSON object that
   could enter the state: a JSON-like media type, complete UTF-8 text within
   256 KiB, exact numbers, no `__proto__` member. Otherwise the reason is
-  `body-unusable`. A `DELETE` takes no body.
+  `body-unusable`. A `DELETE` takes no body. A create's or update's body
+  whose only member wraps one object in a one-element array (Ghost's
+  `{"posts":[{...}]}`) is that object, and the plan records the member as
+  `body.envelope`: serving takes only a body wrapped that way.
+- **Query.** Serving takes only the query parameters the exemplar sent, with
+  its values, since they may change what the body does (Ghost reads `html`
+  only with `?source=html`); a call with others is refused. The gate treats a
+  later recorded call sent with another query, or wrapped otherwise, as a
+  write its plan does not explain: it brings the entity to what the call
+  recorded, without attribution.
 - **The written entity.** The entity is observed in the exemplar's response,
   located by its identity value at the root, in one member, or in a
   one-element array, as item views locate it. When the response does not carry
@@ -140,14 +149,25 @@ identity the client sends is an echo:
    classes.
 6. **Clock.** A timestamp within 10 minutes of the exemplar's start time. The
    format is kept: ISO-8601 with its separator, fraction digits and zone, or
-   epoch seconds or milliseconds.
+   epoch seconds or milliseconds. An object whose every clock lies between 1
+   second before the start time (a whole second's truncation) and 2 seconds
+   after it, in one format, is a nested clock when the type's other entities
+   hold that field as objects agreeing with it in every other member and
+   holding other clocks: served, those members take the write's clock and the
+   others are kept. A reference to another entity, which differs by entity or
+   was made before the request, is not one.
 7. **Sequence.** An integer one greater than the largest value of the field in
    the collection, else in the type. The integer may be written as `-`-separated
    digit groups of one width of at least two digits (an asset number `000-005`;
    not a date, version or address); a served value keeps the recorded value's
    groups and zero padding, and digits that outgrow them lead. A later call must
    record the value spelled that way.
-8. **Unique.** A UUID-shaped string that no other entity of the type shares.
+8. **Unique.** A UUID-shaped string that no other entity of the type shares,
+   or an opaque token (16 to 64 letters, digits, `_` or `-`, with letters and
+   digits both) that no other field of the entity repeats, where every other
+   entity of the type holds a token of the same length and none this one.
+   Serving generates a token of the same length, character classes and
+   separator positions.
 9. **Template.** A string containing a generated value, or else a copied
    value, as a delimited token (for example a URL that ends in the new id or in
    a slug the call sent under another name). It is rebuilt around the new
@@ -179,6 +199,14 @@ of (an end date stored as a time in another zone).
   name and stored under none of its own, or the identity field's value. A
   member copied whole must have the JSON type of the field it is copied into.
   Every member the exemplar sent is required.
+- **Accepted only as recorded.** An echoed member naming the object the entity
+  nests under the field it refers to (`collection_id` and a `collection`
+  object), whose other members serving would keep as recorded; and a state
+  word other fields go with: a lowercase word several entities share, where
+  every entity in another state holds a field the new one leaves null, or the
+  reverse (Ghost's `status: "draft"` beside `published_at: null`), unless the
+  tool's recorded calls sent other values of it. Updates take a member naming
+  a nested object only as recorded too.
 - **Not accepted.** A member the application stored with a different value
   (transformed), or one it did not show. A call that sends such a member is a
   tool error naming the accepted members.
@@ -200,15 +228,38 @@ as sent in another letter case is the sent value, not a fresh one. A member a la
 which the plan's observation does not show, keeps the JSON type that call stored
 it as (the body's `kinds`), as an exemplar's member keeps the observation's.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
-least one. A field the exemplar's update changed without sending it is
-explained as one of:
+least one. A sent clock the call left as it was, stored in whole seconds and
+naming the second the call ran in, is a `held-clock` the application stamps
+anew (Ghost's `updated_at`, which a client sends back as it read it), when it is
+the only such member the call sent: a call must send it as the entity holds it,
+or it is refused, and it is served as the write's clock. A field the exemplar's
+update changed without sending it is explained as one of:
 
 - clock;
+- a nested clock: an object the entity held whose only changes are clocks
+  within 10 minutes of the start time, in one format, where the type's other
+  entities hold that field as objects agreeing in every other member. The gate
+  stores the object the first later read of the entity shows when it differs
+  from the write's only in those members, each within 2 seconds, as Metabase
+  answers an update with one instant and stores another. Serving refuses it on
+  an entity holding no such object;
 - an increment by one;
-- a slug of an echoed member;
-- `unique`: a UUID in place of another UUID, that no other entity of the type
-  holds and the call sent nowhere in its body (a version the application assigns
-  on every update);
+- a slug of an echoed member, judged before a token, since a renamed slug is
+  spelled like one;
+- `unique`: a UUID in place of another UUID, or an opaque token in place of
+  another of the same length, that no other entity of the type holds and the
+  call sent nowhere in its body (a version the application assigns on every
+  update);
+- `stamp`: the acting user on a field named `modified…by`, `updated…by`,
+  `edited…by` or `changed…by` (or `last…`), stored on every call, when the
+  entity already held the value under its `created…by` counterpart
+  (`modifiedByName` and `createdByName`), and the call sent no member naming
+  the same thing (`modifiedById`);
+- `derived`: when the call sent exactly one member the entity stores nowhere,
+  a value showing that member's text, markup aside (at least 8 characters): a
+  field Ghost derives from the `html` it was sent. The member is accepted only
+  with its recorded value, and a call sending it is served only on an entity
+  holding the value the recorded call found (`from`), else refused;
 - `renewed`: an array or object whose only changes are UUIDs replaced by ones
   that neither it nor another entity of the type held, as child rows an update
   rewrites are. The rule names the pointers it renewed at (`*` for any array
@@ -219,7 +270,7 @@ explained as one of:
 
 A field the entity lacked before is a change too when the view that observed
 the update had shown the entity, so a field the application fills in on update
-follows its rule. Any other change is `unexplained-change`. An increment or a slug applies to
+follows its rule. Any other change is `unexplained-change`. An increment, a slug, a stamp or a derived value applies to
 every call that could take it, and `unique` and `renewed` to every call, so the
 plan is also `unexplained-change` when such a rule would give a call of the
 tool another value than the one it recorded, a recorded call kept a `unique` or

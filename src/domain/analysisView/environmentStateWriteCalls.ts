@@ -11,7 +11,10 @@ import { integerOf, slugOf } from "./environmentStateWriteValues.js";
 
 /** Whether a rule changes its field on calls that do not send it: serving applies it to every call that could. */
 export const unsentChange = (rule: FieldRule): boolean =>
-  rule.rule === "increment" || rule.rule === "slug";
+  rule.rule === "increment" ||
+  rule.rule === "slug" ||
+  rule.rule === "stamp" ||
+  rule.rule === "derived";
 
 /** Whether serving gives a rule's field a new value on every call, so no call may have kept it. */
 export const regenerates = (rule: FieldRule): boolean =>
@@ -67,7 +70,10 @@ export const contradictsEarlierCalls = (
   const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
   return rules.some(
     (rule) =>
-      (unsentChange(rule) || regenerates(rule) || rule.rule === "clock") &&
+      (unsentChange(rule) ||
+        regenerates(rule) ||
+        rule.rule === "clock" ||
+        rule.rule === "nested-clock") &&
       !ruled.has(rule.field) &&
       draft.updates.some(({ shown, sent, kept }) => {
         if (regenerates(rule)) return kept.includes(rule.field);
@@ -77,6 +83,9 @@ export const contradictsEarlierCalls = (
         if (rule.rule === "increment") return integerOf(value) !== undefined;
         // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
         if (rule.rule === "clock") return true;
+        if (rule.rule === "stamp") return !same(value, rule.value);
+        if (rule.rule === "derived")
+          return sent.has(rule.member) && !same(value, rule.value);
         const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
         return typeof from === "string" && slugOf(from) !== value;
       }),
