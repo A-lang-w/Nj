@@ -205,6 +205,12 @@ const handleRequest = (socket, server, request, state) => {
   }
   if (state.mode === "exit_tools" && request.method !== "shutdown")
     process.exit(74);
+  if (
+    state.mode === "sigkill_after_first_tool" &&
+    request.method !== "shutdown" &&
+    (state.toolRequests = (state.toolRequests ?? 0) + 1) > 1
+  )
+    process.kill(process.pid, "SIGKILL");
   if (request.method !== "shutdown" && handleOutputFailure(socket, state))
     return;
   if (state.mode === "hang_tools" && request.method !== "shutdown") return;

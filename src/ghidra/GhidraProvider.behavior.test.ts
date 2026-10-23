@@ -3849,7 +3849,7 @@ describe("Ghidra SIGKILL projection", () => {
     exit_code: null,
     exit_signal: "SIGKILL",
   };
-  const cgroup = (oomKillAfter: number, memoryMax: number | null) => ({
+  const cgroup = (oomKillAfter: number, memoryMax: number | "max" | null) => ({
     path: "/",
     oom_kill_before: 0,
     oom_kill_after: oomKillAfter,
@@ -3874,6 +3874,8 @@ describe("Ghidra SIGKILL projection", () => {
         },
       });
       expect(projected.message).toContain("oom_kill");
+      expect(projected.message).toContain("child groups");
+      expect(projected.message).not.toContain("process tree");
       expect(projected.remediation.action).toContain("decompiler");
       expect(projected.remediation.action).not.toContain("rea doctor");
       expect(projected.remediation.action).not.toMatch(
@@ -3882,15 +3884,28 @@ describe("Ghidra SIGKILL projection", () => {
     },
   );
 
-  it("keeps an unlimited group's limit unknown", async () => {
+  it.each([
+    ["an unlimited group", "max"],
+    ["an unread limit", null],
+  ] as const)("reports %s as observed", async (_name, memoryMax) => {
     const projected = await projectFailure("process", {
       ...killed,
-      memory_cgroup: cgroup(2, null),
+      memory_cgroup: cgroup(2, memoryMax),
     });
     expect(projected).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { cgroup_memory_max: null } },
+      details: { reported_limits: { cgroup_memory_max: memoryMax } },
     });
+  });
+
+  it("does not attribute a SIGKILL sent while REA was stopping Ghidra", async () => {
+    const projected = await projectFailure("process", {
+      ...killed,
+      stop_requested: true,
+      memory_cgroup: cgroup(1, 3_221_225_472),
+    });
+    expect(projected.code).toBe("execution_failure");
+    expect(projected.message).not.toContain("SIGKILL");
   });
 
   it.each([

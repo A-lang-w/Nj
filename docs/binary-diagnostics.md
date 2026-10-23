@@ -171,19 +171,29 @@ marks a snapshot taken before stream closure; cleanup ownership remains with
 the session until release succeeds.
 
 A kernel or container OOM killer ends Ghidra with `SIGKILL` and prints no
-`OutOfMemoryError`. When a startup, process, or protocol failure records
-`exit_signal: "SIGKILL"` before REA stopped the process, REA reports the
-signal instead of generic `rea doctor` advice. On Linux with cgroup v2, REA
-also reads its own cgroup's `memory.events` before launch and again after the
-kill. `memory_cgroup` records the group path, `oom_kill_before`,
-`oom_kill_after` and `memory_max`. If the count rose, REA returns
-`resource_constraint` with `resource: "memory"` and `cgroup_memory_max` in
-`reported_limits`. The count is hierarchical, so a rise shows an OOM kill in
-REA's process tree, not which process was chosen. The limit also covers
-Ghidra's native decompiler processes, whose number follows the available CPUs,
-so the advice does not recommend a larger Java heap. Without a cgroup v2 memory
-group, or when the count did not rise, the failure stays `execution_failure`
-and names the signal as a possible out-of-memory kill.
+`OutOfMemoryError`. When a process or protocol failure records
+`exit_signal: "SIGKILL"` and no `stop_requested`, REA reports the signal
+instead of generic `rea doctor` advice. The process supervisor records
+`stop_requested: true` once REA begins stopping Ghidra, before it sends any
+signal, so REA's own SIGKILL is never reported as an outside kill.
+
+On Linux with cgroup v2, REA also reads its own cgroup's `memory.events` before
+launch and again after the kill, locating the group through the cgroup2 mount
+in `/proc/self/mountinfo`. `memory_cgroup` records the group path,
+`oom_kill_before`, `oom_kill_after` and `memory_max`. If the count rose, REA
+returns `resource_constraint` with `resource: "memory"` and `cgroup_memory_max`
+in `reported_limits`. The count covers every process in REA's cgroup and its
+child groups, which can include processes outside REA's process tree when the
+group is shared, so a rise shows that the kernel OOM killer ended a process in
+that cgroup or a child group, not which process it chose. `memory_max` is the
+limit in bytes, `"max"` when the group sets none, or `null` when it could not be
+read; a limit on a parent group is not read. The limit also covers Ghidra's
+native decompiler processes, whose number follows the available CPUs, so the
+advice does not recommend a larger Java heap. When the session had already
+completed an operation, the advice keeps the instruction to reopen the target
+with `open_binary`. Without a cgroup v2 memory group, or when the count did not
+rise, the failure stays `execution_failure` and names the signal as a possible
+out-of-memory kill.
 
 ## Portable PE resources
 
