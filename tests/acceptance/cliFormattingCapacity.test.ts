@@ -25,8 +25,12 @@ import { registerHooks } from "node:module";
 registerHooks({
   load(url, context, next) {
     const loaded = next(url, context);
-    if (!url.endsWith("/incur/dist/Formatter.js")) return loaded;
     const source = String(loaded.source);
+    const markdownSignature = "formatMarkdown = (value, path = []) => {";
+    if (url.includes("/dist/cli-runtime/") && source.includes(markdownSignature))
+      return { ...loaded, source: source.replace(markdownSignature,
+        markdownSignature + 'const fmt = "md";' + ${JSON.stringify(formatterFailure)}) };
+    if (!url.endsWith("/incur/dist/Formatter.js")) return loaded;
     const signature = "export function format(value, fmt = 'toon') {";
     if (!source.includes(signature)) throw new Error("Pinned formatter boundary changed");
     return { ...loaded, source: source.replace(signature, signature + ${JSON.stringify(formatterFailure)}) };
