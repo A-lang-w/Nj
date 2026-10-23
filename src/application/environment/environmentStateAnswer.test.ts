@@ -169,6 +169,38 @@ describe("item answers", () => {
     });
   });
 
+  it("answers a state item whose route has a repeated path separator", () => {
+    const serving = servingFrom([
+      ["GET", "/api/books/1", { id: 1, title: "Single separator" }],
+      ["GET", "/api//books/1", { id: 1, title: "Repeated separator" }],
+    ]);
+    const itemAnswer = (template: string) => {
+      const tool = serving.source.manifest.tools.find(
+        (candidate) => candidate.path_template === template,
+      );
+      if (tool === undefined) throw new Error(`Fixture lacks ${template}`);
+      const result = answerFromState(serving, tool, { id: "1" });
+      if (!result.ok) throw result.error;
+      return result.value;
+    };
+    // The repeated separator route is answered from the collection it was
+    // extracted under, instead of reporting its own entity as missing.
+    expect(itemAnswer("/api//books/{numeric}")).toMatchObject({
+      body: { title: "Repeated separator" },
+      state: {
+        source: "state",
+        view: "item",
+        collection: "/api//books",
+        id: "1",
+      },
+    });
+    // The single separator route stays distinct.
+    expect(itemAnswer("/api/books/{numeric}")).toMatchObject({
+      body: { title: "Single separator" },
+      state: { source: "state", collection: "/api/books", id: "1" },
+    });
+  });
+
   it("refuses an entity the state does not hold or one missing a field the view requires", () => {
     const serving = servingOf();
     expect(refusal(serving, "get_users_by_id", { id: "999" })).toMatchObject({
