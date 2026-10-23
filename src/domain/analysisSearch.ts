@@ -25,9 +25,13 @@ export const analysisSearchPredicate = (
     }
     return (value) => regex.test(value);
   }
-  const needle = query.case_sensitive
-    ? query.pattern
-    : query.pattern.toLowerCase();
-  return (value) =>
-    (query.case_sensitive ? value : value.toLowerCase()).includes(needle);
+  if (query.case_sensitive) return (value) => value.includes(query.pattern);
+  // Unicode case folding is independent of word context, unlike toLowerCase
+  // (a final Greek sigma lowercases differently from a standalone sigma).
+  // Escape every regex metacharacter so this branch remains a literal search.
+  const literal = new RegExp(
+    query.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "iu",
+  );
+  return (value) => literal.test(value);
 };
