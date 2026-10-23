@@ -30,6 +30,11 @@ result records the exact selected path, file size, header length, header SHA-256
 bytes read and read scope. GGUF alignment padding is outside this prefix.
 `artifact.sha256` and the Evidence subject are null: a header digest is not a
 commitment to the weights. Different files can have identical headers and sizes.
+The reported GGUF tensor-data offset follows the aligned tensor directory when
+padding is present. For zero-tensor metadata-only files that end at the
+directory, it is the directory end; no tensor payload is implied. A partial
+alignment gap is rejected. `header_length` still ends at the directory, before
+any padding.
 
 `hash: "full"` additionally streams the remaining file bytes through SHA-256.
 It returns a full-file digest and Evidence subject, while retaining the same
@@ -39,13 +44,33 @@ check descriptor and selected-path identity and metadata before completion;
 this detects observed replacement or modification, not adversarial modification
 that defeats filesystem metadata checks.
 
+If full-file hashing fails or is cancelled after either format's header has
+been validated, partial Evidence retains the parsed metadata and tensor directory.
+Header coverage is complete; digests and final file identity remain unknown.
+Safetensors header parsing is atomic, so interruption before validation does not
+expose unvalidated JSON rows.
+
 ## Facts and selected queries
 
 GGUF reports version, byte order, alignment, typed metadata, and each tensor's
 name, original type ID, dimensions, relative data offset, file offset and derived
 byte length. Alignment accepts every positive UINT32 multiple of eight, including
-non-powers of two. Metadata keys use ASCII lower-snake-case hierarchy components;
+non-powers of two. Partial Evidence retains explicit alignment once validated;
+the default alignment becomes known after metadata completes. Cancellation
+digests or file identity. Metadata keys preserve their spelling and use lowercase
+ASCII alphanumeric components separated by dots, underscores or hyphens;
 standard numeric components such as `general.base_model.0.name` are preserved.
+Hyphenated components are retained for compatibility with the published
+llama.cpp v0.7.0 writer, which emits keys such as
+`gpt-oss.context_length` and `wavtokenizer-dec.context_length`; the current
+[GGUF specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md#standardized-key-value-pairs)
+restricts `general.architecture` values to letters and digits.
+This documents producer output that conflicts with that written restriction,
+not a claim that the specification permits hyphens. See the pinned
+[WAVTOKENIZER_DEC](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/constants.py#L1447)
+and [GPT_OSS](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/constants.py#L1466)
+architecture names, [context-length key template](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/constants.py#L110),
+and [writer method](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/gguf_writer.py#L698-L699).
 Scalar metadata is complete. Arrays have declared element types,
 counts and at most eight preview elements per array, with an explicit
 `preview_complete` flag. This includes tokenizer vocabularies: omitted values
@@ -56,13 +81,22 @@ declared float type; negative zero is `"-0"`. Unknown tensor types retain their 
 lengths; affected totals and storage validation remain unknown.
 
 Safetensors reports the header extent, exact string `__metadata__` values, dtype,
-shape and declared data ranges. JSON duplicate keys, invalid UTF-8, out-of-file
+shape and declared data ranges. A null `__metadata__` is treated as omitted;
+unknown fields on tensor entries are ignored within the reader's 32-level JSON
+nesting limit, while the required dtype, shape and data offsets are still
+validated. JSON duplicate keys, invalid UTF-8, out-of-file
 ranges, overlaps, gaps, trailing unindexed data and known dtype/shape byte-length
 contradictions are rejected with a typed `file_format_rejected` constraint (public code `target_unavailable`, category `unsupported_target`).
 A missing, non-regular or otherwise unusable selected path is also `target_unavailable`;
 host I/O or resource failures on a valid selection, such as `EMFILE` or `EIO`, are
 `execution_failure` with the path and reason in `details.diagnostics`. Empty
-tensors and scalar shapes are supported; packed sub-byte types require whole
+tensors and scalar shapes are supported. The reader retains shape dimensions as
+exact unsigned 64-bit values, including values above JavaScript's safe-integer
+range when a zero extent makes storage empty. Shape products are checked in
+declaration order, as in the
+[64-bit upstream reader](https://github.com/huggingface/safetensors/blob/e246a2560645b7525f5775669ed816eb57c5bcc8/safetensors/src/tensor.rs#L604-L609);
+a later zero does not erase an earlier product overflow. Actual file and data
+offsets must still fit exact host offset precision. Packed sub-byte types require whole
 byte storage. Unknown dtypes retain declared ranges and an explicit limitation
 that shape-to-storage validation is unavailable. Each tensor records
 `storage_validation: "consistent" | "unknown"`; `coverage.storage_sizes` remains
@@ -79,7 +113,9 @@ GGUF supports zero extents and scalar shapes, with at most four dimensions;
 known quantized types still require complete blocks in the first dimension.
 
 MCP defaults to a compact summary with counts, selected short headline metadata,
-chat-template presence and derived totals. The full type histogram and all rows
+chat-template presence (default or named template content) and derived totals.
+A names-only `tokenizer.chat_templates` inventory does not establish template
+content. The full type histogram and all rows
 remain in complete Evidence. Headline metadata uses short keys/types and scalar
 values; long or compound values remain available through explicit metadata
 queries. Use the returned `parent_evidence_id`:

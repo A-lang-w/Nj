@@ -54,6 +54,13 @@ reported. If a virtual table cannot be resolved, possible backing tables have
 ordinary tables remain selectable. Schema inventory does not execute views,
 triggers or arbitrary SQL.
 
+The exact table name `sqlite_schema` is also a supported read-only row source.
+SQLite's [`table_list`](https://www.sqlite.org/pragma.html#pragma_table_list)
+and `table_xinfo` pragmas establish its row-source type and columns. The
+[schema catalog](https://www.sqlite.org/schematab.html) has no self-entry for
+`sqlite_schema`, so REA does not invent a declaration, SQL statement or root
+page for it in `schema.tables`.
+
 Rows are optional. `table` selects one exact ordinary-table name. `columns`
 (CLI repeated `--column`) selects exact visible column names in the requested
 order; omission selects all visible columns, including generated columns.
@@ -66,7 +73,12 @@ whose sampled values were read; stored and other generated cells stay readable. 
 cause a format refusal when all columns are requested. In inventory scope, an explicit valid subset can
 still be sampled without decoding unrelated malformed column names.
 Column selection requires a
-table and at least one name; empty-string identifiers are valid. `row_limit`
+table and at least one name; empty-string identifiers are valid. SQLite counts
+every projected name, including a repeated name, against its native
+result-column capacity; a wider projection is refused as `resource_constraint`
+with `resource: "capacity"`, reporting the selected count and this connection's
+column limit. The selected database is readable and is not reported as
+malformed; request fewer columns per call instead. `row_limit`
 requires `table`, defaults to 20 and accepts positive safe integers. Samples
 remain subject to the byte and worker resource limits below, regardless of row count. The result reports
 the selected limit, returned count and whether more rows were observed. Row

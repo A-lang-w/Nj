@@ -5,6 +5,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { ModelHeaderReader } from "../../../src/model/ModelHeaderReader.js";
 import {
+  MODEL_JSON_NESTING,
   MODEL_METADATA_NESTING,
   MODEL_REPORT_BYTES,
   ModelFormatFailure,
@@ -228,6 +229,21 @@ it.each([8, 24, 40])(
   },
 );
 
+it("aligns the GGUF data section after an empty tensor directory", async () => {
+  const base = ggufFixture({ tensors: [], metadata: [] });
+  const dataOffset = Math.ceil(base.header.length / 32) * 32;
+  const bytes = Buffer.concat([
+    base.header,
+    Buffer.alloc(dataOffset - base.header.length),
+  ]);
+  const { path, provider } = await providerAt(bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (!result.ok) throw result.error;
+  expect(result.value.tensors).toEqual([]);
+  expect(result.value.tensor_data_offset).toBe(dataOffset);
+  expect(result.value.artifact.header_length).toBe(base.header.length);
+});
+
 it.each([0, 1, 2, 4, 12])(
   "rejects GGUF alignment %s outside positive multiples of eight",
   async (alignment) => {
@@ -253,6 +269,8 @@ it.each([
   "general..name",
   "general/name",
   "general.-name",
+  "general.name-",
+  "general.double--name",
   "general.name_",
   "general.__name",
 ])(
@@ -585,11 +603,17 @@ it("chooses model recovery from the producing limit", () => {
   const nesting = modelCapacityRemediation("metadata-nesting");
   expect(nesting).toContain(`${String(MODEL_METADATA_NESTING)} array frames`);
   expect(nesting).not.toContain(String(MODEL_REPORT_BYTES));
+  const jsonNesting = modelCapacityRemediation("json-nesting");
+  expect(jsonNesting).toContain(`${String(MODEL_JSON_NESTING)} levels`);
+  expect(jsonNesting).not.toContain(String(MODEL_REPORT_BYTES));
   expect(modelCapacityReportedLimits("report-bytes")).toEqual({
     maximum_report_bytes: MODEL_REPORT_BYTES,
   });
   expect(modelCapacityReportedLimits("exact-offset")).toEqual({
     maximum_exact_offset: Number.MAX_SAFE_INTEGER,
+  });
+  expect(modelCapacityReportedLimits("json-nesting")).toEqual({
+    maximum_json_depth: MODEL_JSON_NESTING,
   });
 });
 
@@ -693,6 +717,30 @@ const malformed = [
       ).bytes,
   ],
   [
+    "safetensors dimension exceeding uint64",
+    () =>
+      safetensorsFixture(
+        '{"x":{"dtype":"F32","shape":[0,18446744073709551616],"data_offsets":[0,0]}}',
+        Buffer.alloc(0),
+      ).bytes,
+  ],
+  [
+    "overlong safetensors integer",
+    () =>
+      safetensorsFixture(
+        '{"x":{"dtype":"F32","shape":[0,100000000000000000000],"data_offsets":[0,0]}}',
+        Buffer.alloc(0),
+      ).bytes,
+  ],
+  [
+    "safetensors shape product overflowing before a zero extent",
+    () =>
+      safetensorsFixture(
+        '{"x":{"dtype":"F32","shape":[18446744073709551615,18446744073709551615,0],"data_offsets":[0,0]}}',
+        Buffer.alloc(0),
+      ).bytes,
+  ],
+  [
     "safetensors shape mismatch",
     () =>
       safetensorsFixture(
@@ -719,6 +767,44 @@ const malformed = [
     () => safetensorsFixture('{"__metadata__":{"x":1}}', Buffer.alloc(0)).bytes,
   ],
   [
+    "safetensors decimal metadata container",
+    () => safetensorsFixture('{"__metadata__":1.25}', Buffer.alloc(0)).bytes,
+  ],
+  [
+    "safetensors negative metadata container",
+    () => safetensorsFixture('{"__metadata__":-1}', Buffer.alloc(0)).bytes,
+  ],
+  [
+    "safetensors overflowing metadata container",
+    () =>
+      safetensorsFixture(
+        '{"__metadata__":18446744073709551616}',
+        Buffer.alloc(0),
+      ).bytes,
+  ],
+  [
+    "safetensors noninteger shape sentinel",
+    () =>
+      safetensorsFixture(
+        '{"x":{"dtype":"F32","shape":[1.25],"data_offsets":[0,0]}}',
+        Buffer.alloc(0),
+      ).bytes,
+  ],
+  [
+    "safetensors negative data-offset sentinel",
+    () =>
+      safetensorsFixture(
+        '{"x":{"dtype":"F32","shape":[1],"data_offsets":[-1,4]}}',
+        Buffer.alloc(0),
+      ).bytes,
+  ],
+  [
+    "safetensors tensor missing a required declaration",
+    () =>
+      safetensorsFixture('{"x":{"dtype":"F32","shape":[1]}}', Buffer.alloc(0))
+        .bytes,
+  ],
+  [
     "safetensors unpaired surrogate",
     () =>
       safetensorsFixture('{"__metadata__":{"x":"\\ud800"}}', Buffer.alloc(0))
@@ -737,6 +823,53 @@ it.each(malformed)(
     });
   },
 );
+
+it("accepts null safetensors metadata and ignores tensor extension fields", async () => {
+  const fixture = safetensorsFixture(
+    '{"__metadata__":null,"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":{"source":"local","flags":[null,false,-1,1.25]}}}',
+    Buffer.alloc(4),
+  );
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (!result.ok) throw result.error;
+  expect(result.value.metadata).toEqual([]);
+  expect(
+    result.value.tensors.map(({ name, type, shape }) => ({
+      name,
+      type,
+      shape,
+    })),
+  ).toEqual([{ name: "weight", type: "F32", shape: ["1"] }]);
+});
+
+it("accepts nested JSON values in ignored Safetensors extension fields", async () => {
+  const nested = `${"[".repeat(12)}0${"]".repeat(12)}`;
+  const fixture = safetensorsFixture(
+    `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+    Buffer.alloc(4),
+  );
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  expect(result.ok).toBe(true);
+});
+
+it("classifies over-depth Safetensors extension JSON as a resource limit", async () => {
+  const nested = `${"[".repeat(MODEL_JSON_NESTING + 1)}0${"]".repeat(MODEL_JSON_NESTING + 1)}`;
+  const fixture = safetensorsFixture(
+    `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+    Buffer.alloc(4),
+  );
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Over-depth JSON was accepted");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "memory",
+    reason: expect.stringContaining("Safetensors JSON nesting"),
+    reportedLimits: { maximum_json_depth: MODEL_JSON_NESTING },
+  });
+});
 
 it.each([640, 896, 1152, 1408, 66_176])(
   "admits safetensors header length %s whose prefix bytes resemble a pickle protocol marker",

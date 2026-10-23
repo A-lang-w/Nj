@@ -20,7 +20,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, realpath, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
@@ -177,7 +177,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
-      const snapshotPath = join(root.path, "recording");
+      // The private root is fresh; reuse the basename so its parser-relevant
+      // suffix is preserved without growing a valid source name.
+      const snapshotName = "path" in input ? basename(input.path) : "recording";
+      const snapshotPath = join(root.path, snapshotName);
       const execute = async (
         args: readonly string[],
         // Caller selectors this command loads; their refusals are input errors.
@@ -238,8 +241,26 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           );
         phase = previousPhase;
         resourcePath = "path" in input ? input.path : command;
+        const invalidUtf8Streams = [
+          ...(output.stdout.invalidUtf8 ? ["stdout"] : []),
+          ...(output.stderr.invalidUtf8 ? ["stderr"] : []),
+        ];
+        if (invalidUtf8Streams.length > 0)
+          throw new AnalysisOutputError(
+            operation,
+            "sigrok-cli output is not valid UTF-8; retained text contains replacement characters.",
+            {
+              capturedOutput,
+              diagnostics: {
+                stage: phase,
+                invalid_utf8_streams: invalidUtf8Streams,
+              },
+            },
+          );
+        // Some selected-channel refusals are diagnostics, not process failures:
+        // sigrok can emit fallback annotations and still exit successfully.
         const rejection =
-          output.exitCode === 0 || selection === undefined
+          selection === undefined
             ? undefined
             : parseSigrokSelectorRejection(output.stderr.text, selection);
         if (rejection !== undefined)
@@ -327,7 +348,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase = "producer";
         const args = [
           "--dont-scan",
-          "--input-file=recording",
+          `--input-file=${snapshotName}`,
           `--protocol-decoders=${input.decoders}`,
           "--protocol-decoder-samplenum",
           ...(input.input_format === null

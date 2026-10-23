@@ -5,7 +5,8 @@ import {
   mappedFileOffset,
 } from "../metadata/BinaryContainer.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
-import { readElfString, readElfSymbol } from "../metadata/ElfSymbol.js";
+import { isUtf8 } from "node:buffer";
+import { readElfStringBytes, readElfSymbol } from "../metadata/ElfSymbol.js";
 import {
   readNativeDirectoryFromBuffer,
   type NativeSection,
@@ -24,6 +25,7 @@ type Artifact = NativeExports["artifact"];
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
 const SHT_GNU_VERDEF = 0x6ffffffd;
+const SHT_GNU_VERNEED = 0x6ffffffe;
 const SHT_GNU_VERSYM = 0x6fffffff;
 const PE_EXPORT_DIRECTORY = 0;
 const PE_EXPORT_DIRECTORY_BYTES = 40;
@@ -114,18 +116,69 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
   const cString = (rva: number): string => {
-    const start = map(rva, 1);
-    const end = bytes
-      .subarray(start, start + MAXIMUM_NAME_BYTES + 1)
-      .indexOf(0);
-    if (end <= 0)
-      throw new BinaryFormatFailure(
-        "malformed",
-        `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+    const chunks: Buffer[] = [];
+    let length = 0;
+    while (length <= MAXIMUM_NAME_BYTES) {
+      const address = base + BigInt(rva + length);
+      let sourceMapping: (typeof mappings)[number] | undefined;
+      for (const mapping of mappings) {
+        const end = mapping.address + BigInt(mapping.size);
+        if (
+          mapping.address <= address &&
+          address < end &&
+          (sourceMapping === undefined ||
+            end > sourceMapping.address + BigInt(sourceMapping.size))
+        )
+          sourceMapping = mapping;
+      }
+      if (sourceMapping === undefined) {
+        map(rva + length, 1);
+        throw new BinaryFormatFailure(
+          "malformed",
+          "PE export string mapping is inconsistent",
+        );
+      }
+      const size = Math.min(
+        MAXIMUM_NAME_BYTES + 1 - length,
+        Number(sourceMapping.address + BigInt(sourceMapping.size) - address),
       );
-    // The whole string must stay inside one file-backed mapping.
-    map(rva, end + 1);
-    return bytes.toString("latin1", start, start + end);
+      const offset =
+        sourceMapping.offset + Number(address - sourceMapping.address);
+      const chunk = bytes.subarray(offset, offset + size);
+      const terminator = chunk.indexOf(0);
+      if (terminator >= 0) {
+        const nameLength = length + terminator;
+        if (nameLength === 0)
+          throw new BinaryFormatFailure(
+            "malformed",
+            `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+          );
+        const consumedOffset = mappedFileOffset(
+          mappings,
+          address,
+          terminator + 1,
+          image.zero_fills,
+        );
+        if (length === 0) {
+          // Preserve the common single-mapping path without retaining a
+          // temporary chunk array for every export name.
+          return bytes.toString(
+            "latin1",
+            consumedOffset,
+            consumedOffset + terminator,
+          );
+        }
+        chunks.push(chunk.subarray(0, terminator));
+        return Buffer.concat(chunks, nameLength).toString("latin1");
+      }
+      mappedFileOffset(mappings, address, size, image.zero_fills);
+      chunks.push(chunk);
+      length += size;
+    }
+    throw new BinaryFormatFailure(
+      "malformed",
+      `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+    );
   };
 
   const header = map(directory.virtual_address, PE_EXPORT_DIRECTORY_BYTES);
@@ -133,11 +186,6 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   const functionCount = reader.u32(header + 20);
   const nameCount = reader.u32(header + 24);
   rowBudget(functionCount, "PE export address table");
-  if (ordinalBase + functionCount > 0x10000)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PE export ordinal base and address-table size exceed 16-bit ordinals",
-    );
   rowBudget(nameCount, "PE export name table");
   const functions =
     functionCount === 0 ? 0 : map(reader.u32(header + 28), functionCount * 4);
@@ -251,67 +299,204 @@ const ELF_BINDINGS: Readonly<Record<number, ElfExport["binding"]>> = {
   10: "unique",
 };
 
-/** Version definitions by index, read from `.gnu.version_d`. */
-const readVersionDefinitions = (
+const versionSectionData = (
+  reader: BinaryReader,
+  sections: readonly NativeSection[],
+  section: NativeSection,
+  label: string,
+): {
+  table: { readonly offset: number; readonly size: number };
+  names: Buffer;
+} => {
+  const strings = sections[section.link];
+  if (strings?.type !== SHT_STRTAB)
+    throw new BinaryFormatFailure(
+      "malformed",
+      `${label} do not link to a string table`,
+    );
+  const stringRange = reader.fileRange(
+    strings.offset,
+    strings.size,
+    `${label} strings`,
+  );
+  const table = reader.fileRange(section.offset, section.size, label);
+  return {
+    table,
+    names: reader.bytes.subarray(
+      stringRange.offset,
+      stringRange.offset + stringRange.size,
+    ),
+  };
+};
+
+/** Version names by index, read from `.gnu.version_d` and `.gnu.version_r`. */
+type DecodedElfString = {
+  readonly name: string;
+  readonly name_bytes_base64: string | null;
+  readonly name_utf8_decodable: boolean;
+};
+
+const decodeElfString = (bytes: Buffer): DecodedElfString => {
+  const utf8 = isUtf8(bytes);
+  return {
+    name: bytes.toString(utf8 ? "utf8" : "latin1"),
+    name_bytes_base64: bytes.some((byte) => byte >= 0x80)
+      ? bytes.toString("base64")
+      : null,
+    name_utf8_decodable: utf8,
+  };
+};
+
+const readVersionNames = (
   reader: BinaryReader,
   sections: readonly NativeSection[],
   issues: NativeExportIssue[],
-): Map<number, string> => {
-  const definitions = new Map<number, string>();
-  const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
-  if (verdef === undefined) return definitions;
-  try {
-    const strings = sections[verdef.link];
-    if (strings?.type !== SHT_STRTAB)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Version definitions do not link to a string table",
+): Map<number, DecodedElfString | null> => {
+  const namesByIndex = new Map<number, DecodedElfString | null>();
+  const addName = (index: number, name: Buffer): void => {
+    namesByIndex.set(index, name.length === 0 ? null : decodeElfString(name));
+  };
+  const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
+  if (verneed !== undefined) {
+    try {
+      const { table, names } = versionSectionData(
+        reader,
+        sections,
+        verneed,
+        "Version requirements",
       );
-    const names = reader.fileRange(
-      strings.offset,
-      strings.size,
-      "Version strings",
-    );
-    const nameBytes = reader.bytes.subarray(
-      names.offset,
-      names.offset + names.size,
-    );
-    const table = reader.fileRange(
-      verdef.offset,
-      verdef.size,
-      "Version definitions",
-    );
-    let offset = 0;
-    for (let index = 0; index < verdef.info; index++) {
-      if (offset + 20 > table.size)
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Version definition chain leaves its section",
-        );
-      const at = table.offset + offset;
-      const versionIndex = reader.u16(at + 4) & 0x7fff;
-      const aux = reader.u32(at + 12);
-      const next = reader.u32(at + 16);
-      if (aux < 20 || offset + aux + 8 > table.size)
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Version definition name entry leaves its section",
-        );
-      definitions.set(
-        versionIndex,
-        readElfString(nameBytes, reader.u32(at + aux)),
-      );
-      if (next === 0) break;
-      offset += next;
+      let offset = 0;
+      for (let record = 0; record < verneed.info; record++) {
+        if (offset + 16 > table.size)
+          throw new BinaryFormatFailure(
+            "malformed",
+            "Version requirement chain leaves its section",
+          );
+        const at = table.offset + offset;
+        const auxiliaryCount = reader.u16(at + 2);
+        const auxiliaryOffset = reader.u32(at + 8);
+        const next = reader.u32(at + 12);
+        if (auxiliaryCount > 0 && auxiliaryOffset < 16)
+          throw new BinaryFormatFailure(
+            "malformed",
+            "Version requirement auxiliary chain starts inside its header",
+          );
+        let auxiliary = offset + auxiliaryOffset;
+        for (let item = 0; item < auxiliaryCount; item++) {
+          if (auxiliary + 16 > table.size)
+            throw new BinaryFormatFailure(
+              "malformed",
+              "Version requirement auxiliary chain leaves its section",
+            );
+          const auxAt = table.offset + auxiliary;
+          const versionIndex = reader.u16(auxAt + 6) & 0x7fff;
+          const auxiliaryNext = reader.u32(auxAt + 12);
+          try {
+            addName(
+              versionIndex,
+              readElfStringBytes(names, reader.u32(auxAt + 8)),
+            );
+          } catch (cause) {
+            issues.push({
+              code: "version_unresolved",
+              location: hex(verneed.offset + BigInt(auxiliary)),
+              message: `Version requirement name: ${failureMessage(cause)}`,
+            });
+          }
+          if (item + 1 < auxiliaryCount) {
+            if (auxiliaryNext < 16)
+              throw new BinaryFormatFailure(
+                "malformed",
+                "Version requirement auxiliary chain ends before its declared count",
+              );
+            auxiliary += auxiliaryNext;
+          }
+        }
+        if (record + 1 < verneed.info) {
+          if (next < 16)
+            throw new BinaryFormatFailure(
+              "malformed",
+              "Version requirement chain ends before its declared count",
+            );
+          offset += next;
+        }
+      }
+    } catch (cause) {
+      issues.push({
+        code: "version_unresolved",
+        location: hex(verneed.offset),
+        message: `Version requirements: ${failureMessage(cause)}`,
+      });
     }
-  } catch (cause) {
-    issues.push({
-      code: "version_unresolved",
-      location: hex(verdef.offset),
-      message: `Version definitions: ${failureMessage(cause)}`,
-    });
   }
-  return definitions;
+  // GNU lookup installs requirement names first, then definition names.
+  const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
+  if (verdef !== undefined) {
+    try {
+      const { table, names } = versionSectionData(
+        reader,
+        sections,
+        verdef,
+        "Version definitions",
+      );
+      let offset = 0;
+      for (let index = 0; index < verdef.info; index++) {
+        if (offset + 20 > table.size)
+          throw new BinaryFormatFailure(
+            "malformed",
+            "Version definition chain leaves its section",
+          );
+        const at = table.offset + offset;
+        const versionIndex = reader.u16(at + 4) & 0x7fff;
+        const aux = reader.u32(at + 12);
+        const next = reader.u32(at + 16);
+        const auxiliaryCount = reader.u16(at + 6);
+        if (auxiliaryCount === 0 || aux < 20 || offset + aux + 8 > table.size)
+          throw new BinaryFormatFailure(
+            "malformed",
+            "Version definition name entry leaves its section",
+          );
+        let auxiliary = offset + aux;
+        const versionName = readElfStringBytes(
+          names,
+          reader.u32(table.offset + auxiliary),
+        );
+        addName(versionIndex, versionName);
+        for (let item = 0; item < auxiliaryCount; item++) {
+          if (auxiliary + 8 > table.size)
+            throw new BinaryFormatFailure(
+              "malformed",
+              "Version definition auxiliary chain leaves its section",
+            );
+          if (item + 1 < auxiliaryCount) {
+            const auxiliaryNext = reader.u32(table.offset + auxiliary + 4);
+            if (auxiliaryNext < 8)
+              throw new BinaryFormatFailure(
+                "malformed",
+                "Version definition auxiliary chain ends before its declared count",
+              );
+            auxiliary += auxiliaryNext;
+          }
+        }
+        if (index + 1 < verdef.info) {
+          if (next < 20)
+            throw new BinaryFormatFailure(
+              "malformed",
+              "Version definition chain ends before its declared count",
+            );
+          offset += next;
+        }
+      }
+    } catch (cause) {
+      issues.push({
+        code: "version_unresolved",
+        location: hex(verdef.offset),
+        message: `Version definitions: ${failureMessage(cause)}`,
+      });
+    }
+  }
+
+  return namesByIndex;
 };
 
 /** Read defined exported entries of `.dynsym` with their symbol versions. */
@@ -404,7 +589,7 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       });
     }
   }
-  const definitions = readVersionDefinitions(reader, sections, issues);
+  const versionNames = readVersionNames(reader, sections, issues);
   const unresolvedVersions = new Set<number>();
   const retain = createRetention();
   const exports: ElfExport[] = [];
@@ -431,26 +616,33 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       const versionIndex = raw & 0x7fff;
       if (versionIndex === 0) continue;
       if (versionIndex >= 2) {
-        const defined = definitions.get(versionIndex);
-        const name = defined === undefined || defined === "" ? null : defined;
-        if (name === null && !unresolvedVersions.has(versionIndex)) {
+        const decodedName = versionNames.get(versionIndex) ?? null;
+        if (decodedName === null && !unresolvedVersions.has(versionIndex)) {
           unresolvedVersions.add(versionIndex);
           issues.push({
             code: "version_unresolved",
             location: hex(symbol.value),
-            message: `Version index ${String(versionIndex)}, first used by symbol ${String(index)}, has no named version definition`,
+            message: `Version index ${String(versionIndex)}, first used by symbol ${String(index)}, has no unambiguous version name`,
           });
         }
         version = {
           index: versionIndex,
-          name,
+          name: decodedName?.name ?? null,
+          name_bytes_base64: decodedName?.name_bytes_base64 ?? null,
+          name_utf8_decodable: decodedName?.name_utf8_decodable ?? null,
           hidden: (raw & 0x8000) !== 0,
         };
       }
     }
     let name: string;
+    let nameUtf8Decodable: boolean;
+    let rawNameBase64: string | null;
     try {
-      name = readElfString(names, symbol.name_offset);
+      const rawName = readElfStringBytes(names, symbol.name_offset);
+      const decodedName = decodeElfString(rawName);
+      nameUtf8Decodable = decodedName.name_utf8_decodable;
+      name = decodedName.name;
+      rawNameBase64 = decodedName.name_bytes_base64;
     } catch (cause) {
       issues.push({
         code: "name_unreadable",
@@ -467,9 +659,16 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       });
       continue;
     }
-    retain(name, typeof version === "object" ? (version?.name ?? null) : null);
+    retain(
+      name,
+      typeof version === "object" ? (version?.name ?? null) : null,
+      rawNameBase64,
+      typeof version === "object" ? (version?.name_bytes_base64 ?? null) : null,
+    );
     exports.push({
       name,
+      name_bytes_base64: rawNameBase64,
+      name_utf8_decodable: nameUtf8Decodable,
       value: hex(symbol.value),
       size: symbol.size.toString(),
       type: ELF_TYPES[symbol.type] ?? "other",

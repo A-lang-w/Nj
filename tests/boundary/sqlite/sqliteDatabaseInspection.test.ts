@@ -282,6 +282,37 @@ it("keeps unrelated catalog names outside the selected-table reply budget", asyn
     ).toThrowError(expect.objectContaining({ reason: "output-limit" }));
 });
 
+it.each(["inventory", "selected_table", "database"] as const)(
+  "reads sqlite_schema rows using PRAGMA row-source facts in %s scope",
+  async (schema_scope) => {
+    const path = await createDatabase(
+      "CREATE TABLE records(id INTEGER); INSERT INTO records VALUES (1);",
+    );
+    const result = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "sqlite_schema",
+      columns: ["name", "type"],
+      schema_scope,
+    });
+
+    expect(result.rows).toMatchObject({
+      table: "sqlite_schema",
+      columns: ["name", "type"],
+      values: [
+        [
+          { type: "text", value: "records" },
+          { type: "text", value: "table" },
+        ],
+      ],
+    });
+    expect(result.schema.tables).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "sqlite_schema" }),
+      ]),
+    );
+  },
+);
+
 it("rejects malformed schema bytes instead of returning replacement text", async () => {
   const path = await createDatabase(
     "CREATE TABLE records(value TEXT /*schema-marker*/)",
@@ -611,3 +642,42 @@ nativeTest.skipIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     ).toThrow("DatabaseSync.limits");
   },
 );
+
+it("classifies SQLite's result-column capacity refusal without blaming the database", async () => {
+  const path = await createDatabase(
+    "CREATE TABLE records(email TEXT); INSERT INTO records VALUES ('sample');",
+  );
+  const reader = new DatabaseSync(path, { readOnly: true });
+  const engineColumnLimit = (() => {
+    try {
+      return reader.limits.column;
+    } finally {
+      reader.close();
+    }
+  })();
+  const columns = (count: number): string[] =>
+    Array.from({ length: count }, () => "email");
+  const atLimit = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "records",
+    columns: columns(engineColumnLimit),
+  });
+  expect(atLimit.rows).toMatchObject({
+    columns: columns(engineColumnLimit),
+    returned_rows: 1,
+  });
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "records",
+      columns: columns(engineColumnLimit + 1),
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      reason: "column-limit",
+      selectedColumns: engineColumnLimit + 1,
+      engineColumnLimit,
+      message: expect.stringContaining("too many columns in result set"),
+    }),
+  );
+});

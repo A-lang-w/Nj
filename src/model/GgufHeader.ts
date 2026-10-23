@@ -42,6 +42,7 @@ export interface GgufProgress {
     declared_tensor_count: number;
   }): void;
   onMetadata(row: ModelMetadata): void;
+  onAlignment(alignment: number): void;
   onMetadataComplete(): void;
   onTensorsStarted(): void;
   onTensorDeclaration(row: ModelArtifactPartialTensor): void;
@@ -286,10 +287,12 @@ export class GgufHeader {
       const key = await this.#text(true, 65535);
       // Numeric hierarchy components occur in standardized base_model.{id} keys.
       if (
-        !/^[a-z0-9]+(?:_[a-z0-9]+)*(?:\.[a-z0-9]+(?:_[a-z0-9]+)*)*$/u.test(key)
+        !/^[a-z0-9]+(?:[_-][a-z0-9]+)*(?:\.[a-z0-9]+(?:[_-][a-z0-9]+)*)*$/u.test(
+          key,
+        )
       )
         rejectModel(
-          "GGUF metadata keys require ASCII lower-snake-case hierarchy components",
+          "GGUF metadata keys require lowercase ASCII hierarchy components",
         );
       if (keys.has(key)) rejectModel(`Duplicate GGUF metadata key ${key}`);
       keys.add(key);
@@ -318,10 +321,12 @@ export class GgufHeader {
             "GGUF general.alignment must be a positive UINT32 multiple of eight",
           );
         alignment = parsed.value;
+        progress?.onAlignment(alignment);
       }
       metadata.push(row);
       progress?.onMetadata(row);
     }
+    if (!keys.has("general.alignment")) progress?.onAlignment(alignment);
     progress?.onMetadataComplete();
     progress?.onTensorsStarted();
     const tensors: ModelArtifactPartialTensor[] = [];
@@ -380,10 +385,14 @@ export class GgufHeader {
       tensors.push(tensor);
       progress?.onTensorDeclaration(tensor);
     }
+    const directoryEnd = this.reader.position;
+    const alignedDataOffset = Math.ceil(directoryEnd / alignment) * alignment;
     const tensor_data_offset =
-      tensorCount === 0
-        ? this.reader.position
-        : Math.ceil(this.reader.position / alignment) * alignment;
+      tensorCount === 0 && this.reader.size === directoryEnd
+        ? directoryEnd
+        : alignedDataOffset;
+    if (tensor_data_offset > this.reader.size)
+      rejectModel("GGUF tensor data section begins outside the file");
     for (const tensor of tensors) {
       const offset = BigInt(tensor_data_offset) + BigInt(tensor.data_offset);
       if (

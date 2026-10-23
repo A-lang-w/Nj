@@ -8,8 +8,8 @@ import { peCertificateTypeName } from "../../domain/native/peCertificates.js";
 import {
   oidName,
   parsePkcs7SignedData,
-  PeCertificateDerFailure,
-} from "./PeCertificateDer.js";
+  PeCertificateAsn1Failure,
+} from "./PeCertificateAsn1.js";
 import { readPeHeaders } from "./PeResourceLayout.js";
 
 const fail = (message: string): never => {
@@ -38,6 +38,9 @@ const LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
   "PKCS#7 fields are decoded structurally; cryptographic validity remains unobserved.",
 ] as const;
+
+const TELETEX_LIMITATION =
+  "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.";
 
 const ABSENT_LIMITATIONS = [
   "IMAGE_DIRECTORY_ENTRY_SECURITY is absent. That is not proof the image is unsigned in every catalog or overlay sense.",
@@ -88,6 +91,7 @@ export const parsePeCertificates = (
   const entries: PeCertificates["entries"] = [];
   let at = 0;
   let examined = 0;
+  let teletexStringCompatibilityUsed = false;
   while (at < table.length) {
     // Alignment padding sits inside the gap before the next 8-byte boundary.
     // Bytes that remain after that boundary are a short header, including
@@ -112,6 +116,8 @@ export const parsePeCertificates = (
     if (peCertificateTypeName(certificateType) === "pkcs7") {
       try {
         const parsed = parsePkcs7SignedData(payload);
+        teletexStringCompatibilityUsed ||=
+          parsed.teletexStringCompatibilityUsed;
         pkcs7 = {
           content_type_oid: parsed.content_type_oid,
           content_type_name: oidName(parsed.content_type_oid),
@@ -158,7 +164,7 @@ export const parsePeCertificates = (
           })),
         };
       } catch (cause) {
-        if (cause instanceof PeCertificateDerFailure)
+        if (cause instanceof PeCertificateAsn1Failure)
           fail(`PKCS#7 signedData is malformed: ${cause.message}`);
         throw cause;
       }
@@ -199,6 +205,8 @@ export const parsePeCertificates = (
       examined_entries: examined,
       certificates,
     },
-    limitations: [...LIMITATIONS],
+    limitations: teletexStringCompatibilityUsed
+      ? [...LIMITATIONS, TELETEX_LIMITATION]
+      : [...LIMITATIONS],
   };
 };

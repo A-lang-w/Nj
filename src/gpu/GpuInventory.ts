@@ -1,5 +1,7 @@
 import {
+  CCOB_MAGIC,
   CLANG_BUNDLE_MAGIC,
+  readLegacyCcobTotal,
   readClangBundleDirectory,
   readCcobHeader,
 } from "./ClangOffloadBundle.js";
@@ -45,7 +47,11 @@ import {
   readAmdElfMetadata,
   type AmdElfMetadata,
 } from "./GpuElfKernels.js";
-import { readPtxKernels, readPtxTarget } from "./PtxKernels.js";
+import {
+  ptxTargetIdentity,
+  readPtxKernels,
+  readPtxTarget,
+} from "./PtxKernels.js";
 
 /** File declarations only. Every child range stays in its named parent coordinate space. */
 export class GpuInventory {
@@ -141,13 +147,13 @@ export class GpuInventory {
       await this.#hip(source, depth);
       return "hip-bundle";
     }
-    if (prefix.subarray(0, 4).toString("ascii") === "CCOB") {
+    if (prefix.subarray(0, CCOB_MAGIC.length).equals(CCOB_MAGIC)) {
       await this.#hip(source, depth);
       return "hip-bundle";
     }
     if (
       prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
-      prefix.subarray(0, 2).toString("ascii") === "MZ"
+      (prefix[0] === 0x4d && prefix[1] === 0x5a)
     ) {
       const elf = prefix[0] === 0x7f;
       const directory = await readGpuNativeDirectory(
@@ -193,7 +199,10 @@ export class GpuInventory {
           const borrowed: GpuSource = {
             size,
             containerId: source.containerId,
-            read: (start, length) => source.read(offset + start, length),
+            read: (start, length) => {
+              checkGpuRange(size, start, length);
+              return source.read(offset + start, length);
+            },
           };
           // A section is a coordinate space with an explicit physical backing, including PE short names.
           const row = gpuObject(source, {
@@ -227,21 +236,28 @@ export class GpuInventory {
     }
     // PTX is positively identified by its directives, never by extension or arbitrary embedded text.
     let probe = await source.read(0, Math.min(source.size, 64 * 1024));
-    let target = readPtxTarget(probe.toString("utf8"));
-    if (
-      target === null &&
-      probe.length < Math.min(source.size, GPU_REPORT_BYTES)
-    ) {
+    let targetFacts = readPtxTarget(probe.toString("utf8"));
+    if (probe.length < Math.min(source.size, GPU_REPORT_BYTES)) {
       probe = await source.read(0, Math.min(source.size, GPU_REPORT_BYTES));
-      target = readPtxTarget(probe.toString("utf8"));
+      targetFacts = readPtxTarget(probe.toString("utf8"));
     }
-    if (target !== null) {
+    if (targetFacts.recognized) {
+      const target = probe.length === source.size ? targetFacts.target : null;
+      const limitation =
+        probe.length < source.size
+          ? "PTX target scan reached the 16 MiB text budget before all module directives were examined."
+          : targetFacts.limitation;
       const row = gpuObject(source, {
         offset: 0,
         size: source.size,
         kind: "ptx",
       });
       row.target = target;
+      if (limitation !== null) {
+        row.inspection = "partial";
+        row.limitations.push(limitation);
+        this.discovery = "partial";
+      }
       this.#add(row);
       await this.#payload(
         probe.length === source.size
@@ -350,9 +366,12 @@ export class GpuInventory {
         }
         const target = readPtxTarget(text);
         const conflict = this.#target(row, {
-          value: target,
-          key: target,
+          value: target.target,
+          key: target.target,
           scope: "exact",
+          ...(target.limitation === null
+            ? {}
+            : { limitation: target.limitation }),
         });
         if (conflict !== undefined) coverage = "partial";
         const parsed = readPtxKernels(text, row.id);
@@ -400,7 +419,8 @@ export class GpuInventory {
         const inner = /^sm_([0-9]+)$/u.exec(payload.key)?.[1];
         if (base !== undefined && inner !== undefined)
           state = base === inner ? "base-only" : "conflict";
-      } else if (outer === payload.key) state = "consistent";
+      } else if (ptxTargetIdentity(outer) === ptxTargetIdentity(payload.key))
+        state = "consistent";
       else if (
         row.kind === "amdgpu" &&
         outer.split(":")[0] === payload.key.split(":")[0]
@@ -424,7 +444,8 @@ export class GpuInventory {
       state === "conflict"
         ? `Conflicting target declarations: inventory ${outer}; payload ${payload.value}. Target agreement is not established.`
         : payload.limitation!;
-    this.#objectLimitations(row, [message]);
+    if (!row.limitations.includes(message))
+      this.#objectLimitations(row, [message]);
     return message;
   }
   async #amdPayload(
@@ -441,6 +462,7 @@ export class GpuInventory {
         return source.read(row.location.offset + offset, size);
       },
     };
+
     try {
       const native =
         directory ??
@@ -522,9 +544,13 @@ export class GpuInventory {
         base = await nextGpuContainerOffset(source, directory.end);
         continue;
       }
-      if (prefix.subarray(0, 4).toString("ascii") !== "CCOB")
+      if (!prefix.subarray(0, CCOB_MAGIC.length).equals(CCOB_MAGIC))
         rejectGpu("Unexpected bytes between Clang offload bundles");
-      const header = readCcobHeader(prefix, source.size - base),
+      const legacyTotal =
+        prefix.length >= 6 && prefix.readUInt16LE(4) === 1
+          ? await readLegacyCcobTotal(source, base)
+          : source.size - base;
+      const header = readCcobHeader(prefix, legacyTotal),
         { width, total, decoded, hash, version, method } = header;
       const row = gpuObject(source, {
         offset: base + width,
@@ -549,6 +575,7 @@ export class GpuInventory {
             row.compression,
             decoded,
             this.signal,
+            version === 1,
           );
           if (
             createHash("md5").update(data).digest().readBigUInt64LE(0) !== hash

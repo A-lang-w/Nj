@@ -17,6 +17,16 @@ import {
   GO_MODULE_TEXT,
 } from "../../fixtures/go/image.js";
 
+it("uses the shared ELF classifier for Go image architecture", () => {
+  const fixture = createGoBinaryFixture({ omitBuildInfo: true });
+  fixture.bytes.writeUInt16LE(164, 18); // ELF EM_HEXAGON.
+  expect(readGoBinaryImage(fixture.bytes)).toMatchObject({
+    format: "elf",
+    architecture: "hexagon",
+    build_info: null,
+  });
+});
+
 it("preserves exact Mach-O protection masks for Go fallback selection", () => {
   const { bytes } = createGoBinaryFixture({
     format: "macho",
@@ -180,6 +190,24 @@ it.each([
     });
   },
 );
+
+it("reads inline build strings past the ELF build-info discovery section", () => {
+  const fixture = createGoBinaryFixture();
+  const buildInfoSection = 256 + 64 * 2;
+  fixture.bytes.writeBigUInt64LE(32n, buildInfoSection + 32);
+
+  expect(readGoBinaryImage(fixture.bytes).build_info).toMatchObject({
+    header_offset: fixture.headerOffset,
+    encoding: "inline",
+    go_version: "go1.26.0",
+    module_text: GO_MODULE_TEXT,
+    version_location: { offset: fixture.versionOffset, bytes: 8 },
+    module_location: {
+      offset: fixture.moduleOffset,
+      bytes: fixture.moduleBytes.length,
+    },
+  });
+});
 
 it.each(["elf", "pe", "macho"] as const)(
   "follows mapped pointers in legacy %s metadata",
@@ -358,8 +386,13 @@ it("distinguishes unsupported containers from malformed recognized images", () =
     /truncated/i,
   );
   const pe = createGoBinaryFixture({ format: "pe" });
+  expect(() => readGoBinaryImage(pe.bytes.subarray(0, 144))).toThrowError(
+    /range|truncated/i,
+  );
   pe.bytes.writeUInt32LE(0xfffffff0, 60);
-  expect(() => readGoBinaryImage(pe.bytes)).toThrowError(/range|truncated/i);
+  expect(() => readGoBinaryImage(pe.bytes)).toThrowError(
+    /MZ Windows new-header candidate is unresolved/i,
+  );
 });
 
 it("reports JVM class files as unsupported images instead of fat Mach-O containers", () => {
