@@ -21,6 +21,7 @@ import { updatedEntity } from "./environmentStateWriteApply.js";
 import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import { SortedArrays } from "./environmentStateWriteSorted.js";
+import { sameQuery } from "./environmentStateWriteStamps.js";
 import {
   checkDocumentRead,
   checkItemRead,
@@ -294,7 +295,14 @@ export class EnvironmentStateWriteSimulation {
     }
     const observeOnly = draft.plan.reason !== null;
     if (!observeOnly) draft.calls += 1;
-    const step: WriteStep = { record, index, tool, observeOnly };
+    // Serving pins the exemplar's query, so a call with another may do something else and confirms nothing.
+    const pinned =
+      !built(draft) ||
+      sameQuery(
+        this.#input.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
+        record.query,
+      );
+    const step: WriteStep = { record, index, tool, observeOnly, pinned };
     const context = this.#context(tool.name);
     const { address } = draft.plan;
     const results =

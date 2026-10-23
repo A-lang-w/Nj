@@ -3,6 +3,7 @@ import {
   namedEntities,
 } from "../../domain/analysisView/environmentStateWriteAddress.js";
 import {
+  bodyProblem,
   updatedEntity,
   updatedFields,
   writtenResponse,
@@ -34,6 +35,7 @@ import {
   observedEntity,
   pathValues,
   unloadable,
+  updateTarget,
   writeAnswer,
   type WriteRequest,
 } from "./environmentStateWriteAnswer.js";
@@ -41,6 +43,12 @@ import { environmentToolArguments } from "./environmentTools.js";
 
 /** Rules whose generated value is drawn once per call, which one call cannot give several entities. */
 const DRAWN_ONCE = new Set<FieldRule["rule"]>(["unique", "renewed"]);
+
+/** One entity a bulk call names, held by the state, with the members it gets. */
+interface BulkTarget {
+  readonly entity: StateEntity;
+  readonly body: JsonObject | undefined;
+}
 
 /** A bulk answer from the recorded one: one element per written entity, rendered as the first recorded element shows its entity. */
 const bulkResponse = (
@@ -69,10 +77,7 @@ const bulkResponse = (
 const namedTargets = (
   serving: StateServing,
   request: WriteRequest,
-): Result<
-  { readonly entity: StateEntity; readonly body: JsonObject | undefined }[],
-  AnalysisError
-> => {
+): Result<BulkTarget[], AnalysisError> => {
   const { tool, plan, args } = request;
   const { address } = plan;
   const type = plan.target ?? "";
@@ -98,11 +103,13 @@ const namedTargets = (
     text,
     supplied: false,
   }));
-  const targets = [];
+  const targets: BulkTarget[] = [];
   for (const { id, body: members } of named) {
+    // A body's id is the entity's as written, never a percent-encoded spelling of another.
     const entity = namedEntity(serving.store, type, {
       segments: collection,
       id,
+      literal: true,
     });
     if (entity === undefined)
       return err(
@@ -111,9 +118,52 @@ const namedTargets = (
           `The state holds no ${type} entity ${id}; the state is unchanged.`,
         ),
       );
+    if (targets.some((target) => target.entity === entity))
+      return err(
+        refused(
+          tool,
+          `The body names ${type} entity ${entity.id} more than once; the state is unchanged.`,
+        ),
+      );
     targets.push({ entity, body: members });
   }
   return ok(targets);
+};
+
+/** Each named entity as the call writes it, or a refusal: a delete takes only the members its recording sent, an update gets its fields with the call's shared values. */
+const writtenTargets = (
+  serving: StateServing,
+  request: WriteRequest,
+  targets: readonly BulkTarget[],
+  values: ReturnType<typeof generator>,
+): Result<StateEntity[], AnalysisError> => {
+  const { tool, plan, args } = request;
+  const observed = observedEntity(serving, plan) ?? {};
+  const path = { path: tool.path_template, pathValues: pathValues(tool, args) };
+  const written: StateEntity[] = [];
+  for (const { entity, body } of targets) {
+    const call = { ...path, body, id: entity.id };
+    if (plan.effect !== "update") {
+      const problem =
+        plan.body === null
+          ? "The tool has no modelled body."
+          : bodyProblem(plan.body, call, { entity: {}, id: entity.id });
+      if (problem !== undefined) return err(refused(tool, problem));
+      written.push(entity);
+      continue;
+    }
+    const fields = updatedFields(
+      plan,
+      { before: entity.fields, observed },
+      call,
+      values.forTarget(updateTarget(serving, entity, observed)),
+    );
+    if (!fields.ok) return err(refused(tool, fields.error));
+    const field = unloadableMember(fields.value);
+    if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
+    written.push(updatedEntity(entity, fields.value));
+  }
+  return ok(written);
 };
 
 /** Apply one served bulk call to every entity its body names and answer it; a refused call leaves the state unchanged. */
@@ -121,7 +171,7 @@ export const answerBulk = (
   serving: StateServing,
   request: WriteRequest,
 ): Result<StateAnswer, AnalysisError> => {
-  const { tool, plan, args } = request;
+  const { tool, plan } = request;
   const targets = namedTargets(serving, request);
   if (!targets.ok) return targets;
   const update = plan.effect === "update";
@@ -137,55 +187,27 @@ export const answerBulk = (
       ),
     );
   const [first] = targets.value;
-  const observed = observedEntity(serving, plan) ?? {};
-  const values = generator(serving, request, {
-    name: first!.entity.collection,
-    collection: serving.store.inCollection(
-      first!.entity.type,
-      first!.entity.collection,
-    ),
-    observed,
-  });
-  const written: StateEntity[] = [];
-  for (const { entity, body } of targets.value) {
-    if (!update) {
-      written.push(entity);
-      continue;
-    }
-    const fields = updatedFields(
-      plan,
-      { before: entity.fields, observed },
-      {
-        path: tool.path_template,
-        pathValues: pathValues(tool, args),
-        body,
-        id: entity.id,
-      },
-      values.generate,
-    );
-    if (!fields.ok) return err(refused(tool, fields.error));
-    const field = unloadableMember(fields.value);
-    if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
-    written.push(updatedEntity(entity, fields.value));
-  }
+  const values = generator(serving, request);
+  const written = writtenTargets(serving, request, targets.value, values);
+  if (!written.ok) return written;
   const answer = writeAnswer(
     serving,
     request,
-    (recorded) => bulkResponse(plan.response!, recorded, written),
+    (recorded) => bulkResponse(plan.response!, recorded, written.value),
     {
       source: "state",
       view: update ? "update" : "delete",
       type: first!.entity.type,
       collection: first!.entity.collection,
       id: first!.entity.id,
-      ids: written.map((entity) => entity.id),
+      ids: written.value.map((entity) => entity.id),
     },
   );
   if (!answer.ok) return answer;
   if (update) {
-    const updated = serving.store.updateAll(written);
+    const updated = serving.store.updateAll(written.value);
     if (!updated.ok) return updated;
-  } else serving.store.removeAll(written);
+  } else serving.store.removeAll(written.value);
   serving.store.commitWrite(values.taken);
   return answer;
 };

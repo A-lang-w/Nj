@@ -115,14 +115,14 @@ export const sameSecondClocks = (evidence: UpdateEvidence): string[] =>
       inCallSecond(evidence.after[field], evidence.startMs),
   );
 
-/** How an update stored a sent member: stamped anew as the one held clock it sent back, echoed, renewed as a fresh UUID, or as a constant. */
+/** How an update stored a sent member: stamped anew as the one held clock it sent back other than a creation clock, echoed, renewed as a fresh UUID, or as a constant. */
 export const sentRule = (
   evidence: UpdateEvidence,
   member: string,
   held: readonly string[],
 ): FieldRule => {
   const sent = evidence.call.body[member]!;
-  if (held.length === 1 && held[0] === member)
+  if (held.length === 1 && held[0] === member && !CREATION_CLOCK.test(member))
     return {
       field: member,
       rule: "held-clock",

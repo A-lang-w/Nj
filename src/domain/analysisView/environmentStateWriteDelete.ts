@@ -14,18 +14,20 @@ import {
 } from "./environmentStateWriteEffects.js";
 import { responseShapeOf } from "./environmentStateWriteExplain.js";
 
-/** Apply a recorded delete: the held entity leaves its collection. */
+/** Apply a recorded delete: the held entity leaves its collection, unless the call sent another query than serving pins, which may delete nothing. */
 export const applyDelete = (
   context: EffectContext,
   draft: WriteDraft,
   step: WriteStep,
 ): EffectResult =>
-  deleteEntity(
-    context,
-    draft,
-    step,
-    itemTarget(context.state, draft.plan.target!, step.record),
-  );
+  step.pinned
+    ? deleteEntity(
+        context,
+        draft,
+        step,
+        itemTarget(context.state, draft.plan.target!, step.record),
+      )
+    : UNKNOWN;
 
 /** Remove the held entity a call names. */
 export const deleteEntity = (

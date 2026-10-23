@@ -376,6 +376,28 @@ it("takes an update's unique and renewed values from the generator, whether or n
   ]);
 });
 
+const HELD_PLAN: Plan = {
+  rules: [
+    { field: "title", rule: "echo" },
+    { field: "updatedAt", rule: "held-clock", format: SECONDS },
+  ],
+  body: { ...UPDATE_PLAN.body!, accepted: ["title", "updatedAt"], fixed: [] },
+};
+
+it("stamps a held clock only on a call that sends the value the entity holds", () => {
+  expect(
+    update({ title: "New Title", updatedAt: BEFORE.updatedAt! }, HELD_PLAN)
+      .result,
+  ).toEqual(ok({ ...BEFORE, title: "New Title", updatedAt: NOW }));
+  const { asked, result } = update({ title: "New Title" }, HELD_PLAN);
+  expect(result).toEqual(
+    err(
+      "Member updatedAt must be sent with the value the entity holds, as the recorded call did.",
+    ),
+  );
+  expect(asked).toEqual([]);
+});
+
 it("renews no child rows on an entity that holds none", () => {
   const { asked, result } = update({ title: "New Title" }, RENEWING_PLAN);
   expect(result.ok && result.value).not.toHaveProperty("steps");

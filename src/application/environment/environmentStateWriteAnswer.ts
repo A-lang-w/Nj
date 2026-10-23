@@ -161,23 +161,37 @@ const nextHeld = (
     exemplar,
   );
 
+/** The entity a write generates values for: its collection, the observed entity and, for an update, the entity it writes. */
+export interface GeneratedTarget {
+  readonly name: string;
+  readonly collection: readonly StateEntity[];
+  readonly observed: JsonObject;
+  /** The entity an update writes, whose values a renewed field keeps. */
+  readonly current?: JsonObject;
+}
+
+/** What an update generates values for: the entity it writes, in its collection. */
+export const updateTarget = (
+  serving: StateServing,
+  entity: StateEntity,
+  observed: JsonObject,
+): GeneratedTarget => ({
+  name: entity.collection,
+  collection: serving.store.inCollection(entity.type, entity.collection),
+  observed,
+  current: entity.fields,
+});
+
 /**
  * Values one served write generates: its clock instant, sequences one past the largest held
  * value, and UUIDs and tokens seeded by the state Evidence, tool, field and write count,
- * skipping values the type already holds.
+ * skipping values the type already holds. Every entity the call writes shares them.
  */
 export const generator = (
   serving: StateServing,
   request: WriteRequest,
-  target: {
-    readonly name: string;
-    readonly collection: readonly StateEntity[];
-    readonly observed: JsonObject;
-    /** The entity an update writes, whose values a renewed field keeps. */
-    readonly current?: JsonObject;
-  },
 ): {
-  readonly generate: GenerateValue;
+  readonly forTarget: (target: GeneratedTarget) => GenerateValue;
   readonly taken: Map<string, number>;
 } => {
   const { store } = serving;
@@ -191,7 +205,8 @@ export const generator = (
   const ofType = store.ofType(request.plan.target ?? "");
   // A sequence never reuses a value the state started with, even after its entity was deleted.
   const started = store.startedWith(request.plan.target ?? "");
-  const startedIn = started.filter((held) => held.collection === target.name);
+  const startedIn = (collection: string) =>
+    started.filter((held) => held.collection === collection);
   const renewed = callRenewal(
     `${store.state.evidenceId}:${request.tool.name}:renewed:${String(write.count)}`,
   );
@@ -210,7 +225,10 @@ export const generator = (
       `Could not generate a unique value for ${field} after ${String(GENERATION_ATTEMPTS)} attempts without colliding with the held state.`,
     );
   };
-  const generate = (rule: GeneratedRule): Result<JsonValue, string> => {
+  const generate = (
+    target: GeneratedTarget,
+    rule: GeneratedRule,
+  ): Result<JsonValue, string> => {
     const exemplar = target.observed[rule.field] ?? "";
     const seed = (attempt: number) =>
       `${store.state.evidenceId}:${request.tool.name}:${rule.field}:${String(write.count)}:${String(attempt)}`;
@@ -239,7 +257,7 @@ export const generator = (
               `${request.tool.name} ${rule.field} ${rule.scope === "collection" ? target.name : ""}`,
               nextHeld(
                 rule.scope === "collection"
-                  ? [...target.collection, ...startedIn]
+                  ? [...target.collection, ...startedIn(target.name)]
                   : [...ofType, ...started],
                 rule.field,
                 exemplar,
@@ -267,7 +285,7 @@ export const generator = (
               sequence(
                 `${request.plan.target ?? ""} ${rule.field} ${target.name}`,
                 nextHeld(
-                  [...target.collection, ...startedIn],
+                  [...target.collection, ...startedIn(target.name)],
                   rule.field,
                   exemplar,
                 ),
@@ -279,7 +297,7 @@ export const generator = (
         );
     }
   };
-  return { generate, taken };
+  return { forTarget: (target) => (rule) => generate(target, rule), taken };
 };
 
 /** A write's answer on its recorded response's status and content type: a rendered body, none, or the recorded one. */
@@ -424,16 +442,17 @@ const answerCreate = (
       ),
     );
   const members = serving.store.inCollection(type, collection);
-  const values = generator(serving, request, {
-    name: collection,
-    collection: members,
-    observed,
-  });
+  const values = generator(serving, request);
   const created = {
     ...call,
     pathValues: createdPathValues(serving, request, call, collection),
   };
-  const fields = createdFields(plan, observed, created, values.generate);
+  const fields = createdFields(
+    plan,
+    observed,
+    created,
+    values.forTarget({ name: collection, collection: members, observed }),
+  );
   if (!fields.ok) return err(refused(tool, fields.error));
   const field = unloadableMember(fields.value);
   if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
@@ -515,17 +534,12 @@ const answerUpdate = (
   if (!target.ok) return target.error;
   const entity = target.value;
   const observed = observedEntity(serving, plan) ?? {};
-  const values = generator(serving, request, {
-    name: entity.collection,
-    collection: serving.store.inCollection(entity.type, entity.collection),
-    observed,
-    current: entity.fields,
-  });
+  const values = generator(serving, request);
   const written = updatedFields(
     plan,
     { before: entity.fields, observed },
     { ...call, id: entity.id },
-    values.generate,
+    values.forTarget(updateTarget(serving, entity, observed)),
   );
   if (!written.ok) return err(refused(tool, written.error));
   // An increment can pass the exact integers.

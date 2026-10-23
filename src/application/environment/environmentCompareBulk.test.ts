@@ -12,6 +12,7 @@ import {
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
   FIRST_BOOK,
+  SECOND_BOOK,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import { compareEnvironment } from "./environmentCompare.js";
 
@@ -44,6 +45,39 @@ describe("environment comparison of bulk writes", () => {
     });
     if (!report.ok) throw report.error;
     const [, deleted, read] = report.value.probes[0]!.results;
+    expect(deleted).toMatchObject({ env_status: 200, equal: true });
+    expect(read).toMatchObject({ env_status: 404, equal: true });
+  });
+
+  it("translates the ids a bulk body names with its collection's own mapping", () => {
+    const project = { id: 7, name: "Project" };
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence([
+        ["GET", "/api/projects", [project]],
+        ["GET", "/api/projects/7", project],
+        ...RECORDED,
+      ]),
+    );
+    // The probe reuses id 100 for the project and for the first book.
+    const live = (id: number) => ({ ...FIRST_BOOK, id });
+    const report = compareEnvironment({
+      source: environmentServeSource(fixture),
+      captureValue: fixture.capture,
+      probes: [
+        {
+          label: "shared-id",
+          value: timedCaptureEvidence([
+            ["GET", "/api/projects", [{ ...project, id: 100 }]],
+            ["GET", "/api/books", [live(100), { ...SECOND_BOOK, id: 101 }]],
+            ["DELETE", "/api/books", [{ id: 100 }], 200, [{ id: 100 }]],
+            ["GET", "/api/books/100", BOOK_NOT_FOUND, 404],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    const [, , deleted, read] = report.value.probes[0]!.results;
     expect(deleted).toMatchObject({ env_status: 200, equal: true });
     expect(read).toMatchObject({ env_status: 404, equal: true });
   });

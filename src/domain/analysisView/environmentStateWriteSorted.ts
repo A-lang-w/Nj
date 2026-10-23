@@ -13,9 +13,10 @@ import {
   type StateRecordFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import type {
-  CheckOutcome,
-  SimulatedState,
+import {
+  entityTarget,
+  type CheckOutcome,
+  type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import type { WriteIo } from "./environmentStateWriteEffects.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
@@ -29,6 +30,13 @@ const inOrder = (values: readonly string[]): boolean =>
 /** A string array with at least two distinct values, the only kind that shows an order. */
 const ordered = (value: JsonValue | undefined): value is string[] =>
   value !== undefined && isStringArray(value) && new Set(value).size >= 2;
+
+/** Whether no object a read shows lists the field as a string array out of order. */
+const listedSorted = (shown: readonly JsonObject[], field: string): boolean =>
+  shown.every((object) => {
+    const value = object[field];
+    return !ordered(value) || inOrder(value);
+  });
 
 /** An entity's value of a field as one view shows it: its own recorded value, else the stored one. */
 const shownBy = (
@@ -88,9 +96,9 @@ interface Candidates {
  * Array fields a view lists sorted however they were written, as APIs that keep tags as sets do.
  * A field is learned only from a read the gate counts that fails with the stored order and passes
  * with it sorted, where the order could not be the written one or the order the application first
- * held the values in; one counted read listing it unsorted rules it out for that view. The stored
- * value keeps the written order, so a write's response still echoes it; every view of the type that
- * could sort the field sorts it once one does.
+ * held the values in; one counted read listing it unsorted rules it out for that view, learned or
+ * not. The stored value keeps the written order, so a write's response still echoes it; every view
+ * of the type that could sort the field sorts it once one does.
  */
 export class SortedArrays {
   readonly #candidates = new Map<string, Candidates>();
@@ -135,7 +143,8 @@ export class SortedArrays {
   /**
    * Note what a read the gate counts shows, then retry it if it failed: the outcome with the fewest
    * candidate fields sorted that make it pass, which the type's views then keep; the outcome as it
-   * was when none does, the passing check is blocked or the read's order is ambiguous.
+   * was, without any learned field the read lists unsorted, when none does, the passing check is
+   * blocked or the read's order is ambiguous.
    */
   retry(
     view: StateView,
@@ -143,18 +152,24 @@ export class SortedArrays {
     check: (view: StateView) => CheckOutcome | undefined,
     blocked: (targets: readonly string[]) => boolean,
   ): CheckOutcome {
-    const failed = read.outcome;
-    if (view.shape !== "item" && view.shape !== "list") return failed;
-    // A view with no candidate left has nothing to note or retry, so its read is never parsed.
-    if (!this.#candidates.has(view.tool)) return failed;
+    if (view.shape !== "item" && view.shape !== "list") return read.outcome;
+    // A view with no candidate or learned field left has nothing to note or retry, so its read is never parsed.
+    if (!this.#candidates.has(view.tool) && !this.#adopted.has(view.tool))
+      return read.outcome;
     const shown = this.#shown(view, read.record);
     this.#ruleOut(view.tool, shown);
+    // A read listing a learned field unsorted is checked again as the view now lists it.
+    const current = this.#unlearn(view.tool, shown)
+      ? { ...view, sorted_arrays: this.#adopted.get(view.tool) ?? [] }
+      : view;
+    const failed =
+      current === view ? read.outcome : (check(current) ?? read.outcome);
     const candidates = this.#candidates.get(view.tool)?.fields;
     if (failed.pass || candidates === undefined) return failed;
     const passing = (fields: readonly string[]) => {
       const outcome = check({
-        ...view,
-        sorted_arrays: [...(view.sorted_arrays ?? []), ...fields],
+        ...current,
+        sorted_arrays: [...(current.sorted_arrays ?? []), ...fields],
       });
       return outcome?.pass === true &&
         !blocked([...outcome.targets, ...outcome.unheld])
@@ -169,7 +184,8 @@ export class SortedArrays {
       const retried = fewer.length === 0 ? undefined : passing(fewer);
       if (retried !== undefined) [needed, outcome] = [fewer, retried];
     }
-    if (!needed.every((field) => this.#telling(view, shown, field)))
+    const targets = new Set(outcome.targets);
+    if (!needed.every((field) => this.#telling(view, shown, field, targets)))
       return failed;
     this.#adopt(view.type, needed);
     return outcome;
@@ -190,22 +206,28 @@ export class SortedArrays {
   #ruleOut(tool: string, shown: readonly JsonObject[]): void {
     const entry = this.#candidates.get(tool);
     if (entry === undefined) return;
-    const left = entry.fields.filter((field) =>
-      shown.every((object) => {
-        const value = object[field];
-        return !ordered(value) || inOrder(value);
-      }),
-    );
+    const left = entry.fields.filter((field) => listedSorted(shown, field));
     if (left.length === 0) this.#candidates.delete(tool);
     else if (left.length < entry.fields.length)
       this.#candidates.set(tool, { ...entry, fields: left });
   }
 
-  /** Whether a read shows a written array in an order neither the written one nor the order the values were first held in. */
+  /** A read listing a learned field unsorted shows its view does not sort it after all; whether one was. */
+  #unlearn(tool: string, shown: readonly JsonObject[]): boolean {
+    const adopted = this.#adopted.get(tool) ?? [];
+    const kept = adopted.filter((field) => listedSorted(shown, field));
+    if (kept.length === adopted.length) return false;
+    if (kept.length === 0) this.#adopted.delete(tool);
+    else this.#adopted.set(tool, kept);
+    return true;
+  }
+
+  /** Whether a read shows a written array of an entity it covers in an order neither the written one nor the order the values were first held in. */
   #telling(
     view: StateItemView | StateListView,
     shown: readonly JsonObject[],
     field: string,
+    targets: ReadonlySet<string>,
   ): boolean {
     const idField = this.facts.idField(view.type) ?? "";
     const existing = this.#existing.get(`${view.type}\u0000${field}`)!;
@@ -213,9 +235,12 @@ export class SortedArrays {
       const value = object[field];
       const id = scalarText(object[idField]);
       if (!ordered(value) || id === undefined) return false;
-      return this.facts.state.ofType(view.type).some((entity) => {
-        const written = entity.id === id ? entity.fields[field] : undefined;
+      return this.facts.state.named(id).some((entity) => {
+        const written = entity.fields[field];
         return (
+          targets.has(
+            entityTarget(entity.type, entity.collection, entity.id),
+          ) &&
           written !== undefined &&
           isStringArray(written) &&
           written.length === value.length &&

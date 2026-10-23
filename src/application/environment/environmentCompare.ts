@@ -20,6 +20,7 @@ import {
   translatePath,
 } from "./environmentCompareIds.js";
 import {
+  bulkIds,
   collectionScope,
   literalPositions,
   bodyTools,
@@ -354,7 +355,8 @@ const compareStep = (
         { category: "refused", pointer: "", env: message.slice(0, 200) },
       ],
     });
-  const args = environmentArguments(call, run.map);
+  const bulk = bulkIds(run, call, liveSegments);
+  const args = environmentArguments(call, run.map, bulk);
   const problem = check(args);
   if (problem !== undefined)
     return refusedWith(`Invalid arguments: ${problem}`);

@@ -101,30 +101,23 @@ export const unenveloped = (
   return wrapped?.member === envelope ? wrapped.object : undefined;
 };
 
-/** A call's body object as its plan takes it: an entity write's unwrapped from its envelope, and once the plan is built only one sent with the exemplar's query and wrapping. */
+/** A call's body object as its plan takes it: an entity write's unwrapped from its envelope, and once the plan is built only one sent with the exemplar's wrapping. */
 export const plannedObject = (
-  call: {
-    readonly body: JsonValue | undefined;
-    readonly query: string | null | undefined;
-  },
+  body: JsonValue | undefined,
   plan:
     | {
         readonly built: boolean;
         readonly envelope: string | undefined;
-        readonly query: string | null | undefined;
       }
     | undefined,
 ): JsonObject | undefined => {
-  // A recorded call with another query than the exemplar's may do something else with its body.
-  if (plan?.built === true && !sameQuery(plan.query, call.query))
-    return undefined;
   const envelope =
     plan === undefined
       ? undefined
       : plan.built
         ? plan.envelope
-        : envelopeOf(call.body)?.member;
-  const object = unenveloped(call.body, envelope);
+        : envelopeOf(body)?.member;
+  const object = unenveloped(body, envelope);
   return object !== undefined && isObject(object) ? object : undefined;
 };
 
@@ -421,7 +414,7 @@ export const derivedRule = (
     : undefined;
 };
 
-/** Why a call cannot take an update's rules: a derived value for an entity holding another than the recorded one, or a held clock sent otherwise than the entity holds it. */
+/** Why a call cannot take an update's rules: a derived value for an entity holding another than the recorded one, or a held clock not sent or sent otherwise than the entity holds it. */
 export const stampProblem = (
   rules: readonly FieldRule[],
   before: JsonObject,
@@ -434,9 +427,10 @@ export const stampProblem = (
       !same(before[rule.field] ?? null, rule.from)
     )
       return `Member ${rule.member} is accepted only on an entity whose ${rule.field} is as the recorded call found it, since the application derives ${rule.field} from it.`;
+    if (rule.rule === "held-clock" && !Object.hasOwn(sent, rule.field))
+      return `Member ${rule.field} must be sent with the value the entity holds, as the recorded call did.`;
     if (
       rule.rule === "held-clock" &&
-      Object.hasOwn(sent, rule.field) &&
       !same(sent[rule.field], before[rule.field])
     )
       return `Member ${rule.field} must repeat the value the entity holds, as the recorded call did.`;

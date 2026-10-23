@@ -19,6 +19,7 @@ import {
   envelopeOf,
   isOpaqueToken,
   restampedFields,
+  sameQuery,
   variedMembers,
 } from "./environmentStateWriteStamps.js";
 import {
@@ -29,6 +30,7 @@ import {
 import {
   collectionTarget,
   entityTarget,
+  succeeded,
 } from "./environmentStateWriteChecks.js";
 import {
   built,
@@ -147,6 +149,14 @@ const buildCreate = (
   const type = draft.plan.target!;
   const idField = context.idField(type);
   const members = fieldsOf(context.state.members(type, evidence.collection));
+  // Only calls serving would take, successful and with the exemplar's query, show that a member may vary.
+  const calls = new Set(step.tool.record_ordinals);
+  const taken = context.records.filter(
+    (record) =>
+      calls.has(record.ordinal) &&
+      succeeded(record) &&
+      sameQuery(record.query, step.record.query),
+  );
   const explained = explainCreate({
     entity: evidence.observed.object,
     call: evidence.call,
@@ -156,7 +166,7 @@ const buildCreate = (
     type: fieldsOf(context.state.ofType(type)),
     named: (id) => context.state.named(id),
     varied: variedMembers(
-      step.tool.record_ordinals.map((ordinal) => {
+      taken.map(({ ordinal }) => {
         const body = context.io.requestBody(ordinal);
         return envelopeOf(body)?.object ?? body;
       }),
@@ -414,7 +424,7 @@ export const applyCreate = (
       (draft.linked !== undefined && !fromLinkedSource(context, draft, step)))
   )
     return UNKNOWN;
-  const body = requestObject(context, step.record, draft);
+  const body = requestObject(context, step, draft);
   const observed = createdObservation(context, step, {
     type,
     collection,

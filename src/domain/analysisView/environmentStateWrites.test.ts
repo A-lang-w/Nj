@@ -2042,6 +2042,45 @@ describe("values an application stamps", () => {
   });
 });
 
+describe("nested clocks another recorded call kept", () => {
+  const CARD_INIT_ROWS: TimedCaptureRow[] = [
+    ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+    ["GET", "/api/cards/1", FIRST_CARD],
+    ["GET", "/api/cards/2", SECOND_CARD],
+  ];
+  /** The first card renamed, with its edit stamped 64 ms into the given exchange's second, or kept as it was. */
+  const card = (name: string, stampedAt?: number) => ({
+    ...FIRST_CARD,
+    name,
+    edit:
+      stampedAt === undefined
+        ? FIRST_CARD.edit
+        : {
+            at: new Date(Date.parse(bookClock(stampedAt)) + 64).toISOString(),
+            by: "rea",
+          },
+  });
+  const put = (written: ReturnType<typeof card>): TimedCaptureRow[] => [
+    ["PUT", "/api/cards/1", written, 200, { name: written.name }],
+    ["GET", "/api/cards/1", written],
+  ];
+  const verdictOf = (rows: readonly TimedCaptureRow[]) =>
+    planOf(stateOf([...CARD_INIT_ROWS, ...rows]), "put_cards_by_id");
+
+  it("serves no update whose nested clock another recorded call kept, before or after the call that stamped it", () => {
+    expect(
+      verdictOf([...put(card("Edited", 3)), ...put(card("Renamed", 5))]),
+    ).toMatchObject({ served: true });
+    const stamped = card("Edited", 3);
+    expect(
+      verdictOf([...put(stamped), ...put({ ...stamped, name: "Renamed" })]),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+    expect(
+      verdictOf([...put(card("Edited")), ...put(card("Renamed", 5))]),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+  });
+});
+
 /** A book with tags, as an application that keeps tags as a set lists them. */
 const tagged = (entry: Book, tags: string[]): Book => ({ ...entry, tags });
 const TAGGED_INIT_ROWS: TimedCaptureRow[] = [
@@ -2133,6 +2172,59 @@ describe("array fields a view lists sorted", () => {
     expect(
       state.views.find((view) => view.tool === "get_books_by_id"),
     ).not.toHaveProperty("sorted_arrays");
+  });
+});
+
+/** A book on a shelf, in a collection per shelf whose ids repeat across shelves. */
+const shelved = (tags: string[]) => ({ id: 1, name: "Shelved Book", tags });
+
+describe("evidence a learned sort keeps answering to", () => {
+  it("drops a sort a view learned once a later counted read lists the field as written", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+      [
+        "GET",
+        "/api/books",
+        [
+          tagged(FIRST_BOOK, ["alpha", "beta"]),
+          tagged(SECOND_BOOK, ["zeta", "delta"]),
+        ],
+      ],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 5],
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({ sorted_arrays: ["tags"] });
+    expect(
+      state.views.find((view) => view.tool === "get_books"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("learns no sorting from another collection's entity under the read's id", () => {
+    // Shelf 1's read-back fits `alpha`, held before the update, then `zeta` as written; shelf 2's book shares its id.
+    const state = stateOf([
+      ["GET", "/api/shelves/1/books", [shelved(["alpha", "beta"])]],
+      ["GET", "/api/shelves/1/books/1", shelved(["alpha", "beta"])],
+      ["GET", "/api/shelves/2/books", [shelved(["beta", "gamma"])]],
+      ["GET", "/api/shelves/2/books/1", shelved(["beta", "gamma"])],
+      [
+        "PATCH",
+        "/api/shelves/1/books/1",
+        shelved(["zeta", "alpha"]),
+        200,
+        { tags: ["zeta", "alpha"] },
+      ],
+      ["GET", "/api/shelves/1/books/1", shelved(["alpha", "zeta"])],
+    ]);
+    expect(state.writes).toEqual([
+      expect.objectContaining({ served: false, reason: "contradicted" }),
+    ]);
+    for (const view of state.views)
+      expect(view).not.toHaveProperty("sorted_arrays");
   });
 });
 
@@ -2298,5 +2390,120 @@ describe("clocks an update may stamp in its own second", () => {
     expect(plan.rules).toContainEqual(
       expect.objectContaining({ field: "modifiedAt", rule: "clock" }),
     );
+  });
+});
+
+/** A book with an `archived` flag, which an item action sets. */
+const withArchived = (entity: Book, archived: boolean): Book => ({
+  ...entity,
+  archived,
+});
+
+/** A post whose `status` goes with whether it has a publication clock. */
+const post = (id: number, status: string, publishedAt: string | null) => ({
+  id,
+  title: `Post ${id}`,
+  status,
+  published_at: publishedAt,
+});
+
+describe("recorded calls serving would refuse", () => {
+  it("serves no action that only a call sent with another query showed setting its field", () => {
+    const archived = withArchived(FIRST_BOOK, true);
+    // Serving pins toggle=true, so the call sent with toggle=false shows nothing of what serving does.
+    const plan = planOf(
+      stateOf([
+        [
+          "GET",
+          "/api/books",
+          [withArchived(FIRST_BOOK, false), withArchived(SECOND_BOOK, false)],
+        ],
+        ["GET", "/api/books/1", withArchived(FIRST_BOOK, false)],
+        ["GET", "/api/books/2", withArchived(SECOND_BOOK, false)],
+        ["POST", "/api/books/1/archive?toggle=true", archived],
+        ["GET", "/api/books/1", archived],
+        ["POST", "/api/books/1/archive?toggle=false", archived],
+        ["GET", "/api/books/1", archived],
+      ]),
+      "post_books_archive_by_id",
+    );
+    expect(plan).toMatchObject({ served: false, reason: "unconfirmed" });
+  });
+
+  it("confirms no document write by a call sent with another query than serving pins", () => {
+    // The dry run changed nothing; the read after the real call shows only what that call did.
+    const plan = planOf(
+      stateOf([
+        ["GET", "/api/settings", { theme: "light", lang: "en" }],
+        [
+          "PATCH",
+          "/api/settings?dry_run=true",
+          { theme: "dark", lang: "en" },
+          200,
+          { theme: "dark" },
+        ],
+        [
+          "PATCH",
+          "/api/settings?dry_run=false",
+          { theme: "dark", lang: "en" },
+          200,
+          { theme: "dark" },
+        ],
+        ["GET", "/api/settings", { theme: "dark", lang: "en" }],
+      ]),
+      "patch_settings",
+    );
+    expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
+  });
+
+  it("confirms no delete by a call sent with another query than serving pins", () => {
+    const plan = planOf(
+      stateOf([
+        ...BOOK_INIT_ROWS,
+        ["DELETE", "/api/books/2?dry_run=true", "", 204],
+        ["DELETE", "/api/books/1?dry_run=false", "", 204],
+        ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+      ]),
+      "delete_books_by_id",
+    );
+    expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
+  });
+
+  it("keeps a create's state at its recorded value, though a failed call or one with another query sent another", () => {
+    const draft = post(3, "draft", null);
+    const sent = { title: "Post 3", status: "draft" };
+    const others: TimedCaptureRow[] = [
+      ["POST", "/api/posts", { detail: "Invalid." }, 422, { status: "x" }],
+      [
+        "POST",
+        "/api/posts?import=true",
+        post(4, "published", bookClock(6)),
+        201,
+        { title: "Post 4", status: "published" },
+      ],
+    ];
+    for (const other of others) {
+      const plan = planOf(
+        stateOf([
+          [
+            "GET",
+            "/api/posts",
+            [
+              post(1, "published", "2026-10-01T09:00:00Z"),
+              post(2, "published", "2026-10-01T10:00:00Z"),
+            ],
+          ],
+          ["GET", "/api/posts/1", post(1, "published", "2026-10-01T09:00:00Z")],
+          ["GET", "/api/posts/2", post(2, "published", "2026-10-01T10:00:00Z")],
+          ["POST", "/api/posts", draft, 201, sent],
+          ["GET", "/api/posts/3", draft],
+          other,
+        ]),
+        "post_posts",
+      );
+      expect(plan.body?.fixed, other[1]).toEqual([
+        { member: "status", sent: "draft" },
+      ]);
+    }
   });
 });

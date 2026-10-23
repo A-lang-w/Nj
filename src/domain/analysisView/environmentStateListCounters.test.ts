@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import type { JsonValue } from "../jsonValue.js";
 import {
   timedCaptureEvidence,
   type TimedCaptureRow,
@@ -26,15 +27,24 @@ const page = (list: readonly JsonObject[], totalRows = list.length) => ({
   },
 });
 
-const rows: TimedCaptureRow[] = [
-  ["GET", "/api/records?limit=25", page(SEEDED)],
+/** A list beside a top-level total whose member name starts with a slash. */
+const slashed = (list: readonly JsonObject[]) => ({
+  list: [...list],
+  "/total_count": list.length,
+});
+
+/** Seeded reads, a filtered line, then a create its list read-back counts, each list in `envelope`. */
+const rowsOf = (
+  envelope: (list: readonly JsonObject[]) => JsonValue = page,
+): TimedCaptureRow[] => [
+  ["GET", "/api/records?limit=25", envelope(SEEDED)],
   ["GET", "/api/records/1", SEEDED[0]!],
   ["GET", "/api/records/2", SEEDED[1]!],
   ["GET", "/api/records/3", SEEDED[2]!],
   [
     "GET",
     "/api/records?where=(status,eq,Active)",
-    page([SEEDED[0]!, SEEDED[2]!]),
+    envelope([SEEDED[0]!, SEEDED[2]!]),
   ],
   [
     "POST",
@@ -44,13 +54,24 @@ const rows: TimedCaptureRow[] = [
     { name: "Vessel 4", status: "Laid Up" },
   ],
   ["GET", "/api/records/4", vessel(4, "Laid Up")],
-  ["GET", "/api/records?limit=25", page([...SEEDED, vessel(4, "Laid Up")])],
+  ["GET", "/api/records?limit=25", envelope([...SEEDED, vessel(4, "Laid Up")])],
 ];
+const rows = rowsOf();
 
 it("counts a total nested in a paging object, and serves the create its list read-back counts", () => {
   const state = environmentStateViewOf(timedCaptureEvidence(rows));
   expect(state.views.find((view) => view.tool === "get_records")).toMatchObject(
     { shape: "list", counters: ["/pageInfo/totalRows"] },
+  );
+  expect(
+    state.writes.find((write) => write.tool === "post_records"),
+  ).toMatchObject({ served: true, reason: null });
+});
+
+it("names a top-level total whose name starts with a slash by its pointer, and serves the create its list read-back counts", () => {
+  const state = environmentStateViewOf(timedCaptureEvidence(rowsOf(slashed)));
+  expect(state.views.find((view) => view.tool === "get_records")).toMatchObject(
+    { shape: "list", counters: ["/~1total_count"] },
   );
   expect(
     state.writes.find((write) => write.tool === "post_records"),

@@ -316,16 +316,17 @@ export class EnvironmentStateStore {
     entities: readonly StateEntity[],
   ): Result<void, AnalysisResourceConstraintError> {
     const replaced = new Map<StateEntity, StateEntity>();
-    let delta = 0;
     for (const entity of entities) {
       const held = this.#entities.get(
         compositeKey([entity.type, entity.collection, entity.id]),
       );
-      if (held === undefined) continue;
-      replaced.set(held, entity);
-      delta += jsonByteLength(entity) - jsonByteLength(held);
+      if (held !== undefined) replaced.set(held, entity);
     }
     if (replaced.size === 0) return ok(undefined);
+    // Sized from the replacements installed, so an entity named twice counts once.
+    let delta = 0;
+    for (const [held, entity] of replaced)
+      delta += jsonByteLength(entity) - jsonByteLength(held);
     const bytes = this.#grown(delta);
     if (!bytes.ok) return bytes;
     this.#install(

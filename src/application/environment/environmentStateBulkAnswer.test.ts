@@ -110,6 +110,205 @@ describe("served bulk write queries and capacity", () => {
   });
 });
 
+describe("served bulk write targets", () => {
+  it("takes a body's ids as written, refusing one that only decodes to a held id", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["PATCH", "/api/books", "", 204, { ids: ["1"], name: "Renamed Book" }],
+      ["GET", "/api/books/1", RENAMED_AT_3],
+      ["GET", "/api/books", [RENAMED_AT_3, SECOND_BOOK]],
+    ]);
+    const before = books.snapshot();
+    expect(
+      books.refusal("patch_books", { body: { ids: ["1", "%31"], name: "B" } }),
+    ).toMatchObject({
+      message: expect.stringContaining("holds no /api/books entity %31"),
+    });
+    expect(books.snapshot()).toBe(before);
+  });
+
+  it("keeps the size data/get writes when one replacement names an entity twice", () => {
+    const { store } = servedFrom(BULK_RENAME_ROWS);
+    const held = store.ofType("/api/books")[0]!;
+    const renamed = (name: string) => ({
+      ...held,
+      fields: { ...held.fields, name },
+    });
+    const updated = store.updateAll([renamed("A"), renamed("B")]);
+    expect(updated.ok).toBe(true);
+    expect(store.byteLength()).toBe(
+      Buffer.byteLength(JSON.stringify(store.snapshot()), "utf8"),
+    );
+  });
+});
+
+const uuid = (n: number): string =>
+  `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+/** A book holding child rows, which an update gives fresh ids. */
+const withRows = (id: number, name: string, row: number) => ({
+  id,
+  name,
+  rows: [{ id: uuid(row) }],
+});
+
+/** A card whose edit info an update restamps. */
+const card = (id: number, name: string, at: string | null) => ({
+  id,
+  name,
+  edit: at === null ? null : { at, by: "rea" },
+});
+const EDITED_AT = "2026-10-01T09:00:00.000Z";
+const CARDS = [
+  card(1, "One", EDITED_AT),
+  card(2, "Two", EDITED_AT),
+  card(3, "Three", null),
+];
+/** The first card as the bulk update recorded at exchange 4 stored it. */
+const EDITED_CARD = card(
+  1,
+  "Edited",
+  new Date(Date.parse("2026-10-17T18:00:04.000Z") + 53).toISOString(),
+);
+
+describe("served bulk updates of what each entity holds", () => {
+  it("renews the child rows the written entity holds", () => {
+    const books = servedFrom([
+      ["GET", "/api/books", [withRows(1, "One", 1), withRows(2, "Two", 2)]],
+      ["GET", "/api/books/1", withRows(1, "One", 1)],
+      ["GET", "/api/books/2", withRows(2, "Two", 2)],
+      ["PATCH", "/api/books", "", 204, { ids: [1], name: "After" }],
+      ["GET", "/api/books/1", withRows(1, "After", 3)],
+      ["GET", "/api/books", [withRows(1, "After", 3), withRows(2, "Two", 2)]],
+    ]);
+    expect(books.state.writes.get("patch_books")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "rows", rule: "renewed" }),
+      ]),
+    });
+    books.answer("patch_books", { body: { ids: [2], name: "Changed" } });
+    const rows = (
+      books.answer("get_books_by_id", { id: "2" }).body as {
+        rows: { id: string }[] | null;
+      }
+    ).rows;
+    expect(rows).toEqual([{ id: expect.any(String) }]);
+    expect(rows![0]!.id).not.toBe(uuid(2));
+  });
+
+  it("restamps the nested clock each entity holds, refusing one holding no object", () => {
+    const cards = servedFrom([
+      ["GET", "/api/cards", CARDS],
+      ...CARDS.map((entry): TimedCaptureRow => [
+        "GET",
+        `/api/cards/${String(entry.id)}`,
+        entry,
+      ]),
+      ["PATCH", "/api/cards", "", 204, { ids: [1], name: "Edited" }],
+      ["GET", "/api/cards/1", EDITED_CARD],
+      ["GET", "/api/cards", [EDITED_CARD, ...CARDS.slice(1)]],
+    ]);
+    expect(cards.state.writes.get("patch_cards")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "edit", rule: "nested-clock" }),
+      ]),
+    });
+    // A loaded state can hold an edit object another editor wrote.
+    const loaded = cards.store.snapshot();
+    expect(
+      cards.store.replace({
+        rea_state: {
+          ...loaded.rea_state,
+          entities: loaded.rea_state.entities.map((entity) =>
+            entity.id === "2"
+              ? {
+                  ...entity,
+                  fields: {
+                    ...entity.fields,
+                    edit: { at: EDITED_AT, by: "ops" },
+                  },
+                }
+              : entity,
+          ),
+        },
+      }).ok,
+    ).toBe(true);
+    cards.answer("patch_cards", { body: { ids: [2], name: "Edited" } });
+    expect(cards.answer("get_cards_by_id", { id: "2" }).body).toMatchObject({
+      edit: { by: "ops" },
+    });
+    const before = cards.snapshot();
+    expect(
+      cards.refusal("patch_cards", { body: { ids: [3], name: "Edited" } }),
+    ).toMatchObject({
+      message: expect.stringContaining("holds no edit object"),
+    });
+    expect(cards.snapshot()).toBe(before);
+  });
+});
+
+describe("served bulk delete options", () => {
+  it("deletes only with the members its recording sent besides the ids, as it sent them", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["DELETE", "/api/books", "", 204, { ids: [2], dry_run: false }],
+      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", [FIRST_BOOK]],
+    ]);
+    const before = books.snapshot();
+    for (const [body, message] of [
+      [{ ids: [1], dry_run: true }, "Member dry_run is accepted only"],
+      [{ ids: [1], dry_run: false, force: true }, "Member force is not one"],
+      [{ ids: [1] }, "lacks required members"],
+    ] as const)
+      expect(books.refusal("delete_books", { body }).message).toContain(
+        message,
+      );
+    expect(books.snapshot()).toBe(before);
+    expect(
+      books.answer("delete_books", { body: { ids: [1], dry_run: false } }),
+    ).toMatchObject({ status: 204 });
+    expect(books.store.ofType("/api/books").map((book) => book.id)).toEqual([
+      "2",
+    ]);
+  });
+
+  it("pins the members each recorded element sends besides its id", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["DELETE", "/api/books", "", 204, [{ id: 2, cascade: true }]],
+      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", [FIRST_BOOK]],
+    ]);
+    const before = books.snapshot();
+    expect(
+      books.refusal("delete_books", { body: [{ id: 1, cascade: false }] })
+        .message,
+    ).toContain("Member cascade is accepted only");
+    expect(books.snapshot()).toBe(before);
+    expect(
+      books.answer("delete_books", { body: [{ id: 1, cascade: true }] }),
+    ).toMatchObject({ status: 204 });
+  });
+
+  it("models a recorded call with other members as unknown rather than as a delete", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["DELETE", "/api/books", "", 204, { ids: [2], dry_run: false }],
+      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+      ["DELETE", "/api/books", "", 204, { ids: [1], dry_run: true }],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books", [FIRST_BOOK]],
+    ]);
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: true,
+      body: { fixed: [{ member: "dry_run", sent: false }] },
+    });
+  });
+});
+
 describe("served item actions", () => {
   it("sets what the action changed on the entity the path names", () => {
     const books = servedFrom([

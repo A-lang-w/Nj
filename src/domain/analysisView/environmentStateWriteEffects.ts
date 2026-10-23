@@ -145,6 +145,8 @@ export interface WriteStep {
   readonly tool: StateToolFacts;
   /** Set once the plan has a reason: the write only brings the state to its recorded outcome. */
   readonly observeOnly: boolean;
+  /** Whether the call sent the query serving pins, its exemplar's, as every call before the plan is built does. */
+  readonly pinned: boolean;
 }
 
 /**
@@ -206,20 +208,18 @@ export const refuse = (
   if (!step.observeOnly) draft.plan.reason = reason;
 };
 
-/** A call's body object; an entity write's is unwrapped from a one-element envelope, and once its plan is built only one sent with the exemplar's query and wrapping counts, as serving takes it. */
+/** A call's body object, none for a call serving refuses by its query; an entity write's is unwrapped from a one-element envelope, and once its plan is built only one sent with the exemplar's wrapping counts, as serving takes it. */
 export const requestObject = (
   context: EffectContext,
-  record: StateRecordFacts,
+  step: WriteStep,
   draft?: WriteDraft,
 ): JsonObject | undefined =>
-  plannedObject(
-    { body: context.io.requestBody(record.ordinal), query: record.query },
-    draft && {
-      built: built(draft),
-      envelope: draft.plan.body?.envelope,
-      query: context.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
-    },
-  );
+  step.pinned
+    ? plannedObject(
+        context.io.requestBody(step.record.ordinal),
+        draft && { built: built(draft), envelope: draft.plan.body?.envelope },
+      )
+    : undefined;
 
 export const callOf = (
   step: WriteStep,
@@ -428,9 +428,11 @@ export const applyUpdate = (
   });
   // An item action names its change in its path, so it may send no body.
   const body =
-    action && context.io.requestBody(step.record.ordinal) === undefined
+    action &&
+    step.pinned &&
+    context.io.requestBody(step.record.ordinal) === undefined
       ? {}
-      : requestObject(context, step.record, draft);
+      : requestObject(context, step, draft);
   return updateEntity(context, draft, step, { ...named, body });
 };
 

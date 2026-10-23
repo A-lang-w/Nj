@@ -73,7 +73,8 @@ export const listFacts = (
 
 /**
  * A list envelope's item totals, each by its counter: a top-level member's name, or the pointer to one in a
- * top-level object beside the list, such as `/pageInfo/totalRows`.
+ * top-level object beside the list, such as `/pageInfo/totalRows`; a top-level name starting with `/` is named by
+ * its pointer, so a counter starting with `/` is always one.
  */
 export const itemTotals = (
   parent: JsonObject,
@@ -82,7 +83,8 @@ export const itemTotals = (
   const root = pointerTokens(listPointer)[0];
   const totals: [string, JsonValue | undefined][] = [];
   for (const [name, value] of Object.entries(parent))
-    if (isItemTotal(name)) totals.push([name, value]);
+    if (isItemTotal(name))
+      totals.push([name.startsWith("/") ? pointerTo(name) : name, value]);
     else if (isObject(value) && name !== root)
       for (const [inner, count] of Object.entries(value))
         if (isItemTotal(inner))

@@ -204,7 +204,7 @@ describe("values an update stamps without being sent them", () => {
       stampProblem(
         rules,
         { ...before, excerpt: "Custom." },
-        { title: "No html" },
+        { title: "No html", updated_at: before.updated_at },
       ),
     ).toBeUndefined();
   });
@@ -337,6 +337,21 @@ describe("clocks an update sends back unchanged", () => {
     );
     expect(ruleFor(whole.rules, "created_at")?.rule).toBe("echo");
     expect(ruleFor(whole.rules, "updated_at")?.rule).toBe("echo");
+  });
+
+  it("echoes a creation clock a call sent back in the second the entity was made", () => {
+    const second = "2026-03-04T05:06:00.000Z";
+    const result = explainUpdate(
+      updated(
+        { id: "42", title: "Post", created_at: second },
+        { id: "42", title: "Post (edited)", created_at: second },
+        { title: "Post (edited)", created_at: second },
+      ),
+    );
+    expect(ruleFor(result.rules, "created_at")).toEqual({
+      field: "created_at",
+      rule: "echo",
+    });
   });
 });
 

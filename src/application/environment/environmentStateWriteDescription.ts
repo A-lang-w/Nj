@@ -69,7 +69,7 @@ export const describeWrite = (
     queryClause(query);
   if (address !== undefined && address.by !== "action")
     return plan.effect === "delete"
-      ? `removes the entities its body names by id from the served environment state${queryClause(query)}, modelled on the recorded calls`
+      ? `removes the entities its body names by id from the served environment state${body}, modelled on the recorded calls`
       : `changes the entities its body names by id in the served environment state${body}, modelled on the recorded calls`;
   if (address?.by === "action")
     return `applies ${quotedName(address.segment)} to the entity the path names in the served environment state${body}, modelled on the recorded calls`;

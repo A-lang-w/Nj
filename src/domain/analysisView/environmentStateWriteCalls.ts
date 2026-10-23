@@ -20,7 +20,9 @@ export const unsentChange = (rule: FieldRule): boolean =>
 
 /** Whether serving gives a rule's field a new value on every call, so no call may have kept it. */
 export const regenerates = (rule: FieldRule): boolean =>
-  rule.rule === "unique" || rule.rule === "renewed";
+  rule.rule === "unique" ||
+  rule.rule === "renewed" ||
+  rule.rule === "nested-clock";
 
 /** The fields a call showed as they were before it. */
 export const keptFields = (before: JsonObject, after: JsonObject): string[] =>
@@ -86,10 +88,7 @@ export const contradictsEarlierCalls = (
   const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
   return rules.some(
     (rule) =>
-      (unsentChange(rule) ||
-        regenerates(rule) ||
-        rule.rule === "clock" ||
-        rule.rule === "nested-clock") &&
+      (unsentChange(rule) || regenerates(rule) || rule.rule === "clock") &&
       !ruled.has(rule.field) &&
       draft.updates.some(({ shown, sent, kept }) => {
         if (regenerates(rule)) return kept.includes(rule.field);

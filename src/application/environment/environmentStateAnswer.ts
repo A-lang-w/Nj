@@ -206,6 +206,8 @@ export const stateAnswer = (
 export interface ItemCall {
   readonly segments: readonly SuppliedSegment[];
   readonly id: string;
+  /** Set for an id a body names, which is taken as written rather than percent-decoded. */
+  readonly literal?: boolean;
 }
 
 /** What an item call names, or undefined when a path argument is missing; an item action's id comes before its action segment. */
@@ -222,7 +224,7 @@ export const itemCall = (
     : undefined;
 };
 
-/** The entity an item call names, preferring verbatim collection spellings as replay does; the id is tried percent-decoded, then as written. */
+/** The entity an item call names, preferring verbatim collection spellings as replay does; the id is tried percent-decoded, then as written, unless it is literal. */
 /** Whether the state started with the item a call names, which a served delete may since have removed. */
 const startedWithItem = (
   store: EnvironmentStateStore,
@@ -244,7 +246,10 @@ export const namedEntity = (
   type: string,
   call: ItemCall,
 ): StateEntity | undefined => {
-  const ids = [...new Set([decodedSegment(call.id), call.id])];
+  const ids =
+    call.literal === true
+      ? [call.id]
+      : [...new Set([decodedSegment(call.id), call.id])];
   const candidates = store
     .collectionsOf(type)
     .flatMap((collection) => {

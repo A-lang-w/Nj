@@ -5,7 +5,7 @@ type JsonObject = { [key: string]: JsonValue };
 const isObject = (value: JsonValue | undefined): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** A list counter's member names: a top-level member, or a pointer to one in a top-level object (`/pageInfo/totalRows`). */
+/** A list counter's member names: a top-level member's name not starting with `/`, else a pointer (`/pageInfo/totalRows`, `/~1total`). */
 export const counterPath = (counter: string): string[] =>
   counter.startsWith("/")
     ? counter

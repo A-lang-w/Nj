@@ -28,22 +28,28 @@ relation rows), and six need only a better recording. This change addresses the 
   and the state does not contradicts the create.
 - **Constant guard.** A create member is accepted only with its recorded value when a constant derives from it: its
   echoed text inside the constant, a referenced entity's string, or an instant beside a sent date, matched by related
-  field names.
+  field names. Only successful calls sent with the exemplar's query show that a member may vary.
 - **Update rules.** An update's unsent change can be a modified-by stamp beside a created-by counterpart (with its id
-  sibling), a value derived from the one sent member stored nowhere (accepted only while the target holds the
-  recorded before-value), or a sent clock left in the call's own second. An unsent clock left in the call's own second
-  keeps the update unconfirmed until another call shows it stamped. Objects whose clocks moved with the request are
-  nested clocks, stored from the read-back on creates and updates; opaque tokens of a type's own length are
-  generated; an enveloped body is learned as its one object. A write takes only its recorded query, and an echoed
-  reference to a nested object or a state word paired with other fields stays at its recorded value. The served
-  catalog names these values.
+  sibling), a value derived from the one sent member stored nowhere (accepted only while the target holds the recorded
+  before-value), or a sent clock other than a creation clock left in the call's own second, which every call must then
+  send with the value the entity holds. An unsent clock left in the call's own second keeps the update unconfirmed until
+  another call shows it stamped. Objects whose clocks moved with the request are nested clocks, stored from the
+  read-back on creates and updates and refused once any call left the object as it was; opaque tokens of a type's own
+  length are generated; an enveloped body is learned as its one object. A write takes only its recorded query, and a
+  call sent with another neither confirms nor teaches its plan: a create or update only brings the state to what it
+  recorded, and a delete, document or bulk call leaves its target unknown. An echoed reference to a nested object or a
+  state word paired with other fields stays at its recorded value. The served catalog names these values.
 - **View order.** A collection's initial order comes from the first list line that shows every entity its type's
   sightings do and applies no order. A view renders a string array sorted only after a counted read-back shows an
-  order that neither the written order nor existing-values-first explains, and never once a read showed it unsorted.
+  order that neither the written order nor existing-values-first explains, among the entities that read covers in its
+  own collection, and never once a read showed it unsorted, which also drops a sort the view had learned.
   Sort and direction parameters share one vocabulary and are never learned as inert. A create placed by disagreeing
   sorts or a random id falls back to `last`.
 - **Bulk writes.** A write at a type's collection whose body names entities by id, as an id array or objects carrying
-  the id field, deletes or updates each one, all or none; serving refuses it unless every id is held.
+  the id field, deletes or updates each one, all or none; serving refuses it unless every id is held. Body ids are
+  taken as written, and a call naming one entity twice is refused. Each entity's generated values come from that
+  entity, sharing the call's clock and counters. A delete requires the members its exemplar sent besides the ids, with
+  their recorded values. Comparison translates a bulk body's ids with the mapping of the collection the write targets.
 - **Item actions.** A write to an item path plus a literal segment that names no collection, whose calls answer
   nothing or the entity (never a 201, and with every field its item read always shows), updates that entity; a scalar
   it changes without sending is set on every call. It is served only once a call found every field it sets already at
@@ -54,7 +60,8 @@ relation rows), and six need only a better recording. This change addresses the 
   is that path, leave it out: item envelopes, and the write gate's item, list and document reads, compare without it.
   The view names it in `per_response_members`, and serving keeps the recorded value.
 - **Nested counters.** An item total in a top-level object beside the list is a counter on the same evidence as a
-  top-level one, rendered from the state through its pointer.
+  top-level one, rendered from the state through its pointer. A top-level member whose name starts with `/` is named by
+  its pointer (`/~1total`).
 
 ## Acceptance
 

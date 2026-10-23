@@ -183,7 +183,7 @@ const viewSchema = z.discriminatedUnion("shape", [
     counters: z
       .array(z.string())
       .describe(
-        "Envelope members that count the listed entities: a top-level member's name, or a JSON pointer to one in a top-level object beside the list (`/pageInfo/totalRows`).",
+        "Envelope members that count the listed entities: a top-level member's name, or a JSON pointer to one in a top-level object beside the list (`/pageInfo/totalRows`); a top-level name starting with `/` is written as its pointer (`/~1total`).",
       ),
     query: listQuerySchema
       .optional()
