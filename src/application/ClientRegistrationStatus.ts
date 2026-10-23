@@ -540,7 +540,8 @@ const clientEvidencePresent = async (
   Result<boolean, { readonly path: string; readonly detail: string }>
 > => {
   let unavailable:
-    { readonly path: string; readonly detail: string } | undefined;
+    | { readonly path: string; readonly detail: string }
+    | undefined;
   for (const path of clientEvidencePaths(client)) {
     try {
       await lstat(path);
