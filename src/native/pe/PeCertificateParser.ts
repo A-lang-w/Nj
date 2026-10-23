@@ -127,7 +127,7 @@ export const parsePeCertificates = (
         )
           fail("WIN_CERTIFICATE has invalid PKCS#7 alignment padding.");
         payload = entryPayload.subarray(0, root.end);
-        const parsed = parsePkcs7SignedData(payload);
+        const parsed = parsePkcs7SignedData(payload, root);
         pkcs7 = {
           content_type_oid: parsed.content_type_oid,
           content_type_name: oidName(parsed.content_type_oid),
