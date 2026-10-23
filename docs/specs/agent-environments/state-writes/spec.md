@@ -97,8 +97,8 @@ its own (a body with no list counts an identity member at any depth). An id shor
 so it links only to a type a successful read showed before the call. The plan
 records that read's collection, and serving creates there, since the call's own
 path names no collection of the type. That collection holds only for the
-exemplar's path arguments, each as recorded or in the other spelling once
-percent-decoded: serving refuses a call with others, and the gate counts such a
+exemplar's path arguments, compared segment by segment, each as recorded or in
+the other spelling once percent-decoded: serving refuses a call with others, and the gate counts such a
 recorded call as a write no built plan models. A linked create's call is
 observed only in a read of an id its response returned, at the top or in an
 envelope member, so another unseen item's read is never taken for it.

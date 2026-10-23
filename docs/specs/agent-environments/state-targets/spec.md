@@ -31,11 +31,11 @@ its cause in the recordings and the code. The five largest shared causes:
 - **Linked creates.** A POST whose path names no state type becomes a create into the type whose item read first names
   an id its response returned, before any other tool's write, when the id is new: no earlier read of the id, its
   type's lists or that collection showed it. Its observation is a read of an id its response returned, in an envelope
-  too. Serving creates in that read's collection, for the exemplar's path arguments only, in either spelling. A
-  successful POST that returned an id a type's reads only show once it began ends that type's initial window: a read
-  still running then may show it, and a list read shows its listed entities' own ids (identity-named, or a
-  suffix-named field such as `projectId` distinct across two or more when no id-named field identifies them), not
-  those they nest.
+  too. Serving creates in that read's collection, for the exemplar's path arguments only (segment by segment, in
+  either spelling), and fills path fields with the arguments decoded once. A successful POST that returned an id a
+  type's reads only show once it began ends that type's initial window: a read still running then may show it, and a
+  list read shows its listed entities' own ids (identity-named, or a suffix-named field such as `projectId` distinct
+  across two or more when no id-named field identifies them), not those they nest.
 - **Rewrite cuts.** When a type's reads disagree across a write under another root, the type's initial window ends at
   the earliest write within the change and the state is extracted again. The earlier of this and the creation cut wins.
 - **Variant lines.** A read line that shows the same entities in another form is a variant: it leaves the view's
@@ -47,7 +47,7 @@ its cause in the recordings and the code. The five largest shared causes:
   evidence. A call asking for some fields only replays unless every value it gives is `*` or one a checked line gave,
   and no replayed read gave it. The write gate skips exactly the successful reads serving replays, by the same
   decision. A filter role whose name matches no field needs two agreeing values. A tool whose lines would take more
-  than 2^24 entity lookups to compare pairwise keeps every line checked.
+  than 2^24 line pairs and entity lookups to compare pairwise keeps every line checked.
 
 ## Acceptance
 

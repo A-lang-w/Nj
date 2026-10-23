@@ -320,18 +320,19 @@ export const linkedCollection = (
     ? plan.collection
     : undefined;
 
-/** The values a recorded path gives its template's parameters as spelled, undecoded; undefined when it does not fit. */
+/**
+ * The values a recorded path gives its template's parameters as spelled, undecoded, by segment
+ * position, since a template may name two parameters alike; undefined when it does not fit.
+ */
 export const recordedPathValues = (
   template: string,
   path: string,
-): Map<string, string> | undefined => {
+): Map<number, string> | undefined => {
   if (pathValuesOf(template, path) === undefined) return undefined;
   const segments = segmentsOf(path);
   return new Map(
     segmentsOf(template).flatMap((segment, index) =>
-      isParam(segment)
-        ? [[segment.slice(1, -1), segments[index]!] as const]
-        : [],
+      isParam(segment) ? [[index, segments[index]!] as const] : [],
     ),
   );
 };
@@ -344,15 +345,15 @@ export const recordedPathValues = (
 export const sameLinkedSource = (
   template: string,
   exemplar: string | undefined,
-  call: ReadonlyMap<string, string> | undefined,
+  call: ReadonlyMap<number, string> | undefined,
 ): boolean => {
   const recorded =
     exemplar === undefined ? undefined : recordedPathValues(template, exemplar);
   if (recorded === undefined || call === undefined) return false;
   return (
     recorded.size === call.size &&
-    [...recorded].every(([name, value]) => {
-      const given = call.get(name);
+    [...recorded].every(([index, value]) => {
+      const given = call.get(index);
       return given !== undefined && pathSegmentMatches(value, given);
     })
   );

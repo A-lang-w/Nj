@@ -160,12 +160,18 @@ export const readOnlyTools = (
   const position = new Map(
     records.map((record, index) => [record.ordinal, index]),
   );
-  const writesBetween =
+  /** The timeline indexes of the nearest state writes either side of `at`, the skipped calls aside: -1 and the length when none. */
+  const nearestWrites =
     (skip: ReadonlySet<number>) =>
-    (from: number, to: number): boolean =>
-      records
-        .slice(from + 1, to)
-        .some((record) => !skip.has(record.ordinal) && isStateWrite(record));
+    (at: number): { readonly before: number; readonly after: number } => {
+      const writes = (index: number): boolean =>
+        !skip.has(records[index]!.ordinal) && isStateWrite(records[index]!);
+      let before = at - 1;
+      while (before >= 0 && !writes(before)) before -= 1;
+      let after = at + 1;
+      while (after < records.length && !writes(after)) after += 1;
+      return { before, after };
+    };
   const candidates = new Map<string, readonly StateRecordFacts[]>();
   for (const tool of tools) {
     if (
@@ -177,9 +183,9 @@ export const readOnlyTools = (
       .map((ordinal) => records[position.get(ordinal) ?? -1])
       .filter((record): record is StateRecordFacts => record !== undefined);
     if (!calls.some(succeeded) || calls.some(unresolved)) continue;
-    const between = writesBetween(new Set(tool.record_ordinals));
+    const writes = nearestWrites(new Set(tool.record_ordinals));
     if (
-      repeatsRead(calls, records, { position, between, io }) ||
+      repeatsRead(calls, records, { position, writes, io }) ||
       namesReadOperations(calls, io) ||
       namesLookup(tool.path_template)
     )
@@ -187,12 +193,12 @@ export const readOnlyTools = (
   }
   // No candidate's call explains a read change across another's, so drop vetoed candidates until none is.
   for (let vetoed = true; vetoed;) {
-    const between = writesBetween(
+    const writes = nearestWrites(
       new Set([...candidates.values()].flat().map((call) => call.ordinal)),
     );
     vetoed = false;
     for (const [name, calls] of candidates)
-      if (changesReadsAcross(calls, records, { position, between, io })) {
+      if (changesReadsAcross(calls, records, { position, writes, io })) {
         candidates.delete(name);
         vetoed = true;
       }
@@ -202,7 +208,11 @@ export const readOnlyTools = (
 
 interface Timeline {
   readonly position: ReadonlyMap<number, number>;
-  readonly between: (from: number, to: number) => boolean;
+  /** The nearest other writes either side of a timeline index. */
+  readonly writes: (at: number) => {
+    readonly before: number;
+    readonly after: number;
+  };
   readonly io: QueryCallIo;
 }
 
@@ -225,24 +235,23 @@ const lastFinishedBefore = (
 const repeatsRead = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
-  { position, between, io }: Timeline,
+  { position, writes, io }: Timeline,
 ): boolean =>
   calls.filter(succeeded).every((call) => {
     const at = position.get(call.ordinal)!;
+    // Only reads after the last other write show the state the call met.
     const read = lastFinishedBefore(
       records
-        .slice(0, at)
+        .slice(writes(at).before + 1, at)
         .filter(
           (record) =>
             record.method === "GET" &&
             record.path === call.path &&
-            succeeded(record) &&
-            !between(position.get(record.ordinal)!, at),
+            succeeded(record),
         ),
       call,
     );
-    if (read === undefined || between(position.get(read.ordinal)!, at))
-      return false;
+    if (read === undefined) return false;
     const answered = io.response(call.ordinal);
     return answered !== undefined && same(answered, io.response(read.ordinal));
   });
@@ -278,52 +287,48 @@ const lastMeaningfulWord = (segment: string): string | undefined =>
 
 /**
  * A GET line whose path a call's path relates to reads differently, or finds its entity present on one
- * side only, just before and just after it, with no other write between: the reads finished before it
- * began and began after it ended, since one overlapping it may show either state.
+ * side only, just before and just after it, with no other write between: the read that finished last
+ * before it began and the first begun after it ended, since one overlapping it may show either state.
+ * One pass over the reads between the nearest other writes serves every line.
  */
 const changesReadsAcross = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
-  { position, between, io }: Timeline,
+  { position, writes, io }: Timeline,
 ): boolean =>
   calls.filter(succeeded).some((call) => {
     const at = position.get(call.ordinal)!;
-    const lineOf = (record: StateRecordFacts): string =>
-      `${record.path}${record.query ?? ""}`;
-    const related = records.filter(
-      (record) =>
-        record.method === "GET" &&
-        (succeeded(record) || isAbsence(record.status)) &&
-        prefixRelated(call.path, record.path),
-    );
-    return [...new Set(related.map(lineOf))].some((line) => {
-      // A read before another write shows the state that write changed, so only later ones count.
-      const before = lastFinishedBefore(
-        related.filter(
-          (record) =>
-            lineOf(record) === line &&
-            position.get(record.ordinal)! < at &&
-            !between(position.get(record.ordinal)!, at),
-        ),
-        call,
-      );
-      const after = related.find(
-        (record) =>
-          lineOf(record) === line &&
-          position.get(record.ordinal)! > at &&
-          record.start >= call.end,
-      );
-      if (before === undefined || after === undefined) return false;
-      const from = position.get(before.ordinal)!;
-      const to = position.get(after.ordinal)!;
-      if (between(from, at) || between(at, to)) return false;
-      if (succeeded(before) !== succeeded(after)) return true;
-      if (!succeeded(before)) return false;
-      const earlier = io.response(before.ordinal);
-      const later = io.response(after.ordinal);
-      return (
-        earlier !== undefined && later !== undefined && !same(earlier, later)
-      );
+    const { before: lastWrite, after: nextWrite } = writes(at);
+    const before = new Map<string, StateRecordFacts>();
+    const after = new Map<string, StateRecordFacts>();
+    for (let index = lastWrite + 1; index < nextWrite; index += 1) {
+      const record = records[index]!;
+      if (
+        index === at ||
+        record.method !== "GET" ||
+        !(succeeded(record) || isAbsence(record.status)) ||
+        !prefixRelated(call.path, record.path)
+      )
+        continue;
+      const line = `${record.path}${record.query ?? ""}`;
+      const latest = before.get(line);
+      if (index < at) {
+        if (
+          record.end <= call.start &&
+          (latest === undefined || record.end >= latest.end)
+        )
+          before.set(line, record);
+      } else if (record.start >= call.end && !after.has(line))
+        after.set(line, record);
+    }
+    return [...after].some(([line, later]) => {
+      const earlier = before.get(line);
+      if (earlier === undefined) return false;
+      if (succeeded(earlier) !== succeeded(later)) return true;
+      if (!succeeded(earlier)) return false;
+      const was = io.response(earlier.ordinal);
+      const now = io.response(later.ordinal);
+      return was !== undefined && now !== undefined && !same(was, now);
     });
   });
 

@@ -81,7 +81,8 @@ export const lineShapes = (
         shapes.set(observation.ordinal, shape);
       }
       const key = JSON.stringify([entity.type, entity.collection, entity.id]);
-      const signature = [...members].sort(compare).join(",");
+      // A JSON array, since a member name may hold any separator.
+      const signature = JSON.stringify([...members].sort(compare));
       if (!shape.entities.has(key))
         retain(ENTRY_BYTES + textBytes(key.length + signature.length));
       shape.entities.set(key, signature);
@@ -104,7 +105,7 @@ const EMPTY: LineShape = {
   common: undefined,
 };
 
-/** Entity lookups the pairwise variant pass may make; a plan whose lines need more keeps every line checked. */
+/** Line pairs and entity lookups the variant pass may make; a plan whose lines need more keeps every line checked. */
 const VARIANT_WORK_LIMIT = 1 << 24;
 
 /** Whether two lines show a shared entity with different members. */
@@ -113,6 +114,31 @@ const conflicts = (left: LineShape, right: LineShape): boolean =>
     ([key, members]) =>
       right.entities.has(key) && right.entities.get(key) !== members,
   );
+
+/** The base lines so far, with their shaping parameter names, the members their objects carry and those every one carries. */
+interface BaseLines {
+  readonly lines: StateRecordFacts[];
+  readonly names: Set<string>;
+  readonly carried: Set<string>;
+  common: Set<string> | undefined;
+}
+
+/** Add a base line, keeping the totals a later line is compared with. */
+const addBase = (
+  base: BaseLines,
+  record: StateRecordFacts,
+  shape: LineShape,
+): void => {
+  base.lines.push(record);
+  for (const name of shapingNames(record.query)) base.names.add(name);
+  for (const member of shape.carried) base.carried.add(member);
+  const { common } = shape;
+  if (common !== undefined)
+    base.common =
+      base.common === undefined
+        ? new Set(common)
+        : new Set([...base.common].filter((member) => common.has(member)));
+};
 
 /**
  * The latest lines that show the plan's entities in another representation than its base lines, as
@@ -130,36 +156,45 @@ export const variantLines = (
     (sum, line) => sum + line.entities.size,
     0,
   );
-  if (latest.length * entities > VARIANT_WORK_LIMIT) return [];
+  // Each line is compared with every other, pair by pair and entity by entity.
+  if (latest.length * (latest.length + entities) > VARIANT_WORK_LIMIT)
+    return [];
   const shape = (record: StateRecordFacts): LineShape => shapes.get(record)!;
-  const agreeing = new Map(
-    latest.map((record) => [
-      record,
-      latest.filter(
+  const ranks = new Map(
+    latest.map((record) => {
+      const names = shapingNames(record.query).length;
+      const agreeing = latest.filter(
         (other) => other !== record && !conflicts(shape(record), shape(other)),
-      ).length,
-    ]),
+      ).length;
+      return [
+        record,
+        [
+          names === 0 ? 0 : 1,
+          projectsFields(record.query ?? undefined) ? 1 : 0,
+          -agreeing,
+          names,
+          shape(record).carried.size,
+        ],
+      ];
+    }),
   );
-  const size = (record: StateRecordFacts): number => shape(record).carried.size;
-  const rank = (record: StateRecordFacts): number[] => [
-    shapingNames(record.query).length === 0 ? 0 : 1,
-    projectsFields(record.query ?? undefined) ? 1 : 0,
-    -agreeing.get(record)!,
-    shapingNames(record.query).length,
-    size(record),
-  ];
   // Base lines first: no shaping query, then no projection, then the line most others agree with.
   const ordered = [...latest].sort((left, right) => {
-    const [a, b] = [rank(left), rank(right)];
+    const [a, b] = [ranks.get(left)!, ranks.get(right)!];
     const differs = a.findIndex((value, index) => value !== b[index]);
     return differs === -1 ? 0 : a[differs]! - b[differs]!;
   });
-  const base: StateRecordFacts[] = [];
+  const base: BaseLines = {
+    lines: [],
+    names: new Set(),
+    carried: new Set(),
+    common: undefined,
+  };
   const variants: StateRecordFacts[] = [];
   for (const record of ordered) {
-    if (base.length > 0 && isVariant(record, base, shape))
+    if (base.lines.length > 0 && isVariant(record, base, shape))
       variants.push(record);
-    else base.push(record);
+    else addBase(base, record, shape(record));
   }
   return variants;
 };
@@ -167,30 +202,19 @@ export const variantLines = (
 /** Whether a line shows a base line's entity with other members, or names a new shaping parameter while its objects carry or lack members the base lines do not. */
 const isVariant = (
   record: StateRecordFacts,
-  base: readonly StateRecordFacts[],
+  base: BaseLines,
   shape: (record: StateRecordFacts) => LineShape,
 ): boolean => {
   const mine = shape(record);
-  if (base.some((line) => conflicts(mine, shape(line)))) return true;
-  const baseNames = new Set(base.flatMap((line) => shapingNames(line.query)));
-  if (!shapingNames(record.query).some((name) => !baseNames.has(name)))
+  if (base.lines.some((line) => conflicts(mine, shape(line)))) return true;
+  if (!shapingNames(record.query).some((name) => !base.names.has(name)))
     return false;
-  const carried = new Set(base.flatMap((line) => [...shape(line).carried]));
-  const commons = base.flatMap((line) => {
-    const common = shape(line).common;
-    return common === undefined ? [] : [common];
-  });
-  const common =
-    commons.length === 0
-      ? undefined
-      : [...commons[0]!].filter((member) =>
-          commons.every((set) => set.has(member)),
-        );
+  const { common } = mine;
   return (
-    [...mine.carried].some((member) => !carried.has(member)) ||
-    (mine.common !== undefined &&
-      common !== undefined &&
-      common.some((member) => !mine.common!.has(member)))
+    [...mine.carried].some((member) => !base.carried.has(member)) ||
+    (common !== undefined &&
+      base.common !== undefined &&
+      [...base.common].some((member) => !common.has(member)))
   );
 };
 

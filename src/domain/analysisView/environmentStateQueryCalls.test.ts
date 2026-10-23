@@ -428,3 +428,55 @@ describe("the reads either side of a POST", () => {
     ).toEqual([]);
   });
 });
+
+describe("read-only decisions over many lines", () => {
+  it("reads each related line's records once per call, however many lines the lookup's path relates to", () => {
+    let reads = 0;
+    const lines = 2000;
+    const records: StateRecordFacts[] = Array.from(
+      { length: lines + 1 },
+      (_, index) => {
+        const read = index < lines;
+        const record = {
+          ordinal: index,
+          method: read ? "GET" : "POST",
+          path: read ? "/api/members" : "/api/members/ids",
+          status: 200,
+          start: index,
+          end: index,
+        };
+        const query = read ? `?page=${String(index)}` : undefined;
+        return Object.defineProperty(record, "query", {
+          enumerable: true,
+          get: () => {
+            reads += 1;
+            return query;
+          },
+        }) as StateRecordFacts;
+      },
+    );
+    const tools: StateToolFacts[] = [
+      {
+        name: "get_members",
+        method: "GET",
+        path_template: "/api/members",
+        record_ordinals: records
+          .slice(0, lines)
+          .map((record) => record.ordinal),
+      },
+      {
+        name: "post_ids",
+        method: "POST",
+        path_template: "/api/members/ids",
+        record_ordinals: [lines],
+      },
+    ];
+    expect([
+      ...readOnlyTools(tools, records, {
+        response: () => [],
+        request: () => undefined,
+      }),
+    ]).toEqual(["post_ids"]);
+    expect(reads).toBeLessThan(20 * records.length);
+  });
+});

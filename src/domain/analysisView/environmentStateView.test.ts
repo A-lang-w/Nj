@@ -827,6 +827,85 @@ it("leaves every line checked rather than compare more lines than the variant pa
   expect(looked).toBeLessThan(10 * lines.length);
 });
 
+it("tells apart member names that hold the separator, so a line spelling them otherwise is a variant", () => {
+  const line = (ordinal: number, query: string) => ({
+    ordinal,
+    method: "GET",
+    path: "/api/items/1",
+    query,
+    status: 200,
+    start: ordinal,
+    end: ordinal,
+  });
+  const observed = (ordinal: number, object: JsonObject) => ({
+    position: ordinal,
+    index: 0,
+    ordinal,
+    tool: "get_items_by_id",
+    item: true,
+    object,
+  });
+  const shapes = lineShapes(
+    [
+      {
+        type: "/api/items",
+        collection: "/api/items",
+        id: "1",
+        order: [1, 0],
+        observations: [
+          observed(1, { id: 1, a: 1, b: 2 }),
+          observed(2, { id: 1, "a,b": 3 }),
+        ],
+      },
+    ],
+    () => undefined,
+  );
+  expect(
+    variantLines([line(1, "?view=x"), line(2, "?view=y")], (record) =>
+      shapes.get(record.ordinal),
+    ),
+  ).toHaveLength(1);
+});
+
+it("leaves every line checked when comparing many mostly empty lines would exceed the variant pass's work", () => {
+  let reads = 0;
+  const lines = Array.from({ length: 4200 }, (_, ordinal) => {
+    const record = {
+      ordinal,
+      method: "GET",
+      path: "/api/items",
+      status: 200,
+      start: ordinal,
+      end: ordinal,
+    };
+    return Object.defineProperty(record, "query", {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return `?page=${String(ordinal)}`;
+      },
+    }) as typeof record & { readonly query: string };
+  });
+  const empty = {
+    entities: new Map(),
+    carried: new Set<string>(),
+    common: undefined,
+  };
+  const shown = {
+    entities: new Map([
+      ["1", "id"],
+      ["2", "id"],
+    ]),
+    carried: new Set(["id"]),
+    common: new Set(["id"]),
+  };
+  expect(
+    variantLines(lines, (record) => (record.ordinal === 0 ? shown : empty)),
+  ).toEqual([]);
+  // Comparing every pair would read each line's query thousands of times.
+  expect(reads).toBeLessThan(10 * lines.length);
+});
+
 it("releases a planning pass a rewrite cut discards before extracting the state again", () => {
   const recipe = (id: number, views: number) => ({
     id,

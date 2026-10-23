@@ -1691,6 +1691,83 @@ describe("creates read under another path", () => {
       }),
     ).toMatchObject({ status: 201 });
   });
+});
+
+describe("path values of creates read under another path", () => {
+  it("refuses a linked create that changes one of two path values its template names alike", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const group = "/api/projects/11/groups/5";
+    const notes = servedFrom([
+      ["GET", `${group}/notes`, [alpha, beta]],
+      ["GET", `${group}/notes/1001`, alpha],
+      ["GET", `${group}/notes/1002`, beta],
+      ["POST", `${group}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", `${group}/notes/1003`, gamma],
+      ["GET", `${group}/notes`, [alpha, beta, gamma]],
+    ]);
+    const publish = notes.source.manifest.tools.find(
+      (tool) => tool.method === "POST",
+    )!;
+    expect(publish.path_template).toBe(
+      "/api/projects/{numeric}/groups/{numeric}/publish",
+    );
+    const [project, groupArgument] =
+      environmentToolArguments(publish).path.values();
+    expect(notes.state.writes.get(publish.name)).toMatchObject({
+      served: true,
+      collection: `${group}/notes`,
+    });
+    // Project 12's group 5 is another source, though the group value matches.
+    expect(
+      notes.refusal(publish.name, {
+        [project!]: "12",
+        [groupArgument!]: "5",
+        body: { title: "Delta" },
+      }),
+    ).toMatchObject({ code: "invalid_request" });
+  });
+
+  it("fills a linked create's path field with the decoded value, whichever spelling the call uses", () => {
+    const note = (id: number, title: string) => ({
+      id,
+      title,
+      project: "my org1",
+    });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const other = { id: 2001, title: "Other", project: "my org2" };
+    const project = "/api/projects/my%20org1";
+    for (const spelling of ["my%20org1", "my org1"]) {
+      // A second project makes the project segment a path parameter.
+      const notes = servedFrom([
+        ["GET", "/api/projects/my%20org2/notes", [other]],
+        ["GET", "/api/projects/my%20org2/notes/2001", other],
+        ["GET", `${project}/notes`, [alpha, beta]],
+        ["GET", `${project}/notes/1001`, alpha],
+        ["GET", `${project}/notes/1002`, beta],
+        ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+        ["GET", `${project}/notes/1003`, gamma],
+        ["GET", `${project}/notes`, [alpha, beta, gamma]],
+        ["POST", "/api/projects/my%20org2/publish", { ok: true }, 200, {}],
+      ]);
+      notes.answer("post_projects_publish_by_project_id", {
+        project_id: spelling,
+        body: { title: "Delta" },
+      });
+      const created = notes.store
+        .snapshot()
+        .rea_state.entities.filter((entity) => entity.fields.title === "Delta");
+      expect(created).toMatchObject([{ fields: { project: "my org1" } }]);
+    }
+  });
 
   it("counts a linked create's call from a source that names the exemplar's only after decoding twice as another source's", () => {
     const note = (id: number, title: string) => ({ id, title });
