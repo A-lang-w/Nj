@@ -59,6 +59,8 @@ write tool is lost.
   copy survived; Baserow's, Grocy's and Keycloak's published captures predate the ones measured above. On that set the
   previous head and this one both give 187 write tools, 62 served (smoke 62 of 62), 1,151 views and 2,085 of 2,155
   recorded reads matching.
+- **Fifth round** (on main `6a34be41`): no verdict, read view or recorded read changes on the same restored captures,
+  once the serving check passes a repeated query value as an array, as main now expects.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
