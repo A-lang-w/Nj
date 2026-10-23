@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import { lstat, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { lstat, realpath, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -115,6 +115,11 @@ const readIgnoreCase = async (
   }
 };
 
+// Preserve symlink/.. traversal until the filesystem resolves the identity.
+// path.resolve/join would collapse those components before following the link.
+const canonicalGitDirectory = (base: string, path: string): Promise<string> =>
+  realpath(isAbsolute(path) ? path : `${base}${sep}${path}`);
+
 /** Resolve repository identity once for the config and HEAD consumers. */
 const resolveGitMetadata = async (
   root: string,
@@ -124,24 +129,30 @@ const resolveGitMetadata = async (
   const dotgit = join(root, ".git");
   const metadata = await lstat(dotgit);
   const directory = metadata.isSymbolicLink() ? await stat(dotgit) : metadata;
-  const gitdir = directory.isDirectory()
-    ? dotgit
-    : resolve(
-        root,
-        await readGitMetadataPath(dotgit, "gitdir: ", resources, signal),
-      );
+  const gitdir = await canonicalGitDirectory(
+    root,
+    directory.isDirectory()
+      ? dotgit
+      : await readGitMetadataPath(dotgit, "gitdir: ", resources, signal),
+  );
+  let common: string;
   try {
-    const common = await readGitMetadataPath(
+    common = await readGitMetadataPath(
       join(gitdir, "commondir"),
       "",
       resources,
       signal,
     );
-    return { gitdir, commonDirectory: resolve(gitdir, common) };
   } catch (cause: unknown) {
     if (errorCode(cause) !== "ENOENT") throw cause;
     return { gitdir };
   }
+  // Only an absent pointer means there is no common directory. An unreadable
+  // target leaves identity unknown instead of falling back to private metadata.
+  return {
+    gitdir,
+    commonDirectory: await canonicalGitDirectory(gitdir, common),
+  };
 };
 
 const readGitMetadataPath = async (
@@ -222,44 +233,61 @@ const parseGitBoolean = (value: string | undefined): boolean | null => {
     case "true":
     case "yes":
     case "on":
-    case "1":
       return true;
     case "":
     case "false":
     case "no":
     case "off":
-    case "0":
       return false;
-    default:
-      return null;
   }
+  if (value === undefined) return null;
+  // Git parses numeric booleans as base-0 signed integers with binary units.
+  // Keep the portable decimal/octal/hex grammar; C23 binary prefixes depend
+  // on the Git/libc build and cannot be inferred from this local config.
+  const numeric =
+    /^[ \t\r\n\v\f]*([+-]?)(0[xX][0-9A-Fa-f]+|0[0-7]*|[1-9][0-9]*)([kKmMgG]?)$/u.exec(
+      value,
+    );
+  if (numeric === null || numeric[0] !== value) return null;
+  const digits = numeric[2]!;
+  const radix = /^0x/iu.test(digits) ? 16 : digits.startsWith("0") ? 8 : 10;
+  const multiplier =
+    numeric[3] === ""
+      ? 1
+      : 1024 ** ("kmg".indexOf(numeric[3]!.toLowerCase()) + 1);
+  const integer =
+    Number.parseInt(digits, radix) * multiplier * (numeric[1] === "-" ? -1 : 1);
+  // Every integer within Git's signed-int range is exact in a Number; larger
+  // values (including Infinity) must stay unknown, never wrap into a boolean.
+  return integer >= -2147483648 && integer <= 2147483647 ? integer !== 0 : null;
 };
 
 const parseGitConfigValue = (source: string): string | undefined => {
-  const value = trimGitConfigWhitespace(source);
-  const quoted = value.startsWith('"');
-  // Strip unquoted comments and boundary whitespace before decoding escapes.
-  // Decoded whitespace is value data, including in Boolean assignments.
-  const content = quoted
-    ? value
-    : trimGitConfigWhitespace(value.replace(/[#;].*$/u, ""));
+  let quoted = false;
   let parsed = "";
-  for (let index = quoted ? 1 : 0; index < content.length; index++) {
-    const character = content[index];
+  let trimFrom: number | undefined;
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index]!;
+    if (!quoted && /[ \t\r]/u.test(character)) {
+      if (parsed.length > 0) {
+        trimFrom ??= parsed.length;
+        parsed += character;
+      }
+      continue;
+    }
+    if (!quoted && (character === "#" || character === ";")) break;
+    // A later fragment consumes preceding whitespace, even if its quotes are
+    // empty. Only trailing unquoted whitespace is discarded; escapes stay data.
+    trimFrom = undefined;
     if (character === '"') {
-      if (!quoted) return undefined;
-      const remainder = trimGitConfigWhitespace(content.slice(index + 1));
-      return remainder === "" ||
-        remainder.startsWith("#") ||
-        remainder.startsWith(";")
-        ? parsed
-        : undefined;
+      quoted = !quoted;
+      continue;
     }
     if (character !== "\\") {
       parsed += character;
       continue;
     }
-    const escaped = content[++index];
+    const escaped = source[++index];
     switch (escaped) {
       case "\\":
       case '"':
@@ -278,7 +306,7 @@ const parseGitConfigValue = (source: string): string | undefined => {
         return undefined;
     }
   }
-  return quoted ? undefined : parsed;
+  return quoted ? undefined : parsed.slice(0, trimFrom);
 };
 
 const readOwnedMetadataText = async (

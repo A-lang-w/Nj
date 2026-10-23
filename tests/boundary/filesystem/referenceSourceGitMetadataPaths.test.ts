@@ -1,4 +1,11 @@
-import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rename,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -307,6 +314,84 @@ describe.skipIf(process.platform === "win32")(
       await symlink(target, repository.gitdir, "dir");
       await expectGitInventory(repository, true);
     });
+
+    it.each([
+      "directory symlink",
+      "gitdir alias",
+      "gitdir parent traversal",
+      "commondir parent traversal",
+    ] as const)(
+      "resolves the physical worktree identity for %s",
+      async (form) => {
+        const repository = await fixture("linked");
+        const { base, root, gitdir, common, initialHead } = repository;
+        const aliases = join(base, "aliases");
+        await mkdir(aliases);
+        let decoy = base;
+        if (form === "directory symlink") {
+          await unlink(join(root, ".git"));
+          await symlink(gitdir, join(root, ".git"), "dir");
+        } else if (form === "commondir parent traversal") {
+          const alias = join(gitdir, "common-link");
+          await symlink(join(common, "objects"), alias, "dir");
+          await writeFile(join(gitdir, "commondir"), "common-link/..\n");
+          decoy = gitdir;
+        } else {
+          const alias = join(aliases, "linked");
+          await symlink(gitdir, alias, "dir");
+          const target =
+            form === "gitdir parent traversal"
+              ? `${relative(root, alias)}/../${basename(gitdir)}`
+              : relative(root, alias);
+          await writeFile(join(root, ".git"), `gitdir: ${target}\n`);
+          if (form === "gitdir parent traversal")
+            decoy = join(aliases, basename(gitdir));
+        }
+        // A lexical collapse must not silently choose valid but unrelated metadata.
+        await mkdir(join(decoy, "refs", "heads"), { recursive: true });
+        await writeFile(join(decoy, "config"), "[core]\nignoreCase=false\n");
+        await writeFile(
+          join(decoy, "refs", "heads", "linked"),
+          `${initialHead}\n`,
+        );
+        if (form === "gitdir parent traversal")
+          await writeFile(join(decoy, "HEAD"), "ref: refs/heads/linked\n");
+        await expectGitInventory(repository, true);
+      },
+    );
+
+    it.each(["gitdir", "commondir"] as const)(
+      "retains uncertainty when %s traversal contains a missing component",
+      async (record) => {
+        const repository = await fixture(
+          record === "gitdir" ? "separate" : "linked",
+        );
+        const { root, common, gitdir, git, initialHead } = repository;
+        if (record === "gitdir") {
+          await writeFile(
+            join(root, ".git"),
+            `gitdir: ../missing/../${basename(common)}\n`,
+          );
+        } else {
+          await writeFile(join(gitdir, "commondir"), "missing/../../..\n");
+          // An existing but unusable commondir must not fall back to private metadata.
+          await writeFile(join(gitdir, "config"), "[core]\nignoreCase=false\n");
+          await mkdir(join(gitdir, "refs", "heads"), { recursive: true });
+          await writeFile(
+            join(gitdir, "refs", "heads", "linked"),
+            `${initialHead}\n`,
+          );
+        }
+        await expect(git(root, "rev-parse", "HEAD")).rejects.toMatchObject({
+          code: 128,
+        });
+        const { vcs, graph } = await observe(root);
+        expect(vcs).toEqual({ info: unknownVcs, ignoreCase: null });
+        expect(graph.vcs).toEqual(unknownVcs);
+        expect(graph.limitations).toContain(UNKNOWN_CASE);
+        expect(graph.entries.map(({ path }) => path)).toContain("visible.ts");
+      },
+    );
 
     it("preserves packed, worktree-private and detached refs with a spaced common directory", async () => {
       const repository = await fixture("linked");
