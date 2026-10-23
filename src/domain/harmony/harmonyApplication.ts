@@ -43,6 +43,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     javascript: z.array(projectedComponentSchema),
     signing: z.array(projectedComponentSchema),
   }),
+  unclassified_components: z.array(componentSchema),
   unavailable_components: z.array(unavailableComponentSchema),
   app_pack_children: z.array(projectedComponentSchema),
   runtime_families: z.array(
@@ -83,6 +84,14 @@ export const projectHarmonyInventory = (
     unavailable === undefined ? [] : [unavailable],
   );
   const classified = classify(all);
+  const appPackChildren =
+    rootFormat === "app-pack"
+      ? all.filter(({ path }) => /\.(?:hap|hsp)$/iu.test(path))
+      : [];
+  const classifiedFiles = new Set([
+    ...Object.values(classified).flat(),
+    ...appPackChildren,
+  ]);
   const bridgeProjection = bridgeCandidates(
     classified.bytecode,
     classified.native_libraries,
@@ -124,11 +133,11 @@ export const projectHarmonyInventory = (
       .sort(compareUnicodeCodePoints),
     packaging_model: packagingModel(classified.manifests),
     components: classified,
+    unclassified_components: all.filter(
+      (component) => !classifiedFiles.has(component),
+    ),
     unavailable_components: unavailable,
-    app_pack_children:
-      rootFormat === "app-pack"
-        ? all.filter(({ path }) => /\.(?:hap|hsp)$/iu.test(path))
-        : [],
+    app_pack_children: appPackChildren,
     runtime_families: runtimeFamilies(all, classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
