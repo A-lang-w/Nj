@@ -191,6 +191,8 @@ const webSocketFreshMethodSelection = (
   value: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ):
+  | t.CallExpression
+  | t.OptionalCallExpression
   | t.MemberExpression
   | t.OptionalMemberExpression
   | t.ObjectExpression
@@ -282,6 +284,51 @@ const webSocketFreshMethodSelection = (
           )
         )
           return item;
+      }
+    }
+    if (
+      (t.isCallExpression(consumer) || t.isOptionalCallExpression(consumer)) &&
+      consumer.arguments[1] === result &&
+      !javaScriptOptionalOperandsMayBeSkipped(consumer) &&
+      !consumer.arguments.some((argument) => t.isSpreadElement(argument))
+    ) {
+      const callee = unwrapJavaScriptExpression(consumer.callee).node;
+      if (
+        (t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)) &&
+        semanticStaticPropertyName(callee.property, callee.computed) ===
+          "apply" &&
+        t.isFunction(
+          webSocketStoredCallTarget(
+            callee,
+            state,
+            consumer,
+            noCallbackParameters,
+          ),
+        )
+      ) {
+        // Native apply reads length, then ascending indices, only after all
+        // explicit arguments have completed. A getter is owned by that call,
+        // rather than by creation of its array-like object.
+        if (key === "length") return consumer;
+        const length = semanticFinalObjectMember(literal, "length", "get");
+        const value = t.isObjectProperty(length)
+          ? readExactJavaScriptLiteral(length.value)
+          : undefined;
+        const index = key === null ? NaN : Number(key);
+        if (
+          String(index) === key &&
+          Number.isSafeInteger(index) &&
+          index >= 0 &&
+          value?.found &&
+          typeof value.value === "number" &&
+          index <
+            Math.min(
+              Math.max(Math.trunc(value.value), 0),
+              Number.MAX_SAFE_INTEGER,
+            )
+        )
+          return consumer;
       }
     }
     if (
@@ -1550,10 +1597,15 @@ const webSocketClassConstruction = (
       const binding = resolveSemanticBindingState(state, read, read.name);
       if (binding !== undefined) bindings.add(binding);
     }
-    const prototypeEffects = [...bindings].flatMap((binding) => [
-      ...binding.memberWrites,
-      ...binding.escapedPaths,
-    ]);
+    // A class's inner self binding and its outer declaration binding select
+    // one allocation. Prototype effects belong to that shared identity.
+    const prototypeEffects = [
+      ...(state.literalMemberEffects?.get(derived) ?? []),
+      ...[...bindings].flatMap((binding) => [
+        ...binding.memberWrites,
+        ...binding.escapedPaths,
+      ]),
+    ];
     if (
       prototypeEffects.some(
         ({ path, node }) =>

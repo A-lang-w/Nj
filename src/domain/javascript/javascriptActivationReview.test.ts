@@ -5,6 +5,68 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "apply index getter before initialization",
+    '(()=>{}).apply(null,{length:1,get 0(){new Socket("wss://example.test/apply-index")}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "apply arguments wait before implicit length read",
+    '(async()=>{(()=>{}).apply(null,{get length(){new Socket("wss://example.test/apply-args-wait");return 0}},await 0)})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/apply-args-wait"],
+  ],
+  [
+    "apply index getter after initialization",
+    'const Socket=globalThis.WebSocket;(()=>{}).apply(null,{length:1,get 0(){new Socket("wss://example.test/apply-index-ready")}});',
+    ["wss://example.test/apply-index-ready"],
+  ],
+  [
+    "changed apply defers array-like read",
+    'const fn=()=>{};fn.apply=(unused,list)=>queueMicrotask(()=>list.length);fn.apply(null,{get length(){new Socket("wss://example.test/apply-replaced");return 0}});const Socket=globalThis.WebSocket;',
+    ["wss://example.test/apply-replaced"],
+  ],
+  [
+    "rest key fails after waiting before copy",
+    '(async()=>{({...null[(await 0,null.x)]}={get entry(){new Socket("wss://example.test/rest-key-throws")}})})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "rest target reference reads nested base",
+    '(async()=>{({...((await 0,null).x.y)}={get entry(){new Socket("wss://example.test/rest-nested-throws")}})})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+
+  [
+    "apply length getter before initialization",
+    '(()=>{}).apply(null,{get length(){new Socket("wss://example.test/apply-length");return 0}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "apply length getter after initialization",
+    'const Socket=globalThis.WebSocket;(()=>{}).apply(null,{get length(){new Socket("wss://example.test/apply-length-initialized");return 0}});',
+    ["wss://example.test/apply-length-initialized"],
+  ],
+  [
+    "rest reference waits before getter and failed put",
+    '(async()=>{({...((await 0,null).x)}={get entry(){new Socket("wss://example.test/rest-reference")}})})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/rest-reference"],
+  ],
+  [
+    "rest reference null base without wait",
+    '({...((null).x)}={get entry(){new Socket("wss://example.test/rest-early")}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "rest reference base throws before wait",
+    '(async()=>{({...((null.x,await 0,{}).x)}={get entry(){new Socket("wss://example.test/rest-base-throws")}})})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "rest reference computed key waits",
+    '(async()=>{({...null[await 0]}={get entry(){new Socket("wss://example.test/rest-key-waits")}})})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/rest-key-waits"],
+  ],
+
+  [
     "escaped function can reenter before a visible call",
     'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}function unknown(fn){fn(false)}unknown(run);run(true);',
     [],

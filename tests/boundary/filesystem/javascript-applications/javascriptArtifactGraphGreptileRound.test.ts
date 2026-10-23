@@ -12,6 +12,74 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "review-apply-rest-6.mjs",
+    source:
+      '(()=>{}).apply(null,{length:1,get 0(){new Socket("wss://example.test/apply-index")}});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review-apply-rest-7.mjs",
+    source:
+      '(async()=>{(()=>{}).apply(null,{get length(){new Socket("wss://example.test/apply-args-wait");return 0}},await 0)})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/apply-args-wait",
+  },
+  {
+    file: "review-apply-rest-8.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;(()=>{}).apply(null,{length:1,get 0(){new Socket("wss://example.test/apply-index-ready")}});',
+    endpoint: "wss://example.test/apply-index-ready",
+  },
+  {
+    file: "review-apply-rest-9.mjs",
+    source:
+      'const fn=()=>{};fn.apply=(unused,list)=>queueMicrotask(()=>list.length);fn.apply(null,{get length(){new Socket("wss://example.test/apply-replaced");return 0}});const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/apply-replaced",
+  },
+  {
+    file: "review-apply-rest-10.mjs",
+    source:
+      '(async()=>{({...null[(await 0,null.x)]}={get entry(){new Socket("wss://example.test/rest-key-throws")}})})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review-apply-rest-11.mjs",
+    source:
+      '(async()=>{({...((await 0,null).x.y)}={get entry(){new Socket("wss://example.test/rest-nested-throws")}})})();const Socket=globalThis.WebSocket;',
+  },
+
+  {
+    file: "review-apply-rest-0.mjs",
+    source:
+      '(()=>{}).apply(null,{get length(){new Socket("wss://example.test/apply-length");return 0}});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review-apply-rest-1.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;(()=>{}).apply(null,{get length(){new Socket("wss://example.test/apply-length-initialized");return 0}});',
+    endpoint: "wss://example.test/apply-length-initialized",
+  },
+  {
+    file: "review-apply-rest-2.mjs",
+    source:
+      '(async()=>{({...((await 0,null).x)}={get entry(){new Socket("wss://example.test/rest-reference")}})})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/rest-reference",
+  },
+  {
+    file: "review-apply-rest-3.mjs",
+    source:
+      '({...((null).x)}={get entry(){new Socket("wss://example.test/rest-early")}});const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review-apply-rest-4.mjs",
+    source:
+      '(async()=>{({...((null.x,await 0,{}).x)}={get entry(){new Socket("wss://example.test/rest-base-throws")}})})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "review-apply-rest-5.mjs",
+    source:
+      '(async()=>{({...null[await 0]}={get entry(){new Socket("wss://example.test/rest-key-waits")}})})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/rest-key-waits",
+  },
+
+  {
     file: "escaped-capture-0.mjs",
     source:
       'function replace(root){root.WebSocket=class{}};function run(i){const Socket=globalThis.WebSocket;replace(globalThis);if(i)new Socket("wss://example.test/repeated-capture")}function unknown(fn){fn(false)}unknown(run);run(true);',

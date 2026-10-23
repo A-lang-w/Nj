@@ -268,3 +268,27 @@ it.each([
     expect(index.bindings.ambientEscapes.covers(path)).toBe(escaped);
   },
 );
+
+it("retains class allocation effects across outer and inner self bindings", () => {
+  const parsed = parseJavaScriptSource(
+    "class Base{}class Other{}class Derived extends Base{}Object.setPrototypeOf(Derived,Other);",
+    "app.mjs",
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexAmbientWritesSteps());
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const aliases = [...index.bindings.bindingsById.values()].filter(
+    (binding) => binding.name === "Derived",
+  );
+  expect(aliases).toHaveLength(2);
+  const allocation = aliases[0]?.initializers[0]?.node;
+  expect(aliases[1]?.initializers[0]?.node).toBe(allocation);
+  if (allocation?.type !== "ClassDeclaration")
+    throw new Error("Expected class allocation");
+  expect(index.bindings.literalMemberEffects?.get(allocation)).toContainEqual(
+    expect.objectContaining({ kind: "escape", path: [] }),
+  );
+});

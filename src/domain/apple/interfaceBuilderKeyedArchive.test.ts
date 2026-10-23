@@ -342,3 +342,58 @@ it("counts a dangling named root without substituting a valid generic root", () 
   expect(parsed.hierarchy).toEqual([]);
   expect(parsed.omittedHierarchyReferences).toBe(1);
 });
+
+it("distinguishes an unrecognized plist from an explicitly empty Interface Builder document", () => {
+  expect(() =>
+    parseInterfaceBuilderRecords({ CFBundleIdentifier: "sample" }),
+  ).toThrow(/not a recognized/);
+  expect(
+    parseInterfaceBuilderRecords({ "com.apple.ibtool.document.objects": {} }),
+  ).toMatchObject({ objects: [], connections: [], objectCount: 0 });
+});
+
+it.each([
+  ["NSImageView", "view"],
+  ["UIImageView", "view"],
+  ["NSColorWell", "control"],
+  ["NSImage", "resource"],
+])("keeps %s UI identity separate from resource names", (className, kind) => {
+  expect(
+    parseInterfaceBuilderRecords({
+      "com.apple.ibtool.document.objects": { item: { class: className } },
+    }).objects[0]?.kind,
+  ).toBe(kind);
+});
+
+it.each(["NSCustomObject", "NSClassSwapper", "UIClassSwapper"])(
+  "uses the guarded authored class on %s and retains the archived class",
+  (archivedClass) => {
+    const source = archive({
+      [archivedClass === "UIClassSwapper" ? "UIClassName" : "NSClassName"]:
+        "FixtureWindowController",
+    });
+    source.$objects[4] = {
+      $classname: archivedClass,
+      $classes: [archivedClass, "NSObject"],
+    };
+    expect(parseInterfaceBuilderRecords(source).objects[0]).toMatchObject({
+      class_name: "FixtureWindowController",
+      kind: "view_controller",
+      attributes: { interface_builder_archived_class_name: archivedClass },
+    });
+  },
+);
+it("retains action connectors as serialized helpers without inventing UI controls", () => {
+  const source = archive();
+  source.$objects[5] = {
+    $classname: "NSNibControlConnector",
+    $classes: ["NSNibControlConnector", "NSNibConnector", "NSObject"],
+  };
+  const parsed = parseInterfaceBuilderRecords(source);
+  expect(parsed.objects.find(({ id }) => id === "3")?.kind).toBe("other");
+  expect(parsed.connections[0]).toMatchObject({
+    kind: "action",
+    source_id: "2",
+    destination_id: "1",
+  });
+});

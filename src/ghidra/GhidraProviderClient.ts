@@ -494,7 +494,7 @@ export const createGhidraProviderClient = (input: {
           extensionFailure,
           closed.error,
           operation,
-        );
+        ).bindCleanupDependencies([extensionFailure, closed.error]);
   };
   const startSession = async (
     operation: AnalysisOperation,
@@ -532,6 +532,7 @@ export const createGhidraProviderClient = (input: {
     target.format === "pe"
       ? new GhidraNativeAotSnapshotOwner({
           targetSha256: target.sha256,
+          targetPath: target.path,
           readSnapshot: client.readTargetSnapshot?.bind(client),
           projectFailure: (operation, failure) =>
             projectSessionError(
@@ -1007,6 +1008,18 @@ const projectPrimarySessionError = (
           }),
     });
   }
+  if (
+    (failure.kind === "start" ||
+      failure.kind === "process" ||
+      failure.kind === "protocol") &&
+    failure.diagnostics.exit_signal === "SIGKILL"
+  )
+    return new ProviderAdapterError("ghidra", operation, {
+      ...context,
+      userMessage: `Ghidra process diagnostics report termination by SIGKILL. The signal alone does not establish its cause or an out-of-memory failure.${uncertainty === undefined ? "" : ` ${uncertainty}`}`,
+      remediationAction:
+        "Review the retained process output and host or container termination records before choosing a resource-specific remedy. Export useful Evidence, close the binary and resolve any cleanup failure, then call open_binary for the same target to start a new Ghidra session. Session-only annotations are not retained.",
+    });
   const exited = exitedProviderMessage(operation, failure, health);
   if (exited !== undefined)
     return new ProviderAdapterError("ghidra", operation, {

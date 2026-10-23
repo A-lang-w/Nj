@@ -510,6 +510,27 @@ export const createAmbientPathResolver = (
   };
 };
 
+/** These native operations do not pass their namespace receiver to user code. */
+export const semanticAmbientCallKeepsReceiver = (
+  path: readonly string[],
+): boolean =>
+  path[0] === "global" &&
+  ((path.length === 3 && ["Object", "Reflect"].includes(path[1]!)) ||
+    (path.length === 3 &&
+      path[1] === "Promise" &&
+      [
+        "resolve",
+        "reject",
+        "all",
+        "allSettled",
+        "any",
+        "race",
+        "try",
+        "withResolvers",
+      ].includes(path[2]!)) ||
+    (path.length === 3 && path[1] === "indexedDB" && path[2] === "open") ||
+    (path.length === 2 && ["open", "fetch"].includes(path[1]!)));
+
 /**
  * Index source-local writes through ambient identities and stable aliases.
  * The shared invocation owner resolves intrinsic aliases, bind/call/apply and
@@ -532,6 +553,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     node: t.Node;
     target: t.Node;
     browserReceiver: boolean;
+    receiver?: t.Node;
     projection?: AmbientProjection;
   }[] = [];
   const stores = new WeakMap<
@@ -629,7 +651,12 @@ export function* indexJavaScriptAmbientWritesSteps(
       ) {
         if (browserMethod !== undefined)
           browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        escapes.push({
+          target: callee.object,
+          node,
+          browserReceiver: browserMethod !== undefined,
+          receiver: callee,
+        });
       }
     },
   );
@@ -711,12 +738,34 @@ export function* indexJavaScriptAmbientWritesSteps(
       retainSemanticAmbientEffect(state, "write", resolved, node);
     }
   }
-  for (const { node, target, browserReceiver, projection } of escapes)
+  // Explicit exposure is known before deciding which native receiver calls
+  // remain intact. Preserve the invocation capture when checking those calls.
+  const orderedEscapes = [
+    ...escapes.filter(({ receiver }) => receiver === undefined),
+    ...escapes.filter(({ receiver }) => receiver !== undefined),
+  ];
+  for (const {
+    node,
+    target,
+    browserReceiver,
+    projection,
+    receiver,
+  } of orderedEscapes) {
+    if (receiver !== undefined) {
+      const [selected] = ambientReads(receiver);
+      if (
+        selected?.every((key): key is string => key !== null) &&
+        semanticAmbientCallKeepsReceiver(selected) &&
+        !createSemanticAmbientModificationQuery(state, receiver)(selected)
+      )
+        continue;
+    }
     for (const path of ambientWrites(target, node, true, projection))
       // Only proven browser APIs keep their global receiver from user code.
       if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
         retainSemanticAmbientEffect(state, "escape", path, node);
       }
+  }
   // A function may call a browser method replaced later in source order.
   if (
     [...browserReceiverMethods].some((method) =>

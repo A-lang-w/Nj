@@ -710,6 +710,21 @@ const patternExpressionCompletion = (
       ? "suspended"
       : "completed";
 
+/** Forming a rest target reference does not read its selected member value. */
+const patternReferenceCompletion = (
+  raw: t.Node,
+  suspended: (node: t.Node) => boolean,
+): PatternCompletion => {
+  const target = unwrapJavaScriptExpression(raw).node;
+  if (!t.isMemberExpression(target)) return "completed";
+  return combinePatternCompletion(
+    patternExpressionCompletion(target.object, suspended),
+    target.computed
+      ? patternExpressionCompletion(target.property, suspended)
+      : "completed",
+  );
+};
+
 /** Work completed inside a consumed slot precedes the next generator resume. */
 const patternCompletedSuspension = (
   pattern: t.Node,
@@ -764,7 +779,7 @@ const patternCompletedSuspension = (
         // and only afterwards performs PutValue (which may invoke a setter).
         phase = combinePatternCompletion(
           phase,
-          patternExpressionCompletion(property.argument, suspended),
+          patternReferenceCompletion(property.argument, suspended),
         );
         if (patternStopped(phase)) return phase;
         // The target reference precedes copying; the selected getter and

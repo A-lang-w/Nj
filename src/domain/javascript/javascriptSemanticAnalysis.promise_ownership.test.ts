@@ -239,10 +239,10 @@ it.each([
 it.each(["(async () => pending)()", "(async () => { return pending; })()"])(
   "keeps constructor identity unknown after an ambient receiver escape: %s",
   (wrapper) => {
-    // The receiver of an unproven method call can mutate Promise.prototype.
-    // This is distinct from the owned constructor allocation above.
+    // A proven native static operation does not expose its namespace receiver.
+    // An unknown method still can mutate Promise.prototype before adoption.
     const ir = analyzeJavaScriptSemantics(
-      `const pending=Promise.resolve(1);const wrapped=${wrapper};await wrapped;`,
+      `const pending=Promise.resolve(1);Promise.custom();const wrapped=${wrapper};await wrapped;`,
     );
     expect(
       ir.promiseOperations.find(({ method }) => method === "await"),

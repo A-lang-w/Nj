@@ -13,12 +13,15 @@ import {
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticInitializerPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
+import { webSocketExecutionContexts } from "./javascriptWebSocketExecution.js";
 import { semanticPromiseSettlementDependency } from "./javascriptSemanticPromiseIdentity.js";
 import {
   assignedSemanticResultBindings,
@@ -140,7 +143,7 @@ const promiseCandidateDetails = (
   if (
     t.isNewExpression(node) &&
     t.isIdentifier(node.callee, { name: "Promise" }) &&
-    isUnshadowedGlobalPromise(node.callee, state)
+    isUnmodifiedGlobalReference(node.callee, state, "Promise")
   )
     return { kind: "constructor", method: "new" };
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -149,7 +152,7 @@ const promiseCandidateDetails = (
     const method = semanticStaticPropertyName(member.property, member.computed);
     if (
       t.isIdentifier(member.object, { name: "Promise" }) &&
-      isUnshadowedGlobalPromise(member.object, state)
+      isUnmodifiedGlobalReference(node.callee, state, ["Promise", method ?? ""])
     ) {
       if (method === "all" || method === "allSettled")
         return { kind: "aggregate", method };
@@ -163,13 +166,6 @@ const promiseCandidateDetails = (
     return { kind: "awaited-expression", method: "await" };
   return null;
 };
-
-const isUnshadowedGlobalPromise = (
-  node: t.Identifier,
-  state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  resolveSemanticBindingState(state, node, "Promise") === undefined &&
-  !semanticResolutionBlocked(state, node, "Promise");
 
 const isPromiseProducer = (
   node: t.Node,
@@ -441,12 +437,58 @@ const resolvePromiseExpression = (
   context: PromiseExpressionResolutionContext,
 ): PromiseResolution => {
   const { current, candidateByNode, state } = context;
-  const result = semanticPromiseSettlementDependency(rawNode, state);
-  const direct =
-    result === undefined ? undefined : candidateByNode.get(result.node);
-  if (direct !== undefined && direct.promiseId !== current.promiseId)
-    return { promiseIds: [direct.promiseId], status: "complete" };
-  return unresolvedPromise();
+  const seenBindings = new Set<string>();
+  let node = rawNode;
+  for (;;) {
+    const result = semanticPromiseSettlementDependency(node, state);
+    if (
+      result?.aliases.some(({ read, initializer }) => {
+        const binding = resolveSemanticBindingState(state, read, read.name);
+        if (binding === undefined) return true;
+        const selected = semanticBindingAtRead(
+          binding,
+          read,
+          state.parentsByNode,
+        );
+        // Reads inside an adopted async wrapper use its invocation frame; lexical
+        // ordering alone cannot establish initialization across that boundary.
+        return selected.status === "ordered"
+          ? !selected.hasDefiniteInitializer
+          : semanticInitializerPrecedesRead({
+              initializer: initializer.node,
+              read,
+              parents: state.parentsByNode,
+              initializerContexts: webSocketExecutionContexts(
+                initializer.node,
+                state,
+              ),
+              readContexts: webSocketExecutionContexts(read, state),
+            }) !== true;
+      })
+    )
+      return unresolvedPromise();
+    const direct =
+      result === undefined ? undefined : candidateByNode.get(result.node);
+    if (direct !== undefined && direct.promiseId !== current.promiseId)
+      return { promiseIds: [direct.promiseId], status: "complete" };
+    node = unwrapJavaScriptExpression(node).node;
+    if (!t.isIdentifier(node)) return unresolvedPromise();
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (binding === undefined || seenBindings.has(binding.bindingId))
+      return unresolvedPromise();
+    const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+    if (
+      read.status !== "ordered" ||
+      !read.hasDefiniteInitializer ||
+      read.binding.initializers.length !== 1
+    )
+      return unresolvedPromise();
+    const initializer = read.binding.initializers[0];
+    if (initializer === undefined || initializer.projection.length > 0)
+      return unresolvedPromise();
+    seenBindings.add(binding.bindingId);
+    node = initializer.node;
+  }
 };
 
 const promiseResolutionContext = (

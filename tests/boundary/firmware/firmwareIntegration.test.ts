@@ -524,6 +524,78 @@ it("reports a failed multi-file stage as an extractor-failure gap", async () => 
   );
 });
 
+it.each(["task-error", "task-warning"])(
+  "preserves standalone diagnostic recovery without inventing stage ownership: %s",
+  async (mode) => {
+    const fixture = await firmwareFixture(mode);
+    const result = await fixture.service.execute("extract_firmware", {
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (!result.ok) throw result.error;
+    const normalized = firmwareResultSchemas.extract_firmware.parse(
+      result.value.normalized_result,
+    );
+    const failures = gapsWithContinuations(normalized).filter(
+      (gap) => gap.kind === "extractor-failure",
+    );
+    expect(normalized.diagnostics).toContainEqual(
+      expect.objectContaining({
+        input_path: "$input",
+        report: expect.objectContaining({
+          __typename__:
+            mode === "task-error"
+              ? "UnknownError"
+              : "ExtractCommandFailedReport",
+        }),
+      }),
+    );
+    if (mode === "task-error") {
+      expect(failures).toEqual([
+        expect.objectContaining({
+          input_path: "$input",
+          handler: null,
+          provider_id: null,
+          range: null,
+          root_file_range: null,
+          dependencies: [],
+          continuation: expect.stringContaining("diagnostics"),
+        }),
+      ]);
+    } else expect(failures).toEqual([]);
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
+
+it("retains independent failures beside dependencies at each extraction owner", async () => {
+  const fixture = await firmwareFixture("mixed-failures");
+  const result = await fixture.service.execute("extract_firmware", {
+    path: fixture.path,
+    output_directory: fixture.output,
+  });
+  if (!result.ok) throw result.error;
+  const normalized = firmwareResultSchemas.extract_firmware.parse(
+    result.value.normalized_result,
+  );
+  const gaps = gapsWithContinuations(normalized);
+  expect(gaps).toHaveLength(4);
+  for (const provider_id of ["gzip-id", "mixed-id"]) {
+    const owned = gaps.filter((gap) => gap.provider_id === provider_id);
+    expect(owned.map((gap) => gap.kind).sort()).toEqual([
+      "extractor-failure",
+      "missing-extractor-dependency",
+    ]);
+    for (const gap of owned) {
+      expect(gap.input_path).toBe("$input");
+      expect(gap.range).toEqual(
+        provider_id === "mixed-id" ? null : normalized.chunks[0]?.range,
+      );
+    }
+  }
+  expect(normalized.chunks[0]?.extraction_failed).toBe(true);
+  await assertFirmwareCleanup(fixture.launches);
+});
+
 it("carries the owning multi-file stage on a task-level dependency gap", async () => {
   const fixture = await firmwareFixture("multi-file-dependency");
   const result = await fixture.service.execute("extract_firmware", {
@@ -715,12 +787,16 @@ it("preserves existing output and rejects invalid intervals before invoking extr
   const previous = fixture.launches.length;
   const invalid = await fixture.service.execute("extract_firmware", {
     path: fixture.path,
-    output_directory: fixture.output,
+    output_directory: `${fixture.output}-invalid-range`,
     range: { offset: 100, length: 1 },
   });
   expect(invalid).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisInputError" },
+  });
+  if (invalid.ok) throw new Error("Expected out-of-file-range rejection");
+  expect(projectAnalysisError(invalid.error)).toMatchObject({
+    details: { issues: [{ path: ["range"], reason: "out_of_range" }] },
   });
   expect(fixture.launches).toHaveLength(previous);
   await assertFirmwareCleanup(fixture.launches);
