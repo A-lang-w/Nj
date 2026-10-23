@@ -24,6 +24,8 @@ export const mcpDoctorDeadlineRecovery = (budget: McpPhaseBudget): string =>
 export interface McpToolTimeoutInputs {
   readonly analysisProvider: AnalysisProviderSelector;
   readonly ghidraStartupTimeoutMs: number;
+  /** Optional per-procedure Ghidra decompile limit; one cold call can need startup plus this. */
+  readonly ghidraDecompileTimeoutMs?: number;
   readonly hopperStartupTimeoutMs: number;
   readonly jebMcpTimeoutMs?: number;
   readonly providerRequestTimeoutMs?: number;
@@ -34,15 +36,15 @@ export const mcpProviderDeadlineAllowanceMs = (
   inputs: McpToolTimeoutInputs,
 ): number => {
   const selectedProvider = inputs.analysisProvider;
+  // A bounded decompile can run right after a cold import in the same call.
+  const ghidraAllowance =
+    inputs.ghidraStartupTimeoutMs + (inputs.ghidraDecompileTimeoutMs ?? 0);
   const selectedTimeout =
     selectedProvider === "ghidra"
-      ? inputs.ghidraStartupTimeoutMs
+      ? ghidraAllowance
       : selectedProvider === "hopper"
         ? inputs.hopperStartupTimeoutMs
-        : Math.max(
-            inputs.ghidraStartupTimeoutMs,
-            inputs.hopperStartupTimeoutMs,
-          );
+        : Math.max(ghidraAllowance, inputs.hopperStartupTimeoutMs);
   return Math.max(
     selectedTimeout,
     inputs.jebMcpTimeoutMs ?? 0,

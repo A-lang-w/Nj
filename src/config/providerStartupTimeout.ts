@@ -16,6 +16,16 @@ export const DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS = 120_000;
  */
 export const MAX_PROVIDER_STARTUP_TIMEOUT_MS = 2_147_483_647;
 
+/** Largest per-function Ghidra decompile limit: one day, in seconds. */
+const MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = 86_400;
+
+/** Parse REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS; absent keeps Ghidra decompiles unbounded. */
+export const ghidraDecompileTimeoutSchema = z
+  .string()
+  .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
+  .transform(Number)
+  .pipe(z.number().int().min(1).max(MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS));
+
 /** Parse the optional setting without reading the ambient process environment. */
 export const providerStartupTimeoutSchema = z
   .string()
