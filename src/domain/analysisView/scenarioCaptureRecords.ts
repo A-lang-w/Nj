@@ -9,15 +9,19 @@ import {
   type BrowserScenarioCapture,
 } from "../browserScenarioCapture.js";
 import type { BrowserScenarioEvent } from "../browserScenarioCaptureValues.js";
+import {
+  indexBrowserScenarioTransactions,
+  type BrowserScenarioTransactionIndex,
+} from "../browserScenarioTransactions.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import type { AnalysisViewParent } from "./analysisView.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
+import { textBytes } from "./webNetworkRouteTemplates.js";
 
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
-type ResponseEvent = Extract<BrowserScenarioEvent, { kind: "response" }>;
 type ContentEvent = Extract<BrowserScenarioEvent, { kind: "network-content" }>;
 type CapturedBody = Extract<BrowserNetworkBody, { state: "captured" }>;
 
@@ -28,51 +32,9 @@ export interface ScenarioCaptureRecords {
   readonly limitations: readonly string[];
 }
 
-interface TransactionIndex {
-  readonly requests: { readonly event: RequestEvent; readonly item: number }[];
-  readonly requestCounts: Map<string, number>;
-  readonly responses: Map<string, ResponseEvent[]>;
-  /** Content events keyed by the sequence of the request or response event they belong to. */
-  readonly contents: Map<number, ContentEvent[]>;
-}
-
-const append = <Key, Value>(
-  map: Map<Key, Value[]>,
-  key: Key,
-  value: Value,
-): void => {
-  const existing = map.get(key);
-  if (existing === undefined) map.set(key, [value]);
-  else existing.push(value);
-};
-
-const indexTransactions = (
-  events: readonly BrowserScenarioEvent[],
-): TransactionIndex => {
-  const index: TransactionIndex = {
-    requests: [],
-    requestCounts: new Map(),
-    responses: new Map(),
-    contents: new Map(),
-  };
-  for (const [item, event] of events.entries()) {
-    if (event.kind === "request") {
-      index.requests.push({ event, item });
-      index.requestCounts.set(
-        event.transaction_id,
-        (index.requestCounts.get(event.transaction_id) ?? 0) + 1,
-      );
-    } else if (event.kind === "response")
-      append(index.responses, event.transaction_id, event);
-    else if (event.kind === "network-content")
-      append(index.contents, event.source_event_sequence, event);
-  }
-  return index;
-};
-
 /** The one content event of an exchange phase, or undefined when absent or ambiguous. */
 const onlyContent = (
-  index: TransactionIndex,
+  index: BrowserScenarioTransactionIndex,
   sequence: number | undefined,
 ): ContentEvent | undefined => {
   const found =
@@ -139,8 +101,8 @@ const reportedRequest = (
 
 const record = (
   ordinal: number,
-  observed: TransactionIndex["requests"][number],
-  index: TransactionIndex,
+  observed: { readonly event: RequestEvent; readonly item: number },
+  index: BrowserScenarioTransactionIndex,
   purpose: "manifest" | "replay",
 ): {
   readonly record: WebNetworkCaptureRecord;
@@ -225,13 +187,14 @@ export const scenarioCaptureRecords = (
   capture: BrowserScenarioCapture,
   purpose: "manifest" | "replay",
 ): ScenarioCaptureRecords => {
-  const index = indexTransactions(capture.events.items);
+  const index = indexBrowserScenarioTransactions(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];
   let withoutBody = 0;
   let representedCount = 0;
   let redactedBodies = 0;
-  for (const [ordinal, observed] of index.requests.entries()) {
-    const projected = record(ordinal, observed, index, purpose);
+  for (const [item, event] of capture.events.items.entries()) {
+    if (event.kind !== "request") continue;
+    const projected = record(records.length, { event, item }, index, purpose);
     records.push(projected.record);
     if (!projected.represented) continue;
     representedCount += 1;
@@ -262,17 +225,50 @@ export const scenarioCaptureRecords = (
   };
 };
 
-/** Admit a capture_browser_scenario parent whose network content identifies response media types. */
+/** An own data member of admitted parent data; the clone admission already refused accessors. */
+const member = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null && Object.hasOwn(value, key)
+    ? (value as Readonly<Record<string, unknown>>)[key]
+    : undefined;
+
+/**
+ * Bytes the manifest derives from a borrowed scenario: validation decodes and re-encodes one body at
+ * a time (two bytes per base64 character), and projection keeps the decoded text of every request
+ * body. Response bodies stay borrowed, as HAR response text does.
+ */
+const derivedTextBytes = (value: unknown): number => {
+  const items = member(member(value, "events"), "items");
+  let largestBody = 0;
+  let requestText = 0;
+  // Each event is read on its own, so a body without content leaves the others counted.
+  for (const event of Array.isArray(items) ? items : []) {
+    const content = member(member(event, "body"), "content");
+    if (
+      member(event, "kind") !== "network-content" ||
+      typeof content !== "string"
+    )
+      continue;
+    largestBody = Math.max(largestBody, content.length);
+    if (member(event, "phase") === "request")
+      requestText += textBytes(Math.ceil((content.length * 3) / 4));
+  }
+  return 64 + largestBody * 2 + requestText;
+};
+
+/** Admit a capture_browser_scenario parent whose network content identifies response media types; state also needs bodies. */
 export const admitScenarioCaptureParent = (
   parent: AnalysisViewParent,
+  viewKind: "environment-manifest" | "environment-state",
   accumulator: WebNetworkProjectionAccumulator,
 ): Result<ScenarioCaptureRecords, AnalysisError> => {
-  // Body validation decodes base64, and projection constructs UTF-8 request text.
-  // Reserve their expanded strings before either allocation, even for retained parents.
-  const admitted = accumulator.admitCaptureClone(parent.normalizedResult, {
-    copiedStrings: true,
-  });
+  const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
   if (!admitted.ok) return admitted;
+  // Reserve body validation and request text before either allocation, even for a parent read from
+  // a file, without charging the borrowed response bodies a large capture is made of.
+  const derived = accumulator.admitDerivedBytes(
+    derivedTextBytes(parent.normalizedResult),
+  );
+  if (!derived.ok) return derived;
   const parsed = browserScenarioCaptureSchema.safeParse(
     parent.normalizedResult,
   );
@@ -288,13 +284,19 @@ export const admitScenarioCaptureParent = (
       ]),
     );
   const content = parsed.data.scenario.network_content;
-  // Tools are chosen by response media type, which only bodies or header values carry.
-  if (!content.response_body && !content.header_values)
+  // Tools are chosen by response media type, which only bodies or header values carry; state is read from bodies.
+  if (
+    viewKind === "environment-state"
+      ? !content.response_body
+      : !content.response_body && !content.header_values
+  )
     return err(
       new AnalysisUnsupportedTargetError(
         "inspect_analysis_view",
         parent.evidenceId,
-        "environment-manifest needs a capture_browser_scenario capture with capture.network.response_body or header_values selected.",
+        viewKind === "environment-state"
+          ? "environment-state needs a capture_browser_scenario capture with capture.network.response_body selected."
+          : "environment-manifest needs a capture_browser_scenario capture with capture.network.response_body or header_values selected.",
       ),
     );
   return ok(scenarioCaptureRecords(parsed.data, "manifest"));

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { addressedValue } from "../../contracts/toolOutputSchemaPrimitives.js";
+import { addressedValueSchema } from "../../domain/native/nativeInventory.js";
 import {
   nativeDispatchMetadataResultSchema,
   inspectNativeDispatchMetadata,
@@ -20,11 +20,34 @@ export const NATIVE_DISPATCH_METADATA_SOURCES = {
 export const inspectNativeDispatch = async (
   analysis: AnalysisOperationPort,
   maxRecords: number,
-  signal?: AbortSignal,
+  options: {
+    readonly signal?: AbortSignal | undefined;
+    readonly objcClassImportAddresses?: readonly string[] | undefined;
+    readonly objcClassImportAddressesComplete?: boolean | undefined;
+    /** Binary metadata input budget; symbol-only inventories ignore it. */
+    readonly maxInputBytes?: number | undefined;
+  } = {},
 ): EnhancedResult => {
+  const {
+    signal,
+    objcClassImportAddresses,
+    objcClassImportAddressesComplete,
+    maxInputBytes,
+  } = options;
+  const input = {
+    max_records: maxRecords,
+    ...(maxInputBytes === undefined ? {} : { max_input_bytes: maxInputBytes }),
+    ...(objcClassImportAddresses === undefined
+      ? {}
+      : {
+          objc_class_import_addresses: [...objcClassImportAddresses],
+          objc_class_import_addresses_complete:
+            objcClassImportAddressesComplete ?? true,
+        }),
+  };
   const binaryMetadata = await analysis.execute(
     NATIVE_DISPATCH_METADATA_SOURCES.binary,
-    { max_records: maxRecords },
+    input,
     signal === undefined ? {} : { signal },
   );
   if (binaryMetadata.ok)
@@ -44,8 +67,8 @@ export const inspectNativeDispatch = async (
   const names = z
     .array(
       z.union([
-        addressedValue.strict(),
-        addressedValue
+        addressedValueSchema.strict(),
+        addressedValueSchema
           .omit({ value: true })
           .extend({ name: z.string() })
           .strict(),
@@ -59,20 +82,32 @@ export const inspectNativeDispatch = async (
         "provider returned an invalid inventory",
       ),
     );
+  const result = inspectNativeDispatchMetadata(
+    names.data.map((entry) => ({
+      address: entry.address,
+      name: "value" in entry ? entry.value : entry.name,
+    })),
+    maxRecords,
+  );
+  if (objcClassImportAddresses !== undefined) {
+    result.objc_class_import_bindings = [];
+    result.objc_class_import_binding_coverage = {
+      facet: "objc_class_import_bindings",
+      status: "unsupported",
+      reason: "Native Mach-O pointer binding inspection is unavailable.",
+      examined: 0,
+      decoded: 0,
+    };
+  }
   return ok(
     jsonValueSchema.parse(
       nativeDispatchMetadataResultSchema.parse({
         target_sha256: execution.value.subject?.sha256 ?? null,
+        target_architecture: execution.value.subject?.architecture ?? null,
         provider: execution.value.provider,
         analysis_profile_digest:
           execution.value.analysisProfile?.digest ?? null,
-        result: inspectNativeDispatchMetadata(
-          names.data.map((entry) => ({
-            address: entry.address,
-            name: "value" in entry ? entry.value : entry.name,
-          })),
-          maxRecords,
-        ),
+        result,
       }),
     ),
   );

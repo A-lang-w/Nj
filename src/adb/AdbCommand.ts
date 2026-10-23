@@ -9,6 +9,7 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   execFileBytes,
@@ -86,6 +87,11 @@ export const adbArguments = (
 export interface AdbRunLimits {
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
+  /**
+   * Live device observations can shrink between calls. Mutation commands omit
+   * this so a truncated result stays non-retryable.
+   */
+  readonly volatileOutput?: boolean;
 }
 
 /** Keep the selected device separate from the file addressed by the command. */
@@ -132,16 +138,25 @@ export const runAdbCapture = async (
       return err(
         new AnalysisProtocolError(`adb failed for ${operation}`, { cause }),
       );
-    if (failure.outputTruncated)
+    if (failure.outputTruncated) {
+      const name = `The adb output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override)`;
+      const allowance =
+        limits.volatileOutput === true
+          ? {
+              fixedAllowance: { name, kind: "live" as const },
+              retryable: true as const,
+            }
+          : fixedAllowanceOptions(name, "capture");
       return err(
         new AnalysisResourceConstraintError(
           operation,
           "memory",
           `adb output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
           { max_output_bytes: limits.maxOutputBytes },
-          { cause },
+          { cause, ...allowance },
         ),
       );
+    }
     const stderr = failure.stderr.trim();
     const excerpt = stderr.slice(0, STDERR_EXCERPT_CHARACTERS);
     // Device-state words inside a reported file name are not device verdicts.
@@ -199,7 +214,11 @@ export const runAdbCapture = async (
     }
     if (failure.killed)
       return err(
-        new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),
+        new AnalysisTimeoutError(operation, limits.timeoutMs, {
+          cause,
+          userMessage: `adb ${operation} reached its ${String(limits.timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
+          remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+        }),
       );
     return err(
       new AdbProtocolError(
@@ -268,7 +287,7 @@ export const probeAdbPathExistence = async (
     { device: serial, path },
     binary,
     adbArguments(serial, ["shell", "test", "-e", path]),
-    limits,
+    { ...limits, volatileOutput: true },
     signal,
   );
   if (probed.ok) {
