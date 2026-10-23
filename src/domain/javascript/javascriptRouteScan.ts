@@ -18,7 +18,6 @@ import {
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
-import { delayedInstanceFieldValue } from "./javascriptSemanticEvaluationOrder.js";
 import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
@@ -225,36 +224,6 @@ const isNavigationDataEdge = (node: t.Node, parent: t.Node | null): boolean => {
   return true;
 };
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
-/**
- * Report whether an alias read cannot be proven to see its initializer.
- *
- * Only a declaration earlier in the same statement list or enclosing block is
- * proven to run first. A read in a function body or a delayed instance field
- * executes at a call or construction point this scan cannot order, and a later
- * declaration in the same activation has not run yet; both stay unknown.
- */
-const initializerUnprovenAtRead = (
-  read: t.Node,
-  initializer: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
-): boolean => {
-  const activation = (node: t.Node): t.Node => {
-    let current = node;
-    for (;;) {
-      const parent = parents.get(current);
-      if (parent === undefined) return current;
-      if (t.isFunction(parent) || delayedInstanceFieldValue(parent, current))
-        return parent;
-      current = parent;
-    }
-  };
-  const readActivation = activation(read);
-  return (
-    readActivation !== activation(initializer) ||
-    (read.start ?? 0) < (initializer.start ?? 0)
-  );
-};
-
 export class JavaScriptRouteScan {
   readonly #result: JavaScriptRouteSourceFacts = {
     candidates: [],
@@ -1014,23 +983,24 @@ export class JavaScriptRouteScan {
       if (!t.isIdentifier(node)) return node;
       if (seen.has(node) || !this.#queue(node)) return;
       seen.add(node);
-      const binding = index.bindingForReferenceAt(node);
+      let binding = index.bindingForReferenceAt(node);
       if (binding === undefined) return;
+      if (selection === "at-read") {
+        // Ownership discovery retains possible sources; a boolean flag needs
+        // proof at the read that this initializer already ran.
+        const read = semanticBindingAtRead(
+          binding,
+          node,
+          index.bindings.parentsByNode,
+        );
+        if (read.status !== "ordered" || !read.hasDefiniteInitializer) return;
+        binding = read.binding;
+      }
       const initializer = semanticStableInitializer(binding, index.bindings);
       if (
         initializer === undefined ||
         initializer.projection.length !== 0 ||
-        (site !== undefined && index.referenceMayHaveChangedAt(site, node)) ||
-        (selection === "at-read" &&
-          // A boolean flag is only the literal this alias claims when its
-          // initializer has run in this activation. Declarations from an
-          // enclosing function still apply; a later one in the same
-          // activation does not.
-          initializerUnprovenAtRead(
-            node,
-            initializer.node,
-            index.bindings.parentsByNode,
-          ))
+        (site !== undefined && index.referenceMayHaveChangedAt(site, node))
       )
         return;
       node = initializer.node;
