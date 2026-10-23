@@ -167,9 +167,9 @@ export const readElfBuildIds = async (
         type === 3 &&
         notes.subarray(at + 12, at + 16).equals(Buffer.from("GNU\0"))
       ) {
-        if (descsz < 4 || descsz > 64)
+        if (descsz < 1 || descsz > 64)
           return failure(
-            "GNU build-id descriptor exceeds the 4–64 byte projection",
+            "GNU build-id descriptor is outside the 1–64 byte projection",
           );
         const candidate = notes.subarray(descriptor, end).toString("hex");
         if (!candidates.has(candidate) && candidates.size === MAX_BUILD_IDS)
