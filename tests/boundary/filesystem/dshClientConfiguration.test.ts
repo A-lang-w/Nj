@@ -1782,23 +1782,25 @@ describe("DeepSeek Harness runtime environment validation", () => {
     expect(
       await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "unchanged" });
-    await expect(
-      inspectClientConfiguration(
+    expect(
+      await inspectClientConfiguration(
         client,
         { HOPPER_LOADER_ARGS_JSON: "{" },
         command,
       ),
-    ).rejects.toMatchObject({
-      settings: [{ setting: "HOPPER_LOADER_ARGS_JSON" }],
+    ).toMatchObject({
+      status: "invalid",
+      remediation: expect.stringContaining("HOPPER_LOADER_ARGS_JSON"),
     });
-    await expect(
-      inspectClientConfiguration(
+    expect(
+      await inspectClientConfiguration(
         client,
         { REA_GHIDRA_LANGUAGE_ID: "" },
         command,
       ),
-    ).rejects.toMatchObject({
-      settings: [{ setting: "REA_GHIDRA_LANGUAGE_ID" }],
+    ).toMatchObject({
+      status: "invalid",
+      remediation: expect.stringContaining("REA_GHIDRA_LANGUAGE_ID"),
     });
     expect(
       await inspectClientConfiguration(
