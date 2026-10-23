@@ -141,12 +141,29 @@ cleanup does not promise immediate restart. The original projection fails five
 of six new regression cases; all six pass after repair. Cleanup-owner and
 cancellation-reason preservation are covered through the production queue.
 
+## Main integration
+
+Main `bcd18d289845051b0f0513e11bc1aefd3f766902` was merged for admission after
+the paired measurements. The two conflicts preserve both the upstream
+single-active-provider-read batch description and the new deadline guidance,
+and both registration-test imports. The report's measured source remains
+pinned above; this integration is not a repeat of the performance pair.
+
+The first complete `npm run check` on this integration stopped at formatting
+errors in six files, all byte-identical to that exact main: third-party
+notices, JavaScript artifact graph findings, reconstruction journey findings,
+IDA doctor source/CLI tests, and native UI MCP tests. Blob identities are
+retained in the raw receipt. This full gate is not reported as passing.
+
 ## Validation and limits
 
 - The initial selected source/boundary run passed 310 tests with 10 platform
   skips. After the related cancellation changes, all 174 provider/queue cases
   passed. Overlapping executions are not summed.
 - Client deadline scope and registration tests passed 41 cases.
+- The final pre-refresh source/boundary run passed 351 tests with 10 platform
+  skips. The schema suite initially could not load its missing generated test
+  metadata; after generation, all 15 SDK schema cases passed separately.
 - The real Java producer probe passed 39 checks, including injected timeout
   state, unchanged listing facets, live snapshot policy, timeout explanations
   and recovery. This is injected failure verification on the real engine,
