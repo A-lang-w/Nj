@@ -12,6 +12,82 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "global-escape-0.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};replace(globalThis);new globalThis.WebSocket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-1.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};replace(globalThis);new WebSocket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-2.mjs",
+    source:
+      'const root=globalThis;function replace(root){root.WebSocket=class{}};replace(root);new root.WebSocket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-3.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};replace(globalThis);const Socket=globalThis.WebSocket;new Socket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-4.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};replace(globalThis);const {WebSocket:Socket}=globalThis;new Socket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-5.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;function replace(root){root.WebSocket=class{}};replace(globalThis);new Socket("wss://example.test/global-escape");',
+    endpoint: "wss://example.test/global-escape",
+  },
+  {
+    file: "global-escape-6.mjs",
+    source:
+      'const {WebSocket:Socket}=globalThis;function replace(root){root.WebSocket=class{}};replace(globalThis);new Socket("wss://example.test/global-escape");',
+    endpoint: "wss://example.test/global-escape",
+  },
+  {
+    file: "global-escape-7.mjs",
+    source:
+      'new globalThis.WebSocket("wss://example.test/global-escape");function replace(root){root.WebSocket=class{}};replace(globalThis);',
+    endpoint: "wss://example.test/global-escape",
+  },
+  {
+    file: "global-escape-8.mjs",
+    source:
+      'const root=globalThis;function replace(root){root.WebSocket=class{}};replace(globalThis);new root.WebSocket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-9.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket,ignored=replace(globalThis);new Socket("wss://example.test/global-escape");',
+    endpoint: "wss://example.test/global-escape",
+  },
+  {
+    file: "global-escape-10.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};const ignored=replace(globalThis),Socket=globalThis.WebSocket;new Socket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-11.mjs",
+    source:
+      'const other={};function replace(root){root.WebSocket=class{}};replace(other);new globalThis.WebSocket("wss://example.test/global-escape");',
+    endpoint: "wss://example.test/global-escape",
+  },
+  {
+    file: "global-escape-12.mjs",
+    source:
+      'function replace(root){root.WebSocket=class{}};replace(globalThis.globalThis);new globalThis.WebSocket("wss://example.test/global-escape");',
+  },
+  {
+    file: "global-escape-13.mjs",
+    source:
+      'const Socket=globalThis.WebSocket;function replace(root){root.WebSocket=class{}};replace(globalThis);const connect=()=>new Socket("wss://example.test/global-escape");connect();',
+    endpoint: "wss://example.test/global-escape",
+  },
+  {
     file: "reachability-28.mjs",
     source:
       'Array.prototype[Symbol.iterator]=function(){if(globalThis.flag){throw 0}else{throw 1}};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
@@ -46,7 +122,7 @@ const sources = [
   {
     file: "reachability-27.mjs",
     source:
-      '(async()=>{try{globalThis.stop();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+      '(async()=>{try{stop();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
     endpoint: "wss://example.test/reachability",
   },
   {
@@ -94,7 +170,7 @@ const sources = [
   {
     file: "reachability-8.mjs",
     source:
-      '(async()=>{try{globalThis.inert();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+      '(async()=>{try{inert();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
     endpoint: "wss://example.test/reachability",
   },
   {

@@ -20,6 +20,7 @@ import {
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticBindingAtRead,
+  semanticEffectFollowsReference,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
@@ -709,7 +710,7 @@ export function* indexJavaScriptAmbientWritesSteps(
 
 /**
  * Recognize an ambient property path, optionally through a global object, without a visible
- * source-local overwrite. This is a syntax-local identity fact, not proof that
+ * source-local overwrite or unordered receiver escape. This is a syntax-local identity fact, not proof that
  * the runtime's globals have never been patched by other code.
  */
 export const isUnmodifiedGlobalReference = (
@@ -717,10 +718,33 @@ export const isUnmodifiedGlobalReference = (
   state: JavaScriptSemanticAnalysisState,
   name: string | readonly [string, ...string[]],
   projection: readonly string[] = [],
+  capture: t.Node = callee,
 ): boolean => {
   const path: readonly [string, ...string[]] =
     typeof name === "string" ? [name] : name;
-  if (state.ambientWrites.covers(["global", ...path])) return false;
+  // Escaping an ambient receiver lets user code replace any selected member.
+  // A constructor already captured before that escape keeps its identity.
+  const modified = (selected: readonly string[]): boolean =>
+    state.ambientWrites.covers(selected) ||
+    (state.ambientEscapes.covers(selected) &&
+      state.ambientReferenceEffects.some(
+        ({ path, node, kind }) =>
+          kind === "escape" &&
+          path.length <= selected.length &&
+          path.every((key, index) =>
+            semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+          ) &&
+          // Selecting this invocation's callee precedes its receiver escape,
+          // including when the invocation is inside a deferred function.
+          !(
+            (t.isCallExpression(node) ||
+              t.isOptionalCallExpression(node) ||
+              t.isNewExpression(node)) &&
+            unwrapJavaScriptExpression(node.callee).node === capture
+          ) &&
+          !semanticEffectFollowsReference(capture, node, state.parentsByNode),
+      ));
+  if (modified(["global", ...path])) return false;
   const { root, members } = electronMemberPath(callee);
   const selected = [...members, ...projection];
   const matches = (expected: readonly string[], actual = selected) =>
@@ -731,14 +755,13 @@ export const isUnmodifiedGlobalReference = (
   const namespace = globalObjectName(root, state);
   let selfReferencesUnmodified = true;
   const canonical = canonicalAmbientPath(["global", ...selected], (name) => {
-    if (state.ambientWrites.covers(["global", name]))
-      selfReferencesUnmodified = false;
+    if (modified(["global", name])) selfReferencesUnmodified = false;
   });
   return (
     namespace !== undefined &&
     selfReferencesUnmodified &&
     matches(path, canonical.slice(1)) &&
-    !state.ambientWrites.covers(["global", namespace])
+    !modified(["global", namespace])
   );
 };
 

@@ -647,7 +647,15 @@ export const isWebSocketEndpointCandidate = (
   let selectedCapture: t.Node | undefined;
   for (;;) {
     current = unwrapJavaScriptExpression(current).node;
-    if (isUnmodifiedGlobalReference(current, state, "WebSocket", selected))
+    if (
+      isUnmodifiedGlobalReference(
+        current,
+        state,
+        "WebSocket",
+        selected,
+        selectedCapture ?? current,
+      )
+    )
       return true;
     const required = semanticRequireOrigin(current, state)?.origin;
     if (required !== undefined) {

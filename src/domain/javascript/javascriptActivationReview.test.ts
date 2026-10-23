@@ -5,6 +5,76 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "passed global replacement",
+    'function replace(root){root.WebSocket=class{}};replace(globalThis);new globalThis.WebSocket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "bare constructor replacement",
+    'function replace(root){root.WebSocket=class{}};replace(globalThis);new WebSocket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "global alias replacement",
+    'const root=globalThis;function replace(root){root.WebSocket=class{}};replace(root);new root.WebSocket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "late captured constructor",
+    'function replace(root){root.WebSocket=class{}};replace(globalThis);const Socket=globalThis.WebSocket;new Socket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "late destructured constructor",
+    'function replace(root){root.WebSocket=class{}};replace(globalThis);const {WebSocket:Socket}=globalThis;new Socket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "early captured constructor",
+    'const Socket=globalThis.WebSocket;function replace(root){root.WebSocket=class{}};replace(globalThis);new Socket("wss://example.test/global-escape");',
+    ["wss://example.test/global-escape"],
+  ],
+  [
+    "early destructured constructor",
+    'const {WebSocket:Socket}=globalThis;function replace(root){root.WebSocket=class{}};replace(globalThis);new Socket("wss://example.test/global-escape");',
+    ["wss://example.test/global-escape"],
+  ],
+  [
+    "read before later escape",
+    'new globalThis.WebSocket("wss://example.test/global-escape");function replace(root){root.WebSocket=class{}};replace(globalThis);',
+    ["wss://example.test/global-escape"],
+  ],
+  [
+    "namespace alias is not constructor capture",
+    'const root=globalThis;function replace(root){root.WebSocket=class{}};replace(globalThis);new root.WebSocket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "same declaration early capture",
+    'function replace(root){root.WebSocket=class{}};const Socket=globalThis.WebSocket,ignored=replace(globalThis);new Socket("wss://example.test/global-escape");',
+    ["wss://example.test/global-escape"],
+  ],
+  [
+    "same declaration late capture",
+    'function replace(root){root.WebSocket=class{}};const ignored=replace(globalThis),Socket=globalThis.WebSocket;new Socket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "unrelated receiver escape",
+    'const other={};function replace(root){root.WebSocket=class{}};replace(other);new globalThis.WebSocket("wss://example.test/global-escape");',
+    ["wss://example.test/global-escape"],
+  ],
+  [
+    "escaped nested global alias",
+    'function replace(root){root.WebSocket=class{}};replace(globalThis.globalThis);new globalThis.WebSocket("wss://example.test/global-escape");',
+    [],
+  ],
+  [
+    "stored constructor survives later callback escape",
+    'const Socket=globalThis.WebSocket;function replace(root){root.WebSocket=class{}};replace(globalThis);const connect=()=>new Socket("wss://example.test/global-escape");connect();',
+    ["wss://example.test/global-escape"],
+  ],
+  [
     "iterator abrupt branches",
     'Array.prototype[Symbol.iterator]=function(){if(globalThis.flag){throw 0}else{throw 1}};(async()=>{try{const []=[];const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
     [],
@@ -36,7 +106,7 @@ const cases = [
   ],
   [
     "controlled throwing unknown",
-    '(async()=>{try{globalThis.stop();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    '(async()=>{try{stop();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
     ["wss://example.test/reachability"],
   ],
   [
@@ -81,7 +151,7 @@ const cases = [
   ],
   [
     "maybe prior call",
-    '(async()=>{try{globalThis.inert();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
+    '(async()=>{try{inert();const [y=await 0]=(function*(){try{yield undefined}finally{new Socket("wss://example.test/reachability")}})();}catch{}})();const Socket=globalThis.WebSocket;',
     ["wss://example.test/reachability"],
   ],
   [
