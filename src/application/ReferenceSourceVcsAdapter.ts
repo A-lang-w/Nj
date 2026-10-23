@@ -382,6 +382,14 @@ const readOwnedMetadataBytes = async (
   }
 };
 
+// Loose symbolic refs have a different grammar from directory pointers:
+// `ref:` allows Git's SP/TAB/CR/LF padding around the target, while Unicode
+// whitespace remains part of the ref name. VT and FF are not Git whitespace.
+const parseGitSymbolicRef = (record: string): string | undefined =>
+  record.startsWith("ref:")
+    ? record.slice(4).replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "")
+    : undefined;
+
 const resolveSourceHead = async (
   metadata: GitMetadataIdentity,
   resources: ArtifactResourceScope,
@@ -467,8 +475,10 @@ const resolveSourceHead = async (
           // The dependency trims loose and packed refs with JavaScript's
           // Unicode whitespace rules. Reject text whose identity it would
           // change rather than report a different, trimmed sibling's HEAD.
+          // Leading record whitespace is invalid; only trailing Git ASCII
+          // whitespace can be discarded before the record is interpreted.
           const text = decodeGitMetadataRecord(bytes);
-          if (text.trim() !== text.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, ""))
+          if (text.trim() !== text.replace(/[ \t\r\n]+$/u, ""))
             throw new Error("Git ref identity cannot be preserved");
           return encoding === "utf8" || encoding === "utf-8"
             ? text
@@ -504,8 +514,8 @@ const resolveSourceHead = async (
   const { gitdir, commonDirectory } = metadata;
   if (commonDirectory === undefined) return readRef({ gitdir, ref: "HEAD" });
   const head = await readMetadataText(join(gitdir, "HEAD"));
-  if (!head.startsWith("ref: ")) return readRef({ gitdir, ref: "HEAD" });
-  const ref = head.slice(5);
+  const ref = parseGitSymbolicRef(head);
+  if (ref === undefined) return readRef({ gitdir, ref: "HEAD" });
   const privateRef = ["refs/bisect/", "refs/rewritten/", "refs/worktree/"].some(
     (prefix) => ref.startsWith(prefix),
   );

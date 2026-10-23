@@ -131,11 +131,11 @@ const expectGitInventory = async (
     .filter(Boolean)
     .sort();
   const { vcs, graph } = await observe(root);
+  expect(graph.vcs).toEqual({ kind: "git", head, dirty: null });
   expect(vcs).toEqual({
     info: { kind: "git", head, dirty: null },
     ignoreCase,
   });
-  expect(graph.vcs).toEqual(vcs.info);
   expect(graph.limitations).not.toContain(UNKNOWN_CASE);
   expect(
     graph.entries
@@ -484,5 +484,147 @@ describe.skipIf(process.platform === "win32")(
       expect(graph.vcs).toEqual(unknownVcs);
       expect(graph.limitations).not.toContain(UNKNOWN_CASE);
     });
+  },
+);
+
+const symbolicHeadPaddingCases = [
+  {
+    kind: "ordinary" as const,
+    form: "space padding",
+    separator: " ",
+    tail: "   \n",
+    namespace: "refs/heads/",
+    suffix: "",
+  },
+  {
+    kind: "separate" as const,
+    form: "space padding",
+    separator: " ",
+    tail: "\t\r\n",
+    namespace: "refs/heads/",
+    suffix: "",
+  },
+  {
+    kind: "linked" as const,
+    form: "space padding",
+    separator: " ",
+    tail: "   \n",
+    namespace: "refs/heads/",
+    suffix: "",
+  },
+  {
+    kind: "linked" as const,
+    form: "tab separator",
+    separator: "\t",
+    tail: "\t\r\n",
+    namespace: "refs/heads/",
+    suffix: "",
+  },
+  {
+    kind: "linked" as const,
+    form: "no separator",
+    separator: "",
+    tail: "\n",
+    namespace: "refs/heads/",
+    suffix: "",
+  },
+  {
+    kind: "linked" as const,
+    form: "mixed separator",
+    separator: " \t\r\n",
+    tail: " \t\r\n",
+    namespace: "refs/heads/",
+    suffix: "",
+  },
+  {
+    kind: "linked" as const,
+    form: "newline separator",
+    separator: "\n",
+    tail: "\n",
+    namespace: "refs/heads/",
+    suffix: "",
+  },
+  {
+    kind: "linked" as const,
+    form: "padded NBSP identity",
+    separator: "\t",
+    tail: " \t\r\n",
+    namespace: "refs/heads/",
+    suffix: "\u00a0",
+  },
+  {
+    kind: "linked" as const,
+    form: "padded private FEFF identity",
+    separator: " \t",
+    tail: " \t\n",
+    namespace: "refs/worktree/",
+    suffix: "\ufeff",
+  },
+];
+
+describe.skipIf(process.platform === "win32")(
+  "reference source symbolic HEAD record grammar",
+  () => {
+    it.each(symbolicHeadPaddingCases)(
+      "accepts $kind $form without changing the ref identity",
+      async ({ kind, separator, tail, namespace, suffix }) => {
+        const repository = await fixture(kind, "metadata ");
+        const { root, gitdir, git, initialHead } = repository;
+        if (kind !== "linked") await repository.commit(root);
+        const head = (await git(root, "rev-parse", "HEAD")).trim();
+        expect(head).not.toBe(initialHead);
+        const ref = `${namespace}target${suffix}`;
+        await git(root, "update-ref", ref, head);
+        if (suffix !== "")
+          await git(root, "update-ref", ref.trimEnd(), initialHead);
+        await writeFile(join(gitdir, "HEAD"), `ref:${separator}${ref}${tail}`);
+        await expectGitInventory({ ...repository, head }, true);
+      },
+    );
+
+    it.each([
+      {
+        kind: "ordinary" as const,
+        form: "leading record space",
+        prefix: "   ref: ",
+        tail: "\n",
+      },
+      {
+        kind: "linked" as const,
+        form: "leading record space",
+        prefix: "   ref: ",
+        tail: "\n",
+      },
+      {
+        kind: "linked" as const,
+        form: "vertical-tab separator",
+        prefix: "ref:\v",
+        tail: "\n",
+      },
+      {
+        kind: "linked" as const,
+        form: "form-feed padding",
+        prefix: "ref: ",
+        tail: "\f\n",
+      },
+    ])(
+      "keeps an invalid $kind $form unknown",
+      async ({ kind, prefix, tail }) => {
+        const repository = await fixture(kind, "metadata");
+        const { root, gitdir, git, head } = repository;
+        await git(root, "update-ref", "refs/heads/target", head);
+        await writeFile(
+          join(gitdir, "HEAD"),
+          `${prefix}refs/heads/target${tail}`,
+        );
+        await expect(git(root, "rev-parse", "HEAD")).rejects.toMatchObject({
+          code: 128,
+        });
+        const { vcs, graph } = await observe(root);
+        expect(graph.vcs).toEqual(unknownVcs);
+        expect(vcs).toEqual({ info: unknownVcs, ignoreCase: true });
+        expect(graph.limitations).not.toContain(UNKNOWN_CASE);
+      },
+    );
   },
 );
