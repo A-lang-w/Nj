@@ -10,8 +10,8 @@ and compares it with the recording.
 - `npm run build:cached`, `npm run check:fast` (typecheck and lint, no new warnings in the changed files),
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
-- `npm run jscpd`: 3.49% duplicated lines over 4072 files.
-- `npx vitest run --project domain --project services`: 8975 passed, 6 pre-existing skips.
+- `npm run jscpd`: 3.49% duplicated lines over 4074 files.
+- `npx vitest run --project domain --project services`: 8987 passed, 6 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 88 passed.
@@ -27,6 +27,7 @@ and compares it with the recording.
 | rewrite cuts    | 189         | 51     | 77              | 1,110                   | 1,922 of 1,975          |
 | variant lines   | 189         | 61     | 61              | 1,150                   | 2,068 of 2,126          |
 | review fixes    | 189         | 61     | 61              | 1,151                   | 2,075 of 2,133          |
+| third round     | 189         | 61     | 62              | 1,151                   | 2,075 of 2,133          |
 
 The served smoke applies every served write tool at each step. No read view loses its state backing, and no served
 write tool is lost.
@@ -48,6 +49,9 @@ write tool is lost.
   initial windows at a `POST /api/view-log/` returning `{"id":1}`.
   The second round (the gate skipping exactly the reads serving replays, earlier reads vetoing a linked create, whole
   RPC batches, and releasing a discarded planning pass) changes no measurement.
+- **Third round:** Mailpit's send, a linked create that was never observed, loses its target: other writes (marking
+  messages read, tagging) ran between it and the item read naming its id. No served write, read view or matching read
+  changes.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
