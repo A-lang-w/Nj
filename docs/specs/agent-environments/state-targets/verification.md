@@ -13,7 +13,7 @@ among the state-backed views.
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
 - `npm run jscpd`: 3.49% duplicated lines over 4074 files.
-- `npx vitest run --project domain --project services`: 8992 passed, 6 pre-existing skips.
+- `npx vitest run --project domain --project services`: 8992 passed, 6 pre-existing skips, on main `ed069bb9`.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 88 passed.
@@ -61,6 +61,7 @@ write tool is lost.
   recorded reads matching.
 - **Fifth round** (on main `6a34be41`): no verdict, read view or recorded read changes on the same restored captures,
   once the serving check passes a repeated query value as an array, as main now expects.
+- **Sixth round:** no verdict, read view or recorded read changes on the restored captures.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
