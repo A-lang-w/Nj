@@ -10,6 +10,8 @@ import {
 } from "../../../support/javascriptApplicationScope.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { traceApplicationFeature } from "../../../../src/domain/javascript/javascriptFeatureTrace.js";
+import { applicationObligationPolicy } from "../../../../src/application/ReconstructionObligationPolicies.js";
 
 const MAIN = String.raw`
 const { app, protocol } = require("electron");
@@ -133,5 +135,72 @@ describe("Electron URL scheme boundaries", () => {
         resolution: "non-string-literal",
       },
     });
+  });
+});
+
+describe("Electron URL scheme graph consumers", () => {
+  it("ends feature traces at schemes and gives them a reconstruction policy", async () => {
+    const result = await reconstructJavaScriptArtifact({
+      input_path: await protocolFixture(),
+    });
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+    const schemeIds = new Set(
+      graph.nodes
+        .filter(({ kind }) => kind === "url-scheme")
+        .map(({ node_id: id }) => id),
+    );
+    const registering = graph.edges.find(({ target_node_id: target }) =>
+      schemeIds.has(target),
+    )?.source_node_id;
+    const trace = traceApplicationFeature({
+      sourceEvidenceId: `ev_${"0".repeat(64)}`,
+      graph,
+      nativeEvidence: [],
+      direction: "outgoing",
+      seed: {
+        kind: "node-id",
+        value: registering ?? "",
+        match: "exact",
+        case_sensitive: true,
+      },
+    });
+    expect(
+      new Set(
+        trace.paths
+          .filter(({ end_kind: kind }) => kind === "url-scheme")
+          .map(({ end_node_id: id }) => id),
+      ),
+    ).toEqual(schemeIds);
+    expect(applicationObligationPolicy("url-scheme")).toMatchObject({
+      applicationLayer: "electron",
+      family: "url-scheme",
+      fixtureAuthority: "packaged-process",
+    });
+  });
+
+  it("keeps dynamic schemes in identical files as separate occurrences", async () => {
+    const root = await createTestTempDirectory("rea-electron-protocol-copies-");
+    const source = [
+      'const { protocol } = require("electron");',
+      "protocol.handle(config.scheme, () => null);",
+    ].join("\n");
+    // Byte-identical files share a digest but are separate module occurrences.
+    await Promise.all([
+      writeFile(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "rea-electron-protocol-copies",
+          main: "main.cjs",
+        }),
+      ),
+      writeFile(join(root, "main.cjs"), source),
+      writeFile(join(root, "copy.cjs"), source),
+    ]);
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    expect(
+      parseJavaScriptApplicationGraph(result.graph).nodes.filter(
+        ({ kind }) => kind === "url-scheme",
+      ),
+    ).toHaveLength(2);
   });
 });

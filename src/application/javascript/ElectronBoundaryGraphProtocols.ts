@@ -89,7 +89,9 @@ const addProtocolRegistration = (input: ProtocolInput): void => {
         ? artifactLocalIdentity(
             file.sha256,
             "electron-dynamic-url-scheme",
-            `${value.api}:${javascriptSourceRangeKey(value.location)}`,
+            // Identical bytes at two paths are separate occurrences whose
+            // expressions can resolve differently.
+            `${file.path}:${value.api}:${javascriptSourceRangeKey(value.location)}`,
           )
         : electronObservationIdentity(
             context,
