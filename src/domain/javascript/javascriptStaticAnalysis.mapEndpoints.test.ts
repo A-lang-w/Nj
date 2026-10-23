@@ -52,6 +52,11 @@ it.each([
 });
 
 it.each([
+  'const box = {}; box.__proto__ = { set p(value) { value.get = fetch; } }; box.p = Map.prototype; new Map().get("/accounts")',
+  'const box = {}; Object.setPrototypeOf(box, { set p(value) { value.get = fetch; } }); box.p = Map.prototype; new Map().get("/accounts")',
+  'const box = {}; const alias = box; alias.__proto__ = { set p(value) { value.get = fetch; } }; box.p = Map.prototype; new Map().get("/accounts")',
+  'const box = { child: {} }; box.child.__proto__ = { set p(value) { value.get = fetch; } }; box.child.p = Map.prototype; new Map().get("/accounts")',
+  'const box = {}; Object.defineProperty(box, "p", { set(value) { value.get = fetch; } }); box.p = Map.prototype; new Map().get("/accounts")',
   'const box = { set p(value) { patch(value); } }; box.p = Map.prototype; new Map().get("/accounts")',
   'const box = { set p(value) { value.get = fetch; } }; box.p = Map.prototype; new Map().get("/accounts")',
   'const box = { __proto__: { set p(value) { patch(value); } } }; box.p = Map.prototype; new Map().get("/accounts")',

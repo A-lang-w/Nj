@@ -44,6 +44,8 @@ import {
   semanticIterationSources,
   type SemanticIterationSource,
 } from "./javascriptSemanticIterationSources.js";
+import { semanticAliasSelectionChoices } from "./javascriptSemanticAliasSelections.js";
+import { semanticProjectedSourceFactsAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticGetterReceiverPaths } from "./javascriptSemanticGetterResults.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
@@ -149,6 +151,43 @@ const localAccessorMethods = (
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) {
         if (selection.requireLocalProof) return undefined;
+        continue;
+      }
+      if (selection.requireLocalProof && current.path.length > 0) {
+        const receiverPath = current.path.slice(0, -1);
+        for (const path of [current.path, [...receiverPath, "__proto__"]]) {
+          const facts = semanticProjectedSourceFactsAtRead(
+            binding,
+            node,
+            path,
+            state,
+            true,
+            root,
+          );
+          if (facts === undefined || facts.slotMayHaveChanged) return undefined;
+        }
+        const receiver = semanticProjectedSourceFactsAtRead(
+          binding,
+          node,
+          receiverPath,
+          state,
+          true,
+          root,
+        );
+        if (receiver === undefined || receiver.sources.length === 0)
+          return undefined;
+        for (const source of receiver.sources) {
+          const exactPath: PropertyPath[number][] = [];
+          for (const key of source.path) {
+            const choices = semanticAliasSelectionChoices(key);
+            if (choices.length !== 1) return undefined;
+            exactPath.push(choices[0]!);
+          }
+          pending.push({
+            node: source.node,
+            path: [...exactPath, current.path.at(-1)!],
+          });
+        }
         continue;
       }
       const selected = semanticBindingAtRead(
