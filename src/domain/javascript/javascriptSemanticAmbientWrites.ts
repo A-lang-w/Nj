@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -9,6 +10,7 @@ import {
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
   isUnshadowedGlobal,
   resolveSemanticBindingState,
@@ -16,7 +18,12 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticDefiniteEffectPrecedesReference,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
+import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticIterationSources,
   type SemanticIterationSource,
@@ -29,6 +36,50 @@ import {
 } from "./javascriptSemanticReferenceSources.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
+
+// These static builtins do not give their namespace receiver to user code.
+const NATIVE_NAMESPACE_METHODS = {
+  Object: new Set([
+    "assign",
+    "create",
+    "defineProperty",
+    "defineProperties",
+    "entries",
+    "freeze",
+    "fromEntries",
+    "getOwnPropertyDescriptor",
+    "getOwnPropertyDescriptors",
+    "getOwnPropertyNames",
+    "getOwnPropertySymbols",
+    "getPrototypeOf",
+    "groupBy",
+    "hasOwn",
+    "is",
+    "isExtensible",
+    "isFrozen",
+    "isSealed",
+    "keys",
+    "preventExtensions",
+    "seal",
+    "setPrototypeOf",
+    "values",
+  ]),
+  Reflect: new Set([
+    "apply",
+    "construct",
+    "defineProperty",
+    "deleteProperty",
+    "get",
+    "getOwnPropertyDescriptor",
+    "getPrototypeOf",
+    "has",
+    "isExtensible",
+    "ownKeys",
+    "preventExtensions",
+    "set",
+    "setPrototypeOf",
+  ]),
+};
 
 const globalObjectName = (
   node: t.Node,
@@ -130,11 +181,14 @@ export const createAmbientPathResolver = (
       node: t.Node;
       suffix: AmbientProjection;
       readsAtSelf?: true;
+      prototypeDepths?: readonly number[];
+      prototypeReadAt?: t.Node;
     }[] = [{ node, suffix: projection }];
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
     // depths widen to unknown, so diamonds and cycles have finite state.
-    const expanded = new WeakMap<t.Node, AmbientProjection>();
+    const expanded = new WeakMap<t.Node, Map<string, AmbientProjection>>();
+    let prototypeStates = 0;
     const retain = (path: AmbientPath) => {
       let canonical = canonicalAmbientPath(path);
       for (;;) {
@@ -167,8 +221,29 @@ export const createAmbientPathResolver = (
         current.suffix === undefined
           ? undefined
           : [...members, ...current.suffix];
-      if (expanded.has(root)) {
-        const previous = expanded.get(root);
+      const prototypeDepths = (current.prototypeDepths ?? []).map(
+        (depth) => depth + members.length,
+      );
+      const prototypeReadAt = members.includes("__proto__")
+        ? current.node
+        : current.prototypeReadAt;
+      if (
+        prototypeDepths.length > 0 &&
+        ++prototypeStates > SEMANTIC_ALIAS_SELECTION_LIMIT
+      ) {
+        state.valueResourceLimits.add("alias-selections");
+        retain(["global", null]);
+        continue;
+      }
+      const selectionKey = JSON.stringify([
+        prototypeDepths,
+        prototypeReadAt?.start,
+        prototypeReadAt?.end,
+      ]);
+      const bySelection =
+        expanded.get(root) ?? new Map<string, AmbientProjection>();
+      if (bySelection.has(selectionKey)) {
+        const previous = bySelection.get(selectionKey);
         if (previous === undefined) continue;
         if (suffix !== undefined && previous.length === suffix.length) {
           const joined: AmbientPath = previous.map((key, index) =>
@@ -182,13 +257,27 @@ export const createAmbientPathResolver = (
           return [];
         }
       }
-      expanded.set(root, suffix);
+      bySelection.set(selectionKey, suffix);
+      expanded.set(root, bySelection);
       // A widened projection is a possible write, never proof of an intrinsic.
       if (suffix === undefined && !possibleWrites) continue;
-      const continueWith = (node: t.Node, path: AmbientProjection = suffix) =>
+      const shiftPrototypeDepths = (path: AmbientProjection) =>
+        path === undefined || suffix === undefined
+          ? []
+          : prototypeDepths
+              .map((depth) => depth + path.length - suffix.length)
+              .filter((depth) => depth >= 0);
+      const continueWith = (
+        node: t.Node,
+        path: AmbientProjection = suffix,
+        depths = shiftPrototypeDepths(path),
+        readAt = prototypeReadAt,
+      ) =>
         pending.push({
           node,
           suffix: path,
+          ...(depths.length === 0 ? {} : { prototypeDepths: depths }),
+          ...(readAt === undefined ? {} : { prototypeReadAt: readAt }),
           ...(current.readsAtSelf && { readsAtSelf: true }),
         });
       const continueReturned = (callee: t.Node, path: AmbientProjection) => {
@@ -235,6 +324,15 @@ export const createAmbientPathResolver = (
           pending.push({
             node: source.node,
             readsAtSelf: true,
+            ...(prototypeReadAt === undefined ? {} : { prototypeReadAt }),
+            prototypeDepths:
+              suffix === undefined || path === undefined
+                ? []
+                : prototypeDepths
+                    .map(
+                      (depth) => depth + source.projection.length - path.length,
+                    )
+                    .filter((depth) => depth >= 0),
             suffix:
               remaining === undefined
                 ? undefined
@@ -301,6 +399,16 @@ export const createAmbientPathResolver = (
           pending.push({
             node: initializer.node,
             readsAtSelf: true,
+            ...(prototypeReadAt === undefined ? {} : { prototypeReadAt }),
+            prototypeDepths: shiftPrototypeDepths(
+              suffix === undefined
+                ? undefined
+                : path.map((key) =>
+                    key === null || typeof key === "object"
+                      ? null
+                      : String(key),
+                  ),
+            ),
             suffix:
               suffix === undefined ||
               semanticReferenceIterationUnknown(initializer, state)
@@ -326,17 +434,61 @@ export const createAmbientPathResolver = (
           ? "Array"
           : t.isObjectExpression(root) &&
               root.properties.every((property) => {
-                if (t.isSpreadElement(property)) return false;
+                if (t.isSpreadElement(property))
+                  return prototypeDepths.includes(0);
                 const key = semanticStaticPropertyKey(
                   property.key,
                   property.computed,
                 );
-                return key !== null && key !== "__proto__";
+                const prototypeSetter =
+                  t.isObjectProperty(property) &&
+                  !property.computed &&
+                  !property.shorthand &&
+                  key === "__proto__";
+                if (prototypeSetter && t.isObjectProperty(property)) {
+                  const literal = readExactJavaScriptLiteral(property.value);
+                  return literal.found && literal.value !== null;
+                }
+                return (
+                  prototypeDepths.includes(0) ||
+                  (key !== null && key !== "__proto__")
+                );
               })
             ? "Object"
             : undefined;
         if (builtin !== undefined) {
-          retain(["global", builtin, "prototype", ...suffix.slice(1)]);
+          const ownProtoData =
+            t.isObjectExpression(root) &&
+            root.properties.some(
+              (property) =>
+                !t.isSpreadElement(property) &&
+                semanticStaticPropertyKey(property.key, property.computed) ===
+                  "__proto__" &&
+                !(
+                  t.isObjectProperty(property) &&
+                  !property.computed &&
+                  !property.shorthand
+                ),
+            );
+          const replaced =
+            !(prototypeDepths.includes(0) && ownProtoData) &&
+            [...(facts?.stores.get(root) ?? [])].some(
+              ([source, path]) =>
+                path?.length === 1 &&
+                path[0] === "__proto__" &&
+                t.isAssignmentExpression(source.mutation, { operator: "=" }) &&
+                source.target !== undefined &&
+                facts?.freshObject(source.target.object) &&
+                (facts.freshObject(source.node) ||
+                  t.isNullLiteral(source.node)) &&
+                semanticDefiniteEffectPrecedesReference(
+                  source.mutation,
+                  prototypeReadAt ?? capture ?? current.node,
+                  state.parentsByNode,
+                ),
+            );
+          if (!replaced)
+            retain(["global", builtin, "prototype", ...suffix.slice(1)]);
           continue;
         }
       }
@@ -360,6 +512,10 @@ export const createAmbientPathResolver = (
         continueWith(
           prototypeTarget,
           suffix === undefined ? undefined : ["__proto__", ...suffix],
+          suffix === undefined
+            ? []
+            : [0, ...prototypeDepths.map((depth) => depth + 1)],
+          root,
         );
         continue;
       }
@@ -516,6 +672,11 @@ export function* indexJavaScriptAmbientWritesSteps(
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
   const browserReceiverMethods = new Set<string>();
+  const nativeReceiverCalls: {
+    readonly node: t.Node;
+    readonly receiver: t.Node;
+    readonly path: readonly string[];
+  }[] = [];
   const storedSites = new WeakSet<t.Node>();
   const storedReferences: SemanticIterationSource[] = [];
   const writes: { node: t.Node; path: AmbientPath }[] = [];
@@ -610,18 +771,44 @@ export function* indexJavaScriptAmbientWritesSteps(
         ["open", "fetch"].includes(invocation.path[1] ?? "")
           ? invocation.path[1]
           : undefined;
+      const member =
+        t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+          ? callee
+          : undefined;
+      const receiver = member?.object;
+      const [namespace] = receiver === undefined ? [] : ambientReads(receiver);
+      const method =
+        member === undefined
+          ? null
+          : semanticStaticPropertyKey(member.property, member.computed);
+      const nativeNamespace =
+        namespace?.length === 2 &&
+        namespace[0] === "global" &&
+        (namespace[1] === "Object" || namespace[1] === "Reflect")
+          ? namespace[1]
+          : undefined;
+      const nativeReceiver =
+        invocation?.kind === "known" &&
+        nativeNamespace !== undefined &&
+        method !== null &&
+        NATIVE_NAMESPACE_METHODS[nativeNamespace].has(String(method));
+      if (nativeReceiver && receiver !== undefined) {
+        state.intrinsicReceiverCalls.add(node);
+        nativeReceiverCalls.push({
+          node,
+          receiver,
+          path: ["global", nativeNamespace!, String(method)],
+        });
+      }
       if (
         !t.isNewExpression(node) &&
         (t.isMemberExpression(callee) ||
           t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        !nativeReceiver
       ) {
         if (browserMethod !== undefined) {
           browserReceiverMethods.add(browserMethod);
-          state.intrinsicBrowserReceiverCalls.add(node);
+          state.intrinsicReceiverCalls.add(node);
         }
         retainEscape(callee.object, browserMethod !== undefined);
       }
@@ -715,6 +902,27 @@ export function* indexJavaScriptAmbientWritesSteps(
       if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
         retainSemanticAmbientEffect(state, "escape", path, node);
       }
+  for (const { node, receiver, path } of nativeReceiverCalls) {
+    if (!state.ambientWrites.covers(path) && !state.ambientEscapes.covers(path))
+      continue;
+    const changed = [
+      ...state.ambientWriteEffects,
+      ...state.ambientEscapeEffects,
+    ].some((effect) => {
+      if (semanticEffectTiming(node, effect.node, state) === "after")
+        return false;
+      return (
+        effect.path.length <= path.length &&
+        effect.path.every((key, index) =>
+          semanticPropertyPathKeyMatches(key, path[index] ?? ""),
+        )
+      );
+    });
+    if (!changed) continue;
+    state.intrinsicReceiverCalls.delete(node);
+    for (const identity of ambientWrites(receiver, node, true))
+      retainSemanticAmbientEffect(state, "escape", identity, node);
+  }
   // A function may call a browser method replaced later in source order.
   if (
     [...browserReceiverMethods].some((method) =>

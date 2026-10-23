@@ -1052,7 +1052,7 @@ const createState = (
     ambientBindingWrites: new Map(),
     ambientWrites: new SemanticPropertyPathCoverage(),
     ambientEscapes: new SemanticPropertyPathCoverage(),
-    intrinsicBrowserReceiverCalls: new WeakSet(),
+    intrinsicReceiverCalls: new WeakSet(),
     ambientEscapeEffects: [],
     ambientWriteEffects: [],
   };

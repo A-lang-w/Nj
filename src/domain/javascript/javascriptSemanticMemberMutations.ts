@@ -636,11 +636,17 @@ export function* collectSemanticMemberMutationsSteps(
         ...(ownerInitializer === undefined ? {} : { ownerInitializer }),
       },
     ];
+    const aliasStates = new Map<
+      string,
+      { paths: SemanticPropertyPathCoverage; additional: number }
+    >();
+    let widenedAliases = false;
     // Visit shallower alias traversals first so their exact prefixes suppress
     // longer loop paths before those paths enumerate every assignment order.
     for (let cursor = 0; cursor < pending.length; cursor++) {
-      const current = pending[cursor];
-      if (current === undefined) break;
+      const candidate = pending[cursor];
+      if (candidate === undefined) break;
+      let current = candidate;
       const expression = unwrapJavaScriptExpression(current.node).node;
       const required = semanticRequireOrigin(expression, state);
       if (required !== undefined) {
@@ -701,6 +707,30 @@ export function* collectSemanticMemberMutationsSteps(
             state.arrayIterationUnknown = true;
           continue;
         }
+        // Reconverging member aliases can create exponentially many distinct
+        // selectors even without a cycle. The existing precise-alias budget
+        // bounds this query before projection indexes or path copies grow.
+        if (!widenedAliases) {
+          const selected = aliasStates.get(binding.bindingId) ?? {
+            paths: new SemanticPropertyPathCoverage(),
+            additional: -1,
+          };
+          aliasStates.set(binding.bindingId, selected);
+          if (
+            selected.paths.retain(current.path) &&
+            ++selected.additional > SEMANTIC_ALIAS_SELECTION_LIMIT
+          ) {
+            widenedAliases = true;
+            aliasStates.clear();
+            state.valueResourceLimits.add("alias-selections");
+          }
+        }
+        if (widenedAliases)
+          current = {
+            ...current,
+            path: current.path.map(() => null),
+            definiteReceiver: false,
+          };
         // An alias restored from a saved reference can revisit the same binding
         // at an earlier capture or a shorter getter-receiver path. Only a
         // repeated capture and path closes a cycle.
@@ -1156,7 +1186,7 @@ export function* collectSemanticMemberMutationsSteps(
     )
       markValue(expression.object, [], new Set(), "escape", {
         mutation,
-        projectAmbientPaths: !state.intrinsicBrowserReceiverCalls.has(mutation),
+        projectAmbientPaths: !state.intrinsicReceiverCalls.has(mutation),
       });
   };
   const markTarget = (node: t.Node, mutation: t.Node): void => {
