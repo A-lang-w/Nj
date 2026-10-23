@@ -90,7 +90,7 @@ describe("ELF note provider failures", () => {
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
     expect(projected.remediation.action).toContain(
-      "ELF note text, hash, scan, and decompression budget bounded by max_file_bytes",
+      "ELF note text, hash, and scan budget fixed by the admitted image length plus decoded section names",
     );
     expect(projected.remediation.action).toMatch(/fixed allowance/u);
     expect(projected.remediation.action).toMatch(/do not raise it/u);
