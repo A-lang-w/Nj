@@ -24,8 +24,10 @@ future-document scripts, restores live frame methods, then disconnects.
 Add secret declarations, storage seeds, and additional artifact or event
 capture only when needed. Action, secret, and storage counts are not capped.
 Duration, action, and navigation timeouts remain fixed provider-owned liveness
-limits. `capture.limits` controls retained event and network-content budgets;
-it does not change those liveness deadlines.
+limits. The initial navigation to `start_url` carries a fixed 60-second
+deadline: if it does not settle in time, the open fails with a typed timeout
+error and the session is closed. `capture.limits` controls retained event and
+network-content budgets; it does not change those liveness deadlines.
 
 ## Minimal launch example
 
