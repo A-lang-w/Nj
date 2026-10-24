@@ -69,7 +69,7 @@ export type PeImageSection = Extract<
   readonly raw_offset: number;
 };
 
-export interface PeImage extends BinaryContainer {
+export type PeImage = BinaryContainer & {
   readonly format: "pe";
   readonly image_base: bigint;
   readonly pe_machine: number;
@@ -80,7 +80,7 @@ export interface PeImage extends BinaryContainer {
     BinaryContainer["pe_data_directories"]
   >;
   readonly sections: readonly PeImageSection[];
-}
+};
 
 /** Read PE32/PE32+ native image mappings and section facts. */
 export const readPeImage = (bytes: Buffer): PeImage => {
