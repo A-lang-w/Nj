@@ -97,7 +97,7 @@ export const archiveNumberMetadataCases: readonly MetadataCase[] = [
       name:
         key === "CF$UID"
           ? `${key} malformed numeric reference`
-          : `${key} integer dictionary data`,
+          : `${key} unsafe integer dictionary data`,
       source: { [key]: "__INTEGER__" },
       element: "",
       expected: { [key]: key === "CF$UID" ? ROUNDED : EXACT_INTEGER },

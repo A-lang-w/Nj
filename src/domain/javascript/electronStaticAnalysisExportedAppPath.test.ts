@@ -1,7 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 const cases = [
   ["native setter", "const change=app.setAppPath;", true, [1]],

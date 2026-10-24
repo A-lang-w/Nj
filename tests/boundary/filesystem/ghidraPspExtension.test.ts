@@ -422,7 +422,7 @@ describe.skipIf(process.platform === "win32")(
   "PSP inspected ABI declaration boundary",
   () => {
     it("refuses a PSP image whose section headers lie beyond the captured file", async () => {
-      const { directory, provider } = await installation();
+      const { directory } = await installation();
       const path = join(directory, "psp-truncated-sections.elf");
       await writeFile(path, pspElfBytes({ sectionHeadersBeyondEof: true }));
       const parsed = await parseBinaryTarget(path);
@@ -430,6 +430,7 @@ describe.skipIf(process.platform === "win32")(
         ok: false,
         error: {
           _tag: "BinaryTargetError",
+          constraint: "file_format_rejected",
           reason: expect.stringContaining("truncated ELF section header table"),
         },
       });
@@ -546,10 +547,16 @@ describe.skipIf(process.platform === "win32")(
       expect(result.ok).toBe(false);
       if (result.ok)
         throw new Error("Conflicting language override was accepted");
-      expect(result.error._tag).toBe("ConfigurationError");
-      expect(result.error.message).toContain(
-        "does not accept processor or compiler specification overrides",
-      );
+      expect(result.error).toMatchObject({
+        _tag: "ConfigurationError",
+        settings: [
+          {
+            setting: "REA_GHIDRA_LANGUAGE_ID",
+            constraint:
+              "The bounded PSP Allegrex profile does not accept processor or compiler specification overrides.",
+          },
+        ],
+      });
     });
 
     it("keeps PSP and generic language-override launch paths mutually exclusive", () => {

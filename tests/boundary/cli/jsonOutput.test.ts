@@ -729,11 +729,12 @@ describe("CLI result output surface", () => {
         },
         details: {
           reported_limits: {
+            // Token counting uses the compact pipe encoding, unlike the
+            // terminal digest above. Count leaves, separators and framing.
             formatted_characters:
-              '{"methods":['.length +
               count * encodedLeaf.length +
               (count - 1) +
-              "]}".length +
+              '{"methods":[]}'.length +
               1 +
               JSON.stringify({ ok: true, data: null, meta: report.meta })
                 .length -

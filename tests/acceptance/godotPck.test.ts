@@ -334,6 +334,12 @@ cliTest(
     );
     if (evidence === undefined) throw new Error("Missing complete inspection");
     expect(graphFrom(evidence).occurrences).toHaveLength(3);
+    const inspection = artifactInspectionResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(saved.value.records).toContainEqual(
+      inspection.substeps[0]?.evidence,
+    );
     const before = await readFile(bundle);
     expect((await cli.run({ arguments: args })).exitCode).toBe(1);
     expect(await readFile(bundle)).toEqual(before);

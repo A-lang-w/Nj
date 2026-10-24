@@ -1243,7 +1243,6 @@ it.each(
         cdp_hash: "local",
         frame_id: "local",
         frame_scope: phase === "invalidated" ? "unknown" : "authorized",
-        frame_claims: { execution_context_frame_id: "local" },
       }),
     );
     expect(result.value.completeness.policy_filtered_sections).toContain(
@@ -1482,13 +1481,11 @@ it.each([
           cdp_hash: "after-replay",
           frame_id: "child",
           frame_scope: expectedOwner ? "authorized" : "unknown",
-          frame_claims: { execution_context_frame_id: "child" },
         }),
         expect.objectContaining({
           cdp_hash: "descendant",
           frame_id: "grandchild",
           frame_scope: expectedOwner ? "authorized" : "unknown",
-          frame_claims: { execution_context_frame_id: "grandchild" },
         }),
       ]),
     );
@@ -1498,7 +1495,6 @@ it.each([
           cdp_hash: "after-detach",
           frame_id: "child",
           frame_scope: "unknown",
-          frame_claims: { execution_context_frame_id: "child" },
         }),
       );
     expect(

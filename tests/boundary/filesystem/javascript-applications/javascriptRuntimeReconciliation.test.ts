@@ -856,11 +856,9 @@ it.each([false, true])(
       join(root, "app", "package.json"),
       JSON.stringify({ main: "main.cjs" }),
     );
-    // Separate receivers keep both declarations intact: an opaque loadFile call
-    // may mutate its receiver before a later call through the same alias.
     await writeFile(
       join(root, "app", "main.cjs"),
-      'const {BrowserWindow} = require("electron"); new BrowserWindow().loadFile("generated.html"); new BrowserWindow().loadFile("./generated.html");',
+      'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("generated.html"); const other = new BrowserWindow(); other.loadFile("./generated.html");',
     );
     if (present)
       await writeFile(join(root, "app", "generated.html"), "generated page");

@@ -13,6 +13,9 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ghidraInstallationHost } from "./ghidraMcpHarness.js";
 
+const REFUSAL =
+  "Processor or compiler specification overrides cannot replace the admitted raw-binary import.";
+
 const openRawArm = async (languageId: string | undefined) => {
   const directory = await mkdtemp(join(tmpdir(), "rea-profile-refusal-"));
   const path = join(directory, "image.bin");
@@ -64,20 +67,15 @@ const openRawArm = async (languageId: string | undefined) => {
   }
 };
 
-it("returns provider-selection diagnostics when the selected provider refuses its profile", async () => {
+it("returns configuration diagnostics when a language override conflicts with the admitted profile", async () => {
   const { result, clients } = await openRawArm("ARM:LE:32:v7");
   expect(clients).toBe(0);
   const { error } = parseMcpToolError(result);
   expect(error).toMatchObject({
     code: "configuration_invalid",
+    message: expect.stringContaining(REFUSAL),
     details: {
-      settings: [
-        {
-          setting: "REA_GHIDRA_LANGUAGE_ID",
-          constraint:
-            "Processor or compiler specification overrides cannot replace the admitted raw-binary import.",
-        },
-      ],
+      settings: [{ setting: "REA_GHIDRA_LANGUAGE_ID", constraint: REFUSAL }],
     },
   });
 });

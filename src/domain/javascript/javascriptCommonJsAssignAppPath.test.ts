@@ -2,7 +2,8 @@ import { runInNewContext } from "node:vm";
 
 import { expect, it } from "vitest";
 
-import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 const cases = [
   [
@@ -114,7 +115,7 @@ it.each(cases)(
       module.exports,
     );
     expect(changed).toBe(possible ? 1 : 0);
-    const analysis = analyzeCommonJsStaticFixture(defining);
+    const analysis = analyzeJavaScriptStaticSource(defining);
     expect(analysis.parse_error_count).toBe(0);
     expect((analysis.electron.app_path_changes ?? []).length > 0).toBe(
       possible,
@@ -122,7 +123,7 @@ it.each(cases)(
   },
 );
 
-it("does not invent a native export through an overwritten array iterator", () => {
+it("retains native source uncertainty when an array iterator is overwritten", () => {
   const defining =
     "const{app}=require('electron');const sources=[{change:app.setAppPath,app}];sources[Symbol.iterator]=function*(){yield{change(){},app}};Object.assign(exports,...sources);";
   let changed = 0;
@@ -134,8 +135,37 @@ it("does not invent a native export through an overwritten array iterator", () =
   });
   runInNewContext("change.call(app,'./lib');", module.exports);
   expect(changed).toBe(0);
-  // The original array slots cannot establish what the custom iterator publishes.
-  const analysis = analyzeCommonJsStaticFixture(defining);
-  expect(analysis.electron.app_path_changes ?? []).toEqual([]);
+  runInNewContext("app.setAppPath('./lib');", module.exports);
+  expect(changed).toBe(1);
+  // The local change function is harmless, but the published app still permits
+  // a caller to select the native setter. Unknown iteration retains that
+  // possibility without identifying a yielded value or an exact export link.
+  const analysis = analyzeJavaScriptStaticSource(defining);
+  expect((analysis.electron.app_path_changes ?? []).length).toBeGreaterThan(0);
+  const ir = analyzeJavaScriptSemantics(defining);
+  expect(
+    ir.moduleLinks.filter(({ kind }) => kind === "commonjs-export"),
+  ).toEqual([
+    expect.objectContaining({
+      exportedName: "*",
+      specifier: null,
+      importedName: null,
+      callableId: null,
+    }),
+  ]);
+});
+
+it.each([
+  [
+    "opaque iteration without an Electron source",
+    "const sources=[{change(){}}];sources[Symbol.iterator]=opaqueIterator;Object.assign(exports,...sources);",
+  ],
+  [
+    "unresolved iteration into a detached export receiver",
+    "const{app}=require('electron');const sources=[{change:app.setAppPath,app}];sources[Symbol.iterator]=opaqueIterator;module.exports={};Object.assign(exports,...sources);",
+  ],
+])("does not invent a public app-path effect from %s", (_name, source) => {
+  const analysis = analyzeJavaScriptStaticSource(source);
   expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.electron.app_path_changes ?? []).toEqual([]);
 });

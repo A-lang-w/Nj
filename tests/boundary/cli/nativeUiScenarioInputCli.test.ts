@@ -22,7 +22,7 @@ const runCapture = async (cli: TestCli, steps: string | undefined) => {
 
 describe("native UI scenario CLI input", () => {
   cliTest(
-    "rejects omitted steps under the shared scenario contract",
+    "rejects omitted steps at CLI argument admission",
     async ({ cli }) => {
       const result = await runCapture(cli, undefined);
 
@@ -30,7 +30,7 @@ describe("native UI scenario CLI input", () => {
       expect(result.json).toMatchObject({
         code: "VALIDATION_ERROR",
         fieldErrors: [
-          expect.objectContaining({ path: "steps", code: "invalid_type" }),
+          expect.objectContaining({ path: "steps", missing: true }),
         ],
       });
     },

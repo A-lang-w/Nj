@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { analyzeCommonJsSemanticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
+import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 it("shares required process writes with globals while keeping earlier observations", () => {
   const ir = analyzeCommonJsSemanticFixture(`const proc=require('process');

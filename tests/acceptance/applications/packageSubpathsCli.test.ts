@@ -15,8 +15,7 @@ import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js"
 const createPackageSubpathFixture = async () => {
   const root = await createTestTempDirectory("rea-package-subpaths-");
   const source = [
-    'const { BrowserWindow } = require("electron");',
-    'const nearest = require("fixture/parser");',
+    'const {BrowserWindow} = require("electron"); const nearest = require("fixture/parser");',
     'const nested = require("nested/parser");',
     'const parser = require("exported/parser");',
     'const directory = require("exported/parser/");',
@@ -233,7 +232,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         evidence: {
           location: {
             available: true,
-            value: { source: "src/main.cjs", start: { line: 8 } },
+            value: { source: "src/main.cjs", start: { line: 7 } },
           },
         },
       });

@@ -327,6 +327,7 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
             ...(code === "ETIMEDOUT" ? { timeoutMs: 120_000 } : {}),
             ...(code === "EACCES" || code === "EPERM"
               ? {
+                  providerId: "objdump",
                   diagnostics: {
                     boundary: "provider-launch",
                     command: "objdump",
@@ -400,7 +401,7 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
   });
 
   it.each(["EACCES", "EPERM"] as const)(
-    "retains captured output on a permission-denied provider result (%s)",
+    "retains raw failure output on a permission-denied provider launch (%s)",
     async (code) => {
       const { directory, path } = await createArtifact();
       const service = new ReverseEngineeringService({
@@ -424,12 +425,16 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
           ok: false,
           error: {
             _tag: "AnalysisCapabilityUnavailableError",
-            capturedOutput: {
+            providerId: "objdump",
+            diagnostics: {
+              boundary: "provider-launch",
+              command: "objdump",
+              system_code: code,
+            },
+            cause: {
+              code,
               stdout: "partial provider output",
               stderr: "permission diagnostic",
-            },
-            partialObservation: {
-              raw_result: { stdout: "partial provider output" },
             },
           },
         });

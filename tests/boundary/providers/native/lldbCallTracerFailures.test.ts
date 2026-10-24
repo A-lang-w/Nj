@@ -609,8 +609,8 @@ const completedOutputCloseFixture = async () => {
   const fixtureRoot = await mkdtemp(
     join(tmpdir(), "rea-lldb-complete-output-"),
   );
-  const expectedPidPath = join(fixtureRoot, "expected-pid");
   const fakeLldb = join(fixtureRoot, "fake-lldb");
+  const completedPidPath = join(fixtureRoot, "completed-target.pid");
   const completed = {
     ...successfulTracerOutput,
     target_output: {
@@ -629,7 +629,7 @@ const config = JSON.parse(fs.readFileSync(command.slice("rea_trace ".length), "u
 const child = spawnSync(process.execPath, ["-e", ""]);
 const result = ${JSON.stringify(completed)};
 result.pid = child.pid;
-fs.writeFileSync(${JSON.stringify(expectedPidPath)}, String(child.pid));
+fs.writeFileSync(${JSON.stringify(completedPidPath)}, String(child.pid));
 fs.writeFileSync(config.pid_path, String(child.pid));
 fs.writeFileSync(config.stdout_capture_path, "ok");
 fs.writeFileSync(config.stderr_capture_path, "");
@@ -642,10 +642,13 @@ process.exit(0);
   return {
     fixtureRoot,
     fakeLldb,
-    completed,
-    expected: async () => ({
+    readCompleted: async () => ({
       ...completed,
-      pid: Number(await readFile(expectedPidPath, "utf8")),
+      pid: z.coerce
+        .number()
+        .int()
+        .positive()
+        .parse(await readFile(completedPidPath, "utf8")),
     }),
   };
 };
@@ -655,8 +658,7 @@ describe("LLDB process exit at output-close loop completion", () => {
     it.skipIf(process.platform === "win32")(
       `retains completed trace facts after output closure (cancelled=${String(abort)})`,
       async () => {
-        const { fixtureRoot, fakeLldb, completed, expected } =
-          await completedOutputCloseFixture();
+        const fixture = await completedOutputCloseFixture();
         const controller = new AbortController();
         const reason = { requested: "stop after completed output closure" };
         let interrupted = false;
@@ -682,14 +684,15 @@ describe("LLDB process exit at output-close loop completion", () => {
             return closed;
           });
         const tracer = new LldbCallTracer({}, undefined, async () =>
-          ok({ path: fakeLldb, sha256: "e".repeat(64) }),
+          ok({ path: fixture.fakeLldb, sha256: "e".repeat(64) }),
         );
         try {
           const result = await tracer.trace(request, controller.signal);
+          const completed = await fixture.readCompleted();
           expect(interrupted).toBe(abort);
           if (result.ok) {
             expect(abort).toBe(false);
-            expect(result.value.run).toMatchObject(await expected());
+            expect(result.value.run).toMatchObject(completed);
             expect(result.value.stdout).toMatchObject({
               text: "ok",
               bytes: 2,
@@ -708,6 +711,7 @@ describe("LLDB process exit at output-close loop completion", () => {
               coverage: { status: "partial", reason: "cancelled" },
               debugger: { version: completed.version },
               process: {
+                pid: completed.pid,
                 outcome: "exited",
                 exit_status: 0,
                 terminated: true,
@@ -722,7 +726,7 @@ describe("LLDB process exit at output-close loop completion", () => {
         } finally {
           waitSpy.mockRestore();
           expect((await tracer.close()).ok).toBe(true);
-          await rm(fixtureRoot, { recursive: true, force: true });
+          await rm(fixture.fixtureRoot, { recursive: true, force: true });
         }
       },
     );

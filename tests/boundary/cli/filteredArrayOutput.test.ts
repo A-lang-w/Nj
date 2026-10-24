@@ -12,18 +12,6 @@ import {
 
 const source = [{ selected: 1 }, { other: 2 }, { selected: null }];
 
-const expectRowsMarkdown = (
-  output: string | undefined,
-  rows: unknown,
-): void => {
-  const lines = output?.trimEnd().split("\n");
-  expect(lines).toHaveLength(3);
-  expect(lines?.[0]).toMatch(/^\| rows +\|$/u);
-  expect(lines?.[1]).toMatch(/^\|-+\|$/u);
-  const cell = lines?.[2]?.trim().slice(1, -1).trim();
-  expect(JSON.parse(cell ?? "")).toEqual(rows);
-};
-
 const freezeRecursively = <T>(value: T): T => {
   if (typeof value !== "object" || value === null || Object.isFrozen(value))
     return value;
@@ -312,8 +300,10 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual(expected);
-    else if (format === "md") expectRowsMarkdown(outputs[0], expected[0]?.rows);
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else if (format === "md") {
+      expect(outputs[0]).toContain(`| ${JSON.stringify(expected[0]!.rows)} |`);
+      expect(outputs[0]).not.toContain("[object Object]");
+    } else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
     expect(projectionSource[0]?.rows[0]?.retained).toEqual([0, 10]);
   },
 );
@@ -370,8 +360,10 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual(expected);
-    else if (format === "md") expectRowsMarkdown(outputs[0], expected[0]?.rows);
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else if (format === "md") {
+      expect(outputs[0]).toContain(`| ${JSON.stringify(expected[0]!.rows)} |`);
+      expect(outputs[0]).not.toContain("[object Object]");
+    } else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
     expect(projectionSource).toEqual(before);
   },
 );

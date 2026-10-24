@@ -105,10 +105,9 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     arguments: { path: plistPath },
   });
   expect(unbound.isError).toBe(true);
-  expect(
-    unbound.structuredContent ??
-      JSON.parse((unbound.content[0] as { text: string }).text),
-  ).toMatchObject({
+  const unboundError = unbound.content.find((item) => item.type === "text");
+  if (unboundError?.type !== "text") throw new Error("Expected error text");
+  expect(JSON.parse(unboundError.text)).toMatchObject({
     error: { code: "target_unavailable", category: "unavailable" },
   });
   const unopened = await client.callTool({
@@ -353,9 +352,15 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       validResult: jsonObjectSchema.parse({
         target_sha256: "a".repeat(64),
         catalogs: [],
-        catalog_coverage: { status: "complete", reason: null },
-        resource_key_coverage: { status: "complete", reason: null },
         inventory_coverage: { scope: "container-entries", status: "unknown" },
+        catalog_coverage: {
+          status: "unknown",
+          reason: "catalog_coverage_not_reported",
+        },
+        resource_key_coverage: {
+          status: "unknown",
+          reason: "resource_key_coverage_not_reported",
+        },
         total_records: 0,
         offset: 0,
         limit: 1,
@@ -402,11 +407,9 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       parameters: {},
       result: validResult,
     });
-    const parsed = contract.outputSchema.safeParse(validEvidence);
-    expect(
-      parsed.success,
-      parsed.success ? name : `${name}: ${parsed.error.message}`,
-    ).toBe(true);
+    expect(contract.outputSchema.safeParse(validEvidence).success, name).toBe(
+      true,
+    );
     const malformedResult = structuredClone(validResult) as Record<
       string,
       JsonValue
@@ -457,7 +460,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
     ).toBe(true);
     expect(
       validateAdvertised(resourceEvidence),
-      `${name} advertised root branch: ${JSON.stringify(validateAdvertised.errors)}`,
+      `${name} advertised root branch`,
     ).toBe(true);
     expect(
       validateAdvertised(malformedEvidence),

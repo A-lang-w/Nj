@@ -96,7 +96,19 @@ describe("HTTP comparison response coverage", () => {
       [response],
       [{ ...response, status: 500 }],
     );
-    expectObservedResponseChange(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
+    // A finite imported inventory supplies correspondence; passive samples
+    // alone cannot pair repeated same-URL transactions by transient CDP ID.
+    markNetworkInventoriesComplete(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [expect.objectContaining({ change: "modified" })],
+    });
   });
 
   it.each([
@@ -107,7 +119,17 @@ describe("HTTP comparison response coverage", () => {
       [{ ...response, encodedDataLength: 100 }],
       [{ ...response, ...change }],
     );
-    expectObservedResponseChange(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
+    markNetworkInventoriesComplete(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [expect.objectContaining({ change: "modified" })],
+    });
   });
 });
 
@@ -142,7 +164,17 @@ describe("HTTP comparison repeated request coverage", () => {
         { ...response, requestId: "first-after", encodedDataLength: 100 },
       ],
     );
-    expectObservedResponseChange(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
+    markNetworkInventoriesComplete(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [expect.objectContaining({ change: "modified" })],
+    });
   });
 
   it("preserves the association between complete response fields", async () => {
@@ -166,7 +198,17 @@ describe("HTTP comparison repeated request coverage", () => {
         },
       ],
     );
-    expectObservedResponseChange(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
+    markNetworkInventoriesComplete(before, after);
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [expect.objectContaining({ change: "modified" })],
+    });
   });
 });
 
@@ -249,23 +291,4 @@ const markNetworkInventoriesComplete = (
       inspection.completeness[key] = inspection.completeness[key].filter(
         (section) => !sections.has(section),
       );
-};
-
-/** Live partial inventories cannot establish response correspondence across captures. */
-const expectObservedResponseChange = (
-  before: WebPageInspection,
-  after: WebPageInspection,
-): void => {
-  expect(compareNetwork(before, after)).toMatchObject({
-    status: "unknown",
-    total_changes: 0,
-    changes: [],
-  });
-  // Exercise comparable response facts with explicitly complete inventory coverage.
-  markNetworkInventoriesComplete(before, after);
-  expect(compareNetwork(before, after)).toMatchObject({
-    status: "changed",
-    total_changes: 1,
-    changes: [expect.objectContaining({ change: "modified" })],
-  });
 };

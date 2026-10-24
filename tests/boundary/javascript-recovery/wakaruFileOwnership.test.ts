@@ -2,10 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readFile, type FileHandle } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
-import {
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -19,31 +16,7 @@ const fileClose = vi.hoisted(() => ({
   deniedRemoval: undefined as string | undefined,
   cancel: undefined as AbortController | undefined,
   handles: [] as FileHandle[],
-  physicalFailure: undefined as unknown,
 }));
-
-vi.mock(
-  "../../../src/artifacts/ArtifactFileOperation.js",
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import("../../../src/artifacts/ArtifactFileOperation.js")
-      >();
-    return {
-      ...actual,
-      withArtifactRegularFile: async (
-        ...args: Parameters<typeof actual.withArtifactRegularFile>
-      ) => {
-        try {
-          return await actual.withArtifactRegularFile(...args);
-        } catch (cause: unknown) {
-          if (fileClose.selected(args[0])) fileClose.physicalFailure = cause;
-          throw cause;
-        }
-      },
-    };
-  },
-);
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -83,7 +56,6 @@ afterEach(() => {
   fileClose.deniedRemoval = undefined;
   fileClose.cancel = undefined;
   fileClose.handles = [];
-  fileClose.physicalFailure = undefined;
 });
 
 const linuxX64 = it.skipIf(
@@ -202,21 +174,27 @@ linuxX64.each([
     expect(result.error).toBeInstanceOf(
       denied ? ProviderCleanupError : AnalysisCancelledError,
     );
-    if (!denied) expect(result.error.cause).toBe(controller.signal.reason);
-    const failure = denied ? result.error.cause : fileClose.physicalFailure;
-    const physical =
-      failure instanceof ArtifactFileCleanupFailure
-        ? failure.fileCleanupFailure
-        : failure instanceof ArtifactFileCancelled
-          ? failure.fileCancellation
-          : undefined;
-    expect(physical?.outcome).toMatchObject({
-      kind: "completed",
-      value: {
+    if (denied) {
+      const failure = result.error.cause;
+      expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+      if (!(failure instanceof ArtifactFileCleanupFailure))
+        throw new Error("Expected exact file cleanup owner");
+      expect(failure.fileCleanupFailure.outcome).toMatchObject({
+        kind: "completed",
+        value: {
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      });
+    } else {
+      expect(result.error.cause).toBe(controller.signal.reason);
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path: selected,
         bytes: bytes.length,
         sha256: createHash("sha256").update(bytes).digest("hex"),
-      },
-    });
+      });
+    }
     expect(fixture.launches).toHaveLength(0);
     if (denied) {
       expect(result.error.cleanupIncomplete).toBe(true);

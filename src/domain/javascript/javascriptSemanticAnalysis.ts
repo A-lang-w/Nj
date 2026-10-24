@@ -100,6 +100,7 @@ import {
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
   javaScriptRuntimeContext,
+  javaScriptProgramStrictness,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
@@ -282,7 +283,7 @@ const visitSemanticReferenceEffectsAtSite = (
   } else if (lookup.kind === "ambient" || lookup.kind === "uncertain-ambient") {
     for (const node of state.ambientBindingWrites.get(root.name) ?? [])
       if (!retain("ambient-write", node)) return metadata;
-    const ambientRoots = createAmbientPathResolver(state, false)(root);
+    const ambientRoots = createAmbientPathResolver(state, false)(root).paths;
     for (const ambientRoot of ambientRoots) {
       const selectedPath = [...ambientRoot, ...path];
       for (const [kind, effects] of [
@@ -1053,6 +1054,7 @@ const createState = (
     requiredModuleEffects: new Map(),
     ambientBindingWrites: new Map(),
     ambientWrites: new SemanticPropertyPathCoverage(),
+    escapingReferenceStores: new WeakSet(),
     ambientEscapes: new SemanticPropertyPathCoverage(),
     intrinsicReceiverCalls: new WeakMap(),
     ambientEscapeEffects: [],
@@ -1799,15 +1801,7 @@ const semanticStrictnessAt = (
       current.body.directives.some(({ value }) => value.value === "use strict")
     )
       return "strict";
-    if (t.isProgram(current)) {
-      if (current.sourceType === "module") return "strict";
-      if (current.directives.some(({ value }) => value.value === "use strict"))
-        return "strict";
-      const runtimeContext = javaScriptRuntimeContext(current);
-      if (runtimeContext === "module") return "strict";
-      if (runtimeContext === "commonjs") return "sloppy";
-      return "unknown";
-    }
+    if (t.isProgram(current)) return javaScriptProgramStrictness(current);
   }
   return "unknown";
 };

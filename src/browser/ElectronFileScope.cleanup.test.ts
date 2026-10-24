@@ -152,15 +152,16 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected descriptor close failure");
     expect(result.error.cleanupIncomplete).toBe(true);
-    const partial = result.error.partialObservation;
-    if (partial === undefined || !("normalized_result" in partial))
-      throw new Error("Expected retained runtime Evidence");
-    expect(partial.normalized_result).toMatchObject({
-      scripts: {
-        observed_total: 1,
-        items: [{ location: { kind: "unresolved", reported_url: scriptUrl } }],
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: {
+        scripts: {
+          observed_total: 1,
+          items: [
+            { location: { kind: "unresolved", reported_url: scriptUrl } },
+          ],
+        },
+        execution_contexts: [{ name: "node[fixture]" }],
       },
-      execution_contexts: [{ name: "node[fixture]" }],
     });
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);

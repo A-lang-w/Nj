@@ -2,7 +2,7 @@ import { posix } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 it.each(["/other", "relative"])(
   "keeps a shadowed source-directory parameter dynamic: %s",

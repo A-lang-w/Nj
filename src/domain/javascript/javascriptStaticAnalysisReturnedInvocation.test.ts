@@ -168,20 +168,20 @@ it("retains a finite shared callable alias graph", () => {
     index.bindings,
     "direct-call",
   )(call.callee, call);
-  const firstStatement = parsed.program.body[0];
-  const callable = t.isVariableDeclaration(firstStatement)
-    ? firstStatement.declarations[0]?.init
-    : undefined;
+  const declaration = parsed.program.body[0];
+  if (!t.isVariableDeclaration(declaration))
+    throw new Error("Expected root callable declaration");
+  const callable = declaration.declarations[0]?.init;
   if (!t.isArrowFunctionExpression(callable))
-    throw new Error("Expected the source-local callable");
-  expect(result.callables.size).toBe(1);
-  expect(result.callables.has(callable)).toBe(true);
-  expect(result.references).toEqual([
-    {
-      node: expect.objectContaining({ type: "Identifier", name: "module" }),
-      projection: [],
-    },
-  ]);
-  expect(result.precision).toBe("exact");
-  expect(result.unresolvedInvocation).toBeUndefined();
+    throw new Error("Expected root arrow callable");
+  expect(result).toEqual({
+    callables: new Set([callable]),
+    references: [
+      {
+        node: expect.objectContaining({ type: "Identifier", name: "module" }),
+        projection: [],
+      },
+    ],
+    precision: "exact",
+  });
 });

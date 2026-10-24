@@ -39,6 +39,7 @@ const fixture = async (scenario: (typeof scenarios)[number]) => {
     bytes = Buffer.from(
       buildBinaryKeyedArchive({
         ...source,
+        $top: { root: { UID: 1 } },
         $objects: ["$null", { real: 9007199254740992 }],
       }),
     );

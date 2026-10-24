@@ -189,7 +189,12 @@ it.skipIf(process.platform === "win32")(
         error: {
           _tag: "AnalysisOutputError",
           operation: "environment-export",
-          diagnostics: { output_directory: directory },
+          diagnostics: {
+            output_directory: directory,
+            path: join(directory, "README.md"),
+            system_code: "EACCES",
+            boundary: "filesystem-write",
+          },
         },
       });
       expect(await readdir(directory)).toEqual([]);
@@ -233,9 +238,11 @@ it.skipIf(process.platform === "win32")(
         diagnostics: { output_directory: directory },
       });
       if (!(result.error instanceof AnalysisOutputError)) throw result.error;
-      expect(result.error.diagnostics?.path).toEqual(
-        expect.stringMatching(new RegExp(`^${directory}/`)),
-      );
+      expect(result.error.diagnostics).toMatchObject({
+        path: expect.stringContaining(`${directory}/`),
+        system_code: "EACCES",
+        boundary: "filesystem-write",
+      });
       expect(await readdir(directory)).not.toEqual([]);
     } finally {
       writer.mockRestore();

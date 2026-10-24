@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { signatureInspectionFixture } from "../../../fixtures/nativeCommands.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import {
@@ -77,19 +78,20 @@ const registerSignatureObservationCases = () => {
       .createClient(target)
       .execute("inspect_signature", {});
     if (!result.ok) throw result.error;
-    expect(captures).toHaveLength(3);
-    expect(
-      captures.every(
-        (args) => args[args.indexOf("-a") + 1] === target.architecture,
-      ),
-    ).toBe(true);
+    expect(captures.map((args) => args[args.indexOf("-a") + 1])).toEqual([
+      target.architecture,
+      target.architecture,
+      target.architecture,
+      ...target.availableArchitectures,
+    ]);
     expect(result.value.result).toMatchObject({
       signed: true,
       identifier: "com.example.fixture",
       designated_requirement: "identifier com.example.fixture",
-      limitations: [
+      limitations: expect.arrayContaining([
         "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined.",
-      ],
+        expect.stringContaining("Partial signature coverage:"),
+      ]),
     });
   });
 
@@ -271,12 +273,11 @@ it.each([
       },
     };
     let failed = false;
-    let displaySeen = false;
+    let displayCaptures = 0;
     const runner: NativeCommandRunner = {
       async run(tool, args) {
         const display = args.includes("--verbose=4");
-        const slice = display && displaySeen;
-        if (display) displaySeen = true;
+        const slice = display && displayCaptures++ > 0;
         const selected =
           stage === "slice"
             ? slice
@@ -297,10 +298,6 @@ it.each([
             ).run(tool, args);
           return err(new NativeCommandFailure(tool, "nonzero-exit", 1));
         }
-        if (stage === "slice" && display && !slice)
-          return new NativeFixtureRunner({
-            codesign: "Format=Mach-O universal (arm64 x86_64)\n",
-          }).run(tool, args);
         if (stage === "slice" && args.includes("-r-"))
           return unsigned.run(tool, args, {});
         return replay.run(tool, args);
@@ -448,7 +445,11 @@ it.skipIf(process.platform !== "darwin")(
     );
     const path = join(directory, "source\ncode object is not signed\noperand");
     await copyFile("/usr/bin/true", path);
-    const target = await nativeMachoTargetForFile(path);
+    const admitted = await parseBinaryTarget(path);
+    if (!admitted.ok) throw admitted.error;
+    const target = admitted.value;
+    if (target.kind !== "executable")
+      throw new Error("Expected the copied system executable");
     const originalBytes = await readFile(path);
     const real = new XcrunCommandRunner({});
     let snapshotPath: string | undefined;
@@ -492,7 +493,11 @@ it.skipIf(process.platform !== "darwin")(
     const path = join(directory, "source\ncode object is not signed\noperand");
     await copyFile("/usr/bin/true", path);
     await runFile("/usr/bin/codesign", ["--remove-signature", path]);
-    const target = await nativeMachoTargetForFile(path);
+    const admitted = await parseBinaryTarget(path);
+    if (!admitted.ok) throw admitted.error;
+    const target = admitted.value;
+    if (target.kind !== "executable")
+      throw new Error("Expected the copied system executable");
     const result = await new NativeMacOSProvider(
       {},
       new XcrunCommandRunner({}),
@@ -503,7 +508,22 @@ it.skipIf(process.platform !== "darwin")(
     if (!result.ok) throw result.error;
     const parsed = inspectSignatureSchema.parse(result.value.result);
     expect(parsed).toMatchObject({ signed: false });
-    expect(parsed.provenance).toHaveLength(5);
+    const selectedArchitecture =
+      target.architecture === "x86" ? "i386" : target.architecture;
+    expect(
+      parsed.provenance.map(
+        ({ command }) => command[command.indexOf("-a") + 1],
+      ),
+    ).toEqual([
+      selectedArchitecture,
+      selectedArchitecture,
+      selectedArchitecture,
+      ...(target.availableArchitectures.length > 1
+        ? target.availableArchitectures.map((architecture) =>
+            architecture === "x86" ? "i386" : architecture,
+          )
+        : []),
+    ]);
     expect(parsed.provenance.every(({ exit }) => exit.code === 1)).toBe(true);
   },
 );
@@ -625,7 +645,11 @@ it.skipIf(process.platform !== "darwin")(
         program,
       ]);
     }
-    const target = await nativeMachoTargetForFile(path);
+    const admitted = await parseBinaryTarget(path);
+    if (!admitted.ok) throw admitted.error;
+    const target = admitted.value;
+    if (target.kind !== "executable")
+      throw new Error("Expected the copied system executable");
     const real = new XcrunCommandRunner({});
     let capturedPath: string | undefined;
     const runner: NativeCommandRunner = {
@@ -707,7 +731,7 @@ for (const cleanupFails of [false, true])
     expect(result.error.cleanupIncomplete).toBe(cleanupFails);
     const facts = inspectSignatureSchema.parse(result.error.partialObservation);
     expect(facts.signed).toBe(true);
-    expect(facts.provenance).toHaveLength(3);
+    expect(facts.provenance).toHaveLength(5);
     expect(
       projectAnalysisError(result.error).details?.partial_observation,
     ).toEqual(facts);

@@ -381,7 +381,8 @@ it.each(
       reason: "invalid_protocol_value",
       count: 1,
     });
-    // The initially admitted child already leaves replay coverage incomplete.
+    // Initial allowed-child replay coverage remains unknown even when a
+    // later event positively identifies that child's destination as foreign.
     expect(result.value.completeness.attach_limited_sections).toContain(
       "webmcp_tools",
     );
@@ -482,7 +483,7 @@ it.each(
       result.value.completeness.attach_limited_sections.includes(
         "webmcp_tools",
       ),
-    ).toBe(valid || uncertain);
+    ).toBe(uncertain || valid);
     expect(
       result.value.completeness.policy_filtered_sections.includes(
         "webmcp_tools",
@@ -522,7 +523,8 @@ describe("CdpBrowserProvider: transient WebMCP frames", () => {
     expect(result.value.completeness.attach_limited_sections).toContain(
       "webmcp_tools",
     );
-    // The initial foreign frame and its tool registration are distinct exclusions.
+    // Initial foreign frame and its replay declaration are two exclusions;
+    // their count does not describe the transient allowed child.
     expect(result.value.completeness.excluded).toContainEqual({
       section: "webmcp_tools",
       reason: "out_of_target_scope",
@@ -551,7 +553,8 @@ describe("CdpBrowserProvider: transient WebMCP frames", () => {
     expect(result.value.tools.items).toContainEqual(
       expect.objectContaining({ name: "child_tool" }),
     );
-    // Fresh registrations do not recover pre-attachment subframe coverage.
+    // Fresh registration restores this tool, but cannot recover pre-attach
+    // declarations from the initial allowed child frame.
     expect(result.value.completeness.attach_limited_sections).toContain(
       "webmcp_tools",
     );
@@ -866,12 +869,10 @@ describe("CdpBrowserProvider WebMCP schema comparison", () => {
       examples: [{ token: "caller-schema-value" }],
     };
     let inputSchema: JsonValue = declaration;
-    // Isolate schema comparison from foreign-frame filtering and replay gaps.
     const browser = await startFakeCdpBrowser({
-      commandResult: ({ method }, origin) =>
-        method === "Page.getFrameTree"
-          ? { frameTree: { frame: { id: "frame-main", url: `${origin}/app` } } }
-          : undefined,
+      // A root-only replay supplies complete owner correspondence. Foreign
+      // filtering and pre-existing child coverage are tested separately above.
+      eventsBeforeReply: ["WebMCP.enable"],
       commandEvents: ({ method, sessionId }) =>
         method === "WebMCP.enable"
           ? [
@@ -881,7 +882,7 @@ describe("CdpBrowserProvider WebMCP schema comparison", () => {
                 params: {
                   tools: [
                     {
-                      name: "search_orders",
+                      name: "schema_tool",
                       frameId: "frame-main",
                       inputSchema,
                       annotations: { consequential: false },
@@ -890,6 +891,18 @@ describe("CdpBrowserProvider WebMCP schema comparison", () => {
                 },
               },
             ]
+          : undefined,
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-main",
+                  url: `${origin}/app`,
+                },
+              },
+            }
           : undefined,
     });
     trackBrowser(browser);

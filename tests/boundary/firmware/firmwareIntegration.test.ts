@@ -1,6 +1,6 @@
-import { dirname } from "node:path";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { expect, it as test, vi } from "vitest";
 import {
   firmwareFixture,
@@ -239,10 +239,7 @@ it("retains a setup-failed publication tree for provider cleanup retry", async (
 
 it("returns firmware output after a transient published-directory close failure", async () => {
   const fixture = await firmwareFixture();
-  const closeFailure = injectPublishedDirectoryCloseFailure(
-    false,
-    fixture.output,
-  );
+  const closeFailure = injectPublishedDirectoryCloseFailure(false);
   try {
     const result = await fixture.service.execute("extract_firmware", {
       path: fixture.path,
@@ -266,10 +263,7 @@ it("returns firmware output after a transient published-directory close failure"
 it("retains the complete firmware result when published output cleanup stays uncertain", async () => {
   const fixture = await firmwareFixture();
   let retained: AnalysisError | undefined;
-  const closeFailure = injectPublishedDirectoryCloseFailure(
-    true,
-    fixture.output,
-  );
+  const closeFailure = injectPublishedDirectoryCloseFailure(true);
   try {
     const result = await fixture.service.execute("extract_firmware", {
       path: fixture.path,
@@ -633,23 +627,23 @@ it("carries the owning multi-file stage on a task-level dependency gap", async (
   ]);
 });
 
-const injectPublishedDirectoryCloseFailure = (
-  persistent: boolean,
-  output: string,
-) => {
-  directoryCloseFailure.parent = dirname(output);
+const injectPublishedDirectoryCloseFailure = (persistent: boolean) => {
   directoryCloseFailure.attempts = 0;
   const commit = SafeOutputTree.prototype.commit;
   const spy = vi
     .spyOn(SafeOutputTree.prototype, "commit")
     .mockImplementation(async function (this: SafeOutputTree) {
       directoryCloseFailure.mode = persistent ? "persistent" : "transient";
+      // Only the parent descriptor closes after the publication cutoff. A
+      // child/root close failure aborts sync before output becomes published.
+      directoryCloseFailure.parent = dirname(this.outputRoot);
       await commit.call(this);
     });
   return {
     attempts: () => directoryCloseFailure.attempts,
     restore: () => {
       directoryCloseFailure.mode = "off";
+      directoryCloseFailure.parent = "";
       spy.mockRestore();
     },
   };

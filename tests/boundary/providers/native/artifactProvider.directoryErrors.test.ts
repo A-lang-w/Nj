@@ -11,7 +11,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 describe("artifact directory diagnostics", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "preserves the inaccessible member path and errno through provider projection",
+    "retains an inaccessible member and its errno alongside readable inventory facts",
     async () => {
       const root = await createTestTempDirectory("rea-directory-eacces-");
       const appPath = join(root, "Denied.app");
@@ -41,20 +41,21 @@ describe("artifact directory diagnostics", () => {
           ({ logical_path }) => logical_path === "Contents/blocked.txt",
         );
         expect(blocked).toMatchObject({
-          hash_status: "unavailable",
           artifact_id: null,
+          hash_status: "unavailable",
         });
-        expect(blocked?.limitations.join("\n")).toContain(
-          "Denied.app/Contents/blocked.txt",
+        const detail = blocked?.limitations.join("\n");
+        expect(detail).toContain("Denied.app/Contents/blocked.txt");
+        expect(detail).toContain("EACCES");
+        expect(inventory.limitations).toContainEqual(
+          expect.stringContaining("EACCES"),
         );
-        expect(blocked?.limitations.join("\n")).toContain("EACCES");
-        expect(inventory.occurrences).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              logical_path: "Contents/MacOS/Fixture",
-              hash_status: "verified",
-            }),
-          ]),
+        expect(inventory.occurrences).toContainEqual(
+          expect.objectContaining({
+            logical_path: "Contents/MacOS/Fixture",
+            hash_status: "verified",
+            artifact_id: expect.any(String),
+          }),
         );
       } finally {
         await chmod(blockedPath, 0o600);

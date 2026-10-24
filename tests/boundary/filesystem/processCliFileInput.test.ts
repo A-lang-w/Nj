@@ -11,7 +11,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { err } from "../../../src/domain/result.js";
@@ -401,9 +401,39 @@ describe("process CLI input diagnostics", () => {
 });
 
 describe("process CLI file cleanup", () => {
-  it.each([false, true])(
-    "preserves the open-file owner when close fails (cancelled: %s)",
-    async (cancelDuringClose) => {
+  it("retries a transient input close refusal before validating the scenario", async () => {
+    const root = await createTestTempDirectory(
+      "rea-process-cli-cleanup-retry-",
+    );
+    const path = join(root, "scenario.json");
+    await writeFile(path, "{}");
+    let owner: OwnedFileHandle | undefined;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(async function (this: OwnedFileHandle) {
+        owner = this;
+        throw new Error("transient close refusal");
+      });
+    try {
+      expect(await captureProcessScenarioFile(path)).toMatchObject({
+        code: "invalid_request",
+      });
+      expect(close).toHaveBeenCalledTimes(2);
+      expect(owner?.handle.fd).toBe(-1);
+    } finally {
+      close.mockRestore();
+      await owner?.close();
+    }
+  });
+
+  it.each([
+    { operation: "capture", cancelDuringClose: false },
+    { operation: "capture", cancelDuringClose: true },
+    { operation: "compare", cancelDuringClose: false },
+    { operation: "compare", cancelDuringClose: true },
+  ] as const)(
+    "preserves the open-file owner when $operation close fails (cancelled: $cancelDuringClose)",
+    async ({ operation, cancelDuringClose }) => {
       const root = await createTestTempDirectory("rea-process-cli-cleanup-");
       const path = join(root, "scenario.json");
       await writeFile(path, JSON.stringify({ executable: process.execPath }));
@@ -412,57 +442,39 @@ describe("process CLI file cleanup", () => {
       let owner: OwnedFileHandle | undefined;
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
-        .mockImplementationOnce(async function (this: OwnedFileHandle) {
+        .mockImplementation(async function (this: OwnedFileHandle) {
           owner = this;
           if (cancelDuringClose) controller.abort();
           throw cleanupCause;
         });
-      // Record the actual Result boundary before the CLI's data-only projection.
-      const originalRead = jsonFiles.readJsonFile;
-      let sourceError: EvidenceFileError | undefined;
-      const read = vi
-        .spyOn(jsonFiles, "readJsonFile")
-        .mockImplementation(async (...args) => {
-          const result = await originalRead(...args);
-          if (!result.ok && result.error instanceof EvidenceFileError)
-            sourceError = result.error;
-          return result;
-        });
-      let failure: RetainedRegularFileCleanupFailure | undefined;
+      let failure: unknown;
       try {
-        const projected = await captureProcessScenarioFile(
-          path,
-          process.env,
-          cancelDuringClose ? controller.signal : undefined,
-        );
-        expect(projected).toMatchObject({
-          error: "Process command failed",
-          code: "cleanup_incomplete",
-          details: { cleanup: "incomplete", resources: [path] },
+        try {
+          const signal = cancelDuringClose ? controller.signal : undefined;
+          if (operation === "capture")
+            await captureProcessScenarioFile(path, process.env, signal);
+          else await compareProcessEvidenceFiles(path, path, undefined, signal);
+        } catch (cause: unknown) {
+          failure = cause;
+        }
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        if (!(failure instanceof ArtifactReaderFailure))
+          throw new Error("Expected the retained file handle owner");
+        expect(failure.cleanup).toMatchObject({
+          reason: expect.stringContaining(cleanupCause.message),
+          resources: [path],
         });
-        if (sourceError === undefined)
-          throw new Error("Missing owned file Result");
-        const cleanup =
-          sourceError.cleanupPrimary === undefined
-            ? sourceError
-            : (sourceError.cause as AggregateError).errors[1];
-        expect(cleanup).toBeInstanceOf(EvidenceFileError);
-        expect(cleanup.cause).toBeInstanceOf(RetainedRegularFileCleanupFailure);
-        failure = cleanup.cause;
-        expect(failure?.cleanupCause).toBe(cleanupCause);
-        expect(failure?.owner).toBe(owner);
         expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
-        if (cancelDuringClose)
-          expect(sourceError.cleanupPrimary?.cause).toBe(
-            controller.signal.reason,
-          );
+        expect(failure.cleanupLeases).toHaveLength(1);
+        expect(close.mock.calls.length).toBeGreaterThanOrEqual(2);
       } finally {
-        read.mockRestore();
         close.mockRestore();
-        if (failure !== undefined) await failure.cleanupLease.release();
+        if (failure instanceof ArtifactReaderFailure)
+          for (const lease of failure.cleanupLeases ?? [])
+            await lease.release();
         else await owner?.close();
+        expect(owner?.handle.fd).toBe(-1);
       }
-      expect(sourceError?.cleanupIncomplete).toBe(false);
     },
   );
 });

@@ -5,7 +5,7 @@ import { runInThisContext } from "node:vm";
 
 import { expect, it } from "vitest";
 
-import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 it.each([false, true])(
   "preserves only untouched authored CommonJS dirname vars: assigned=%s",

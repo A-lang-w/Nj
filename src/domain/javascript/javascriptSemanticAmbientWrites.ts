@@ -217,7 +217,7 @@ export const semanticNativeDescriptorTargetIsSafe = (
     node.arguments[0] !== target
   )
     return false;
-  const identities = createAmbientPathResolver(state, false)(target);
+  const identities = createAmbientPathResolver(state, false)(target).paths;
   const identity = identities[0];
   return (
     identities.length === 1 &&
@@ -239,6 +239,17 @@ const joinAmbientProjection = (
   left === undefined || right === undefined || left.length !== right.length
     ? undefined
     : left.map((key, index) => (key === right[index] ? key : null));
+
+type AmbientIdentityUnknownReason =
+  | "unresolved-value"
+  | "widened-projection"
+  | "unresolved-call"
+  | "mixed-identities";
+interface AmbientResolution {
+  readonly paths: readonly AmbientPath[];
+  readonly ownership: "local" | "ambient" | "unknown";
+  readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
+}
 
 interface AmbientPrototypeReplacement {
   readonly node: t.Node;
@@ -276,7 +287,7 @@ export const createAmbientPathResolver = (
   possibleWrites: boolean,
   facts?: AmbientReferenceFacts,
 ) => {
-  const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
+  const cached = new WeakMap<t.Node, AmbientResolution>();
   const returnedReferences = createSemanticReturnedReferences(state);
   return (
     node: t.Node,
@@ -287,10 +298,12 @@ export const createAmbientPathResolver = (
       readonly localIdentity?: (node: t.Node, path: AmbientProjection) => void;
       readonly prototypeReceiver?: boolean;
     },
-  ): readonly AmbientPath[] => {
+  ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
+    let hasLocalIdentity = false;
+    const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
     // Reads reached through an initializer occur at their own position.
     const pending: {
@@ -332,125 +345,93 @@ export const createAmbientPathResolver = (
     while (pending.length > 0) {
       const current = pending.pop();
       if (current === undefined) break;
-      const { root, members } = electronMemberPath(current.node);
-      let suffix: AmbientProjection =
-        current.suffix === undefined
-          ? undefined
-          : [...members, ...current.suffix];
-      const prototypeDepths = (current.prototypeDepths ?? []).map(
-        (depth) => depth + members.length,
-      );
-      const prototypeReadAt = members.includes("__proto__")
-        ? current.node
-        : current.prototypeReadAt;
-      if (
-        prototypeDepths.length > 0 &&
-        ++prototypeStates > SEMANTIC_ALIAS_SELECTION_LIMIT
-      ) {
-        state.valueResourceLimits.add("alias-selections");
-        retain(["global", null]);
-        continue;
-      }
-      const selectionKey = JSON.stringify([
-        prototypeDepths,
-        prototypeReadAt?.start,
-        prototypeReadAt?.end,
-      ]);
-      const bySelection =
-        expanded.get(root) ?? new Map<string, AmbientProjection>();
-      if (bySelection.has(selectionKey)) {
-        const previous = bySelection.get(selectionKey);
-        if (previous === undefined) continue;
-        if (suffix !== undefined && previous.length === suffix.length) {
-          const joined: AmbientPath = previous.map((key, index) =>
-            key === suffix?.[index] ? key : null,
-          );
-          if (joined.every((key, index) => key === previous[index])) continue;
-          suffix = joined;
-        } else suffix = undefined;
-        if (!possibleWrites) {
-          cached.set(node, []);
-          return [];
+      const queuedBefore = pending.length;
+      const pathsBefore = result.size;
+      let resolvedIdentity = false;
+      try {
+        const { root, members } = electronMemberPath(current.node);
+        let suffix: AmbientProjection =
+          current.suffix === undefined
+            ? undefined
+            : [...members, ...current.suffix];
+        const prototypeDepths = (current.prototypeDepths ?? []).map(
+          (depth) => depth + members.length,
+        );
+        const prototypeReadAt = members.includes("__proto__")
+          ? current.node
+          : current.prototypeReadAt;
+        if (
+          prototypeDepths.length > 0 &&
+          ++prototypeStates > SEMANTIC_ALIAS_SELECTION_LIMIT
+        ) {
+          state.valueResourceLimits.add("alias-selections");
+          retain(["global", null]);
+          continue;
         }
-      }
-      bySelection.set(selectionKey, suffix);
-      expanded.set(root, bySelection);
-      // A widened projection is a possible write, never proof of an intrinsic.
-      if (suffix === undefined && !possibleWrites) continue;
-      const shiftPrototypeDepths = (path: AmbientProjection) =>
-        path === undefined || suffix === undefined
-          ? []
-          : prototypeDepths
-              .map((depth) => depth + path.length - suffix.length)
-              .filter((depth) => depth >= 0);
-      const continueWith = (
-        node: t.Node,
-        path: AmbientProjection = suffix,
-        depths = shiftPrototypeDepths(path),
-        readAt = prototypeReadAt,
-      ) =>
-        pending.push({
-          node,
-          suffix: path,
-          ...(depths.length === 0 ? {} : { prototypeDepths: depths }),
-          ...(readAt === undefined ? {} : { prototypeReadAt: readAt }),
-          ...(current.readsAtSelf && { readsAtSelf: true }),
-        });
-      const continueReturned = (callee: t.Node, path: AmbientProjection) => {
-        for (const source of returnedReferences(callee).references)
-          continueWith(
-            source.node,
-            path === undefined
-              ? undefined
-              : [
-                  ...source.projection.map((key) =>
-                    key === null || typeof key === "object"
-                      ? null
-                      : String(key),
-                  ),
-                  ...path,
-                ],
-          );
-      };
-      if (!t.isIdentifier(root) && facts?.freshObject(root)) {
-        selection?.localIdentity?.(root, suffix);
-        for (const [source, path] of facts?.stores.get(root) ?? []) {
-          const selected =
-            suffix === undefined ||
-            path === undefined ||
-            path.every(
-              (key, index) =>
-                index >= suffix.length ||
-                key === null ||
-                suffix[index] === null ||
-                key === suffix[index],
-            );
-          if (
-            !selected ||
-            (suffix !== undefined &&
-              path !== undefined &&
-              suffix.length < path.length &&
-              !escapedContents)
-          )
+        const selectionKey = JSON.stringify([
+          prototypeDepths,
+          prototypeReadAt?.start,
+          prototypeReadAt?.end,
+        ]);
+        const bySelection =
+          expanded.get(root) ?? new Map<string, AmbientProjection>();
+        if (bySelection.has(selectionKey)) {
+          const previous = bySelection.get(selectionKey);
+          if (previous === undefined) {
+            resolvedIdentity = true;
             continue;
-          const remaining =
-            suffix === undefined || path === undefined
-              ? undefined
-              : suffix.slice(path.length);
+          }
+          if (suffix !== undefined && previous.length === suffix.length) {
+            const joined: AmbientPath = previous.map((key, index) =>
+              key === suffix?.[index] ? key : null,
+            );
+            if (joined.every((key, index) => key === previous[index])) {
+              resolvedIdentity = true;
+              continue;
+            }
+            suffix = joined;
+          } else suffix = undefined;
+          if (!possibleWrites) {
+            const unresolved: AmbientResolution = {
+              paths: [],
+              ownership: "unknown",
+              unknownReasons: ["widened-projection"],
+            };
+            cached.set(node, unresolved);
+            return unresolved;
+          }
+        }
+        bySelection.set(selectionKey, suffix);
+        expanded.set(root, bySelection);
+        if (suffix === undefined || suffix.includes(null))
+          unknownReasons.add("widened-projection");
+        // A widened projection is a possible write, never proof of an intrinsic.
+        if (suffix === undefined && !possibleWrites) continue;
+        const shiftPrototypeDepths = (path: AmbientProjection) =>
+          path === undefined || suffix === undefined
+            ? []
+            : prototypeDepths
+                .map((depth) => depth + path.length - suffix.length)
+                .filter((depth) => depth >= 0);
+        const continueWith = (
+          node: t.Node,
+          path: AmbientProjection = suffix,
+          depths = shiftPrototypeDepths(path),
+          readAt = prototypeReadAt,
+        ) =>
           pending.push({
-            node: source.node,
-            readsAtSelf: true,
-            ...(prototypeReadAt === undefined ? {} : { prototypeReadAt }),
-            prototypeDepths:
-              suffix === undefined || path === undefined
-                ? []
-                : prototypeDepths
-                    .map(
-                      (depth) => depth + source.projection.length - path.length,
-                    )
-                    .filter((depth) => depth >= 0),
-            suffix:
-              remaining === undefined
+            node,
+            suffix: path,
+            ...(depths.length === 0 ? {} : { prototypeDepths: depths }),
+            ...(readAt === undefined ? {} : { prototypeReadAt: readAt }),
+            ...(current.readsAtSelf && { readsAtSelf: true }),
+          });
+        const continueReturned = (callee: t.Node, path: AmbientProjection) => {
+          unknownReasons.add("unresolved-call");
+          for (const source of returnedReferences(callee).references)
+            continueWith(
+              source.node,
+              path === undefined
                 ? undefined
                 : [
                     ...source.projection.map((key) =>
@@ -458,377 +439,464 @@ export const createAmbientPathResolver = (
                         ? null
                         : String(key),
                     ),
-                    ...remaining,
+                    ...path,
                   ],
-          });
-        }
-      }
-      if (
-        t.isMetaProperty(root) &&
-        root.meta.name === "import" &&
-        root.property.name === "meta"
-      ) {
-        retain(["import-meta", ...(suffix ?? [])]);
-        continue;
-      }
-      if (t.isIdentifier(root)) {
-        // The wrapper module object is distinct from globalThis.module. Keep
-        // its identity through the same alias/projection owner used for writes.
-        if (isUnshadowedGlobal(root, state, "module")) {
-          retain(["commonjs-module", ...(suffix ?? [])]);
-          continue;
-        }
-        if (globalObjectName(root, state) !== undefined) {
-          retain(["global", ...(suffix ?? [])]);
-          continue;
-        }
-        if (isUnshadowedGlobal(root, state, root.name)) {
-          retain(["global", root.name, ...(suffix ?? [])]);
-          continue;
-        }
-        const binding = resolveSemanticBindingState(state, root, root.name);
-        if (binding === undefined) continue;
-        const stable = possibleWrites
-          ? undefined
-          : semanticStableInitializer(binding, state);
-        const readAt = current.readsAtSelf ? root : capture;
-        const selected =
-          !possibleWrites || readAt === undefined
-            ? binding
-            : semanticBindingAtRead(binding, readAt, state.parentsByNode)
-                .binding;
-        const initializers = possibleWrites
-          ? [...selected.initializers, ...selected.referenceInitializers]
-          : stable === undefined
-            ? []
-            : [stable];
-        for (const initializer of initializers) {
-          if (semanticReferenceSourcesInactive(initializer, state)) continue;
-          // Pattern assignments share the source selection owner with member
-          // effects: copying a container preserves its children, not itself.
-          const path = semanticCopiedReferencePath(
-            initializer,
-            suffix ?? [null],
-            escapedContents ? "escape" : "identity",
-          );
-          if (path === null) continue;
-          pending.push({
-            node: initializer.node,
-            readsAtSelf: true,
-            ...(prototypeReadAt === undefined ? {} : { prototypeReadAt }),
-            prototypeDepths: shiftPrototypeDepths(
-              suffix === undefined
-                ? undefined
-                : path.map((key) =>
-                    key === null || typeof key === "object"
-                      ? null
-                      : String(key),
-                  ),
-            ),
-            suffix:
+            );
+        };
+        if (!t.isIdentifier(root) && facts?.freshObject(root)) {
+          selection?.localIdentity?.(root, suffix);
+          if (suffix?.length === 0) {
+            hasLocalIdentity = true;
+            resolvedIdentity = true;
+          }
+          for (const [source, path] of facts?.stores.get(root) ?? []) {
+            const selected =
               suffix === undefined ||
-              semanticReferenceIterationUnknown(initializer, state)
-                ? undefined
-                : path.map((key) =>
-                    key === null || typeof key === "object"
-                      ? null
-                      : String(key),
-                  ),
-          });
-        }
-        continue;
-      }
-      const explicitPrototype = prototypeDepths.includes(0);
-      const ownProtoData =
-        t.isObjectExpression(root) &&
-        root.properties.some(
-          (property) =>
-            !t.isSpreadElement(property) &&
-            semanticStaticPropertyKey(property.key, property.computed) ===
-              "__proto__" &&
-            !(
-              t.isObjectProperty(property) &&
-              !property.computed &&
-              !property.shorthand
-            ),
-        );
-      const canSelectActualPrototype = explicitPrototype || !ownProtoData;
-      let intrinsicReplacement = false;
-      if (
-        possibleWrites &&
-        suffix?.[0] === "__proto__" &&
-        canSelectActualPrototype
-      ) {
-        for (const replacement of facts?.prototypeReplacements.get(root) ??
-          []) {
-          if (
-            !facts?.prototypeMutation(replacement.node) ||
-            semanticEffectTiming(
-              prototypeReadAt ?? capture ?? current.node,
-              replacement.node,
-              state,
-            ) === "after"
-          )
-            continue;
-          continueWith(replacement.value, suffix.slice(1));
-          if (
-            replacement.definiteOwner &&
-            (facts.freshObject(replacement.value) ||
-              t.isNullLiteral(replacement.value)) &&
-            semanticDefiniteEffectPrecedesReference(
-              replacement.node,
-              prototypeReadAt ?? capture ?? current.node,
-              state.parentsByNode,
-            ) &&
-            facts.prototypeReady(
-              root,
-              replacement.node,
-              prototypeReadAt ?? capture ?? current.node,
-              true,
+              path === undefined ||
+              path.every(
+                (key, index) =>
+                  index >= suffix.length ||
+                  key === null ||
+                  suffix[index] === null ||
+                  key === suffix[index],
+              );
+            if (
+              !selected ||
+              (suffix !== undefined &&
+                path !== undefined &&
+                suffix.length < path.length &&
+                !escapedContents)
             )
-          )
-            intrinsicReplacement = true;
+              continue;
+            const remaining =
+              suffix === undefined || path === undefined
+                ? undefined
+                : suffix.slice(path.length);
+            pending.push({
+              node: source.node,
+              readsAtSelf: true,
+              ...(prototypeReadAt === undefined ? {} : { prototypeReadAt }),
+              prototypeDepths:
+                suffix === undefined || path === undefined
+                  ? []
+                  : prototypeDepths
+                      .map(
+                        (depth) =>
+                          depth + source.projection.length - path.length,
+                      )
+                      .filter((depth) => depth >= 0),
+              suffix:
+                remaining === undefined
+                  ? undefined
+                  : [
+                      ...source.projection.map((key) =>
+                        key === null || typeof key === "object"
+                          ? null
+                          : String(key),
+                      ),
+                      ...remaining,
+                    ],
+            });
+          }
         }
-      }
-      // Literal instances share native prototypes. A write to the instance's
-      // own __proto__ slot changes only that instance; selecting or exposing
-      // the prototype's contents can affect every instance of the builtin.
-      if (
-        possibleWrites &&
-        suffix?.[0] === "__proto__" &&
-        (escapedContents || selection?.prototypeReceiver || suffix.length > 1)
-      ) {
-        const builtin = t.isArrayExpression(root)
-          ? "Array"
-          : t.isObjectExpression(root) &&
-              root.properties.every((property) => {
-                if (t.isSpreadElement(property))
-                  return prototypeDepths.includes(0);
-                const key = semanticStaticPropertyKey(
+        if (
+          t.isMetaProperty(root) &&
+          root.meta.name === "import" &&
+          root.property.name === "meta"
+        ) {
+          retain(["import-meta", ...(suffix ?? [])]);
+          resolvedIdentity = true;
+          continue;
+        }
+        if (t.isIdentifier(root)) {
+          // The wrapper module object is distinct from globalThis.module. Keep
+          // its identity through the same alias/projection owner used for writes.
+          if (isUnshadowedGlobal(root, state, "module")) {
+            retain(["commonjs-module", ...(suffix ?? [])]);
+            resolvedIdentity = true;
+            continue;
+          }
+          if (globalObjectName(root, state) !== undefined) {
+            retain(["global", ...(suffix ?? [])]);
+            resolvedIdentity = true;
+            continue;
+          }
+          if (isUnshadowedGlobal(root, state, root.name)) {
+            retain(["global", root.name, ...(suffix ?? [])]);
+            resolvedIdentity = true;
+            continue;
+          }
+          const binding = resolveSemanticBindingState(state, root, root.name);
+          if (binding === undefined) continue;
+          const stable = possibleWrites
+            ? undefined
+            : semanticStableInitializer(binding, state);
+          const readAt = current.readsAtSelf ? root : capture;
+          const atRead =
+            possibleWrites && readAt !== undefined
+              ? semanticBindingAtRead(binding, readAt, state.parentsByNode)
+              : undefined;
+          const selected = atRead?.binding ?? binding;
+          if (possibleWrites && atRead?.hasDefiniteInitializer === false)
+            unknownReasons.add("unresolved-value");
+          const initializers = possibleWrites
+            ? [...selected.initializers, ...selected.referenceInitializers]
+            : stable === undefined
+              ? []
+              : [stable];
+          for (const initializer of initializers) {
+            if (semanticReferenceSourcesInactive(initializer, state)) continue;
+            // Pattern assignments share the source selection owner with member
+            // effects: copying a container preserves its children, not itself.
+            const path = semanticCopiedReferencePath(
+              initializer,
+              suffix ?? [null],
+              escapedContents ? "escape" : "identity",
+            );
+            if (path === null) continue;
+            pending.push({
+              node: initializer.node,
+              readsAtSelf: true,
+              ...(prototypeReadAt === undefined ? {} : { prototypeReadAt }),
+              prototypeDepths: shiftPrototypeDepths(
+                suffix === undefined
+                  ? undefined
+                  : path.map((key) =>
+                      key === null || typeof key === "object"
+                        ? null
+                        : String(key),
+                    ),
+              ),
+              suffix:
+                suffix === undefined ||
+                semanticReferenceIterationUnknown(initializer, state)
+                  ? undefined
+                  : path.map((key) =>
+                      key === null || typeof key === "object"
+                        ? null
+                        : String(key),
+                    ),
+            });
+          }
+          continue;
+        }
+        const explicitPrototype = prototypeDepths.includes(0);
+        const ownProtoData =
+          t.isObjectExpression(root) &&
+          root.properties.some(
+            (property) =>
+              !t.isSpreadElement(property) &&
+              semanticStaticPropertyKey(property.key, property.computed) ===
+                "__proto__" &&
+              !(
+                t.isObjectProperty(property) &&
+                !property.computed &&
+                !property.shorthand
+              ),
+          );
+        const canSelectActualPrototype = explicitPrototype || !ownProtoData;
+        let intrinsicReplacement = false;
+        if (
+          possibleWrites &&
+          suffix?.[0] === "__proto__" &&
+          canSelectActualPrototype
+        ) {
+          for (const replacement of facts?.prototypeReplacements.get(root) ??
+            []) {
+            if (
+              !facts?.prototypeMutation(replacement.node) ||
+              semanticEffectTiming(
+                prototypeReadAt ?? capture ?? current.node,
+                replacement.node,
+                state,
+              ) === "after"
+            )
+              continue;
+            continueWith(replacement.value, suffix.slice(1));
+            if (
+              replacement.definiteOwner &&
+              (facts.freshObject(replacement.value) ||
+                t.isNullLiteral(replacement.value)) &&
+              semanticDefiniteEffectPrecedesReference(
+                replacement.node,
+                prototypeReadAt ?? capture ?? current.node,
+                state.parentsByNode,
+              ) &&
+              facts.prototypeReady(
+                root,
+                replacement.node,
+                prototypeReadAt ?? capture ?? current.node,
+                true,
+              )
+            )
+              intrinsicReplacement = true;
+          }
+        }
+        // Literal instances share native prototypes. A write to the instance's
+        // own __proto__ slot changes only that instance; selecting or exposing
+        // the prototype's contents can affect every instance of the builtin.
+        if (
+          possibleWrites &&
+          suffix?.[0] === "__proto__" &&
+          (escapedContents || selection?.prototypeReceiver || suffix.length > 1)
+        ) {
+          const builtin = t.isArrayExpression(root)
+            ? "Array"
+            : t.isObjectExpression(root) &&
+                root.properties.every((property) => {
+                  if (t.isSpreadElement(property))
+                    return prototypeDepths.includes(0);
+                  const key = semanticStaticPropertyKey(
+                    property.key,
+                    property.computed,
+                  );
+                  const prototypeSetter =
+                    t.isObjectProperty(property) &&
+                    !property.computed &&
+                    !property.shorthand &&
+                    key === "__proto__";
+                  if (prototypeSetter && t.isObjectProperty(property)) {
+                    // Unknown values may be primitive: Annex B ignores them and
+                    // leaves Object.prototype in place. Only a proven object or
+                    // null can exclude that shared prototype.
+                    const value = unwrapJavaScriptExpression(
+                      property.value,
+                    ).node;
+                    return !(
+                      t.isNullLiteral(value) ||
+                      t.isObjectExpression(value) ||
+                      t.isArrayExpression(value) ||
+                      t.isFunction(value) ||
+                      t.isClassExpression(value) ||
+                      facts?.freshObject(value)
+                    );
+                  }
+                  return (
+                    prototypeDepths.includes(0) ||
+                    (key !== null && key !== "__proto__")
+                  );
+                })
+              ? "Object"
+              : undefined;
+          if (builtin !== undefined) {
+            const replaced =
+              intrinsicReplacement ||
+              (!(explicitPrototype && ownProtoData) &&
+                [...(facts?.stores.get(root) ?? [])].some(
+                  ([source, path]) =>
+                    path?.length === 1 &&
+                    path[0] === "__proto__" &&
+                    t.isAssignmentExpression(source.mutation, {
+                      operator: "=",
+                    }) &&
+                    source.target !== undefined &&
+                    facts?.freshObject(source.target.object) &&
+                    (facts.freshObject(source.node) ||
+                      t.isNullLiteral(source.node)) &&
+                    semanticDefiniteEffectPrecedesReference(
+                      source.mutation,
+                      prototypeReadAt ?? capture ?? current.node,
+                      state.parentsByNode,
+                    ) &&
+                    facts.prototypeReady(
+                      root,
+                      source.mutation,
+                      prototypeReadAt ?? capture ?? current.node,
+                      false,
+                    ),
+                ));
+            if (!replaced)
+              retain(["global", builtin, "prototype", ...suffix.slice(1)]);
+            continue;
+          }
+        }
+        if (
+          possibleWrites &&
+          t.isNewExpression(root) &&
+          (suffix?.[0] === "__proto__" || suffix?.[0] === "constructor")
+        ) {
+          continueWith(
+            root.callee,
+            suffix[0] === "__proto__"
+              ? ["prototype", ...suffix.slice(1)]
+              : suffix.slice(1),
+          );
+          continue;
+        }
+        const prototypeTarget = possibleWrites
+          ? facts?.prototypeTarget(root)
+          : undefined;
+        if (prototypeTarget !== undefined) {
+          continueWith(
+            prototypeTarget,
+            suffix === undefined ? undefined : ["__proto__", ...suffix],
+            suffix === undefined
+              ? []
+              : [0, ...prototypeDepths.map((depth) => depth + 1)],
+            root,
+          );
+          continue;
+        }
+        if (
+          possibleWrites &&
+          (t.isCallExpression(root) ||
+            t.isOptionalCallExpression(root) ||
+            t.isNewExpression(root) ||
+            t.isTaggedTemplateExpression(root) ||
+            (escapedContents && (t.isFunction(root) || t.isClass(root))))
+        ) {
+          continueReturned(
+            t.isFunction(root) || t.isClass(root)
+              ? root
+              : t.isTaggedTemplateExpression(root)
+                ? root.tag
+                : root.callee,
+            suffix,
+          );
+          continue;
+        }
+        if (possibleWrites && t.isConditionalExpression(root)) {
+          continueWith(root.consequent);
+          continueWith(root.alternate);
+          continue;
+        }
+        if (possibleWrites && t.isLogicalExpression(root)) {
+          continueWith(root.left);
+          continueWith(root.right);
+          continue;
+        }
+        if (possibleWrites && t.isSequenceExpression(root)) {
+          const value = root.expressions.at(-1);
+          if (value !== undefined) continueWith(value);
+          continue;
+        }
+        if (
+          possibleWrites &&
+          t.isAssignmentExpression(root) &&
+          root.operator === "="
+        ) {
+          continueWith(root.right);
+          continue;
+        }
+        const key = suffix?.[0];
+        // Container escapes reuse the finite worklist, including alias cycles.
+        if (escapedContents && suffix?.length === 0) {
+          if (t.isObjectExpression(root)) {
+            for (const property of root.properties)
+              if (t.isSpreadElement(property))
+                // A fresh copy exposes selected children, not its source container.
+                continueWith(property.argument, [null]);
+              else if (
+                t.isObjectProperty(property) &&
+                t.isExpression(property.value)
+              )
+                continueWith(property.value, []);
+              else if (t.isObjectMethod(property) && property.kind === "get")
+                continueReturned(property, []);
+            continue;
+          }
+          if (t.isArrayExpression(root)) {
+            for (const element of root.elements)
+              if (t.isSpreadElement(element))
+                continueWith(element.argument, []);
+              else if (t.isExpression(element)) continueWith(element, []);
+            continue;
+          }
+        }
+        if (suffix !== undefined && key === undefined) continue;
+        if (t.isObjectExpression(root)) {
+          if (possibleWrites) {
+            for (const property of root.properties) {
+              if (t.isSpreadElement(property)) continueWith(property.argument);
+              else if (
+                (t.isObjectProperty(property) &&
+                  t.isExpression(property.value)) ||
+                (t.isObjectMethod(property) && property.kind === "get")
+              ) {
+                const ownKey = semanticStaticPropertyKey(
                   property.key,
                   property.computed,
                 );
-                const prototypeSetter =
-                  t.isObjectProperty(property) &&
-                  !property.computed &&
-                  !property.shorthand &&
-                  key === "__proto__";
-                if (prototypeSetter && t.isObjectProperty(property)) {
-                  // Unknown values may be primitive: Annex B ignores them and
-                  // leaves Object.prototype in place. Only a proven object or
-                  // null can exclude that shared prototype.
-                  const value = unwrapJavaScriptExpression(property.value).node;
-                  return !(
-                    t.isNullLiteral(value) ||
-                    t.isObjectExpression(value) ||
-                    t.isArrayExpression(value) ||
-                    t.isFunction(value) ||
-                    t.isClassExpression(value) ||
-                    facts?.freshObject(value)
-                  );
-                }
-                return (
-                  prototypeDepths.includes(0) ||
-                  (key !== null && key !== "__proto__")
-                );
-              })
-            ? "Object"
-            : undefined;
-        if (builtin !== undefined) {
-          const replaced =
-            intrinsicReplacement ||
-            (!(explicitPrototype && ownProtoData) &&
-              [...(facts?.stores.get(root) ?? [])].some(
-                ([source, path]) =>
-                  path?.length === 1 &&
-                  path[0] === "__proto__" &&
-                  t.isAssignmentExpression(source.mutation, {
-                    operator: "=",
-                  }) &&
-                  source.target !== undefined &&
-                  facts?.freshObject(source.target.object) &&
-                  (facts.freshObject(source.node) ||
-                    t.isNullLiteral(source.node)) &&
-                  semanticDefiniteEffectPrecedesReference(
-                    source.mutation,
-                    prototypeReadAt ?? capture ?? current.node,
-                    state.parentsByNode,
-                  ) &&
-                  facts.prototypeReady(
-                    root,
-                    source.mutation,
-                    prototypeReadAt ?? capture ?? current.node,
-                    false,
-                  ),
-              ));
-          if (!replaced)
-            retain(["global", builtin, "prototype", ...suffix.slice(1)]);
-          continue;
-        }
-      }
-      if (
-        possibleWrites &&
-        t.isNewExpression(root) &&
-        (suffix?.[0] === "__proto__" || suffix?.[0] === "constructor")
-      ) {
-        continueWith(
-          root.callee,
-          suffix[0] === "__proto__"
-            ? ["prototype", ...suffix.slice(1)]
-            : suffix.slice(1),
-        );
-        continue;
-      }
-      const prototypeTarget = possibleWrites
-        ? facts?.prototypeTarget(root)
-        : undefined;
-      if (prototypeTarget !== undefined) {
-        continueWith(
-          prototypeTarget,
-          suffix === undefined ? undefined : ["__proto__", ...suffix],
-          suffix === undefined
-            ? []
-            : [0, ...prototypeDepths.map((depth) => depth + 1)],
-          root,
-        );
-        continue;
-      }
-      if (
-        possibleWrites &&
-        (t.isCallExpression(root) ||
-          t.isOptionalCallExpression(root) ||
-          t.isNewExpression(root) ||
-          t.isTaggedTemplateExpression(root) ||
-          (escapedContents && (t.isFunction(root) || t.isClass(root))))
-      ) {
-        continueReturned(
-          t.isFunction(root) || t.isClass(root)
-            ? root
-            : t.isTaggedTemplateExpression(root)
-              ? root.tag
-              : root.callee,
-          suffix,
-        );
-        continue;
-      }
-      if (possibleWrites && t.isConditionalExpression(root)) {
-        continueWith(root.consequent);
-        continueWith(root.alternate);
-        continue;
-      }
-      if (possibleWrites && t.isLogicalExpression(root)) {
-        continueWith(root.left);
-        continueWith(root.right);
-        continue;
-      }
-      if (possibleWrites && t.isSequenceExpression(root)) {
-        const value = root.expressions.at(-1);
-        if (value !== undefined) continueWith(value);
-        continue;
-      }
-      if (
-        possibleWrites &&
-        t.isAssignmentExpression(root) &&
-        root.operator === "="
-      ) {
-        continueWith(root.right);
-        continue;
-      }
-      const key = suffix?.[0];
-      // Container escapes reuse the finite worklist, including alias cycles.
-      if (escapedContents && suffix?.length === 0) {
-        if (t.isObjectExpression(root)) {
-          for (const property of root.properties)
-            if (t.isSpreadElement(property))
-              // A fresh copy exposes selected children, not its source container.
-              continueWith(property.argument, [null]);
-            else if (
-              t.isObjectProperty(property) &&
-              t.isExpression(property.value)
-            )
-              continueWith(property.value, []);
-            else if (t.isObjectMethod(property) && property.kind === "get")
-              continueReturned(property, []);
-          continue;
-        }
-        if (t.isArrayExpression(root)) {
-          for (const element of root.elements)
-            if (t.isSpreadElement(element)) continueWith(element.argument, []);
-            else if (t.isExpression(element)) continueWith(element, []);
-          continue;
-        }
-      }
-      if (suffix !== undefined && key === undefined) continue;
-      if (t.isObjectExpression(root)) {
-        if (possibleWrites) {
-          for (const property of root.properties) {
-            if (t.isSpreadElement(property)) continueWith(property.argument);
-            else if (
-              (t.isObjectProperty(property) &&
-                t.isExpression(property.value)) ||
-              (t.isObjectMethod(property) && property.kind === "get")
-            ) {
-              const ownKey = semanticStaticPropertyKey(
-                property.key,
-                property.computed,
-              );
-              if (
-                suffix === undefined ||
-                key === null ||
-                ownKey === null ||
-                ownKey === key
-              )
-                if (t.isObjectMethod(property))
-                  continueReturned(property, suffix?.slice(1));
-                else if (t.isExpression(property.value))
-                  continueWith(property.value, suffix?.slice(1));
+                if (
+                  suffix === undefined ||
+                  key === null ||
+                  ownKey === null ||
+                  ownKey === key
+                )
+                  if (t.isObjectMethod(property))
+                    continueReturned(property, suffix?.slice(1));
+                  else if (t.isExpression(property.value))
+                    continueWith(property.value, suffix?.slice(1));
+              }
             }
+          } else if (
+            suffix !== undefined &&
+            key !== null &&
+            root.properties.every(
+              (property) =>
+                t.isObjectProperty(property) &&
+                semanticStaticPropertyKey(property.key, property.computed) !==
+                  null,
+            )
+          ) {
+            const property = root.properties.findLast(
+              (property) =>
+                t.isObjectProperty(property) &&
+                semanticStaticPropertyKey(property.key, property.computed) ===
+                  key,
+            );
+            if (t.isObjectProperty(property) && t.isExpression(property.value))
+              continueWith(property.value, suffix.slice(1));
           }
-        } else if (
-          suffix !== undefined &&
-          key !== null &&
-          root.properties.every(
-            (property) =>
-              t.isObjectProperty(property) &&
-              semanticStaticPropertyKey(property.key, property.computed) !==
-                null,
-          )
-        ) {
-          const property = root.properties.findLast(
-            (property) =>
-              t.isObjectProperty(property) &&
-              semanticStaticPropertyKey(property.key, property.computed) ===
-                key,
-          );
-          if (t.isObjectProperty(property) && t.isExpression(property.value))
-            continueWith(property.value, suffix.slice(1));
-        }
-      } else if (t.isArrayExpression(root)) {
-        if (suffix === undefined) {
-          for (const element of root.elements)
-            if (t.isSpreadElement(element)) continueWith(element.argument);
-            else if (t.isExpression(element)) continueWith(element);
-        } else if (!root.elements.some(t.isSpreadElement)) {
-          const index = Number(key);
-          if (key === null && possibleWrites) {
+        } else if (t.isArrayExpression(root)) {
+          if (suffix === undefined) {
             for (const element of root.elements)
+              if (t.isSpreadElement(element)) continueWith(element.argument);
+              else if (t.isExpression(element)) continueWith(element);
+          } else if (!root.elements.some(t.isSpreadElement)) {
+            const index = Number(key);
+            if (key === null && possibleWrites) {
+              for (const element of root.elements)
+                if (t.isExpression(element))
+                  continueWith(element, suffix.slice(1));
+            } else if (
+              key !== null &&
+              Number.isInteger(index) &&
+              index >= 0 &&
+              String(index) === key
+            ) {
+              const element = root.elements[index];
               if (t.isExpression(element))
                 continueWith(element, suffix.slice(1));
-          } else if (
-            key !== null &&
-            Number.isInteger(index) &&
-            index >= 0 &&
-            String(index) === key
-          ) {
-            const element = root.elements[index];
-            if (t.isExpression(element)) continueWith(element, suffix.slice(1));
+            }
           }
         }
+      } finally {
+        if (
+          !resolvedIdentity &&
+          pending.length === queuedBefore &&
+          result.size === pathsBefore
+        )
+          unknownReasons.add("unresolved-value");
       }
     }
     const paths = [...result.values()];
-    if (!possibleWrites) cached.set(node, paths);
-    return paths;
+    if (paths.length > 0 && hasLocalIdentity)
+      unknownReasons.add("mixed-identities");
+    const resolution: AmbientResolution = {
+      paths,
+      ownership:
+        unknownReasons.size > 0
+          ? "unknown"
+          : paths.length > 0
+            ? "ambient"
+            : hasLocalIdentity
+              ? "local"
+              : "unknown",
+      unknownReasons: [...unknownReasons],
+    };
+    if (!possibleWrites) cached.set(node, resolution);
+    return resolution;
   };
 };
 
@@ -875,7 +943,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   const exposures = new WeakMap<t.Node, t.Node[]>();
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
-      const [path] = ambientReads(node);
+      const [path] = ambientReads(node).paths;
       return path?.[0] === "global" && path.every((key) => key !== null)
         ? ["intrinsic", ...(path.slice(1) as readonly string[])]
         : undefined;
@@ -1004,7 +1072,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       const target =
         path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
       if (target !== undefined)
-        for (const identity of ambientReads(target.node))
+        for (const identity of ambientReads(target.node).paths)
           if (identity[0] === "global")
             interop.retainWrite(node, [
               "intrinsic",
@@ -1049,7 +1117,8 @@ export function* indexJavaScriptAmbientWritesSteps(
           ? callee
           : undefined;
       const receiver = member?.object;
-      const [namespace] = receiver === undefined ? [] : ambientReads(receiver);
+      const [namespace] =
+        receiver === undefined ? [] : ambientReads(receiver).paths;
       const method =
         member === undefined
           ? null
@@ -1097,7 +1166,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     pendingStores.delete(source);
     if (source.target === undefined) continue;
     const identities = new Map<t.Node, AmbientProjection>();
-    ambientWrites(source.target, source.mutation, false, [], {
+    ambientWrites(source.target, source.target.object, false, [], {
       localIdentity: (node, path) => {
         const users =
           dependents.get(node) ?? new Set<SemanticIterationSource>();
@@ -1169,7 +1238,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       });
       const definiteOwner =
         roots.size === 1 &&
-        ambient.length === 0 &&
+        ambient.paths.length === 0 &&
         interop.isFreshObject(call.target);
       for (const root of roots) {
         const values = prototypeReplacements.get(root) ?? [];
@@ -1180,19 +1249,9 @@ export function* indexJavaScriptAmbientWritesSteps(
   }
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
-    let local = false;
-    const ambient = ambientWrites(
-      source.target.object,
-      source.mutation,
-      false,
-      [],
-      {
-        localIdentity: () => {
-          local = true;
-        },
-      },
-    );
-    if (!local || ambient.length > 0)
+    const receiver = ambientWrites(source.target.object, source.target.object);
+    if (receiver.ownership !== "local") {
+      state.escapingReferenceStores.add(source.target);
       escapes.push({
         node: source.mutation,
         target: source.node,
@@ -1201,6 +1260,7 @@ export function* indexJavaScriptAmbientWritesSteps(
           key === null || typeof key === "object" ? null : String(key),
         ),
       });
+    }
   }
   for (const { node, path, storeTarget } of writes) {
     const target =
@@ -1210,14 +1270,14 @@ export function* indexJavaScriptAmbientWritesSteps(
         ? [path]
         : ambientWrites(target.node, target.capture, false, [], {
             prototypeReceiver: true,
-          }).map((identity) => [...identity, ...path.slice(2)]);
+          }).paths.map((identity) => [...identity, ...path.slice(2)]);
     for (const resolved of paths) {
       retainSemanticAmbientEffect(state, "write", resolved, node, storeTarget);
     }
   }
   for (const { node, target, browserReceiver, projection } of escapes)
     if (!semanticNativeDescriptorTargetIsSafe(node, target, state))
-      for (const path of ambientWrites(target, node, true, projection))
+      for (const path of ambientWrites(target, node, true, projection).paths)
         // Only proven browser APIs keep their global receiver from user code.
         if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
           retainSemanticAmbientEffect(state, "escape", path, node);
@@ -1236,12 +1296,13 @@ export function* indexJavaScriptAmbientWritesSteps(
       )
     )
       continue;
-    for (const identity of ambientWrites(target.object, source.mutation, false))
+    for (const identity of ambientWrites(target.object, source.mutation, false)
+      .paths)
       retainSemanticAmbientEffect(state, "escape", identity, source.mutation);
   }
   for (const { node, receiver } of nativeReceiverCalls) {
     if (semanticIntrinsicReceiverIsSafe(node, state)) continue;
-    for (const identity of ambientWrites(receiver, node, true))
+    for (const identity of ambientWrites(receiver, node, true).paths)
       retainSemanticAmbientEffect(state, "escape", identity, node);
   }
 }

@@ -45,8 +45,8 @@ describe("setup workflow", () => {
     const result = await runSetup(
       {
         ...options(true),
-        installSkill: false,
         clientIds: ["first", "second", "third"],
+        installSkill: false,
       },
       host,
     );

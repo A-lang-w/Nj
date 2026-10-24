@@ -53,8 +53,11 @@ describe("compiled Windows reference-source import", () => {
             ? expect.objectContaining({
                 ok: false,
                 error: expect.objectContaining({
-                  category: "unsupported_provider",
                   code: "capability_unavailable",
+                  category: "unsupported_provider",
+                  message: expect.stringContaining(
+                    "Safe no-follow file opens are unavailable on this host.",
+                  ),
                 }),
               })
             : unsupportedHostOutput,
@@ -115,20 +118,19 @@ describe("compiled reference-source import preflight failures", () => {
             ? "Reference source root could not be resolved"
             : "Reference source root is not a directory";
         const invalidRootOutput = {
-          error: "Import failed",
           category: "invalid_input",
           message: expect.stringContaining(rootReason),
         };
         if (scenario.fullOutput) {
           expect(result.json).toMatchObject({
             ok: false,
-            error: {
-              category: invalidRootOutput.category,
-              message: invalidRootOutput.message,
-            },
+            error: invalidRootOutput,
           });
         } else {
-          expect(result.json).toMatchObject(invalidRootOutput);
+          expect(result.json).toMatchObject({
+            ...invalidRootOutput,
+            error: "Import failed",
+          });
         }
         const projection = scenario.fullOutput
           ? (result.json as { error: unknown }).error

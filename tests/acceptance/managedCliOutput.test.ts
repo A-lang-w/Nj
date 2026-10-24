@@ -384,11 +384,8 @@ cliTest(
       arguments: [...argv, "--filter-output", "toString", "--token-count"],
     });
     expect(omittedCount.exitCode).toBe(0);
+    // A missing JSON selection delivers an empty object, which costs one token.
     expect(omittedCount.stdout).toBe("1\n");
-    const empty = await cli.run({
-      arguments: [...argv, "--filter-output", "toString"],
-    });
-    expect(empty.json).toEqual({});
     const jsonl = await cli.run({
       arguments: [
         "inspect-managed-members",

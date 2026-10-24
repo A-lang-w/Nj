@@ -258,20 +258,27 @@ it("does not recognize embedded Swift runtime markers in Objective-C selectors",
   expect(discoverObjcProtocols(names)).toEqual({ count: 0, protocols: [] });
 });
 
-it("distinguishes protocol declaration labels from members in a protocol context", () => {
-  const names = [
+it("distinguishes protocol identity from protocol member contexts", () => {
+  const symbols = [
     "_$s4main7ScoringMp",
-    "_$s4main7ScoringP5scoreSiyFTq",
-    "_$s4main7ScoringTL",
-    "_$s4main7ScoringP5scoreSiyFTqMp",
     "$s4main7ScoringPMp",
     "_TtP4main7Scoring_",
-  ].map((name, index) => ({ address: `0x${index + 1}`, name }));
-  expect(discoverObjcProtocols(names)).toEqual({
+    "_$s4main7ScoringP5scoreSiyFTq",
+    "_$s4main7ScoringTL",
+    "_$s4main7ScoringP5scoreSiyF",
+  ].map((name, index) => ({ name, address: `0x${index}` }));
+  expect(discoverObjcProtocols(symbols)).toEqual({
     count: 3,
-    protocols: [names[0], names[4], names[5]],
+    protocols: symbols.slice(0, 3),
   });
-  expect(categorizeSwiftTypes([names[1]!])).toMatchObject({
+  // Function/requirement categorization still describes the enclosing nominal
+  // context; it does not turn that member into a protocol inventory identity.
+  expect(
+    categorizeSwiftTypes([
+      { address: "0x3", name: "_$s4main7ScoringP5scoreSiyFTq" },
+    ]),
+  ).toMatchObject({
     categories: { protocols: { count: 1 } },
+    unclassified: [],
   });
 });

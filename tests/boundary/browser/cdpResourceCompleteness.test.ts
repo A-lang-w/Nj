@@ -144,7 +144,7 @@ const compareResources = (
     }),
   ).dimensions.resources;
 
-describe("resource inventory omissions through CDP", () => {
+describe("resource metadata through CDP", () => {
   it.each([
     { fields: { type: undefined }, retained: false },
     { fields: { type: null }, retained: false },
@@ -194,6 +194,36 @@ describe("resource inventory omissions through CDP", () => {
     },
   );
 
+  it.each([
+    {
+      fields: { type: "Other", mimeType: "", contentSize: undefined },
+      size: null,
+    },
+    { fields: { contentSize: 0 }, size: 0 },
+    { fields: { contentSize: 1.5 }, size: 1.5 },
+  ])(
+    "accepts valid optional and empty fields: $fields",
+    async ({ fields, size }) => {
+      const { state, inspect } = await startBrowser();
+      state.peerFields = fields;
+      const capture = await inspect();
+      expect(capture.resources).toHaveLength(2);
+      expect(
+        capture.resources.find(({ url }) => url.endsWith("/peer.js"))
+          ?.content_size,
+      ).toBe(size);
+      expect(capture.completeness.unavailable_sections).not.toContain(
+        "resources",
+      );
+      // Omitted contentSize is valid metadata, but cannot prove equal resource size.
+      expect(compareResources(capture, capture).status).toBe(
+        size === null ? "unknown" : "unchanged",
+      );
+    },
+  );
+});
+
+describe("resource inventory omissions through CDP", () => {
   it.each([
     "missing",
     "null",
@@ -272,35 +302,6 @@ describe("resource inventory omissions through CDP", () => {
     expect(compareResources(after, after).status).toBe("unchanged");
   });
 });
-
-it.each([
-  {
-    fields: { type: "Other", mimeType: "", contentSize: undefined },
-    size: null,
-  },
-  { fields: { contentSize: 0 }, size: 0 },
-  { fields: { contentSize: 1.5 }, size: 1.5 },
-])(
-  "accepts valid CDP resource fields while preserving size uncertainty: $fields",
-  async ({ fields, size }) => {
-    const { state, inspect } = await startBrowser();
-    state.peerFields = fields;
-    const capture = await inspect();
-    expect(capture.resources).toHaveLength(2);
-    expect(
-      capture.resources.find(({ url }) => url.endsWith("/peer.js"))
-        ?.content_size,
-    ).toBe(size);
-    expect(capture.completeness.unavailable_sections).not.toContain(
-      "resources",
-    );
-    expect(compareResources(capture, capture)).toMatchObject({
-      status: size === null ? "unknown" : "unchanged",
-      total_changes: 0,
-      changes: [],
-    });
-  },
-);
 
 describe("resource uncertainty in production MCP registration", () => {
   it("delivers partial resources and preserves comparison uncertainty through the SDK", async () => {

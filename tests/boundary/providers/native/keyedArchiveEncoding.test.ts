@@ -1,4 +1,3 @@
-import { buildBinaryKeyedArchive } from "../../../fixtures/binaryKeyedArchive.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,6 +7,7 @@ import { expect, it } from "vitest";
 
 import { inspectBundleKeyedArchive } from "../../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { nativeFixture } from "../../../fixtures/nativeCommands.js";
+import { buildBinaryKeyedArchive } from "../../../fixtures/binaryKeyedArchive.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 it.each(["utf8", "utf8-bom", "utf16le", "utf16be", "binary"] as const)(

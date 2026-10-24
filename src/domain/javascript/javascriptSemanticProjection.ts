@@ -180,16 +180,17 @@ export function* collectSemanticReferencesSteps(
         (name !== undefined && node.name !== name)
       )
         return;
-      const role = semanticIdentifierRole(node, parent, readAncestors);
+      let ancestors: readonly t.Node[] | undefined;
+      const ancestry = () => (ancestors ??= readAncestors());
+      const role = semanticIdentifierRole(node, parent, ancestry);
       if (role === null) return;
-      const ancestors = readAncestors();
       // A compound assignment or update reads before it writes; emit both so
       // reference consumers see the read they actually execute.
       const roles =
         role === "write" &&
         semanticReadsBeforeWrite(
           node,
-          semanticWrappedWriteSite(node, parent, ancestors) ?? parent,
+          semanticWrappedWriteSite(node, parent, ancestry()) ?? parent,
         )
           ? (["read", "write"] as const)
           : ([role] as const);
@@ -633,13 +634,10 @@ export const semanticIdentifierRole = (
   parent: t.Node,
   readAncestors: () => readonly t.Node[],
 ): JavaScriptSemanticReference["role"] | null => {
-  // Babel can reject member names without materializing or scanning ancestry.
-  // A deep member chain otherwise repeats a full pattern walk for every key.
-  if (
-    (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
-    !t.isReferenced(node, parent)
-  )
-    return null;
+  // Member identifiers are either object/computed-key reads or fixed property
+  // names. None is a bound destructuring slot, so no ancestor snapshot is needed.
+  if (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent))
+    return semanticReferenceRole(node, parent);
   if (
     t.isObjectProperty(parent) &&
     parent.key === node &&

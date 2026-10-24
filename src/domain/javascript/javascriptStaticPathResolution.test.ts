@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseExpression } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
-import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { parserPluginsForPath } from "./javascriptSourceParser.js";
 import {
   calleeName,

@@ -327,12 +327,14 @@ it("bounds a stalled health poll by the remaining readiness deadline", async () 
       userMessage: expect.stringMatching(/800 ms.*config_json_get/u),
       remediationAction: expect.stringContaining("timeoutMs"),
       diagnostics: {
+        busy_tool: "config_json_get",
         health_request_operation: "server_health",
         health_request_timeout_ms: 250,
       },
     });
     if (!(failure instanceof AnalysisTimeoutError))
       throw new Error("Expected the readiness deadline to expire");
+    expect(failure.userMessage).toContain("config_json_get");
     expect(failure.capturedOutput).toBeDefined();
   } finally {
     await connection.close();

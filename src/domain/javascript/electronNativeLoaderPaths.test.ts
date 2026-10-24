@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeCommonJsStaticFixture } from "../../../tests/support/javascriptFixtureAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 describe("native addon type-only TypeScript imports", () => {
   it("ignores declaration-wide import type and export type from .node modules", () => {
-    const analysis = analyzeCommonJsStaticFixture(`
+    const analysis = analyzeJavaScriptStaticSource(`
       import type { NativeThing } from "./addon.node";
       export type { Extra } from "./addon.node";
     `);
@@ -13,7 +14,7 @@ describe("native addon type-only TypeScript imports", () => {
   });
 
   it("keeps only value members from mixed type/value native imports", () => {
-    const analysis = analyzeCommonJsStaticFixture(`
+    const analysis = analyzeJavaScriptStaticSource(`
       import { type OtherThing, load } from "./addon.node";
       load();
     `);
@@ -27,7 +28,7 @@ describe("native addon type-only TypeScript imports", () => {
   });
 
   it("retains ordinary value imports of native addons", () => {
-    const analysis = analyzeCommonJsStaticFixture(`
+    const analysis = analyzeJavaScriptStaticSource(`
       import { load } from "./addon.node";
       load();
     `);
@@ -47,7 +48,7 @@ describe("native addon type-only re-exports", () => {
     ['export { type Extra } from "./addon.node";', []],
     ['export type * from "./addon.node";', []],
   ] as const)("retains only runtime members from %s", (source, members) => {
-    const analysis = analyzeCommonJsStaticFixture(source);
+    const analysis = analyzeJavaScriptStaticSource(source);
     expect(analysis.parse_status).toBe("complete");
     expect(analysis.electron.native_addon_bindings).toEqual(
       members.length === 0
@@ -64,6 +65,21 @@ describe("native addon type-only re-exports", () => {
 });
 
 describe("native addon loader provenance", () => {
+  it("does not give ESM fixtures an ambient CommonJS loader", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import imported from "./addon.node";
+      const required = require("./other.node");
+      module.exports = require("./exported.node");
+    `);
+    expect(analysis.electron.native_addon_bindings).toEqual([
+      expect.objectContaining({
+        specifier: "./addon.node",
+        binding_kind: "import",
+        module_kind: "import",
+      }),
+    ]);
+  });
+
   it("distinguishes CommonJS and ESM re-exports", () => {
     const analysis = analyzeCommonJsStaticFixture(`
       const required = require("./addon.node#literal.node");

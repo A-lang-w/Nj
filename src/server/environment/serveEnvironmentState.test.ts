@@ -41,7 +41,7 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-
+import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   environmentCard,
@@ -959,8 +959,9 @@ describe("serveEnvironment with a state", () => {
     ).resolves.toMatchObject({ result: {} });
     await expect(environment.close()).rejects.toMatchObject({
       _tag: "AnalysisOutputError",
-      cleanupIncomplete: true,
       diagnostics: { cleanup_stages: ["state-files"] },
+      cause: expect.any(ArtifactResourceRetryFailure),
+      cleanupIncomplete: true,
     });
     expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
     failing = false;
@@ -992,13 +993,18 @@ describe("serveEnvironment cleanup retries", () => {
 
     const listenerFailure = new Error("injected listener cleanup failure");
     closeFailureControl.failure = listenerFailure;
-    await expect(environment.close()).rejects.toMatchObject({
-      _tag: "AnalysisOutputError",
-      cleanupIncomplete: true,
-      diagnostics: { cleanup_stages: ["http-server", "state-files"] },
-      cause: expect.objectContaining({
-        errors: [listenerFailure, expect.any(Error)],
-      }),
+    await expect(environment.close()).rejects.toSatisfy((cause: unknown) => {
+      if (!(cause instanceof Error) || !(cause.cause instanceof AggregateError))
+        return false;
+      expect(cause).toMatchObject({
+        _tag: "AnalysisOutputError",
+        diagnostics: { cleanup_stages: ["http-server", "state-files"] },
+        cleanupIncomplete: true,
+      });
+      return (
+        cause.cause.errors[0] === listenerFailure &&
+        cause.cause.errors[1] instanceof ArtifactResourceRetryFailure
+      );
     });
     expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
 

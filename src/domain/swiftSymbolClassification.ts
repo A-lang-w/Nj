@@ -24,10 +24,8 @@ export const classifySwiftSymbol = (
   name: string,
 ):
   | {
-      /** Nominal context, including the owner of a member or compiler descriptor. */
       readonly category: SwiftTypeCategory | null;
-      /** A recognized protocol declaration label, rather than a protocol member. */
-      readonly protocolDeclaration: boolean;
+      readonly protocolIdentity: boolean;
     }
   | undefined => {
   const prefix = /^_?(?:\$[sS]|_T0)/u.exec(name);
@@ -37,18 +35,21 @@ export const classifySwiftSymbol = (
       category:
         LEGACY_CATEGORIES.find(([prefix]) => name.startsWith(prefix))?.[1] ??
         null,
-      protocolDeclaration: name.startsWith("_TtP"),
+      protocolIdentity: name.startsWith("_TtP"),
     };
   }
   const mangling = name.slice(prefix[0].length);
   let offset = identifierEnd(mangling, 0);
-  if (offset === undefined)
-    return { category: null, protocolDeclaration: false };
+  if (offset === undefined) return { category: null, protocolIdentity: false };
   let category: SwiftTypeCategory | null = null;
-  let protocolDeclaration = false;
+  let protocolIdentity = false;
   for (;;) {
     const end = identifierEnd(mangling, offset);
     if (end === undefined) {
+      // A protocol member retains its enclosing category, but only the exact
+      // descriptor terminal identifies the protocol itself.
+      protocolIdentity =
+        category === "protocols" && mangling.slice(offset) === "Mp";
       // A zero-prefixed identifier uses word substitutions or Punycode. We
       // cannot tell whether it continues a nested type or names a member, so
       // retaining the outer category would be a guess.
@@ -60,8 +61,6 @@ export const classifySwiftSymbol = (
         mangling.startsWith("AA", offset)
       )
         category = null;
-      protocolDeclaration =
-        category === "protocols" && mangling.slice(offset) === "Mp";
       break;
     }
     const kind = mangling.charAt(end);
@@ -72,14 +71,14 @@ export const classifySwiftSymbol = (
       // suffix; unknown substitution encodings stay unclassified, never guessed.
       if (mangling.slice(end) === "Mp") {
         category = "protocols";
-        protocolDeclaration = true;
+        protocolIdentity = true;
       } else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
     offset = end + 1;
   }
-  return { category, protocolDeclaration };
+  return { category, protocolIdentity };
 };
 
 /**
