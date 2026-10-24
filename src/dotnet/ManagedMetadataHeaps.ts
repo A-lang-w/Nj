@@ -1,5 +1,6 @@
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { createHash } from "node:crypto";
+import { err, ok, type Result } from "../domain/result.js";
 
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 
@@ -55,6 +56,39 @@ export class MetadataRowCursor {
   }
 }
 
+interface ManagedCompressedUnsigned {
+  readonly value: number;
+  readonly width: 1 | 2 | 4;
+  readonly minimal: boolean;
+}
+
+type ManagedCompressedUnsignedFailure =
+  | { readonly kind: "truncated"; readonly width: 1 | 2 | 4 }
+  | { readonly kind: "reserved" };
+
+/** ECMA-335 unsigned encoding facts, without heap or signature admission policy. */
+export const readManagedCompressedUnsigned = (
+  bytes: Buffer,
+  offset: number,
+): Result<ManagedCompressedUnsigned, ManagedCompressedUnsignedFailure> => {
+  const first = bytes[offset];
+  if (first === undefined) return err({ kind: "truncated", width: 1 });
+  if ((first & 0x80) === 0)
+    return ok({ value: first, width: 1, minimal: true });
+  const width =
+    (first & 0xc0) === 0x80 ? 2 : (first & 0xe0) === 0xc0 ? 4 : null;
+  if (width === null) return err({ kind: "reserved" });
+  if (offset > bytes.length - width) return err({ kind: "truncated", width });
+  const value =
+    width === 2
+      ? ((first & 0x3f) << 8) | (bytes[offset + 1] ?? 0)
+      : (first & 0x1f) * 0x01_00_00_00 +
+        (bytes[offset + 1] ?? 0) * 0x01_00_00 +
+        (bytes[offset + 2] ?? 0) * 0x0100 +
+        (bytes[offset + 3] ?? 0);
+  return ok({ value, width, minimal: value >= (width === 2 ? 0x80 : 0x4000) });
+};
+
 // Issue code and label for the heap item a compressed length prefixes.
 const PREFIXED_ITEMS = {
   blob: { code: "invalid-blob", label: "Metadata blob" },
@@ -73,38 +107,21 @@ const compressedLength = (
   readonly minimal: boolean;
 } => {
   const { code, label } = PREFIXED_ITEMS[item];
-  const requirePrefix = (size: number): void => {
-    if (offset < 0 || offset > bytes.length - size)
-      throw managedFailure(
-        code,
-        scope,
-        `${label} length prefix leaves the artifact byte range`,
-        offset >= 0 ? offset : null,
-      );
+  const decoded = readManagedCompressedUnsigned(bytes, offset);
+  if (!decoded.ok)
+    throw managedFailure(
+      code,
+      scope,
+      decoded.error.kind === "truncated"
+        ? `${label} length prefix leaves the artifact byte range`
+        : `${label} uses a reserved compressed-length prefix`,
+      offset >= 0 ? offset : null,
+    );
+  return {
+    length: decoded.value.value,
+    prefix: decoded.value.width,
+    minimal: decoded.value.minimal,
   };
-  requirePrefix(1);
-  const first = bytes[offset] ?? 0;
-  if ((first & 0x80) === 0) return { length: first, prefix: 1, minimal: true };
-  if ((first & 0xc0) === 0x80) {
-    requirePrefix(2);
-    const length = ((first & 0x3f) << 8) | (bytes[offset + 1] ?? 0);
-    return { length, prefix: 2, minimal: length >= 0x80 };
-  }
-  if ((first & 0xe0) === 0xc0) {
-    requirePrefix(4);
-    const length =
-      (first & 0x1f) * 0x01_00_00_00 +
-      (bytes[offset + 1] ?? 0) * 0x01_00_00 +
-      (bytes[offset + 2] ?? 0) * 0x0100 +
-      (bytes[offset + 3] ?? 0);
-    return { length, prefix: 4, minimal: length >= 0x4000 };
-  }
-  throw managedFailure(
-    code,
-    scope,
-    `${label} uses a reserved compressed-length prefix`,
-    offset,
-  );
 };
 
 /** Read one UTF-8 value from #Strings within its PE/CLI stream extent. */
@@ -218,13 +235,14 @@ export const readMetadataBlob = (
 export const readMetadataUserString = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  token: string,
+  reference: Pick<MetadataTokenFact, "token" | "row">,
 ): {
   readonly offset: number;
   readonly value: string;
   /** Conformance differences observed beside the readable literal. */
   readonly issues: readonly ManagedParseIssue[];
 } => {
+  const { token, row: index } = reference;
   const heap = layout.userStrings;
   const scope = `metadata.#US:${token}`;
   if (heap === null)
@@ -233,7 +251,6 @@ export const readMetadataUserString = (
       scope,
       "ldstr references #US, but the metadata has no #US stream",
     );
-  const index = Number.parseInt(token.slice(4), 16);
   if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
@@ -361,6 +378,20 @@ export const readMetadataGuid = (
 export const metadataToken = (table: number, row: number): string =>
   `0x${(table * 0x01_00_00_00 + row).toString(16).padStart(8, "0")}`;
 
+/** Full-token coordinates do not establish that a table row or heap item exists. */
+export interface MetadataTokenFact {
+  readonly raw: number;
+  readonly table: number;
+  readonly row: number;
+  readonly token: string;
+}
+
+export const metadataTokenFact = (raw: number): MetadataTokenFact => {
+  const table = raw >>> 24;
+  const row = raw & 0x00ff_ffff;
+  return { raw, table, row, token: metadataToken(table, row) };
+};
+
 /** Hash bytes without exposing their contents. */
 export const sha256Bytes = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -392,6 +423,21 @@ export const metadataRowCursor = (
   );
 };
 
+/** Format coordinates do not establish that the selected metadata row exists. */
+export interface MetadataCodedIndexCoordinate {
+  readonly table: number | undefined;
+  readonly row: number;
+}
+
+export const metadataCodedIndexCoordinate = (
+  raw: number,
+  bits: number,
+  tables: readonly (number | undefined)[],
+): MetadataCodedIndexCoordinate & { readonly tag: number } => {
+  const tag = raw & (2 ** bits - 1);
+  return { tag, table: tables[tag], row: Math.floor(raw / 2 ** bits) };
+};
+
 export type ManagedCodedIndex =
   | { readonly kind: "null" }
   | {
@@ -415,9 +461,7 @@ export const decodeMetadataCodedIndex = (
   rowCounts: readonly number[],
 ): ManagedCodedIndex => {
   if (raw === 0) return { kind: "null" };
-  const tag = raw & (2 ** bits - 1);
-  const row = Math.floor(raw / 2 ** bits);
-  const table = tables[tag];
+  const { tag, table, row } = metadataCodedIndexCoordinate(raw, bits, tables);
   if (table === undefined)
     return {
       kind: "invalid",

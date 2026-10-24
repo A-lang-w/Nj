@@ -2,6 +2,9 @@ import { access, mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { expect, it, vi } from "vitest";
+import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
+import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
+import { SafeOutputSourceFailure } from "../../../src/artifacts/SafeOutputSourceFailure.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
@@ -87,7 +90,7 @@ it.each(
       readerAttempts = 0,
       rollbackAttempts = 0;
     let tree: SafeOutputTree | undefined;
-    const originalCreate = SafeOutputTree.create;
+    const originalCreate = SafeOutputTree.create.bind(SafeOutputTree);
     const originalOpen = DirectoryArtifactReader.prototype.open;
     const originalClose = DirectoryArtifactReader.prototype.close;
     vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
@@ -222,6 +225,64 @@ it("extracts unchanged directory bytes without cleanup injection", async () => {
     expect(await readFile(join(output, "file"), "utf8")).toBe("owned");
     expect(scope.hasPending).toBe(false);
   } finally {
+    await scope.close();
+  }
+});
+
+it("retains the completed ZIP inventory after a composed source failure", async () => {
+  const root = await createTestTempDirectory("rea-zip-source-observation-");
+  const input = join(root, "input.zip");
+  const output = join(root, "output");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("payload.txt", new TextReader("owned ZIP bytes"));
+  await writeFile(input, await writer.close());
+  const scope = new ArtifactResourceScope();
+  let materializing = false;
+  const create = SafeOutputTree.create.bind(SafeOutputTree);
+  const originalOpen = ZipArtifactReader.prototype.open;
+  const primary = new Error("controlled ZIP read failure");
+  const secondary = new Error("controlled source finalization failure");
+  vi.spyOn(SafeOutputTree, "create").mockImplementation(async (...args) => {
+    const tree = await create(...args);
+    materializing = true;
+    return tree;
+  });
+  vi.spyOn(ZipArtifactReader.prototype, "open").mockImplementation(
+    async function (this: ZipArtifactReader, ...args) {
+      if (!materializing) return originalOpen.apply(this, args);
+      return new Readable({
+        read() {
+          this.emit("error", primary);
+          this.destroy(secondary);
+        },
+      });
+    },
+  );
+  try {
+    const raw = await extractArtifact({
+      inputPath: input,
+      inputFormat: "zip",
+      outputRoot: output,
+      environment: {},
+      integrityPolicy: "fail",
+      resourceScope: scope,
+    }).catch((cause: unknown) => cause);
+    expect(raw).toBeInstanceOf(SafeOutputSourceFailure);
+    if (!(raw instanceof SafeOutputSourceFailure))
+      throw new Error("Expected a composed source failure");
+    expect(raw.partialObservation).toMatchObject({
+      kind: "artifact-inventory",
+    });
+    const translated = translateArtifactFailure("extract_artifact", raw);
+    expect(translated.partialObservation).toBe(raw.partialObservation);
+    expect(
+      projectAnalysisError(translated).details?.partial_observation,
+    ).toBeDefined();
+    expect(translated.cleanupIncomplete).toBe(false);
+    expect(scope.hasPending).toBe(false);
+    await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    vi.restoreAllMocks();
     await scope.close();
   }
 });

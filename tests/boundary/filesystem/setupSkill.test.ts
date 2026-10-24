@@ -178,7 +178,10 @@ describe("skill directory admission", () => {
       references,
       process.platform === "win32" ? "junction" : "dir",
     );
-    expect(await existingSkillDestinations(directory)).toEqual([]);
+    expect(await existingSkillDestinations(directory)).toEqual({
+      destinations: [],
+      issues: [],
+    });
     expect((await lstat(references)).isSymbolicLink()).toBe(true);
     await access(join(retained, "native-and-artifacts.md"));
   });
@@ -635,6 +638,7 @@ describe("canonical skill transaction", () => {
       "SKILL.md",
       "references/android-applications.md",
       "references/connection-and-recovery.md",
+      "references/environments.md",
       "references/evidence-workflows.md",
       "references/javascript-applications.md",
       "references/native-and-artifacts.md",

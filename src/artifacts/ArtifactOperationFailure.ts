@@ -16,6 +16,21 @@ export const translateArtifactFailure = (
   operation: ArtifactOperationError["operation"],
   cause: unknown,
 ): AnalysisError => {
+  const error = translateArtifactFailureOutcome(operation, cause);
+  // Extraction can attach completed facts after composing source/cleanup errors.
+  // Preserve that outer observation independently of the primary's semantics.
+  if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.partialObservation !== undefined
+  )
+    error.partialObservation = cause.partialObservation;
+  return error;
+};
+
+const translateArtifactFailureOutcome = (
+  operation: ArtifactOperationError["operation"],
+  cause: unknown,
+): AnalysisError => {
   if (cause instanceof ArtifactResourceCleanupFailure)
     return translateResourceCleanupFailure(operation, cause);
   if (cause instanceof SafeOutputSourceFailure) {
@@ -101,6 +116,7 @@ export const translateArtifactFailure = (
         ...(cause.admission === undefined
           ? {}
           : { admission: cause.admission }),
+        ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
       },
     );
     bindArtifactFileCleanup(cause, error);
@@ -108,7 +124,9 @@ export const translateArtifactFailure = (
   }
   // Keep typed Evidence and other analysis failures instead of reducing them to I/O.
   if (cause instanceof AnalysisError) return cause;
-  return new ArtifactOperationError(operation, "io");
+  return new ArtifactOperationError(operation, "io", undefined, undefined, {
+    cause,
+  });
 };
 
 /**
@@ -221,7 +239,5 @@ const translateResourceCleanupFailure = (
       : analysisErrorWithCleanupFailure(primary, cleanup, operation);
   error.bindCleanupDependencies([primary, cleanup]);
   error.retainSecondaryFailure(cleanup);
-  if (cause.partialObservation !== undefined)
-    error.partialObservation = cause.partialObservation;
   return error;
 };

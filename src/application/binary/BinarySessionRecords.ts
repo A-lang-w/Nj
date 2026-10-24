@@ -28,6 +28,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
+  RetainedResourceScope,
 } from "../AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
@@ -69,6 +70,16 @@ export interface WorkflowSnapshotRecordInput {
 export abstract class BinarySessionRecords {
   readonly #records: InvestigationRecords;
   protected readonly fileResources = new ArtifactResourceScope();
+
+  readonly resourceScope: RetainedResourceScope = {
+    retain: (owner, resource) =>
+      this.fileResources.retain({
+        kind: "lease",
+        resource,
+        lease: { release: () => owner.close() },
+      }),
+    run: (operation) => this.fileResources.run(operation),
+  };
 
   protected get hasPendingFileResources(): boolean {
     return this.fileResources.hasPending;
@@ -159,7 +170,7 @@ export abstract class BinarySessionRecords {
   ): Result<number, EvidenceIntegrityError | AnalysisInputError> {
     const imported = this.#records.mergeEvidenceBundle(bundle);
     if (!imported.ok) return imported;
-    this.#snapshot.refreshEvidenceDisplay(imported.value.replacements);
+    this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
     if (imported.value.changed) this.#emitSnapshotChanged();
     return ok(imported.value.recordsAdded);
   }
@@ -248,7 +259,7 @@ export abstract class BinarySessionRecords {
       (bundle) => {
         const imported = this.#records.mergeEvidenceBundle(bundle);
         if (!imported.ok) return imported;
-        this.#snapshot.refreshEvidenceDisplay(imported.value.replacements);
+        this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
         return ok(imported.value.recordsAdded);
       },
     );

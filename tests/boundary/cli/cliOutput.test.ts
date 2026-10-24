@@ -26,6 +26,14 @@ describe("CLI output argument boundary", () => {
     expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
   });
 
+  it("preserves literal HTML and entity text in Markdown table headers and cells", () => {
+    const value = [{ "List<T>": "&copy; <br>\r\nnext" }];
+    const markdown = renderCliDocument(value, "md", false);
+    expect(markdown).toContain("List&lt;T&gt;");
+    expect(markdown).toContain("&amp;copy; &lt;br&gt;<br>next");
+    expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
+  });
+
   it("rejects token windows that would corrupt structured output", () => {
     for (const format of ["json", "jsonl", "yaml"] as const) {
       const validation = parseCliOutputArguments([
@@ -76,6 +84,89 @@ describe("CLI output argument boundary", () => {
       parseCliOutputArguments(["providers", "--token-count", "--json"])
         .validation,
     ).toEqual({ ok: true });
+  });
+});
+
+describe("CLI output value admission", () => {
+  it.each(["--token-limit", "--token-offset"])(
+    "rejects invalid %s values before dispatch and preserves later JSON selection",
+    (flag) => {
+      for (const value of [
+        "-1",
+        "0.5",
+        "NaN",
+        "Infinity",
+        "9007199254740992",
+      ]) {
+        const validation = parseCliOutputArguments([
+          "providers",
+          flag,
+          value,
+          "--json",
+        ]).validation;
+        expect(validation).toMatchObject({
+          ok: false,
+          format: "json",
+          code: "INVALID_OUTPUT_VALUE",
+        });
+        if (!validation.ok)
+          expect(
+            JSON.parse(renderCliOutputArgumentError(validation)),
+          ).toMatchObject({
+            ok: false,
+            error: { code: "INVALID_OUTPUT_VALUE" },
+          });
+      }
+      for (const value of ["0", "1", "9007199254740991"])
+        expect(
+          parseCliOutputArguments(["providers", flag, value]).validation,
+        ).toEqual({ ok: true });
+    },
+  );
+
+  it("excludes explicitly declared literals from early output diagnostics", () => {
+    const validation = parseCliOutputArguments([
+      "--format",
+      "private-marker",
+      "--sensitive-value=private-marker",
+      "--json",
+    ]).validation;
+    expect(validation).toMatchObject({
+      ok: false,
+      format: "json",
+      code: "INVALID_OUTPUT_VALUE",
+      message: expect.stringContaining("[REDACTED]"),
+    });
+    expect(JSON.stringify(validation)).not.toContain("private-marker");
+  });
+
+  it("retains valid output selections on either side of a malformed value", () => {
+    for (const arguments_ of [
+      ["--json", "--format", "invalid"],
+      ["--format", "invalid", "--json"],
+      ["--token-limit", "invalid", "--json"],
+    ])
+      expect(parseCliOutputArguments(arguments_).validation).toMatchObject({
+        ok: false,
+        format: "json",
+        code: "INVALID_OUTPUT_VALUE",
+      });
+    expect(
+      parseCliOutputArguments(["--format", "jsonl", "--format", "invalid"])
+        .validation,
+    ).toMatchObject({
+      ok: false,
+      format: "jsonl",
+      code: "INVALID_OUTPUT_VALUE",
+    });
+    expect(
+      parseCliOutputArguments(["--format", "yaml", "--token-offset", "-1"])
+        .validation,
+    ).toMatchObject({
+      ok: false,
+      format: "yaml",
+      code: "INVALID_OUTPUT_VALUE",
+    });
   });
 });
 
@@ -180,8 +271,6 @@ describe("unclosed CLI output filter slices", () => {
       ],
       ["--filter-output", "capabilities[-1,].provider.id"],
       ["--filter-output", "capabilities[[0,1]"],
-      ["--format", "invalid", "--filter-output", "providers["],
-      ["--token-limit", "invalid", "--filter-output", "providers["],
     ])
       expect(parseCliOutputArguments(arguments_).validation).toEqual({
         ok: true,
@@ -356,7 +445,10 @@ describe("CLI output valued-flag parsing", () => {
       ]) {
         const result = await cli.run({ arguments: arguments_ });
         expect(result.exitCode).toBe(1);
-        expect(result.stdout).not.toContain("UNSUPPORTED_OUTPUT_COMBINATION");
+        expect(result.json).toMatchObject({
+          ok: false,
+          error: { code: "INVALID_OUTPUT_VALUE" },
+        });
         expect(result.stdout).not.toContain("[truncated:");
       }
     },
@@ -457,7 +549,8 @@ describe("compiled CLI output boundary", () => {
         exitCode: 1,
         json: {
           code: "VALIDATION_ERROR",
-          message: expect.stringContaining("expected string"),
+          message:
+            "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
           fieldErrors: [
             {
               path: "path",

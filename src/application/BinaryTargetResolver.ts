@@ -31,6 +31,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
+import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
 import {
   resolveAppBundleExecutable,
   type ResolvedAppBundle,
@@ -43,8 +44,11 @@ import {
   admitRawBinary,
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
+import { admitGamecubeDol } from "../domain/gamecubeDolAdmission.js";
+import { DOL_HEADER_SIZE } from "../domain/gamecubeDol.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import {
+  mzWindowsHeaderLayoutLimitation,
   observeMzWindowsHeader,
   parseMzHeaderEvidence,
   type DosMzHeader,
@@ -73,12 +77,26 @@ import {
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
 import {
+  classifyFatContainerIdentity,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
   type FatSliceHeaderEvidence,
   type MachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
-import type { PeCodeViewRecord } from "../domain/binaryTargetTypes.js";
+import {
+  isJvmClassFile,
+  MAX_JVM_CLASS_IDENTITY_BYTES,
+  JVM_CLASS_IDENTITY_LIMIT_REASON,
+} from "../domain/apple/jvmClassFile.js";
+import {
+  MachoLoadCommandCursor,
+  readMachoLoadCommandTableHeader,
+  type MachoLoadCommandTableHeader,
+} from "../domain/apple/machoLoadCommands.js";
+import type {
+  PeCodeViewRecord,
+  UniversalMachOSlice,
+} from "../domain/binaryTargetTypes.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -273,6 +291,49 @@ const readOpenedBinaryTarget = async (
         constraint: "load_selection_rejected",
       }),
     );
+  if (formatHint === "gamecube-dol") {
+    if (targetKind !== undefined && targetKind !== "executable")
+      return err(
+        new BinaryTargetError(
+          path,
+          "gamecube-dol format requires an executable target kind",
+          { constraint: "load_selection_rejected" },
+        ),
+      );
+    // Only the fixed header is parsed; section bounds use the file size from metadata.
+    const headerBytes = await readLeadingBytes(
+      handle,
+      Math.min(metadata.size, DOL_HEADER_SIZE),
+      path,
+      signal,
+    );
+    const admitted = admitGamecubeDol({
+      bytes: headerBytes,
+      fileSize: metadata.size,
+      entryPoint,
+    });
+    if (!admitted.ok)
+      return err(
+        new BinaryTargetError(path, admitted.error.reason, {
+          constraint: admitted.error.constraint,
+        }),
+      );
+    return ok({
+      path,
+      sourcePath,
+      ...bundle,
+      sha256: await sha256Handle(handle, path, metadata, signal),
+      kind: "executable",
+      format: "gamecube-dol",
+      architecture: admitted.value.architecture,
+      availableArchitectures: [admitted.value.architecture],
+      byteOrder: "big",
+      bits: 32,
+      entryPoint: admitted.value.entryPoint,
+      entryPointSource: admitted.value.entryPointSource,
+      dol: admitted.value.header,
+    });
+  }
   if (formatHint === "dos-com") {
     if (targetKind !== undefined && targetKind !== "executable")
       return err(
@@ -568,6 +629,7 @@ const detectArtifactFormat = async (
       | "dos-mz"
       | "dos-com"
       | "raw-binary"
+      | "gamecube-dol"
     >
   | undefined
 > => {
@@ -666,6 +728,7 @@ const isArchiveFormat = (
     | "dos-mz"
     | "dos-com"
     | "raw-binary"
+    | "gamecube-dol"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
   isZipPackageFormat(format) ||
@@ -694,6 +757,30 @@ const readHandleRange = async (
   const observed = await handle.read(bytes, 0, length, position);
   throwIfTargetResolutionCancelled(signal);
   return bytes.subarray(0, observed.bytesRead);
+};
+
+/** Read exactly `size` bytes by offset; a short read means the file changed or ended early. */
+const readLeadingBytes = async (
+  handle: FileHandle,
+  size: number,
+  path: string,
+  signal?: AbortSignal,
+): Promise<Uint8Array> => {
+  const bytes = Buffer.allocUnsafe(size);
+  let position = 0;
+  while (position < size) {
+    throwIfTargetResolutionCancelled(signal);
+    const observed = await handle.read(
+      bytes,
+      position,
+      size - position,
+      position,
+    );
+    if (observed.bytesRead === 0)
+      throw new BinaryTargetError(path, "target changed while being read");
+    position += observed.bytesRead;
+  }
+  return bytes;
 };
 
 const sha256Handle = async (
@@ -786,8 +873,15 @@ const readExecutableMetadata = async (
     }
     const { windowsHeader } = evidence;
     if (windowsHeader.state === "declared") {
-      if (windowsHeader.offset < 64)
-        return err("invalid Windows new-header offset in MZ image");
+      const limitation = mzWindowsHeaderLayoutLimitation(windowsHeader);
+      if (limitation !== undefined)
+        return err({
+          reason: limitation,
+          diagnostics: {
+            unsupported_layout: true,
+            mz_windows_header: { ...windowsHeader },
+          },
+        });
       return readPeMetadata(
         handle,
         windowsHeader.offset,
@@ -836,12 +930,44 @@ const readExecutableMetadata = async (
       signatureEvidence,
     );
   }
+  if (bytes.length >= 4 && bytes.toString("hex", 0, 4) === "7f454c46")
+    return readElfMetadata(handle, bytes, {
+      fileSize,
+      hostArchitecture,
+      signal,
+    });
+  const thin = await readThinMachoMetadata(handle, bytes, {
+    fileSize,
+    hostArchitecture,
+    signal,
+  });
+  if (thin !== null) return thin;
+  const hasJvmMagic = bytes.length >= 4 && bytes.readUInt32BE(0) === 0xcafebabe;
+  if (
+    hasJvmMagic &&
+    fileSize > bytes.length &&
+    fileSize <= MAX_JVM_CLASS_IDENTITY_BYTES
+  ) {
+    const complete = await readHandleRange(handle, 0, fileSize, signal);
+    if (complete.byteLength === fileSize && isJvmClassFile(complete))
+      return err("unsupported binary format");
+  }
   const fatEvidence = await readFatSliceHeaderEvidence(
     handle,
     bytes,
     fileSize,
     signal,
   );
+  if (
+    hasJvmMagic &&
+    fileSize > MAX_JVM_CLASS_IDENTITY_BYTES &&
+    fatEvidence !== undefined &&
+    classifyFatContainerIdentity(
+      fatEvidence.header,
+      (offset) => fatEvidence.sliceHeadersByOffset.get(offset)?.magic,
+    ).state === "malformed"
+  )
+    return err(JVM_CLASS_IDENTITY_LIMIT_REASON);
   const parsed = parseExecutableHeader(
     bytes,
     hostArchitecture,
@@ -850,10 +976,34 @@ const readExecutableMetadata = async (
     fatEvidence,
   );
   if (
-    !parsed.ok ||
-    parsed.value.architecture !== "mips" ||
-    parsed.value.mips.elfClass !== 32
-  )
+    parsed.ok &&
+    parsed.value.format === "mach-o-universal" &&
+    fatEvidence !== undefined
+  ) {
+    for (const slice of fatEvidence.header.slices) {
+      const framed = await readMachoSliceCommandFrames(handle, slice, signal);
+      if (!framed.ok) return framed;
+    }
+  }
+  return parsed;
+};
+
+/** ELF structure and family declarations share one descriptor before provider selection. */
+const readElfMetadata = async (
+  handle: FileHandle,
+  bytes: Buffer,
+  options: {
+    readonly fileSize: number;
+    readonly hostArchitecture: NodeJS.Architecture;
+    readonly signal?: AbortSignal | undefined;
+  },
+): Promise<Result<ExecutableMetadata, ExecutableMetadataFailure>> => {
+  const { fileSize, hostArchitecture, signal } = options;
+  const parsed = parseExecutableHeader(bytes, hostArchitecture, fileSize);
+  if (!parsed.ok || parsed.value.format !== "elf") return parsed;
+  const ranges = await readElfDeclaredRanges(handle, bytes, fileSize, signal);
+  if (!ranges.ok) return ranges;
+  if (parsed.value.architecture !== "mips" || parsed.value.mips.elfClass !== 32)
     return parsed;
   const declarations = await readMipsElfMetadata(
     handle,
@@ -875,6 +1025,44 @@ const readExecutableMetadata = async (
         : { limitations: declarations.value.limitations }),
     },
   });
+};
+
+/** Borrow the admitted descriptor; every request is at most one 64 KiB table chunk. */
+const readElfDeclaredRanges = async (
+  handle: FileHandle,
+  prefix: Buffer,
+  fileSize: number,
+  signal?: AbortSignal,
+): Promise<Result<null, string>> => {
+  const ranges = validateElfDeclaredRanges(prefix, fileSize);
+  let next = ranges.next();
+  let window: Buffer | undefined;
+  while (!next.done) {
+    throwIfTargetResolutionCancelled(signal);
+    const { offset, size } = next.value;
+    let bytes: Buffer;
+    if (offset + size <= prefix.length)
+      bytes = prefix.subarray(offset, offset + size);
+    else {
+      window ??= Buffer.allocUnsafe(64 * 1024);
+      bytes = window.subarray(0, size);
+      let length = 0;
+      while (length < size) {
+        const read = await handle.read(
+          bytes,
+          length,
+          size - length,
+          offset + length,
+        );
+        throwIfTargetResolutionCancelled(signal);
+        if (read.bytesRead === 0) break;
+        length += read.bytesRead;
+      }
+      bytes = bytes.subarray(0, length);
+    }
+    next = ranges.next(bytes);
+  }
+  return next.value;
 };
 
 type ExecutableMetadataFailure =
@@ -911,6 +1099,95 @@ const unresolvedMzHeaderFailure = (
         : { state: "invalid", reason: dos.error },
     },
   };
+};
+
+/** Establish a complete thin-command framing proof before provider admission. */
+const readThinMachoMetadata = async (
+  handle: FileHandle,
+  prefix: Buffer,
+  input: {
+    readonly fileSize: number;
+    readonly hostArchitecture: NodeJS.Architecture;
+    readonly signal?: AbortSignal | undefined;
+  },
+): Promise<Result<ExecutableMetadata, string> | null> => {
+  const table = readMachoLoadCommandTableHeader(prefix, input.fileSize);
+  if (!table.ok) return table;
+  if (table.value === null) return null;
+  const parsed = parseExecutableHeader(
+    prefix.subarray(0, table.value.headerSize),
+    input.hostArchitecture,
+    input.fileSize,
+  );
+  if (!parsed.ok) return parsed;
+  const framed = await readMachoCommandFrames(handle, table.value, {
+    prefix,
+    fileSize: input.fileSize,
+    signal: input.signal,
+  });
+  return framed.ok ? parsed : framed;
+};
+
+/** Walk thin command headers through one probe window, skipping payload bytes. */
+const readMachoCommandFrames = async (
+  handle: FileHandle,
+  table: MachoLoadCommandTableHeader,
+  input: {
+    readonly prefix: Buffer;
+    readonly fileSize: number;
+    readonly fileOffset?: number | undefined;
+    readonly signal?: AbortSignal | undefined;
+  },
+): Promise<Result<null, string>> => {
+  const commands = new MachoLoadCommandCursor(table);
+  let window = input.prefix;
+  let windowOffset = 0;
+  while (commands.nextOffset !== null) {
+    const offset = table.headerSize + commands.nextOffset;
+    if (
+      offset + 8 <= input.fileSize &&
+      (offset < windowOffset || offset + 8 > windowOffset + window.length)
+    ) {
+      window = Buffer.alloc(Math.min(4096, input.fileSize - offset));
+      windowOffset = offset;
+      const observed = await handle.read(
+        window,
+        0,
+        window.length,
+        (input.fileOffset ?? 0) + offset,
+      );
+      throwIfTargetResolutionCancelled(input.signal);
+      window = window.subarray(0, observed.bytesRead);
+    }
+    const relative = offset - windowOffset;
+    const frame = commands.read(
+      relative >= 0 ? window.subarray(relative, relative + 8) : Buffer.alloc(0),
+    );
+    if (!frame.ok) return frame;
+  }
+  return commands.finish();
+};
+
+/** Validate declared FAT slices after the canonical table/identity admission succeeds. */
+const readMachoSliceCommandFrames = async (
+  handle: FileHandle,
+  slice: UniversalMachOSlice,
+  signal?: AbortSignal,
+): Promise<Result<null, string>> => {
+  const prefix = Buffer.alloc(Math.min(4096, slice.size));
+  const observed = await handle.read(prefix, 0, prefix.length, slice.offset);
+  throwIfTargetResolutionCancelled(signal);
+  const bytes = prefix.subarray(0, observed.bytesRead);
+  const table = readMachoLoadCommandTableHeader(bytes, slice.size);
+  if (!table.ok) return table;
+  if (table.value === null)
+    return err("FAT slice does not identify a thin Mach-O image");
+  return readMachoCommandFrames(handle, table.value, {
+    prefix: bytes,
+    fileSize: slice.size,
+    fileOffset: slice.offset,
+    signal,
+  });
 };
 
 /** Read the validated FAT table and bounded thin-header identity prefixes. */

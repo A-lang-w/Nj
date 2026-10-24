@@ -51,6 +51,8 @@ export type AnalysisOperation =
 /** Atomic successful provider observation with exact producing provenance. */
 export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
+  /** Session-issued identity of the committed record consumed by this execution. */
+  readonly evidenceId?: string;
   /** Result-specific veto of snapshot replay; Evidence remains retainable. */
   readonly cachePolicy?: "live";
   /**
@@ -126,6 +128,8 @@ export function createAnalysisExecution(
 
 /** Provider-neutral application capability for one analysis operation. */
 export interface AnalysisOperationPort {
+  /** The session retains workflow resources whose final cleanup failed. */
+  readonly resourceScope?: RetainedResourceScope | undefined;
   execute(
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,

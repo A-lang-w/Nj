@@ -11,6 +11,7 @@ import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -173,6 +174,25 @@ describe("detached provider and target metadata", () => {
   });
 });
 
+it("preserves the exact abort reason before external mutation admission", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Cancelled mutation must not start a provider");
+  });
+  const reason = { request: "cancel before external mutation" };
+  const operation = vi.fn(async () => resultOk(null));
+  const result = await session.withAdmittedExternalMutation(
+    undefined,
+    AbortSignal.abort(reason),
+    operation,
+    (_value, error) => error,
+  );
+  if (result.ok) throw new Error("Expected external mutation cancellation");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(reason);
+  expect(operation).not.toHaveBeenCalled();
+  await session.close();
+});
+
 it("drains session calls and retires analysis after an admitted external mutation", async () => {
   const [target] = await createBinarySessionTargets();
   const alias = join(dirname(target), "first-alias.hop");
@@ -260,6 +280,41 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   expect((await session.open(target)).ok).toBe(true);
   expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
   await session.close();
+});
+
+it("reports an external cleanup blocker until its exact owner confirms release", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  const failure = new ProviderCleanupError(
+    "external-debugger",
+    ["external-run"],
+    {},
+  );
+  let released = false;
+  const lease = new AnalysisCleanupLease(async () => {
+    released = true;
+  }, ["external-run"]);
+  lease.bindCleanupError(failure);
+  try {
+    expect(await session.status()).toMatchObject({ cleanup_pending: false });
+    await session.withAdmittedExternalMutation(
+      target,
+      undefined,
+      async () => err(failure),
+      (_value, error) => error,
+    );
+    expect(await session.status()).toMatchObject({ cleanup_pending: true });
+    expect(await session.open(target)).toEqual(err(failure));
+    await session.close();
+    expect(released).toBe(false);
+    expect(await session.status()).toMatchObject({ cleanup_pending: true });
+    await lease.release();
+    expect(await session.status()).toMatchObject({ cleanup_pending: false });
+    expect((await session.open(target)).ok).toBe(true);
+  } finally {
+    await lease.release();
+    await session.close();
+  }
 });
 
 it("retires analysis when an external mutation uses a hard link", async () => {
@@ -1061,6 +1116,24 @@ describe("provider health and availability", () => {
   });
 });
 
+it("preserves the exact abort reason before composed admission", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Cancelled admission must not start a provider");
+  });
+  const reason = { request: "cancel before composed admission" };
+  const operation = vi.fn(async () => null);
+  const result = await session.withAdmittedAnalysis(
+    "binary_overview",
+    AbortSignal.abort(reason),
+    operation,
+  );
+  if (result.ok) throw new Error("Expected composed admission cancellation");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(reason);
+  expect(operation).not.toHaveBeenCalled();
+  await session.close();
+});
+
 describe("typed unavailability without dispatching", () => {
   it("returns typed unavailability without dispatching a partial provider", async () => {
     const [first] = await createBinarySessionTargets();
@@ -1192,18 +1265,26 @@ describe("typed unavailability without dispatching", () => {
         return null;
       },
     );
-    controller.abort();
-    await expect(admitted).resolves.toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisCancelledError",
-        operation: "binary_overview",
-      },
-    });
-    expect(invoked).toBe(false);
-    health.resolve(ok(null));
-    expect((await opening).ok).toBe(true);
-    await session.close();
+    const reason = { request: "cancel queued composed admission" };
+    controller.abort(reason);
+    try {
+      const result = await admitted;
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "binary_overview",
+        },
+      });
+      if (result.ok) throw new Error("Expected queued admission cancellation");
+      expect(result.error.cause).toBe(reason);
+      expect(invoked).toBe(false);
+    } finally {
+      health.resolve(ok(null));
+      const opened = await opening;
+      await session.close();
+      expect(opened.ok).toBe(true);
+    }
   });
 });
 

@@ -8,7 +8,11 @@ import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { createEvidence } from "../domain/evidence.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../domain/evidence.js";
+import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import {
@@ -21,7 +25,7 @@ import {
 } from "../contracts/managed/managedToolContracts.js";
 import {
   EvidenceFileError,
-  EvidenceIntegrityError,
+  AnalysisSnapshotMismatchError,
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -47,6 +51,7 @@ import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.j
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
 import {
+  composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
   workflowSnapshotRecord,
@@ -89,7 +94,8 @@ type DirectAnalysisTool =
   | "xrefs"
   | "trace_feature"
   | "trace_native_ui_action"
-  | "trace_native_values";
+  | "trace_native_values"
+  | "decompile_all";
 
 // These one-shot CLI questions require native utilities, not a deep engine.
 // Runtime observation retains the ordinary session and authority checks.
@@ -193,28 +199,33 @@ export const runProviderAnalysis = async (
       ]),
     );
   return withProcessCancellation(signal, async (operationSignal) => {
+    // The selected CLI path is a request fact. Keep it out of provider inputs
+    // and target identity, which may use the resolved executable instead.
+    const evidenceParameters = { ...arguments_, input_path: path };
     if (isManagedToolName(tool)) {
       const original = await runManagedProviderAnalysis(
         dependencies,
         path,
         tool,
         arguments_,
+        evidenceParameters,
         operationSignal,
       );
       await dispatchQueuedInterrupts();
       if (!original.ok) return cliError(original.error);
+      const evidence = withEvidenceCallerInputPath(original.value, path);
       if (operationSignal.aborted)
         return cliError(
           new AnalysisCancelledError(tool, {
             cause: operationSignal.reason,
-            partialObservation: original.value,
+            partialObservation: evidence,
           }),
         );
       const result =
         delivery?.evidenceBundlePath === undefined
-          ? original
+          ? ok(evidence)
           : await deliverAnalysisEvidence(
-              original.value,
+              evidence,
               delivery.evidenceBundlePath,
               delivery.detail,
               operationSignal,
@@ -225,6 +236,7 @@ export const runProviderAnalysis = async (
       logger,
       snapshotPath: undefined,
       signal: operationSignal,
+      evidenceParameters,
       ...(ARTIFACT_ANALYSIS_OPERATION_SET.has(tool)
         ? { createSession: dependencies.createArtifactBinarySession }
         : NATIVE_INSPECTION_OPERATIONS.has(tool)
@@ -263,6 +275,7 @@ const runManagedProviderAnalysis = async (
   path: string,
   tool: ManagedToolName,
   arguments_: Readonly<Record<string, JsonValue>>,
+  evidenceParameters: Readonly<Record<string, JsonValue>>,
   signal?: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const execution = await runManagedProviderExecution(
@@ -275,9 +288,13 @@ const runManagedProviderAnalysis = async (
   if (!execution.ok) return execution;
   const value = execution.value;
   return ok(
-    createAnalysisExecutionEvidence(tool, arguments_, value, "observed", {
-      immutable: true,
-    }),
+    createAnalysisExecutionEvidence(
+      tool,
+      evidenceParameters,
+      value,
+      "observed",
+      { immutable: true },
+    ),
   );
 };
 
@@ -294,6 +311,7 @@ const runAnalysis = async (
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
+    readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
@@ -302,6 +320,7 @@ const runAnalysis = async (
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
+  const evidenceParameters = options.evidenceParameters ?? arguments_;
   let session: BinarySession;
   if (options.createSession !== undefined) {
     session = await options.createSession();
@@ -328,11 +347,14 @@ const runAnalysis = async (
       const execution = await session.execute(tool, arguments_, { signal });
       if (!execution.ok) return err(execution.error);
       return ok(
-        createAnalysisExecutionEvidence(
-          tool,
-          arguments_,
-          execution.value,
-          "observed",
+        withEvidenceCallerInputPath(
+          createAnalysisExecutionEvidence(
+            tool,
+            evidenceParameters,
+            execution.value,
+            "observed",
+          ),
+          path,
         ),
       );
     }
@@ -397,7 +419,8 @@ const runAnalysis = async (
             : providerIdentityForRoute(route, tool),
           evidenceProfile,
         });
-        if (cached !== undefined) return ok(cached);
+        if (cached !== undefined)
+          return ok(withEvidenceCallerInputPath(cached, path));
       }
     }
     const openOptions = {
@@ -427,12 +450,19 @@ const runAnalysis = async (
       openedTarget: opened.value,
       tool,
       arguments: arguments_,
+      evidenceParameters,
       signal,
       evidenceProfile,
     });
     if (!executed.ok) return executed;
-    const { evidence, cachePolicy } = executed.value;
-    const recorded = session.recordEvidence(evidence);
+    const { cachePolicy } = executed.value;
+    const evidence = withEvidenceCallerInputPath(executed.value.evidence, path);
+    // Provider execution may have already recorded the same semantic Evidence
+    // without this invocation's request path. Import replaces that metadata
+    // while retaining the authenticated result and snapshot binding.
+    const recorded = session.importEvidenceBundle(
+      createImmutableEvidenceBundle([evidence]),
+    );
     if (!recorded.ok)
       return err(recorded.error.retainPartialObservation(evidence));
     if (isWorkflowEvidenceTool(tool)) {
@@ -463,7 +493,11 @@ const runAnalysis = async (
           return err(recorded.error.retainPartialObservation(evidence));
       }
     }
-    if (tool !== "trace_native_ui_action" && snapshotPath !== undefined) {
+    if (
+      tool !== "trace_native_ui_action" &&
+      tool !== "decompile_all" &&
+      snapshotPath !== undefined
+    ) {
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok)
         return err(snapshot.error.retainPartialObservation(evidence));
@@ -522,6 +556,7 @@ const executeAnalysisTool = async (input: {
     | ManagedToolName
     | DirectAnalysisTool;
   readonly arguments: Readonly<Record<string, JsonValue>>;
+  readonly evidenceParameters: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
 }): Promise<
@@ -551,20 +586,27 @@ const executeAnalysisTool = async (input: {
     tool === "inspect_native_dispatch_metadata" ||
     tool === "trace_feature" ||
     tool === "trace_native_values" ||
-    tool === "trace_native_ui_action"
+    tool === "trace_native_ui_action" ||
+    tool === "decompile_all"
   ) {
     const { EnhancedTools } = await import("./EnhancedTools.js");
-    const result = await executeComposedWorkflow(session, (observed) =>
-      new EnhancedTools(observed).execute(tool, input.arguments, signal),
+    const result = await executeComposedWorkflow(
+      session,
+      (observed) =>
+        new EnhancedTools(observed).execute(tool, input.arguments, signal),
+      composedLimitationBudget(tool),
     );
     if (!result.ok) return result;
     const evidence = createWorkflowEvidence({
       target: input.openedTarget,
       operation: tool,
-      parameters: input.arguments,
+      parameters: input.evidenceParameters,
       result: result.value.result,
       upstreamProfile: evidenceProfile,
       upstreamLimitations: result.value.limitations,
+      ...(result.value.evidenceLinks === undefined
+        ? {}
+        : { upstreamEvidenceLinks: result.value.evidenceLinks }),
     });
     return ok({
       evidence,
@@ -609,7 +651,7 @@ const executeAnalysisTool = async (input: {
     result.value.provider,
     {
       operation: tool,
-      parameters: input.arguments,
+      parameters: input.evidenceParameters,
       result: result.value.result,
       ...(result.value.analysisProfile === undefined
         ? {}
@@ -689,7 +731,7 @@ const prepareSnapshot = async (options: {
   if (!target.ok) return target;
   if (!snapshotMatchesTarget(loaded.value.target, target.value))
     return err(
-      new EvidenceIntegrityError(
+      new AnalysisSnapshotMismatchError(
         "Analysis snapshot target does not match the requested binary",
       ),
     );
@@ -717,7 +759,8 @@ const allowsSnapshotReplay = (
     | ManagedToolName
     | DirectAnalysisTool,
 ): boolean => {
-  if (tool === "trace_native_ui_action") return false;
+  if (tool === "trace_native_ui_action" || tool === "decompile_all")
+    return false;
   const descriptor = route.capabilities?.get(tool);
   return descriptor === undefined
     ? ![...(route.capabilities?.values() ?? [])].some(
@@ -790,7 +833,8 @@ const isWorkflowEvidenceTool = (
   tool === "inspect_native_dispatch_metadata" ||
   tool === "trace_feature" ||
   tool === "trace_native_values" ||
-  tool === "trace_native_ui_action";
+  tool === "trace_native_ui_action" ||
+  tool === "decompile_all";
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {
