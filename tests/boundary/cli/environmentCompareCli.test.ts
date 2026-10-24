@@ -10,6 +10,7 @@ import {
   type TimedCaptureRow,
 } from "../../fixtures/analysisView.js";
 import { environmentStateServeFixture } from "../../fixtures/environmentServe.js";
+import { TAG_ROWS } from "../../fixtures/environmentStateDerivedValues.js";
 import {
   BOOK_NOT_FOUND,
   BOOK_ROWS,
@@ -349,6 +350,66 @@ describe("rea environment-compare value context", () => {
 });
 
 describe("rea environment-compare recorded clock spelling", () => {
+  cliTest(
+    "accepts variable fractional widths under a confirmed trimmed write plan",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-trimmed-clock-",
+      );
+      const capture = timedCaptureEvidence(TAG_ROWS);
+      const fixture = environmentStateServeFixture(capture);
+      const probe = timedCaptureEvidence([
+        [
+          "POST",
+          "/api/tags",
+          {
+            id: numberedUuid(20),
+            name: "Spare",
+            createdAt: "2026-10-20T10:00:00.12345678Z",
+            updatedAt: "2026-10-20T10:00:00.12345678Z",
+          },
+          201,
+          { name: "Spare" },
+        ],
+      ]);
+      const originals = new Map<string, string>();
+      for (const [name, value] of [
+        ["manifest.json", fixture.manifest],
+        ["capture.json", capture],
+        ["probe.json", probe],
+      ] as const) {
+        const path = join(root, name);
+        const text = JSON.stringify(value);
+        originals.set(path, text);
+        await writeFile(path, text);
+      }
+      const result = await cli.run({
+        arguments: [
+          "environment-compare",
+          join(root, "manifest.json"),
+          "--evidence",
+          join(root, "capture.json"),
+          "--probe",
+          join(root, "probe.json"),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.json).toMatchObject({
+        status: "complete",
+        summary: { probes: 1, steps: 1, equal: 1, agreement: 1 },
+        probes: [
+          {
+            normalised: { clocks: 2 },
+            results: [{ method: "POST", equal: true, differences: [] }],
+          },
+        ],
+      });
+      for (const [path, text] of originals)
+        expect(await readFile(path, "utf8")).toBe(text);
+    },
+  );
+
   cliTest(
     "replays compact-offset submillisecond probe timestamps in exact order",
     async ({ cli }) => {

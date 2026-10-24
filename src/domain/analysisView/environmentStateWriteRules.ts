@@ -128,20 +128,30 @@ export const siblingTrimmedClocks = (
   values: Readonly<Record<string, JsonValue>> | undefined,
   ...later: readonly Readonly<Record<string, JsonValue>>[]
 ): FieldRule[] => {
-  const trimmed = rules.find(
-    (rule) =>
-      rule.rule === "clock" &&
-      rule.format.kind === "iso" &&
-      rule.format.trimmed === true,
-  );
-  if (trimmed?.rule !== "clock") return [...rules];
+  const trimmed = new Map<string, Extract<ClockFormat, { kind: "iso" }>>();
+  for (const rule of rules) {
+    if (
+      rule.rule !== "clock" ||
+      rule.format.kind !== "iso" ||
+      rule.format.trimmed !== true
+    )
+      continue;
+    const format = rule.format;
+    const group = `${format.separator}${format.zone}`;
+    const widest = trimmed.get(group);
+    if (widest === undefined || format.fraction > widest.fraction)
+      trimmed.set(group, format);
+  }
+  if (trimmed.size === 0) return [...rules];
   return rules.map((rule) => {
-    if (rule.rule !== "clock") return rule;
+    if (rule.rule !== "clock" || rule.format.kind !== "iso") return rule;
+    const peer = trimmed.get(`${rule.format.separator}${rule.format.zone}`);
+    if (peer === undefined) return rule;
     const format = later.some((fields) =>
       showsFixedWidth(rule.format, fields[rule.field]),
     )
       ? rule.format
-      : trimmedLike(rule.format, trimmed.format, values?.[rule.field]);
+      : trimmedLike(rule.format, peer, values?.[rule.field]);
     return format === rule.format ? rule : { ...rule, format };
   });
 };

@@ -3,12 +3,32 @@ import {
   readClock,
   zoneMinutesForFormat,
   type ClockFormat,
+  type ClockReading,
 } from "./environmentStateWriteValues.js";
 
 const MINUTE_MS = 60_000;
 
 const pad = (value: number, width: number): string =>
   String(value).padStart(width, "0");
+
+/** Whether a parsed clock fits a learned format without widening it or learning a new spelling. */
+export const matchesClockFormat = (
+  format: ClockFormat,
+  reading: ClockReading | undefined,
+): boolean => {
+  if (reading === undefined) return false;
+  const spelled = reading.format;
+  if (format.kind === "epoch")
+    return spelled.kind === "epoch" && spelled.unit === format.unit;
+  return (
+    spelled.kind === "iso" &&
+    spelled.separator === format.separator &&
+    spelled.zone === format.zone &&
+    (format.trimmed === true
+      ? !reading.fixedWidth && spelled.fraction <= format.fraction
+      : spelled.fraction === format.fraction)
+  );
+};
 
 /**
  * The format that spells both a format's values and another clock value: the format itself, or a trimmed one when the
@@ -22,17 +42,19 @@ export const fittedClockFormat = (
 ): ClockFormat | undefined => {
   const reading = readClock(value);
   if (reading === undefined) return undefined;
+  if (matchesClockFormat(format, reading)) return format;
   const spelled = reading.format;
-  if (format.kind !== "iso" || spelled.kind !== "iso")
-    return JSON.stringify(spelled) === JSON.stringify(format)
-      ? format
-      : undefined;
-  if (spelled.separator !== format.separator || spelled.zone !== format.zone)
+  if (
+    format.kind !== "iso" ||
+    spelled.kind !== "iso" ||
+    spelled.separator !== format.separator ||
+    spelled.zone !== format.zone ||
+    reading.fixedWidth
+  )
     return undefined;
   if (format.trimmed !== true) {
-    if (spelled.fraction === format.fraction) return format;
     const learned = readClock(exemplar);
-    return learned === undefined || learned.fixedWidth || reading.fixedWidth
+    return learned === undefined || learned.fixedWidth
       ? undefined
       : {
           ...format,
@@ -40,10 +62,7 @@ export const fittedClockFormat = (
           trimmed: true,
         };
   }
-  if (reading.fixedWidth) return undefined;
-  return spelled.fraction <= format.fraction
-    ? format
-    : { ...format, fraction: spelled.fraction };
+  return { ...format, fraction: spelled.fraction };
 };
 
 /** Whether a value spells a clock as an ISO format does with a fraction ending in a zero, which no trimmed spelling shows. */

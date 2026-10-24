@@ -147,6 +147,31 @@ describe("fixed-width clock evidence", () => {
     zone: "Z",
   } as const;
 
+  it.each([1, 2])(
+    "withholds a shorter update clock when held entity %s proves a fixed width",
+    (heldId) => {
+      const fixedHeld = (value: JsonValue): JsonValue =>
+        Array.isArray(value)
+          ? value.map(fixedHeld)
+          : isObject(value) && value.id === numberedUuid(heldId)
+            ? { ...value, updatedAt: "2026-10-01T09:00:00.120000000Z" }
+            : value;
+      const rows = TAG_UPDATE_ROWS.map((row, index): TimedCaptureRow => {
+        const [method, path, body, ...rest] = row;
+        return index < 3 && body !== undefined
+          ? [method, path, fixedHeld(body), ...rest]
+          : row;
+      });
+      expect(planOf(rows, "patch_tags_by_uuid")).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+        rules: expect.arrayContaining([
+          { field: "updatedAt", rule: "clock", format: FIXED },
+        ]),
+      });
+    },
+  );
+
   it("serves updates whose later call trims one clock and shows the other's trailing zero", () => {
     expect(
       planOf(MIXED_WIDTH_TAG_UPDATE_ROWS, "patch_tags_by_uuid"),
@@ -251,6 +276,50 @@ describe("values an application composes or generates", () => {
       reason: "unexplained-change",
     });
   });
+
+  it.each([null, { path: "/legacy" }])(
+    "withholds a later composition whose parts an earlier rename could not spell (%j)",
+    (base) => {
+      const first = { id: 1, title: "First Folder", base, url: "/legacy" };
+      const renamedFirst = { ...first, title: "Renamed First Folder" };
+      const second = {
+        id: 2,
+        title: "Second Folder",
+        base: "https://example.test/folders",
+        url: "https://example.test/folders/second-folder",
+      };
+      const renamedSecond = {
+        ...second,
+        title: "Renamed Second Folder",
+        url: "https://example.test/folders/renamed-second-folder",
+      };
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/folders", [first, second]],
+        ["GET", "/api/folders/1", first],
+        ["GET", "/api/folders/2", second],
+        [
+          "PUT",
+          "/api/folders/1",
+          renamedFirst,
+          200,
+          { title: renamedFirst.title },
+        ],
+        ["GET", "/api/folders/1", renamedFirst],
+        [
+          "PUT",
+          "/api/folders/2",
+          renamedSecond,
+          200,
+          { title: renamedSecond.title },
+        ],
+        ["GET", "/api/folders/2", renamedSecond],
+      ];
+      expect(planOf(rows, "put_folders_by_id")).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+    },
+  );
 
   /** The folder rows with each folder's numeric id repeated where `mirror` puts it. */
   const mirrored = (mirror: (id: number) => JsonObject): TimedCaptureRow[] => {

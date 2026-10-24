@@ -1,10 +1,12 @@
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
+import { matchesClockFormat } from "../../domain/analysisView/environmentStateWriteClockFormats.js";
 import {
   generatedIntegerDigits,
   isUuid,
   readClock,
   type ClockFormat,
+  type ClockReading,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ReplayedBody } from "./environmentSource.js";
@@ -77,18 +79,17 @@ const formatKey = (format: ClockFormat): string =>
     : `iso${format.separator}${String(format.fraction)}${format.zone === "" ? "" : format.zone === "Z" ? "Z" : "offset"}`;
 
 /** ISO text has its own clock syntax; numeric epochs require a time-named field. */
-const clockFormat = (
+const clockReading = (
   value: JsonValue,
   key: string | undefined,
-): string | undefined => {
+): ClockReading | undefined => {
   if (
     typeof value === "number" &&
     (key === undefined ||
       (!TIME_FIELD.test(key) && !TIME_FIELD_CAMEL.test(key)))
   )
     return undefined;
-  const clock = readClock(value);
-  return clock === undefined ? undefined : formatKey(clock.format);
+  return readClock(value);
 };
 
 const characterClasses = (text: string): string =>
@@ -253,8 +254,8 @@ class Differ {
     generation?: Generation,
   ): void {
     const key = at.clockKey ?? at.key;
-    const liveClock = clockFormat(live, key);
-    const envClock = clockFormat(env, key);
+    const liveClock = clockReading(live, key);
+    const envClock = clockReading(env, key);
     const generatedMatch =
       generation !== undefined &&
       (typeof live === "string" || typeof live === "number") &&
@@ -298,7 +299,17 @@ class Differ {
         return;
       }
       if (liveClock !== undefined && envClock !== undefined) {
-        if (liveClock === envClock) this.normalised.clocks += 1;
+        const rule = generation?.pointer === "" ? generation.rule : undefined;
+        const format =
+          rule?.rule === "clock" || rule?.rule === "held-clock"
+            ? rule.format
+            : undefined;
+        const matches =
+          format?.kind === "iso" && format.trimmed === true
+            ? matchesClockFormat(format, liveClock) &&
+              matchesClockFormat(format, envClock)
+            : formatKey(liveClock.format) === formatKey(envClock.format);
+        if (matches) this.normalised.clocks += 1;
         else
           this.add({
             category: "clock-format",

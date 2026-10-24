@@ -7,6 +7,23 @@ merge without this branch.
 
 ## Gates
 
+Follow-up on 2026-10-25, after merging main `a5bfd0440`, with Node 24.22.1 and npm 11.16.0 on macOS:
+
+- Environment write/compare source tests: 26 files, 839 passed.
+- Analysis-view CLI/MCP, environment served-write MCP, environment-compare CLI, managed bundle read guards, and setup
+  registration prewarm boundaries: 6 distinct files, 77 passed. The managed low-headroom failure is fixed by main's
+  Evidence ownership change (#7036); the setup tests share host preparation to satisfy lint without removing cases.
+- `check:fast`, `format:check`, and `docs:check`: passed.
+- New capture-to-plan regressions reproduce missing composition parts on earlier updates (null and structured sources)
+  and fixed-width clock evidence from either the selected entity or another held entity. Rule tests exercise several
+  separator/zone groups in both orders, choosing each group's widest trimmed peer while preserving fixed-width fields.
+- Compare uses the domain clock matcher on parsed readings. Tests cover shorter fractions, absent fractions, maximum
+  width, trailing zeros, separators, zones, and response-entity scope; the compiled CLI accepts a Go-style create whose
+  live clocks have eight digits and served clocks have none, preserving all input Evidence files.
+- The original application's recordings and model evaluations below were not rerun in this follow-up.
+
+Original author validation:
+
 - `npm run -s typecheck`, `lint`, `format:check`, `docs:check`, `mcp-catalog:check`, `verify:test-discovery`,
   `scan:todos` and `npx knip`: passed.
 - `npx vitest run --project domain --project services --project adapters`: 17,246 passed, 25 skipped, 1 failed ("stops

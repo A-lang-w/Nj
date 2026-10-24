@@ -34,6 +34,83 @@ describe("early-year clock formats", () => {
   );
 });
 
+describe("trimmed response clocks", () => {
+  const rules: readonly FieldRule[] = [
+    {
+      field: "updatedAt",
+      rule: "clock",
+      format: {
+        kind: "iso",
+        separator: "T",
+        zone: "Z",
+        fraction: 8,
+        trimmed: true,
+      },
+    },
+  ];
+
+  it.each([".12345678", ".123", ""])(
+    "normalizes a learned trimmed width %s against the served millisecond width",
+    (fraction) => {
+      const result = compare(
+        { updatedAt: `2026-03-04T05:06:07${fraction}Z` },
+        { updatedAt: "2026-03-04T05:06:08.321Z" },
+        new IdMap(),
+        [200, 200],
+        rules,
+      );
+      expect(result.differences).toEqual([]);
+      expect(result.normalised.clocks).toBe(1);
+    },
+  );
+
+  it.each([
+    ["2026-03-04T05:06:07.123456789Z", "2026-03-04T05:06:08.321Z"],
+    ["2026-03-04T05:06:07.123456780Z", "2026-03-04T05:06:08.321Z"],
+    ["2026-03-04T05:06:07.120Z", "2026-03-04T05:06:08.320Z"],
+    ["2026-03-04T05:06:07.123+01:00", "2026-03-04T05:06:08.321Z"],
+    ["2026-03-04 05:06:07.123Z", "2026-03-04T05:06:08.321Z"],
+  ])(
+    "reports a pair outside the learned trimmed format (%s, %s)",
+    (live, env) => {
+      const result = compare(
+        { updatedAt: live },
+        { updatedAt: env },
+        new IdMap(),
+        [200, 200],
+        rules,
+      );
+      expect(result.differences).toMatchObject([
+        { category: "clock-format", pointer: "/updatedAt" },
+      ]);
+      expect(result.normalised.clocks).toBe(0);
+    },
+  );
+
+  it("keeps trimmed normalization within the confirmed response entity", () => {
+    const answer = (fraction: string) => ({
+      status: 200,
+      body: {
+        kind: "json" as const,
+        value: {
+          data: { updatedAt: `2026-03-04T05:06:07.${fraction}Z` },
+          updatedAt: `2026-03-04T05:06:07.${fraction}Z`,
+        },
+      },
+    });
+    const result = compareAnswers(
+      answer("12345678"),
+      answer("123"),
+      new IdMap(),
+      { at: "/data", rules },
+    );
+    expect(result.differences).toMatchObject([
+      { category: "clock-format", pointer: "/updatedAt" },
+    ]);
+    expect(result.normalised.clocks).toBe(1);
+  });
+});
+
 const registerGeneratedValueComparisonCases = () => {
   it.each([
     {
