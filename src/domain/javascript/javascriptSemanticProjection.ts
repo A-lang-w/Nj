@@ -96,7 +96,7 @@ export const collectSemanticModuleLink = (
   else if (t.isAssignmentExpression(node))
     collectCommonJsExport(node, state, commonJsReceivers.get(node));
   else if (t.isCallExpression(node)) {
-    collectDefinedCommonJsExport(node, state, commonJsReceivers.get(node));
+    collectCommonJsExport(node, state, commonJsReceivers.get(node));
     collectUnboundRequireLink(node, state);
   }
 };
