@@ -28,6 +28,8 @@ export interface AddressProjection {
     location: TextAddressLocation,
   ) => AddressMask | null;
   readonly isCalleeAddress: (address: bigint) => boolean;
+  /** Whether the exact calls dimension compares this callee (the callees facet). */
+  readonly isComparedCalleeAddress: (address: bigint) => boolean;
 }
 
 interface BodyExtent {
@@ -45,18 +47,26 @@ export const createFunctionAddressProjection = (
   relativeOffsets: boolean,
 ): AddressProjection => {
   const addresses = corroboratedAddresses(snapshot);
-  const calleeAddresses = new Set(
-    [
-      ...snapshot.dossier.callees.flatMap((callee) => [
+  const parsed = (values: readonly (string | null | undefined)[]) =>
+    values
+      .map((value) => parseAddress((value ?? "").toLowerCase()))
+      .filter((value): value is bigint => value !== null);
+  // The exact calls dimension compares only the callees facet.
+  const comparedCallees = new Set(
+    parsed(
+      snapshot.dossier.callees.flatMap((callee) => [
         callee.address,
         callee.classification?.thunk_target,
       ]),
+    ),
+  );
+  const calleeAddresses = new Set([
+    ...comparedCallees,
+    ...parsed([
       ...outgoingCallTargets(snapshot),
       snapshot.dossier.procedure.classification?.thunk_target,
-    ]
-      .map((value) => parseAddress((value ?? "").toLowerCase()))
-      .filter((value): value is bigint => value !== null),
-  );
+    ]),
+  ]);
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   const targetsBySite = referenceTargetsBySite(snapshot);
   const instructionSites = observedInstructionSites(snapshot);
@@ -73,6 +83,7 @@ export const createFunctionAddressProjection = (
   };
   return {
     isCalleeAddress: (address) => calleeAddresses.has(address),
+    isComparedCalleeAddress: (address) => comparedCallees.has(address),
     maskIdentifier: (address, occurrence) =>
       isNamedOccurrence(namedSymbols, occurrence)
         ? null

@@ -74,7 +74,8 @@ const normalizeText = (
 ): {
   readonly text: string;
   readonly counts: MaskingCounts;
-  readonly maskedCalleeTarget: boolean;
+  readonly maskedComparedCallee: boolean;
+  readonly maskedUncomparedCallee: boolean;
 } | null => {
   const identifiers = new Map<string, number>();
   const addresses = new Map<string, number>();
@@ -82,7 +83,15 @@ const normalizeText = (
   let unmaskedIdentifiers = 0;
   let maskedAddresses = 0;
   let visibleAddresses = 0;
-  let maskedCalleeTarget = false;
+  let maskedComparedCallee = false;
+  let maskedUncomparedCallee = false;
+  // The exact calls dimension can settle only the callees it compares.
+  const noteMaskedCallee = (address: bigint | null) => {
+    if (address === null || !projection.isCalleeAddress(address)) return;
+    if (projection.isComparedCalleeAddress(address))
+      maskedComparedCallee = true;
+    else maskedUncomparedCallee = true;
+  };
   const addressLocation = createTextAddressLocator(
     text,
     dimension === "assembly_normalized",
@@ -119,16 +128,14 @@ const normalizeText = (
           else visibleAddresses += 1;
           output += match;
         } else if (isIdentifier) {
-          if (address !== null && projection.isCalleeAddress(address))
-            maskedCalleeTarget = true;
+          noteMaskedCallee(address);
           maskedIdentifiers += 1;
           output +=
             mask.kind === "relative"
               ? `${groups.label}${mask.value}`
               : `${groups.label}<sym:${ordinal(identifiers, mask.value)}>`;
         } else {
-          if (address !== null && projection.isCalleeAddress(address))
-            maskedCalleeTarget = true;
+          noteMaskedCallee(address);
           maskedAddresses += 1;
           output +=
             mask.kind === "relative"
@@ -143,7 +150,8 @@ const normalizeText = (
   if (normalized === null) return null;
   return {
     text: normalized,
-    maskedCalleeTarget,
+    maskedComparedCallee,
+    maskedUncomparedCallee,
     counts: {
       address_derived_identifiers: maskedIdentifiers,
       unmasked_address_derived_identifiers: unmaskedIdentifiers,
@@ -303,8 +311,15 @@ export const normalizedViews = (
       );
       if (
         delta.hunks === 0 &&
+        (leftText.maskedUncomparedCallee || rightText.maskedUncomparedCallee)
+      )
+        return unresolved(
+          "Masked text references a call, tail-jump or thunk target that the exact calls dimension does not compare; normalized equality cannot establish callee identity or call order.",
+        );
+      if (
+        delta.hunks === 0 &&
         options.callsStatus === "unknown" &&
-        (leftText.maskedCalleeTarget || rightText.maskedCalleeTarget)
+        (leftText.maskedComparedCallee || rightText.maskedComparedCallee)
       )
         return unresolved(
           "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",

@@ -1667,3 +1667,86 @@ describe("normalized view named symbol index", () => {
     });
   });
 });
+
+describe("normalized view targets outside the exact calls comparison", () => {
+  it("keeps an uncompared tail-jump target unknown even when exact calls are unchanged", () => {
+    const make = (base: string, target: string) => {
+      const name = `FUN_${BigInt(target).toString(16)}`;
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { ${name}(); }`,
+        assembly: [`${base}: JMP ${target}`],
+        outgoingReferences: [{ source: base, target, operandIndex: 0 }],
+      });
+      const edge = dossier.outgoing_references[0]!;
+      return {
+        ...dossier,
+        // Complete, empty caller and callee sets: exact calls can be unchanged.
+        facet_availability: {
+          callers: { available: true as const },
+          callees: { available: true as const },
+        },
+        outgoing_references: [
+          {
+            ...edge,
+            target_procedure: {
+              address: target,
+              name,
+              classification: null,
+              body: {
+                available: false as const,
+                reason: "extent not observed",
+              },
+            },
+            kind: {
+              ...edge.kind,
+              type: "UNCONDITIONAL_JUMP",
+              flow: true,
+              jump: true,
+              data: false,
+              read: false,
+            },
+          },
+        ],
+      };
+    };
+    // Complete relationship coverage, so no call-coverage blocker applies.
+    const observeComplete = (digest: string, dossier: object): Evidence =>
+      createEvidence(
+        {
+          path: `/tmp/tail-${digest}`,
+          sha256: digest.repeat(64),
+          format: "pe",
+          architecture: "x86",
+        },
+        G_HIDRA,
+        {
+          operation: "analyze_function",
+          parameters: enhancedInputSchemas.analyze_function.parse({
+            procedure: "fixture",
+          }),
+          result: jsonValueSchema.parse(
+            functionDossierSchema.parse(wallaceDossier(dossier)),
+          ),
+          confidence: "observed",
+          authority: "shipped-artifact",
+          relationshipCoverage: { status: "complete" },
+        },
+      );
+    // The tail target moves by a different amount than the function itself.
+    const before = observeComplete("7", make("0x411700", "0x411860"));
+    const after = observeComplete("8", make("0x511700", "0x5118a0"));
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(dimension(result, "calls")).toMatchObject({ status: "unchanged" });
+    for (const name of ["pseudocode_normalized", "assembly_normalized"])
+      expect(view(result, name), name).toMatchObject({
+        status: "unknown",
+        limitations: expect.arrayContaining([
+          expect.stringContaining("exact calls dimension does not compare"),
+        ]),
+      });
+  });
+});
