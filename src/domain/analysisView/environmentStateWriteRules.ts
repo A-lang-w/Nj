@@ -164,6 +164,10 @@ export interface WriteBody {
   readonly kinds: { readonly member: string; readonly kind: JsonKind }[];
   /** The member a call wraps its object in, as a one-element array. */
   readonly envelope?: string | undefined;
+  /** The value a create stores for an accepted member a call leaves out, as a recorded call that left it out showed. */
+  readonly defaults?:
+    | { readonly member: string; readonly value: JsonValue }[]
+    | undefined;
 }
 
 /**

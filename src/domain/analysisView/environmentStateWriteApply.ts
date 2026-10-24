@@ -314,10 +314,15 @@ export const createdFields = (
   });
   if (problem !== undefined) return err(problem);
   const written: JsonObject = { ...observed };
+  const defaults = new Map(
+    (plan.body.defaults ?? []).map(({ member, value }) => [member, value]),
+  );
   for (const rule of plan.rules) {
     const value = ruledValue(rule, observed, call, generate);
     if (!value.ok) return value;
     if (value.value !== undefined) written[rule.field] = value.value;
+    else if (rule.rule === "echo" && defaults.has(rule.field))
+      written[rule.field] = defaults.get(rule.field)!;
     else if (rule.rule === "echo") delete written[rule.field];
   }
   derive(plan.rules, observed, written, call.body ?? {});

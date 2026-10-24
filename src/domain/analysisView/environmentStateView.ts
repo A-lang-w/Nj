@@ -360,10 +360,13 @@ const writePlanSchema = z.strictObject({
         }),
       ),
       envelope: z.string().optional(),
+      defaults: z
+        .array(z.strictObject({ member: z.string(), value: jsonValueSchema }))
+        .optional(),
     })
     .nullable()
     .describe(
-      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), the JSON type a later call stored an accepted member as when the observation does not show it (kinds), and the member a call wraps its object in as a one-element array (envelope).",
+      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), the JSON type a later call stored an accepted member as when the observation does not show it (kinds), the member a call wraps its object in as a one-element array (envelope), and the value a create stores for an accepted member a call leaves out, as a call that left it out showed (defaults).",
     ),
   rules: z
     .array(fieldRuleSchema)

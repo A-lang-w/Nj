@@ -71,6 +71,7 @@ import {
   type WriteCall,
 } from "./environmentStateWriteRules.js";
 import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
+import { mergedCreatePlan } from "./environmentStateWriteCreateCalls.js";
 import {
   generatedIntegerDigits,
   isUuid,
@@ -140,19 +141,73 @@ const createdObservation = (
 const fieldsOf = (entities: readonly StateEntity[]): JsonObject[] =>
   entities.map((entity) => entity.fields);
 
-/** Build a create plan from its exemplar's observation. */
-const buildCreate = (
+/** Whether a created field no rule explains holds a token another field links to, which serving cannot keep consistent. */
+const linkedUnexplained = (
+  rules: readonly FieldRule[],
+  entity: JsonObject,
+  held: readonly JsonObject[],
+): boolean => {
+  const explained = new Set(rules.map((rule) => rule.field));
+  return Object.keys(entity).some(
+    (field) =>
+      !explained.has(field) && createdToken(field, entity, held) === "linked",
+  );
+};
+
+/** Widen a create plan to a later call it does not take, when that call explained on its own agrees with it. */
+const refineCreate = (
   context: EffectContext,
   draft: WriteDraft,
   step: WriteStep,
-  evidence: {
-    readonly observed: Observed;
-    readonly call: WriteCall & { readonly body: JsonObject };
-    readonly collection: string;
-  },
+  evidence: CreateCallEvidence,
 ): boolean => {
+  const { explained, request, held } = explainedCall(
+    context,
+    draft,
+    step,
+    evidence,
+  );
+  if (
+    (explained.tied && draft.plan.collection === null) ||
+    linkedUnexplained(explained.rules, evidence.observed.object, held)
+  )
+    return false;
+  const merged = mergedCreatePlan(
+    { rules: draft.plan.rules, body: draft.plan.body! },
+    draft.observed!,
+    {
+      entity: evidence.observed.object,
+      body: evidence.call.body,
+      rules: explained.rules,
+      contract: {
+        ...explained.body,
+        ...(request.envelope === undefined
+          ? {}
+          : { envelope: request.envelope }),
+      },
+    },
+  );
+  if (merged === undefined) return false;
+  retainFixed(context, merged.body.fixed.slice(draft.plan.body!.fixed.length));
+  draft.plan.rules = merged.rules;
+  draft.plan.body = merged.body;
+  return true;
+};
+
+type CreateCallEvidence = {
+  readonly observed: Observed;
+  readonly call: WriteCall & { readonly body: JsonObject };
+  readonly collection: string;
+};
+
+/** Explain one recorded create on its own, against the entities its collection and type held before it. */
+const explainedCall = (
+  context: EffectContext,
+  draft: WriteDraft,
+  step: WriteStep,
+  evidence: CreateCallEvidence,
+) => {
   const type = draft.plan.target!;
-  const idField = context.idField(type);
   const members = fieldsOf(context.state.members(type, evidence.collection));
   const held = fieldsOf(context.state.ofType(type));
   // Only calls serving would take, successful and with the exemplar's query, show that a member may vary.
@@ -172,7 +227,7 @@ const buildCreate = (
   const explained = explainCreate({
     entity: evidence.observed.object,
     call: evidence.call,
-    idField,
+    idField: context.idField(type),
     startMs: startOf(context, step),
     collection: members,
     type: held,
@@ -184,14 +239,25 @@ const buildCreate = (
       }),
     ),
   });
-  const explainedFields = new Set(explained.rules.map((rule) => rule.field));
-  if (
-    Object.keys(evidence.observed.object).some(
-      (field) =>
-        !explainedFields.has(field) &&
-        createdToken(field, evidence.observed.object, held) === "linked",
-    )
-  ) {
+  return { explained, request, members, held };
+};
+
+/** Build a create plan from its exemplar's observation. */
+const buildCreate = (
+  context: EffectContext,
+  draft: WriteDraft,
+  step: WriteStep,
+  evidence: CreateCallEvidence,
+): boolean => {
+  const type = draft.plan.target!;
+  const idField = context.idField(type);
+  const { explained, request, members, held } = explainedCall(
+    context,
+    draft,
+    step,
+    evidence,
+  );
+  if (linkedUnexplained(explained.rules, evidence.observed.object, held)) {
     refuse(draft, step, "unexplained-change");
     return false;
   }
@@ -535,13 +601,22 @@ export const applyCreate = (
     pathValues:
       pathValuesOf(step.tool.path_template, collection) ?? call.pathValues,
   };
-  const fields = createdFields(draft.plan, draft.observed!, created, (rule) =>
-    recordedGeneratedValue(
-      rule,
-      draft.observed![rule.field],
-      observed.object[rule.field] ?? null,
-    ),
-  );
+  const fieldsOfCall = () =>
+    createdFields(draft.plan, draft.observed!, created, (rule) =>
+      recordedGeneratedValue(
+        rule,
+        draft.observed![rule.field],
+        observed.object[rule.field] ?? null,
+      ),
+    );
+  let fields = fieldsOfCall();
+  // A later call the plan does not take may widen it, as a later update does.
+  if (
+    later &&
+    !fields.ok &&
+    refineCreate(context, draft, step, { observed, call, collection })
+  )
+    fields = fieldsOfCall();
   const id = fields.ok ? scalarText(fields.value[idField]) : undefined;
   if (
     !fields.ok ||

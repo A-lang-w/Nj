@@ -238,3 +238,51 @@ export const TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
   ],
   ["GET", `/api/tags/${numberedUuid(2)}`, RENAMED_SECOND_TAG],
 ];
+
+/** A book shelved as the application shelves it, on `general` when the call names no shelf. */
+const shelved = (
+  id: number,
+  name: string,
+  shelf: string,
+  at: string,
+): Entity => ({
+  id,
+  name,
+  shelf,
+  created_at: at,
+});
+
+const SHELVED_SEEDS = [
+  shelved(1, "First Book", "general", "2026-10-01T09:00:00Z"),
+  shelved(2, "Second Book", "general", "2026-10-01T10:00:00Z"),
+];
+
+/** Two book creates, one naming a shelf and one leaving it out, in the order given, each read back. */
+export const shelvedRows = (
+  first: { readonly name: string; readonly shelf?: string },
+  second: { readonly name: string; readonly shelf?: string },
+  stored: (sent: string) => string = (sent) => sent,
+): TimedCaptureRow[] => {
+  const third = shelved(
+    3,
+    first.name,
+    first.shelf === undefined ? "general" : stored(first.shelf),
+    bookClock(3),
+  );
+  const fourth = shelved(
+    4,
+    second.name,
+    second.shelf === undefined ? "general" : stored(second.shelf),
+    bookClock(5),
+  );
+  return [
+    ["GET", "/api/books", SHELVED_SEEDS],
+    ["GET", "/api/books/1", SHELVED_SEEDS[0]!],
+    ["GET", "/api/books/2", SHELVED_SEEDS[1]!],
+    ["POST", "/api/books", third, 201, first],
+    ["GET", "/api/books/3", third],
+    ["POST", "/api/books", fourth, 201, second],
+    ["GET", "/api/books/4", fourth],
+    ["GET", "/api/books", [...SHELVED_SEEDS, third, fourth]],
+  ];
+};

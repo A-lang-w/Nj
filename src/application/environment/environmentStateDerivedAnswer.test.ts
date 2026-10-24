@@ -4,6 +4,7 @@ import {
   BOOKMARK_ROWS,
   FOLDER_ROWS,
   TAG_ROWS,
+  shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 import {
@@ -80,5 +81,25 @@ describe("served values an application derives from others", () => {
     expect(
       folders.answer("get_folders_by_uuid", { uuid: uid }).body,
     ).toMatchObject({ title: "Moved Folder", url: renamed["url"] });
+  });
+});
+
+describe("served creates learned from every call", () => {
+  it("stores a member a create leaves out at the default a recorded call showed, and a sent one as sent", () => {
+    const books = servedFrom(
+      shelvedRows(
+        { name: "Third Book" },
+        { name: "Fourth Book", shelf: "rare" },
+      ),
+    );
+    expect(
+      objectOf(books.answer("post_books", { body: { name: "Plain" } }).body),
+    ).toMatchObject({ name: "Plain", shelf: "general" });
+    expect(
+      objectOf(
+        books.answer("post_books", { body: { name: "Kept", shelf: "attic" } })
+          .body,
+      ),
+    ).toMatchObject({ name: "Kept", shelf: "attic" });
   });
 });
