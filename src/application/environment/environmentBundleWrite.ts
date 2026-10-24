@@ -101,13 +101,10 @@ export interface BundleTarball {
   readonly size: number;
 }
 
-/** Hash and copy only the instance retained before destination admission. */
-const writeTarball = async (
-  tree: SafeOutputTree,
-  directory: string,
-  relative: string,
+/** Read and hash the admitted instance, checking its complete length without retaining its contents. */
+export const bundleTarballDigest = async (
   source: BundleTarball,
-): Promise<WrittenBundleFile> => {
+): Promise<string> => {
   const hash = createHash("sha256");
   let observed = 0;
   for await (const chunk of tarballChunks(source)) {
@@ -117,7 +114,17 @@ const writeTarball = async (
     hash.update(bytes);
   }
   if (observed !== source.size) throw new RegularFileChangedError(source.path);
-  const sha256 = hash.digest("hex");
+  return hash.digest("hex");
+};
+
+/** Hash and copy only the instance retained before destination admission. */
+const writeTarball = async (
+  tree: SafeOutputTree,
+  directory: string,
+  relative: string,
+  source: BundleTarball,
+): Promise<WrittenBundleFile> => {
+  const sha256 = await bundleTarballDigest(source);
   const written = await writingBundleFile(directory, relative, () =>
     tree.write(relative, Readable.from(tarballChunks(source)), {
       bytes: source.size,

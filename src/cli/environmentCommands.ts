@@ -354,9 +354,7 @@ const inspectBuildHar = async (
   const { createWebNetworkCaptureService } =
     await import("../composition/webNetworkCaptures.js");
   const { parseEvidence } = await import("../domain/evidence.js");
-  const { environmentExportFile } =
-    await import("../application/environment/environmentExport.js");
-  const { evidenceFileBytes, ENVIRONMENT_BUILD_OPERATION } =
+  const { serializedEvidenceFile, ENVIRONMENT_BUILD_OPERATION } =
     await import("../application/environment/environmentBuild.js");
   const service = createWebNetworkCaptureService(environment);
   const inspected = await finishAnalysisCommand(
@@ -381,10 +379,9 @@ const inspectBuildHar = async (
       error: "Application workflow failed",
       ...(inspected as Record<string, JsonValue>),
     });
-  const file = await environmentExportFile(
-    "evidence",
+  const file = await serializedEvidenceFile(
+    parseEvidence(inspected),
     capturePath,
-    evidenceFileBytes(parseEvidence(inspected)),
     ENVIRONMENT_BUILD_OPERATION,
   );
   return file.ok ? ok(file.value) : err(cliError(file.error));
@@ -486,13 +483,10 @@ const registerBuildCommand = (
     description:
       "Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes",
     args: z.object({
-      capture: z
-        .string()
-        .describe(
-          "A .har file, or capture Evidence JSON from inspect-web-network-capture (HAR) or capture-browser-scenario",
-        ),
-      directory: z
-        .string()
+      capture: localPathStringSchema.describe(
+        "A .har file, or capture Evidence JSON from inspect-web-network-capture (HAR) or capture-browser-scenario",
+      ),
+      directory: localPathStringSchema
         .optional()
         .describe(
           "Bundle directory to create; must be absent or empty, nothing is overwritten; omit only with --dry-run",
@@ -515,8 +509,7 @@ const registerBuildCommand = (
         .boolean()
         .default(false)
         .describe("Apply only the four format rules, the views' own default"),
-      packageTarball: z
-        .string()
+      packageTarball: localPathStringSchema
         .optional()
         .describe(
           "Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version",

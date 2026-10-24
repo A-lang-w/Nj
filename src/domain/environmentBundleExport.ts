@@ -101,7 +101,11 @@ export const environmentBuildReportSchema = z.strictObject({
   ),
   warnings: z.array(
     z.strictObject({
-      code: z.enum(["name-from-file", "credential-named-members"]),
+      code: z.enum([
+        "name-from-file",
+        "credential-named-members",
+        "credential-scan-incomplete",
+      ]),
       message: z.string(),
       pointers: z
         .array(z.string())

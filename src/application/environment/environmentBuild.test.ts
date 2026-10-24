@@ -541,7 +541,72 @@ describe("buildEnvironment credential names", () => {
   });
 });
 
+describe("buildEnvironment credential scan coverage", () => {
+  it("warns that a body too large to scan was not scanned", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-large-");
+    const [entry] = environmentManifestHar().log.entries;
+    const text = JSON.stringify({
+      token: "t-large",
+      pad: "a".repeat(4 * 1024 * 1024),
+    });
+    const evidence = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture([
+        {
+          ...entry!,
+          response: {
+            ...entry!.response,
+            content: { ...entry!.response.content, text },
+          },
+        },
+      ]),
+    );
+    const planned = await buildEnvironment(
+      await buildInput(root, evidence, {
+        dryRun: true,
+        directory: undefined,
+        name: "large",
+      }),
+    );
+    if (!planned.ok) throw planned.error;
+    expect(planned.value.warnings).toEqual([
+      expect.objectContaining({
+        code: "credential-scan-incomplete",
+        pointers: ["record 0 response"],
+      }),
+    ]);
+    expect(JSON.stringify(planned.value.warnings)).not.toContain("t-large");
+  });
+});
+
 describe("buildEnvironment dry-run package tarball", () => {
+  it("refuses a tarball whose descriptor stats successfully but fails to read", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-read-");
+    const tarball = join(root, "rea-agents.tgz");
+    await writeFile(tarball, "packed");
+    const input = await buildInput(root, undefined, {
+      dryRun: true,
+      packageTarball: tarball,
+    });
+    const prototype = await fileHandlePrototype(tarball);
+    const failure = Object.assign(
+      new Error("controlled tarball read failure"),
+      { code: "EIO" },
+    );
+    const read = vi.spyOn(prototype, "read").mockRejectedValue(failure);
+    try {
+      const planned = await buildEnvironment(input);
+      expect(read).toHaveBeenCalled();
+      if (planned.ok) throw new Error("Expected a tarball read refusal");
+      expect(projectAnalysisError(planned.error)).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["package_tarball"] }] },
+      });
+      expect(await readdir(root)).not.toContain("bundle");
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it.each([false, true])(
     "retries a failed tarball close and retains its owner when the failure persists: %s",
     async (persistent) => {
@@ -652,7 +717,6 @@ describe("buildEnvironment dry-run package tarball", () => {
     }
   });
 });
-
 describe("evidenceFileBytes", () => {
   it("writes the bytes --format json writes, into one buffer", async () => {
     // A long multibyte body with a surrogate pair across the serializer's first part boundary.

@@ -24,6 +24,7 @@ import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js"
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   BundleFileHostFailure,
+  bundleTarballDigest,
   packageTarballRefusal,
   withBundleTarball,
   writeEnvironmentBundle,
@@ -203,11 +204,12 @@ const NOT_A_FILE_CODES = new Set([
   "ENAMETOOLONG",
 ]);
 
-/** Refuse a whole read, native parse and owned snapshot traversal that cannot fit live heap headroom. */
-const headroomRefusal = (
+/** Refuse materializing, natively parsing and sealing an input that cannot fit live heap headroom. */
+export const exportInputHeadroomRefusal = (
   operation: string,
-  path: string,
+  input: Readonly<Record<string, JsonValue>>,
   inputBytes: number,
+  reason = "Insufficient heap headroom to read, parse and seal the complete JSON file",
 ): AnalysisResourceConstraintError | undefined => {
   const heap = getHeapStatistics();
   const requiredBytes = nativeJsonParseRequiredBytes(inputBytes, true);
@@ -216,10 +218,9 @@ const headroomRefusal = (
     : new AnalysisResourceConstraintError(
         operation,
         "memory",
-        "Insufficient heap headroom to read, parse and seal the complete JSON file",
+        reason,
         {
-          input_path: path,
-          input_file_bytes: inputBytes,
+          ...input,
           required_heap_bytes: requiredBytes,
           available_heap_bytes: heap.total_available_size,
           heap_size_limit_bytes: heap.heap_size_limit,
@@ -274,7 +275,14 @@ export const readEnvironmentExportFile = async (
     bytes = await readRegularFile(path, {
       resources,
       admit: (state) => {
-        const refused = headroomRefusal(operation, path, state.size);
+        const refused = exportInputHeadroomRefusal(
+          operation,
+          {
+            input_path: path,
+            input_file_bytes: state.size,
+          },
+          state.size,
+        );
         if (refused !== undefined) throw refused;
       },
     });
@@ -392,13 +400,16 @@ const readerFailureError = (
   return error;
 };
 
-/** The package tarball's size, admitted and released as the export admits and releases it. */
+/** The package tarball's size after the same complete read and integrity check export uses. */
 export const packageTarballBytes = async (
   path: string,
 ): Promise<Result<number, AnalysisError>> => {
   try {
     return ok(
-      await withBundleTarball(path, (tarball) => Promise.resolve(tarball.size)),
+      await withBundleTarball(path, async (tarball) => {
+        await bundleTarballDigest(tarball);
+        return tarball.size;
+      }),
     );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return err(cause);
@@ -406,6 +417,8 @@ export const packageTarballBytes = async (
       return err(changedArtifact(cause));
     if (cause instanceof ArtifactReaderFailure)
       return err(readerFailureError(cause, undefined));
+    if (cause instanceof BundleFileHostFailure)
+      return err(packageTarballRefusal(path, cause));
     if (systemCode(cause) !== undefined)
       return err(packageTarballRefusal(path, cause));
     throw cause;
