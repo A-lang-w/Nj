@@ -17,6 +17,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "captures",
   "signals",
   "android",
+  "binaryNinjaHeadless",
   "firmware",
   "ghidra",
   "hopper",

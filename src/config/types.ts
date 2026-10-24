@@ -15,6 +15,11 @@ export interface AppConfig {
   readonly mcpOutputSchemaProfile?: McpOutputSchemaProfile;
   readonly analysisProvider: AnalysisProviderSelector;
   readonly idaMcpConfigPath?: string;
+  /** Binary Ninja installation containing python/binaryninja; absent probes the vendor default. */
+  readonly binaryNinjaInstallDir?: string;
+  /** Python interpreter for the headless bridge; absent uses the bundled Windows interpreter. */
+  readonly binaryNinjaPythonPath?: string;
+  readonly binaryNinjaStartupTimeoutMs: number;
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;
   readonly ghidraStartupTimeoutMs: number;

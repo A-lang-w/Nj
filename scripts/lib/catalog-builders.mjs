@@ -228,6 +228,15 @@ export const providerCatalog = (sources) => {
       contracts: declaredContracts("ida", sources.idaProvider.IDA_OPERATIONS),
     },
     {
+      identity:
+        sources.binaryNinjaHeadlessProvider
+          .BINARY_NINJA_HEADLESS_PROVIDER_IDENTITY,
+      contracts: declaredContracts(
+        "binary-ninja-headless",
+        sources.binaryNinjaHeadlessProvider.BINARY_NINJA_HEADLESS_OPERATIONS,
+      ),
+    },
+    {
       identity: sources.kunaProvider.KUNA_PROVIDER_IDENTITY,
       contracts: declaredContracts(
         "kuna",
