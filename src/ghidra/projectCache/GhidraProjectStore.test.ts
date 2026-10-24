@@ -860,7 +860,9 @@ describe("GhidraProjectStore resilience", () => {
     ]);
   });
 
-  it("replaces a link at a lease file without writing through it", async () => {
+  it("replaces a link at a lease file without writing through it", async ({
+    skip,
+  }) => {
     const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     await store.publish(publishable(store, miss));
@@ -873,7 +875,18 @@ describe("GhidraProjectStore resilience", () => {
       await mkdir(join(root, "leases"), { recursive: true });
       // A root other principals could write before it was tightened can hold
       // a link at the name a lease uses.
-      await symlink(ownerFile, lease);
+      try {
+        await symlink(ownerFile, lease);
+      } catch (cause) {
+        if (
+          process.platform === "win32" &&
+          cause instanceof Error &&
+          "code" in cause &&
+          (cause.code === "EPERM" || cause.code === "EACCES")
+        )
+          skip("Windows symlink creation requires unavailable privileges");
+        throw cause;
+      }
       const hit = await store.prepare({ identity: identity(), mode: "on" });
       expect(hit.ok && hit.value?.hit).toBe(true);
       // The hit refreshes its lease without writing through the link.

@@ -23,6 +23,8 @@ import {
 } from "./GhidraProjectCacheRoot.js";
 
 const roots: string[] = [];
+// Junctions need no symlink privilege on Windows and are reported as links.
+const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
 const tempRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "rea-ghidra-cache-root-"));
   roots.push(root);
@@ -77,7 +79,7 @@ describe("POSIX cache root", () => {
     const target = join(parent, "target");
     const root = join(parent, "cache");
     await mkdir(target);
-    await symlink(target, root);
+    await symlink(target, root, directoryLinkType);
     await expect(
       ensureGhidraProjectCacheRoot(root, { platform: "linux" }),
     ).rejects.toMatchObject({ reason: "io", path: root });
@@ -276,7 +278,7 @@ describe("Windows cache root repair", () => {
     const target = join(parent, "target");
     const root = join(parent, "cache");
     await mkdir(target);
-    await symlink(target, root);
+    await symlink(target, root, directoryLinkType);
     let verified = false;
     await expect(
       ensureGhidraProjectCacheRoot(root, {
@@ -410,7 +412,7 @@ describe("Windows cache root repair coordination", () => {
     await writeFile(join(root, "entry"), "stored");
     // A link cannot be carried into the private root, so the repair fails
     // after the replacement is in place.
-    await symlink(shared, join(root, "shared"), "dir");
+    await symlink(shared, join(root, "shared"), directoryLinkType);
     let rebuilt = false;
     await expect(
       ensureGhidraProjectCacheRoot(root, {
@@ -647,7 +649,7 @@ describe("Windows cache root repair failures", () => {
     await writeFile(join(root, "entry"), "stored");
     // A link cannot be carried into the private root: it would keep naming
     // the shared directory it points at.
-    await symlink(shared, join(root, "shared"), "dir");
+    await symlink(shared, join(root, "shared"), directoryLinkType);
     let inspected = false;
     await expect(
       ensureGhidraProjectCacheRoot(root, {
@@ -690,7 +692,7 @@ describe("Windows cache root repair failures", () => {
       await mkdir(root);
       await mkdir(shared);
       await writeFile(join(root, "entry"), "stored");
-      await symlink(shared, join(root, "shared"), "dir");
+      await symlink(shared, join(root, "shared"), directoryLinkType);
       let inspected = false;
       try {
         await expect(
@@ -801,7 +803,7 @@ describe("Windows cache root repair restoration failures", () => {
       await mkdir(root);
       await mkdir(shared);
       await writeFile(join(root, "entry"), "stored");
-      await symlink(shared, join(root, "shared"), "dir");
+      await symlink(shared, join(root, "shared"), directoryLinkType);
       let inspected = false;
       try {
         await expect(
@@ -1134,7 +1136,7 @@ describe("Windows cache root concurrency", () => {
             created.push(path);
             // The concurrent initializer wins the name with a link.
             mkdirSync(target);
-            symlinkSync(target, root, "dir");
+            symlinkSync(target, root, directoryLinkType);
             throw new Error("the name was taken by a concurrent initializer");
           },
           verifyPrivateDirectory(path) {
