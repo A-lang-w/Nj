@@ -11,7 +11,6 @@ import {
   type Server,
 } from "@modelcontextprotocol/server";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -25,6 +24,7 @@ import {
   UnsupportedRequestTargetError,
   writeWebResponse,
 } from "./nodeHttpBridge.js";
+import { listenHttpServer } from "./listenHttpServer.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import {
   NodeHttpRequestOwner,
@@ -47,6 +47,8 @@ export interface StreamableHttpRoute {
 export interface ServeStreamableHttpOptions {
   readonly host: string;
   readonly port: number;
+  /** Cancellation during listener startup; later shutdown remains owned by close(). */
+  readonly signal?: AbortSignal;
   /** Called once; the instance serves every session in turn on a fresh transport. */
   readonly createMcpServer: (
     context: McpRequestContext,
@@ -58,7 +60,7 @@ export interface ServeStreamableHttpOptions {
   readonly routes?: readonly StreamableHttpRoute[];
   readonly logger?: Logger;
   /** Reports listener failures after binding; request failures are logged instead. */
-  readonly onerror?: (error: Error) => void;
+  readonly onerror?: (error: StreamableHttpListenError) => void;
   /** Close the server instance as the last stage of `close`; false when the factory's owner closes it. */
   readonly closeInstance?: boolean;
 }
@@ -105,11 +107,17 @@ export const hostHeaderAllowlist = (
   return [...new Set([...localhostAllowedHostnames(), ...known])];
 };
 
-const jsonError = (status: number, code: number, message: string): Response =>
+/** A JSON-RPC error answered outside any session, so its id is null. */
+export const jsonRpcErrorResponse = (
+  status: number,
+  code: number,
+  message: string,
+): Response =>
   Response.json(
     { jsonrpc: "2.0", error: { code, message }, id: null },
     { status },
   );
+const jsonError = jsonRpcErrorResponse;
 
 const protocolOf = (instance: McpServer | Server): Server =>
   "server" in instance ? instance.server : instance;
@@ -190,24 +198,27 @@ const hasStreamablePostHeaders = (request: Request): boolean => {
 };
 
 /** Only a new client's initialize travels without a session id; peek within the SDK body bound. */
-const isInitializePost = async (request: Request): Promise<boolean> => {
+const classifyInitializePost = async (
+  request: Request,
+): Promise<"initialize" | "batch" | undefined> => {
   if (
     request.method !== "POST" ||
     request.headers.has("mcp-session-id") ||
     !hasStreamablePostHeaders(request)
   )
-    return false;
+    return undefined;
   const probe = request.clone();
   try {
     const read = await readRequestBody(probe);
-    if (read.tooLarge) return false;
+    if (read.tooLarge) return undefined;
     const body: unknown = JSON.parse(read.text);
-    // The transport accepts only a lone initialize, so only that may evict a session.
-    return Array.isArray(body)
-      ? body.length === 1 && isInitializeRequest(body[0])
-      : isInitializeRequest(body);
+    // SDK 2.3.1 accepts a one-message array. REA's session handover contract
+    // requires an object, regardless of whether a session is already open.
+    if (Array.isArray(body))
+      return body.some(isInitializeRequest) ? "batch" : undefined;
+    return isInitializeRequest(body) ? "initialize" : undefined;
   } catch {
-    return false;
+    return undefined;
   } finally {
     // The clone is one branch of a tee; awaiting its cancel would wait for the original to drain.
     void probe.body?.cancel().catch(() => undefined);
@@ -328,12 +339,19 @@ export class McpSessionSlot {
 
   async #handle(request: Request): Promise<Response> {
     if (this.#closed) return SHUTTING_DOWN();
+    const initialization = await classifyInitializePost(request);
+    if (initialization === "batch")
+      return jsonError(
+        400,
+        -32600,
+        "Initialize must be a single JSON-RPC object, not a batch",
+      );
     if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
     const open = this.#live;
     if (
       open?.transport.sessionId !== undefined &&
-      (await isInitializePost(request)) &&
+      initialization === "initialize" &&
       // A client that left while its initialize was probed would evict the session for nobody.
       !request.signal.aborted
     ) {
@@ -518,9 +536,13 @@ export const serveStreamableHttp = async (
     () => requests.drain(),
   ]);
   try {
-    httpServer.listen(port, host);
-    await once(httpServer, "listening");
+    await listenHttpServer(httpServer, host, port, options.signal);
+    options.signal?.throwIfAborted();
   } catch (cause: unknown) {
+    if (options.signal?.aborted && cause === options.signal.reason) {
+      if (httpServer.listening) await prepareTransportShutdown();
+      throw cause;
+    }
     throw new StreamableHttpListenError(cause);
   }
   const bound = httpServer.address();
@@ -545,7 +567,9 @@ export const serveStreamableHttp = async (
     });
   });
   // Bind failures already rejected the listening wait above; only later listener errors are reported.
-  httpServer.on("error", (error) => options.onerror?.(error));
+  httpServer.on("error", (error) =>
+    options.onerror?.(new StreamableHttpListenError(error, "serving")),
+  );
   let instance: RequestTrackingMcpServer;
   try {
     instance = await options.createMcpServer({ era: "legacy" });
@@ -562,6 +586,18 @@ export const serveStreamableHttp = async (
     options.sessionDrainTimeoutMs,
   );
   slot = live;
+  const prepareShutdown = stagedClose([
+    prepareTransportShutdown,
+    () => live.close(),
+  ]);
+  const close = stagedClose([
+    prepareShutdown,
+    ...(closeInstance ? [() => instance.close()] : []),
+  ]);
+  if (options.signal?.aborted) {
+    await close();
+    throw options.signal.reason;
+  }
   if (allowedHosts === undefined)
     logger?.warn(
       { host },
@@ -571,14 +607,6 @@ export const serveStreamableHttp = async (
   logger
     ?.child({}, { level: "info" })
     .info({ transport: "streamable-http", url }, "MCP transport listening");
-  const prepareShutdown = stagedClose([
-    prepareTransportShutdown,
-    () => live.close(),
-  ]);
-  const close = stagedClose([
-    prepareShutdown,
-    ...(closeInstance ? [() => instance.close()] : []),
-  ]);
   return { url, prepareShutdown, close };
 };
 
