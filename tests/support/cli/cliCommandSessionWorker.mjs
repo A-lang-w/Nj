@@ -39,6 +39,7 @@ const prepareCliProcess = () => {
 const runtimeFiles = [
   "dist/cli-runtime/cli.js",
   "dist/cli-runtime/cliOutput.js",
+  "dist/cli-runtime/cliBuiltinArguments.js",
   "dist/cli-runtime/cliResultOutput.js",
 ];
 
@@ -50,15 +51,18 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.exit(1);
 }
 
-const { cliConfigurationError, createCli } =
+const { closeCliJavaScriptResources, createCli } =
   await import("../../../dist/cli-runtime/cli.js");
 const { createCliResultOutput } =
   await import("../../../dist/cli-runtime/cliResultOutput.js");
+const { cliCompletionShell, splitIncurBuiltinArguments } =
+  await import("../../../dist/cli-runtime/cliBuiltinArguments.js");
 const {
+  cliConfigurationError,
   normalizeCliArguments,
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
-  validateCliOutputArguments,
+  parseCliOutputArguments,
 } = await import("../../../dist/cli-runtime/cliOutput.js");
 
 const writeFrame = (value) =>
@@ -89,7 +93,10 @@ process.stdin.on("data", (chunk) => {
   }
 });
 process.stdin.on("end", () => {
-  chain.finally(() => process.exit(0));
+  chain.finally(async () => {
+    await closeCliJavaScriptResources();
+    process.exit(0);
+  });
 });
 
 async function handle(value) {
@@ -157,10 +164,18 @@ async function runOneShot(args) {
   process.exitCode = undefined;
   let explicitExit;
   try {
-    const cliArgs = normalizeCliArguments(args);
-    const outputArguments = validateCliOutputArguments(cliArgs);
+    const isShellCompletion = cliCompletionShell(process.env) !== undefined;
+    const cliArgs = isShellCompletion ? args : normalizeCliArguments(args);
+    const outputOptions = parseCliOutputArguments(
+      isShellCompletion ? [] : cliArgs,
+    );
+    const outputArguments = outputOptions.validation;
     const configurationError = cliConfigurationError(process.env);
-    if (configurationError !== undefined && !isDoctorCommand(cliArgs)) {
+    if (
+      configurationError !== undefined &&
+      (isShellCompletion ||
+        splitIncurBuiltinArguments(cliArgs).command[0] !== "doctor")
+    ) {
       process.stderr.write(`${configurationError}\n`);
       process.exitCode = 1;
     } else if (!outputArguments.ok) {
@@ -168,7 +183,7 @@ async function runOneShot(args) {
       process.exitCode = 1;
     } else {
       let wroteOutput = false;
-      const resultOutput = createCliResultOutput(cliArgs, destination);
+      const resultOutput = createCliResultOutput(outputOptions, destination);
       try {
         await createCli(process.env, resultOutput).serve(cliArgs, {
           stdout: (output) => {
@@ -177,6 +192,7 @@ async function runOneShot(args) {
               return;
             }
             if (output.length > 0) wroteOutput = true;
+            if (resultOutput?.captureSdkOutput(output)) return;
             process.stdout.write(output);
           },
           exit: (code) => {
@@ -190,9 +206,13 @@ async function runOneShot(args) {
         process.exitCode = 1;
       }
       if (!wroteOutput && !resultOutput?.handled) {
-        const empty = renderEmptyFilteredCliOutput(cliArgs);
+        const empty = renderEmptyFilteredCliOutput(outputOptions);
         if (empty) process.stdout.write(empty);
       }
+      await resultOutput?.finishSdkOutput(
+        explicitExit ??
+          (typeof process.exitCode === "number" ? process.exitCode : 0),
+      );
     }
   } finally {
     process.stdout.write = originalStdoutWrite;
@@ -219,26 +239,6 @@ function captureWrite(chunks) {
     if (typeof done === "function") done();
     return true;
   };
-}
-
-function isDoctorCommand(arguments_) {
-  const valuedFlags = new Set([
-    "--format",
-    "--filter-output",
-    "--token-limit",
-    "--token-offset",
-  ]);
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument === "--") return arguments_[index + 1] === "doctor";
-    if (valuedFlags.has(argument)) {
-      index += 1;
-      continue;
-    }
-    if (argument.startsWith("-")) continue;
-    return argument === "doctor";
-  }
-  return false;
 }
 
 async function compiledRuntimeExists(paths) {
