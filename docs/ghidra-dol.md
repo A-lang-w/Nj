@@ -4,6 +4,9 @@ This lane imports 32-bit big-endian PowerPC GameCube/Wii DOL images through
 Ghidra. It does not execute the image. DOL is a headerless format with no magic
 number, so REA never detects it: the caller must select it explicitly.
 
+Only the cached MEM1 window `0x80000000..0x81800000` is admitted. Wii MEM2
+and uncached aliases are outside this lane.
+
 Not covered: small-data anchors (`r2`/`r13`), REL, RPX, and IDA or Hopper
 support. See [Not supported yet](#not-supported-yet).
 
@@ -45,8 +48,9 @@ Ghidra then runs in two steps:
 2. The pre-script `bridge/ghidra/ReaGhidraPrepareDol.java` reads a section file
    that REA wrote from the parsed header. It creates one initialized block per
    used text and data section at its load address, with file bytes from the
-   section's file offset. Text is read-execute and data is read-write. It then
-   removes the whole-file block, sets the entry point, and labels the entry
+   section's file offset. The whole-file block is removed before the section
+   blocks are created. Text is read-execute and data is read-write. It sets the
+   entry point and labels the entry
    `__start`.
 
 Sections that the header marks unused are not mapped. The 256-byte header and

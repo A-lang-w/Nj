@@ -289,6 +289,7 @@ export const attestGhidraDolLoadImage = (
       checks,
       limitations: [
         "GameCube DOL is a header interpretation explicitly selected by the caller; the format is not identified from file bytes.",
+        "Admission covers cached MEM1 addresses 0x80000000..0x81800000 only; Wii MEM2 and uncached aliases are not supported by this lane.",
         "Verification covers original/modified FileBytes identity, every used text and data section at its load address with exact file-byte digests, BSS as uninitialized gaps outside data sections, and the header entry. Each block is checked for address space, initialized/loaded/overlay state and read/write/execute permissions (text r-x, data and BSS rw-). Mapping ends are inclusive.",
         "The 256-byte header and any bytes between sections are not mapped and are not verified. Language-defined uninitialized blocks outside BSS are preserved as observations and not attested.",
         "A mismatching digest identifies its source range, not the first differing byte. No runtime, boot, or hardware state is modeled.",
