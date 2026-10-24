@@ -68,11 +68,14 @@ byte correspondence or decode the map's original source paths.
 Artifact inventories declare `coverage.scope` (`root` or `container-entries`)
 and `coverage.status` (`complete` or `unknown`) independently of diagnostic
 wording. Comparison requires matching scopes, complete graph members and complete
-traversal coverage before concluding equality. A fully observed root without
-container children can be `unchanged`; its scope notice stays in `limitations`
-without creating a gap. Content and executable metadata changes still produce
-root deltas. Missing graph members yield `truncated`; unknown traversal coverage
-or unavailable occurrence hashes retain uncertainty. Integrity mismatches remain
+traversal coverage before concluding equality. Fully observed roots can be
+`unchanged` within root scope; their scope notice stays in `limitations` without
+creating a gap. Root-scoped equality establishes equality of the observed root
+bytes. Child-container presence and unexamined format details remain unresolved,
+including when the root format is `unknown`. Content and executable metadata
+changes still produce root deltas. Missing graph members yield `truncated`;
+unknown traversal coverage or unavailable occurrence hashes retain uncertainty.
+Integrity mismatches remain
 contradictions. Static artifact equality does not establish unchanged runtime
 behavior.
 Source-map relation deltas include the content identity of the mapped source,
@@ -173,6 +176,11 @@ sets `truncated: true`; any path already supported by observed edges remains
 visible. When a requested goal is not reached but an expansion is unresolved,
 `goal_status` is `unknown`; `not_reached` means traversal exhausted without
 unresolved relationship reads. Cancellation remains a tool error.
+
+`trace_feature` validates each reference's containing-procedure resolution using
+the same contract as navigation context. Explicit absence remains a successful
+negative observation; malformed provider replies return `unreadable_output`
+for `resolve_containing_procedure` before successful-result projection.
 
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and

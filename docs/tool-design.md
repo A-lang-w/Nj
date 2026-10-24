@@ -53,6 +53,11 @@ satisfy. A plan without execution does not establish runtime behavior.
 - Use strict inputs with explicit target identity and required fields. Preserve
   meaningful target, action, capture, and output choices; remove ignored options
   and repeated permission declarations.
+  One-shot binary CLI analysis retains the caller's verbatim target spelling in
+  Evidence `caller_input_path`, including a result loaded from a snapshot. The
+  subject keeps the inspected file identity. Provider inspections also retain
+  the established `parameters.input_path` field for existing consumers. Keep
+  request provenance separate from provider arguments and snapshot queries.
 - Return the requested facts inline with artifact/provider identity, source
   locations, Evidence references, coverage, and relevant confidence and
   limitations. Use supported selection, summaries or views when they answer
@@ -201,8 +206,10 @@ providers need not expose identical state machines.
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
   applies rather than duplicate close/finally handling.
 - Give descriptor-backed reads an owner before opening the file. A rejected
-  close must retain the exact handle and preserve any earlier failure. If an
-  abortable caller stops waiting, keep the underlying work in that owner's
+  close must retain the exact handle and preserve any earlier failure.
+  Stable file reads expose completed values separately from cancellation so
+  consumers retain acquired identity facts after successful close or cleanup retry.
+  If an abortable caller stops waiting, keep the underlying work in that owner's
   lifetime so shutdown cannot report release before finalization settles.
   Admit the entire inspection once, including later reads and finalization.
   Helpers must borrow that admission or use an operation child scope; re-entering
@@ -254,6 +261,10 @@ File-error wrappers retain the format owner's specific diagnostic and recovery
 text. Strict JSON file input, for example, keeps the byte-order-mark explanation
 and UTF-8 recovery through CLI/MCP projection rather than replacing it with
 generic invalid-file advice. Consumers do not classify parser message text.
+When an artifact boundary falls back to an I/O error, retain the original cause
+on the typed error so provider callers can inspect its filesystem evidence.
+Keep public error fields under the canonical projector's ownership; retaining
+a cause does not require exposing it in transport output.
 
 Update canonical contracts, output schemas, examples, generated artifacts, and
 relevant docs together. Verify converted advertised schemas and success,

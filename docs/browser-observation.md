@@ -94,6 +94,14 @@ content. Actual JSON properties with those names remain content. Reference-only
 objects, unsupported values, and opaque cookie partition identities remain
 incomplete. Previously exported fingerprints are not recomputed; recapture both
 sides when comparing captures produced across this decoder change.
+IndexedDB schema fingerprints with `projection_version: 2` include the observed
+database version and object-store definitions. A missing, malformed, or imprecise
+version leaves the schema fingerprint incomplete while retaining observed store
+facts. Historical fingerprints without this marker covered object stores only:
+matching historical hashes cannot establish unchanged database versions, and a
+historical hash is not compared with a version-bearing hash. Recapture both
+sides for a complete IndexedDB version comparison; other proven storage changes
+remain reportable.
 
 Script comparison groups observations by reported URL and compares unordered
 content samples. Producer inventory keys include optional metadata, so a changed
@@ -404,8 +412,12 @@ allowance; exhaustion fails the observation explicitly instead of guessing scope
 
 ## Data minimization
 
-The Link projection parses repeated CDP header field lines independently and
-retains their declarations in order. Each link keeps its target in `href` and
+Response metadata parses repeated CDP header field lines independently. The
+Link projection retains their declarations in order. `csp.directives` lists the
+directives of every CSP policy in order, across field lines and comma-separated
+policies, without recording policy boundaries, so a directive name can repeat.
+Single-valued policy fields combine their lines as one comma-separated value,
+as RFC 9110 specifies. Each link keeps its target in `href` and
 its relationship context in `context_url` with a separate `context_scope`;
 absent `anchor` uses the response URL, while a relative `anchor` resolves
 against that URL. Anchored links remain in the projection, but a `link_rel`

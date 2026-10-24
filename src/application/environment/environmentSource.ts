@@ -13,8 +13,10 @@ import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumul
 import {
   mediaTypeEssence,
   readRecordedRequestLine,
+  type RecordedRequestLine,
 } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
+import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -170,21 +172,18 @@ const schemaInputError = (
     })),
   );
 
-/** One capture record reduced to its request line and retained response body, or undefined without a request line. */
+/** Combine an already parsed request line with its record's retained response body. */
 export const recordedExchange = (
   record: WebNetworkCaptureRecord,
-): RecordedExchange | undefined => {
-  const line = readRecordedRequestLine(record.reported, true, () => true);
-  if (line === null || line.kind !== "line") return undefined;
-  return {
-    ordinal: record.ordinal,
-    path: line.path,
-    query: line.query === undefined || line.query === "" ? null : line.query,
-    status: line.status,
-    contentType: line.rawMime === "" ? null : line.rawMime,
-    ...readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES),
-  };
-};
+  line: Extract<RecordedRequestLine, { readonly kind: "line" }>,
+): RecordedExchange => ({
+  ordinal: record.ordinal,
+  path: line.path,
+  query: line.query === undefined || line.query === "" ? null : line.query,
+  status: line.status,
+  contentType: line.rawMime === "" ? null : line.rawMime,
+  ...readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES),
+});
 
 /** Authenticate a view Evidence file and require one view kind; a refusal names the file role. */
 export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(
@@ -265,6 +264,8 @@ interface CaptureFacts {
   readonly responseBodies: boolean;
   /** Whether the capture recorded request bodies, likewise. */
   readonly requestBodies: boolean;
+  /** A browser scenario's retained events, including those no record represents; null for a HAR. */
+  readonly scenarioEvents: readonly BrowserScenarioEvent[] | null;
 }
 
 /** Issue paths of a capture payload refusal start here. */
@@ -299,6 +300,7 @@ const parseScenarioCapture = (
     captureSha256: definition.success ? definition.data.scenario_sha256 : null,
     responseBodies: scenario.data.scenario.network_content.response_body,
     requestBodies: scenario.data.scenario.network_content.request_body,
+    scenarioEvents: scenario.data.events.items,
   });
 };
 
@@ -349,6 +351,7 @@ const parseHarCapture = (
     captureSha256: capture.data.artifact.sha256,
     responseBodies: true,
     requestBodies: true,
+    scenarioEvents: null,
   });
 };
 
@@ -416,9 +419,10 @@ const indexExchanges = (
     for (const ordinal of tool.record_ordinals) {
       if (exchanges.has(ordinal)) continue;
       const record = byOrdinal.get(ordinal);
-      const exchange =
-        record === undefined ? undefined : recordedExchange(record);
-      if (exchange !== undefined) exchanges.set(ordinal, exchange);
+      if (record === undefined) continue;
+      const line = readRecordedRequestLine(record.reported, true, () => true);
+      if (line?.kind === "line")
+        exchanges.set(ordinal, recordedExchange(record, line));
     }
   return exchanges;
 };
