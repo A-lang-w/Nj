@@ -64,10 +64,10 @@ export const unverifiedGhidraBuildLimitation = (
   return `This session uses Ghidra ${providerVersion}. The bridge is verified against ${SUPPORTED_GHIDRA_VERSION}; other ${ghidraReleaseLine()} builds are accepted and the observed version is reported.`;
 };
 
-/** Accepted release floor on this major, such as `12.1+`. */
+/** Accepted release floor on this major, such as `12.x (>=12.1)`. */
 export const ghidraReleaseLine = (): string => {
   const verified = verifiedGhidraRelease();
-  return `${String(verified.major)}.${String(verified.minor)}+`;
+  return `${String(verified.major)}.x (>=${String(verified.major)}.${String(verified.minor)})`;
 };
 
 /** Detail for the installation version check, including the accepted line. */

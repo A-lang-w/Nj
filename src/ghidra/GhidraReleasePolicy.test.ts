@@ -67,7 +67,7 @@ describe("unverifiedGhidraBuildLimitation", () => {
 
 describe("ghidraReleaseLine", () => {
   it("names the accepted release floor", () => {
-    expect(ghidraReleaseLine()).toBe("12.1+");
+    expect(ghidraReleaseLine()).toBe("12.x (>=12.1)");
   });
 });
 

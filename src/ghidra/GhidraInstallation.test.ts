@@ -1025,7 +1025,7 @@ describe("Ghidra installation version admission", () => {
     );
     expect(result.status).toBe("unavailable");
     if (result.status !== "unavailable") return;
-    expect(result.rejection.reason).toContain("12.1+");
+    expect(result.rejection.reason).toContain("12.x (>=12.1)");
     expect(result.rejection.reason).toContain(SUPPORTED_GHIDRA_VERSION);
     expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
       status: "failed",
