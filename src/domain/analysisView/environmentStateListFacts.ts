@@ -32,7 +32,7 @@ export const listFacts = (
   const field = context.idField(plan.type);
   const whole = new Set<number>();
   const counting = new Map<number, string[]>();
-  const names = mintedFor(context.minted, plan.latest, false);
+  const names = mintedFor(context.minted, plan.latest);
   const minted = new Set<string>();
   for (const record of plan.latest)
     context.withBody(record.ordinal, (body) => {

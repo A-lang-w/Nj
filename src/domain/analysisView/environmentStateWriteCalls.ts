@@ -1,4 +1,5 @@
 import { jsonTextCodeUnits } from "../jsonSerialization.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { JsonValue } from "../jsonValue.js";
 import { same, type JsonObject } from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
@@ -63,16 +64,31 @@ export const steadyFields = (
   );
 
 /** A call's scalar members by name, as much of it as later rules are checked against. */
-export const scalars = (object: JsonObject): Map<string, JsonValue> =>
+const scalars = (object: JsonObject): Map<string, JsonValue> =>
   new Map(
     Object.entries(object).filter(
       ([, value]) => value === null || typeof value !== "object",
     ),
   );
 
-/** The scalar values a modelled update call showed and sent, and the fields it kept, which later rules must reproduce. */
+type ObservedValue =
+  | { readonly kind: "scalar"; readonly value: JsonValue }
+  | { readonly kind: "structured"; readonly digest: string };
+
+/** Keep structured equality facts without retaining another copy of each response body. */
+const observedValue = (value: JsonValue): ObservedValue =>
+  value !== null && typeof value === "object"
+    ? { kind: "structured", digest: digestCanonicalValue(value) }
+    : { kind: "scalar", value };
+
+const sameObserved = (left: ObservedValue, right: ObservedValue): boolean =>
+  left.kind === "structured"
+    ? right.kind === "structured" && left.digest === right.digest
+    : right.kind === "scalar" && same(left.value, right.value);
+
+/** The equality facts a modelled update showed, scalar inputs it sent, and fields it kept, which later rules must reproduce. */
 export interface UpdateCall {
-  readonly shown: ReadonlyMap<string, JsonValue>;
+  readonly shown: ReadonlyMap<string, ObservedValue>;
   readonly sent: ReadonlyMap<string, JsonValue>;
   readonly kept: readonly string[];
 }
@@ -86,26 +102,40 @@ export const contradictsEarlierCalls = (
   rules: readonly FieldRule[],
 ): boolean => {
   const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
-  return rules.some(
-    (rule) =>
-      (unsentChange(rule) || regenerates(rule) || rule.rule === "clock") &&
-      !ruled.has(rule.field) &&
-      draft.updates.some(({ shown, sent, kept }) => {
-        if (regenerates(rule)) return kept.includes(rule.field);
-        // An unruled field an earlier call showed is one it left as it was.
-        const value = shown.get(rule.field);
-        if (value === undefined) return false;
-        if (rule.rule === "increment") return integerOf(value) !== undefined;
-        if (rule.rule === "set") return !same(value, rule.value);
-        // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
-        if (rule.rule === "clock") return true;
-        if (rule.rule === "stamp") return !same(value, rule.value);
-        if (rule.rule === "derived")
-          return sent.has(rule.member) && !same(value, rule.value);
-        const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
-        return typeof from === "string" && slugOf(from) !== value;
-      }),
-  );
+  return rules.some((rule) => {
+    if (
+      !(unsentChange(rule) || regenerates(rule) || rule.rule === "clock") ||
+      ruled.has(rule.field)
+    )
+      return false;
+    // Compute a structured rule's digest once, rather than once per earlier call.
+    const expected =
+      rule.rule === "set" || rule.rule === "stamp" || rule.rule === "derived"
+        ? observedValue(rule.value)
+        : undefined;
+    return draft.updates.some(({ shown, sent, kept }) => {
+      if (regenerates(rule)) return kept.includes(rule.field);
+      // An unruled field an earlier call showed is one it left as it was.
+      const observation = shown.get(rule.field);
+      if (observation === undefined) return false;
+      if (rule.rule === "increment")
+        return (
+          observation.kind === "structured" ||
+          integerOf(observation.value) !== undefined
+        );
+      if (rule.rule === "set") return !sameObserved(observation, expected!);
+      // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
+      if (rule.rule === "clock") return true;
+      if (rule.rule === "stamp") return !sameObserved(observation, expected!);
+      if (rule.rule === "derived")
+        return sent.has(rule.member) && !sameObserved(observation, expected!);
+      const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
+      return (
+        typeof from === "string" &&
+        !sameObserved(observation, observedValue(slugOf(from)))
+      );
+    });
+  });
 };
 
 /** A plan's body with the members and fixed values a later call's body adds, and the JSON types it stored those members as when the observation shows none. */
@@ -219,7 +249,12 @@ export const rememberCall = (
   const unstamped = new Set(sameSecond);
   for (const field of unstamped) draft.unstamped.add(field);
   const kept = call.kept.filter((field) => !unstamped.has(field));
-  const shown = scalars(call.after);
+  const shown = new Map(
+    Object.entries(call.after).map(([field, value]) => [
+      field,
+      observedValue(value),
+    ]),
+  );
   for (const field of unstamped) shown.delete(field);
   const facts = { shown, sent: scalars(call.sent), kept };
   retain(64 + jsonTextCodeUnits([...facts.shown, ...facts.sent, kept]) * 2);

@@ -40,9 +40,26 @@ const viewOf = (rows: readonly TimedCaptureRow[], tool: string) =>
     (view) => view.tool === tool,
   );
 
-it("leaves out of an item envelope a member its collection's repeated reads mint anew, and serves the write the item read then checks", () => {
+it("masks an item envelope member proved minted on every item path, and serves the write the item read checks", () => {
+  const rows = entityRows("/v1/entities");
+  const itemRepeats: TimedCaptureRow[] = [
+    ...Array.from({ length: 3 }, (_, n): TimedCaptureRow => [
+      "GET",
+      `/v1/entities/${OPS}`,
+      reply(10 + n, { id: OPS, name: "ops" }),
+    ]),
+    ...Array.from({ length: 3 }, (_, n): TimedCaptureRow => [
+      "GET",
+      `/v1/entities/${AUDIT}`,
+      reply(20 + n, { id: AUDIT, name: "audit" }),
+    ]),
+  ];
   const state = environmentStateViewOf(
-    timedCaptureEvidence(entityRows("/v1/entities")),
+    timedCaptureEvidence([
+      ...rows.slice(0, 3),
+      ...itemRepeats,
+      ...rows.slice(5),
+    ]),
   );
   expect(
     state.views.find((view) => view.tool === "get_entities_by_uuid"),
@@ -59,10 +76,34 @@ it("leaves out of an item envelope a member its collection's repeated reads mint
   ).toMatchObject({ served: true, reason: null });
 });
 
+it("does not transfer a collection envelope's minted-member proof to its item paths", () => {
+  expect(
+    viewOf(entityRows("/v1/entities"), "get_entities_by_uuid"),
+  ).toMatchObject({
+    shape: "recorded",
+    reason: "envelope-varies",
+  });
+});
+
 it("masks a minted member only on the paths whose reads minted it", () => {
   // The request id is minted on /v1/policies, not on the entities' own paths.
   expect(viewOf(entityRows("/v1/policies"), "get_entities_by_uuid")).toEqual({
     tool: "get_entities_by_uuid",
+    shape: "recorded",
+    reason: "envelope-varies",
+  });
+});
+
+it("keeps a distinct item path's envelope unless its own repeats prove the member minted there", () => {
+  const first = { id: 1, name: "First" };
+  const second = { id: 2, name: "Second" };
+  const rows: TimedCaptureRow[] = [
+    ["GET", "/api/items/1", reply(1, first)],
+    ["GET", "/api/items/1", reply(2, first)],
+    ["GET", "/api/items/1", reply(3, first)],
+    ["GET", "/api/items/2", reply(4, second)],
+  ];
+  expect(viewOf(rows, "get_items_by_id")).toMatchObject({
     shape: "recorded",
     reason: "envelope-varies",
   });

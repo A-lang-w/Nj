@@ -845,7 +845,7 @@ export class EnvironmentStateExtraction {
         value,
         record_ordinal: record.ordinal,
       });
-      const minted = mintedFor(this.#minted ?? new Map(), [record], false);
+      const minted = mintedFor(this.#minted ?? new Map(), [record]);
       this.#views.set(tool.name, {
         tool: tool.name,
         shape: "document",

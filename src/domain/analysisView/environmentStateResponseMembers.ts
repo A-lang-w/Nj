@@ -2,7 +2,6 @@ import { canonicalJson } from "../comparisonSemantics.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
-  collectionPathOf,
   isObject,
   normalizedPath,
   replaceAt,
@@ -164,20 +163,22 @@ export const perResponseMembers = (input: {
   return minted;
 };
 
-/** The members minted on the paths of these reads, and for item reads on their collection's path too. */
+/** Only members proved minted on every concrete path this shared view answers may be masked in its envelope. */
 export const mintedFor = (
   minted: MintedMembers,
   records: readonly Pick<StateRecordFacts, "path">[],
-  item: boolean,
 ): ReadonlySet<string> => {
-  const names = new Set<string>();
-  for (const record of records)
-    for (const path of item
-      ? [record.path, collectionPathOf(record, true)]
-      : [record.path])
-      for (const name of minted.get(normalizedPath(path)) ?? [])
-        names.add(name);
-  return names;
+  let common: Set<string> | undefined;
+  for (const path of new Set(
+    records.map((record) => normalizedPath(record.path)),
+  )) {
+    const names = minted.get(path);
+    if (names === undefined) return new Set();
+    if (common === undefined) common = new Set(names);
+    else for (const name of common) if (!names.has(name)) common.delete(name);
+    if (common.size === 0) return common;
+  }
+  return common ?? new Set();
 };
 
 /** The first member a pointer names, which holds the entity rather than the envelope. */

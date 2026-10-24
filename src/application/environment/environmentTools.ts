@@ -356,10 +356,10 @@ function* environmentToolProperties(
           }
         : {
             type: "string",
-            enum: [pinned],
-            description: `Query parameter ${describeText(name, "query name")}; required: the served write takes only the value its recording sent, ${describeText(pinned, "query value")}, and applies it when left out.`,
+            ...(pinned === "" ? {} : { enum: [pinned] }),
+            description: `Query parameter ${describeText(name, "query name")}; optional: the served write takes only the value its recording sent, ${describeText(pinned, "query value")}, and applies it when left out.`,
           },
-      pinned !== undefined,
+      false,
     ];
   }
   if (args.body !== undefined)

@@ -276,7 +276,7 @@ export const checkItemPlan = (
   const view = { tool: plan.tool.name, fields: union.fields };
   const envelope: { skeleton?: string; members?: string[] } = {};
   const spellings = new ClockSpellings(context.retain);
-  const minted = mintedFor(context.minted, plan.latest, true);
+  const minted = mintedFor(context.minted, plan.latest);
   for (const record of plan.latest) {
     const reason = itemMismatch(
       context,

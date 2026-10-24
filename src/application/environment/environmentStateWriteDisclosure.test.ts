@@ -72,13 +72,13 @@ const toolOf = (rows: readonly TimedCaptureRow[], name: string) => {
 };
 
 describe("served write queries", () => {
-  it("advertises the query a write's recording sent as required, and applies it when a call leaves it out", () => {
+  it("advertises the recorded query as optional so omission reaches its default", () => {
     const { served, tool } = toolOf(PINNED_ROWS, "patch_books_by_id");
     expect(tool.inputSchema.properties["notify"]).toMatchObject({
       type: "string",
       enum: ["quiet"],
     });
-    expect(tool.inputSchema.required).toContain("notify");
+    expect(tool.inputSchema.required).not.toContain("notify");
     expect(tool.description).toContain("with the recorded query notify=quiet");
     const before = served.snapshot();
     expect(
@@ -96,9 +96,79 @@ describe("served write queries", () => {
       }),
     ).toMatchObject({ status: 200, body: { id: 2, name: "Second Edition" } });
   });
+
+  it.each(["notify", "notify="])(
+    "widens an empty pinned query literal in %s while enforcing it at runtime",
+    (query) => {
+      const rows: TimedCaptureRow[] = [
+        ...BOOK_INIT_ROWS,
+        [
+          "PATCH",
+          `/api/books/1?${query}`,
+          RENAMED,
+          200,
+          { name: "Renamed Book" },
+        ],
+        ["GET", "/api/books/1", RENAMED],
+      ];
+      const { served, tool } = toolOf(rows, "patch_books_by_id");
+      expect(tool.inputSchema.properties["notify"]).not.toHaveProperty("enum");
+      const before = served.snapshot();
+      expect(
+        served.call("patch_books_by_id", {
+          id: "2",
+          notify: "yes",
+          body: { name: "Changed" },
+        }).ok,
+      ).toBe(false);
+      expect(served.snapshot()).toBe(before);
+      expect(
+        served.call("patch_books_by_id", { id: "2", body: { name: "Changed" } })
+          .ok,
+      ).toBe(true);
+    },
+  );
 });
 
 describe("served write bodies", () => {
+  it("advertises an empty fixed body member without an empty literal, retaining its runtime guard", () => {
+    const rows: TimedCaptureRow[] = [
+      ...FIXED_ROWS.slice(0, 3),
+      [
+        "POST",
+        "/api/books",
+        STORED,
+        201,
+        {
+          books: [
+            { name: "Third Book", format: "", query: LONG, featured: true },
+          ],
+        },
+      ],
+      ...FIXED_ROWS.slice(4),
+    ];
+    const { served, tool } = toolOf(rows, "post_books");
+    expect(JSON.stringify(tool.inputSchema)).not.toContain('"const":""');
+    const before = served.snapshot();
+    expect(
+      served.call("post_books", {
+        body: {
+          books: [
+            { name: "Fourth", format: "other", query: LONG, featured: true },
+          ],
+        },
+      }).ok,
+    ).toBe(false);
+    expect(served.snapshot()).toBe(before);
+    expect(
+      served.call("post_books", {
+        body: {
+          books: [{ name: "Fourth", format: "", query: LONG, featured: true }],
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
   it("shows the values a create fixes and the object it wraps, in its schema, description and refusals", () => {
     const { served, tool } = toolOf(FIXED_ROWS, "post_books");
     expect(tool.inputSchema.properties["body"]).toMatchObject({

@@ -561,10 +561,12 @@ served. Their descriptions say the tool:
 - names the query its recording sent.
 
 The input schema says the same: each query parameter the recording sent is
-required, with its value as the only `enum` member; a body that wraps its
+optional, defaulting at execution to its recorded value, with a nonempty value
+as the only `enum` member; an empty value is described and enforced at execution
+because some clients reject empty literals. A body that wraps its
 object requires that member, an array of one object; and a member accepted
 only with its recorded value carries that value as `const` when it is short
-and no boolean (some clients reject boolean literals), else a description
+and neither a boolean nor an empty string (some clients reject these literals), else a description
 saying it must equal the recorded value. A refused member's message names the
 recorded value the same way.
 

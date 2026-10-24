@@ -102,9 +102,10 @@ export const writeQuery = (
 /** A fixed member's schema: its recorded value as `const` when short and not a boolean, which some clients reject as a literal. */
 const fixedSchema = (sent: JsonValue): EnvironmentToolSchema => {
   const shown = shownValue(sent);
-  if (shown !== undefined && typeof sent !== "boolean")
+  if (shown !== undefined && typeof sent !== "boolean" && sent !== "")
     return { const: sent, description: "Only the recorded value is accepted." };
   return {
+    ...(typeof sent === "string" ? { type: "string" as const } : {}),
     description:
       shown === undefined
         ? "Must equal the recorded value, which is too long to show here."

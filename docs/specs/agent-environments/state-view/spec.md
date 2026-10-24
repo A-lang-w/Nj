@@ -84,10 +84,12 @@ later increments.
 - A top-level UUID or clock member that differs on every repeat of a path's
   successful GET lines with no write between, and across the capture differed
   on at least two repeats and never stayed the same, is minted per response
-  there (a request id). Views of that path, and item views whose collection is
-  that path, name it in `per_response_members`; an item plan's shared envelope
-  compares without it, and serving keeps the recorded value. A member minted on
-  one path is never left out of another path's views.
+  there (a request id). A view names it in `per_response_members` only when
+  every concrete path the view answers independently proves it minted. A
+  collection's proof does not establish that its item paths mint the same
+  member. The shared envelope compares without these common members, and
+  serving keeps their recorded values; an unproved envelope difference stays
+  recorded rather than borrowing another path's value.
 - Merge observations into one entity per collection and identity: item views'
   latest values win over list views', differing views keep their own values,
   and a value that changed between repeats of one request line with no recorded

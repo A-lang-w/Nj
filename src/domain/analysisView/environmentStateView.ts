@@ -104,7 +104,7 @@ const perResponseSchema = z
   .array(z.string())
   .optional()
   .describe(
-    "Top-level members minted per response, such as a request id: a UUID or clock that differed on every repeat of the view's paths (or, for an item view, its collection's) with no write between. Checks leave them out; serving keeps the recorded value, so a served response repeats it.",
+    "Top-level members minted per response, such as a request id: a UUID or clock that differed on every repeat of every concrete path the view answers with no write between. Checks leave them out; serving keeps the recorded value, so a served response repeats it.",
   );
 const entityViewFields = {
   tool: z.string(),

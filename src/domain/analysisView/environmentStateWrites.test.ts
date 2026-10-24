@@ -50,6 +50,54 @@ const ISO_SECONDS = {
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
 
+describe("structured values an earlier update kept", () => {
+  it.each([false, true])(
+    "refuses a later derived rule that changes an earlier kept value (array: %s)",
+    (array) => {
+      const content = (text: string): JsonValue =>
+        array ? [{ text }] : { children: [{ text }] };
+      const entry = (id: number, edited: boolean) => ({
+        id,
+        title: edited ? "Edited" : "Original",
+        content: content(edited ? "Edited body text." : "Original body text."),
+      });
+      const initial: TimedCaptureRow[] = [
+        ["GET", "/api/posts", [entry(1, false), entry(2, false)]],
+        ["GET", "/api/posts/1", entry(1, false)],
+        ["GET", "/api/posts/2", entry(2, false)],
+      ];
+      const edit = (id: number, changed: boolean): TimedCaptureRow[] => {
+        const after = { ...entry(id, changed), title: "Edited" };
+        return [
+          [
+            "PATCH",
+            `/api/posts/${id}`,
+            after,
+            200,
+            { title: "Edited", html: "<p>Edited body text.</p>" },
+          ],
+          ["GET", `/api/posts/${id}`, after],
+        ];
+      };
+      const plan = (rows: TimedCaptureRow[]) =>
+        stateOf([...initial, ...rows]).writes.find(
+          (write) => write.tool === "patch_posts_by_id",
+        );
+      expect(plan([...edit(1, true), ...edit(2, true)])).toMatchObject({
+        served: true,
+      });
+      expect(plan([...edit(1, false), ...edit(2, true)])).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+      expect(plan([...edit(1, true), ...edit(2, false)])).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+    },
+  );
+});
+
 const planOf = (state: StateView, tool: string) => {
   const plan = state.writes.find((candidate) => candidate.tool === tool);
   if (plan === undefined) throw new Error(`No write plan for ${tool}`);
