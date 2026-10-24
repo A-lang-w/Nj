@@ -46,7 +46,9 @@ export interface DoctorConfiguredScopeReport {
   readonly providers: readonly string[];
   readonly skill: boolean;
   readonly healthy: boolean;
-  /** The doctor invocation that reports exactly this scope. */
+  /** The exact, unquoted arguments of the doctor invocation for this scope. */
+  readonly argv: readonly string[];
+  /** `argv` quoted for this host's shell: PowerShell on Windows, POSIX elsewhere. */
   readonly command: string;
 }
 
@@ -91,10 +93,13 @@ export const configuredDoctorScope = (
   input: Omit<DoctorScopeInput, "scope"> & {
     readonly selection: DoctorConfiguredSelection;
     readonly target: string | null;
+    /** Whether any selected skill copy exists, including a partial install. */
+    readonly skillInstalled: boolean;
+    readonly platform: NodeJS.Platform;
   },
 ): DoctorConfiguredScopeReport => {
   const { clients, providers } = input.selection;
-  const skill = input.skillState !== "missing";
+  const skill = input.skillInstalled;
   const scope: DoctorScopeReport = {
     mode: "explicit",
     clients,
@@ -102,28 +107,36 @@ export const configuredDoctorScope = (
     skill,
     target: input.target,
   };
+  const argv = [
+    "rea",
+    "doctor",
+    ...clients.flatMap((client) => ["--client", client]),
+    ...providers.flatMap((provider) => ["--provider", provider]),
+    ...(skill ? ["--skill"] : []),
+    ...(input.target === null ? [] : ["--target", input.target]),
+  ];
   return {
     clients,
     providers,
     skill,
     healthy: scopeDoctorChecks({ ...input, scope }).healthy,
-    command: [
-      "rea doctor",
-      ...clients.map((client) => `--client ${client}`),
-      ...providers.map((provider) => `--provider ${provider}`),
-      ...(skill ? ["--skill"] : []),
-      ...(input.target === null
-        ? []
-        : [`--target ${shellArgument(input.target)}`]),
-    ].join(" "),
+    argv,
+    command: argv
+      .map((argument) => shellArgument(argument, input.platform))
+      .join(" "),
   };
 };
 
-/** Quote a caller path for POSIX shells only when it needs it. */
-const shellArgument = (value: string): string =>
-  /^[\w./:@%+=,-]+$/u.test(value)
-    ? value
+/**
+ * Quote one argument only when it needs it: single quotes with doubled quotes
+ * for PowerShell, REA's documented Windows shell, or POSIX escaping elsewhere.
+ */
+const shellArgument = (value: string, platform: NodeJS.Platform): string => {
+  if (/^[\w./:@%+=,-]+$/u.test(value)) return value;
+  return platform === "win32"
+    ? `'${value.replaceAll("'", "''")}'`
     : `'${value.replaceAll("'", "'\\''")}'`;
+};
 
 /** Normalize a caller-selected doctor readiness boundary. */
 export const normalizeDoctorScope = (

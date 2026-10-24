@@ -300,7 +300,12 @@ const inspectDoctor = async (
   const scoped = scopeDoctorChecks({ ...scopeInput, scope });
   const configured =
     scope.mode === "audit-wide"
-      ? await inspectConfiguredScope(host, scopeInput, scope.target)
+      ? await inspectConfiguredScope(
+          host,
+          scopeInput,
+          identity.skillIdentity,
+          scope.target,
+        )
       : undefined;
   return {
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
@@ -326,26 +331,45 @@ const inspectConfiguredScope = async (
   host: DoctorHost,
   audit: Omit<
     Parameters<typeof configuredDoctorScope>[0],
-    "selection" | "target"
+    "selection" | "target" | "skillInstalled" | "platform"
   >,
+  auditSkill: InstalledSkillIdentity | undefined,
   target: string | null,
 ): Promise<DoctorConfiguredScopeReport | undefined> => {
   const selection = selectConfiguredDoctorScope(audit);
   if (selection === undefined) return undefined;
+  const common = { selection, target, platform: host.platform };
   if (selection.clients.length === 0)
-    return configuredDoctorScope({ ...audit, selection, target });
+    return configuredDoctorScope({
+      ...audit,
+      ...common,
+      skillInstalled: skillCopiesPresent(auditSkill),
+    });
   const skill = await inspectSkillIdentity(host, selection.clients);
   return configuredDoctorScope({
     ...audit,
+    ...common,
     checks: [
       ...audit.checks.filter(({ name }) => name !== "skill:identity"),
       ...(skill.check === undefined ? [] : [skill.check]),
     ],
     skillState: skill.state,
-    selection,
-    target,
+    skillInstalled: skillCopiesPresent(skill.identity),
   });
 };
+
+/**
+ * Whether any read skill copy exists. A partial install reports aggregate
+ * state "missing" through its missing-copy issues, yet still has a present
+ * copy (a manifest version or a non-missing issue), which must stay selected.
+ */
+const skillCopiesPresent = (
+  identity: InstalledSkillIdentity | undefined,
+): boolean =>
+  identity !== undefined &&
+  (identity.version !== null ||
+    identity.issues === undefined ||
+    identity.issues.some(({ kind }) => kind !== "missing"));
 
 /** Read one set of skill copies; undefined clients means every installed copy. */
 const inspectSkillIdentity = async (
@@ -414,6 +438,10 @@ const doctorReportWithCleanup = (
     ...report,
     healthy: false,
     environment_healthy: false,
+    // The suggested scope would also report this finalization failure.
+    ...(report.configured_scope === undefined
+      ? {}
+      : { configured_scope: { ...report.configured_scope, healthy: false } }),
     checks: [...report.checks, check],
     scope_checks: [...report.scope_checks, check],
   };
@@ -423,6 +451,7 @@ const collectDoctorIdentity = async (
   host: DoctorHost,
   scope: DoctorScopeReport,
 ): Promise<{
+  readonly skillIdentity: InstalledSkillIdentity | undefined;
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
@@ -437,6 +466,7 @@ const collectDoctorIdentity = async (
     check: skillCheck,
   } = await inspectSkillIdentity(host, skillClientIds);
   return {
+    skillIdentity: installedSkillIdentity,
     checks: [
       ...(skillCheck === undefined ? [] : [skillCheck]),
       ...registrations

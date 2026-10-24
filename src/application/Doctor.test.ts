@@ -10,6 +10,7 @@ import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   runDoctor,
+  runDoctorOwned,
   systemDoctorHost,
   type DoctorHost,
   type DoctorProviderInspection,
@@ -1360,6 +1361,17 @@ describe("doctor configured scope", () => {
       providers: ["ghidra", "hopper"],
       skill: true,
       healthy: true,
+      argv: [
+        "rea",
+        "doctor",
+        "--client",
+        "cursor",
+        "--provider",
+        "ghidra",
+        "--provider",
+        "hopper",
+        "--skill",
+      ],
       command:
         "rea doctor --client cursor --provider ghidra --provider hopper --skill",
     });
@@ -1449,6 +1461,73 @@ describe("doctor configured scope", () => {
       skill: true,
       healthy: false,
     });
+  });
+});
+
+describe("doctor configured scope edge cases", () => {
+  it("keeps a partially installed skill in the configured workflow", async () => {
+    const audit = await runDoctor(undefined, {
+      ...workstation(true, [
+        registration("cursor", "aligned"),
+        registration("codex", "aligned"),
+      ]),
+      installedSkillIdentity: (clients) =>
+        Promise.resolve(
+          clients === undefined
+            ? undefined
+            : {
+                version: PRODUCT_IDENTITY.skillVersion,
+                toolCount: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
+                canonical: false,
+                issues: [
+                  {
+                    path: "/home/user/.codex/skills/reverse-engineer-anything",
+                    kind: "missing",
+                    client: "codex",
+                    detail: "Selected skill copy is missing.",
+                  },
+                ],
+              },
+        ),
+    });
+    expect(audit.configured_scope).toMatchObject({
+      clients: ["codex", "cursor"],
+      skill: true,
+      healthy: false,
+    });
+    expect(audit.configured_scope?.argv).toContain("--skill");
+  });
+
+  it("marks the configured workflow unhealthy after a cleanup failure", async () => {
+    const failingClose = (): DoctorHost => ({
+      ...workstation(true),
+      close: () => Promise.resolve("doctor cleanup remains incomplete"),
+    });
+    const audit = await runDoctorOwned(undefined, failingClose());
+    expect(audit.healthy).toBe(false);
+    expect(audit.configured_scope).toMatchObject({ healthy: false });
+    const suggested = await runDoctorOwned(undefined, failingClose(), {
+      clients: ["cursor"],
+      providers: ["ghidra", "hopper"],
+      skill: true,
+    });
+    expect(suggested.healthy).toBe(false);
+  });
+
+  it("renders the suggested command for PowerShell on Windows and keeps argv exact", async () => {
+    const target = "C:\\Program Files\\My App's.exe";
+    const audit = await runDoctor(target, {
+      ...workstation(true),
+      platform: "win32",
+    });
+    expect(audit.configured_scope?.argv.slice(-2)).toEqual([
+      "--target",
+      target,
+    ]);
+    expect(audit.configured_scope?.argv.slice(0, 2)).toEqual(["rea", "doctor"]);
+    expect(audit.configured_scope?.command).toMatch(
+      /--target 'C:\\Program Files\\My App''s\.exe'$/u,
+    );
   });
 
   it("omits the configured workflow when nothing is set up", async () => {

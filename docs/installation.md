@@ -387,10 +387,13 @@ Without a scope option, `healthy` also counts clients and providers you never
 set up, so a working setup can report `healthy: false`. The audit-wide report
 then includes `configured_scope`: the registered clients (any registration
 state except missing or manual), the configured or discovered providers, and
-the skill when installed. Its `healthy` applies the same scoped rules to just
-those components, reading the skill copies of those clients rather than every
-installed copy, and its `command` is the `rea doctor` invocation that reports
-exactly that scope. It is omitted when no client or provider is set up.
+the skill when any selected copy is installed, even partially. Its `healthy`
+applies the same scoped rules to just those components, reading the skill
+copies of those clients rather than every installed copy, and becomes false
+with the audit when doctor's own cleanup fails. `argv` holds the exact
+arguments of the `rea doctor` invocation that reports that scope; `command` is
+the same invocation quoted for PowerShell on Windows and for POSIX shells
+elsewhere. It is omitted when no client or provider is set up.
 
 An invalid `REA_LOG_LEVEL` fails every scope, including one client or the
 installed skill, because the executable rejects it before any command. A
