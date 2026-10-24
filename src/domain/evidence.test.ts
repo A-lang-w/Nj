@@ -20,11 +20,10 @@ import {
   jsonValueSchema,
   type JsonValue,
 } from "./jsonValue.js";
+import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import {
-  freezeJsonSnapshot,
-  isImmutableJsonSnapshot,
-} from "./immutableJson.js";
+import { freezeJsonSnapshot } from "./immutableJson.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -191,36 +190,44 @@ it("retains verbatim caller input without changing semantic identity or copying 
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
 });
 
-it.each(["caller", "subject", "combined"] as const)(
-  "retains JSON snapshot proof through %s Evidence rebinding",
-  (kind) => {
-    const original = immutableEvidence(
-      createEvidence(TARGET, PROVIDER, {
+it.each(["caller selection", "subject display"])(
+  "preserves sealed JSON ownership when rebinding %s metadata",
+  (metadata) => {
+    const original = createEvidence(
+      TARGET,
+      PROVIDER,
+      {
         operation: "inspect",
-        parameters: { address: "0x1000" },
-        result: {
-          rows: Array.from({ length: 512 }, (_, index) => ({ index })),
-        },
-        rawResult: { observed: true },
-      }),
+        parameters: {},
+        result: { rows: [{ value: "observed" }] },
+        rawResult: { source: ["provider"] },
+      },
+      { immutable: true },
     );
-    const selected =
-      kind === "subject"
-        ? original
-        : withEvidenceCallerInputPath(original, "./selected");
     const rebound =
-      kind === "caller"
-        ? selected
-        : rebindEvidenceToTargetPath(selected, {
+      metadata === "caller selection"
+        ? withEvidenceCallerInputPath(original, "./selected/../alias")
+        : rebindEvidenceToTargetPath(original, {
             ...TARGET,
-            path: "/another/fixture",
+            path: "/tmp/selected-alias",
           });
-    expect(isImmutableJsonSnapshot(rebound)).toBe(true);
-    expect(jsonValueSchema.parse(rebound)).toBe(rebound);
-    expect(parseEvidence(rebound)).toBe(rebound);
+    const projected = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect",
+        "memory",
+        "low heap",
+        null,
+        {
+          partialObservation: rebound,
+        },
+      ),
+    );
+    expect(rebound).not.toBe(original);
+    expect(rebound.evidence_id).toBe(original.evidence_id);
     expect(rebound.normalized_result).toBe(original.normalized_result);
     expect(rebound.raw_result).toBe(original.raw_result);
-    expect(rebound.evidence_id).toBe(original.evidence_id);
+    expect(projected.details?.partial_observation).toBe(rebound);
+    expect(jsonValueSchema.parse(rebound)).toBe(rebound);
     expect(original.caller_input_path).toBeUndefined();
     expect(original.subject?.local_path).toBe(TARGET.path);
   },
