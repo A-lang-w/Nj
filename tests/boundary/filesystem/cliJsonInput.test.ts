@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { chmod, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -344,5 +345,94 @@ describe("CLI JSON file cancellation", () => {
         new AbortController().signal,
       ),
     ).toEqual({ ok: true, value: ["index.js", "main.js", "package.json"] });
+  });
+});
+
+describe("CLI JSON standard input", () => {
+  it("reads valid JSON from stdin when input is '-'", async () => {
+    const stream = Readable.from(['{"seed":123,"label":"piped"}']);
+    const result = await parseCliJsonInput("-", "test-input", undefined, {
+      stdin: stream,
+    });
+    expect(result).toEqual({
+      ok: true,
+      value: { seed: 123, label: "piped" },
+    });
+  });
+
+  it("rejects empty stdin with invalid-json", async () => {
+    const stream = Readable.from([]);
+    const result = await parseCliJsonInput("-", "test-input", undefined, {
+      stdin: stream,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_request",
+        input_path: "-",
+        input_reason: "invalid-json",
+        details: {
+          issues: [{ path: [], reason: "invalid_format" }],
+        },
+      },
+    });
+  });
+
+  it("rejects malformed JSON from stdin without printing full payload", async () => {
+    const stream = Readable.from(["{ this is not valid json"]);
+    const result = await parseCliJsonInput("-", "test-input", undefined, {
+      stdin: stream,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_request",
+        input_path: "-",
+        input_reason: "invalid-json",
+        details: {
+          issues: [{ path: [], reason: "invalid_format" }],
+        },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("this is not valid json");
+  });
+
+  it("rejects oversized stdin with too-large", async () => {
+    const stream = Readable.from(['{"a":"' + "x".repeat(100) + '"}']);
+    const result = await parseCliJsonInput("-", "test-input", undefined, {
+      stdin: stream,
+      maxStdinBytes: 50,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "resource_constraint",
+        input_path: "-",
+        input_reason: "too-large",
+        details: {
+          resource: "memory",
+        },
+      },
+    });
+  });
+
+  it("preserves caller cancellation during stdin read", async () => {
+    const controller = new AbortController();
+    controller.abort("aborted");
+    const stream = Readable.from(['{"seed":1}']);
+    const result = await parseCliJsonInput(
+      "-",
+      "test-input",
+      controller.signal,
+      {
+        stdin: stream,
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "cancelled",
+      },
+    });
   });
 });

@@ -11,17 +11,26 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
 } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { safeParseJson } from "./domain/safeJson.js";
+import {
+  JSON_INPUT_RESOURCE_REMEDIATION,
+  parseUtf8Json,
+} from "./application/Utf8JsonInput.js";
 
-/** Parse inline JSON or one local JSON file, honoring optional caller cancellation. */
+/** Parse inline JSON, standard input ('-'), or one local JSON file, honoring optional caller cancellation. */
 export const parseCliJsonInput = async (
   value: string,
   operation: string,
   signal?: AbortSignal,
-  options?: { readonly snapshot?: boolean },
+  options?: {
+    readonly snapshot?: boolean;
+    readonly stdin?: NodeJS.ReadableStream;
+    readonly maxStdinBytes?: number;
+  },
 ): Promise<
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
@@ -38,6 +47,9 @@ export const parseCliJsonInput = async (
     },
   });
   if (signal?.aborted) return cancelled(signal.reason);
+  if (value === "-") {
+    return readCliJsonStdin(operation, signal, options);
+  }
   try {
     const inline = safeParseJson(value);
     if (inline.ok) {
@@ -104,6 +116,92 @@ export const parseCliJsonInput = async (
       throw cause;
     return jsonFileError(value, operation, "read-failed", cause);
   }
+};
+
+const DEFAULT_MAX_STDIN_BYTES = 8 * 1024 * 1024;
+
+const readCliJsonStdin = async (
+  operation: string,
+  signal?: AbortSignal,
+  options?: {
+    readonly snapshot?: boolean;
+    readonly stdin?: NodeJS.ReadableStream;
+    readonly maxStdinBytes?: number;
+  },
+): Promise<
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly error: JsonValue }
+> => {
+  const cancelled = (cause: unknown) => ({
+    ok: false as const,
+    error: {
+      error: "Application workflow failed",
+      ...projectAnalysisError(
+        new AnalysisCancelledError(operation, {
+          cause,
+        }),
+      ),
+    },
+  });
+  if (signal?.aborted) return cancelled(signal.reason);
+  const stream = options?.stdin ?? process.stdin;
+  const maxBytes = options?.maxStdinBytes ?? DEFAULT_MAX_STDIN_BYTES;
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    for await (const chunk of stream) {
+      if (signal?.aborted) return cancelled(signal.reason);
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buf.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new AnalysisResourceConstraintError(
+          operation,
+          "memory",
+          "JSON input exceeds the maximum allowed stdin size",
+          { input_path: "-", input_bytes: totalBytes },
+          { remediationAction: JSON_INPUT_RESOURCE_REMEDIATION },
+        );
+      }
+      chunks.push(buf);
+    }
+  } catch (cause: unknown) {
+    if (signal?.aborted) return cancelled(signal.reason);
+    if (cause instanceof AnalysisResourceConstraintError) {
+      return {
+        ok: false,
+        error: {
+          error: "Application workflow failed",
+          ...projectAnalysisError(cause),
+          input_path: "-",
+          input_reason: "too-large",
+        },
+      };
+    }
+    const systemCode = accessDeniedSystemCode(cause);
+    if (systemCode !== undefined)
+      return jsonAccessDeniedError("-", operation, systemCode, cause);
+    return jsonFileError("-", operation, "read-failed", cause);
+  }
+  if (signal?.aborted) return cancelled(signal.reason);
+  const bytes = Buffer.concat(chunks, totalBytes);
+  if (bytes.byteLength === 0) {
+    return jsonFileError("-", operation, "invalid-json");
+  }
+  const parsed = parseUtf8Json(bytes, operation, "-");
+  if (!parsed.ok) {
+    return jsonFileError("-", operation, "invalid-json", parsed.cause);
+  }
+  if (!options?.snapshot) return { ok: true, value: parsed.value };
+  const sealed = await sealOwnedJsonInput(parsed.value, operation, signal);
+  return sealed.ok
+    ? { ok: true, value: sealed.value }
+    : {
+        ok: false,
+        error: {
+          error: "Application workflow failed",
+          ...projectAnalysisError(sealed.error),
+        },
+      };
 };
 
 const isJsonInputCancellation = (
