@@ -1,10 +1,22 @@
-import { expect, it } from "vitest";
+import { createRequire } from "node:module";
+
+import { expect, it, vi } from "vitest";
 
 import {
   nativePtyUsable,
   processTerminalBackend,
   spawnProcessTerminal,
 } from "./ProcessTerminalBackend.js";
+
+// The native prebuild is the one thing a musl runtime cannot import: through a
+// gcompat shim the module resolves, and then `forkpty` faults the process that
+// loaded it. Importing it there is the bug this suite guards, so the import
+// itself fails rather than only the call made after it.
+vi.mock("@lydell/node-pty", () => {
+  throw new Error(
+    "@lydell/node-pty was imported on a runtime that cannot run it",
+  );
+});
 
 /** Run one shell script through the pipe backend and collect what it produced. */
 const run = async (
@@ -73,6 +85,52 @@ it.skipIf(process.platform !== "linux")(
       });
       expect(nativePtyUsable()).toBe(false);
       expect(processTerminalBackend()).toBe("pipe");
+    } finally {
+      if (descriptor !== undefined)
+        Object.defineProperty(process, "report", descriptor);
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "runs on pipes where the runtime reports no glibc, without importing node-pty",
+  async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "report");
+    const loadedBefore = new Set(
+      Object.keys(createRequire(import.meta.url).cache),
+    );
+    try {
+      // The same signal the musl runtime gives: no glibcVersionRuntime. If the
+      // default backend still chose node-pty, its import would throw above.
+      Object.defineProperty(process, "report", {
+        value: { getReport: () => ({ header: {} }) },
+        configurable: true,
+      });
+      expect(processTerminalBackend()).toBe("pipe");
+      const { terminal, backend } = await spawnProcessTerminal("/bin/sh", [
+        "-c",
+        "printf piped; exit 0",
+      ], {
+        cwd: process.cwd(),
+        env: process.env,
+        cols: 80,
+        rows: 24,
+        name: "xterm-256color",
+      });
+      const output: string[] = [];
+      terminal.onData((data) => output.push(data));
+      const exited = new Promise<{
+        readonly exitCode: number;
+        readonly signal?: number;
+      }>((resolve) => terminal.onExit(resolve));
+      const exit = await exited;
+      expect(backend).toBe("pipe");
+      expect(output.join("")).toContain("piped");
+      expect(exit.exitCode).toBe(0);
+      const newlyLoaded = Object.keys(createRequire(import.meta.url).cache).filter(
+        (path) => path.includes("node-pty") && !loadedBefore.has(path),
+      );
+      expect(newlyLoaded).toEqual([]);
     } finally {
       if (descriptor !== undefined)
         Object.defineProperty(process, "report", descriptor);
