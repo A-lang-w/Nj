@@ -72,6 +72,7 @@ import {
   noteFixedWidths,
 } from "./environmentStateWriteClockFormats.js";
 import {
+  containsDelimited,
   generatedIntegerDigits,
   isUuid,
   nextSequence,
@@ -149,6 +150,38 @@ const linkedGenerated = (
   createdToken(field, entity, type) === "linked" ||
   createdInteger(field, entity, type) === "linked";
 
+/** Whether a field's rule rebuilds it from `source`, as a template or a composition does. */
+const rebuiltFrom = (rule: FieldRule | undefined, source: string): boolean =>
+  rule?.rule === "template"
+    ? rule.from === source
+    : rule?.rule === "composed" &&
+      rule.parts.some((part) => "from" in part && part.from === source);
+
+/** Whether a unique integer's digits show in another string whose rule does not rebuild them from it, which seeding would leave behind. */
+const strandedInteger = (
+  rules: readonly FieldRule[],
+  entity: JsonObject,
+): boolean =>
+  rules.some((rule) => {
+    const digits =
+      rule.rule === "unique"
+        ? generatedIntegerDigits(entity[rule.field])
+        : undefined;
+    return (
+      digits !== undefined &&
+      Object.entries(entity).some(
+        ([other, kept]) =>
+          other !== rule.field &&
+          typeof kept === "string" &&
+          containsDelimited(kept, digits) &&
+          !rebuiltFrom(
+            rules.find((candidate) => candidate.field === other),
+            rule.field,
+          ),
+      )
+    );
+  });
+
 /** Build a create plan from its exemplar's observation. */
 const buildCreate = (
   context: EffectContext,
@@ -180,7 +213,8 @@ const buildCreate = (
       (field) =>
         !explainedFields.has(field) &&
         linkedGenerated(field, evidence.observed.object, held),
-    )
+    ) ||
+    strandedInteger(explained.rules, evidence.observed.object)
   ) {
     refuse(draft, step, "unexplained-change");
     return false;
@@ -517,7 +551,7 @@ export const applyCreate = (
   const later = built(draft);
   if (
     later &&
-    draft.plan.rules.some(
+    (draft.plan.rules.some(
       (rule) =>
         rule.rule === "unique" &&
         linkedGenerated(
@@ -525,7 +559,8 @@ export const applyCreate = (
           observed.object,
           fieldsOf(context.state.ofType(type)),
         ),
-    )
+    ) ||
+      strandedInteger(draft.plan.rules, observed.object))
   ) {
     refuse(draft, step, "unexplained-change");
     return recorded();
