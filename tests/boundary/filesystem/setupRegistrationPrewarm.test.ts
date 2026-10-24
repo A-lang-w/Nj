@@ -29,21 +29,37 @@ const packageRunnerEnvironment = {
   HOPPER_LAUNCHER_PATH: "/fixture/Hopper",
 } as const;
 
+const registrationHost = async (
+  prefix: string,
+  overrides: Parameters<typeof createDoctorHostFixture>[0] = {},
+) => {
+  const root = await createTestTempDirectory(prefix);
+  roots.push(root);
+  const client = supportedClients(root, "darwin", {}).find(
+    (candidate) => candidate.name === "cursor",
+  );
+  if (client === undefined) throw new Error("Cursor registration is missing");
+  await mkdir(dirname(client.configPath), { recursive: true });
+  const doctor = createDoctorHostFixture({
+    clientRegistrations: () =>
+      readClientRegistrationStatuses(root, undefined, {
+        platform: "darwin",
+        environment: {},
+      }),
+    providerInspections: () => Promise.resolve([]),
+    ...overrides,
+  });
+  return {
+    ...systemSetupHost(doctor, packageRunnerEnvironment),
+    nodeVersion: "24.22.1",
+    detectedClients: () => Promise.resolve([client]),
+    supportedClients: () => Promise.resolve([client]),
+  };
+};
+
 describe("setup registration package-runner prewarm", () => {
   it("materializes the pinned runner cache once after configuring clients", async () => {
-    const root = await createTestTempDirectory("rea-setup-prewarm-");
-    roots.push(root);
-    const client = supportedClients(root, "darwin", {}).find(
-      (candidate) => candidate.name === "cursor",
-    );
-    if (client === undefined) throw new Error("Cursor registration is missing");
-    await mkdir(dirname(client.configPath), { recursive: true });
-    const doctor = createDoctorHostFixture({
-      clientRegistrations: () =>
-        readClientRegistrationStatuses(root, undefined, {
-          platform: "darwin",
-          environment: {},
-        }),
+    const baseHost = await registrationHost("rea-setup-prewarm-", {
       providerInspections: () =>
         Promise.resolve([
           {
@@ -68,12 +84,7 @@ describe("setup registration package-runner prewarm", () => {
     let prewarmCalls = 0;
     const prewarmResult: SetupRegistrationPrewarm = { status: "warmed" };
     const host = {
-      ...systemSetupHost(doctor, packageRunnerEnvironment),
-      // The host reports the developer machine's Node; pin a supported one
-      // so readiness does not depend on the local runtime.
-      nodeVersion: "24.22.1",
-      detectedClients: () => Promise.resolve([client]),
-      supportedClients: () => Promise.resolve([client]),
+      ...baseHost,
       prewarmRegistrationRunner: () => {
         prewarmCalls += 1;
         return Promise.resolve(prewarmResult);
@@ -96,29 +107,10 @@ describe("setup registration package-runner prewarm", () => {
   });
 
   it("keeps setup ready when the prewarm fails, with a warning progress event", async () => {
-    const root = await createTestTempDirectory("rea-setup-prewarm-fail-");
-    roots.push(root);
-    const client = supportedClients(root, "darwin", {}).find(
-      (candidate) => candidate.name === "cursor",
-    );
-    if (client === undefined) throw new Error("Cursor registration is missing");
-    await mkdir(dirname(client.configPath), { recursive: true });
-    const doctor = createDoctorHostFixture({
-      clientRegistrations: () =>
-        readClientRegistrationStatuses(root, undefined, {
-          platform: "darwin",
-          environment: {},
-        }),
-      providerInspections: () => Promise.resolve([]),
-    });
+    const baseHost = await registrationHost("rea-setup-prewarm-fail-");
     const progress: { state: string; detail?: string }[] = [];
     const host = {
-      ...systemSetupHost(doctor, packageRunnerEnvironment),
-      // The host reports the developer machine's Node; pin a supported one
-      // so readiness does not depend on the local runtime.
-      nodeVersion: "24.22.1",
-      detectedClients: () => Promise.resolve([client]),
-      supportedClients: () => Promise.resolve([client]),
+      ...baseHost,
       prewarmRegistrationRunner: () =>
         Promise.resolve({
           status: "failed" as const,
@@ -149,32 +141,11 @@ describe("setup registration package-runner prewarm", () => {
   });
 
   it("omits the prewarm summary when the host offers no capability", async () => {
-    const root = await createTestTempDirectory("rea-setup-prewarm-absent-");
-    roots.push(root);
-    const client = supportedClients(root, "darwin", {}).find(
-      (candidate) => candidate.name === "cursor",
-    );
-    if (client === undefined) throw new Error("Cursor registration is missing");
-    await mkdir(dirname(client.configPath), { recursive: true });
-    const doctor = createDoctorHostFixture({
-      clientRegistrations: () =>
-        readClientRegistrationStatuses(root, undefined, {
-          platform: "darwin",
-          environment: {},
-        }),
-      providerInspections: () => Promise.resolve([]),
-    });
+    const baseHost = await registrationHost("rea-setup-prewarm-absent-");
     const { prewarmRegistrationRunner: absent, ...hostWithoutPrewarm } =
-      systemSetupHost(doctor, packageRunnerEnvironment);
+      baseHost;
     void absent;
-    const host = {
-      ...hostWithoutPrewarm,
-      // The host reports the developer machine's Node; pin a supported one
-      // so readiness does not depend on the local runtime.
-      nodeVersion: "24.22.1",
-      detectedClients: () => Promise.resolve([client]),
-      supportedClients: () => Promise.resolve([client]),
-    };
+    const host = hostWithoutPrewarm;
     const result = await runSetup(
       {
         ...options(true),
@@ -190,27 +161,10 @@ describe("setup registration package-runner prewarm", () => {
   });
 
   it("skips the prewarm when no client registration was applied", async () => {
-    const root = await createTestTempDirectory("rea-setup-prewarm-skip-");
-    roots.push(root);
-    const client = supportedClients(root, "darwin", {}).find(
-      (candidate) => candidate.name === "cursor",
-    );
-    if (client === undefined) throw new Error("Cursor registration is missing");
-    await mkdir(dirname(client.configPath), { recursive: true });
-    const doctor = createDoctorHostFixture({
-      clientRegistrations: () =>
-        readClientRegistrationStatuses(root, undefined, {
-          platform: "darwin",
-          environment: {},
-        }),
-      providerInspections: () => Promise.resolve([]),
-    });
+    const baseHost = await registrationHost("rea-setup-prewarm-skip-");
     let prewarmCalls = 0;
     const host = {
-      ...systemSetupHost(doctor, packageRunnerEnvironment),
-      nodeVersion: "24.22.1",
-      detectedClients: () => Promise.resolve([client]),
-      supportedClients: () => Promise.resolve([client]),
+      ...baseHost,
       prewarmRegistrationRunner: () => {
         prewarmCalls += 1;
         return Promise.resolve({ status: "warmed" as const });
