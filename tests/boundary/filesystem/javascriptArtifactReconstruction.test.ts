@@ -137,11 +137,25 @@ it("keeps undecodable HTML reference discovery as an explicit unknown", async ()
     ),
   ]);
 
+  const htmlGaps = (
+    result: Awaited<ReturnType<typeof reconstructJavaScriptArtifact>>,
+  ) =>
+    result.graph.nodes
+      .filter(({ kind }) => kind === "unknown")
+      .flatMap(({ observations }) => observations)
+      .filter(({ properties }) => properties.path === "index.html");
+
+  const excluded = htmlGaps(
+    await reconstructJavaScriptArtifact({
+      input_path: root,
+      source_paths: ["main.js"],
+    }),
+  );
+  expect(excluded).toHaveLength(1);
+  expect(excluded[0]?.properties.operation).toBe("select-javascript-sources");
+
   const result = await reconstructJavaScriptArtifact({ input_path: root });
-  const gaps = result.graph.nodes
-    .filter(({ kind }) => kind === "unknown")
-    .flatMap(({ observations }) => observations)
-    .filter(({ properties }) => properties.path === "index.html");
+  const gaps = htmlGaps(result);
 
   expect(result.graph.coverage.status).toBe("partial");
   expect(gaps).toHaveLength(1);
