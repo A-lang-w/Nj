@@ -90,7 +90,11 @@ name it `.har`.
   tarballs a build refuses, including one whose contents cannot be read.
 
 The directory must be absent or empty, as for the export; the build never
-replaces a folder. A refusal before the write leaves nothing behind. Each
+replaces a folder. A refusal before the write leaves nothing behind. A capture
+Evidence file, an inspected HAR's Evidence and the projected manifest must each
+fit the live heap headroom for parsing and sealing, checked before the file is
+read or the Evidence serialized; one that does not is refused as
+`resource_constraint`. Each
 refusal names its stage: `environment-build` for the build's own checks,
 `inspect_web_network_capture` and `inspect_analysis_view` for inspection and
 projection, `environment-export` for the bundle. SIGINT cancels the build
