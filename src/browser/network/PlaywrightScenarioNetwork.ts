@@ -26,7 +26,19 @@ export interface ScenarioNetworkRequest extends NetworkHeadersSource {
   postDataBuffer(): Buffer | null;
   redirectedFrom(): ScenarioNetworkRequest | null;
   failure(): { errorText: string } | null;
+  /** Browser resource timing; `responseEnd` is milliseconds after the start, or -1 when unknown. */
+  timing?(): { readonly responseEnd: number };
 }
+
+/** The browser-reported time to the end of the response, when it reported one. */
+const elapsedMs = (
+  request: ScenarioNetworkRequest,
+): { readonly elapsed_ms?: number } => {
+  const end = request.timing?.().responseEnd;
+  return end !== undefined && Number.isFinite(end) && end >= 0
+    ? { elapsed_ms: end }
+    : {};
+};
 
 /** A response's body becomes eligible for reading only after requestfinished. */
 export interface ScenarioNetworkResponse extends NetworkHeadersSource {
@@ -102,6 +114,8 @@ interface NetworkCaptureOptions {
   readonly signal?: AbortSignal;
   /** Production uses 5s; a fixture can supply its own bounded-read clock. */
   readonly readTimeoutMs?: number;
+  /** Wall clock stamping when a request was observed; production uses Date.now. */
+  readonly now?: () => number;
 }
 
 /** Captures correlated network phases and drains selected content before browser cleanup. */
@@ -155,13 +169,20 @@ export class PlaywrightScenarioNetwork {
       return;
     }
     if (transaction.requestObserved) return;
-    if (!this.admitMetadata(transaction, "request", request)) return;
+    const observedAt = new Date((this.options.now ?? Date.now)()).toISOString();
+    if (
+      !this.admitMetadata(transaction, "request", request, undefined, [
+        observedAt,
+      ])
+    )
+      return;
     transaction.requestObserved = true;
     const admission = this.options.emit({
       ...this.metadata(request, transaction),
       kind: "request",
       status: null,
       failure: null,
+      observed_at: observedAt,
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(transaction.id, "request", admission.reason);
@@ -259,6 +280,7 @@ export class PlaywrightScenarioNetwork {
       kind: "request-finished",
       status: null,
       failure: null,
+      ...elapsedMs(request),
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(
@@ -294,6 +316,7 @@ export class PlaywrightScenarioNetwork {
       kind: "request-failed",
       status: null,
       failure: message,
+      ...elapsedMs(request),
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(

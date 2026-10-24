@@ -944,3 +944,42 @@ it("does not read content when phase metadata was omitted", async () => {
   );
   expect(collector.limitations().join(" ")).toContain("incomplete");
 });
+
+it("stamps when each request was observed and how long the browser timed it", async () => {
+  vi.useFakeTimers({ now: Date.parse("2026-10-24T05:00:00.250Z") });
+  const { collector, events } = harness({
+    request_body: false,
+    response_body: false,
+    header_values: false,
+  });
+  class TimedRequest extends RequestFixture {
+    constructor(
+      marker: string,
+      readonly responseEnd: number,
+    ) {
+      super(marker);
+    }
+    timing() {
+      return { responseEnd: this.responseEnd };
+    }
+  }
+  const finished = new TimedRequest("timed", 12.5);
+  const failed = new TimedRequest("untimed", -1);
+  collector.request(finished);
+  collector.request(failed);
+  collector.finished(finished);
+  collector.failed(failed);
+  await collector.finish();
+  expect(
+    events.filter(({ kind }) => kind === "request").map((event) => event),
+  ).toEqual([
+    expect.objectContaining({ observed_at: "2026-10-24T05:00:00.250Z" }),
+    expect.objectContaining({ observed_at: "2026-10-24T05:00:00.250Z" }),
+  ]);
+  expect(events).toContainEqual(
+    expect.objectContaining({ kind: "request-finished", elapsed_ms: 12.5 }),
+  );
+  const failure = events.find(({ kind }) => kind === "request-failed");
+  expect(failure).toBeDefined();
+  expect(failure).not.toHaveProperty("elapsed_ms");
+});

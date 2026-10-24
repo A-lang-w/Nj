@@ -65,7 +65,7 @@ export const scenarioNetworkTransactions = (
         redirected_from_transaction_state: _state,
         ...network
       } = event;
-      evidence = network;
+      evidence = withoutRequestTiming(network);
       predecessor =
         request === undefined ? parent : request.redirected_from_transaction_id;
       predecessorState =
@@ -156,6 +156,16 @@ export const scenarioNetworkCoverageReason = (
 };
 
 /** Hash normalized own evidence and its complete parent fingerprint in linear graph space. */
+/** Request times differ on every run, so comparisons leave them out. */
+const withoutRequestTiming = (event: object): object => {
+  const {
+    observed_at: _observed,
+    elapsed_ms: _elapsed,
+    ...rest
+  } = event as { observed_at?: unknown; elapsed_ms?: unknown };
+  return rest;
+};
+
 export const fingerprintScenarioNetworkTransactions = (
   nodes: readonly ScenarioNetworkTransaction[],
   rules: readonly BrowserScenarioNormalizationRule[] = [],

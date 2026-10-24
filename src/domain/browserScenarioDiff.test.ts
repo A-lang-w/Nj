@@ -582,6 +582,42 @@ describe("browser scenario network comparison stability", () => {
       ),
     ).toBe("changed");
   });
+
+  it("ignores when requests were observed and how long they took", () => {
+    const timed = (
+      capture: BrowserScenarioCapture,
+      offset: number,
+    ): BrowserScenarioCapture => ({
+      ...capture,
+      events: {
+        ...capture.events,
+        items: capture.events.items.map((event) =>
+          event.kind === "request"
+            ? {
+                ...event,
+                observed_at: new Date(
+                  Date.parse("2026-10-24T05:00:00.000Z") + offset,
+                ).toISOString(),
+              }
+            : event.kind === "request-finished" ||
+                event.kind === "request-failed"
+              ? { ...event, elapsed_ms: 3 + offset }
+              : event,
+        ),
+      },
+    });
+    const statuses = { a: 200, b: 404 };
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: timed(concurrentCapture(["a", "b"], statuses), 0),
+        after_scenario: timed(concurrentCapture(["a", "b"], statuses), 7_000),
+      }),
+    );
+    expect(compared.overall_status).toBe("unchanged");
+    expect(compared.normalization.built_in_rules).toContain(
+      "ignore_network_request_timing",
+    );
+  });
 });
 
 describe("scenario comparison recovery guidance", () => {
