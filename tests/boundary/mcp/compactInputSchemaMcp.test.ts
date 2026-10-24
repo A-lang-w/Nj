@@ -27,8 +27,7 @@ import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import {
   arrayItemSchemaError,
-  booleanLiteralSchemaError,
-  emptyStringLiteralSchemaError,
+  unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 
 interface AdvertisedTool {
@@ -285,10 +284,7 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
         `${profile} profile: ${tool.name}`,
       ).toBeUndefined();
       expect(
-        booleanLiteralSchemaError(tool.inputSchema, tool.name),
-      ).toBeUndefined();
-      expect(
-        emptyStringLiteralSchemaError(tool.inputSchema, tool.name),
+        unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
       ).toBeUndefined();
       expect(
         ajv.validateSchema(tool.inputSchema),

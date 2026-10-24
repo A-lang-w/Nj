@@ -38,7 +38,10 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { z } from "zod";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
-import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  parseEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
 
 cliTest(
@@ -264,11 +267,72 @@ cliTest(
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("main.js", new TextReader("console.log('portable');\n"));
     await writeFile(archive, await writer.close());
+    const bundlePath = join(root, "inspection-bundle.json");
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", archive, "--json"],
+      arguments: [
+        "inspect-artifact",
+        archive,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        bundlePath,
+        "--json",
+      ],
     });
     expect(inspected.exitCode).toBe(0);
-    const parent = parseEvidence(inspected.json);
+    const savedBundle = parseEvidenceBundle(
+      JSON.parse(await readFile(bundlePath, "utf8")),
+    );
+    const parent = savedBundle.records.find(
+      (record) => record.operation === "inspect_artifact",
+    )!;
+    const atomicId = artifactInspectionResultSchema.parse(
+      parent.normalized_result,
+    ).substeps[0]!.evidence_id;
+    expect(savedBundle.records.map((record) => record.evidence_id)).toContain(
+      atomicId,
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    expect(
+      (await call("import_evidence_bundle", { path: bundlePath })).isError,
+    ).not.toBe(true);
+    const atomicView = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: atomicId },
+      view: {
+        kind: "inventory",
+        collection: "occurrences",
+        logical_paths: ["main.js"],
+      },
+    });
+    expect(atomicView.isError).not.toBe(true);
+    expect(
+      parseEvidence(atomicView.structuredContent).normalized_result,
+    ).toMatchObject({
+      parent_evidence_id: atomicId,
+      items: [expect.objectContaining({ logical_path: "main.js" })],
+    });
+    const unsupportedRequest = join(root, "unsupported-view.json");
+    const unsupportedInput = {
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "page", collection: "sections", offset: 0, limit: 20 },
+    };
+    await writeFile(unsupportedRequest, JSON.stringify(unsupportedInput));
+    const unsupported = await cli.run({
+      arguments: ["inspect-analysis-view", unsupportedRequest, "--json"],
+    });
+    expect(unsupported.exitCode).toBe(1);
+    expect(unsupported.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["view"],
+            message: "Artifact Evidence supports summary and inventory views.",
+          },
+        ],
+      },
+    });
     await unlink(archive);
     const request = join(root, "view.json");
     await writeFile(
@@ -1033,6 +1097,80 @@ cliTest(
     });
     for (const value of ["probe folder", "probe@example.test"])
       expect(result.stdout).toContain(value);
+  },
+);
+
+cliTest.for([
+  {
+    spelling: "minute-only offset timestamps",
+    starts: ["2026-10-20T09:00Z", "2026-10-20T09:02Z", "2026-10-20T09:01Z"],
+  },
+  {
+    spelling: "ten-digit fractional timestamps",
+    starts: [
+      "2026-10-20T09:00:00.0000000001Z",
+      "2026-10-20T09:00:00.0000000003Z",
+      "2026-10-20T09:00:00.0000000002Z",
+    ],
+  },
+])(
+  "keeps the pre-write environment state through the compiled CLI for $spelling",
+  async ({ starts }, { cli }) => {
+    const root = await createTestTempDirectory("rea-state-chronology-cli-");
+    const path = join(root, "view.json");
+    const entries = starts.map((startedDateTime, ordinal) => ({
+      startedDateTime,
+      time: 0,
+      request: {
+        method: ordinal === 2 ? "PATCH" : "GET",
+        url: "http://app.example/api/settings",
+        ...(ordinal === 2
+          ? {
+              postData: {
+                mimeType: "application/json",
+                text: '{"theme":"dark"}',
+              },
+            }
+          : {}),
+      },
+      response: {
+        status: 200,
+        content: {
+          mimeType: "application/json",
+          text: ordinal === 0 ? '{"theme":"light"}' : '{"theme":"dark"}',
+        },
+      },
+    }));
+    const parent = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(entries),
+    );
+    expect(parent.normalized_result).toMatchObject({
+      records: entries.map((reported, ordinal) => ({ ordinal, reported })),
+    });
+    const request = JSON.stringify({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "environment-state" },
+    });
+    await writeFile(path, request);
+    const result = await cli.run({
+      arguments: ["inspect-analysis-view", path, "--json"],
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    const evidence = parseEvidence(result.json);
+    expect(evidence.evidence_links).toEqual([parent.evidence_id]);
+    expect(evidence.normalized_result).toMatchObject({
+      kind: "environment-state",
+      timeline: "recorded-start-time",
+      documents: [
+        {
+          tool: "get_settings",
+          path: "/api/settings",
+          value: { theme: "light" },
+          record_ordinal: 0,
+        },
+      ],
+    });
+    expect(await readFile(path, "utf8")).toBe(request);
   },
 );
 

@@ -33,7 +33,9 @@ export default defineConfig({
           { text: "Model artifacts", link: "/model-artifacts" },
           { text: "Rust dependencies", link: "/rust-binaries" },
           { text: "PE certificates", link: "/pe-certificates" },
+          { text: "PE imports", link: "/pe-imports" },
           { text: "ELF notes", link: "/elf-notes" },
+          { text: "Apple IPS crash reports", link: "/apple-ips" },
           { text: "CPython pyc files", link: "/python-pyc" },
           { text: "Erlang BEAM", link: "/erlang-beam" },
           {

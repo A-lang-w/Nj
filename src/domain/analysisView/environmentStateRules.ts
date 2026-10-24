@@ -44,6 +44,8 @@ export interface StateBudget {
   /** Whether a record's response had no body. */
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => boolean;
+  /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
+  readonly checkpoint: () => () => void;
   /** Drop the temporary work of the body just read. */
   readonly release: () => void;
 }
@@ -107,12 +109,26 @@ interface EntityViewPlan {
   readonly clock_formats?: Readonly<Record<string, ClockFormat>> | undefined;
 }
 
-export type StateItemView = EntityViewPlan & {
-  readonly shape: "item";
-  readonly envelope_ordinal: number;
-  /** Recorded reads that asked for some fields only and did not return the item, which replay answers. */
+/** A query key that picks out replayed reads: a parameter, a parameter with one value, or a parameter left out. */
+export interface ReplayKey {
+  readonly name: string;
+  readonly value?: string | undefined;
+  readonly absent?: true | undefined;
+}
+
+/** Recorded reads a view leaves to replay, and the query keys that pick calls of them out. */
+interface ReplayedReads {
+  /** Reads that asked for some fields only, or show entities in another representation than the checked lines. */
   readonly projected_record_ordinals?: number[] | undefined;
-};
+  /** A call whose query matches one of these replays, a field selection by its values; absent on views that only left out projections. */
+  readonly projected_query_keys?: ReplayKey[] | undefined;
+}
+
+export type StateItemView = EntityViewPlan &
+  ReplayedReads & {
+    readonly shape: "item";
+    readonly envelope_ordinal: number;
+  };
 
 /** A query parameter that asks for some fields only (`fields`, `fields[...]`, `select`, `$select`). */
 export const isProjectionParameter = (name: string): boolean => {
@@ -130,15 +146,23 @@ export const projectsFields = (query: string | undefined): boolean =>
   query !== undefined &&
   [...new URLSearchParams(query).keys()].some(isProjectionParameter);
 
-export type StateListView = EntityViewPlan & {
-  readonly shape: "list";
-  readonly membership: "all" | "recorded";
-  /** With recorded membership, the checked lines that each list their whole collection. */
-  readonly all_record_ordinals?: number[] | undefined;
-  readonly counters: string[];
-  /** The query the view's other lines follow, when one explains any of them. */
-  readonly query?: ListQuery | undefined;
-};
+/** Whether a recorded query asks for some fields only: a projection parameter with a value other than `*`, which asks for all. */
+export const selectsSomeFields = (query: string | undefined): boolean =>
+  query !== undefined &&
+  [...new URLSearchParams(query)].some(
+    ([name, value]) => isProjectionParameter(name) && value !== "*",
+  );
+
+export type StateListView = EntityViewPlan &
+  ReplayedReads & {
+    readonly shape: "list";
+    readonly membership: "all" | "recorded";
+    /** With recorded membership, the checked lines that each list their whole collection. */
+    readonly all_record_ordinals?: number[] | undefined;
+    readonly counters: string[];
+    /** The query the view's other lines follow, when one explains any of them. */
+    readonly query?: ListQuery | undefined;
+  };
 
 /** Whether a list view answers on a checked line with every entity of the collection. */
 export const listsAll = (view: StateListView, ordinal: number): boolean =>
@@ -177,7 +201,7 @@ export interface ExtractedState {
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** A POST whose path names one of these segments queries state rather than changing it. */
-const QUERY_SEGMENTS = new Set([
+export const QUERY_SEGMENTS = new Set([
   "search",
   "query",
   "list",
@@ -596,6 +620,25 @@ export const listItems = (
   return Array.isArray(items) && items.every(isObject) ? items : undefined;
 };
 
+/** An observed item count, retaining the original value separately for rendering. */
+export const recordedItemCount = (
+  value: JsonValue | undefined,
+): number | undefined =>
+  typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/u.test(value)
+      ? Number(value)
+      : undefined;
+
+/** Spell a changed count with the recorded numeric/string type and digit width. */
+export const formatItemCount = (
+  count: number,
+  observed: JsonValue,
+): JsonValue =>
+  typeof observed === "string"
+    ? String(count).padStart(observed.length, "0")
+    : count;
+
 /** One entity as a view shows it: the view's fields it has, view-specific values first; volatile fields take `observed` values when given. */
 export const renderStateEntity = (
   entity: StateEntity,
@@ -650,10 +693,13 @@ export const renderStateList = (
 ): JsonValue => {
   const listed = listItems(base, view.pointer)?.length;
   return view.counters.reduce(
-    (body, name) =>
-      at(base, pointerTo(name)) === listed
-        ? replaceAt(body, pointerTo(name), items.length)
-        : body,
+    (body, name) => {
+      const observed = at(base, pointerTo(name));
+      if (listed === undefined || recordedItemCount(observed) !== listed)
+        return body;
+      const count = formatItemCount(items.length, observed!);
+      return replaceAt(body, pointerTo(name), count);
+    },
     replaceAt(base, view.pointer, [...items]),
   );
 };

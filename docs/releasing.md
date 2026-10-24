@@ -55,7 +55,7 @@ both publication jobs and the published-package canary; a merged PR or GitHub
 tag alone does not establish that publication finished. Retry failed jobs in
 the original run after a partial publication.
 
-### Recover an already published npm release
+## Recover an already published npm release
 
 Rerunning a job uses its original workflow and source revision. When a verifier
 or publishing workflow needs a code fix, land that fix on main first, then use
@@ -89,6 +89,23 @@ releases are outside this recovery path.
 
 For a release that needs an independently frozen application checkpoint, use
 the optional manual path below. It retains explicit prepare and publish phases.
+
+Automatic main proposals and manual checkpoint preparation use
+`scripts/release-proposal.mjs` with the pinned release-please dependency.
+The controller applies `patches/release-please+17.3.0.patch` only when invoked;
+normal dependency installation and published-package installation do not apply it.
+The patch avoids commit-file backfills and path splitting for a single root Node
+package with the default changelog, default or always-bump-minor versioning,
+no path exclusions and no explicit plugins. Other configurations retain the
+upstream file attribution workflow. Associated PR metadata and commit overrides
+still come from GitHub. The controller sizes commit search from the complete
+selected Git history, and a missing known release boundary fails before proposal
+creation. Publication continues through the pinned release-please action.
+
+When upgrading release-please, review the upstream manifest implementation,
+refresh the versioned patch and run the release proposal and workflow boundary
+tests. Version mismatch or a patch that neither applies cleanly nor matches an
+already-applied patch fails closed.
 
 ## Contributor-aware release notes
 

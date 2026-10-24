@@ -16,8 +16,7 @@ import { processScenarioSchema } from "../../../src/domain/process/processScenar
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import {
   arrayItemSchemaError,
-  booleanLiteralSchemaError,
-  emptyStringLiteralSchemaError,
+  unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -51,16 +50,11 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
         );
         if (clientError !== undefined) return [clientError];
         if (kind === "inputSchema") {
-          const literalError = booleanLiteralSchemaError(
+          const literalError = unsupportedInputLiteralSchemaError(
             schema,
             `${tool.name}.${kind}`,
           );
           if (literalError !== undefined) return [literalError];
-          const emptyLiteralError = emptyStringLiteralSchemaError(
-            schema,
-            `${tool.name}.${kind}`,
-          );
-          if (emptyLiteralError !== undefined) return [emptyLiteralError];
         }
         return [];
       } catch (cause: unknown) {
@@ -870,35 +864,39 @@ it("checks client array constraints in schema positions while preserving literal
     examples: [{ enum: [false] }],
   };
   expect(
-    booleanLiteralSchemaError(
+    unsupportedInputLiteralSchemaError(
       { ...booleanMetadata, properties: {} },
       "literal",
     ),
   ).toBeUndefined();
-  expect(booleanLiteralSchemaError(booleanMetadata, "literal")).toBe(
+  expect(unsupportedInputLiteralSchemaError(booleanMetadata, "literal")).toBe(
     "literal.properties.default.const is boolean",
   );
-});
-
-it("rejects empty-string literals and visits array-valued schema children", () => {
-  const metadata = {
-    type: "object",
-    properties: { value: { type: "string", const: "" } },
-    default: { const: "" },
-    examples: [{ enum: [""] }],
-  };
-  expect(
-    emptyStringLiteralSchemaError({ ...metadata, properties: {} }, "literal"),
-  ).toBeUndefined();
-  expect(emptyStringLiteralSchemaError(metadata, "literal")).toBe(
-    "literal.properties.value.const is an empty string",
-  );
-  expect(
-    emptyStringLiteralSchemaError(
-      { type: "array", items: [{ type: "string", const: "" }] },
-      "literal",
-    ),
-  ).toBe("literal.items[0].const is an empty string");
+  for (const [literal, reason] of [
+    [{ const: "" }, "const is an empty string"],
+    [{ enum: ["named", ""] }, "enum contains an empty string"],
+  ] as const) {
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "object",
+          properties: { value: literal },
+          default: { const: "" },
+          examples: [{ enum: [""] }],
+        },
+        "literal",
+      ),
+    ).toBe(`literal.properties.value.${reason}`);
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "array",
+          items: [{ type: "string" }, literal],
+        },
+        "tuple",
+      ),
+    ).toBe(`tuple.items[1].${reason}`);
+  }
 });
 
 it.each([false, true])(
