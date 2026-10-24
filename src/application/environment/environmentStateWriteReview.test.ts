@@ -449,9 +449,14 @@ it("reloads an unchanged snapshot after a view with its own clock spellings disp
   expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(first);
 });
 
-it.each([false, true])(
-  "keeps contradictions after retiring a sorted list while an item proof survives (wrong values: %s)",
-  (wrong) => {
+it.each([
+  { wrong: false, mixed: false },
+  { wrong: true, mixed: false },
+  { wrong: false, mixed: true },
+  { wrong: true, mixed: true },
+])(
+  "keeps contradictions after retiring a sorted list while an item proof survives (wrong=$wrong, mixed=$mixed)",
+  ({ wrong, mixed }) => {
     const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
     const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
     const written = { ...second, tags: ["zeta", "delta"] };
@@ -466,7 +471,10 @@ it.each([false, true])(
       [
         "GET",
         "/api/books",
-        [{ ...later, tags: wrong ? ["wrong", "values"] : later.tags }, written],
+        [
+          { ...later, tags: wrong ? ["wrong", "values"] : later.tags },
+          mixed ? { ...written, tags: ["delta", "zeta"] } : written,
+        ],
       ],
     ]);
     expect(books.state.views.get("get_books")).toMatchObject({

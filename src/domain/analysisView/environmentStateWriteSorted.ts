@@ -5,6 +5,7 @@ import {
   isObject,
   isStringArray,
   listItems,
+  replaceAt,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -157,7 +158,10 @@ export class SortedArrays {
   retry(
     view: StateView,
     read: { readonly record: StateRecordFacts; readonly outcome: CheckOutcome },
-    check: (view: StateView) => CheckOutcome | undefined,
+    check: (
+      view: StateView,
+      comparisonBody?: (body: JsonValue) => JsonValue,
+    ) => CheckOutcome | undefined,
     blocked: (targets: readonly string[]) => boolean,
   ): CheckOutcome {
     if (view.shape !== "item" && view.shape !== "list") return read.outcome;
@@ -166,9 +170,14 @@ export class SortedArrays {
       return read.outcome;
     const shown = this.#shown(view, read.record);
     this.#ruleOut(view.tool, shown);
-    // A contradictory ordering invalidates the view's earlier checks; a raw retry cannot preserve their proof.
+    const adopted = this.#adopted.get(view.tool) ?? [];
+    // Retire ordering proof, but still check values independently of the withdrawn array order.
     if (this.#unlearn(view.tool, shown))
-      return check({ ...view, sorted_arrays: [] }) ?? read.outcome;
+      return (
+        check({ ...view, sorted_arrays: adopted }, (body) =>
+          this.#comparisonBody(view, adopted, body),
+        ) ?? read.outcome
+      );
     const current = view;
     const failed = read.outcome;
     const candidates = this.#candidates.get(view.tool)?.fields;
@@ -196,6 +205,33 @@ export class SortedArrays {
       return failed;
     this.#adopt(view.type, needed);
     return outcome;
+  }
+
+  /** Compare a retired view's values as multisets only for its formerly sorted string-array fields. */
+  #comparisonBody(
+    view: StateItemView | StateListView,
+    fields: readonly string[],
+    body: JsonValue,
+  ): JsonValue {
+    const normalize = (value: JsonValue): JsonValue => {
+      if (!isObject(value)) return value;
+      const object = { ...value };
+      for (const field of fields) {
+        const array = object[field];
+        if (array !== undefined && isStringArray(array))
+          object[field] = array.toSorted(compare);
+      }
+      return object;
+    };
+    const value = at(body, view.pointer);
+    if (value === undefined) return body;
+    return replaceAt(
+      body,
+      view.pointer,
+      view.shape === "list" && Array.isArray(value)
+        ? value.map(normalize)
+        : normalize(value),
+    );
   }
 
   /** The entity objects a read recorded at the view's pointer. */

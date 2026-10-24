@@ -1,3 +1,4 @@
+import type { JsonValue } from "../jsonValue.js";
 import {
   at,
   changesState,
@@ -451,7 +452,11 @@ export class EnvironmentStateWriteSimulation {
     return true;
   }
 
-  #check(view: StateView, record: StateRecordFacts): CheckOutcome | undefined {
+  #check(
+    view: StateView,
+    record: StateRecordFacts,
+    comparisonBody?: (body: JsonValue) => JsonValue,
+  ): CheckOutcome | undefined {
     if (view.shape === "recorded") return undefined;
     const line = this.#line(view, record);
     if (view.shape !== "item" && line === undefined) return undefined;
@@ -483,7 +488,13 @@ export class EnvironmentStateWriteSimulation {
     const minted = view.per_response_members;
     return withBodies(this.#input.io.withBody, ordinals, (served, body) => {
       const check = {
-        body: body === undefined ? body : withoutMembers(body, minted),
+        body:
+          body === undefined
+            ? body
+            : withoutMembers(
+                comparisonBody === undefined ? body : comparisonBody(body),
+                minted,
+              ),
         base: served === undefined ? served : withoutMembers(served, minted),
         idField: this.#types.get(view.type)?.id_field ?? "",
         volatile: this.#input.volatileOf(view.type),
@@ -537,7 +548,8 @@ export class EnvironmentStateWriteSimulation {
     outcome = this.#sorted.retry(
       view,
       { record, outcome },
-      (candidate) => this.#check(candidate, record),
+      (candidate, comparisonBody) =>
+        this.#check(candidate, record, comparisonBody),
       blocked,
     );
     view = this.#viewOf(original);
@@ -545,7 +557,7 @@ export class EnvironmentStateWriteSimulation {
     if (blocked(keys)) return;
     let exercised = exercisedBy(this.#touched, keys, borrowers);
     if (view.shape === "recorded") {
-      // Retiring a view withdraws its proof, not a remaining mismatch with the raw written values.
+      // Retiring a view withdraws ordering proof, not a remaining mismatch in values.
       if (!outcome.pass)
         this.#contradictOthers(
           exercised,
