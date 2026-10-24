@@ -1246,10 +1246,11 @@ describe("reads named as serving names them", () => {
 });
 
 describe("encoded parent spellings", () => {
-  it("names the plainly held entity from a path that encodes its parent", () => {
-    const type = "/api/orgs/uid/{uid}/books";
-    const collection = "/api/orgs/uid/acme1/books";
-    const state = new SimulatedState(
+  const type = "/api/orgs/uid/{uid}/books";
+  const collection = "/api/orgs/uid/acme1/books";
+  /** A state holding one book under its parent's plain spelling. */
+  const plainlyHeld = () =>
+    new SimulatedState(
       [
         {
           type,
@@ -1262,9 +1263,26 @@ describe("encoded parent spellings", () => {
       ],
       [],
     );
+
+  it("names the plainly held entity from a path that encodes its parent", () => {
+    expect(
+      itemTarget(plainlyHeld(), type, {
+        path: "/api/orgs/uid/%61cme1/books/1",
+      }),
+    ).toEqual({ collection, id: "1" });
+  });
+
+  it("lists the type's entities only when the path's own collection holds no such id", () => {
+    const state = plainlyHeld();
+    const listed = vi.spyOn(state, "ofType");
+    expect(
+      itemTarget(state, type, { path: "/api/orgs/uid/acme1/books/1" }),
+    ).toEqual({ collection, id: "1" });
+    expect(listed).not.toHaveBeenCalled();
     expect(
       itemTarget(state, type, { path: "/api/orgs/uid/%61cme1/books/1" }),
     ).toEqual({ collection, id: "1" });
+    expect(listed).toHaveBeenCalledTimes(1);
   });
 
   it("answers an encoded read from the plain checked line", () => {

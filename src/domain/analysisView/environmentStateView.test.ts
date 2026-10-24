@@ -33,6 +33,7 @@ import {
   lineShapes,
   replayKeys,
   variantLines,
+  withoutVariants,
   type LineShape,
 } from "./environmentStateVariants.js";
 import { rewriteCuts } from "./environmentStateRewrites.js";
@@ -984,6 +985,43 @@ it("compares lines through the entities they show, so items read plainly and exp
   expect(variantLines(lines, shapeOf)).toEqual(lines.slice(1000));
   // Comparing every pair would walk each line's entities thousands of times.
   expect(walks()).toBeLessThan(10 * lines.length);
+});
+
+it("reads each base line's query a fixed number of times however many variants it keys", () => {
+  const items = 200;
+  const { lines, shapeOf } = expandedItemLines(items);
+  let reads = 0;
+  for (const line of lines.slice(0, items)) {
+    const { query } = line;
+    Object.defineProperty(line, "query", {
+      enumerable: true,
+      get: () => ((reads += 1), query),
+    });
+  }
+  const tool = {
+    name: "get_items_by_id",
+    method: "GET",
+    path_template: "/api/items/{id}",
+    record_ordinals: lines.map((line) => line.ordinal),
+  };
+  const plan = {
+    tool,
+    item: true,
+    type: "/api/items",
+    pointer: "",
+    recordings: lines,
+    latest: lines,
+  };
+  const split = withoutVariants(plan, {
+    shapeOf,
+    queryOf: (ordinal) => lines[ordinal]?.query,
+    position: (ordinal) => ordinal,
+    retain: () => undefined,
+    checkpoint: () => () => undefined,
+  });
+  expect(split?.plan.projected).toHaveLength(items);
+  // Keying each variant against the base lines anew reads every base line's query once per variant.
+  expect(reads).toBeLessThan(10 * items);
 });
 
 it("counts what it holds to compare lines by the entities they show against the budget", () => {
