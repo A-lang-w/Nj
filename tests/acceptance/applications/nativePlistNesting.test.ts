@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildBinary, type PlistValue } from "plist";
@@ -10,6 +11,25 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+const lintXmlPlist = (path: string) =>
+  new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      execFile(
+        "/usr/bin/plutil",
+        ["-lint", "--", path],
+        { timeout: 10_000 },
+        (error, stdout, stderr) => {
+          const exitCode = error === null ? 0 : error.code;
+          if (typeof exitCode !== "number") {
+            reject(error);
+            return;
+          }
+          resolve({ exitCode, stdout, stderr });
+        },
+      );
+    },
+  );
 
 describe.skipIf(process.platform !== "darwin")(
   "ordinary plist source nesting",
@@ -57,43 +77,19 @@ describe.skipIf(process.platform !== "darwin")(
                     : `<plist>${"<dict><key>level</key>".repeat(depth)}${data ? "<data>AAE=</data>" : "<integer>1</integer>"}${"</dict>".repeat(depth)}</plist>`,
                 );
           await writeFile(path, bytes);
+          // The decoder ceiling does not override native XML admission.
+          // Compare its upper-edge admission with the actual utility, while
+          // requiring the historical depth-129/200 controls to succeed below.
+          const native =
+            format === "xml" && depth === 998
+              ? await lintXmlPlist(path)
+              : undefined;
           const output = await cli.run({
             arguments: ["inspect-plist", path, "--json"],
             environment,
           });
           const response = await call("inspect_plist", { path });
           expect(await readFile(path)).toEqual(bytes);
-          if (format === "xml" && depth === 998) {
-            // Native XML admission has its own depth boundary, below REA's
-            // result allowance. Preserve that physical failure independently.
-            const expectedFailure = {
-              code: "invalid_request",
-              category: "invalid_input",
-              details: {
-                issues: [
-                  {
-                    path: ["path"],
-                    reason: "invalid_value",
-                    message: expect.stringContaining(
-                      "Too many nested arrays or dictionaries",
-                    ),
-                  },
-                ],
-                captured_output: {
-                  exit_code: 1,
-                  stderr: expect.stringContaining(
-                    "Too many nested arrays or dictionaries",
-                  ),
-                },
-              },
-            };
-            expect(output.exitCode, output.stderr).toBe(1);
-            expect(output.json).toMatchObject(expectedFailure);
-            expect(parseMcpToolError(response).error).toMatchObject(
-              expectedFailure,
-            );
-            continue;
-          }
           if (depth === 999) {
             expect(output.exitCode, output.stderr).toBe(1);
             const expectedFailure = {
@@ -107,6 +103,26 @@ describe.skipIf(process.platform !== "darwin")(
               remediation: {
                 action:
                   "The 998-level native plist nesting allowance (no runtime override) is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. Repeating the unchanged request fails the same way.",
+              },
+            };
+            expect(output.json).toMatchObject(expectedFailure);
+            expect(parseMcpToolError(response).error).toMatchObject(
+              expectedFailure,
+            );
+            continue;
+          }
+          if (native !== undefined && native.exitCode !== 0) {
+            expect(output.exitCode, output.stderr).toBe(1);
+            const expectedFailure = {
+              code: "invalid_request",
+              retryable: false,
+              details: {
+                operation: "inspect_plist",
+                captured_output: {
+                  exit_code: native.exitCode,
+                  stdout: native.stdout,
+                  stderr: native.stderr,
+                },
               },
             };
             expect(output.json).toMatchObject(expectedFailure);

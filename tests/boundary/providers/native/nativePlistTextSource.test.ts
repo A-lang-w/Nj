@@ -66,14 +66,14 @@ it.for<TextSourceCase>([
   },
   {
     name: "unknown XML scalar",
-    bytes: Buffer.from("<plist><real>1e999</real></plist>"),
+    bytes: Buffer.from("<plist><integer> 42 </integer></plist>"),
     description: "XML 1.0 document text",
     format: "xml",
     value: {
       $plist_type: "unknown",
-      element: "real",
-      literal: "1e999",
-      reason: "unrepresentable",
+      element: "integer",
+      literal: " 42 ",
+      reason: "invalid-literal",
     },
     limitations: [
       expect.stringContaining("1 XML scalar value(s) could not be established"),
@@ -147,8 +147,8 @@ it.for<TextSourceCase>([
   await writeFile(path, fixture.bytes);
   const replay = new NativeFixtureRunner({ file: fixture.description });
   const tools: string[] = [];
-  const admissions: Array<readonly string[]> = [];
   let conversionIndex = 0;
+  const admissions: Array<readonly string[]> = [];
   const client = new NativeMacOSProvider(
     {},
     {
@@ -157,6 +157,7 @@ it.for<TextSourceCase>([
         const result = await replay.run(tool, args);
         if (tool !== "plutil" || !result.ok) return result;
         if (args[0] === "-lint") {
+          expect(args).toEqual(["-lint", "--", path]);
           admissions.push([...args]);
           return ok({
             ...result.value,
@@ -191,12 +192,12 @@ it.for<TextSourceCase>([
     source_path: path,
   });
   expect(result.provenance.map((item) => item.tool)).toEqual(tools);
-  const validatesSource =
+  const directXml =
     fixture.format === "xml" && fixture.conversions.length === 0;
-  expect(admissions).toEqual(validatesSource ? [["-lint", "--", path]] : []);
+  expect(admissions).toEqual(directXml ? [["-lint", "--", path]] : []);
   expect(tools).toEqual([
     "file",
-    ...(validatesSource ? ["plutil"] : []),
+    ...(directXml ? ["plutil"] : []),
     ...fixture.conversions.map(() => "plutil"),
   ]);
   expect(conversionIndex).toBe(fixture.conversions.length);
