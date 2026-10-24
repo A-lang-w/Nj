@@ -4,11 +4,12 @@ import {
 } from "../unicodeCodePointOrder.js";
 import {
   iterateUrlQueryParameters,
+  parseUrlQueryParameterNames,
   singleQueryValues,
 } from "../recordedTransportUrl.js";
 import {
   allLines,
-  decodedSegment,
+  pathSegmentMatches,
   isParam,
   listsAll,
   segmentsOf,
@@ -141,9 +142,7 @@ export const servedLine = (
 ): ServedLine | undefined => {
   const key = queryKey(record.query);
   if (lines === undefined || key === undefined) return undefined;
-  const names = [...iterateUrlQueryParameters(record.query ?? "")].map(
-    ([name]) => name,
-  );
+  const names = [...parseUrlQueryParameterNames(record.query ?? "")];
   const named = bestLine(lines, lines.byQuery.get(key) ?? [], record);
   if (named !== undefined) return { ...named, named: true };
   const unfiltered =
@@ -165,7 +164,7 @@ const queryMatches = (
   query: string | undefined,
 ): number => {
   const matched = new Set<string>();
-  for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "", read))
     if (read.get(name) === value) matched.add(name);
   return matched.size;
 };
@@ -186,7 +185,11 @@ const bestLine = (
         if (lines.params.has(index)) verbatim += 1;
         return true;
       }
-      return lines.params.has(index) && decodedSegment(segment) === read[index];
+      return (
+        lines.params.has(index) &&
+        read[index] !== undefined &&
+        pathSegmentMatches(segment, read[index])
+      );
     });
     if (!matches) continue;
     const matched = queryMatches(values, query);

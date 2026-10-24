@@ -1,4 +1,6 @@
+import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { writeOrderedZip } from "../../tests/fixtures/artifactEntryOrder.js";
+import { zipSymlinkMetadataFixture } from "../../tests/fixtures/zipSymlinkMetadata.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -213,6 +215,29 @@ describe("ZipArtifactReader positional reads", () => {
   });
 });
 
+it("refuses to open ZIP symlink entries even when unixMode is absent", async () => {
+  const directory = await createTestTempDirectory("rea-zip-symlink-open-");
+  const path = join(directory, "symlinks.zip");
+  await writeFile(path, await zipSymlinkMetadataFixture());
+  const reader = new ZipArtifactReader(path, "zip");
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    for (const logicalPath of ["type-only-link", "permissions-link"]) {
+      const entry = entries.find((candidate) => candidate.path === logicalPath);
+      expect(entry).toMatchObject({ kind: "symlink" });
+      if (entry === undefined)
+        throw new Error(`Missing ZIP symlink ${logicalPath}`);
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "format",
+        message: "ZIP entry is not a regular file",
+      });
+    }
+  } finally {
+    await reader.close();
+  }
+});
+
 describe("ZipArtifactReader decompression budget", () => {
   it("refuses an archive whose entries declare more than its size can justify", async () => {
     const directory = await createTestTempDirectory("rea-zip-budget-bomb-");
@@ -364,3 +389,48 @@ it.each([null, { caller: "opaque ZIP interruption" }])(
     }
   },
 );
+
+it("retains exact caller cancellation after a real ZIP member opens and leaves an uncancelled read intact", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-zip-stream-cancellation-",
+  );
+  const path = join(directory, "fixture.zip");
+  const bytes = new Uint8Array(512 * 1024).fill(0x71);
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("member.bin", new Uint8ArrayReader(bytes), { level: 0 });
+  await writeFile(path, await writer.close());
+  const reader = new ZipArtifactReader(path, "zip");
+  const reason = { requested: "stop member" };
+  const controller = new AbortController();
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Expected member");
+    const stream = await reader.open(entry, controller.signal);
+    const consumption = (async () => {
+      for await (const _chunk of stream) controller.abort(reason);
+    })();
+    const failure: unknown = await consumption.catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(failure instanceof ArtifactReaderFailure))
+      throw new Error("Expected cancellation");
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.cancellation?.reason).toBe(reason);
+    expect(translateArtifactFailure("extract_artifact", failure).cause).toBe(
+      reason,
+    );
+    await expect(
+      Promise.resolve().then(() => reader.open(entry, controller.signal)),
+    ).rejects.toMatchObject({
+      reason: "cancelled",
+      cancellation: { reason },
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of await reader.open(entry))
+      chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks)).toEqual(Buffer.from(bytes));
+  } finally {
+    await reader.close();
+  }
+});

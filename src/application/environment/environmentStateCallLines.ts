@@ -1,14 +1,16 @@
 import {
   allLines,
   collectionPathOf,
+  collectionMatch,
   segmentsOf,
+  type SuppliedSegment,
   type StateListView,
 } from "../../domain/analysisView/environmentStateRules.js";
 import { pagesOnly } from "../../domain/analysisView/environmentStatePaging.js";
 import {
-  pathValueMatches,
   selectReplayExchange,
   selectsRecordedLine,
+  type ObservedQuery,
   type ReplayArguments,
 } from "./environmentReplay.js";
 import type {
@@ -18,27 +20,19 @@ import type {
 } from "./environmentSource.js";
 import { environmentToolArguments } from "./environmentTools.js";
 
-/** One collection segment an item call names: a template literal, or a supplied path value. */
-export interface CallSegment {
-  readonly text: string;
-  readonly supplied: boolean;
-}
-
 /** A call's path segments: template literals and supplied values, or undefined when a path argument is missing. */
 export const callSegments = (
   tool: EnvironmentManifestTool,
   args: ReplayArguments,
-): CallSegment[] | undefined => {
+): SuppliedSegment[] | undefined => {
   const names = environmentToolArguments(tool).path;
   const params = new Map(tool.params.map((param) => [param.index, param]));
-  const segments: CallSegment[] = [];
-  const template = tool.path_template
-    .slice(tool.path_template.indexOf("/") + 1)
-    .split("/");
-  for (const [index, text] of template.entries()) {
+  const segments: SuppliedSegment[] = [];
+  // Use the collection's path parser so repeated separators remain meaningful.
+  for (const [index, text] of segmentsOf(tool.path_template).entries()) {
     const param = params.get(index);
     if (param === undefined) {
-      if (text !== "") segments.push({ text, supplied: false });
+      segments.push({ text, supplied: false });
       continue;
     }
     const value = args[names.get(param.name) ?? param.name];
@@ -48,37 +42,24 @@ export const callSegments = (
   return segments;
 };
 
-/** How many supplied segments a held collection matches verbatim, when it matches the call under replay's path rule. */
-export const collectionMatch = (
-  collection: string,
-  segments: readonly CallSegment[],
-): number | undefined => {
-  const held = segmentsOf(collection);
-  if (held.length !== segments.length) return undefined;
-  let verbatim = 0;
-  for (const [index, { text, supplied }] of segments.entries()) {
-    const segment = held[index]!;
-    if (supplied ? !pathValueMatches(segment, text) : segment !== text)
-      return undefined;
-    if (supplied && segment === text) verbatim += 1;
-  }
-  return verbatim;
-};
-
 /** The checked recorded line a list or document call names exactly, chosen among them as replay chooses; later or filtered recordings never qualify. */
 export const checkedLine = (
   source: EnvironmentSource,
   tool: EnvironmentManifestTool,
   checked: readonly number[],
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): RecordedExchange | undefined => {
   const lines = new Map<number, RecordedExchange>();
   for (const ordinal of checked) {
     const exchange = source.exchanges.get(ordinal);
-    if (exchange !== undefined && selectsRecordedLine(tool, exchange, args))
+    if (
+      exchange !== undefined &&
+      selectsRecordedLine(tool, exchange, args, observedQuery)
+    )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args)?.exchange;
+  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
 };
 
 /** For a list of a whole collection, a call that supplies no query argument answers from a checked line of the collection its path arguments name that only pages it, chosen as replay chooses; a requested page answers from its recording. */
@@ -87,6 +68,7 @@ export const unfilteredLine = (
   tool: EnvironmentManifestTool,
   checked: readonly number[],
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): RecordedExchange | undefined => {
   const query = environmentToolArguments(tool).query;
   const segments = callSegments(tool, args);
@@ -105,7 +87,7 @@ export const unfilteredLine = (
     )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args)?.exchange;
+  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
 };
 
 /** A call's query arguments by parameter name. */
@@ -128,6 +110,7 @@ export const queryLine = (
   tool: EnvironmentManifestTool,
   view: StateListView,
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): RecordedExchange | undefined => {
   const query = view.query;
   const segments = callSegments(tool, args);
@@ -148,5 +131,5 @@ export const queryLine = (
     )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args)?.exchange;
+  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
 };

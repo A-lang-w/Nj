@@ -21,10 +21,9 @@ import type {
 } from "../application/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
-import { createHash } from "node:crypto";
+import { idaRegistrationDigest } from "./IdaRegistrationIdentity.js";
 import { isDeepStrictEqual } from "node:util";
 import { analysisProfilesEqual } from "../domain/analysisProfile.js";
-import canonicalize from "canonicalize";
 import type { Result } from "../domain/result.js";
 import {
   readIdaConfiguration,
@@ -255,6 +254,13 @@ export class IdaProvider implements AnalysisProviderCandidate {
         } lane. Select a supported Ghidra profile instead.`,
         diagnostics,
       };
+    if (target.kind === "executable" && target.architecture === "arm64_32")
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: "REA's IDA adapter has no verified arm64_32 lane.",
+        diagnostics,
+      };
     if (target.kind !== "executable")
       return {
         status: "unsupported",
@@ -338,9 +344,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
             : "database-supervisor",
       database_revision: null,
       cache_policy: "live",
-      registration_digest: createHash("sha256")
-        .update(canonicalize(config.value) ?? "")
-        .digest("hex"),
+      registration_digest: idaRegistrationDigest(config.value),
     });
     if (options?.scope !== undefined)
       this.#registrationByScope.delete(options.scope);
