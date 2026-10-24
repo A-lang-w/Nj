@@ -6,8 +6,6 @@ import {
   isStringArray,
   listItems,
   scalarText,
-  same,
-  renderStateEntity,
   type JsonObject,
   type StateEntity,
   type StateItemView,
@@ -105,9 +103,7 @@ interface Candidates {
 export class SortedArrays {
   readonly #candidates = new Map<string, Candidates>();
   readonly #adopted = new Map<string, string[]>();
-  /** Passing checks whose complete rendering needed a learned field order. */
-  readonly #dependent = new Map<string, Map<string, Set<number>>>();
-  readonly #invalidated = new Set<number>();
+  readonly #inconsistent = new Set<string>();
   /** Values each type's initial entities held, per candidate field. */
   readonly #existing = new Map<string, Set<string>>();
 
@@ -118,7 +114,6 @@ export class SortedArrays {
       readonly state: SimulatedState;
       readonly io: Pick<WriteIo, "withBody" | "retain">;
       readonly idField: (type: string) => string | undefined;
-      readonly volatileOf: (type: string) => ReadonlySet<string>;
     },
   ) {
     for (const view of views) {
@@ -135,13 +130,15 @@ export class SortedArrays {
     }
   }
 
-  /** Earlier passing reads the final view no longer reproduces after withdrawing a sort. */
-  get invalidatedReads(): ReadonlySet<number> {
-    return this.#invalidated;
-  }
-
   /** The view with the array fields it was shown to sort. */
-  view<View extends StateView>(view: View): View {
+  view(view: StateView): StateView {
+    if (view.shape !== "item" && view.shape !== "list") return view;
+    if (this.#inconsistent.has(view.tool))
+      return {
+        tool: view.tool,
+        shape: "recorded",
+        reason: view.shape === "item" ? "fields-differ" : "list-differs",
+      };
     const adopted = this.#adopted.get(view.tool);
     return adopted === undefined ? view : { ...view, sorted_arrays: adopted };
   }
@@ -169,24 +166,12 @@ export class SortedArrays {
       return read.outcome;
     const shown = this.#shown(view, read.record);
     this.#ruleOut(view.tool, shown);
-    // A read listing a learned field unsorted is checked again as the view now lists it.
-    const current = this.#unlearn(view.tool, shown)
-      ? { ...view, sorted_arrays: this.#adopted.get(view.tool) ?? [] }
-      : view;
-    const failed =
-      current === view ? read.outcome : (check(current) ?? read.outcome);
-    const finish = (outcome: CheckOutcome): CheckOutcome => {
-      if (outcome.pass)
-        this.#remember(
-          { ...current, sorted_arrays: this.#adopted.get(view.tool) ?? [] },
-          read.record.ordinal,
-          shown,
-          outcome,
-        );
-      return outcome;
-    };
+    // A contradictory ordering invalidates the view's earlier checks; a raw retry cannot preserve their proof.
+    if (this.#unlearn(view.tool, shown)) return read.outcome;
+    const current = view;
+    const failed = read.outcome;
     const candidates = this.#candidates.get(view.tool)?.fields;
-    if (failed.pass || candidates === undefined) return finish(failed);
+    if (failed.pass || candidates === undefined) return failed;
     const passing = (fields: readonly string[]) => {
       const outcome = check({
         ...current,
@@ -209,7 +194,7 @@ export class SortedArrays {
     if (!needed.every((field) => this.#telling(view, shown, field, targets)))
       return failed;
     this.#adopt(view.type, needed);
-    return finish(outcome);
+    return outcome;
   }
 
   /** The entity objects a read recorded at the view's pointer. */
@@ -233,70 +218,15 @@ export class SortedArrays {
       this.#candidates.set(tool, { ...entry, fields: left });
   }
 
-  /** A read listing a learned field unsorted shows its view does not sort it after all; whether one was. */
+  /** Contradictory ordering makes the view recorded and invalidates its earlier confirmations. */
   #unlearn(tool: string, shown: readonly JsonObject[]): boolean {
     const adopted = this.#adopted.get(tool) ?? [];
     const kept = adopted.filter((field) => listedSorted(shown, field));
     if (kept.length === adopted.length) return false;
-    const dependent = this.#dependent.get(tool);
-    for (const field of adopted) {
-      if (kept.includes(field)) continue;
-      for (const ordinal of dependent?.get(field) ?? [])
-        if (!this.#invalidated.has(ordinal)) {
-          this.facts.io.retain(ENTRY_BYTES);
-          this.#invalidated.add(ordinal);
-        }
-      dependent?.delete(field);
-    }
-    if (kept.length === 0) this.#adopted.delete(tool);
-    else this.#adopted.set(tool, kept);
+    this.#inconsistent.add(tool);
+    this.#adopted.delete(tool);
+    this.#candidates.delete(tool);
     return true;
-  }
-
-  /** Record only checks that need sorting after the shared renderer applies fields, omissions and volatility. */
-  #remember(
-    view: StateItemView | StateListView,
-    ordinal: number,
-    shown: readonly JsonObject[],
-    outcome: CheckOutcome,
-  ): void {
-    const fields = view.sorted_arrays ?? [];
-    if (fields.length === 0) return;
-    const targets = new Set(outcome.targets);
-    const idField = this.facts.idField(view.type) ?? "";
-    for (const object of shown) {
-      const id = scalarText(object[idField]);
-      if (id === undefined) continue;
-      for (const entity of this.facts.state.named(id)) {
-        if (
-          !targets.has(entityTarget(entity.type, entity.collection, entity.id))
-        )
-          continue;
-        const raw = renderStateEntity(
-          entity,
-          { ...view, sorted_arrays: [] },
-          this.facts.volatileOf(view.type),
-          object,
-        );
-        for (const field of fields) {
-          if (same(raw[field], object[field])) continue;
-          let byField = this.#dependent.get(view.tool);
-          if (byField === undefined) {
-            this.facts.io.retain(ENTRY_BYTES);
-            this.#dependent.set(view.tool, (byField = new Map()));
-          }
-          let reads = byField.get(field);
-          if (reads === undefined) {
-            this.facts.io.retain(ENTRY_BYTES + textBytes(field.length));
-            byField.set(field, (reads = new Set()));
-          }
-          if (!reads.has(ordinal)) {
-            this.facts.io.retain(ENTRY_BYTES);
-            reads.add(ordinal);
-          }
-        }
-      }
-    }
   }
 
   /** Whether a read shows a written array of an entity it covers in an order neither the written one nor the order the values were first held in. */

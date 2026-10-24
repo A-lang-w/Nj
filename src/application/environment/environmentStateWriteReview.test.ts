@@ -9,6 +9,7 @@ import {
   environmentStateServeFixture,
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
+import { servedCatalog } from "./environmentState.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 import {
   BOOK_NOT_FOUND,
@@ -17,6 +18,7 @@ import {
   book,
   bookClock,
   renamedBook,
+  offsetListed,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 
 import { webNetworkCaptureSchema } from "../../domain/webNetworkCapture.js";
@@ -349,47 +351,102 @@ it.each([
   },
 );
 
-it("withholds create variations whose nested references cannot follow the sent identity", () => {
-  const collectionA = { id: 10, name: "A" };
-  const collectionB = { id: 20, name: "B" };
-  const first = { ...FIRST_BOOK, collection_id: 10, collection: collectionA };
-  const second = { ...SECOND_BOOK, collection_id: 20, collection: collectionB };
-  const third = {
-    ...book(3, "Third", bookClock(3)),
-    collection_id: 10,
-    collection: collectionA,
-  };
-  const fourth = {
-    ...book(4, "Fourth", bookClock(5)),
-    collection_id: 20,
-    collection: collectionB,
-  };
-  const books = servedFrom([
-    ["GET", "/api/books", [first, second]],
-    ["GET", "/api/books/1", first],
-    ["GET", "/api/books/2", second],
-    ["POST", "/api/books", third, 201, { name: "Third", collection_id: 10 }],
-    ["GET", "/api/books/3", third],
-    ["POST", "/api/books", fourth, 201, { name: "Fourth", collection_id: 20 }],
+it("keeps a create's nested reference pinned when an unobserved call varies its id", () => {
+  const card = (id: number, name: string, collection_id: number) => ({
+    id,
+    name,
+    collection_id,
+    collection: {
+      id: collection_id,
+      name: collection_id === 8 ? "Ledger" : "Other",
+    },
+  });
+  const first = card(1, "First", 8);
+  const second = card(2, "Second", 9);
+  const third = card(3, "Third", 8);
+  const fourth = card(4, "Fourth", 9);
+  const cards = servedFrom([
+    ["GET", "/api/cards", [first, second]],
+    ["GET", "/api/cards/1", first],
+    ["GET", "/api/cards/2", second],
+    ["POST", "/api/cards", third, 201, { name: "Third", collection_id: 8 }],
+    ["GET", "/api/cards/3", third],
+    ["POST", "/api/cards", fourth, 201, { name: "Fourth", collection_id: 9 }],
   ]);
-  expect(books.state.writes.get("post_books")).toMatchObject({ served: false });
+  const plan = cards.state.writes.get("post_cards");
+  expect(plan?.body?.fixed).toContainEqual({
+    member: "collection_id",
+    sent: 8,
+  });
+  expect(plan).toMatchObject({ served: false });
+  const catalog = servedCatalog(cards.source, cards.state, "cards");
+  if (!catalog.ok) throw catalog.error;
+  expect(catalog.value.tools.map(({ name }) => name)).not.toContain(
+    "post_cards",
+  );
 });
 
-it("withholds an update when later reads invalidate the sort that confirmed it", () => {
-  const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
-  const second = { ...SECOND_BOOK, tags: ["gamma", "zeta"] };
-  const changed = { ...first, tags: ["omega", "delta"] };
+it("drops a write's confirmation when its read view later disproves learned array sorting", () => {
+  const tagged = (book: typeof FIRST_BOOK, tags: string[]) => ({
+    ...book,
+    tags,
+  });
+  const first = tagged(FIRST_BOOK, ["alpha", "beta"]);
+  const second = tagged(SECOND_BOOK, ["gamma", "omega"]);
+  const written = tagged(SECOND_BOOK, ["zeta", "delta"]);
   const books = servedFrom([
     ["GET", "/api/books", [first, second]],
     ["GET", "/api/books/1", first],
     ["GET", "/api/books/2", second],
-    ["PATCH", "/api/books/1", changed, 200, { tags: changed.tags }],
-    ["GET", "/api/books/1", { ...changed, tags: ["delta", "omega"] }],
-    ["GET", "/api/books/1", changed],
+    ["PATCH", "/api/books/2", written, 200, { tags: ["zeta", "delta"] }],
+    ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ["GET", "/api/books/2", written],
   ]);
+  expect(books.state.views.get("get_books_by_id")).toMatchObject({
+    shape: "recorded",
+  });
   expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
     served: false,
+    checked_record_ordinals: [],
   });
+});
+
+it("reloads an unchanged snapshot after a view with its own clock spellings disproves sorting", () => {
+  const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+  const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+  const written = { ...second, tags: ["zeta", "delta"] };
+  const rows: TimedCaptureRow[] = [
+    ["GET", "/api/books", [first, second].map(offsetListed)],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+    [
+      "GET",
+      "/api/books",
+      [first, { ...written, tags: ["delta", "zeta"] }].map(offsetListed),
+    ],
+  ];
+  const consistent = servedFrom(rows);
+  expect(consistent.state.entities[0]?.view_fields).toContainEqual({
+    tool: "get_books",
+    fields: {
+      created_at: offsetListed(first).created_at,
+      updated_at: offsetListed(first).updated_at,
+    },
+  });
+  expect(consistent.store.replace(consistent.store.snapshot()).ok).toBe(true);
+
+  const books = servedFrom([
+    ...rows,
+    ["GET", "/api/books", [first, written].map(offsetListed)],
+  ]);
+  expect(books.state.views.get("get_books")).toMatchObject({
+    shape: "recorded",
+  });
+  const snapshot = books.store.snapshot();
+  expect(books.store.replace(snapshot)).toMatchObject({ ok: true });
+  expect(books.store.snapshot()).toEqual(snapshot);
+  expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(first);
 });
 
 it("withholds varied create states whose dependent fields still copy the first create", () => {

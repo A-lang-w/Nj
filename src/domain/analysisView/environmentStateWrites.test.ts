@@ -2242,7 +2242,7 @@ describe("evidence a learned sort keeps answering to", () => {
     ]);
     expect(planOf(state, "patch_books_by_id")).toMatchObject({
       served: true,
-      checked_record_ordinals: [4, 5],
+      checked_record_ordinals: [4],
     });
     expect(
       state.views.find((view) => view.tool === "get_books_by_id"),
