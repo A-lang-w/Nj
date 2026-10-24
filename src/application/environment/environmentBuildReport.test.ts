@@ -355,3 +355,37 @@ describe("nameFromCaptureFile", () => {
     expect(nameFromCaptureFile("/w/--.json")).toBe("");
   });
 });
+
+it.each([
+  "password=example&",
+  "user=a&&token=example",
+  "=empty&password=example&&",
+])("scans valid form separators with the recorded media type: %s", (text) => {
+  const form = record(7, undefined, undefined);
+  (
+    form.reported as {
+      request: { postData?: unknown };
+      response: { content: unknown };
+    }
+  ).request.postData = {
+    mimeType: "application/x-www-form-urlencoded; charset=UTF-8",
+    text,
+  };
+  expect(scanCredentialNames([form])).toMatchObject({
+    count: 1,
+    skipped: NONE_SKIPPED,
+  });
+  (
+    form.reported as {
+      request: { postData?: unknown };
+      response: { content: unknown };
+    }
+  ).response.content = {
+    mimeType: "application/x-www-form-urlencoded",
+    text,
+  };
+  expect(scanCredentialNames([form])).toMatchObject({
+    count: 2,
+    skipped: NONE_SKIPPED,
+  });
+});

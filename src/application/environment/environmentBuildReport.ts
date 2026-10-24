@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { isIP } from "node:net";
 
+import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { readRecordedResponseBody } from "../../domain/analysisView/recordedResponseBody.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 
@@ -94,10 +95,17 @@ type ScannedBody =
   | { readonly kind: "skipped" };
 
 /** A recorded body as JSON or form fields, skipped when it is cut or over the limit, or undefined when it is neither. */
-const parsedBody = (text: unknown, cut = false): ScannedBody | undefined => {
+const parsedBody = (
+  text: unknown,
+  mimeType: unknown,
+  cut = false,
+): ScannedBody | undefined => {
   if (typeof text !== "string") return undefined;
   if (cut || Buffer.byteLength(text, "utf8") > SCAN_BODY_LIMIT_BYTES)
     return { kind: "skipped" };
+  const format = typeof mimeType === "string" ? mediaTypeEssence(mimeType) : "";
+  if (format === "application/x-www-form-urlencoded")
+    return { kind: "form", fields: [...new URLSearchParams(text)] };
   const start = text.trimStart()[0];
   if (start === "{" || start === "[") {
     try {
@@ -106,12 +114,7 @@ const parsedBody = (text: unknown, cut = false): ScannedBody | undefined => {
       return undefined;
     }
   }
-  if (!/^[^=&\s]+=[^&]*(?:&[^=&\s]+=[^&]*)*$/u.test(text)) return undefined;
-  try {
-    return { kind: "form", fields: [...new URLSearchParams(text)] };
-  } catch {
-    return undefined;
-  }
+  return undefined;
 };
 
 /** Name/value pairs such as HAR headers and query strings. */
@@ -132,7 +135,14 @@ const responseBody = (
   const body = readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES);
   return body.bodyEncoding === "base64"
     ? undefined
-    : parsedBody(body.bodyText, body.bodyCut === true);
+    : parsedBody(
+        body.bodyText,
+        member(
+          member(member(record.reported, "response"), "content"),
+          "mimeType",
+        ),
+        body.bodyCut === true,
+      );
 };
 
 /** A count of matches and the first of their pointers. */
@@ -214,7 +224,7 @@ export const scanCredentialNames = (
                   : [],
             ),
           }
-        : parsedBody(text),
+        : parsedBody(text, member(postData, "mimeType")),
       `record ${ordinal} request`,
     );
     scanBody(responseBody(record), `record ${ordinal} response`);
