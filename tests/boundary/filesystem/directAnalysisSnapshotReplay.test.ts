@@ -209,7 +209,7 @@ const makeProvider = (
             list_procedures: ["0x1000"],
             list_strings: { "0x1000": "fixture" },
             analyze_function: functionDossier,
-            list_names: [{ address: "0x1000", name: "fixture" }],
+            list_names: [{ address: "0x1000", value: "fixture" }],
             search_strings: [{ address: "0x1000", value: "fixture" }],
             search_procedures: [{ address: "0x1000", value: "fixture" }],
             xrefs: [],
@@ -659,6 +659,9 @@ describe("direct analysis composed snapshot replay", () => {
         scenario.arguments,
         { snapshotPath: fixture.snapshotPath },
       );
+      expect(first, JSON.stringify(first)).toMatchObject({
+        operation: scenario.tool,
+      });
       const callsAfterFirst = [...fixture.calls];
       const startsAfterFirst = [...fixture.starts];
       const loaded = await readAnalysisSnapshot(fixture.snapshotPath);
