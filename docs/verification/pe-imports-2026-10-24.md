@@ -223,3 +223,10 @@ as verified with an unsupported delay descriptor. Complete results must agree
 and carry no issues. Existing function-count traversals are reused; the change
 adds no further row scan. These validation checks postdate the pinned cost
 measurements above.
+
+The expanded selection passes **217** checks in 73.179 s (70.360 s
+waited-child CPU), with a sampled process-family peak of 2,039.3 MiB. Full
+`npm run check` passes. These counts overlap earlier selections. A subsequent
+main integration at `7f70797b98c226009163358f91a9cfcedf03b390` includes the
+upstream plist-fixture correction for the three unrelated native-provider
+failures seen in CI run 40055148308.
