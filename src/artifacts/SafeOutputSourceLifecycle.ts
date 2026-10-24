@@ -3,14 +3,14 @@ import { setImmediate, setTimeout } from "node:timers/promises";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 
-// After cancellation, input destruction gets the same bounded closure grace as
-// process output. Cancellation alone does not prove that the source closed.
-const SOURCE_DESTRUCTION_GRACE_MS = 1_000;
+// Pending reads and input destruction each get bounded cancellation grace.
+// Cancellation alone proves neither that a read succeeded nor a source closed.
+const SOURCE_CANCELLATION_GRACE_MS = 1_000;
 const SOURCE_CLOSURE_POLL_MS = 10;
 
 /**
- * Yield chunks until the source ends or the caller cancels. A closing source
- * ends its iterator only at close, so cancellation also ends that wait.
+ * Yield chunks until the source ends or cancellation grace expires. A pending
+ * read can still fail after cancellation; let its producer report that outcome.
  */
 export async function* readSourceChunks(
   source: Readable,
@@ -21,7 +21,7 @@ export async function* readSourceChunks(
   let abandoned = false;
   try {
     while (true) {
-      const next = await untilAborted(chunks.next(), signal);
+      const next = await settleReadAfterCancellation(chunks.next(), signal);
       if (next === undefined) {
         abandoned = true;
         return;
@@ -35,18 +35,35 @@ export async function* readSourceChunks(
   }
 }
 
-/** Settle with the read, or with undefined once cancellation is observed. */
-const untilAborted = <T>(
+/** Prefer the pending read's outcome, but bound an unresponsive producer. */
+const settleReadAfterCancellation = <T>(
   read: Promise<T>,
   signal: AbortSignal | undefined,
 ): Promise<T | undefined> => {
   if (signal === undefined) return read;
   return new Promise((resolve, reject) => {
-    const onAbort = (): void => resolve(undefined);
+    let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const cleanup = (): void => {
+      globalThis.clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      timer = globalThis.setTimeout(() => {
+        cleanup();
+        resolve(undefined);
+      }, SOURCE_CANCELLATION_GRACE_MS);
+    };
     // An abandoned read still settles here; its source error has an owner.
-    void read
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", onAbort));
+    void read.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (cause: unknown) => {
+        cleanup();
+        reject(cause);
+      },
+    );
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -68,7 +85,7 @@ export const settleSourceDestruction = async (
   while (source.destroyed && !source.closed) {
     if (signal?.aborted === true) {
       cancelledAt ??= performance.now();
-      if (performance.now() - cancelledAt >= SOURCE_DESTRUCTION_GRACE_MS)
+      if (performance.now() - cancelledAt >= SOURCE_CANCELLATION_GRACE_MS)
         return retainUnsettledSource(source, resource, signal.reason);
     }
     await setTimeout(SOURCE_CLOSURE_POLL_MS);
