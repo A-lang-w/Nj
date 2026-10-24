@@ -186,9 +186,16 @@ report's `credential-named-members` warning counts recorded header names, query
 parameter names and JSON or form body members whose names look like
 credentials (whole name segments such as `token`, `secret`, `password`,
 `api_key`, `authorization` or `session`) and hold a value, and lists the first
-20 by record and pointer, never by value. Bodies larger than 4 MiB of UTF-8 text are not
-scanned; `credential-scan-incomplete` counts them and lists up to 20 record
-pointers, including base64 bodies whose decoded scan was cut. An empty name
+20 by record and pointer, never by value. A body is read as a form or as JSON by
+its recorded media type, or by its shape when it has none or one naming
+neither. A browser scenario is
+scanned by event (`event 4 response /token` names
+`normalized_result.events.items[4]`): every retained request and response
+content event, including a response whose request began before the browser was
+attached and a transaction no record represents, and each transaction URL's
+query once. Bodies larger than 4 MiB of UTF-8 text are not
+scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
+event pointers, including base64 bodies whose decoded scan was cut. An empty name
 warning does not establish that these bodies were checked. Names do not establish sensitivity,
 so the build never refuses on them. Capture
 

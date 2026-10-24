@@ -306,13 +306,12 @@ export const buildEnvironment = async (
     name,
     operation: ENVIRONMENT_EXPORT_OPERATION,
   });
-  const records = parseCaptureEvidence(
+  const recorded = parseCaptureEvidence(
     ENVIRONMENT_BUILD_OPERATION,
     input.capture.value,
-    "review",
   );
-  if (!records.ok) return records;
-  warnings.push(...credentialScanWarnings(records.value.records));
+  if (!recorded.ok) return recorded;
+  warnings.push(...credentialScanWarnings(recorded.value));
 
   const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined
@@ -323,7 +322,7 @@ export const buildEnvironment = async (
     capture: {
       evidence_id: capture.evidence_id,
       operation: capture.operation,
-      records: records.value.records.length,
+      records: recorded.value.records.length,
       input: input.captureInput,
     },
     manifest: {
