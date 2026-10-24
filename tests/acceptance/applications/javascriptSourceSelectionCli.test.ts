@@ -183,16 +183,28 @@ cliTest(
 );
 
 cliTest.for([
-  { command: "analyze", source: "file" },
-  { command: "analyze-javascript-application", source: "inline" },
+  { command: "analyze", source: "file", format: "asar" },
+  {
+    command: "analyze-javascript-application",
+    source: "inline",
+    format: "directory",
+  },
 ])(
-  "appends $source --source-paths-json selections to --source-path through $command",
+  "appends $source --source-paths-json selections for $format through $command",
   { timeout: 60_000 },
-  async ({ command, source }, { cli }) => {
+  async ({ command, source, format }, { cli }) => {
     const directory = await createTestTempDirectory(
       "rea-js-source-paths-json-",
     );
     await writeJavaScriptSourceSelectionFixture(directory);
+    let target = directory;
+    if (format === "asar") {
+      target = join(
+        await createTestTempDirectory("rea-js-json-selected-asar-"),
+        "app.asar",
+      );
+      await createPackageWithOptions(directory, target, {});
+    }
     const listed = ["main.mjs", "package.json"];
     let sourcePathsJson = JSON.stringify(listed);
     if (source === "file") {
@@ -205,7 +217,7 @@ cliTest.for([
     const response = await cli.run({
       arguments: [
         command,
-        directory,
+        target,
         "--source-path",
         "package.json",
         "--source-paths-json",
@@ -226,6 +238,16 @@ cliTest.for([
     });
     expect(evidence.parameters.source_paths).toEqual(requested);
     expect(result.statistics.parsed_javascript_files).toBe(1);
+    if (format === "asar") {
+      expect(evidence.subject).toMatchObject({
+        local_path: target,
+        digest: {
+          sha256: createHash("sha256")
+            .update(await readFile(target))
+            .digest("hex"),
+        },
+      });
+    }
   },
 );
 
