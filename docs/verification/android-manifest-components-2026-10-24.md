@@ -130,3 +130,53 @@ it is not a kernel-enforced process-family maximum. No Android device,
 split APK, signature-verification, native-library or runtime coverage is claimed.
 Issue #4448's broader enabled/process, metadata, URI-grant and location requests
 remain open.
+
+## SDK omission and XML namespace follow-up
+
+The subsequent review fixes are pinned in
+`dfdba0fac79e07949b12299c85a1a2f3e9c2f115`.
+Android's [uses-sdk contract](https://developer.android.com/guide/topics/manifest/uses-sdk-element)
+defaults an omitted target to the minimum SDK and an omitted minimum to 1.
+The component XML owner now combines the bridge's declaration values with
+attribute-presence facts from the already parsed document. A present-empty
+attribute or an unrecognized nonempty value stays unknown. Declaration-level
+`target_sdk` and `min_sdk` remain unchanged. Root child nodes are reused, and
+the effective numeric SDK/provider default is computed once; the redundant
+per-provider parsing helper was removed.
+
+One unnamespaced-element predicate now guards the manifest root, uses-sdk,
+application, components, filters, actions and categories. Foreign lookalikes
+cannot contribute component facts or satisfy an alias's preceding target.
+Namespace URIs on Android attributes continue to govern attribute selection.
+
+Eleven new negative cases fail on the published baseline, with three positive
+SDK cases already passing. Three further present-empty SDK cases fail with a
+simple string fallback and pass with the owned presence facts. Unknown-SDK
+fixtures now supply an explicit unrecognized value rather than using omission
+to mean unknown. All 100 selected component/JADX/protocol/SDK-summary cases
+pass, as do `check:fast`, `format:check`, `docs:check` and discovery of all
+2,333 files. Complete inventory coverage does not establish every SDK or
+export state; nullable facts and limitations retain that uncertainty.
+
+Another three alternating public-APK pairs compare published
+`b50ee503fdff0912c12f1aaa76f043235d187a77` with the corrected revision above.
+Every normalized fact/provenance field and all 355 component rows match the
+independent oracle again. The exact-raw-record exclusions and fresh-JVM,
+warm-OS-cache conditions described above apply.
+
+| Cost                               | Before median (range)   | After median (range)      |
+| ---------------------------------- | ----------------------- | ------------------------- |
+| Estimated complete CLI task tokens | 135,958 (constant)      | 135,958 (constant)        |
+| Elapsed seconds                    | 12.036 (11.133–12.487)  | 11.024 (10.623–17.519)    |
+| CPU seconds                        | 18.436 (18.169–18.897)  | 17.921 (17.252–19.856)    |
+| Sampled peak family RSS, MiB       | 1,022.1 (981.3–1,049.8) | 1,043.8 (1,023.5–1,090.1) |
+
+The ranges overlap and sampled memory median is higher; no speed or memory
+improvement is established by this comparison. The actual stdio MCP workflow
+also passes again, including all summary facts, the three manifest pages,
+warm complete inspection and retained summary. That completed verification
+took 26.991 seconds, 35.482 CPU seconds and 1,740.9 MiB sampled peak family RSS.
+Its schema/client-buffer and comparison qualifications above remain in force.
+These legacy-SDK edge cases are production-boundary/golden checks; the real
+APK has an explicit SDK 33 target, so a legacy APK without uses-sdk was not
+independently exercised through binary XML decoding or on a device.
