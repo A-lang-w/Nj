@@ -474,12 +474,13 @@ estimated 64 MiB decode budget before parsing; this is not a hard process-memory
 bound. JSON decode memory has not been measured and has no equivalent decode
 estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
-Ordinary direct-source inspection admits 998 source nesting levels, derived from
+Ordinary direct-source inspection has a 998-level source nesting allowance, derived from
 the existing 1000-level JSON result capacity by reserving one level for typed
 scalar fields and one for the result's `value` field. Deeper input reports
 `resource_constraint` with `reported_limits.maximum_nesting_depth: 998` and names
-the fixed nesting allowance. Compatibility conversions can encounter an earlier
-native utility refusal; their diagnostics remain explicit. Archive and Interface
+the fixed nesting allowance. XML validation and compatibility conversions can
+encounter an earlier native nesting or format refusal; their diagnostics remain
+distinct from REA's result allowance. Archive and Interface
 Builder decoding retain their separate 128-level allowance. Worker limits and
 host memory do not raise these fixed allowances, and the unchanged request fails
 the same way.

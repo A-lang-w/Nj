@@ -34,6 +34,7 @@ describe.skipIf(process.platform !== "darwin")(
           { format: "binary", depth: 129, data: true },
           { format: "xml", depth: 129, data: true },
           { format: "binary", depth: 200, data: false },
+          { format: "xml", depth: 200, data: false },
           { format: "json", depth: 200, data: false },
           { format: "binary", depth: 998, data: true },
           { format: "binary", depth: 999, data: true },
@@ -53,7 +54,7 @@ describe.skipIf(process.platform !== "darwin")(
               : Buffer.from(
                   format === "json"
                     ? JSON.stringify(value)
-                    : `<plist>${"<dict><key>level</key>".repeat(depth)}<data>AAE=</data>${"</dict>".repeat(depth)}</plist>`,
+                    : `<plist>${"<dict><key>level</key>".repeat(depth)}${data ? "<data>AAE=</data>" : "<integer>1</integer>"}${"</dict>".repeat(depth)}</plist>`,
                 );
           await writeFile(path, bytes);
           const output = await cli.run({
@@ -62,6 +63,37 @@ describe.skipIf(process.platform !== "darwin")(
           });
           const response = await call("inspect_plist", { path });
           expect(await readFile(path)).toEqual(bytes);
+          if (format === "xml" && depth === 998) {
+            // Native XML admission has its own depth boundary, below REA's
+            // result allowance. Preserve that physical failure independently.
+            const expectedFailure = {
+              code: "invalid_request",
+              category: "invalid_input",
+              details: {
+                issues: [
+                  {
+                    path: ["path"],
+                    reason: "invalid_value",
+                    message: expect.stringContaining(
+                      "Too many nested arrays or dictionaries",
+                    ),
+                  },
+                ],
+                captured_output: {
+                  exit_code: 1,
+                  stderr: expect.stringContaining(
+                    "Too many nested arrays or dictionaries",
+                  ),
+                },
+              },
+            };
+            expect(output.exitCode, output.stderr).toBe(1);
+            expect(output.json).toMatchObject(expectedFailure);
+            expect(parseMcpToolError(response).error).toMatchObject(
+              expectedFailure,
+            );
+            continue;
+          }
           if (depth === 999) {
             expect(output.exitCode, output.stderr).toBe(1);
             const expectedFailure = {
@@ -105,7 +137,15 @@ describe.skipIf(process.platform !== "darwin")(
           expect(cliResult.format).toBe(format === "json" ? "unknown" : format);
           expect(cliResult.provenance.map((item) => item.tool)).toEqual([
             "file",
+            ...(format === "xml" ? ["plutil"] : []),
           ]);
+          if (format === "xml")
+            expect(cliResult.provenance[1]?.command).toEqual([
+              "/usr/bin/plutil",
+              "-lint",
+              "--",
+              "$PLIST",
+            ]);
           let leaf: unknown = cliResult.value;
           for (let level = 0; level < depth; level += 1) {
             expect(leaf).toHaveProperty("level");

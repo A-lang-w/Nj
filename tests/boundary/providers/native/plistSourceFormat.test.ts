@@ -36,6 +36,8 @@ class PlistSourceRunner extends NativeFixtureRunner {
 
   override async run(tool: string, arguments_: readonly string[]) {
     const result = await super.run(tool, arguments_);
+    if (result.ok && tool === "plutil" && arguments_[0] === "-lint")
+      return ok({ ...result.value, stdout: "OK\n", stdoutBytes: 3 });
     if (!result.ok || tool !== "plutil" || !this.xmlFallback) return result;
     const json = arguments_.includes("json");
     const stdout = json ? "" : this.convertedXml;
@@ -87,7 +89,7 @@ it.for<PlistSourceCase>([
     contents: `﻿ \n${XML}`,
     expected: "xml",
     xmlFallback: true,
-    expectedTools: ["file"],
+    expectedTools: ["file", "plutil"],
     expectedLimitations: [],
   },
   {
@@ -95,7 +97,7 @@ it.for<PlistSourceCase>([
     contents: `<!-- source plist -->\n${XML}`,
     expected: "xml",
     xmlFallback: true,
-    expectedTools: ["file"],
+    expectedTools: ["file", "plutil"],
     expectedLimitations: [],
   },
   ...[false, true].map((bigEndian) => ({
@@ -105,7 +107,7 @@ it.for<PlistSourceCase>([
       : Buffer.from(`\uFEFF${XML}`, "utf16le"),
     expected: "xml",
     xmlFallback: true,
-    expectedTools: ["file"],
+    expectedTools: ["file", "plutil"],
     expectedLimitations: [],
   })),
   { description: "ASCII text\n", expected: "unknown", xmlFallback: true },
@@ -120,7 +122,7 @@ it.for<PlistSourceCase>([
     expected: "xml",
     xmlFallback: false,
     expectedValue: { ...VALUE, Blob: DATA },
-    expectedTools: ["file"],
+    expectedTools: ["file", "plutil"],
   },
   {
     description:
@@ -128,7 +130,7 @@ it.for<PlistSourceCase>([
     contents: Buffer.from("\uFEFF" + XML, "utf16le").swap16(),
     expected: "xml",
     xmlFallback: true,
-    expectedTools: ["file"],
+    expectedTools: ["file", "plutil"],
     expectedLimitations: [],
   },
   {
@@ -162,7 +164,7 @@ it.for<PlistSourceCase>([
     xmlFallback: true,
     convertedXml:
       "<plist><dict><key>nel</key><string>a\u0085b</string><key>ls</key><string>a\u2028b</string><key>ps</key><string>a\u2029b</string><key>lf</key><string>a\nb</string><key>payload</key><data>AA==</data></dict></plist>",
-    expectedTools: ["file"],
+    expectedTools: ["file", "plutil"],
     expectedLimitations: [],
     expectedValue: {
       nel: "a\u0085b",
@@ -210,6 +212,12 @@ it.for<PlistSourceCase>([
       expectedTools ??
         (xmlFallback ? ["file", "plutil", "plutil"] : ["file", "plutil"]),
     );
+    if (expected === "xml")
+      expect(
+        result.provenance
+          .filter(({ tool }) => tool === "plutil")
+          .map(({ command }) => command.slice(1)),
+      ).toEqual([["-lint", "--", "$PLIST"]]);
     expect(result.limitations).toEqual(
       expectedLimitations ??
         (xmlFallback ? [expect.stringContaining("XML conversion")] : []),

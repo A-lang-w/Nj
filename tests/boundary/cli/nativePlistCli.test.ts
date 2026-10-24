@@ -281,7 +281,17 @@ describe.skipIf(process.platform !== "darwin")(
               ],
             },
             bundle: { identifier: "com.example.types", executable: "App" },
-            provenance: [{ tool: "file" }],
+            provenance: [
+              expect.objectContaining({ tool: "file" }),
+              ...(format === "xml"
+                ? [
+                    expect.objectContaining({
+                      tool: "plutil",
+                      command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+                    }),
+                  ]
+                : []),
+            ],
             limitations: [expect.stringContaining("2 non-finite real")],
           },
         });

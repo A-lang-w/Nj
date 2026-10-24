@@ -66,14 +66,14 @@ it.for<TextSourceCase>([
   },
   {
     name: "unknown XML scalar",
-    bytes: Buffer.from("<plist><integer> 42 </integer></plist>"),
+    bytes: Buffer.from("<plist><real>1e999</real></plist>"),
     description: "XML 1.0 document text",
     format: "xml",
     value: {
       $plist_type: "unknown",
-      element: "integer",
-      literal: " 42 ",
-      reason: "invalid-literal",
+      element: "real",
+      literal: "1e999",
+      reason: "unrepresentable",
     },
     limitations: [
       expect.stringContaining("1 XML scalar value(s) could not be established"),
@@ -147,6 +147,7 @@ it.for<TextSourceCase>([
   await writeFile(path, fixture.bytes);
   const replay = new NativeFixtureRunner({ file: fixture.description });
   const tools: string[] = [];
+  const admissions: Array<readonly string[]> = [];
   let conversionIndex = 0;
   const client = new NativeMacOSProvider(
     {},
@@ -155,6 +156,15 @@ it.for<TextSourceCase>([
         tools.push(tool);
         const result = await replay.run(tool, args);
         if (tool !== "plutil" || !result.ok) return result;
+        if (args[0] === "-lint") {
+          admissions.push([...args]);
+          return ok({
+            ...result.value,
+            stdout: `${path}: OK\n`,
+            stdoutBytes: Buffer.byteLength(`${path}: OK\n`),
+          });
+        }
+        expect(args[0]).toBe("-convert");
         const conversion = fixture.conversions[conversionIndex++];
         if (conversion === undefined)
           throw new Error("Unexpected conversion of directly supported source");
@@ -181,7 +191,14 @@ it.for<TextSourceCase>([
     source_path: path,
   });
   expect(result.provenance.map((item) => item.tool)).toEqual(tools);
-  expect(tools).toEqual(["file", ...fixture.conversions.map(() => "plutil")]);
+  const validatesSource =
+    fixture.format === "xml" && fixture.conversions.length === 0;
+  expect(admissions).toEqual(validatesSource ? [["-lint", "--", path]] : []);
+  expect(tools).toEqual([
+    "file",
+    ...(validatesSource ? ["plutil"] : []),
+    ...fixture.conversions.map(() => "plutil"),
+  ]);
   expect(conversionIndex).toBe(fixture.conversions.length);
   if (fixture.limitations !== undefined)
     expect(result.limitations).toEqual(fixture.limitations);
