@@ -260,7 +260,8 @@ export const semanticStoreMayReachAmbientSetter = (
       effect.node !== undefined &&
       semanticIntrinsicReceiverIsSafe(effect.node, state) &&
       semanticObjectAccessorSelection(descriptor, "set", state, "get", "own")
-        .ownDescriptor === "absent"
+        .ownDescriptor === "absent" &&
+      state.descriptorMayInheritSetterAt?.(descriptor, effect.node) === false
     )
       return false;
     const overlaps = (path: readonly (string | null)[], descendants: boolean) =>
@@ -1598,14 +1599,16 @@ export function* indexJavaScriptAmbientWritesSteps(
         path[0] === "__proto__" &&
         semanticEffectTiming(read, source.mutation, state) !== "after",
     );
-  state.ambientStorePrototypeFacts = (store) => {
-    const resolved = ambientWrites(
-      store.target.object,
-      store.target.object,
-      false,
-      ["__proto__"],
-      { actualPrototype: true, prototypeReceiver: true, beforeStore: store },
-    );
+  const actualPrototypeFactsAt = (
+    root: t.Node,
+    read: t.Node,
+    store?: SemanticBeforeStore,
+  ) => {
+    const resolved = ambientWrites(root, read, false, ["__proto__"], {
+      actualPrototype: true,
+      prototypeReceiver: true,
+      ...(store === undefined ? {} : { beforeStore: store }),
+    });
     if (resolved.unknownReasons.length > 0) return undefined;
     const prototypePaths = new Map<string, AmbientPath>();
     let unknownAncestors = false;
@@ -1634,7 +1637,10 @@ export function* indexJavaScriptAmbientWritesSteps(
               effect.path[1] === owner &&
               effect.path[2] === "prototype" &&
               (effect.path[3] === null || effect.path[3] === "__proto__") &&
-              semanticEffectTimingAtStore(store, effect, state) !== "after",
+              (store === undefined
+                ? semanticEffectTiming(read, effect.node, state)
+                : semanticEffectTimingAtStore(store, effect, state)) !==
+                "after",
           )
         )
           return undefined;
@@ -1653,6 +1659,24 @@ export function* indexJavaScriptAmbientWritesSteps(
           localPrototypes: resolved.localPrototypes,
         }
       : undefined;
+  };
+  state.ambientStorePrototypeFacts = (store) =>
+    actualPrototypeFactsAt(store.target.object, store.target.object, store);
+  state.descriptorMayInheritSetterAt = (descriptor, read) => {
+    const facts = actualPrototypeFactsAt(descriptor, read);
+    if (facts === undefined || facts.unknownAncestors) return true;
+    if (
+      facts.prototypePaths.some((prototype) =>
+        semanticAmbientPathMayHaveChanged(state, read, [...prototype, "set"]),
+      )
+    )
+      return true;
+    return facts.localPrototypes.some(
+      (prototype) =>
+        !t.isObjectExpression(prototype) ||
+        semanticObjectAccessorSelection(prototype, "set", state, "get", "own")
+          .ownDescriptor !== "absent",
+    );
   };
   // A setter can rewrite any property of its receiver, not just the assigned
   // key. Publish that exposure before deciding whether a recognized native

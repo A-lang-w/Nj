@@ -194,6 +194,10 @@ export interface JavaScriptSemanticAnalysisState {
   objectCopyMayInvalidateOwnDescriptors?:
     | ((source: t.ObjectExpression) => boolean)
     | undefined;
+  /** Whether ToPropertyDescriptor may obtain a setter through the actual prototype chain. */
+  descriptorMayInheritSetterAt?:
+    | ((descriptor: t.ObjectExpression, read: t.Node) => boolean)
+    | undefined;
   /** Ordinary local identity selected at the target argument's own read site. */
   ordinaryLocalIdentityAt?: ((node: t.Node) => boolean) | undefined;
   /** Captured allocation's prototype mutations invalidate inherited member identity. */

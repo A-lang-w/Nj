@@ -755,3 +755,48 @@ it.each([
     else expect(endpoints).toEqual([]);
   },
 );
+
+it.each([
+  [
+    'Object.prototype.set=function(value){value.get=fetch};Object.defineProperty(Array.prototype,"p",{});',
+    true,
+  ],
+  [
+    'Object.defineProperty(Array.prototype,"p",{__proto__:{set(value){value.get=fetch}}});',
+    true,
+  ],
+  [
+    'Object.defineProperty(Array.prototype,"p",{__proto__:{get set(){return function(value){value.get=fetch}}}});',
+    true,
+  ],
+  [
+    'const descriptor=Object.create({set(value){value.get=fetch}});Object.defineProperty(Array.prototype,"p",descriptor);',
+    true,
+  ],
+  ['Object.defineProperty(Array.prototype,"p",{});', false],
+  [
+    'Object.prototype.set=function(value){value.get=fetch};Object.defineProperty(Array.prototype,"p",{__proto__:null});',
+    false,
+  ],
+  [
+    'Object.defineProperty(Array.prototype,"p",{});Object.prototype.set=function(value){value.get=fetch};',
+    false,
+  ],
+])(
+  "reads inherited descriptor setters at the definition clock: %s",
+  (setup, invoked) => {
+    const source = `${setup}const box=[];box.p=Map.prototype;new Map().get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);
