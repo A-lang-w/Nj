@@ -33,9 +33,14 @@ serving, reading records with REA's own capture parser, and compares the reads; 
 | unshown writes refused       | 69     | 46              | 1,153                   | 2,087 of 2,162           | 2,766 of 3,031 |
 | catalog values, atomic bulk  | 69     | 46              | 1,153                   | 2,087 of 2,162           | 2,766 of 3,031 |
 | review fixes                 | 69     | 46              | 1,153                   | 2,087 of 2,162           | 2,766 of 3,031 |
+| scoped envelopes, bulk rows  | 69     | 48              | 1,151                   | 2,085 of 2,155           | 2,763 of 3,022 |
 
 All 187 write tools are counted at every step, and the served smoke applies every served write tool.
 
+- **Scoped envelopes, bulk rows:** a shared envelope masks only members minted on every path, so Vault's identity entity
+  and group item views, which matched one of four and one of three recorded reads from the state, replay their
+  recordings, and Vault's entity update and delete lose their state target. Serving bulk responses that list each
+  written entity changes no capture's verdict.
 - **Review fixes:** literal bulk ids, per-entity bulk values, pinned bulk delete members, comparison ids per
   collection, echoed creation clocks, required held clocks, nested clocks checked against every call, learned sorts
   kept open to contrary reads and limited to the read's own entities, one query check per recorded call, guards
