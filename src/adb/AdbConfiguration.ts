@@ -7,6 +7,7 @@ import { isAbsolute } from "node:path";
 
 import {
   execFileOutput,
+  execFileFailureCapturedOutput,
   ExecFileOutputCancelledError,
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
@@ -14,7 +15,6 @@ import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { adbCommandCapturedOutput } from "./AdbCommand.js";
 
 /** Environment key selecting the caller's adb binary. */
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
@@ -128,7 +128,7 @@ export const inspectAdbClient = async (
         cause: cause.cause,
         ...(failure === undefined
           ? {}
-          : { capturedOutput: adbCommandCapturedOutput(failure) }),
+          : { capturedOutput: execFileFailureCapturedOutput(failure) }),
       });
     const diagnostics = {
       selected_binary: selection.binary,
@@ -140,7 +140,7 @@ export const inspectAdbClient = async (
       diagnostics,
       ...(failure === undefined
         ? {}
-        : { capturedOutput: adbCommandCapturedOutput(failure) }),
+        : { capturedOutput: execFileFailureCapturedOutput(failure) }),
     };
     if (failure?.outputTruncated === true) {
       throw new AnalysisResourceConstraintError(
@@ -180,11 +180,11 @@ export const inspectAdbClient = async (
     if (failure?.code === "EACCES" || failure?.code === "EPERM")
       throw new AdbConfigurationFailure(
         "binary_not_executable",
-        `The selected adb binary could not be executed (${failure.code}): ${selection.binary}`,
+        `Execution of the selected adb binary was denied (${failure.code}): ${selection.binary}`,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
-          spawn_error: failure.code,
+          filesystem_error: failure.code,
           remediation:
             failure.code === "EPERM"
               ? `Allow the host security policy to run this adb binary, or set ${ADB_BINARY_ENV} to an absolute path to an adb binary the host permits`
@@ -216,9 +216,9 @@ export const inspectAdbClient = async (
 const rejectionCodeOf = (
   code: AdbConfigurationFailureCode,
 ): ProviderRejectionCode =>
-  code === "binary_missing" || code === "binary_not_executable"
+  code === "binary_missing"
     ? "executable_missing"
-    : code === "not_absolute"
+    : code === "not_absolute" || code === "binary_not_executable"
       ? "not_configured"
       : "version_unresolved";
 

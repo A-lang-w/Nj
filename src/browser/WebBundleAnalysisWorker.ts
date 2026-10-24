@@ -1,3 +1,4 @@
+import { WorkerFrameSignal } from "../process/WorkerFrameSignal.js";
 import { createHash, randomUUID } from "node:crypto";
 import { open, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,16 +11,18 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import {
-  ArtifactFileCancelled,
+  artifactFileCompletion,
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
   withArtifactFileHandle,
 } from "../artifacts/ArtifactFileOperation.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  completedStableArtifact,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import type { StableArtifactSnapshot } from "../artifacts/readStableArtifact.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisOutputError,
@@ -30,13 +33,16 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonParts, bufferedJsonParts } from "../domain/jsonSerialization.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerInspection.js";
+import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "../domain/webBundleScriptAnalysis.js";
 import { OwnedWorkerRuntime } from "../process/OwnedWorkerRuntime.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../process/RuntimeControlUnavailableError.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
@@ -104,21 +110,6 @@ type WebBundleActiveJob = {
   readonly resultBudgetBytes: number;
 };
 
-const stableSnapshotValue = (
-  value: unknown,
-): StableArtifactSnapshot | undefined => {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    !("bytes" in value) ||
-    !Buffer.isBuffer(value.bytes) ||
-    !("sha256" in value) ||
-    typeof value.sha256 !== "string"
-  )
-    return undefined;
-  return { bytes: value.bytes, sha256: value.sha256 };
-};
-
 export interface WebBundleScriptAnalysisFailure {
   readonly error: AnalysisError;
   readonly completed: WebBundleScriptAnalysis | null;
@@ -139,7 +130,7 @@ export class WebBundleAnalysisWorker {
   #activeDeadline: ProviderStartupDeadline | undefined;
   #activeJob: WebBundleActiveJob | undefined;
   #activeTerminalResponseObserved = false;
-  readonly #frameWaiters = new Set<(outcome: "frame" | "failure") => void>();
+  readonly #frameSignal = new WorkerFrameSignal();
   #retainedResultBytes = 0;
   #ready = false;
   readonly #stdout = (chunk: Buffer | string): void => {
@@ -172,12 +163,12 @@ export class WebBundleAnalysisWorker {
         this.#observeFrame(this.#frames.at(-1)!);
         this.#pending = this.#pending.slice(end + 1);
       }
-      this.#wakeFrameWaiters("frame");
+      this.#frameSignal.wake("frame");
     } catch (cause) {
       this.#pending = "";
       this.#protocolFailure = cause;
       this.#latchFailure({ kind: "protocol", cause });
-      this.#wakeFrameWaiters("failure");
+      this.#frameSignal.wake("failure");
     }
   };
 
@@ -200,7 +191,7 @@ export class WebBundleAnalysisWorker {
       onInputFailure: (cause) => {
         if (this.#activeDeadline?.interruption !== undefined) return;
         this.#latchFailure({ kind: "input", cause });
-        this.#wakeFrameWaiters("failure");
+        this.#frameSignal.wake("failure");
       },
       supervisorOptions: {
         captureStdout: false,
@@ -232,7 +223,7 @@ export class WebBundleAnalysisWorker {
                 !this.#activeTerminalResponseObserved)
             )
               this.#latchFailure({ kind: "incomplete-output" });
-            this.#wakeFrameWaiters("failure");
+            this.#frameSignal.wake("failure");
           } else if (event.type === "output") {
             const failure = this.#observedFailure;
             if (failure?.kind !== "exit") return;
@@ -390,7 +381,8 @@ export class WebBundleAnalysisWorker {
       completed = facts;
       result = ok(facts);
     } catch (cause) {
-      const snapshot = this.#completedSnapshot(cause);
+      const completion = artifactFileCompletion(cause);
+      const snapshot = completedStableArtifact(cause);
       if (snapshot !== undefined && resultDescriptor !== undefined) {
         try {
           completed = this.#validateCompletedResult(
@@ -403,7 +395,7 @@ export class WebBundleAnalysisWorker {
           // The physical read completed, but only validated facts are retained.
         }
       }
-      const cancellationCause = this.#completedReadCancellation(cause);
+      const cancellationCause = completion?.cancellation;
       const interrupted =
         deadline?.interruption === "timeout"
           ? scriptTimeout(timeoutMs, cause)
@@ -425,19 +417,13 @@ export class WebBundleAnalysisWorker {
       if (observedFailure !== undefined && interrupted !== undefined)
         observedFailure.retainSecondaryFailure(interrupted);
       const failure =
-        cause instanceof ArtifactFileCleanupFailure &&
-        cause.fileCleanupFailure.outcome.kind === "completed"
+        cause instanceof ArtifactFileCleanupFailure && completion !== undefined
           ? this.#cleanupFailure(cause, interrupted)
           : interrupted !== undefined && observedFailure !== undefined
             ? observedFailure
             : (interrupted ??
-              (cause instanceof PrivateRuntimeRootUnavailableError
-                ? new AnalysisCapabilityUnavailableError(
-                    PROVIDER,
-                    OPERATION,
-                    cause.message,
-                    { cause, retryable: cause.retryable },
-                  )
+              (cause instanceof RuntimeControlUnavailableError
+                ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
                 : cause instanceof AnalysisError
                   ? cause
                   : new AnalysisOutputError(
@@ -780,65 +766,12 @@ export class WebBundleAnalysisWorker {
     };
   }
 
-  #wakeFrameWaiters(outcome: "frame" | "failure"): void {
-    for (const wake of this.#frameWaiters) wake(outcome);
-    this.#frameWaiters.clear();
-  }
-
   async #waitForFrameOrOutputClose(
     supervisor: NonNullable<OwnedWorkerRuntime["supervisor"]>,
     deadline: ProviderStartupDeadline,
   ): Promise<"frame" | "failure" | "closed" | "interrupted"> {
     if (this.#frames.length > 0) return "frame";
-    let wakeFrame!: (outcome: "frame" | "failure") => void;
-    const frameAvailable = new Promise<"frame" | "failure">((resolve) => {
-      wakeFrame = resolve;
-      this.#frameWaiters.add(wakeFrame);
-    });
-    const outputCloseController = new AbortController();
-    const interruptOutputClose = () =>
-      outputCloseController.abort(deadline.signal.reason);
-    if (deadline.signal.aborted) interruptOutputClose();
-    else
-      deadline.signal.addEventListener("abort", interruptOutputClose, {
-        once: true,
-      });
-    try {
-      const outputClose = supervisor
-        .waitForOutputClose(undefined, outputCloseController.signal)
-        .then((closed): "closed" | "interrupted" =>
-          closed ? "closed" : "interrupted",
-        );
-      return await Promise.race([frameAvailable, outputClose]);
-    } finally {
-      outputCloseController.abort();
-      deadline.signal.removeEventListener("abort", interruptOutputClose);
-      this.#frameWaiters.delete(wakeFrame);
-    }
-  }
-
-  #completedSnapshot(cause: unknown): StableArtifactSnapshot | undefined {
-    if (cause instanceof ArtifactFileCancelled)
-      return stableSnapshotValue(cause.fileCancellation.outcome.value);
-    if (
-      cause instanceof ArtifactFileCleanupFailure &&
-      cause.fileCleanupFailure.outcome.kind === "completed"
-    )
-      return stableSnapshotValue(cause.fileCleanupFailure.outcome.value);
-    return undefined;
-  }
-
-  #completedReadCancellation(
-    cause: unknown,
-  ): { readonly reason: unknown } | undefined {
-    if (cause instanceof ArtifactFileCancelled)
-      return { reason: artifactFileCancellationCause(cause) };
-    if (
-      cause instanceof ArtifactFileCleanupFailure &&
-      cause.fileCleanupFailure.outcome.kind === "completed"
-    )
-      return cause.fileCleanupFailure.completionCancellation;
-    return undefined;
+    return this.#frameSignal.waitForOutputClose(supervisor, deadline.signal);
   }
 
   #validateCompletedResult(
@@ -875,7 +808,7 @@ export class WebBundleAnalysisWorker {
     this.#activeDeadline = undefined;
     this.#activeJob = undefined;
     this.#activeTerminalResponseObserved = false;
-    this.#wakeFrameWaiters("failure");
+    this.#frameSignal.wake("failure");
   }
 
   #cleanupFailure(cause: unknown, primary?: AnalysisError): AnalysisError {

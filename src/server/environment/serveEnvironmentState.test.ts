@@ -1,3 +1,4 @@
+import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -57,11 +58,7 @@ import {
   type ServedEnvironment,
   type ServeEnvironmentOptions,
 } from "./serveEnvironment.js";
-import {
-  DEFAULT_STATE_INTAKE,
-  STATE_INTAKE_LIMIT_BYTES,
-  type StateIntake,
-} from "./stateIntake.js";
+import { DEFAULT_STATE_INTAKE, type StateIntake } from "./stateIntake.js";
 
 const { source, state } = environmentStateServeInputs();
 
@@ -960,9 +957,12 @@ describe("serveEnvironment with a state", () => {
     await expect(
       add({ kind: "data", data: renamedDocument() }),
     ).resolves.toMatchObject({ result: {} });
-    await expect(environment.close()).rejects.toBeInstanceOf(
-      ArtifactResourceRetryFailure,
-    );
+    await expect(environment.close()).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      diagnostics: { cleanup_stages: ["state-files"] },
+      cause: expect.any(ArtifactResourceRetryFailure),
+      cleanupIncomplete: true,
+    });
     expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
     failing = false;
     await expect(environment.close()).resolves.toBeUndefined();
@@ -994,10 +994,16 @@ describe("serveEnvironment cleanup retries", () => {
     const listenerFailure = new Error("injected listener cleanup failure");
     closeFailureControl.failure = listenerFailure;
     await expect(environment.close()).rejects.toSatisfy((cause: unknown) => {
-      if (!(cause instanceof AggregateError)) return false;
+      if (!(cause instanceof Error) || !(cause.cause instanceof AggregateError))
+        return false;
+      expect(cause).toMatchObject({
+        _tag: "AnalysisOutputError",
+        diagnostics: { cleanup_stages: ["http-server", "state-files"] },
+        cleanupIncomplete: true,
+      });
       return (
-        cause.errors[0] === listenerFailure &&
-        cause.errors[1] instanceof ArtifactResourceRetryFailure
+        cause.cause.errors[0] === listenerFailure &&
+        cause.cause.errors[1] instanceof ArtifactResourceRetryFailure
       );
     });
     expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);

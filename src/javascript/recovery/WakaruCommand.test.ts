@@ -11,6 +11,7 @@ import {
   runWakaruCommand,
   type WakaruLauncher,
 } from "./WakaruCommand.js";
+import { prlimitArgumentVector } from "../../process/LinuxResourceLimits.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 it("names the Wakaru configuration requirement when it is not configured", async () => {
@@ -90,6 +91,31 @@ it("preserves caller cancellation before acquiring an expired execution budget",
     }),
   ).rejects.toMatchObject({ _tag: "AnalysisCancelledError" });
 });
+
+it.each([null, false, { request: "cancel launch" }])(
+  "preserves the opaque reason when cancellation interrupts launcher acquisition (%j)",
+  async (reason) => {
+    const controller = new AbortController();
+    await expect(
+      runWakaruCommand({
+        command: "/selected/wakaru",
+        limiter: "/usr/bin/prlimit",
+        arguments: ["--version"],
+        cwd: "/tmp/unused",
+        environment: {},
+        deadline: performance.now() + 5_000,
+        signal: controller.signal,
+        launcher: async () => {
+          controller.abort(reason);
+          throw new Error("launcher interrupted");
+        },
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+  },
+);
 
 const commandFixture = (
   emit: (producer: ReturnType<typeof createProducer>) => void,
@@ -180,6 +206,52 @@ it("enforces the shared deadline while exited output streams remain open", async
     producer.stdout.destroy();
     producer.stderr.destroy();
   }
+});
+
+it("pins both Wakaru ceilings through the shared prlimit vector", async () => {
+  let observed: readonly string[] | undefined;
+  const producer = createProducer();
+  const command = "/selected/wakaru";
+  await expect(
+    runWakaruCommand({
+      command,
+      limiter: "/usr/bin/prlimit",
+      arguments: ["--version"],
+      cwd: "/tmp/unused",
+      environment: {},
+      deadline: performance.now() + 5_000,
+      launcher: async (options) => {
+        observed = options.arguments;
+        setImmediate(() => {
+          producer.stdout.end();
+          producer.stderr.end();
+          producer.emit("exit", 0, null);
+          producer.emit("close", 0, null);
+        });
+        return {
+          process: producer,
+          ownership: {
+            runId: options.runId,
+            leaderPid: 12345,
+            processGroupId: 12345,
+            expectedParentPid: process.pid,
+          },
+          cleanup: async () => ({ cleaned: true, signaled: false }),
+        };
+      },
+    }),
+  ).resolves.toMatchObject({ exit_code: 0 });
+  expect(observed).toEqual([
+    ...prlimitArgumentVector(
+      {
+        address_space_bytes: RECOVERY_LIMITS.addressSpaceBytes,
+        file_bytes: RECOVERY_LIMITS.outputBytes,
+        cpu_seconds: RECOVERY_LIMITS.cpuSeconds,
+      },
+      command,
+    ),
+    "--version",
+  ]);
 });
 
 it("honors cancellation while waiting for output after exit", async () => {
