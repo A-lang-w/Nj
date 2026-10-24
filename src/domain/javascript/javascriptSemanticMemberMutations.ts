@@ -80,7 +80,7 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
-  traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
   childNodes,
 } from "./javascriptSemanticTraversal.js";
 import {
@@ -1482,7 +1482,7 @@ export function* collectSemanticMemberMutationsSteps(
         );
   };
   const writeOnlyMembers = new WeakSet<t.Node>();
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       const writeTarget = semanticWriteSiteTarget(node);
       if (writeTarget !== null && !semanticWriteSiteReadsFirst(node))
@@ -2008,8 +2008,8 @@ const observableMutationPaths = (
   for (const binding of state.bindingsById.values()) {
     const observer = bindingNodes.get(binding.bindingId);
     if (observer === undefined) continue;
-    // Imported values are external objects with observable member slots even
-    // when their syntax has no local object-allocation node (for example a
+    // Parameters, caught values and imports can have observable member slots
+    // without a local object-allocation node (for example a
     // CommonJS namespace from `require("node:fs")`). Keep those writes at their
     // exact member paths instead of widening the first path to a wildcard.
     const hasParsedRequireOrigin = binding.initializers.some(
@@ -2018,6 +2018,8 @@ const observableMutationPaths = (
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (
+      binding.kind === "parameter" ||
+      binding.kind === "catch" ||
       binding.directOrigins.length > 0 ||
       hasParsedRequireOrigin ||
       binding.hostOrigin !== undefined
