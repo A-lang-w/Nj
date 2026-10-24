@@ -75,7 +75,9 @@ export class AnalysisCleanupLease {
 
   /** Binding can follow a concurrent retry that already confirmed release. */
   bindCleanupError(error: AnalysisError): void {
-    new AnalysisCleanupLeaseGroup(error, [this]);
+    new AnalysisCleanupLeaseGroup(error, [this], {
+      preserveResourceAttribution: true,
+    });
   }
 
   /** Bind one aggregate error to every exact lease in a failed retry set. */
@@ -95,11 +97,17 @@ export class AnalysisCleanupLeaseGroup {
   readonly #error: WeakRef<AnalysisError>;
   readonly #pending: Set<AnalysisCleanupLease>;
 
-  constructor(error: AnalysisError, owners: readonly AnalysisCleanupLease[]) {
+  constructor(
+    error: AnalysisError,
+    owners: readonly AnalysisCleanupLease[],
+    options: { readonly preserveResourceAttribution?: boolean } = {},
+  ) {
     this.#error = new WeakRef(error);
     this.#pending = new Set(owners);
     if (this.#pending.size === 0) return;
-    error.bindCleanupResourceOwner(this);
+    if (options.preserveResourceAttribution === true)
+      error.bindCleanupCompletionOwner(this);
+    else error.bindCleanupResourceOwner(this);
     for (const owner of this.#pending) owner.bindCleanupGroup(this);
   }
 
