@@ -2,7 +2,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
-import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { pythonPycSchema } from "../../../src/domain/python/pythonPyc.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -18,7 +17,7 @@ import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
 const completePycEvidenceSchema = toolContract(
   "inspect_python_pyc",
-).outputSchema.and(evidenceResultOf(pythonPycSchema));
+).outputSchema.safeExtend({ normalized_result: pythonPycSchema });
 
 const marshalInt64 = (value: bigint): Buffer => {
   const payload = Buffer.alloc(8);

@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { evidenceResultOf } from "../../src/contracts/toolOutputSchemaPrimitives.js";
 import { pythonPycSchema } from "../../src/domain/python/pythonPyc.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
@@ -15,7 +14,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 
 const completePycEvidenceSchema = toolContract(
   "inspect_python_pyc",
-).outputSchema.and(evidenceResultOf(pythonPycSchema));
+).outputSchema.safeExtend({ normalized_result: pythonPycSchema });
 
 const marshalUtf8 = (bytes: Buffer): Buffer => {
   const length = Buffer.alloc(4);
