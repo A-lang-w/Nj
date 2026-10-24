@@ -309,6 +309,38 @@ describe("JebProvider project open refusal error handling", () => {
     expect(error.path).toBe("/targets/Other.apk");
     expect(error.message).toContain("/targets/Other.apk");
   });
+
+  it("preserves artifact path when varying the endpoint URL", async () => {
+    const customEndpoint = "http://127.0.0.1:9999/mcp";
+    const provider = new JebProvider({
+      environment: { REA_JEB_MCP_URL: customEndpoint },
+      connectionFactory: () =>
+        scriptedConnection({
+          get_client_information: {
+            success: true,
+            version: "5.48.0",
+            gui_client: false,
+          },
+          open_project: {
+            success: false,
+            message: "Format not recognized",
+          },
+        }),
+    });
+    const result = await provider.execute({
+      operation: "open_jeb_project",
+      input: { path: "/targets/Example.apk" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    const error = result.error as AnalysisUnsupportedTargetError;
+    expect(error.path).toBe("/targets/Example.apk");
+    expect(error.operation).toBe("open_jeb_project");
+    expect(error.reason).toBe("Format not recognized");
+    expect(error.message).toContain("/targets/Example.apk");
+    expect(error.message).not.toContain(customEndpoint);
+  });
 });
 
 describe("JebProvider open project inventories", () => {
