@@ -1,5 +1,7 @@
+import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPublication.js";
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
+import type { HopperReleaseError } from "./HopperReleaseFeed.js";
 import type {
   SkillDestination,
   SkillInstallResult,
@@ -20,6 +22,8 @@ export interface SetupInitialState {
   readonly hopperPath?: string;
   /** Whether the caller explicitly selected a Hopper launcher in its environment. */
   readonly hopperLauncherConfigured?: boolean;
+  /** Whether the caller or host has an analysis provider configuration. */
+  readonly providerConfigured: boolean;
   readonly providerEnvironment: SetupProviderEnvironment;
   readonly doctor: DoctorReport;
 }
@@ -27,17 +31,44 @@ export interface SetupInitialState {
 /** Result of one backup/write/readback transaction. */
 export type ClientConfigurationResult =
   | {
+      readonly status: "failed";
+      readonly reason: "conflict";
+      readonly backupPath?: string;
+    }
+  | {
       readonly status: "unchanged" | "configured" | "skipped";
       readonly backupPath?: string;
     }
   | {
       readonly status: "failed";
-      readonly reason:
-        | "path"
-        | "target_changed"
-        | "backup"
-        | "write"
-        | "readback";
+      readonly reason: "path" | "target_changed" | "backup";
+    }
+  | {
+      readonly status: "failed";
+      readonly reason: "write";
+      readonly failure?: ClientConfigurationWriteProblem;
+      readonly backupPath?: string;
+    }
+  | {
+      readonly status: "failed";
+      /** Removing the member a client reads would activate an earlier duplicate. */
+      readonly reason: "shadowed_member";
+      readonly path: readonly string[];
+    }
+  | {
+      readonly status: "failed";
+      readonly reason: "readback";
+      /** Snapshot of the restored original, when this transaction made one. */
+      readonly backupPath?: string;
+    }
+  | {
+      readonly status: "failed";
+      readonly reason: "target_unavailable";
+      readonly failure: {
+        readonly kind: "inspect";
+        readonly path: string;
+        readonly detail: string;
+      };
     }
   | {
       readonly status: "failed";
@@ -65,6 +96,7 @@ export type ClientConfigurationInspection =
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory: string;
+  readonly linuxHopperReleaseCache?: Result<string, HopperReleaseError>;
   skillDestinations(clientIds: readonly string[]): readonly SkillDestination[];
   readonly registrationCommand: readonly string[];
   /** Why client registration cannot proceed from this host. */
