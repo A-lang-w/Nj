@@ -57,6 +57,20 @@ Every change had an independent review that rebuilt it and tried to refute it; t
 the change. A final review of the whole branch found one wrongly served update (EspoCRM) and the hidden pinned values,
 both fixed.
 
+## Cost
+
+Over the 50 captures, one Node v24.22.1 process per sweep builds the environment-state and environment-manifest views
+of every capture (macOS arm64, warm medians of three runs; the cold first run is within 2% of them):
+
+| Tree                    | Wall   | CPU    | Peak RSS | Environment-state view | Its results |
+| ----------------------- | ------ | ------ | -------- | ---------------------- | ----------- |
+| main `d87e73f2`         | 2.61 s | 3.41 s | 516 MiB  | 1,791 ms               | 3.69 MB     |
+| state targets (`#6385`) | 2.96 s | 3.82 s | 540 MiB  | 2,093 ms               | 3.84 MB     |
+| this branch             | 3.06 s | 4.07 s | 601 MiB  | 2,224 ms               | 3.85 MB     |
+
+The write rules add 0.10 s wall, 0.25 s CPU and 61 MiB of peak memory to the sweep while serving 7 more write tools.
+Agent tokens were not measured; the views' results grow by 0.3%.
+
 ## Not included
 
 - Templating literal ids by value: an opt-in rule served Grafana's folder delete and Vault's policy delete, but both
