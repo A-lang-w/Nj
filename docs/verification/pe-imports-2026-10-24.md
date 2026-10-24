@@ -169,7 +169,7 @@ CLI cases and the real MCP SDK/advertised AJV schema exercise both zero-span and
 preceding-row outcomes. The expanded selected workflow passes **213** checks
 in 71.408 s (71.595 s waited-child CPU). The full static gate passes. The earlier
 cost table remains pinned to its revisions; these later RVA checks were not
-included in those measurements.
+included in that first measurement; the separate comparison below covers them.
 
 The ordinal-mask suggestion was tested rather than applied: installed pefile
 2024.8.26 itself uses `addr_of_data & 0x7FFFFFFF` in its ordinal corruption
@@ -186,3 +186,29 @@ All three controls already pass before the RVA correction. Expanding the mask
 to 63 payload bits would diverge from this pinned pefile behavior. The reason
 text now specifies the low 31-bit payload; the raw thunk remains available, and
 matching pefile does not claim loader validity for reserved bits.
+
+## RVA-guard completed-task follow-up
+
+To measure the final guard separately from other integration changes, repeat
+three alternating pairs of the same four completed CLI tasks, now comparing
+`a7406eca8137c9fae58a12cb8354f042047f5045` against
+`feda57ae4ef420bc72e8e04393b75810da86cc3c` on their common main integration.
+All **24** tasks complete. All complete Evidence objects match across each
+fixture's six runs, and every ordered inventory field still matches the
+independent pefile oracle. Artifact digests stay unchanged; stderr is empty.
+The token estimator, invocation/discovery scope, process/cache conditions and
+profiler limitations are the same as the earlier measurement.
+
+| Complete CLI task          | Estimated stdout + invocation tokens, before → after | Elapsed median s |  CPU median s | Sampled family RSS median MiB |
+| -------------------------- | ---------------------------------------------------: | ---------------: | ------------: | ----------------------------: |
+| No imports                 |                                            676 → 676 |    2.220 → 2.019 | 2.383 → 2.382 |                 367.6 → 364.0 |
+| Shipped PE32               |                                        3,678 → 3,678 |    1.918 → 1.918 | 2.253 → 2.203 |                 366.8 → 367.9 |
+| Shipped PE32+              |                                        3,715 → 3,715 |    1.973 → 1.968 | 2.363 → 2.293 |                 368.9 → 369.3 |
+| 2,048 sections / functions |                                      70,342 → 70,342 |    2.825 → 2.221 | 2.423 → 2.428 |                 382.9 → 389.0 |
+
+No speedup is claimed. In the largest case, elapsed ranges are 2.019–3.085 s
+before and 2.019–2.776 s after. CPU medians differ by about 0.004 s; sampled
+RSS increases about 6.1 MiB (1.6%). Shared-host variance dominates the apparent
+elapsed improvement. This validates the measured completed tasks, not a maximum
+format-size or transport-buffer qualification. Later main changes remain
+outside these pinned measurements.
