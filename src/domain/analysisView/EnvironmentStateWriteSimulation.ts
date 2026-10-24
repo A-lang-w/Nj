@@ -276,10 +276,6 @@ export class EnvironmentStateWriteSimulation {
                 ordinal === request.ordinal
                   ? request.body
                   : this.#input.io.requestBody(ordinal),
-              withRequestBody: (ordinal, use) =>
-                ordinal === request.ordinal
-                  ? use(request.body)
-                  : this.#input.io.withRequestBody(ordinal, use),
             },
       records: this.#input.records,
       timed: this.#input.timed,

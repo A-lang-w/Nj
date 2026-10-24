@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-import { jsonParts } from "../jsonSerialization.js";
-import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -445,31 +442,6 @@ export const stampProblem = (
   return undefined;
 };
 
-/** Compare one borrowed body at a time, retaining only budgeted member fingerprints. */
-export class RequestVariation {
-  readonly #seen = new Map<string, string>();
-  readonly members = new Set<string>();
-
-  constructor(private readonly retain: (bytes: number) => void) {}
-
-  observe(body: JsonValue | undefined): void {
-    if (body === undefined || !isObject(body)) return;
-    for (const [member, value] of Object.entries(body)) {
-      if (this.members.has(member)) continue;
-      if (!this.#seen.has(member))
-        this.retain(ENTRY_BYTES + textBytes(member.length) + 128);
-      const hash = createHash("sha256");
-      for (const part of jsonParts(value)) hash.update(part);
-      const fingerprint = hash.digest("hex");
-      const previous = this.#seen.get(member);
-      if (previous !== undefined && previous !== fingerprint) {
-        this.members.add(member);
-        this.#seen.delete(member);
-      } else this.#seen.set(member, fingerprint);
-    }
-  }
-}
-
 /** The identity values of the objects an entity nests, by the stem of the field each sits under: what a member like `collection_id` names. */
 const nestedIdentities = (entity: JsonObject): Map<string, Set<string>> => {
   const index = new Map<string, Set<string>>();
@@ -515,15 +487,12 @@ const stateOf = (
 
 /**
  * Echoed members accepted only with their recorded value: one naming an object the entity nests, which serving
- * would keep as recorded, and on a create a state other fields go with unless recorded calls varied that state.
+ * would keep as recorded, and on a create a state other fields go with.
  */
 export const pinnedEchoes = (
   entity: JsonObject,
   body: JsonObject,
-  context: {
-    readonly type?: readonly JsonObject[];
-    readonly varied: ReadonlySet<string>;
-  },
+  type?: readonly JsonObject[],
 ): Set<string> => {
   const nested = nestedIdentities(entity);
   // A member names the object nested under the field it refers to, as `collection_id` does `collection`.
@@ -536,9 +505,7 @@ export const pinnedEchoes = (
   return new Set(
     Object.entries(body).flatMap(([member, value]) =>
       namesNested(member, value) ||
-      (!context.varied.has(member) &&
-        context.type !== undefined &&
-        stateOf(entity, member, value, context.type))
+      (type !== undefined && stateOf(entity, member, value, type))
         ? [member]
         : [],
     ),

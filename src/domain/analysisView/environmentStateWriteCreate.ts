@@ -9,7 +9,6 @@ import {
   segmentsOf,
   selectedCollection,
   type JsonObject,
-  requestJson,
   type StateEntity,
   type SuppliedSegment,
 } from "./environmentStateRules.js";
@@ -18,12 +17,9 @@ import {
   recordedGeneratedValue,
 } from "./environmentStateWriteApply.js";
 import {
-  unenveloped,
   createdToken,
   isOpaqueToken,
   restampedFields,
-  sameQuery,
-  RequestVariation,
 } from "./environmentStateWriteStamps.js";
 import {
   recordedPathValues,
@@ -33,7 +29,6 @@ import {
 import {
   collectionTarget,
   entityTarget,
-  succeeded,
 } from "./environmentStateWriteChecks.js";
 import {
   built,
@@ -147,32 +142,13 @@ const buildCreate = (
     readonly observed: Observed;
     readonly call: WriteCall & { readonly body: JsonObject };
     readonly collection: string;
+    readonly envelope: string | undefined;
   },
 ): boolean => {
   const type = draft.plan.target!;
   const idField = context.idField(type);
   const members = fieldsOf(context.state.members(type, evidence.collection));
   const held = fieldsOf(context.state.ofType(type));
-  // Only calls serving would take, successful and with the exemplar's query, show that a member may vary.
-  const calls = new Set(step.tool.record_ordinals);
-  const request = requestBodyPlan(
-    context,
-    step,
-    draft,
-    evidence.observed.object,
-  )!;
-  const variation = new RequestVariation((bytes) => context.io.retain(bytes));
-  for (const record of context.records) {
-    if (
-      !calls.has(record.ordinal) ||
-      !succeeded(record) ||
-      !sameQuery(record.query, step.record.query)
-    )
-      continue;
-    context.io.withRequestBody(record.ordinal, (parsed) => {
-      variation.observe(unenveloped(requestJson(parsed), request.envelope));
-    });
-  }
   const explained = explainCreate({
     entity: evidence.observed.object,
     call: evidence.call,
@@ -181,7 +157,6 @@ const buildCreate = (
     collection: members,
     type: held,
     named: (id) => context.state.named(id),
-    varied: variation.members,
   });
   const explainedFields = new Set(explained.rules.map((rule) => rule.field));
   if (
@@ -236,7 +211,9 @@ const buildCreate = (
     ),
     body: {
       ...explained.body,
-      ...(request.envelope === undefined ? {} : { envelope: request.envelope }),
+      ...(evidence.envelope === undefined
+        ? {}
+        : { envelope: evidence.envelope }),
     },
     rules: explained.rules,
     collection:
@@ -446,7 +423,8 @@ export const applyCreate = (
     idField,
     linked: draft.linked !== undefined,
   });
-  const body = requestBodyPlan(context, step, draft, observed?.object)?.object;
+  const request = requestBodyPlan(context, step, draft, observed?.object);
+  const body = request?.object;
   if (observed === undefined) {
     fail(draft, step, body === undefined ? "body-unusable" : "no-observation");
     return UNKNOWN;
@@ -495,7 +473,12 @@ export const applyCreate = (
   }
   if (
     !later &&
-    !buildCreate(context, draft, step, { observed, call, collection })
+    !buildCreate(context, draft, step, {
+      observed,
+      call,
+      collection,
+      envelope: request?.envelope,
+    })
   )
     return recorded();
   // Rules learn from the recorded path; serving fills path fields from the collection it selects.

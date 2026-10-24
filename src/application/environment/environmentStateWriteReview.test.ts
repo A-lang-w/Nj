@@ -386,6 +386,39 @@ it("keeps a create's nested reference pinned when an unobserved call varies its 
   );
 });
 
+it("refuses a create's unsupported dependent state even when an unobserved call varied it", () => {
+  const post = (id: number, status: string, published_at: string | null) => ({
+    id,
+    title: `Post ${String(id)}`,
+    status,
+    published_at,
+  });
+  const first = post(1, "published", "2026-10-01T09:00:00Z");
+  const second = post(2, "published", "2026-10-01T10:00:00Z");
+  const draft = post(3, "draft", null);
+  const posts = servedFrom([
+    ["GET", "/api/posts", [first, second]],
+    ["GET", "/api/posts/1", first],
+    ["GET", "/api/posts/2", second],
+    ["POST", "/api/posts", draft, 201, { title: "Post 3", status: "draft" }],
+    ["GET", "/api/posts/3", draft],
+    ["POST", "/api/posts", "", 204, { title: "Post 4", status: "published" }],
+  ]);
+  expect(posts.state.writes.get("post_posts")).toMatchObject({ served: true });
+  const before = posts.snapshot();
+  expect(
+    posts.refusal("post_posts", {
+      body: { title: "Caller", status: "published" },
+    }),
+  ).toMatchObject({ code: "invalid_request" });
+  expect(posts.snapshot()).toBe(before);
+  expect(
+    posts.answer("post_posts", {
+      body: { title: "Caller", status: "draft" },
+    }).body,
+  ).toMatchObject({ title: "Caller", status: "draft", published_at: null });
+});
+
 it("drops a write's confirmation when its read view later disproves learned array sorting", () => {
   const tagged = (book: typeof FIRST_BOOK, tags: string[]) => ({
     ...book,
