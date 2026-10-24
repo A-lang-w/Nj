@@ -622,6 +622,44 @@ describe("opt-in function comparison normalized views", () => {
       await harness.close();
     }
   });
+
+  it("returns the same views for retained session references", async () => {
+    const [left, right] = relocationPair();
+    const harness = await connectComparisonMcp(
+      "function-comparison-retained-views",
+    );
+    try {
+      for (const evidence of [left, right]) {
+        const recorded = harness.session.recordEvidence(evidence);
+        if (!recorded.ok) throw recorded.error;
+      }
+      const compare = async (inputs: object) => {
+        const response = await harness.mcp.callTool({
+          name: "compare_functions",
+          arguments: { ...inputs, include_normalized_views: true },
+        });
+        expect(
+          response.isError,
+          JSON.stringify(response.structuredContent),
+        ).not.toBe(true);
+        return parseEvidence(response.structuredContent);
+      };
+      const retained = await compare({
+        left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+        right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+      });
+      const inline = await compare({ left, right });
+      expect(retained.parameters).toMatchObject({
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+        include_normalized_views: true,
+      });
+      expect(retained.normalized_result).toHaveProperty("normalized_views");
+      expect(retained.normalized_result).toEqual(inline.normalized_result);
+    } finally {
+      await harness.close();
+    }
+  });
 });
 
 const connectComparisonMcp = async (name: string) => {
@@ -638,6 +676,7 @@ const connectComparisonMcp = async (name: string) => {
   await client.connect(clientTransport);
   return {
     mcp: client,
+    session,
     close: async () => {
       await Promise.allSettled([
         client.close(),
