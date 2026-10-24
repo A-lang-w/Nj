@@ -5,6 +5,61 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "unchanged review safe getter",
+    'const copy = {...{get first(){return undefined}, get later(){new Socket("wss://example.test/socket")}}}; const Socket = globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "review safe getter",
+    'try{const copy = {...{get first(){return undefined}, get later(){new Socket("wss://example.test/socket")}}};}catch{} const Socket = globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "review failed apply",
+    'let args; try { (()=>{}).apply(null, args={get length(){new Socket("wss://example.test/later"); return 0}}, null.value); } catch {} const Socket=globalThis.WebSocket; args.length;',
+    ["wss://example.test/later"],
+  ],
+  [
+    "spread safe undefined prefix",
+    'try{const copy={...{get first(){return undefined},get later(){new Socket("wss://example.test/safe")}}};}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "spread shadowed undefined prefix",
+    'let box;try{const copy={...(box={get first(){return undefined},get later(){new Socket("wss://example.test/shadow")}})};let undefined=0;}catch{}const Socket=globalThis.WebSocket;box.later;',
+    ["wss://example.test/shadow"],
+  ],
+  [
+    "rest safe undefined prefix",
+    'try{const {...copy}={get first(){return undefined},get later(){new Socket("wss://example.test/safe")}};}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "rest shadowed undefined prefix",
+    'let box;try{const {...copy}=(box={get first(){return undefined},get later(){new Socket("wss://example.test/shadow")}});let undefined=0;}catch{}const Socket=globalThis.WebSocket;box.later;',
+    ["wss://example.test/shadow"],
+  ],
+  [
+    "apply safe undefined prefix",
+    'try{(()=>{}).apply(null,{length:2,get 0(){return undefined},get 1(){new Socket("wss://example.test/safe")}});}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "apply shadowed undefined prefix",
+    'let box;try{(()=>{}).apply(null,box={length:2,get 0(){return undefined},get 1(){new Socket("wss://example.test/shadow")}});let undefined=0;}catch{}const Socket=globalThis.WebSocket;box[1];',
+    ["wss://example.test/shadow"],
+  ],
+  [
+    "apply index explicit failure",
+    'let args;try{(()=>{}).apply(null,args={length:1,get 0(){new Socket("wss://example.test/index")}},null.x)}catch{}const Socket=globalThis.WebSocket;args[0];',
+    ["wss://example.test/index"],
+  ],
+  [
+    "apply safe later argument",
+    'const Socket=globalThis.WebSocket;(()=>{}).apply(null,{get length(){new Socket("wss://example.test/length");return 0}},0);',
+    ["wss://example.test/length"],
+  ],
+  [
     "rest prior selected read must finish",
     'let box;try{const {first,...copy}=(box={get first(){throw 0},get later(){new Socket("wss://example.test/rest-selected")}})}catch{}const Socket=globalThis.WebSocket;box.later;',
     ["wss://example.test/rest-selected"],

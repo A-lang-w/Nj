@@ -3,7 +3,6 @@ import * as t from "@babel/types";
 
 import {
   semanticLiteralContainer,
-  semanticDirectFunctionResult,
   semanticLiteralProperty,
   semanticFinalObjectSlot,
   semanticStaticPropertyKey,
@@ -12,11 +11,11 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { syntaxEvaluationAlwaysThrows } from "./javascriptSymbolicControlFlow.js";
 import {
-  syntaxEvaluationCannotThrow,
-  syntaxEvaluationAlwaysThrows,
-} from "./javascriptSymbolicControlFlow.js";
-import { semanticPatternCompletionBeforeTarget } from "./javascriptGeneratorConsumerPhases.js";
+  semanticGetterCompletionValue,
+  semanticPatternCompletionBeforeTarget,
+} from "./javascriptGeneratorConsumerPhases.js";
 import {
   semanticArrayIndex,
   semanticPropertyPathKeyMatches,
@@ -275,12 +274,7 @@ export const semanticLiteralCopyGetterIsReached = (
   for (const slot of slots) {
     if (slot.kind === "accessor") {
       if (slot.node === getter) return true;
-      const result = semanticDirectFunctionResult(slot.node);
-      if (
-        result.kind === "unknown" ||
-        (result.kind === "value" && !syntaxEvaluationCannotThrow(result.node))
-      )
-        return false;
+      if (!semanticGetterCompletionValue(slot.node, state).known) return false;
     } else if (slot.kind === "unknown" || slot.kind === "invalid") return false;
   }
   return false;

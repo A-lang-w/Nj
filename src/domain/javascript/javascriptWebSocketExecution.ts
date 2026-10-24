@@ -7,6 +7,7 @@ import {
 } from "./javascriptSemanticLiteralProjection.js";
 import {
   semanticPatternCompletionBeforeGeneratorRead,
+  semanticGetterCompletionValue,
   semanticPatternSuspendsBeforeTarget,
   semanticGeneratorReadInCleanup,
   semanticGeneratorReadAfterYield,
@@ -28,7 +29,6 @@ import {
   javaScriptClassField,
   javaScriptFunctionCanConstruct,
   semanticDirectFunctionReturn,
-  semanticDirectFunctionResult,
   semanticFinalObjectSlot,
   semanticValueIsRead,
   semanticValueWriteSite,
@@ -297,6 +297,7 @@ const webSocketFreshMethodSelection = (
       (t.isCallExpression(consumer) || t.isOptionalCallExpression(consumer)) &&
       consumer.arguments[1] === result &&
       !javaScriptOptionalOperandsMayBeSkipped(consumer) &&
+      !syntaxEvaluationAlwaysThrows(consumer) &&
       !consumer.arguments.some((argument) => t.isSpreadElement(argument))
     ) {
       const callee = unwrapJavaScriptExpression(consumer.callee).node;
@@ -357,12 +358,7 @@ const webSocketFreshMethodSelection = (
             }
             if (slot.kind !== "member") continue;
             if (t.isObjectMethod(slot.node) && slot.node.kind === "get") {
-              const result = semanticDirectFunctionResult(slot.node);
-              if (
-                result.kind !== "undefined" &&
-                (result.kind !== "value" ||
-                  !syntaxEvaluationCannotThrow(result.node))
-              )
+              if (!semanticGetterCompletionValue(slot.node, state).known)
                 continue;
             }
             prior.add(name!);
