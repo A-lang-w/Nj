@@ -210,7 +210,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
 
 class NativeMacOSClient implements AnalysisClient {
   readonly #pendingNativeUiRuntimes = new Set<NativeUiHelperRuntime>();
-  readonly #pendingCommands = new Set<Promise<unknown>>();
+  readonly #pendingOperations = new Set<Promise<unknown>>();
   readonly #signatureResources = new ArtifactResourceScope();
   readonly #plistResources = new ArtifactResourceScope();
   readonly #callResources = new ArtifactResourceScope();
@@ -249,6 +249,23 @@ class NativeMacOSClient implements AnalysisClient {
           "Native provider client is closed",
         ),
       );
+    // Register before invoking any external port that could reenter close().
+    const execution = Promise.resolve().then(() =>
+      this.#executeAdmitted(operation, parameters, options),
+    );
+    this.#pendingOperations.add(execution);
+    try {
+      return await execution;
+    } finally {
+      this.#pendingOperations.delete(execution);
+    }
+  }
+
+  async #executeAdmitted(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: { readonly signal?: AbortSignal },
+  ) {
     if (options?.signal?.aborted === true)
       return err(
         new AnalysisCancelledError(operation, { cause: options.signal.reason }),
@@ -372,7 +389,7 @@ class NativeMacOSClient implements AnalysisClient {
 
   async close(): Promise<Result<null, AnalysisError>> {
     this.#closed = true;
-    await Promise.allSettled(this.#pendingCommands);
+    await Promise.allSettled(this.#pendingOperations);
     const uiCleanupFailures = await this.#serializeNativeUi(() =>
       this.#retryNativeUiCleanup(),
     );
@@ -1256,27 +1273,13 @@ class NativeMacOSClient implements AnalysisClient {
         | undefined;
     },
   ): Promise<Result<NativeCommandCapture, AnalysisError>> {
-    if (this.#closed)
-      return err(
-        new AnalysisCapabilityUnavailableError(
-          IDENTITY.id,
-          operation,
-          "Native provider client is closed",
-        ),
-      );
     const command = this.runner.run(tool, arguments_, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       timeoutMs: options.timeoutMs,
       acceptNonZero:
         options.acceptNonZero ?? options.acceptNonZeroIf !== undefined,
     });
-    this.#pendingCommands.add(command);
-    let captured: Awaited<typeof command>;
-    try {
-      captured = await command;
-    } finally {
-      this.#pendingCommands.delete(command);
-    }
+    const captured = await command;
     if (captured.ok) {
       const hasFailedExit =
         captured.value.exitCode !== 0 || captured.value.signal !== null;
