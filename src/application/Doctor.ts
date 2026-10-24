@@ -57,6 +57,7 @@ import {
 import {
   configuredDoctorScope,
   normalizeDoctorScope,
+  selectConfiguredDoctorScope,
   scopeDoctorChecks,
   type DoctorConfiguredScopeReport,
   type DoctorScopeReport,
@@ -299,7 +300,7 @@ const inspectDoctor = async (
   const scoped = scopeDoctorChecks({ ...scopeInput, scope });
   const configured =
     scope.mode === "audit-wide"
-      ? configuredDoctorScope({ ...scopeInput, target: scope.target })
+      ? await inspectConfiguredScope(host, scopeInput, scope.target)
       : undefined;
   return {
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
@@ -313,6 +314,55 @@ const inspectDoctor = async (
     ...(providerInspections === undefined ? {} : { providerInspections }),
     checks,
     identity: identity.value,
+  };
+};
+
+/**
+ * Judge the configured workflow with the facts its suggested command reads:
+ * skill copies of the configured clients only, when any client is configured;
+ * otherwise that command reads every installed copy, as the audit did.
+ */
+const inspectConfiguredScope = async (
+  host: DoctorHost,
+  audit: Omit<
+    Parameters<typeof configuredDoctorScope>[0],
+    "selection" | "target"
+  >,
+  target: string | null,
+): Promise<DoctorConfiguredScopeReport | undefined> => {
+  const selection = selectConfiguredDoctorScope(audit);
+  if (selection === undefined) return undefined;
+  if (selection.clients.length === 0)
+    return configuredDoctorScope({ ...audit, selection, target });
+  const skill = await inspectSkillIdentity(host, selection.clients);
+  return configuredDoctorScope({
+    ...audit,
+    checks: [
+      ...audit.checks.filter(({ name }) => name !== "skill:identity"),
+      ...(skill.check === undefined ? [] : [skill.check]),
+    ],
+    skillState: skill.state,
+    selection,
+    target,
+  });
+};
+
+/** Read one set of skill copies; undefined clients means every installed copy. */
+const inspectSkillIdentity = async (
+  host: DoctorHost,
+  clientIds: readonly string[] | undefined,
+): Promise<{
+  readonly identity: InstalledSkillIdentity | undefined;
+  readonly state: DoctorSkillState;
+  readonly check: DoctorCheck | undefined;
+}> => {
+  const identity = await host.installedSkillIdentity?.(clientIds);
+  return {
+    identity,
+    state: skillIdentityState(identity),
+    check: skillIdentityAligned(identity)
+      ? undefined
+      : skillIdentityCheck(identity),
   };
 };
 
@@ -381,12 +431,14 @@ const collectDoctorIdentity = async (
   const skillClientIds =
     scope.skill_clients ??
     (scope.clients.length > 0 ? scope.clients : undefined);
-  const installedSkillIdentity =
-    await host.installedSkillIdentity?.(skillClientIds);
-  const skillAligned = skillIdentityAligned(installedSkillIdentity);
+  const {
+    identity: installedSkillIdentity,
+    state: skillState,
+    check: skillCheck,
+  } = await inspectSkillIdentity(host, skillClientIds);
   return {
     checks: [
-      ...(skillAligned ? [] : [skillIdentityCheck(installedSkillIdentity)]),
+      ...(skillCheck === undefined ? [] : [skillCheck]),
       ...registrations
         .filter(
           (registration): registration is UnhealthyClientRegistrationStatus =>
@@ -414,13 +466,14 @@ const collectDoctorIdentity = async (
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
         installed_tool_count: installedSkillIdentity?.toolCount ?? null,
-        state: skillIdentityState(installedSkillIdentity),
+        state: skillState,
         ...(installedSkillIdentity?.issues === undefined
           ? {}
           : { issues: installedSkillIdentity.issues }),
-        remediation: skillAligned
-          ? null
-          : skillIdentityRemediation(installedSkillIdentity),
+        remediation:
+          skillCheck === undefined
+            ? null
+            : skillIdentityRemediation(installedSkillIdentity),
       },
       registrations,
     },

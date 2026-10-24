@@ -50,13 +50,19 @@ export interface DoctorConfiguredScopeReport {
   readonly command: string;
 }
 
+/** Clients and providers this host has set up; absent when none is. */
+export interface DoctorConfiguredSelection {
+  readonly clients: readonly string[];
+  readonly providers: readonly string[];
+}
+
 /**
- * Select registered clients (any state except missing or manual), configured or
- * discovered providers, and an installed skill; absent when none is set up.
+ * Select registered clients (any state except missing or manual) and
+ * configured or discovered providers.
  */
-export const configuredDoctorScope = (
-  input: Omit<DoctorScopeInput, "scope"> & { readonly target: string | null },
-): DoctorConfiguredScopeReport | undefined => {
+export const selectConfiguredDoctorScope = (
+  input: Pick<DoctorScopeInput, "registrations" | "providers">,
+): DoctorConfiguredSelection | undefined => {
   const clients = uniqueSorted(
     input.registrations
       .filter(({ state }) => state !== "missing" && state !== "manual")
@@ -70,7 +76,24 @@ export const configuredDoctorScope = (
       ? ["hopper"]
       : []),
   ]);
-  if (clients.length === 0 && providers.length === 0) return undefined;
+  return clients.length === 0 && providers.length === 0
+    ? undefined
+    : { clients, providers };
+};
+
+/**
+ * Judge a configured selection as `rea doctor` would for its explicit scope.
+ * `skillState` and the `skill:identity` check must come from the skill copies
+ * of the selected clients, which the explicit scope reads, not from the
+ * audit's read of every installed copy.
+ */
+export const configuredDoctorScope = (
+  input: Omit<DoctorScopeInput, "scope"> & {
+    readonly selection: DoctorConfiguredSelection;
+    readonly target: string | null;
+  },
+): DoctorConfiguredScopeReport => {
+  const { clients, providers } = input.selection;
   const skill = input.skillState !== "missing";
   const scope: DoctorScopeReport = {
     mode: "explicit",

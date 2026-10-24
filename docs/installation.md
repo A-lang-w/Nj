@@ -387,8 +387,9 @@ Without a scope option, `healthy` also counts clients and providers you never
 set up, so a working setup can report `healthy: false`. The audit-wide report
 then includes `configured_scope`: the registered clients (any registration
 state except missing or manual), the configured or discovered providers, and
-the installed skill. Its `healthy` applies the same scoped rules to just those
-components, and its `command` is the `rea doctor` invocation that reports
+the skill when installed. Its `healthy` applies the same scoped rules to just
+those components, reading the skill copies of those clients rather than every
+installed copy, and its `command` is the `rea doctor` invocation that reports
 exactly that scope. It is omitted when no client or provider is set up.
 
 An invalid `REA_LOG_LEVEL` fails every scope, including one client or the

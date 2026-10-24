@@ -6,6 +6,8 @@ import { defaultHopperLauncherPath } from "../config/parseConfig.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   runDoctor,
   systemDoctorHost,
@@ -1262,92 +1264,93 @@ describe("doctor target admission diagnostics", () => {
   });
 });
 
-describe("doctor configured scope", () => {
-  const registration = (
-    client: string,
-    state: "aligned" | "stale" | "missing",
-  ): ClientRegistrationStatus =>
-    state === "missing"
+/** Doctor configured-scope fixtures: one registered client per state. */
+const registration = (
+  client: string,
+  state: "aligned" | "stale" | "missing",
+): ClientRegistrationStatus =>
+  state === "missing"
+    ? {
+        client,
+        config_path: `/home/user/.${client}/config`,
+        command: [],
+        state,
+        remediation: "Run rea setup to refresh this registration.",
+      }
+    : state === "stale"
       ? {
           client,
           config_path: `/home/user/.${client}/config`,
-          command: [],
+          command: ["/old/rea", "mcp"],
           state,
           remediation: "Run rea setup to refresh this registration.",
         }
-      : state === "stale"
-        ? {
-            client,
-            config_path: `/home/user/.${client}/config`,
-            command: ["/old/rea", "mcp"],
-            state,
-            remediation: "Run rea setup to refresh this registration.",
-          }
-        : {
-            client,
-            config_path: `/home/user/.${client}/config`,
-            command: ["/current/rea", "mcp"],
-            state,
-            remediation: null,
-          };
-  const unconfigured = (
-    id: "ida" | "jadx" | "kuna",
-  ): DoctorProviderInspection => ({
-    id,
-    configured: false,
-    available: false,
-    providerVersion: null,
-    registrationEnvironment: {},
-    checks: [
-      {
-        name: "configuration",
-        ok: false,
-        code: "not_configured",
-        detail: `${id} is not configured.`,
-        remediation: `Configure ${id}.`,
-        classification: "missing_analysis_engine",
-      },
-    ],
+      : {
+          client,
+          config_path: `/home/user/.${client}/config`,
+          command: ["/current/rea", "mcp"],
+          state,
+          remediation: null,
+        };
+const unconfigured = (
+  id: "ida" | "jadx" | "kuna",
+): DoctorProviderInspection => ({
+  id,
+  configured: false,
+  available: false,
+  providerVersion: null,
+  registrationEnvironment: {},
+  checks: [
+    {
+      name: "configuration",
+      ok: false,
+      code: "not_configured",
+      detail: `${id} is not configured.`,
+      remediation: `Configure ${id}.`,
+      classification: "missing_analysis_engine",
+    },
+  ],
+});
+const ghidra = (available: boolean): DoctorProviderInspection => ({
+  id: "ghidra",
+  configured: true,
+  available,
+  providerVersion: available ? "12.1.4" : null,
+  registrationEnvironment: { GHIDRA_INSTALL_DIR: "/tools/ghidra" },
+  checks: available
+    ? []
+    : [
+        {
+          name: "java",
+          ok: false,
+          code: "runtime_unavailable",
+          detail: "JAVA_HOME is not a JDK.",
+          remediation: "Set JAVA_HOME to a JDK 21 installation.",
+          classification: "missing_analysis_engine",
+        },
+      ],
+});
+const workstation = (
+  ghidraAvailable: boolean,
+  registrations: readonly ClientRegistrationStatus[] = [
+    registration("cursor", "aligned"),
+    registration("codex", "missing"),
+    registration("vscode", "missing"),
+  ],
+) =>
+  host({
+    installationPaths: () => Promise.resolve([]),
+    clientRegistrations: () => Promise.resolve(registrations),
+    providerInspections: () =>
+      Promise.resolve([
+        ghidra(ghidraAvailable),
+        unconfigured("ida"),
+        unconfigured("jadx"),
+        unconfigured("kuna"),
+      ]),
   });
-  const ghidra = (available: boolean): DoctorProviderInspection => ({
-    id: "ghidra",
-    configured: true,
-    available,
-    providerVersion: available ? "12.1.4" : null,
-    registrationEnvironment: { GHIDRA_INSTALL_DIR: "/tools/ghidra" },
-    checks: available
-      ? []
-      : [
-          {
-            name: "java",
-            ok: false,
-            code: "runtime_unavailable",
-            detail: "JAVA_HOME is not a JDK.",
-            remediation: "Set JAVA_HOME to a JDK 21 installation.",
-            classification: "missing_analysis_engine",
-          },
-        ],
-  });
-  const workstation = (
-    ghidraAvailable: boolean,
-    registrations: readonly ClientRegistrationStatus[] = [
-      registration("cursor", "aligned"),
-      registration("codex", "missing"),
-      registration("vscode", "missing"),
-    ],
-  ) =>
-    host({
-      installationPaths: () => Promise.resolve([]),
-      clientRegistrations: () => Promise.resolve(registrations),
-      providerInspections: () =>
-        Promise.resolve([
-          ghidra(ghidraAvailable),
-          unconfigured("ida"),
-          unconfigured("jadx"),
-          unconfigured("kuna"),
-        ]),
-    });
 
+describe("doctor configured scope", () => {
   it("reports the configured workflow and its command beside an unhealthy audit", async () => {
     const audit = await runDoctor(undefined, workstation(true));
     expect(audit.healthy).toBe(false);
@@ -1400,6 +1403,52 @@ describe("doctor configured scope", () => {
     expect(audit.configured_scope?.command).toBe(
       "rea doctor --client cursor --provider ghidra --provider hopper --skill --target '/Applications/My App'\\''s.app'",
     );
+  });
+
+  it("judges the skill from the configured clients' copies, like the suggested command", async () => {
+    const selected: (readonly string[] | undefined)[] = [];
+    const skillHost = (cursorCopy: "aligned" | "stale"): DoctorHost => ({
+      ...workstation(true),
+      installedSkillIdentity: (clients) => {
+        selected.push(clients);
+        // A leftover copy outside the configured clients is stale; the audit
+        // reads every root and sees it, the cursor-scoped read does not.
+        const stale = { version: "stale", toolCount: 0, canonical: false };
+        if (clients === undefined) return Promise.resolve(stale);
+        return Promise.resolve(
+          cursorCopy === "stale"
+            ? stale
+            : {
+                version: PRODUCT_IDENTITY.skillVersion,
+                toolCount: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
+                canonical: true,
+              },
+        );
+      },
+    });
+
+    const audit = await runDoctor(undefined, skillHost("aligned"));
+    expect(audit.checks).toContainEqual(
+      expect.objectContaining({ name: "skill:identity", ok: false }),
+    );
+    expect(audit.configured_scope).toMatchObject({
+      clients: ["cursor"],
+      skill: true,
+      healthy: true,
+    });
+    expect(selected).toContainEqual(["cursor"]);
+    const suggested = await runDoctor(undefined, skillHost("aligned"), {
+      clients: ["cursor"],
+      providers: ["ghidra", "hopper"],
+      skill: true,
+    });
+    expect(suggested.healthy).toBe(true);
+
+    const staleCopy = await runDoctor(undefined, skillHost("stale"));
+    expect(staleCopy.configured_scope).toMatchObject({
+      skill: true,
+      healthy: false,
+    });
   });
 
   it("omits the configured workflow when nothing is set up", async () => {
