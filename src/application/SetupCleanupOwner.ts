@@ -15,6 +15,18 @@ interface SetupCleanupTask {
   close(): Promise<string | AnalysisCleanupObservation | AnalysisError | void>;
 }
 
+/** Construct a report from facts already parsed by its owning boundary. */
+const setupCleanupReport = (
+  cause: unknown,
+  observation: AnalysisCleanupObservation,
+): AnalysisError =>
+  new ProviderCleanupError(
+    "setup",
+    observation.resources,
+    { reason: observation.reason },
+    { cause, cleanup: observation, operation: "setup" },
+  );
+
 /** Preserve explicit cleanup capabilities when a host rejects instead of reporting. */
 export const setupCleanupError = (
   cause: unknown,
@@ -28,12 +40,7 @@ export const setupCleanupError = (
       cause instanceof ProviderCleanupError)
   )
     return cause;
-  const error = new ProviderCleanupError(
-    "setup",
-    observation.resources,
-    { reason: observation.reason },
-    { cause, cleanup: observation, operation: "setup" },
-  );
+  const error = setupCleanupReport(cause, observation);
   bindRegularFileCleanup(cause, error);
   return error;
 };
@@ -44,15 +51,14 @@ export const setupCleanupReason = (error: AnalysisError): string =>
     ? error.diagnostics.reason
     : error.message);
 
-/** One child callback and the conjunctive authorities reported by its generation. */
+/** One child callback, its conjunctive completion owner, and latest failure provenance. */
 class SetupCleanupChild {
   #generation = {};
   #attempted: object | undefined;
   #completed: object | undefined;
-  #report: AnalysisError | undefined;
+  #failure: { readonly owner: AnalysisError; cause: AnalysisError } | undefined;
   #reportedErrors = new WeakSet<AnalysisError>();
   #delegated: AnalysisError | undefined;
-  #delegatedErrors = new WeakSet<AnalysisError>();
   #reason = "";
   #resources: readonly string[] = [];
   #attempt: ReturnType<SetupCleanupTask["close"]> = Promise.resolve();
@@ -68,16 +74,20 @@ class SetupCleanupChild {
   }
 
   get failure():
-    | { readonly error: AnalysisError; readonly reason: string }
+    | {
+        readonly owner: AnalysisError;
+        readonly cause: AnalysisError;
+        readonly reason: string;
+      }
     | undefined {
-    if (this.#report !== undefined && !this.#report.cleanupIncomplete) {
+    if (this.#failure !== undefined && !this.#failure.owner.cleanupIncomplete) {
       this.#completed = this.#attempted;
-      this.#report = undefined;
+      this.#failure = undefined;
       this.#reportedErrors = new WeakSet();
     }
-    return this.#report === undefined
+    return this.#failure === undefined
       ? undefined
-      : { error: this.#report, reason: this.#reason };
+      : { ...this.#failure, reason: this.#reason };
   }
 
   close(): Promise<void> {
@@ -88,7 +98,6 @@ class SetupCleanupChild {
       this.#lease = this.#newLease();
       this.#completed = undefined;
       this.#delegated = undefined;
-      this.#delegatedErrors = new WeakSet();
     }
     const generation = this.#generation;
     this.#attempted = generation;
@@ -133,27 +142,43 @@ class SetupCleanupChild {
           ? ""
           : this.task.rejectedPrefix + ": ") + setupCleanupReason(failure);
     }
-    if (!failure.hasCleanupOwner) {
+    // Keep this attempt's diagnostics separate from the owner followed by
+    // every earlier report from this generation.
+    if (this.#failure !== undefined) this.#failure.cause = failure;
+    let dependency = failure;
+    if (failure.cleanupIncomplete && !failure.hasCleanupOwner) {
       this.#resources = [...failure.cleanupResources];
-      new AnalysisCleanupLeaseGroup(failure, [this.#lease]);
-      this.#delegatedErrors.add(failure);
-      // Every delegated report shares this exact lease. Retain one dependency
-      // rather than retaining an error for every unsuccessful callback attempt.
-      this.#delegated ??= failure;
+      if (this.#delegated === undefined) {
+        // Ownerless source errors remain evidence snapshots. A private report
+        // binds this callback without changing shared or immutable input.
+        this.#delegated = setupCleanupReport(failure, {
+          reason: this.#reason,
+          resources: this.#resources,
+        });
+        new AnalysisCleanupLeaseGroup(this.#delegated, [this.#lease]);
+      }
+      // Every attempt shares this exact callback lease and one dependency.
+      dependency = this.#delegated;
     }
-    const dependency = this.#delegatedErrors.has(failure)
-      ? this.#delegated
-      : failure;
     if (dependency !== undefined && dependency.cleanupIncomplete) {
       if (!this.#reportedErrors.has(dependency)) {
-        if (this.#report === undefined || !this.#report.cleanupIncomplete) {
-          this.#report = setupCleanupError(
-            new AggregateError([dependency], "Setup child cleanup authorities"),
-            { reason: this.#reason, resources: [] },
-          );
+        if (
+          this.#failure === undefined ||
+          !this.#failure.owner.cleanupIncomplete
+        ) {
+          this.#failure = {
+            owner: setupCleanupReport(
+              new AggregateError(
+                [dependency],
+                "Setup child cleanup authorities",
+              ),
+              { reason: this.#reason, resources: [] },
+            ),
+            cause: failure,
+          };
           this.#reportedErrors = new WeakSet();
-        } else this.#report.retainSecondaryFailure(dependency);
-        this.#report.bindCleanupDependencies([dependency]);
+        } else this.#failure.owner.retainSecondaryFailure(dependency);
+        this.#failure.owner.bindCleanupDependencies([dependency]);
         this.#reportedErrors.add(dependency);
       }
     }
@@ -207,17 +232,23 @@ export class SetupCleanupOwner {
       reason: failures.map((failure) => failure.reason).join("; "),
       resources: [
         ...new Set(
-          failures.flatMap((failure) => failure.error.cleanupResources),
+          failures.flatMap((failure) => failure.owner.cleanupResources),
         ),
       ],
     };
-    const error = setupCleanupError(
+    const error = setupCleanupReport(
       new AggregateError(
-        failures.map((failure) => failure.error),
+        failures.map((failure) => failure.cause),
         "Setup child cleanup failures",
+        {
+          cause: new AggregateError(
+            failures.map((failure) => failure.owner),
+            "Setup cleanup ownership reports",
+          ),
+        },
       ),
       observation,
-    ).bindCleanupDependencies(failures.map((failure) => failure.error));
+    ).bindCleanupDependencies(failures.map((failure) => failure.owner));
     return error.cleanupIncomplete ? error : undefined;
   }
 }

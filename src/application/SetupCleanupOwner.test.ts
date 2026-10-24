@@ -5,8 +5,24 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+
+const errorSources = (error: unknown): ReadonlySet<unknown> => {
+  const pending = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (seen.has(value)) continue;
+    seen.add(value);
+    if (value instanceof Error) pending.push(value.cause);
+    if (value instanceof AggregateError) pending.push(...value.errors);
+    if (value instanceof AnalysisError)
+      pending.push(value.cleanupPrimary, ...value.secondaryFailures);
+  }
+  return seen;
+};
 
 it("updates every report through mixed cleanup outcomes and exact retries", async () => {
   let firstHeld = true;
@@ -204,8 +220,9 @@ it.each(["pending", "already recovered"] as const)(
   },
 );
 
-it("recognizes its own delegated typed error when the same producer returns it again", async () => {
+it("keeps an immutable ownerless source snapshot while its owned report recovers", async () => {
   const source = new ProviderCleanupError("fixture", ["/delegated"], {});
+  Object.freeze(source);
   let held = true;
   const owner = new SetupCleanupOwner([
     {
@@ -218,7 +235,8 @@ it("recognizes its own delegated typed error when the same producer returns it a
   expect(second?.cleanupResources).toEqual(["/delegated"]);
   held = false;
   expect(await owner.close()).toBeUndefined();
-  expect(source.cleanupIncomplete).toBe(false);
+  expect(source.hasCleanupOwner).toBe(false);
+  expect(source.cleanupIncomplete).toBe(true);
   expect(first?.cleanupIncomplete).toBe(false);
   expect(second?.cleanupIncomplete).toBe(false);
 });
@@ -336,3 +354,82 @@ it.each(["artifact", "analysis"] as const)(
     expect(report?.cleanupResources).toEqual(observation.resources);
   },
 );
+
+it("retains the latest typed retry cause independently of its completion owner", async () => {
+  const firstCause = new ProviderCleanupError("fixture", ["/owned"], {
+    stage: "first",
+  });
+  const secondCause = new ProviderCleanupError(
+    "fixture",
+    ["/owned"],
+    { stage: "retry" },
+    {
+      capturedOutput: {
+        stdout: "retry-specific output",
+        stderr: "",
+        truncated: false,
+      },
+    },
+  );
+  let calls = 0;
+  const owner = new SetupCleanupOwner([
+    {
+      close: async () => {
+        if (++calls === 1) throw firstCause;
+        if (calls === 2) throw secondCause;
+      },
+    },
+  ]);
+  const first = await owner.close();
+  const second = await owner.close();
+  expect(errorSources(second).has(secondCause)).toBe(true);
+  expect(secondCause.capturedOutput?.stdout).toBe("retry-specific output");
+  expect(await owner.close()).toBeUndefined();
+  expect(first?.cleanupIncomplete).toBe(false);
+  expect(second?.cleanupIncomplete).toBe(false);
+});
+
+it("does not share callback ownership through a reused ownerless source error", async () => {
+  const source = new ProviderCleanupError("fixture", ["/same-file"], {});
+  let firstHeld = true;
+  let secondHeld = true;
+  const owner = new SetupCleanupOwner([
+    { close: async () => (firstHeld ? source : undefined) },
+    { close: async () => (secondHeld ? source : undefined) },
+  ]);
+  const first = await owner.close();
+  firstHeld = false;
+  const second = await owner.close();
+  expect(second?.cleanupIncomplete).toBe(true);
+  expect(second?.cleanupResources).toEqual(["/same-file"]);
+  secondHeld = false;
+  expect(await owner.close()).toBeUndefined();
+  expect(first?.cleanupIncomplete).toBe(false);
+  expect(second?.cleanupIncomplete).toBe(false);
+  expect(source.hasCleanupOwner).toBe(false);
+  expect(source.cleanupIncomplete).toBe(true);
+});
+
+it("retains earlier independent owner evidence alongside the latest retry cause", async () => {
+  const firstSource = new ProviderCleanupError("fixture", ["/first"], {
+    stage: "first",
+  });
+  const secondSource = new ProviderCleanupError("fixture", ["/second"], {
+    stage: "retry",
+  });
+  const firstLease = new AnalysisCleanupLease(async () => {}, ["/first"]);
+  const secondLease = new AnalysisCleanupLease(async () => {}, ["/second"]);
+  new AnalysisCleanupLeaseGroup(firstSource, [firstLease]);
+  new AnalysisCleanupLeaseGroup(secondSource, [secondLease]);
+  let calls = 0;
+  const owner = new SetupCleanupOwner([
+    { close: async () => (++calls === 1 ? firstSource : secondSource) },
+  ]);
+  await owner.close();
+  const latest = await owner.close();
+  expect(errorSources(latest).has(firstSource)).toBe(true);
+  expect(errorSources(latest).has(secondSource)).toBe(true);
+  await firstLease.release();
+  await secondLease.release();
+  expect(await owner.close()).toBeUndefined();
+});
