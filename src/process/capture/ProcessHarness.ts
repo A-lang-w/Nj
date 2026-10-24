@@ -328,6 +328,7 @@ const startCaptureRuntime = async (
         rows: scenario.terminal.rows,
         name: "xterm-256color",
       },
+      { signal: options.signal },
     );
     terminal = spawned.terminal;
     terminalBackend = spawned.backend;

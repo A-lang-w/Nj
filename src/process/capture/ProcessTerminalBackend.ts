@@ -5,6 +5,8 @@ import {
 import { constants as osConstants } from "node:os";
 import type { IDisposable, IPty } from "@lydell/node-pty";
 
+import { processCaptureCancelled } from "./ProcessCaptureError.js";
+
 /**
  * How a captured command gets its standard streams.
  *
@@ -83,6 +85,11 @@ class PipeTerminal {
       cwd: options.cwd,
       env: options.env as NodeJS.ProcessEnv,
       stdio: ["pipe", "pipe", "pipe"],
+      // Capture cleanup signals the process group it sampled from
+      // `terminal.pid`, and a PTY child is a session leader. A pipe child has
+      // to be one too, or that group is REA's own and cleanup would signal the
+      // server. Not on Windows, where `detached` means a new console instead.
+      detached: process.platform !== "win32",
     }) as ChildProcessWithoutNullStreams;
     this.pid = this.#child.pid ?? -1;
     if (this.pid < 1) {
@@ -93,6 +100,12 @@ class PipeTerminal {
     }
     this.#child.stdout.setEncoding("utf8");
     this.#child.stderr.setEncoding("utf8");
+    // A command can close its stdin and stay alive (`exec 0<&-; sleep 10`). The
+    // next scripted write then fails with EPIPE asynchronously, outside the
+    // `try` in `write()`; an unhandled stream error would take down the server
+    // this backend exists to keep up. Input after the command stopped reading is
+    // not a capture error.
+    this.#child.stdin.on("error", () => undefined);
     this.#child.stdout.on("data", (chunk: string) => this.#emit(chunk));
     this.#child.stderr.on("data", (chunk: string) => this.#emit(chunk));
     this.#child.on("error", () => undefined);
@@ -188,6 +201,14 @@ export interface SpawnedProcessTerminal {
   readonly backend: ProcessTerminalBackend;
 }
 
+/** How the caller wants the spawn done, when it needs a say. */
+export interface ProcessTerminalSpawnChoice {
+  /** Defaults to what this host can run; a test names one to reach the other path. */
+  readonly backend?: ProcessTerminalBackend;
+  /** Checked once more after the native module loads, before the command starts. */
+  readonly signal?: AbortSignal;
+}
+
 /**
  * Start one captured command on the best backend this host can actually run.
  *
@@ -198,8 +219,9 @@ export const spawnProcessTerminal = async (
   executable: string,
   args: readonly string[],
   options: ProcessTerminalSpawnOptions,
-  backend: ProcessTerminalBackend = processTerminalBackend(),
+  choice: ProcessTerminalSpawnChoice = {},
 ): Promise<SpawnedProcessTerminal> => {
+  const backend = choice.backend ?? processTerminalBackend();
   if (backend === "pipe") {
     return {
       terminal: new PipeTerminal(executable, args, options) as unknown as IPty,
@@ -207,5 +229,11 @@ export const spawnProcessTerminal = async (
     };
   }
   const { spawn } = await import("@lydell/node-pty");
+  // The caller checked cancellation before this call, but loading the native
+  // module is itself asynchronous. A command that starts after the capture was
+  // cancelled still writes files, and a later kill cannot undo those.
+  if (choice.signal?.aborted === true) {
+    throw processCaptureCancelled(choice.signal.reason);
+  }
   return { terminal: spawn(executable, [...args], options), backend };
 };

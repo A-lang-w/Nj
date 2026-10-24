@@ -37,7 +37,7 @@ const run = async (
       rows: 24,
       name: "xterm-256color",
     },
-    "pipe",
+    { backend: "pipe" },
   );
   let output = "";
   terminal.onData((data) => {
@@ -138,6 +138,67 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
+it("survives scripted input after the command closed its stdin", async () => {
+  const { terminal } = await spawnProcessTerminal(
+    "/bin/sh",
+    ["-c", "exec 0<&-; sleep 0.3"],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      cols: 80,
+      rows: 24,
+      name: "xterm-256color",
+    },
+    { backend: "pipe" },
+  );
+  const exited = new Promise<{
+    readonly exitCode: number;
+    readonly signal?: number;
+  }>((resolve) => terminal.onExit(resolve));
+  // Let the command close its end of the pipe, then write anyway. The failure
+  // arrives as an asynchronous EPIPE on the stream, not from `write()` itself.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  terminal.write("ignored\n");
+  terminal.write("ignored again\n");
+  const exit = await exited;
+  expect(exit.exitCode).toBe(0);
+});
+
+it.skipIf(process.platform !== "linux")(
+  "runs the pipe child in its own process group",
+  async () => {
+    const { terminal } = await spawnProcessTerminal(
+      "/bin/sh",
+      ["-c", "sleep 30"],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        cols: 80,
+        rows: 24,
+        name: "xterm-256color",
+      },
+      { backend: "pipe" },
+    );
+    const exited = new Promise<{
+      readonly exitCode: number;
+      readonly signal?: number;
+    }>((resolve) => terminal.onExit(resolve));
+    try {
+      // Capture cleanup signals the group sampled from `terminal.pid`; a PTY
+      // child leads its own group, so the pipe child has to as well. Otherwise
+      // that group is REA's and cleanup would signal the server.
+      const stat = await import("node:fs/promises").then((fs) =>
+        fs.readFile(`/proc/${String(terminal.pid)}/stat`, "utf8"),
+      );
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      expect(Number(fields[2])).toBe(terminal.pid);
+    } finally {
+      terminal.kill("SIGKILL");
+      await exited;
+    }
+  },
+);
+
 it("reports a signal when the command is killed", async () => {
   const { terminal } = await spawnProcessTerminal(
     "/bin/sh",
@@ -149,7 +210,7 @@ it("reports a signal when the command is killed", async () => {
       rows: 24,
       name: "xterm-256color",
     },
-    "pipe",
+    { backend: "pipe" },
   );
   const exited = new Promise<{
     readonly exitCode: number;
