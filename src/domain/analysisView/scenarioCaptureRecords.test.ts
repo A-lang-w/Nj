@@ -93,6 +93,13 @@ describe("scenarioCaptureRecords", () => {
     };
     const projected = scenarioCaptureRecords(duplicated, "manifest");
     expect(projected.records[0]?.reported).toEqual({});
+    // Review still sees the request side, whose bytes the Evidence ships.
+    expect(
+      scenarioCaptureRecords(duplicated, "review").records[0]?.reported,
+    ).toMatchObject({ request: { method: expect.any(String) } });
+    expect(
+      scenarioCaptureRecords(duplicated, "review").records[0]?.reported,
+    ).not.toHaveProperty("response");
     // The shared request-line owner rejects this ambiguous transaction before body counting.
     expect(
       manifestLimitations(projected).some((limitation) =>

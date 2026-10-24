@@ -184,6 +184,66 @@ describe("scanCredentialNames", () => {
   });
 });
 
+describe("scanCredentialNames over structured and unattributed records", () => {
+  it("scans each structured form parameter a HAR records without text", () => {
+    const structured = record(4, undefined, undefined);
+    (
+      structured.reported as { request: { postData?: unknown } }
+    ).request.postData = {
+      mimeType: "multipart/form-data",
+      params: [
+        { name: "api_key", value: "secret" },
+        { name: "api_key", value: "" },
+        { name: "user", value: "a" },
+        { name: "token", value: "t" },
+      ],
+    };
+    expect(scanCredentialNames([structured])).toEqual({
+      count: 2,
+      pointers: ["record 4 request /api_key", "record 4 request /token"],
+    });
+  });
+
+  it("scans the request side of a scenario transaction with duplicate responses", () => {
+    const capture = scenarioCaptureFixture(
+      [
+        {
+          method: "POST",
+          url: "/api/session?api_key=k-1",
+          status: 200,
+          mediaType: "application/json",
+          body: "{}",
+          requestMediaType: "application/json",
+          requestBody: '{"password":"x"}',
+          requestHeaders: [{ name: "X-Api-Key", value: "k-2" }],
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    const response = capture.events.items.find(
+      (event) => event.kind === "response",
+    );
+    if (response === undefined) throw new Error("Fixture lacks a response");
+    const duplicated = {
+      ...capture,
+      events: {
+        ...capture.events,
+        items: [...capture.events.items, { ...response, sequence: 99 }],
+      },
+    };
+    expect(
+      scanCredentialNames(scenarioCaptureRecords(duplicated, "review").records),
+    ).toEqual({
+      count: 3,
+      pointers: [
+        "record 0 request header X-Api-Key",
+        "record 0 request query api_key",
+        "record 0 request /password",
+      ],
+    });
+  });
+});
+
 describe("anonymousOrigin", () => {
   it("is true for loopback names and IP literals", () => {
     for (const origin of [

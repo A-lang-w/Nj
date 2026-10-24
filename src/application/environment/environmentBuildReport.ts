@@ -173,8 +173,21 @@ export const scanCredentialNames = (
     for (const [name, value] of namedValues(member(request, "queryString")))
       if (credentialNamed(name) && holdsValue(value))
         found(`record ${ordinal} request query ${name}`);
+    const postData = member(request, "postData");
+    const text = member(postData, "text");
+    // A HAR may record form fields only as structured params; each occurrence counts, as in a form body.
     scanBody(
-      parsedBody(member(member(request, "postData"), "text")),
+      text === undefined
+        ? {
+            kind: "form",
+            fields: namedValues(member(postData, "params")).flatMap(
+              ([name, value]) =>
+                typeof value === "string"
+                  ? [[name, value] as [string, string]]
+                  : [],
+            ),
+          }
+        : parsedBody(text),
       `record ${ordinal} request`,
     );
     scanBody(
