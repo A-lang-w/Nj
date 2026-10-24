@@ -150,10 +150,11 @@ const writeBundleFiles = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
+    if (input.exclusiveDestination !== true)
+      await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
     try {
       tree = await SafeOutputTree.create(input.directory, process.platform, {
-        acceptExistingEmpty: true,
+        acceptExistingEmpty: input.exclusiveDestination !== true,
       });
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;

@@ -22,11 +22,6 @@ const QUOTA_RETRY_PAUSE_MS = 90_000;
 const RUN_BUDGET_MS = 22 * 60_000;
 const FIRST_ATTEMPT_MS = 15 * 60_000;
 const MIN_RETRY_MS = 5 * 60_000;
-const TEMPLATE_RULES = [
-  "after-uid-literal",
-  "opaque-token",
-  "sibling-variance",
-];
 
 // Both tools are caller-supplied absolute paths, as every real-* lane names its upstream.
 for (const key of ["REA_AGENT_ENV_COMMAND", "REA_DOCKER_COMMAND"])

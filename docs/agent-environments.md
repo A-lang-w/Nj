@@ -168,7 +168,7 @@ what to record next; hints never change what is served:
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `no-state-target`     | The write's path names no collection or item the capture reads. Read the collection or item it changes.                                                                                                                                          |
 | `no-call`             | No recorded call of this tool was modelled, for example because every call failed. Record a successful call.                                                                                                                                     |
-| `body-unusable`       | The request body is not a usable JSON object.                                                                                                                                                                                                    |
+| `body-unusable`       | The retained request or response cannot be modelled. Record a successful call with a complete supported request and reproducible response.                                                                                                       |
 | `no-observation`      | Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it. |
 | `unexplained-change`  | The write changed fields it did not send, in a way no rule explains. A second, different call of the same tool can show the pattern.                                                                                                             |
 | `contradicted`        | A later read disagreed with the modelled effect. Check the read at contradicted_by.                                                                                                                                                              |
@@ -186,15 +186,39 @@ report's `credential-named-members` warning counts recorded header names, query
 parameter names and JSON or form body members whose names look like
 credentials (whole name segments such as `token`, `secret`, `password`,
 `api_key`, `authorization` or `session`) and hold a value, and lists the first
-20 by record and pointer, never by value. Text bodies over 4 MiB are not
-scanned: a `credential-scan-incomplete` warning counts them and lists the first
-20 by record and side (`record 3 response`), so the absence of
-`credential-named-members` covers every body only when this warning is absent
-too. Names do not establish sensitivity, so the build never refuses on them.
-Capture
+20 by record and pointer, never by value. A body is read as a form or as JSON by
+its recorded media type, or by its shape when it has none or one naming
+neither. A browser scenario is
+scanned by event (`event 4 response /token` names
+`normalized_result.events.items[4]`): every retained request and response
+content event, including a response whose request began before the browser was
+attached and a transaction no record represents, and each transaction URL's
+query once. Bodies larger than 4 MiB of UTF-8 text are not
+scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
+event pointers, including base64 bodies whose decoded scan was cut. An empty name
+warning does not establish that these bodies were checked. Names do not establish sensitivity,
+so the build never refuses on them. Capture
+
 Evidence also records the capture file's absolute path (`subject.local_path`,
 `parameters.capture_path`, `locations`, `artifact.path`), and the bundle
 carries it: build from a neutral folder when that path should not ship.
+
+Over MCP, `export_environment_bundle` builds the same bundle and returns the
+same report. Its `source` is capture Evidence the session retained
+(`{"kind": "retained-evidence", "evidence_id"}`), such as a
+`capture_browser_scenario` or `inspect_web_network_capture` result, or a
+capture Evidence file (`{"kind": "evidence-file", "path"}`); inspect a HAR with
+`inspect_web_network_capture` first. Retained Evidence is written into the
+bundle as `--format json` writes it, so the bundle is the one
+`environment-build` writes from that file. `output_directory` must be an
+absolute path that does not exist yet, whose parent does; the tool creates it
+and refuses an existing directory, empty or not. `name`, `template_rules`,
+`package_tarball` and `dry_run` work as `--name`, `--template-rule`,
+`--package-tarball` and `--dry-run` do, and retained Evidence has no file to
+name the environment after, so a loopback or IP origin needs `name`. Unlike
+`--dry-run`, `dry_run` still checks `output_directory`. Destination refusals
+name `export_environment_bundle`; the others name their stage as
+`environment-build`'s do.
 
 ## From a browser scenario
 
@@ -283,6 +307,46 @@ application returns in response bodies, such as session tokens, are kept, and
 the replayed body is the bytes the browser exposes for each response, with any
 declared secret replaced by its redaction marker (a body that redaction had to
 empty replays no body).
+
+To record writes, sign in through the UI and then send the application's API
+calls with [request steps](browser-scenario-contract.md#request-steps): each
+sends one request to the start origin through the page's own `fetch`, with the
+session's cookies, and a header can carry the CSRF cookie or stored token the
+application's own requests send. A write is served only when the capture shows
+its effect, so read each collection before writing, read every written entity
+back by id and in its list right after the write, and leave more than a second
+between a create and its first edit. A request step's path is fixed when the
+scenario is written and cannot use a value an earlier response returned, so an
+id must be known before the run: one the caller chooses, such as a `uid` in the
+create body, or one an earlier scenario created. When the server assigns ids,
+read the list after each create (the create's response or the list shows the
+new entity), and record updates and deletes in a second scenario that reads
+the first one's objects by id before editing them, or make them through the
+UI. The environment coverage view names each
+write it withholds and what to record next. A scenario records no request
+times, so the state learns no clock: an update whose response changes a
+timestamp the server sets, such as a modification time, is withheld as
+`unexplained-change` however it is recorded, and the coverage view says so; a
+HAR of the same session times its entries and can serve it. A scenario with write requests
+changes the application's data: record against an instance whose data may
+change.
+
+```json
+{
+  "step_id": "create-folder-1",
+  "action": "request",
+  "method": "POST",
+  "path": "/api/folders",
+  "headers": [
+    {
+      "name": "X-CSRFToken",
+      "value": { "source": "cookie", "name": "csrftoken" }
+    }
+  ],
+  "json": { "title": "Scratch folder 1" },
+  "expected_status": [200, 201]
+}
+```
 
 ## What a manifest is
 

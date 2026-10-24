@@ -400,7 +400,7 @@ it("withholds varied create states whose dependent fields still copy the first c
     closed_at: SECOND_BOOK.created_at!,
   };
   const third = {
-    ...book(3, "Third", SECOND_BOOK.created_at!),
+    ...book(3, "Third", "2026-10-01T10:00:00Z"),
     status: "closed",
     closed_at: SECOND_BOOK.created_at!,
   };

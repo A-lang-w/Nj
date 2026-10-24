@@ -1,15 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
 import { scenarioCaptureFixture } from "../../../tests/fixtures/browserScenarioCapture.js";
-import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import {
   anonymousOrigin,
   credentialNamed,
-  credentialScanWarnings,
   nameFromCaptureFile,
   scanCredentialNames,
+  scanScenarioCredentialNames,
 } from "./environmentBuildReport.js";
 
 const record = (
@@ -163,29 +161,6 @@ describe("scanCredentialNames", () => {
     });
   });
 
-  it("scans a scenario request body the capture recorded without a media type", () => {
-    const capture = scenarioCaptureFixture(
-      [
-        {
-          method: "POST",
-          url: "/api/session",
-          status: 200,
-          mediaType: "application/json",
-          body: "{}",
-          requestBody: '{"password":"x"}',
-        },
-      ],
-      { request_body: true, response_body: true, header_values: true },
-    );
-    expect(
-      scanCredentialNames(scenarioCaptureRecords(capture, "review").records),
-    ).toEqual({
-      count: 1,
-      pointers: ["record 0 request /password"],
-      skipped: NONE_SKIPPED,
-    });
-  });
-
   it("walks bodies nested deeper than the call stack allows", () => {
     const depth = 20_000;
     const deep = record(1, undefined, undefined);
@@ -197,7 +172,47 @@ describe("scanCredentialNames", () => {
   });
 });
 
-describe("scanCredentialNames over structured and unattributed records", () => {
+describe("scanCredentialNames body formats", () => {
+  const posted = (mimeType: string, text: string): WebNetworkCaptureRecord => {
+    const scanned = record(3, undefined, undefined);
+    (scanned.reported as { request: { postData?: unknown } }).request.postData =
+      { mimeType, text };
+    return scanned;
+  };
+  const FORM = "application/x-www-form-urlencoded; charset=UTF-8";
+
+  it("reads a form body as the form parser does, by its media type or, without one, by its shape", () => {
+    for (const mimeType of [FORM, ""]) {
+      expect(
+        scanCredentialNames([posted(mimeType, "password=example&")]),
+        mimeType,
+      ).toEqual({
+        count: 1,
+        pointers: ["record 3 request /password"],
+        skipped: NONE_SKIPPED,
+      });
+      expect(
+        scanCredentialNames([posted(mimeType, "user=a&&flag&token=example")]),
+        mimeType,
+      ).toEqual({
+        count: 1,
+        pointers: ["record 3 request /token"],
+        skipped: NONE_SKIPPED,
+      });
+    }
+  });
+
+  it("finds nothing in plain text that is not a form", () => {
+    for (const mimeType of ["text/plain", ""])
+      for (const text of ["token=abc to sign in", "Use token=abc", ""])
+        expect(
+          scanCredentialNames([posted(mimeType, text)]),
+          `${mimeType} ${text}`,
+        ).toEqual({ count: 0, pointers: [], skipped: NONE_SKIPPED });
+  });
+});
+
+describe("scanCredentialNames over structured form parameters", () => {
   it.each([undefined, null])(
     "scans each structured form parameter with absent text: %s",
     (text) => {
@@ -221,8 +236,10 @@ describe("scanCredentialNames over structured and unattributed records", () => {
       });
     },
   );
+});
 
-  it("scans the request side of a scenario transaction with duplicate responses", () => {
+describe("scanScenarioCredentialNames", () => {
+  it("scans each content event, and each transaction URL once, by event index", () => {
     const capture = scenarioCaptureFixture(
       [
         {
@@ -231,7 +248,7 @@ describe("scanCredentialNames over structured and unattributed records", () => {
           status: 200,
           mediaType: "application/json",
           body: "{}",
-          requestMediaType: "application/json",
+          // Recorded without a media type, so its shape decides how it is read.
           requestBody: '{"password":"x"}',
           requestHeaders: [{ name: "X-Api-Key", value: "k-2" }],
         },
@@ -242,24 +259,21 @@ describe("scanCredentialNames over structured and unattributed records", () => {
       (event) => event.kind === "response",
     );
     if (response === undefined) throw new Error("Fixture lacks a response");
-    const duplicated = {
-      ...capture,
-      events: {
-        ...capture.events,
-        items: [...capture.events.items, { ...response, sequence: 99 }],
-      },
-    };
-    expect(
-      scanCredentialNames(scenarioCaptureRecords(duplicated, "review").records),
-    ).toEqual({
+    // A second response leaves the transaction unattributable; its events still ship.
+    const scanned = scanScenarioCredentialNames([
+      ...capture.events.items,
+      { ...response, sequence: 99 },
+    ]);
+    expect(scanned).toEqual({
       count: 3,
       pointers: [
-        "record 0 request header X-Api-Key",
-        "record 0 request query api_key",
-        "record 0 request /password",
+        "event 0 request query api_key",
+        "event 1 request header X-Api-Key",
+        "event 1 request /password",
       ],
       skipped: NONE_SKIPPED,
     });
+    expect(JSON.stringify(scanned)).not.toContain("k-2");
   });
 });
 
@@ -357,154 +371,3 @@ describe("nameFromCaptureFile", () => {
     expect(nameFromCaptureFile("/w/--.json")).toBe("");
   });
 });
-
-it.each([
-  "password=example&",
-  "user=a&&token=example",
-  "=empty&password=example&&",
-])("scans valid form separators with the recorded media type: %s", (text) => {
-  const form = record(7, undefined, undefined);
-  (
-    form.reported as {
-      request: { postData?: unknown };
-      response: { content: unknown };
-    }
-  ).request.postData = {
-    mimeType: "application/x-www-form-urlencoded; charset=UTF-8",
-    text,
-  };
-  expect(scanCredentialNames([form])).toMatchObject({
-    count: 1,
-    skipped: NONE_SKIPPED,
-  });
-  (
-    form.reported as {
-      request: { postData?: unknown };
-      response: { content: unknown };
-    }
-  ).response.content = {
-    mimeType: "application/x-www-form-urlencoded",
-    text,
-  };
-  expect(scanCredentialNames([form])).toMatchObject({
-    count: 2,
-    skipped: NONE_SKIPPED,
-  });
-});
-
-it.each([
-  { text: "password=example", pointers: ["/password"] },
-  { text: "token=a&page=1&token=b", pointers: ["/token", "/token"] },
-  { text: "%70assword=encoded", pointers: ["/password"] },
-  { text: "flag&password=example", pointers: ["/password"] },
-])(
-  "reviews retained form names without a recorded media type: $text",
-  ({ text, pointers }) => {
-    const capture = scenarioCaptureFixture(
-      [
-        {
-          method: "POST",
-          url: "/api/session",
-          status: 200,
-          mediaType: "application/json",
-          body: "{}",
-          requestBody: text,
-        },
-      ],
-      { request_body: true, response_body: true, header_values: true },
-    );
-    expect(
-      scanCredentialNames(scenarioCaptureRecords(capture, "review").records),
-    ).toEqual({
-      count: pointers.length,
-      pointers: pointers.map((pointer) => `record 0 request ${pointer}`),
-      skipped: NONE_SKIPPED,
-    });
-  },
-);
-
-it("keeps JSON interpretation before an untyped form fallback and honors explicit non-form types", () => {
-  const json = record(7, undefined, undefined);
-  const plain = record(8, undefined, undefined);
-  (json.reported as { request: { postData: unknown } }).request.postData = {
-    mimeType: "",
-    text: '{"name":"password=example","token":"actual"}',
-  };
-  (plain.reported as { request: { postData: unknown } }).request.postData = {
-    mimeType: "text/plain",
-    text: "password=example",
-  };
-  expect(scanCredentialNames([json, plain])).toEqual({
-    count: 1,
-    pointers: ["record 7 request /token"],
-    skipped: NONE_SKIPPED,
-  });
-});
-
-it.each(["duplicate response", "duplicate content", "duplicate request"])(
-  "reports retained response content the review cannot attribute: %s",
-  (variant) => {
-    const capture = scenarioCaptureFixture(
-      [
-        {
-          method: "POST",
-          url: "/api/session",
-          status: 200,
-          mediaType: "application/json",
-          body: '{"token":"response-secret"}',
-        },
-      ],
-      { request_body: true, response_body: true, header_values: true },
-    );
-    const request = capture.events.items.find(
-      (event) => event.kind === "request",
-    );
-    const response = capture.events.items.find(
-      (event) => event.kind === "response",
-    );
-    const content = capture.events.items.find(
-      (event) => event.kind === "network-content" && event.phase === "response",
-    );
-    if (
-      request === undefined ||
-      response === undefined ||
-      content === undefined
-    )
-      throw new Error("Missing fixture transaction");
-    const extra = {
-      ...(variant === "duplicate response"
-        ? response
-        : variant === "duplicate request"
-          ? request
-          : content),
-      sequence: 99,
-    };
-    const items = [...capture.events.items, extra];
-    const admitted = retainedBrowserScenarioCaptureSchema.parse({
-      ...capture,
-      events: { ...capture.events, retained: items.length, items },
-    });
-    const projected = scenarioCaptureRecords(admitted, "review");
-    const warnings = credentialScanWarnings(
-      projected.records,
-      projected.unreviewedContent,
-    );
-    expect(
-      credentialScanWarnings(projected.records, projected.unreviewedContent),
-    ).toEqual(warnings);
-    const contentIndex = capture.events.items.indexOf(content);
-    const omitted =
-      variant === "duplicate content"
-        ? [contentIndex, capture.events.items.length]
-        : [contentIndex];
-    expect(warnings).toContainEqual(
-      expect.objectContaining({
-        code: "credential-scan-incomplete",
-        pointers: omitted.map(
-          (index) => `/normalized_result/events/items/${String(index)}`,
-        ),
-      }),
-    );
-    expect(JSON.stringify(warnings)).not.toContain("response-secret");
-  },
-);

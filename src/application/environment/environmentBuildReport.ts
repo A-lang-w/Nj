@@ -1,19 +1,25 @@
 import { basename } from "node:path";
 import { isIP } from "node:net";
 
+import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+import {
+  decodeRetainedBase64,
+  readRecordedResponseBody,
+  type RecordedResponseBody,
+} from "../../domain/analysisView/recordedResponseBody.js";
+import { scenarioContentMediaType } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
-import { readRecordedResponseBody } from "../../domain/analysisView/recordedResponseBody.js";
+import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
+import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
+import {
+  iterateUrlQueryParameters,
+  parseRecordedTransportUrl,
+} from "../../domain/recordedTransportUrl.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 
 /** A note the build report carries; warnings never change what is built. */
-export interface EnvironmentBuildWarning {
-  readonly code:
-    | "name-from-file"
-    | "credential-named-members"
-    | "credential-scan-incomplete";
-  readonly message: string;
-  readonly pointers?: readonly string[];
-}
+export type EnvironmentBuildWarning =
+  EnvironmentBuildReport["warnings"][number];
 
 /** Whole name segments that name credentials; `author` is not `auth`. */
 const CREDENTIAL_SEGMENTS = new Set([
@@ -94,31 +100,50 @@ type ScannedBody =
   | { readonly kind: "form"; readonly fields: readonly [string, string][] }
   | { readonly kind: "skipped" };
 
+const FORM_MEDIA_TYPE = "application/x-www-form-urlencoded";
+
+/** The parser a recorded media type names; otherwise JSON by its first character, or a form when it has `=` and no whitespace, which form encoding never leaves raw. */
+const bodyFormat = (
+  text: string,
+  mediaType: unknown,
+): "json" | "form" | undefined => {
+  const essence =
+    typeof mediaType === "string" ? mediaTypeEssence(mediaType) : null;
+  if (essence === FORM_MEDIA_TYPE) return "form";
+  if (isJsonLike(essence)) return "json";
+  const start = text.trimStart()[0];
+  if (start === "{" || start === "[") return "json";
+  return text.includes("=") && !/\s/u.test(text) ? "form" : undefined;
+};
+
 /** A recorded body as JSON or form fields, skipped when it is cut or over the limit, or undefined when it is neither. */
 const parsedBody = (
   text: unknown,
-  mimeType: unknown,
+  mediaType: unknown,
   cut = false,
 ): ScannedBody | undefined => {
   if (typeof text !== "string") return undefined;
   if (cut || Buffer.byteLength(text, "utf8") > SCAN_BODY_LIMIT_BYTES)
     return { kind: "skipped" };
-  const format =
-    typeof mimeType === "string" ? mediaTypeEssence(mimeType) : null;
-  const form = format === "application/x-www-form-urlencoded";
-  const start = text.trimStart()[0];
-  if (!form && (start === "{" || start === "[")) {
-    try {
-      return { kind: "json", value: JSON.parse(text) };
-    } catch {
-      return undefined;
-    }
+  const format = bodyFormat(text, mediaType);
+  if (format === "form")
+    return { kind: "form", fields: [...new URLSearchParams(text)] };
+  if (format === undefined) return undefined;
+  try {
+    return { kind: "json", value: JSON.parse(text) };
+  } catch {
+    return undefined;
   }
-  // An unclassified capture can still retain form text. Review its potential names without changing Evidence or manifest interpretation.
-  return form || (format === null && text.includes("="))
-    ? { kind: "form", fields: [...new URLSearchParams(text)] }
-    : undefined;
 };
+
+/** Decoded body text as the scan reads it; binary bytes hold no JSON or form text. */
+const decodedBody = (
+  body: RecordedResponseBody,
+  mediaType: unknown,
+): ScannedBody | undefined =>
+  body.bodyEncoding === "base64"
+    ? undefined
+    : parsedBody(body.bodyText, mediaType, body.bodyCut === true);
 
 /** Name/value pairs such as HAR headers and query strings. */
 const namedValues = (value: unknown): (readonly [string, unknown])[] =>
@@ -131,28 +156,15 @@ const namedValues = (value: unknown): (readonly [string, unknown])[] =>
       })
     : [];
 
-/** The response text the scan reads; binary bytes hold no JSON or form text. */
-const responseBody = (
-  record: WebNetworkCaptureRecord,
-): ScannedBody | undefined => {
-  const body = readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES);
-  return body.bodyEncoding === "base64"
-    ? undefined
-    : parsedBody(
-        body.bodyText,
-        member(
-          member(member(record.reported, "response"), "content"),
-          "mimeType",
-        ),
-        body.bodyCut === true,
-      );
-};
-
 /** A count of matches and the first of their pointers. */
 interface ScanTally {
   count: number;
   readonly pointers: string[];
 }
+
+type CredentialScan = Readonly<ScanTally> & {
+  readonly skipped: Readonly<ScanTally>;
+};
 
 const tallied = (tally: ScanTally, pointer: string): void => {
   tally.count++;
@@ -160,17 +172,16 @@ const tallied = (tally: ScanTally, pointer: string): void => {
 };
 
 /**
- * Credential-named members that hold a value in recorded JSON and form
- * bodies, headers and query strings: a count and the first pointers, never
- * values, and the bodies too large to scan by record and side. The walk keeps
- * its own stack, so nesting depth cannot overflow it.
+ * The tallies both capture readers fill: a named value counts when its name
+ * looks like a credential and it holds a value. The body walk keeps its own
+ * stack, so nesting depth cannot overflow it.
  */
-export const scanCredentialNames = (
-  records: readonly WebNetworkCaptureRecord[],
-): Readonly<ScanTally> & { readonly skipped: Readonly<ScanTally> } => {
+const credentialTally = () => {
   const matches: ScanTally = { count: 0, pointers: [] };
   const skipped: ScanTally = { count: 0, pointers: [] };
-  const found = (pointer: string): void => tallied(matches, pointer);
+  const field = (pointer: string, name: string, value: unknown): void => {
+    if (credentialNamed(name) && holdsValue(value)) tallied(matches, pointer);
+  };
   const walk = (root: unknown, label: string): void => {
     const stack: [unknown, string][] = [[root, ""]];
     while (stack.length > 0) {
@@ -185,20 +196,34 @@ export const scanCredentialNames = (
       for (let index = entries.length - 1; index >= 0; index--) {
         const [name, child] = entries[index]!;
         const path = `${pointer}/${pointerToken(name)}`;
-        if (credentialNamed(name) && holdsValue(child))
-          found(`${label} ${path}`);
+        field(`${label} ${path}`, name, child);
         stack.push([child, path]);
       }
     }
   };
-  const scanBody = (body: ScannedBody | undefined, label: string): void => {
-    if (body?.kind === "skipped") tallied(skipped, label);
-    else if (body?.kind === "json") walk(body.value, label);
-    else if (body?.kind === "form")
-      for (const [name, value] of body.fields)
-        if (credentialNamed(name) && holdsValue(value))
-          found(`${label} /${pointerToken(name)}`);
+  const body = (scanned: ScannedBody | undefined, label: string): void => {
+    if (scanned?.kind === "skipped") tallied(skipped, label);
+    else if (scanned?.kind === "json") walk(scanned.value, label);
+    else if (scanned?.kind === "form")
+      for (const [name, value] of scanned.fields)
+        field(`${label} /${pointerToken(name)}`, name, value);
   };
+  return {
+    field,
+    body,
+    result: (): CredentialScan => ({ ...matches, skipped }),
+  };
+};
+
+/**
+ * Credential-named members that hold a value in recorded JSON and form
+ * bodies, headers and query strings: a count and the first pointers, never
+ * values, and the bodies too large to scan by record and side.
+ */
+export const scanCredentialNames = (
+  records: readonly WebNetworkCaptureRecord[],
+): CredentialScan => {
+  const scan = credentialTally();
   for (const record of records) {
     const ordinal = String(record.ordinal);
     const request = member(record.reported, "request");
@@ -208,15 +233,13 @@ export const scanCredentialNames = (
       ["response", response],
     ] as const)
       for (const [name, value] of namedValues(member(message, "headers")))
-        if (credentialNamed(name) && holdsValue(value))
-          found(`record ${ordinal} ${side} header ${name}`);
+        scan.field(`record ${ordinal} ${side} header ${name}`, name, value);
     for (const [name, value] of namedValues(member(request, "queryString")))
-      if (credentialNamed(name) && holdsValue(value))
-        found(`record ${ordinal} request query ${name}`);
+      scan.field(`record ${ordinal} request query ${name}`, name, value);
     const postData = member(request, "postData");
     const text = member(postData, "text");
     // A HAR may record form fields only as structured params; each occurrence counts, as in a form body.
-    scanBody(
+    scan.body(
       typeof text !== "string"
         ? {
             kind: "form",
@@ -230,17 +253,67 @@ export const scanCredentialNames = (
         : parsedBody(text, member(postData, "mimeType")),
       `record ${ordinal} request`,
     );
-    scanBody(responseBody(record), `record ${ordinal} response`);
+    scan.body(
+      decodedBody(
+        readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES),
+        member(member(response, "content"), "mimeType"),
+      ),
+      `record ${ordinal} response`,
+    );
   }
-  return { ...matches, skipped };
+  return scan.result();
+};
+
+/**
+ * The same scan over a browser scenario's retained events, by index in
+ * `events.items`: every network-content event's headers and body, whether or
+ * not a record represents its transaction, and each transaction URL's query
+ * once.
+ */
+export const scanScenarioCredentialNames = (
+  events: readonly BrowserScenarioEvent[],
+): CredentialScan => {
+  const scan = credentialTally();
+  const urls = new Set<string>();
+  for (const [index, event] of events.entries()) {
+    const label = `event ${String(index)}`;
+    if (event.kind === "network-content") {
+      const side = `${label} ${event.phase}`;
+      if (event.headers.state === "captured")
+        for (const { name, value } of event.headers.items)
+          scan.field(`${side} header ${name}`, name, value);
+      if (event.body.state === "captured")
+        scan.body(
+          decodedBody(
+            decodeRetainedBase64(event.body.content, SCAN_BODY_LIMIT_BYTES),
+            scenarioContentMediaType(event),
+          ),
+          side,
+        );
+    } else if ("transaction_id" in event) {
+      // Every event of a transaction repeats its URL; a response attached mid-flight may be the only one.
+      const key = `${event.transaction_id} ${event.url.url}`;
+      if (urls.has(key)) continue;
+      urls.add(key);
+      const { query } = parseRecordedTransportUrl(event.url.url, {
+        includeQuery: true,
+      });
+      for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
+        scan.field(`${label} ${event.kind} query ${name}`, name, value);
+    }
+  }
+  return scan.result();
 };
 
 /** The credential-name scan's warnings: what it found, and the bodies it could not scan. */
-export const credentialScanWarnings = (
-  records: readonly WebNetworkCaptureRecord[],
-  unreviewedContent: Iterable<string> = [],
-): EnvironmentBuildWarning[] => {
-  const scanned = scanCredentialNames(records);
+export const credentialScanWarnings = (capture: {
+  readonly records: readonly WebNetworkCaptureRecord[];
+  readonly scenarioEvents: readonly BrowserScenarioEvent[] | null;
+}): EnvironmentBuildWarning[] => {
+  const scanned =
+    capture.scenarioEvents === null
+      ? scanCredentialNames(capture.records)
+      : scanScenarioCredentialNames(capture.scenarioEvents);
   const warnings: EnvironmentBuildWarning[] = [];
   if (scanned.count > 0)
     warnings.push({
@@ -253,15 +326,6 @@ export const credentialScanWarnings = (
       code: "credential-scan-incomplete",
       message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned; evidence.json ships them, so review them before sharing.`,
       pointers: scanned.skipped.pointers,
-    });
-  const unattributed: ScanTally = { count: 0, pointers: [] };
-  for (const pointer of unreviewedContent)
-    tallied(unattributed, `/normalized_result${pointer}`);
-  if (unattributed.count > 0)
-    warnings.push({
-      code: "credential-scan-incomplete",
-      message: `${String(unattributed.count)} retained scenario content events could not be attributed and were not scanned; review their bodies and headers in evidence.json before sharing.`,
-      pointers: unattributed.pointers,
     });
   return warnings;
 };
