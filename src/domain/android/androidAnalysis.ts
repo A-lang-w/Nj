@@ -168,7 +168,7 @@ export const androidResultSchemas = {
     // Evidence retained before the component projection existed re-parses
     // with an explicit unavailable inventory; current results always carry it.
     components: manifestComponents.default(() => ({
-      status: "unavailable",
+      status: "unavailable" as const,
       items: [],
       limitations: [
         "This Evidence predates the manifest component projection; run inspect_android_package again to obtain it.",
