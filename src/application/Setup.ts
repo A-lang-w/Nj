@@ -2,7 +2,6 @@ import type {
   ClientConfigurationResult,
   SetupAction,
   SetupClientState,
-  SetupCloseReport,
   SetupConfirmation,
   SetupConfirmationDecision,
   SetupDoctorSummary,
@@ -28,7 +27,11 @@ import {
   hostRemediation,
   systemSetupHost,
 } from "./SetupHost.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
@@ -50,55 +53,44 @@ export const runSetup = async (
     primaryFailure = cause;
   }
 
-  let cleanup: SetupCloseReport | undefined;
+  let cleanup: AnalysisCleanupObservation | undefined;
   try {
     cleanup = await host.close?.();
   } catch (cause: unknown) {
     cleanup = {
       reason: `Setup resource cleanup failed: ${failureMessage(cause)}`,
-      resources: [],
+      resources: ArtifactReaderFailure.cleanupObservation(cause, []).resources,
     };
   }
-  const cleanupFailure = cleanup?.reason;
-  // Resources the host still owns join the primary's, so the typed report
-  // lists everything a caller must review rather than only what the primary
-  // failure already knew about.
-  const cleanupResources = cleanup?.resources ?? [];
-
   if (threw) {
-    if (cleanupFailure !== undefined && primaryFailure instanceof AnalysisError)
+    if (cleanup === undefined) throw primaryFailure;
+    const cleanupFailure = new ProviderCleanupError(
+      "setup",
+      cleanup.resources,
+      { reason: cleanup.reason },
+      { operation: "setup" },
+    );
+    if (primaryFailure instanceof AnalysisError)
       throw analysisErrorWithCleanupFailure(
         primaryFailure,
-        new ProviderCleanupError(
-          "setup",
-          [
-            ...new Set([
-              ...primaryFailure.cleanupResources,
-              ...cleanupResources,
-            ]),
-          ],
-          { reason: cleanupFailure },
-          { operation: "setup" },
-        ),
+        cleanupFailure,
         "setup",
       );
-    if (cleanupFailure !== undefined)
-      throw new AggregateError(
-        [primaryFailure, new Error(cleanupFailure)],
-        "Setup and resource cleanup failed.",
-        { cause: primaryFailure },
-      );
-    throw primaryFailure;
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      "Setup and resource cleanup failed.",
+      { cause: primaryFailure },
+    );
   }
   if (result === undefined) throw new Error("Setup returned no result.");
-  if (cleanupFailure === undefined) return result;
+  if (cleanup === undefined) return result;
   return {
     ...result,
     status: "needs_human",
     code: result.code ?? "cleanup_failed",
     remediation: result.remediation
-      ? `${result.remediation} ${cleanupFailure}`
-      : cleanupFailure,
+      ? `${result.remediation} ${cleanup.reason}`
+      : cleanup.reason,
   };
 };
 

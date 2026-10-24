@@ -57,11 +57,11 @@ import {
   packagePrivateLauncherBlocker,
 } from "./MsixPackageStorage.js";
 import type {
-  SetupCloseReport,
   SetupHost,
   SetupInitialState,
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { DoctorScope } from "./Doctor.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
@@ -366,7 +366,7 @@ const closeSetupResources = async (
   macHopperHost: ReturnType<typeof systemMacHopperInstallHost> | undefined,
   doctorHost: DoctorHost,
   retryLinuxHopperCleanup: () => Promise<string | undefined>,
-): Promise<SetupCloseReport | undefined> => {
+): Promise<AnalysisCleanupObservation | undefined> => {
   const [resourceCleanup, hopperCleanup, doctorCleanup, linuxCleanup] =
     await Promise.allSettled([
       resources.close(),
