@@ -67,7 +67,6 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
       zeroFills.push({ address: address + size, size: memorySize - size });
   }
   for (const section of directory.sections) {
-    if (section.name === "" || section.name_state === "unavailable") continue;
     const range = declaredFileRange(bytes.length, section.offset, section.size);
     const file_backed = section.type !== 8 && range.file_backed;
     const compressed = (section.flags & 0x800n) !== 0n;
@@ -78,10 +77,10 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
       (section.flags & 1n) === 0n &&
       (section.flags & 4n) === 0n &&
       (section.flags & 2n) !== 0n;
-    if (section.name === null && !read_only) continue;
+    if ((section.name === null || section.name === "") && !read_only) continue;
     sections.push({
       format: "elf",
-      name: section.name ?? "",
+      name: section.name,
       type: section.type,
       address: section.address,
       declared_range: { offset: section.offset, size: section.size },
@@ -101,6 +100,9 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
     executable_mappings: executableMappings,
     zero_fills: zeroFills,
     sections,
+    ...(directory.section_names_limitation === undefined
+      ? {}
+      : { section_names_limitation: directory.section_names_limitation }),
   };
 };
 

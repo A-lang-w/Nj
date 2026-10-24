@@ -4,7 +4,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   mapArtifactFileFailure,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
@@ -20,7 +20,6 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
-  type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -63,7 +62,6 @@ export const ghidraFileFailure = (
   cause: unknown,
   operation: string,
   diagnostics: Readonly<Record<string, JsonValue>> = {},
-  capacityRecovery: ResourceConstraintRecovery = { retryable: false },
 ): AnalysisError => {
   cause = mapArtifactFileFailure(cause, (primary) => {
     if (primary instanceof RegularFileCapacityError)
@@ -75,7 +73,7 @@ export const ghidraFileFailure = (
           maximum_bytes: primary.maximumBytes,
           observed_bytes: primary.observedBytes.toString(),
         },
-        { cause: primary, diagnostics, ...capacityRecovery },
+        { cause: primary, diagnostics, retryable: false },
       );
     if (primary instanceof RegularFileChangedError)
       return new AnalysisArtifactChangedError(
@@ -101,12 +99,11 @@ export const ghidraFileFailure = (
     }
     return primary;
   });
-  if (cause instanceof AnalysisError) return cause;
-  const primary = artifactFilePrimaryFailure(cause);
+  const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
   const reason = primary instanceof Error ? primary.message : String(primary);
   const cleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  if (primary instanceof AnalysisError) {
+  if (origin === "owned-or-classified" && primary instanceof AnalysisError) {
     if (cleanup === undefined) return primary;
     const failure = new ProviderCleanupError(
       "ghidra",
