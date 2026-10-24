@@ -4,6 +4,7 @@ import {
   isParam,
   normalizedPath,
   pathSegmentMatches,
+  same,
   segmentsOf,
   type JsonObject,
 } from "./environmentStateRules.js";
@@ -69,7 +70,8 @@ export type GeneratedRule =
 /** How one field of a written entity gets its value; fields no rule names keep the observed value. */
 export type FieldRule =
   | GeneratedRule
-  | { readonly field: string; readonly rule: "echo" }
+  /** The sent member stored as sent, or with its strings in code-point order when `sorted`. */
+  | { readonly field: string; readonly rule: "echo"; readonly sorted?: true }
   | { readonly field: string; readonly rule: "copy"; readonly from: string }
   | { readonly field: string; readonly rule: "path"; readonly from: string }
   | { readonly field: string; readonly rule: "slug"; readonly from: string }
@@ -79,6 +81,14 @@ export type FieldRule =
       readonly field: string;
       readonly rule: "composed";
       readonly parts: ComposedPart[];
+    }
+  /** An object holding `fields` of the entity of `type` the sent `member` names, as the state holds it; absent when the call does not send it. */
+  | {
+      readonly field: string;
+      readonly rule: "reference";
+      readonly member: string;
+      readonly type: string;
+      readonly fields: string[];
     }
   | { readonly field: string; readonly rule: "increment" }
   /** An update stores `value` whenever the call sends the member, as the call that showed it did. */
@@ -129,6 +139,19 @@ export const siblingTrimmedClocks = (
     );
     return format === rule.format ? rule : { ...rule, format };
   });
+};
+
+/**
+ * Two calls' rules for a field as one plan holds them: equal, or echoes one of which sorted its strings (a call whose
+ * array was already in order cannot show it), kept sorted. Undefined when they differ otherwise.
+ */
+export const alikeRules = (
+  held: FieldRule,
+  later: FieldRule,
+): FieldRule | undefined => {
+  if (held.rule === "echo" && later.rule === "echo")
+    return held.sorted === true ? held : later;
+  return same(held, later) ? held : undefined;
 };
 
 /** One part of a composed string: literal text, or another written field as written, slugged, or as a clock's calendar digits. */

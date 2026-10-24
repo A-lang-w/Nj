@@ -26,6 +26,11 @@ import {
 } from "./environmentStateWriteStamps.js";
 import { composedValue } from "./environmentStateWriteComposed.js";
 import {
+  referencedValue,
+  type ReferencedEntity,
+} from "./environmentStateWriteReferences.js";
+import {
+  echoed,
   integerOf,
   readClock,
   isUuid,
@@ -211,9 +216,12 @@ const ruledValue = (
   observed: JsonObject,
   call: WriteCall,
   generate: GenerateValue,
+  referenced?: ReferencedEntity,
 ): Applied<JsonValue | undefined> => {
   const body = call.body ?? {};
   switch (rule.rule) {
+    case "reference":
+      return referencedValue(rule, body, referenced);
     case "identity":
     case "sequence":
     case "unique":
@@ -223,7 +231,11 @@ const ruledValue = (
     case "held-clock":
       return generate(rule);
     case "echo":
-      return ok(Object.hasOwn(body, rule.field) ? body[rule.field] : undefined);
+      return ok(
+        Object.hasOwn(body, rule.field)
+          ? echoed(rule, body[rule.field]!)
+          : undefined,
+      );
     case "copy": {
       const value = valueAt(body, rule.from);
       return value === undefined
@@ -307,6 +319,7 @@ export const createdFields = (
   observed: JsonObject,
   call: WriteCall,
   generate: GenerateValue,
+  referenced?: ReferencedEntity,
 ): Applied<JsonObject> => {
   if (plan.body === null) return err("The tool has no modelled body.");
   const problem = bodyProblem(plan.body, call, {
@@ -318,12 +331,13 @@ export const createdFields = (
     (plan.body.defaults ?? []).map(({ member, value }) => [member, value]),
   );
   for (const rule of plan.rules) {
-    const value = ruledValue(rule, observed, call, generate);
+    const value = ruledValue(rule, observed, call, generate, referenced);
     if (!value.ok) return value;
     if (value.value !== undefined) written[rule.field] = value.value;
     else if (rule.rule === "echo" && defaults.has(rule.field))
       written[rule.field] = defaults.get(rule.field)!;
-    else if (rule.rule === "echo") delete written[rule.field];
+    else if (rule.rule === "echo" || rule.rule === "reference")
+      delete written[rule.field];
   }
   derive(plan.rules, observed, written, call.body ?? {});
   return ok(written);
@@ -351,7 +365,7 @@ const statedValue = (
   if (rule.rule === "set") return rule.value;
   if (rule.rule !== "echo" && rule.rule !== "constant") return undefined;
   if (!Object.hasOwn(sent, rule.field)) return undefined;
-  return rule.rule === "echo" ? sent[rule.field] : rule.value;
+  return rule.rule === "echo" ? echoed(rule, sent[rule.field]!) : rule.value;
 };
 
 /** The fields of an updated entity: sent echoed members, the constants the plan recorded, generated and derived changes. */
@@ -360,6 +374,7 @@ export const updatedFields = (
   entity: { readonly before: JsonObject; readonly observed: JsonObject },
   call: WriteCall & { readonly id: string },
   generate: GenerateValue,
+  referenced?: ReferencedEntity,
 ): Applied<JsonObject> => {
   const { before, observed } = entity;
   if (plan.body === null) return err("The tool has no modelled body.");
@@ -382,7 +397,11 @@ export const updatedFields = (
   for (const rule of plan.rules) {
     const stated = statedValue(rule, sent);
     if (stated !== undefined) written[rule.field] = stated;
-    else if (rule.rule === "increment") {
+    else if (rule.rule === "reference" && Object.hasOwn(sent, rule.member)) {
+      const value = referencedValue(rule, sent, referenced);
+      if (!value.ok) return value;
+      if (value.value !== undefined) written[rule.field] = value.value;
+    } else if (rule.rule === "increment") {
       const was = integerOf(before[rule.field]);
       if (was !== undefined)
         written[rule.field] = spelledLike(before[rule.field]!, was + 1);

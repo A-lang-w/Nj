@@ -4,10 +4,11 @@ import type { JsonValue } from "../jsonValue.js";
 import { same, type JsonObject } from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
 import type { explainUpdate } from "./environmentStateWriteExplain.js";
-import type {
-  FieldRule,
-  StateWritePlan,
-  WriteBody,
+import {
+  alikeRules,
+  type FieldRule,
+  type StateWritePlan,
+  type WriteBody,
 } from "./environmentStateWriteRules.js";
 import { integerOf, slugOf } from "./environmentStateWriteValues.js";
 
@@ -187,7 +188,7 @@ export const conflictsWithPlan = (
     (identity !== null && fixed.has(identity)) ||
     explained.rules.some((rule) => {
       const held = rules.get(rule.field);
-      return held !== undefined && !same(held, rule);
+      return held !== undefined && alikeRules(held, rule) === undefined;
     })
   );
 };

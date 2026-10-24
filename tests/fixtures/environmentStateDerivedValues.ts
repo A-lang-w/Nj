@@ -286,3 +286,91 @@ export const shelvedRows = (
     ["GET", "/api/books", [...SHELVED_SEEDS, third, fourth]],
   ];
 };
+
+const SHELVES = [
+  { id: 1, name: "Main Hall", floor: "ground" },
+  { id: 2, name: "Map Room", floor: "upper" },
+];
+
+/** A book as its item read shows it: its shelf whole, which its list read shows by id and name only. */
+const filed = (
+  id: number,
+  name: string,
+  shelf: number,
+  at: string,
+): Entity => ({
+  id,
+  name,
+  shelf: SHELVES[shelf - 1]!,
+  created_at: at,
+});
+
+const listed = (book: Entity): Entity => {
+  const { id, name } = book["shelf"] as { id: number; name: string };
+  return { ...book, shelf: { id, name } };
+};
+
+const FILED_SEED = filed(1, "Tide Tables", 1, "2026-10-01T09:00:00Z");
+const ATLAS = filed(2, "Coastal Atlas", 2, bookClock(5));
+const CHARTS = filed(3, "Harbour Charts", 1, bookClock(8));
+
+/** Two book creates naming a shelf by `shelf_id`, whose answers and item reads show the shelf whole and whose list shows it by id and name. */
+export const FILED_ROWS: readonly TimedCaptureRow[] = [
+  ["GET", "/api/shelves", SHELVES],
+  ["GET", "/api/shelves/1", SHELVES[0]!],
+  ["GET", "/api/shelves/2", SHELVES[1]!],
+  ["GET", "/api/books", [listed(FILED_SEED)]],
+  ["GET", "/api/books/1", FILED_SEED],
+  ["POST", "/api/books", ATLAS, 201, { name: "Coastal Atlas", shelf_id: 2 }],
+  ["GET", "/api/books/2", ATLAS],
+  ["GET", "/api/books", [listed(FILED_SEED), listed(ATLAS)]],
+  ["POST", "/api/books", CHARTS, 201, { name: "Harbour Charts", shelf_id: 1 }],
+  ["GET", "/api/books/3", CHARTS],
+  ["GET", "/api/books", [listed(FILED_SEED), listed(ATLAS), listed(CHARTS)]],
+];
+
+const tagged = (
+  id: number,
+  name: string,
+  tags: string[],
+  at: string,
+): Entity => ({
+  id,
+  name,
+  tags,
+  created_at: at,
+});
+
+/** Two book creates sending tags out of order, which the application stores sorted. */
+export const TAGGED_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/books",
+    [tagged(1, "Tide Tables", ["coast", "tides"], "2026-10-01T09:00:00Z")],
+  ],
+  [
+    "GET",
+    "/api/books/1",
+    tagged(1, "Tide Tables", ["coast", "tides"], "2026-10-01T09:00:00Z"),
+  ],
+  [
+    "POST",
+    "/api/books",
+    tagged(2, "Atlas", ["maps", "zoning"], bookClock(2)),
+    201,
+    { name: "Atlas", tags: ["zoning", "maps"] },
+  ],
+  ["GET", "/api/books/2", tagged(2, "Atlas", ["maps", "zoning"], bookClock(2))],
+  [
+    "POST",
+    "/api/books",
+    tagged(3, "Charts", ["harbour", "sea"], bookClock(4)),
+    201,
+    { name: "Charts", tags: ["sea", "harbour"] },
+  ],
+  [
+    "GET",
+    "/api/books/3",
+    tagged(3, "Charts", ["harbour", "sea"], bookClock(4)),
+  ],
+];

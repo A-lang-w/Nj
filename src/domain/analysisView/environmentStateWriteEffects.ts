@@ -54,6 +54,7 @@ import {
   observationNeeds,
 } from "./environmentStateWriteAddress.js";
 import {
+  alikeRules,
   pathValuesOf,
   siblingTrimmedClocks,
   type FieldRule,
@@ -243,6 +244,12 @@ export const callOf = (
   body,
 });
 
+/** The fields of the entity of a type with an id, as the replayed state holds them. */
+export const referencedIn =
+  (context: EffectContext) =>
+  (type: string, id: string): JsonObject | undefined =>
+    context.state.ofType(type).find((entity) => entity.id === id)?.fields;
+
 export const startOf = (
   context: EffectContext,
   step: WriteStep,
@@ -356,8 +363,15 @@ const refineUpdate = (
   retainFixed(context, body.fixed.slice(plan.body!.fixed.length));
   plan.body = body;
   const ruled = new Set(plan.rules.map((rule) => rule.field));
+  const later = new Map(
+    evidence.explained.rules.map((rule) => [rule.field, rule]),
+  );
   plan.rules = [
-    ...plan.rules,
+    // A later call may be the first to show an echoed array sorted.
+    ...plan.rules.map((rule) => {
+      const shown = later.get(rule.field);
+      return shown === undefined ? rule : (alikeRules(rule, shown) ?? rule);
+    }),
     ...evidence.explained.rules.filter((rule) => !ruled.has(rule.field)),
   ];
 };
@@ -523,6 +537,7 @@ export const updateEntity = (
         : { readFields: after.readFields }),
       others: otherFields(context.state.ofType(type), { collection, id }),
       shown: shownBefore(context.viewOf, entity, after.ordinal),
+      named: (named) => context.state.named(named),
       action: needs.action,
     }),
   );
@@ -550,6 +565,7 @@ export const updateEntity = (
         entity.fields[rule.field],
         after.object[rule.field],
       ),
+    referencedIn(context),
   );
   const kept = keptFields(entity.fields, after.object);
   const disagrees =

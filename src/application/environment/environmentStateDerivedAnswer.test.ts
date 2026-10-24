@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   BOOKMARK_ROWS,
+  FILED_ROWS,
   FOLDER_ROWS,
   TAG_ROWS,
+  TAGGED_ROWS,
   shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
@@ -101,5 +103,42 @@ describe("served creates learned from every call", () => {
           .body,
       ),
     ).toMatchObject({ name: "Kept", shelf: "attic" });
+  });
+});
+
+describe("served objects that repeat a named entity, and sorted arrays", () => {
+  it("embeds the shelf a create names as the environment holds it, lists it with the listed keys, and refuses an unknown shelf", () => {
+    const books = servedFrom(FILED_ROWS);
+    const created = objectOf(
+      books.answer("post_books", { body: { name: "Pilot Guide", shelf_id: 2 } })
+        .body,
+    );
+    expect(created["shelf"]).toEqual({
+      id: 2,
+      name: "Map Room",
+      floor: "upper",
+    });
+    const listed = books.answer("get_books").body as JsonValue[];
+    expect(listed.at(-1)).toMatchObject({
+      name: "Pilot Guide",
+      shelf: { id: 2, name: "Map Room" },
+    });
+    expect(JSON.stringify(listed.at(-1))).not.toContain("upper");
+    expect(
+      JSON.stringify(
+        books.refusal("post_books", { body: { name: "Lost", shelf_id: 9 } }),
+      ),
+    ).toContain("names no entity of /api/shelves");
+  });
+
+  it("stores the tags a create sends in code-point order", () => {
+    const books = servedFrom(TAGGED_ROWS);
+    expect(
+      objectOf(
+        books.answer("post_books", {
+          body: { name: "Logbook", tags: ["wind", "ice", "fog"] },
+        }).body,
+      )["tags"],
+    ).toEqual(["fog", "ice", "wind"]);
   });
 });

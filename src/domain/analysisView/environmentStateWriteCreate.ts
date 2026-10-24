@@ -39,6 +39,7 @@ import {
   built,
   callOf,
   fail,
+  referencedIn,
   itemReads,
   refuse,
   requestBodyPlan,
@@ -154,7 +155,7 @@ const linkedUnexplained = (
   );
 };
 
-/** Widen a create plan to a later call it does not take, when that call explained on its own agrees with it. */
+/** Widen a create plan by a later call, when that call explained on its own agrees with it; whether it did. */
 const refineCreate = (
   context: EffectContext,
   draft: WriteDraft,
@@ -602,21 +603,22 @@ export const applyCreate = (
       pathValuesOf(step.tool.path_template, collection) ?? call.pathValues,
   };
   const fieldsOfCall = () =>
-    createdFields(draft.plan, draft.observed!, created, (rule) =>
-      recordedGeneratedValue(
-        rule,
-        draft.observed![rule.field],
-        observed.object[rule.field] ?? null,
-      ),
+    createdFields(
+      draft.plan,
+      draft.observed!,
+      created,
+      (rule) =>
+        recordedGeneratedValue(
+          rule,
+          draft.observed![rule.field],
+          observed.object[rule.field] ?? null,
+        ),
+      referencedIn(context),
     );
-  let fields = fieldsOfCall();
-  // A later call the plan does not take may widen it, as a later update does.
-  if (
-    later &&
-    !fields.ok &&
-    refineCreate(context, draft, step, { observed, call, collection })
-  )
-    fields = fieldsOfCall();
+  // A later call that agrees with the plan widens it, as a later update does: to members it alone sent or left out, an
+  // array it showed sorted, or a clock spelling. One that disagrees leaves the plan as it was.
+  if (later) refineCreate(context, draft, step, { observed, call, collection });
+  const fields = fieldsOfCall();
   const id = fields.ok ? scalarText(fields.value[idField]) : undefined;
   if (
     !fields.ok ||

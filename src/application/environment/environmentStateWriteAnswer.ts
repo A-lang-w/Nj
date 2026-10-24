@@ -172,6 +172,12 @@ export interface GeneratedTarget {
   readonly current?: JsonObject;
 }
 
+/** The fields of the entity of a type with an id the live state holds, which a referencing write repeats. */
+export const heldEntity =
+  (serving: StateServing) =>
+  (type: string, id: string): JsonObject | undefined =>
+    serving.store.ofType(type).find((entity) => entity.id === id)?.fields;
+
 /** What an update generates values for: the entity it writes, in its collection. */
 export const updateTarget = (
   serving: StateServing,
@@ -456,6 +462,7 @@ const answerCreate = (
     observed,
     created,
     values.forTarget({ name: collection, collection: members, observed }),
+    heldEntity(serving),
   );
   if (!fields.ok) return err(refused(tool, fields.error));
   const field = unloadableMember(fields.value);
@@ -544,6 +551,7 @@ const answerUpdate = (
     { before: entity.fields, observed },
     { ...call, id: entity.id },
     values.forTarget(updateTarget(serving, entity, observed)),
+    heldEntity(serving),
   );
   if (!written.ok) return err(refused(tool, written.error));
   // An increment can pass the exact integers.

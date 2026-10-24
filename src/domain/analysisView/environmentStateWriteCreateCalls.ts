@@ -2,7 +2,11 @@ import type { JsonValue } from "../jsonValue.js";
 import { same, type JsonObject } from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
 import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
-import type { FieldRule, WriteBody } from "./environmentStateWriteRules.js";
+import {
+  alikeRules,
+  type FieldRule,
+  type WriteBody,
+} from "./environmentStateWriteRules.js";
 
 type Default = { readonly member: string; readonly value: JsonValue };
 
@@ -15,7 +19,8 @@ const agreeing = (
     readonly later: JsonValue | undefined;
   },
 ): FieldRule | undefined => {
-  if (same(held, later)) return held;
+  const alike = alikeRules(held, later);
+  if (alike !== undefined) return alike;
   if (held.rule !== "clock" || later.rule !== "clock") return undefined;
   const format = fittedClockFormat(held.format, values.later, values.exemplar);
   return format === undefined ? undefined : { ...held, format };
@@ -35,11 +40,61 @@ const joinedDefaults = (
   return [...joined].map(([member, value]) => ({ member, value }));
 };
 
+/** What two calls show of one field. */
+interface FieldCalls {
+  readonly before: FieldRule | undefined;
+  readonly after: FieldRule | undefined;
+  readonly exemplar: JsonObject;
+  readonly later: { readonly entity: JsonObject; readonly body: JsonObject };
+  readonly sentBefore: ReadonlySet<string>;
+  readonly required: readonly string[];
+}
+
+/** One field's rule in the merged plan, and the default it gives a member; undefined when the calls disagree on it. */
+const mergedField = (
+  field: string,
+  calls: FieldCalls,
+): { readonly rule?: FieldRule; readonly default?: Default } | undefined => {
+  const { before, after, exemplar, later } = calls;
+  const inExemplar = Object.hasOwn(exemplar, field);
+  if (!inExemplar || !Object.hasOwn(later.entity, field)) {
+    // A field one call shows alone must be a reference the other call did not send the member of.
+    const own = inExemplar ? before : after;
+    if (own?.rule !== "reference") return undefined;
+    const sent = inExemplar
+      ? Object.hasOwn(later.body, own.member)
+      : calls.sentBefore.has(own.member);
+    return sent ? undefined : { rule: own };
+  }
+  if (before !== undefined && after !== undefined) {
+    const rule = agreeing(before, after, {
+      exemplar: exemplar[field],
+      later: later.entity[field],
+    });
+    return rule === undefined ? undefined : { rule };
+  }
+  // The plan echoes a member this call left out: what it stored there is the member's default.
+  if (before !== undefined)
+    return before.rule === "echo" && !Object.hasOwn(later.body, field)
+      ? {
+          rule: before,
+          default: { member: field, value: later.entity[field]! },
+        }
+      : undefined;
+  // This call echoes a member the plan's calls left out: what they stored there is its default.
+  if (after !== undefined)
+    return after.rule === "echo" && !calls.required.includes(field)
+      ? { rule: after, default: { member: field, value: exemplar[field]! } }
+      : undefined;
+  return same(exemplar[field], later.entity[field]) ? {} : undefined;
+};
+
 /**
- * A create plan widened by a later call the plan does not take, explained on its own: both calls show the same fields,
- * every field both rule they rule alike, a field neither rules holds one value, and where only one echoes a member the
- * other left out, the member becomes optional with the value the call that left it out stored. Members either call sent are accepted, and only those every
- * call sent are required. Undefined when the calls disagree otherwise, so the later call stays unexplained.
+ * A create plan widened by a later call, explained on its own: both calls show the same fields, but for a reference
+ * whose member the other did not send, every field both rule they rule alike, a field neither rules holds one value,
+ * and where only one echoes a member the other left out, the member becomes optional with the value the call that left
+ * it out stored. Members either call sent are accepted, and only those every call sent are required. Undefined when the
+ * calls disagree otherwise, so the later call stays unexplained.
  */
 export const mergedCreatePlan = (
   plan: { readonly rules: readonly FieldRule[]; readonly body: WriteBody },
@@ -51,39 +106,30 @@ export const mergedCreatePlan = (
     readonly contract: WriteBody;
   },
 ): { readonly rules: FieldRule[]; readonly body: WriteBody } | undefined => {
-  const fields = Object.keys(exemplar);
-  if (
-    fields.length !== Object.keys(later.entity).length ||
-    !fields.every((field) => Object.hasOwn(later.entity, field))
-  )
-    return undefined;
   const held = new Map(plan.rules.map((rule) => [rule.field, rule]));
   const shown = new Map(later.rules.map((rule) => [rule.field, rule]));
-  const rules: FieldRule[] = [];
+  const sentBefore = new Set([
+    ...plan.body.accepted,
+    ...plan.body.fixed.map(({ member }) => member),
+    ...plan.body.required,
+  ]);
+  const merged = new Map<string, FieldRule>();
   const defaults: Default[] = [];
-  for (const field of fields) {
-    const before = held.get(field);
-    const after = shown.get(field);
-    if (before !== undefined && after !== undefined) {
-      const rule = agreeing(before, after, {
-        exemplar: exemplar[field],
-        later: later.entity[field],
-      });
-      if (rule === undefined) return undefined;
-      rules.push(rule);
-    } else if (before !== undefined) {
-      // The plan echoes a member this call left out: what it stored there is the member's default.
-      if (before.rule !== "echo" || Object.hasOwn(later.body, field))
-        return undefined;
-      rules.push(before);
-      defaults.push({ member: field, value: later.entity[field]! });
-    } else if (after !== undefined) {
-      // This call echoes a member the plan's calls left out: what they stored there is its default.
-      if (after.rule !== "echo" || plan.body.required.includes(field))
-        return undefined;
-      rules.push(after);
-      defaults.push({ member: field, value: exemplar[field]! });
-    } else if (!same(exemplar[field], later.entity[field])) return undefined;
+  for (const field of new Set([
+    ...Object.keys(exemplar),
+    ...Object.keys(later.entity),
+  ])) {
+    const outcome = mergedField(field, {
+      before: held.get(field),
+      after: shown.get(field),
+      exemplar,
+      later,
+      sentBefore,
+      required: plan.body.required,
+    });
+    if (outcome === undefined) return undefined;
+    if (outcome.rule !== undefined) merged.set(field, outcome.rule);
+    if (outcome.default !== undefined) defaults.push(outcome.default);
   }
   const body = mergedBody(plan.body, later, exemplar);
   const joined =
@@ -91,8 +137,15 @@ export const mergedCreatePlan = (
       ? undefined
       : joinedDefaults(plan.body.defaults ?? [], defaults);
   if (body === undefined || joined === undefined) return undefined;
+  // The plan's rules keep their order; rules the later call adds follow.
   return {
-    rules,
+    rules: [
+      ...plan.rules.flatMap((rule) => {
+        const kept = merged.get(rule.field);
+        return kept === undefined ? [] : [kept];
+      }),
+      ...[...merged.values()].filter((rule) => !held.has(rule.field)),
+    ],
     body: joined.length === 0 ? body : { ...body, defaults: joined },
   };
 };
