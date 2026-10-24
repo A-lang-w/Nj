@@ -15,6 +15,7 @@ import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js
 import { collectJavaScriptSemanticResources } from "./javascriptSemanticResources.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
@@ -138,11 +139,19 @@ function* collectAssignmentFlowsSteps(
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
+  // A node inside any branch position that evaluation may skip (if bodies,
+  // destructuring defaults, logical right sides, optional-chain arguments)
+  // makes every assignment below it ordering-uncertain.
   let conditionalDepth = 0;
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       stack.enter(node, parent);
-      if (CONDITIONAL_AST_NODES.has(node.type)) conditionalDepth += 1;
+      if (
+        parent !== null &&
+        parent !== undefined &&
+        semanticBranchMayBeSkipped(parent, node)
+      )
+        conditionalDepth += 1;
       if (!t.isAssignmentExpression(node)) return;
       const target = unwrapJavaScriptExpression(node.left).node;
       // Destructuring has its own property-selection owner.
@@ -155,35 +164,25 @@ function* collectAssignmentFlowsSteps(
           t.isIdentifier(source) || t.isMemberExpression(source),
         operator: node.operator,
         ownerCallableId: stack.callables.at(-1) ?? null,
-        ...assignedContainerValue(target, source, {
+        ...assignedContainerValue(node.operator, target, source, {
           conditional: conditionalDepth > 0,
           ownerCallableId: stack.callables.at(-1) ?? null,
           state,
         }),
       });
     },
-    exit: (node) => {
-      if (CONDITIONAL_AST_NODES.has(node.type)) conditionalDepth -= 1;
+    exit: (node, parent) => {
+      if (
+        parent !== null &&
+        parent !== undefined &&
+        semanticBranchMayBeSkipped(parent, node)
+      )
+        conditionalDepth -= 1;
       stack.exit(node);
     },
   });
   return flows;
 }
-
-/** Constructs wrapping branches or loops make a write's survival uncertain. */
-const CONDITIONAL_AST_NODES = new Set([
-  "IfStatement",
-  "ConditionalExpression",
-  "LogicalExpression",
-  "ForStatement",
-  "ForInStatement",
-  "ForOfStatement",
-  "WhileStatement",
-  "DoWhileStatement",
-  "SwitchStatement",
-  "TryStatement",
-  "CatchClause",
-]);
 
 /**
  * The static value an unconditional top-level `X.p = {…}` stores, so the
@@ -193,6 +192,7 @@ const CONDITIONAL_AST_NODES = new Set([
  */
 
 const assignedContainerValue = (
+  operator: string,
   target: t.Node,
   source: t.Node,
   options: {
@@ -201,6 +201,9 @@ const assignedContainerValue = (
     readonly state: JavaScriptSemanticAnalysisState;
   },
 ): Pick<JavaScriptSemanticIr["assignmentFlows"][number], "assignedValue"> => {
+  // Compound and logical operators write conditionally or compute a new
+  // value; only a plain `=` stores the literal container itself.
+  if (operator !== "=") return {};
   if (options.conditional || options.ownerCallableId !== null) return {};
   if (!t.isMemberExpression(target) || target.computed) return {};
   const propertyPath = staticPropertyPath(target);

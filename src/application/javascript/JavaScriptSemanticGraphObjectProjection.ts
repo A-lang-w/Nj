@@ -20,33 +20,33 @@ import {
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
-import { foldedAssignedContainerValues } from "./JavaScriptSemanticGraphAssignedValues.js";
+import {
+  foldedAssignedContainerValues,
+  type FoldedAssignedValue,
+} from "./JavaScriptSemanticGraphAssignedValues.js";
 import { semanticPropertySlot } from "./JavaScriptSemanticGraphValueProjection.js";
 
-/**
- * Fold unconditional top-level `X.p = { container }` assignments into the
- * values object reads resolve against, mirroring the initializer path. A
- * path is only folded when that assignment is its single intersecting
- * member write; conditional, nested or repeated writers keep the existing
- * mutation-unknown semantics.
- */
-const applyAssignedContainerValues = (
-  context: SemanticFlowProjectionContext,
-  values: ReadonlyMap<string, JavaScriptSemanticValue> &
-    Map<string, JavaScriptSemanticValue>,
-): void => {
-  for (const folded of foldedAssignedContainerValues(context)) {
-    const binding = context.ir.bindings.find(
-      (candidate) => candidate.name === folded.receiverName,
-    );
-    if (binding === undefined) continue;
-    const current = values.get(binding.bindingId);
-    if (current === undefined) continue;
-    values.set(
-      binding.bindingId,
-      valueWithAssignedContainer(current, folded.propertyPath, folded.value),
-    );
+/** Apply folded assignment values to one operation by source position. */
+const withPositionalFolds = (
+  base: JavaScriptSemanticValue | undefined,
+  operation: JavaScriptSemanticObjectOperation,
+  folds: readonly FoldedAssignedValue[] | undefined,
+): JavaScriptSemanticValue | undefined => {
+  if (base === undefined || folds === undefined) return base;
+  let value = base;
+  for (const folded of folds) {
+    const after =
+      operation.location.start.line > folded.target.start.line ||
+      (operation.location.start.line === folded.target.start.line &&
+        operation.location.start.column >= folded.target.end.column);
+    if (after)
+      value = valueWithAssignedContainer(
+        value,
+        folded.propertyPath,
+        folded.value,
+      );
   }
+  return value;
 };
 
 /** Overwrites one property path with an assigned container value. */
@@ -113,10 +113,18 @@ export function* projectSemanticObjects(
   const values = new Map(
     context.ir.bindings.map((binding) => [binding.bindingId, binding.value]),
   );
-  applyAssignedContainerValues(context, values);
+  // Folded assignment values apply positionally: only reads at or after the
+  // assignment observe them, so an earlier read keeps the pre-assignment fact.
+  const foldsByBinding = new Map<string, FoldedAssignedValue[]>();
+  for (const folded of foldedAssignedContainerValues(context)) {
+    const list = foldsByBinding.get(folded.receiverBindingId) ?? [];
+    list.push(folded);
+    foldsByBinding.set(folded.receiverBindingId, list);
+  }
+  // folds are consumed positionally in objectTarget
   for (const [index, operation] of context.ir.objectOperations.entries()) {
     if (index % 64 === 0) yield;
-    const target = objectTarget(context, values, operation);
+    const target = objectTarget(context, values, operation, foldsByBinding);
     const occurrence = addObjectOccurrence(
       context,
       operation,
@@ -161,15 +169,23 @@ const objectTarget = (
   context: SemanticFlowProjectionContext,
   values: ReadonlyMap<string, JavaScriptSemanticValue>,
   operation: JavaScriptSemanticObjectOperation,
+  foldsByBinding: ReadonlyMap<string, readonly FoldedAssignedValue[]>,
 ): ObjectTarget => {
   const binding =
     operation.objectBindingId === null
       ? undefined
       : context.bindingNodes.get(operation.objectBindingId);
-  const value =
+  const base =
     operation.objectBindingId === null
       ? undefined
       : values.get(operation.objectBindingId);
+  const value = withPositionalFolds(
+    base,
+    operation,
+    operation.objectBindingId === null
+      ? undefined
+      : foldsByBinding.get(operation.objectBindingId),
+  );
   if (
     operation.objectBindingId === null ||
     operation.propertyPath === null ||

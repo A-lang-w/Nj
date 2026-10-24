@@ -71,12 +71,9 @@ const projectAssignedContainerValues = (
 ): void => {
   for (const folded of foldedAssignedContainerValues(context)) {
     const binding = context.ir.bindings.find(
-      (candidate) => candidate.name === folded.receiverName,
+      (candidate) => candidate.bindingId === folded.receiverBindingId,
     );
-    const bindingNode =
-      binding === undefined
-        ? undefined
-        : context.bindingNodes.get(binding.bindingId);
+    const bindingNode = context.bindingNodes.get(folded.receiverBindingId);
     if (binding === undefined || bindingNode === undefined) continue;
     // Materialize each ancestor slot so the container slot itself reports
     // object/array status; projecting from the binding alone would leave the

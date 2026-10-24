@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 
@@ -124,5 +124,73 @@ it("models nested property paths and arrays", () => {
       "settings.limits:object",
       "list:array",
     ]),
+  );
+});
+
+it("does not fold logical-assignment right-hand sides", () => {
+  const graph = graphForJavaScript(
+    "const Game = {};\nGame.config ||= { ACCEL: 0.001 };\nexport function accel() { return Game.config.ACCEL; }",
+  );
+  expect(slotStates(graph)).toContain("config.ACCEL:unknown");
+});
+
+it("does not fold when a dynamic-key write may overlap the path", () => {
+  const graph = graphForJavaScript(
+    'const Game = {};\nconst key = "config";\nGame.config = { ACCEL: 0.001 };\nGame[key] = other;\nexport function accel() { return Game.config.ACCEL; }\nconst other = {};',
+  );
+  expect(slotStates(graph)).toContain("config.ACCEL:unknown");
+});
+
+it("does not fold assignments inside destructuring defaults", () => {
+  const graph = graphForJavaScript(
+    "const Game = {};\nconst { x = (Game.config = { ACCEL: 0.001 }) } = { x: 0 };\nexport function accel() { return Game.config.ACCEL; }",
+  );
+  expect(slotStates(graph)).toContain("config.ACCEL:unknown");
+});
+
+it("does not synthesize containers on null receivers", () => {
+  const graph = graphForJavaScript(
+    "const Game = null;\nGame.config = { ACCEL: 0.001 };\nexport function accel() { return Game.config.ACCEL; }",
+  );
+  expect(slotStates(graph)).toContain("config.ACCEL:unknown");
+});
+
+it("keeps the folded value unknown once the container reference is read out", () => {
+  const graph = graphForJavaScript(
+    "const Game = {};\nGame.config = { ACCEL: 0.001 };\nconst ref = Game.config;\nexport function accel() { return Game.config.ACCEL; }",
+  );
+  expect(slotStates(graph)).toContain("config.ACCEL:unknown");
+});
+
+it("folds onto the lexical receiver, not a same-named shadow", () => {
+  const graph = graphForJavaScript(
+    "const Game = {};\n{ const Game = {}; }\nGame.config = { ACCEL: 0.001 };\nexport function accel() { return Game.config.ACCEL; }",
+  );
+  expect(slotStates(graph)).toContain("config.ACCEL:literal");
+});
+
+it("keeps an enclosing nested writer over its inner assignment", () => {
+  const graph = graphForJavaScript(
+    "const Game = {};\nGame.config = { marker: (Game.config = { stale: 1 }) };\nexport function accel() { return Game.config.stale; }",
+  );
+  expect(slotStates(graph)).not.toContain("config.stale:literal");
+});
+
+it("does not apply a folded value to reads before the assignment", () => {
+  const graph = graphForJavaScript(
+    "const Game = { config: { x: 1 } };\nconst before = Game.config.x;\nGame.config = { x: 2 };\nexport function accel() { return Game.config.x; }",
+  );
+  // The folded literal reaches the later read through candidate edges (the
+  // initializer-written container keeps mutation-unknown presence, so a fully
+  // resolved chain through both writers needs follow-up); the positional
+  // application guarantees the earlier read never claims the folded value.
+  const foldedTrace = queryJavaScriptSemanticGraph(graph, {
+    seed: { kind: "literal", value: 2 },
+    direction: "forward-influence",
+    include_ambiguous_dynamic_edges: true,
+    expected: null,
+  });
+  expect(foldedTrace.nodes.map((node) => node.label)).toContain(
+    "read:/config/x",
   );
 });
