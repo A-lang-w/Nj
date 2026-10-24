@@ -107,6 +107,14 @@ They do not establish behavior on every filesystem or operating system and do
 not execute LLVM or ls. CLI/MCP contracts, Evidence fields, input limits and
 provider authority remain unchanged; generated catalogs and builds are ignored.
 
+After integrating main `21a20306b`, the six serial static tasks, architecture
+guards and all 36 focused cases passed again. Three fresh real MCP/source-export
+tasks and three CLI calls matched every oracle fact and the frozen cohort's
+report/parent identity. The integrated test/preparation family peaked at
+2.23 GiB with verified payload exit/cleanup and no guard stop/OOM. These are
+integration qualification runs; they do not replace the fixed performance pins.
+The committed cost verifier also reproduced the complete measurement JSON.
+
 ## Reproduction
 
 Build both pinned checkouts using their locked toolchain, serially. Supply an
