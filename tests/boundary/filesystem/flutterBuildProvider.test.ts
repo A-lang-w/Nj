@@ -112,6 +112,71 @@ const analyzeImage = async (bytes: Buffer, operation: FlutterOperation) => {
   return result.value;
 };
 
+it.each([false, true])(
+  "qualifies unified snapshot exports without aliasing legacy sources (text=%s)",
+  async (includeText) => {
+    const symbols = [
+      { name: "_kDartSnapshotData", value: 0x1000, size: 52 },
+      ...(includeText
+        ? [{ name: "_kDartSnapshotText", value: 0x1100, size: 16 }]
+        : []),
+    ];
+    const image = Buffer.alloc(0x1110);
+    buildElf64Image(symbols).copy(image);
+    const data = snapshotSection(REFERENCE_HASH);
+    data.writeBigUInt64LE(2n, 12); // Pinned unified producer enum; support is not inferred.
+    data.copy(image, 0x1000);
+    const path = await buildApk("unified.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: image },
+    ]);
+    const provider = new FlutterBuildProvider();
+    onTestFinished(() => provider.close());
+    const inspected = await provider.execute({
+      operation: "inspect_dart_aot",
+      input: { path },
+    });
+    expect(inspected.ok).toBe(false);
+    if (inspected.ok)
+      throw new Error("Unified profile was admitted as split VM/isolate");
+    expect(projectAnalysisError(inspected.error)).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      details: {
+        diagnostics: {
+          supported_profile: "dart-2.14-split-full-aot",
+          observed_exports: symbols.map(({ name, value, size }) => ({
+            name,
+            offset: value,
+            size,
+          })),
+          abi: "arm64-v8a",
+          libapp_bytes: image.length,
+          libapp_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      },
+    });
+    const identified = await provider.execute({
+      operation: "identify_flutter_build",
+      input: { path },
+    });
+    if (!identified.ok) throw identified.error;
+    const value = flutterResultSchemas.identify_flutter_build.parse(
+      identified.value.result,
+    );
+    expect(value.coverage).toBe("partial");
+    expect(value.abis[0]?.libapp).toMatchObject({
+      snapshot_hash: REFERENCE_HASH,
+      snapshot_hash_sources: 1,
+    });
+    expect(identified.value.limitations.join(" ")).toContain(
+      "supported legacy split VM/isolate profile",
+    );
+    expect(identified.value.limitations.join(" ")).not.toContain(
+      "library is truncated",
+    );
+  },
+);
+
 it.each([32, 64] as const)(
   "reads only ELF-owned notes in an ELF%s engine",
   async (bits) => {
@@ -316,10 +381,33 @@ it.each([
       input: { path },
     });
     if (result.ok) throw new Error("expected owned I/O failure");
-    expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
     expect(result.error.cause).toBe(cause);
-    expect(result.error.message).toContain(
-      "Provider-owned Flutter snapshot storage",
+    // Only storage exhaustion is a resource constraint; other owned-storage
+    // failures keep their system code instead of claiming a size allowance.
+    // These causes carry no errno path, so the failure is located by the owned
+    // workspace once allocated; before allocation no workspace exists.
+    const workspace =
+      stage === "root"
+        ? null
+        : (expect.stringMatching(/\/rea-flutter-[^/]+$/u) as unknown);
+    const location = { workspace_path: workspace, path: workspace };
+    expect(projectAnalysisError(result.error)).toMatchObject(
+      code === "ENOSPC"
+        ? {
+            code: "resource_constraint",
+            details: { reported_limits: { ...location, system_code: code } },
+          }
+        : {
+            code: "execution_failure",
+            details: {
+              provider_id: "flutter",
+              diagnostics: {
+                stage: "workspace",
+                ...location,
+                system_code: code,
+              },
+            },
+          },
     );
   },
 );
@@ -368,6 +456,48 @@ it.each(["close", "elf", "pool", "cleanup"] as const)(
     );
     if (result.ok) throw new Error("late cancellation must prevent success");
     expect(projectAnalysisError(result.error).code).toBe("cancelled");
+  },
+);
+
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s keeps completed Evidence when cancelled during successful snapshot removal",
+  async (operation) => {
+    const path = await buildApk("removal-cancellation.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+      { path: "lib/arm64-v8a/libflutter.so", bytes: libflutter() },
+    ]);
+    const controlProvider = new FlutterBuildProvider();
+    onTestFinished(() => controlProvider.close());
+    const control = await new FlutterBuildAnalysisService(
+      controlProvider,
+    ).execute(operation, { path });
+    if (!control.ok) throw control.error;
+
+    const controller = new AbortController();
+    const reason = new Error("caller interrupted snapshot removal");
+    const removedRoots: string[] = [];
+    const provider = new FlutterBuildProvider({
+      removeRoot: async (root) => {
+        await rm(root, { recursive: true, force: true });
+        removedRoots.push(root);
+        controller.abort(reason);
+      },
+    });
+    const result = await new FlutterBuildAnalysisService(provider).execute(
+      operation,
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("cancellation must prevent success");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.partialObservation).toEqual(control.value);
+    expect(removedRoots).toHaveLength(1);
+    await expect(stat(removedRoots[0]!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await provider.close();
+    expect(removedRoots).toHaveLength(1);
   },
 );
 
@@ -642,6 +772,7 @@ it("retains failed snapshot cleanup and retries it on close", async () => {
     { close: () => provider.close() },
     "flutter",
     "identify_flutter_build",
+    new AbortController().signal,
   );
   expect(result).toMatchObject({
     code: "cleanup_incomplete",
@@ -885,7 +1016,11 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const result = await provider.execute({ operation, input: { path } });
     if (result.ok) throw new Error("expected a size refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.retryable).toBe(false);
+    expect(projected.remediation.action).toContain("APK snapshot allowance");
+    expect(projected.remediation.action).not.toMatch(/evidence reply/u);
     expect(result.error).toMatchObject({
       operation,
       reportedLimits: {

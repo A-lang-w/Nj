@@ -24,6 +24,8 @@ import {
 } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  freezeOwnedJsonTreeSnapshot,
+  canBorrowParsedJsonSnapshot,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
@@ -48,6 +50,7 @@ const subjectFormatSchema = z.enum([
   "dos-mz",
   "dos-com",
   "raw-binary",
+  "gamecube-dol",
   "zip",
   "ipa",
   "apk",
@@ -57,6 +60,7 @@ const subjectFormatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "godot-pck",
   "dmg",
   "pkg",
   "plist",
@@ -68,6 +72,7 @@ const subjectFormatSchema = z.enum([
   "mach-o-universal",
   "javascript-bundle",
   "entitlements",
+  "pyinstaller",
 ]);
 const subjectBaseSchema = z.strictObject({
   name: z.string().min(1),
@@ -77,7 +82,7 @@ const subjectBaseSchema = z.strictObject({
 // The format owns the architecture claim, including nested Evidence subjects.
 const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary"]),
+    format: subjectFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
     architecture: z
       .enum(BINARY_ARCHITECTURES)
       .exclude([...RAW_ONLY_ARCHITECTURES])
@@ -86,6 +91,10 @@ const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
     format: z.literal("raw-binary"),
     architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+  }),
+  subjectBaseSchema.extend({
+    format: z.literal("gamecube-dol"),
+    architecture: z.literal("powerpc"),
   }),
 ]);
 /** Source location attached to an evidence observation. */
@@ -100,16 +109,17 @@ export const evidenceLocationSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
   z.strictObject({
     kind: z.literal("file-offset"),
-    offset: z.number().int().min(0),
+    offset: z.int().min(0),
   }),
   z.strictObject({
     kind: z.literal("file-offset-range"),
-    start: z.number().int().min(0),
-    end: z.number().int().min(0),
+    start: z.int().min(0),
+    end: z.int().min(0),
   }),
 ]);
 
-const evidenceAuthoritySchema = z.enum([
+/** Source authority vocabulary owned by Evidence and reused by its consumers. */
+export const evidenceAuthoritySchema = z.enum([
   "shipped-artifact",
   "controlled-replay",
   "historical-reference",
@@ -179,7 +189,9 @@ const authenticatedEvidenceSchema = evidenceSchema.superRefine(
       context.addIssue({
         code: "custom",
         path: ["evidence_id"],
-        message: "Evidence semantic identifier does not match its record",
+        message: usesPre66NullCoverageIdentity(withoutId, evidenceId)
+          ? "Evidence uses an earlier relationship_coverage identity commitment: explicit null was omitted from that digest. Recreate this observation with the current REA release; re-exporting the old bundle cannot update its identity."
+          : "Evidence semantic identifier does not match its record",
       });
   },
 );
@@ -222,11 +234,7 @@ export const rebindEvidenceSubjectTargetPath = (
 type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
-export interface EvidenceProvider {
-  readonly id: string;
-  readonly name: string;
-  readonly version: string | null;
-}
+export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;
 
 export interface EvidenceObservation {
   readonly predicateType?: string;
@@ -248,7 +256,9 @@ export interface EvidenceObservation {
 
 type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
-const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
+const semanticProjection = (
+  evidence: EvidenceWithoutId,
+): Record<string, JsonValue> => ({
   subject:
     evidence.subject === null
       ? null
@@ -277,6 +287,20 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
 const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
   `ev_${digestCanonicalValue(semanticProjection(evidence), "Evidence")}`;
 
+/** Recognize an obsolete commitment for diagnosis only; never admit or rewrite it. */
+const usesPre66NullCoverageIdentity = (
+  evidence: EvidenceWithoutId,
+  evidenceId: string,
+): boolean => {
+  if (evidence.relationship_coverage !== null) return false;
+  const legacyProjection = semanticProjection(evidence);
+  delete legacyProjection.relationship_coverage;
+  return (
+    evidenceId ===
+    `ev_${digestCanonicalValue(legacyProjection, "Historical Evidence identity")}`
+  );
+};
+
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {
   const immutable =
@@ -288,8 +312,12 @@ export const parseEvidence = (input: unknown): Evidence => {
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
-export const immutableEvidence = (input: unknown): Evidence =>
-  rememberImmutableEvidence(parseEvidence(input));
+export const immutableEvidence = (input: unknown): Evidence => {
+  const parsed = parseEvidence(input);
+  return rememberImmutableEvidence(
+    canBorrowParsedJsonSnapshot(input, parsed) ? input : parsed,
+  );
+};
 
 /** Rebind display path metadata when an authenticated record names this target. */
 export const rebindEvidenceToTargetPath = (
@@ -338,11 +366,17 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
   return evidence;
 };
 
+/** Ownership policy for the freshly parsed Evidence snapshot. */
+export interface EvidenceCreationOptions {
+  readonly immutable?: boolean;
+}
+
 /** Build deterministic Evidence from an immutable artifact subject. */
 export const createEvidence = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservation,
+  options?: EvidenceCreationOptions,
 ): Evidence => {
   const { normalized, sharedResult } = normalizeEvidenceObservation(
     target,
@@ -353,7 +387,15 @@ export const createEvidence = (
     ...normalized,
     evidence_id: computeEvidenceId(normalized),
   };
-  return sharedResult ? rememberImmutableEvidence(evidence) : evidence;
+  // Seal this already parsed, exclusively owned snapshot without authenticating
+  // or copying its payload again, including later partial-error delivery.
+  if (sharedResult || options?.immutable === true) {
+    // The normalizer's JSON parser clones mutable payloads into trees and only
+    // borrows previously sealed roots. No graph-sized sealing scratch is needed.
+    freezeOwnedJsonTreeSnapshot(evidence);
+    immutableEvidenceSnapshots.set(evidence, evidence);
+  }
+  return evidence;
 };
 
 /** Create Evidence from owned immutable JSON while exposing cooperative computation steps. */

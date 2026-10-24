@@ -9,6 +9,7 @@ import type {
   AnalysisViewParent,
   AnalysisViewRequest,
   UnsignedAnalysisView,
+  GroupingViewKind,
 } from "./analysisView.js";
 import {
   boundedViewMessages,
@@ -157,7 +158,7 @@ const layoutSummary = (layout: BinaryLayout) => ({
 export const projectBinaryLayoutView = (
   parent: AnalysisViewParent,
   layout: BinaryLayout,
-  view: Exclude<AnalysisViewRequest, { kind: "api-surface" }>,
+  view: Exclude<AnalysisViewRequest, { kind: GroupingViewKind }>,
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   const shared = parentFields(parent, layout);
   if (view.kind === "native")

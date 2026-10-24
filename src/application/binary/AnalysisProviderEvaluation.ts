@@ -10,16 +10,20 @@ import {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
+import type {
+  AnalysisProviderBoundClientFactory,
+  AnalysisProfileResolutionOptions,
+  AnalysisProviderCandidate,
+} from "../AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import type { FileCloseResourceOwner } from "../AnalysisProvider.js";
 
 /** Profile-resolution truth for one discovered provider candidate. */
 export interface AnalysisProviderCandidateEvaluation {
   readonly candidate: AnalysisProviderCandidate;
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
+  readonly createClient?: AnalysisProviderBoundClientFactory;
   readonly profileError?: AnalysisError;
 }
 
@@ -28,21 +32,18 @@ export const evaluateAnalysisProviderCandidate = async (
   candidate: AnalysisProviderCandidate,
   status: AnalysisProviderCandidateStatus,
   target: BinaryTarget,
-  signal: AbortSignal | undefined,
-  fileCloseResources?: FileCloseResourceOwner,
+  options: AnalysisProfileResolutionOptions = {},
 ): Promise<
   Result<AnalysisProviderCandidateEvaluation, AnalysisCancelledError>
 > => {
+  const { signal } = options;
   if (signalIsAborted(signal))
     return err(
       new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
     );
   let resolved: Awaited<ReturnType<typeof candidate.resolveAnalysisProfile>>;
   try {
-    resolved = await candidate.resolveAnalysisProfile(target, {
-      ...(signal === undefined ? {} : { signal }),
-      ...(fileCloseResources === undefined ? {} : { fileCloseResources }),
-    });
+    resolved = await candidate.resolveAnalysisProfile(target, options);
   } catch (cause: unknown) {
     resolved = err(
       cause instanceof AnalysisError
@@ -108,7 +109,14 @@ export const evaluateAnalysisProviderCandidate = async (
           "Resolved analysis profile has mismatched provider identity",
         ),
       );
-    return ok({ candidate, status, profile });
+    return ok({
+      candidate,
+      status,
+      profile,
+      ...(resolved.value.createClient === undefined
+        ? {}
+        : { createClient: resolved.value.createClient }),
+    });
   } catch (cause: unknown) {
     void cause;
     return ok(

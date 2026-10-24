@@ -5,12 +5,14 @@ import {
   type JadxToolPort,
 } from "../../../src/android/JadxAnalysis.js";
 import {
+  type AndroidRequest,
   androidInputSchemas,
   androidResultSchemas,
 } from "../../../src/domain/android/androidAnalysis.js";
 
 const summary = {
   full_name: "fixture.Target",
+  raw_name: "fixture.Target",
   name: "Target",
   method_count: 2,
   field_count: 0,
@@ -43,6 +45,336 @@ const engine = {
   worker_count: 1,
   heap_limit_mib: null,
 };
+
+it.each([
+  ["", "", true, true, null],
+  ["16", "", true, true, null],
+  ["17", "", false, true, null],
+  ["33", "", false, null, null],
+  ["16", "17", false, true, null],
+  ["Preview", "", null, null, null],
+  ["1", "Preview", null, null, null],
+  ["", "", null, null, 'android:targetSdkVersion=""'],
+  ["", "", null, null, 'android:minSdkVersion=""'],
+  [
+    "16",
+    "",
+    null,
+    null,
+    'android:minSdkVersion="16" android:targetSdkVersion=""',
+  ],
+] as const)(
+  "derives export rules from minimum SDK %s and declared target %s",
+  async (minimum, target, providerDefault, activityDefault, sourceSdk) => {
+    const sdk =
+      sourceSdk ??
+      [
+        minimum === "" ? "" : `android:minSdkVersion="${minimum}"`,
+        target === "" ? "" : `android:targetSdkVersion="${target}"`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    const manifest = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">${sdk === "" ? "" : `<uses-sdk ${sdk}/>`}<application><provider android:name=".Data"/><activity android:name=".Filtered"><intent-filter><action android:name="example.OPEN"/></intent-filter></activity></application></manifest>`;
+    const tools: JadxToolPort = {
+      json: (name) => {
+        expect(name).toBe("get_app_info");
+        return Promise.resolve({
+          package: "com.example",
+          version_name: "",
+          version_code: "",
+          min_sdk: minimum,
+          target_sdk: target,
+          permissions: [],
+        });
+      },
+      text: (name) => {
+        expect(name).toBe("get_android_manifest");
+        return Promise.resolve(manifest);
+      },
+      listClasses: () => Promise.reject(new Error("Unexpected class query")),
+    };
+    const report = androidResultSchemas.inspect_android_package.parse(
+      await analyzeJadxRequest(
+        tools,
+        {
+          operation: "inspect_android_package",
+          input: { path: "/fixture.apk" },
+        },
+        {
+          state: "LOADED",
+          apk_path: "/snapshot.apk",
+          class_count: 0,
+          resource_count: 1,
+          threads: 1,
+          resources: "full",
+        },
+        engine,
+      ),
+    );
+    expect(report.target_sdk).toBe(target || null);
+    expect(report.min_sdk).toBe(minimum || null);
+    expect(report.components.status).toBe("complete");
+    expect(report.components.items[0]?.exported_default).toBe(providerDefault);
+    expect(report.components.items[1]?.exported_default).toBe(activityDefault);
+    if (sourceSdk !== null || minimum === "Preview" || target === "Preview")
+      expect(report.components.limitations.join(" ")).toContain(
+        "target SDK is unknown",
+      );
+    else if (minimum === "33" && target === "")
+      expect(report.components.limitations.join(" ")).toContain(
+        "requires an explicit value",
+      );
+    else expect(report.components.limitations).toEqual([]);
+  },
+);
+
+const nestedClassInput = {
+  path: "/fixture.apk",
+  class_name: "fixture.Outer$Worker",
+};
+const nestedClassRequests: AndroidRequest[] = [
+  { operation: "inspect_android_class", input: nestedClassInput },
+  {
+    operation: "inspect_android_method",
+    input: { ...nestedClassInput, method_name: "choose" },
+  },
+  { operation: "trace_android_references", input: nestedClassInput },
+  {
+    operation: "trace_android_references",
+    input: { ...nestedClassInput, method_name: "choose" },
+  },
+];
+
+it.each(nestedClassRequests)(
+  "preserves the raw nested class selector for $operation and its followups: $input",
+  async (request) => {
+    const calls: Record<string, unknown>[] = [];
+    const fullName = "fixture.Outer.Worker";
+    const selected = summary.methods[1]!;
+    const tools: JadxToolPort = {
+      listClasses: () =>
+        Promise.reject(new Error("unexpected class inventory call")),
+      text: () => Promise.reject(new Error("unexpected text call")),
+      json: (name, input) => {
+        calls.push({ name, ...input });
+        if (name === "get_class_summary")
+          return Promise.resolve({
+            ...summary,
+            full_name: fullName,
+            raw_name: nestedClassInput.class_name,
+            method_count: 1,
+            methods: [selected],
+          });
+        if (name === "get_method_body")
+          return Promise.resolve({
+            class_name: fullName,
+            method_name: selected.name,
+            full_name: `${fullName}.${selected.name}`,
+            overload_index: 0,
+            overload_count: 1,
+            dex_descriptor: selected.dex_descriptor,
+            mode: "java",
+            fell_back: false,
+            markers: [],
+            body: "void choose(int value) {}",
+          });
+        return Promise.resolve({
+          target:
+            input.method_name === undefined
+              ? fullName
+              : `${fullName}.${selected.name}`,
+          ...(input.method_name === undefined
+            ? {}
+            : {
+                overload_index: 0,
+                reported_signature: selected.signature,
+              }),
+          total: 0,
+          count: 0,
+          resolve_line: false,
+          items: [],
+        });
+      },
+    };
+    const result = await analyzeJadxRequest(
+      tools,
+      request,
+      {} as never,
+      engine,
+    );
+    expect(result).toMatchObject({ class_name: fullName });
+    expect(calls.map((call) => call.class_name)).toEqual(
+      Array.from({ length: calls.length }, () => nestedClassInput.class_name),
+    );
+    expect(calls).toHaveLength(
+      request.operation === "inspect_android_class" ? 1 : 2,
+    );
+  },
+);
+
+it("rejects a nested class when neither producer identity matches the requested selector", async () => {
+  await expect(
+    analyzeJadxRequest(
+      {
+        listClasses: () =>
+          Promise.reject(new Error("unexpected class inventory call")),
+        text: () => Promise.reject(new Error("unexpected text call")),
+        json: () =>
+          Promise.resolve({
+            ...summary,
+            full_name: "fixture.Outer.Worker",
+            raw_name: "fixture.Outer$Different",
+          }),
+      },
+      { operation: "inspect_android_class", input: nestedClassInput },
+      {} as never,
+      engine,
+    ),
+  ).rejects.toMatchObject({ _tag: "AnalysisInputError" });
+});
+
+it("pages filtered matches independently of the examined inventory and preserves cross-page duplicates", async () => {
+  const names = Array.from({ length: 5000 }, (_, i) => `fixture.Target${i}`);
+  names[0] = "fixture.TargetDuplicate";
+  names[4096] = "fixture.TargetDuplicate";
+  const calls: Record<string, unknown>[] = [];
+  const tools: JadxToolPort = {
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: (input) => {
+      calls.push({ ...input });
+      const offset = Number(input.offset);
+      return Promise.resolve({
+        scope: "top_level" as const,
+        total_classes: 10000,
+        next_offset: offset === 0 ? 8191 : 10000,
+        offset,
+        limit: 4096,
+        items: offset === 0 ? names.slice(0, 4096) : names.slice(4096),
+      });
+    },
+    text: () => Promise.reject(new Error("unexpected text call")),
+  };
+  const result = await analyzeJadxRequest(
+    tools,
+    {
+      operation: "search_android_classes",
+      input: { path: "/fixture.apk", query: "Target" },
+    },
+    {
+      state: "LOADED",
+      apk_path: "/snapshot.apk",
+      class_count: 10000,
+      resource_count: 0,
+      threads: 1,
+      resources: "full",
+    },
+    engine,
+  );
+  expect(calls).toEqual([
+    { query: "Target", offset: 0, limit: 4096 },
+    { query: "Target", offset: 8191, limit: 4096 },
+  ]);
+  expect(result).toMatchObject({
+    total_classes: 10000,
+    matches: names,
+    duplicate_names: [{ name: "fixture.TargetDuplicate", occurrences: 2 }],
+    coverage: "complete",
+  });
+});
+
+it.each([
+  { name: "inventory total", query: "Target", page: { total_classes: 9 } },
+  { name: "out-of-range cursor", query: "Target", page: { next_offset: 11 } },
+  {
+    name: "impossible examined row count",
+    query: "Target",
+    page: { next_offset: 1, items: ["TargetA", "TargetB"] },
+  },
+  { name: "offset identity", query: "Target", page: { offset: 1 } },
+  { name: "requested page size", query: "Target", page: { limit: 1 } },
+  { name: "nonmatching row", query: "Target", page: { items: ["Other"] } },
+  {
+    name: "non-progressing page",
+    query: "Target",
+    page: { next_offset: 0, items: [] },
+  },
+  { name: "premature page end", query: "Target", page: { next_offset: 9 } },
+  { name: "empty-query completeness", query: "", page: {} },
+])(
+  "refuses changed $name instead of reporting complete search coverage",
+  async ({ query, page }) => {
+    const tools: JadxToolPort = {
+      json: () => Promise.reject(new Error("unexpected JSON call")),
+      listClasses: () =>
+        Promise.resolve({
+          scope: "top_level" as const,
+          total_classes: 10,
+          next_offset: 10,
+          offset: 0,
+          limit: 4096,
+          items: ["fixture.Target"],
+          ...page,
+        }),
+      text: () => Promise.reject(new Error("unexpected text call")),
+    };
+    await expect(
+      analyzeJadxRequest(
+        tools,
+        {
+          operation: "search_android_classes",
+          input: { path: "/fixture.apk", query },
+        },
+        {
+          state: "LOADED",
+          apk_path: "/snapshot.apk",
+          class_count: 10,
+          resource_count: 0,
+          threads: 1,
+          resources: "full",
+        },
+        engine,
+      ),
+    ).rejects.toThrow();
+  },
+);
+
+it("accepts an examined empty inventory without requiring cursor progress", async () => {
+  const tools: JadxToolPort = {
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: () =>
+      Promise.resolve({
+        scope: "top_level" as const,
+        total_classes: 0,
+        offset: 0,
+        next_offset: 0,
+        limit: 4096,
+        items: [],
+      }),
+    text: () => Promise.reject(new Error("unexpected text call")),
+  };
+  const result = await analyzeJadxRequest(
+    tools,
+    {
+      operation: "search_android_classes",
+      input: { path: "/fixture.apk", query: "Target" },
+    },
+    {
+      state: "LOADED",
+      apk_path: "/snapshot.apk",
+      class_count: 0,
+      resource_count: 0,
+      threads: 1,
+      resources: "full",
+    },
+    engine,
+  );
+  expect(result).toMatchObject({
+    total_classes: 0,
+    matches: [],
+    duplicate_names: [],
+    coverage: "complete",
+  });
+});
 
 it("requires explicit direct invoke coverage state in result evidence", () => {
   const result = {
@@ -83,6 +415,8 @@ it("requires explicit direct invoke coverage state in result evidence", () => {
 
 it("publishes exact DEX prototypes instead of discarding bridge metadata", async () => {
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: () => Promise.resolve(summary),
     text: () => Promise.reject(new Error("unexpected text call")),
   };
@@ -109,6 +443,8 @@ it("publishes exact DEX prototypes instead of discarding bridge metadata", async
 it("traces only the selected overloaded method and checks the producer identity", async () => {
   const calls: Record<string, unknown>[] = [];
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: (name, input) => {
       calls.push({ name, ...input });
       if (name === "get_class_summary") return Promise.resolve(summary);
@@ -192,6 +528,8 @@ it("rejects an ambiguous method and a producer response for a different overload
     items: [],
   };
   const tools: JadxToolPort = {
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
     json: (name) =>
       Promise.resolve(name === "get_class_summary" ? summary : xrefs),
     text: () => Promise.reject(new Error("unexpected text call")),
@@ -239,6 +577,8 @@ const invokeSite = {
 const traceWithReference = (fields: Record<string, unknown>) =>
   analyzeJadxRequest(
     {
+      listClasses: () =>
+        Promise.reject(new Error("unexpected class inventory call")),
       json: (name) =>
         Promise.resolve(
           name === "get_class_summary"
@@ -340,6 +680,8 @@ it.each([
     await expect(
       analyzeJadxRequest(
         {
+          listClasses: () =>
+            Promise.reject(new Error("unexpected class inventory call")),
           json: () => Promise.resolve(invalidSummary),
           text: () => Promise.reject(new Error("unexpected text call")),
         },

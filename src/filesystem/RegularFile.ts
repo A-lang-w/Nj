@@ -54,11 +54,35 @@ export class RegularFileAdmissionFailure extends Error {
 /** A regular input no longer matches the extent or identity admitted for reading. */
 export class RegularFileChangedError extends Error {
   readonly code = "ESTALE";
-  constructor(readonly path: string) {
-    super(`Selected input changed while being read: ${path}`);
+  constructor(
+    readonly path: string,
+    options?: ErrorOptions,
+  ) {
+    super(`Selected input changed while being read: ${path}`, options);
     this.name = "RegularFileChangedError";
   }
 }
+
+const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+  "ENOENT",
+  "ENOTDIR",
+  "ELOOP",
+  "ENAMETOOLONG",
+  "EISDIR",
+  "ENOTFILE",
+  "ESTALE",
+]);
+
+/** Whether an errno identifies the selected path or file itself. */
+export const isSelectedRegularFileError = (
+  cause: unknown,
+): cause is Error & { readonly code: string } => {
+  if (!(cause instanceof Error)) return false;
+  const code: unknown = Reflect.get(cause, "code");
+  return (
+    typeof code === "string" && SELECTED_REGULAR_FILE_ERROR_CODES.has(code)
+  );
+};
 
 /** One admitted file descriptor and the metadata that identified its contents. */
 export interface StableRegularFileDescriptor {

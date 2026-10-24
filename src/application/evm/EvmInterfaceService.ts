@@ -1,14 +1,13 @@
-import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { EvmInterfacePort } from "./EvmInterfacePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { evmInterfaceEvidence } from "../../domain/evm/evmInterfaceEvidence.js";
 import {
   inspectEvmInterfaceInputSchema,
   evmInterfaceSchema,
@@ -36,23 +35,15 @@ export class EvmInterfaceService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectEvmInterfaceInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
         analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
           cause: input.error,
         }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
       );
     const inspected = await this.provider.inspect(input.data, options);
     if (!inspected.ok) return inspected;
@@ -78,17 +69,7 @@ export class EvmInterfaceService {
         ),
       );
     return completeProviderEvidence(
-      createEvidence(execution.subject, execution.provider, {
-        operation: OPERATION,
-        parameters: input.data,
-        result: report.data,
-        ...(execution.rawResult === null
-          ? {}
-          : { rawResult: execution.rawResult }),
-        confidence: "inferred",
-        locations: execution.locations,
-        limitations: execution.limitations,
-      }),
+      evmInterfaceEvidence(input.data, execution),
       options?.signal,
       outputOptions?.capturedOutput,
     );

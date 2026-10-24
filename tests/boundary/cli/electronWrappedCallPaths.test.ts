@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -265,7 +266,10 @@ cliTest(
       },
     ] as const;
 
-    for (const surface of ["CLI", "stdio MCP"] as const)
+    for (const surface of ["CLI", "stdio MCP"] as const) {
+      const connection =
+        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+      const artifacts = new Set<string>();
       for (const fixture of cases) {
         const root = await createTestTempDirectory(
           "rea-electron-early-return-",
@@ -277,7 +281,11 @@ cliTest(
           surface,
           cli,
           root,
+          { mcpCall: connection?.call },
         );
+        expect(application.input_path).toBe(root);
+        expect(artifacts.has(application.root_artifact_sha256)).toBe(false);
+        artifacts.add(application.root_artifact_sha256);
         const observations = application.graph.nodes.flatMap(
           (node) => node.observations,
         );
@@ -306,6 +314,7 @@ cliTest(
         );
         expect(source?.properties.parse_status).toBe(fixture.coverage);
       }
+    }
   },
 );
 
@@ -497,6 +506,8 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
   cliTest(
     `retains explicit nested contextBridge members after an unknown spread through ${surface}`,
     async ({ cli }) => {
+      const connection =
+        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
       const analyzeBridge = async (api: string) => {
         const root = await createTestTempDirectory(
           "rea-electron-spread-bridge-members-",
@@ -506,10 +517,20 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
             const extra = getExtra();
             contextBridge.exposeInMainWorld("api", ${api});`,
         });
-        return analyzeJavaScriptDirectory(surface, cli, root);
+        const application = await analyzeJavaScriptDirectory(
+          surface,
+          cli,
+          root,
+          { mcpCall: connection?.call },
+        );
+        expect(application.input_path).toBe(root);
+        return application;
       };
       const withSpread = await analyzeBridge("{ ...extra, a: { b: 1 }, c: 2 }");
       const control = await analyzeBridge("{ a: { b: 1 }, c: 2 }");
+      expect(control.root_artifact_sha256).not.toBe(
+        withSpread.root_artifact_sha256,
+      );
 
       const bridgeObservation = (application: typeof withSpread) =>
         application.graph.nodes
@@ -532,6 +553,90 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
       });
       expect(withSpread.summary.exposed_api_members).toBe(3);
       expect(control.summary.exposed_api_members).toBe(3);
+    },
+  );
+
+  cliTest(
+    `binds each contextBridge helper invocation's own key and members through ${surface}`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-electron-bridge-helper-calls-",
+      );
+      await writeFixtureFiles(root, {
+        "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+          function expose(key, api) { contextBridge.exposeInMainWorld(key, api); }
+          function relay(key, label, api) { expose(key, api); }
+          function named(label, key) { expose(key, { hidden: () => ipcRenderer.send("hidden") }); }
+          expose("one", { ping: () => ipcRenderer.send("one:ping") });
+          expose("two", { nested: { pong: () => ipcRenderer.send("two:pong") } });
+          relay("three", "label", { pang: () => ipcRenderer.send("three:pang") });
+          contextBridge.exposeInMainWorld("direct", { d: () => ipcRenderer.send("direct:d") });
+          named("label", globalThis.bridgeName);`,
+      });
+      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+      const bridges = application.graph.nodes
+        .filter((node) => node.kind === "context-bridge-api")
+        .flatMap((node) => node.observations)
+        .map(({ properties }) => ({
+          api_key: properties.api_key,
+          api_key_expression: properties.api_key_expression,
+          members: properties.members,
+          unknown_members: properties.unknown_members,
+          resolution_basis: properties.resolution_basis,
+        }));
+      expect(bridges).toHaveLength(5);
+      expect(bridges).toEqual(
+        expect.arrayContaining([
+          {
+            api_key: "one",
+            api_key_expression: null,
+            members: ["ping"],
+            unknown_members: 0,
+            resolution_basis: "wrapper-substitution",
+          },
+          {
+            api_key: "two",
+            api_key_expression: null,
+            members: ["nested", "nested.pong"],
+            unknown_members: 0,
+            resolution_basis: "wrapper-substitution",
+          },
+          {
+            api_key: "three",
+            api_key_expression: null,
+            members: ["pang"],
+            unknown_members: 0,
+            resolution_basis: "wrapper-substitution",
+          },
+          {
+            api_key: "direct",
+            api_key_expression: null,
+            members: ["d"],
+            unknown_members: 0,
+            resolution_basis: "direct-syntax",
+          },
+          // The traced invocation with an unresolved key stays unknown rather
+          // than lending its members to a resolved key.
+          {
+            api_key: null,
+            api_key_expression: "key",
+            members: [],
+            unknown_members: 1,
+            resolution_basis: "direct-syntax",
+          },
+        ]),
+      );
+      expect(application.summary.context_bridge_apis).toBe(5);
+      expect(application.summary.exposed_api_members).toBe(5);
+      const exposureEntries = new Set(
+        application.graph.nodes
+          .flatMap((node) => node.observations)
+          .filter(({ properties }) => properties.step_kind === "exposure")
+          .map(({ properties }) => properties.entry),
+      );
+      expect(exposureEntries).toEqual(
+        new Set(["one.ping", "two.nested.pong", "three.pang", "direct.d"]),
+      );
     },
   );
 
