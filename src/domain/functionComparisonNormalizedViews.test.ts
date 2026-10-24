@@ -142,11 +142,19 @@ describe("wallace relocation-only function pair", () => {
     });
     for (const name of ["pseudocode_normalized", "assembly_normalized"]) {
       const projection = view(result, name);
+      // Both projections completed, so the unknown view keeps their facts.
+      expect(projection?.left_digest).toBe(projection?.right_digest);
       expect(projection, name).toMatchObject({
         status: "unknown",
         conclusion_kind: "unresolved_branch",
         evidence_links: [left.evidence_id, right.evidence_id],
-        masking: null,
+        left_digest: expect.any(String),
+        text_delta: null,
+        masking: {
+          policy: "rea-address-normalized-text-v1",
+          left: { address_derived_identifiers: expect.any(Number) },
+          right: { address_derived_identifiers: expect.any(Number) },
+        },
         limitations: expect.arrayContaining([
           expect.stringContaining(
             "exact calls dimension is unknown; normalized equality cannot establish callee identity or call order",
@@ -880,6 +888,69 @@ describe("normalized view callee identity", () => {
       ]),
     });
   });
+
+  it.each([
+    { edge: "call", call: true, jump: false },
+    { edge: "tail jump", call: false, jump: true },
+  ] as const)(
+    "treats a typed outgoing $edge target missing from callees as a masked callee",
+    ({ call, jump }) => {
+      const make = (base: string, target: string) => {
+        const name = `FUN_${BigInt(target).toString(16)}`;
+        const dossier = syntheticDossier({
+          base,
+          name: `FUN_${BigInt(base).toString(16)}`,
+          pseudocode: `void f(void) { ${name}(); }`,
+          assembly: [`${base}: ${call ? "CALL" : "JMP"} ${target}`],
+          outgoingReferences: [{ source: base, target, operandIndex: 0 }],
+        });
+        const edge = dossier.outgoing_references[0]!;
+        return {
+          ...dossier,
+          outgoing_references: [
+            {
+              ...edge,
+              target_procedure: {
+                address: target,
+                name,
+                classification: null,
+                body: {
+                  available: false as const,
+                  reason: "extent not observed",
+                },
+              },
+              kind: {
+                ...edge.kind,
+                type: call ? "UNCONDITIONAL_CALL" : "UNCONDITIONAL_JUMP",
+                flow: true,
+                call,
+                jump,
+                data: false,
+                read: false,
+              },
+            },
+          ],
+        };
+      };
+      const [before, after] = syntheticPair(
+        make("0x411700", "0x411860"),
+        make("0x511700", "0x511860"),
+      );
+      const result = compareFunctions(before, after, {
+        includeNormalizedViews: true,
+      });
+      expect(dimension(result, "calls")).toMatchObject({ status: "unknown" });
+      for (const name of ["pseudocode_normalized", "assembly_normalized"])
+        expect(view(result, name), name).toMatchObject({
+          status: "unknown",
+          limitations: expect.arrayContaining([
+            expect.stringContaining(
+              "cannot establish callee identity or call order",
+            ),
+          ]),
+        });
+    },
+  );
 });
 
 describe("normalized view fail-closed parsing", () => {

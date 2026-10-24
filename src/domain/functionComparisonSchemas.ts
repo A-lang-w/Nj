@@ -114,7 +114,10 @@ const normalizedViewContextShape = {
   limitations: z.array(z.string()),
 };
 
-/** One opt-in normalized text view; absent masking reports why the view is unknown. */
+/**
+ * One opt-in normalized text view. An unknown view keeps its digests and masking
+ * when both projections completed; otherwise absent masking reports why.
+ */
 const normalizedTextViewSchema = z.union([
   z.object({
     ...normalizedViewContextShape,
@@ -127,6 +130,17 @@ const normalizedTextViewSchema = z.union([
     status: z.literal("changed"),
     masking: maskingSchema,
     conclusion_kind: z.literal("derived_relationship"),
+  }),
+  z.object({
+    ...normalizedViewContextShape,
+    status: z.literal("unknown"),
+    left_digest: digestSchema,
+    right_digest: digestSchema,
+    left_count: z.int().min(0),
+    right_count: z.int().min(0),
+    text_delta: z.null(),
+    masking: maskingSchema,
+    conclusion_kind: z.literal("unresolved_branch"),
   }),
   z.object({
     ...normalizedViewContextShape,

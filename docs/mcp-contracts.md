@@ -1307,7 +1307,8 @@ operands, and retain exact function-relative offsets. Constants, ambiguous
 operands, and names that the dossier reports with a named symbol origin stay
 visible. An `unchanged` result means the masked text matches; it
 does not establish callee identity or call order. A view is `unknown` when the
-exact calls dimension is unknown and its text masks a callee or thunk target.
+exact calls dimension is unknown and its text masks a callee or thunk target;
+it then keeps both digests and its masking record, without a text delta.
 Each view returns its applied masking rules, counts, limitations, and both
 source Evidence links. Reconstruction claims and static/runtime function
 selectors can name `pseudocode_normalized` or `assembly_normalized` only when

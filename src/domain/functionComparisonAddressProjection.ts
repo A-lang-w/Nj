@@ -40,17 +40,15 @@ export const createFunctionAddressProjection = (
   const addresses = corroboratedAddresses(snapshot);
   const calleeAddresses = new Set(
     [
-      ...snapshot.dossier.callees.flatMap((callee) =>
-        [callee.address, callee.classification?.thunk_target]
-          .map((value) => parseAddress((value ?? "").toLowerCase()))
-          .filter((value): value is bigint => value !== null),
-      ),
-      parseAddress(
-        (
-          snapshot.dossier.procedure.classification?.thunk_target ?? ""
-        ).toLowerCase(),
-      ),
-    ].filter((value): value is bigint => value !== null),
+      ...snapshot.dossier.callees.flatMap((callee) => [
+        callee.address,
+        callee.classification?.thunk_target,
+      ]),
+      ...outgoingCallTargets(snapshot),
+      snapshot.dossier.procedure.classification?.thunk_target,
+    ]
+      .map((value) => parseAddress((value ?? "").toLowerCase()))
+      .filter((value): value is bigint => value !== null),
   );
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   const targetsBySite = referenceTargetsBySite(snapshot);
@@ -184,6 +182,22 @@ const corroboratedAddresses = (snapshot: FunctionSnapshot): Set<bigint> => {
     add(item.source_address);
   }
   return addresses;
+};
+
+/** Typed calls and jumps into another procedure name callees the callees facet may omit. */
+const outgoingCallTargets = (
+  snapshot: FunctionSnapshot,
+): (string | null | undefined)[] => {
+  const entry = parseAddress(snapshot.dossier.procedure.address.toLowerCase());
+  return snapshot.dossier.outgoing_references.flatMap((edge) => {
+    if (!edge.kind.available) return [];
+    const target = edge.target_procedure;
+    const intoOtherProcedure =
+      target !== null && parseAddress(target.address.toLowerCase()) !== entry;
+    return edge.kind.call || (edge.kind.jump && intoOtherProcedure)
+      ? [edge.target_address, target?.classification?.thunk_target]
+      : [];
+  });
 };
 
 /** A producer-reported named symbol is an identity even when it looks address-derived. */

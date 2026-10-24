@@ -273,31 +273,41 @@ export const normalizedViews = (
         }),
         { added_lines: 0, removed_lines: 0, hunks: 0 },
       );
+      const masking: NonNullable<NormalizedTextView["masking"]> = {
+        policy: POLICY,
+        provider_id: left.evidence.provider.id,
+        rules: RULES.map((rule) => ({ ...rule })),
+        left: leftText.counts,
+        right: rightText.counts,
+      };
+      const projected = {
+        dimension,
+        left_digest: digest(leftText.text),
+        right_digest: digest(rightText.text),
+        left_count: [...leftText.text].length,
+        right_count: [...rightText.text].length,
+        evidence_links: [...links],
+        masking,
+      };
       if (
         delta.hunks === 0 &&
         options.callsStatus === "unknown" &&
         (leftText.maskedCalleeTarget || rightText.maskedCalleeTarget)
       )
-        return unknownView(dimension, links, [
-          ...limitations,
-          "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
-        ]);
+        return {
+          ...projected,
+          status: "unknown",
+          text_delta: null,
+          limitations: [
+            ...limitations,
+            "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
+          ],
+          conclusion_kind: "unresolved_branch",
+        } satisfies NormalizedTextView;
       return {
-        dimension,
+        ...projected,
         status: delta.hunks === 0 ? "unchanged" : "changed",
-        left_digest: digest(leftText.text),
-        right_digest: digest(rightText.text),
-        left_count: [...leftText.text].length,
-        right_count: [...rightText.text].length,
         text_delta: delta,
-        evidence_links: [...links],
-        masking: {
-          policy: POLICY,
-          provider_id: left.evidence.provider.id,
-          rules: RULES.map((rule) => ({ ...rule })),
-          left: leftText.counts,
-          right: rightText.counts,
-        },
         limitations: [...limitations],
         conclusion_kind: "derived_relationship",
       } satisfies NormalizedTextView;
