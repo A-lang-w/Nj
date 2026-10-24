@@ -1,3 +1,4 @@
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
@@ -287,6 +288,7 @@ export class JadxProvider implements AndroidAnalysisPort {
   constructor(
     readonly environment: Readonly<Record<string, string | undefined>>,
     readonly launcher?: JadxLauncher,
+    readonly settings?: AnalysisSettingsReader,
   ) {}
 
   /** Report actual local prerequisites without starting JADX or opening a target. */
@@ -436,12 +438,13 @@ export class JadxProvider implements AndroidAnalysisPort {
     request: AndroidRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
-    // The deadline is fixed per provider environment; an unusable value is
-    // refused before any file handle, workspace, or engine is acquired.
-    const timeoutMs = resolveJadxOperationTimeout(
-      this.environment,
-      request.operation,
-    );
+    // Resolve the accepted operation's override before acquiring any resource.
+    // An unusable launch value is refused without starting the engine.
+    const override = this.settings?.().overrides["jadx.operation_timeout_ms"];
+    const timeoutMs =
+      override === undefined
+        ? resolveJadxOperationTimeout(this.environment, request.operation)
+        : ok(override);
     if (!timeoutMs.ok) return timeoutMs;
     const timeout = AbortSignal.timeout(timeoutMs.value);
     const signal =

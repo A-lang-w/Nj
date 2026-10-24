@@ -1,3 +1,4 @@
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
@@ -69,6 +70,8 @@ afterEach(async () => {
 const fixture = async (
   options: {
     readonly hold?: ReturnType<typeof barrier>;
+    readonly analysisSettings?: AnalysisSettings;
+    readonly execute?: () => Promise<void>;
     readonly failClose?: () => boolean;
     readonly failLoad?: boolean;
     readonly invalidOutput?: boolean;
@@ -92,12 +95,14 @@ const fixture = async (
       started.release();
       await options.hold?.promise;
       if (options.failLoad) throw new Error("PRIVATE startup cause");
+      target.analysisSettings = options.analysisSettings;
       target.materialize(() => {
         target.registerTool(
           "fixture",
           { inputSchema: input, outputSchema: output },
           async (args, context) => {
             calls(args.n, context);
+            await options.execute?.();
             return {
               content: [],
               structuredContent: {
@@ -340,4 +345,32 @@ it("never executes a partially registered handler after initialization fails", a
   expect(f.loads()).toBe(1);
   await f.server.close();
   expect(f.closed).toHaveBeenCalledTimes(1);
+});
+
+it("keeps one accepted settings snapshot through a deferred handler while the next call sees updates", async () => {
+  const settings = new AnalysisSettings({});
+  const entered = barrier();
+  const held = barrier();
+  const seen: Array<number | undefined> = [];
+  const f = await fixture({
+    analysisSettings: settings,
+    execute: async () => {
+      entered.release();
+      await held.promise;
+      seen.push(settings.read().overrides["asar.max_header_bytes"]);
+    },
+  });
+  const pending = f.client.callTool({ name: "fixture", arguments: {} });
+  await entered.promise;
+  expect(
+    settings.update({
+      changes: [
+        { setting: "asar.max_header_bytes", action: "set", value: 33554432 },
+      ],
+    }).ok,
+  ).toBe(true);
+  held.release();
+  await pending;
+  await f.client.callTool({ name: "fixture", arguments: {} });
+  expect(seen).toEqual([undefined, 33554432]);
 });

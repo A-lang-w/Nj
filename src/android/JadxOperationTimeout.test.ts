@@ -27,7 +27,15 @@ it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", ()
   );
   expect(projected.remediation.action).toContain("1 to 2147483647");
   expect(projected.remediation.action).toContain("120000");
-  expect(projected.remediation.action).toContain("next process start");
+  expect(projected.remediation.action).toContain("next REA process start");
+  expect(projected.remediation.action).toContain("update_analysis_settings");
+  expect(projected.details).toMatchObject({
+    limit: {
+      setting: "jadx.operation_timeout_ms",
+      effective_value: 1500,
+      rea_restart_required: false,
+    },
+  });
   expect(projected).toMatchObject({
     code: "provider_timeout",
     details: { timeout_ms: 1500 },
