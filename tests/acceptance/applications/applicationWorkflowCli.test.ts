@@ -834,6 +834,7 @@ describe("application workflow CLI parity", () => {
       }),
       "--json",
     ]);
+    await assertSourceFileView(sourceCompared);
     expect(sourceCompared).toMatchObject({
       operation: "compare_source_to_bundle",
       predicate_type: "rea.source-to-bundle-comparison",
@@ -1225,17 +1226,21 @@ describe("Webpack factory CommonJS export keys", () => {
 
 describe("application workflow CLI input", () => {
   it("rejects Evidence ID-only workflow inputs", async () => {
-    const result = await runCli([
-      "compare-application-versions",
-      JSON.stringify({
-        left: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left
-          .evidence_id,
-        right:
-          JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right.evidence_id,
-      }),
-      "--json",
-    ]);
-    expect(result).toMatchObject({ code: "invalid_request" });
+    const result = await runCli(
+      [
+        "compare-application-versions",
+        JSON.stringify({
+          left: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left
+            .evidence_id,
+          right:
+            JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right.evidence_id,
+        }),
+        "--json",
+      ],
+      {},
+      1,
+    );
+    expect(result).toMatchObject({ code: "evidence_integrity_mismatch" });
   });
 });
 
@@ -1489,6 +1494,51 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
 });
 
 describe("application workflow CLI export Evidence", () => {
+  it("compares primitive changes through local spread copies with CLI and stdio MCP", async () => {
+    const root = await createTestTempDirectory("rea-spread-copy-comparison-");
+    const [left, right] = await analyzeComparisonSources(root, [
+      `export default () => {
+        const o = { a: 1, b: 2 }; const box = { ...o };
+        return { type: "x", a: box.a, b: box.b };
+      };`,
+      `export default () => {
+        const o = { a: 9, b: 2 }; const box = { ...o };
+        return { type: "x", a: box.a, b: box.b };
+      };`,
+    ]);
+    const input = {
+      left,
+      right,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    };
+    const expected = {
+      operation: "compare_javascript_export_shapes",
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: 1, unknown: 0 },
+        coverage: { status: "complete-within-inputs" },
+        changes: [
+          expect.objectContaining({
+            path: "/a",
+            status: "changed",
+            left: { availability: "literal", value: 1 },
+            right: { availability: "literal", value: 9 },
+          }),
+        ],
+      },
+    };
+    expect(
+      await runCliWithRequestFile(
+        root,
+        "compare-javascript-export-shapes",
+        input,
+      ),
+    ).toMatchObject(expected);
+    expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+  }, 20_000);
+
   it("preserves uncertainty after a helper can mutate an awaited return object", async () => {
     const root = await createTestTempDirectory("rea-awaited-export-shape-cli-");
     const sources = [
@@ -1683,11 +1733,11 @@ describe("application workflow CLI export property presence", () => {
 
 describe("application workflow CLI validation", () => {
   it("returns safe actionable JSON validation details", async () => {
-    const malformed = await runCli([
-      "trace-application-feature",
-      "{not-json",
-      "--json",
-    ]);
+    const malformed = await runCli(
+      ["trace-application-feature", "{not-json", "--json"],
+      {},
+      1,
+    );
     expect(malformed).toMatchObject({
       code: "invalid_request",
       retryable: false,
@@ -1697,7 +1747,11 @@ describe("application workflow CLI validation", () => {
     });
     expect(JSON.stringify(malformed)).not.toContain("not-json");
 
-    const missing = await runCli(["trace-application-feature", "{}", "--json"]);
+    const missing = await runCli(
+      ["trace-application-feature", "{}", "--json"],
+      {},
+      1,
+    );
     expect(missing).toMatchObject({
       code: "invalid_request",
       details: {
@@ -1818,6 +1872,7 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
 const runCli = async (
   arguments_: readonly string[],
   environment: Readonly<Record<string, string>> = {},
+  expectedExitCode: 0 | 1 = 0,
 ): Promise<unknown> => {
   cliSession ??= createCliCommandSession();
   const result = await cliSession.run({
@@ -1825,13 +1880,12 @@ const runCli = async (
     cwd: process.cwd(),
     environment: definedCliEnvironment({ ...process.env, ...environment }),
   });
-  const stdout = result.stdout.trim();
-  if (stdout.length > 0) return JSON.parse(stdout) as unknown;
-  throw new Error(
-    result.stderr.trim().length > 0
-      ? result.stderr
-      : `Compiled CLI command failed with status ${String(result.exitCode)}`,
+  expect(result.signal, result.stderr || result.stdout).toBeNull();
+  expect(result.exitCode, result.stderr || result.stdout).toBe(
+    expectedExitCode,
   );
+  expect(result.json, result.stderr || result.stdout).toBeDefined();
+  return result.json;
 };
 
 /**
@@ -1848,4 +1902,72 @@ const runCliWithRequestFile = async (
   const requestPath = join(root, "request.json");
   await writeFile(requestPath, JSON.stringify(request));
   return runCli([command, requestPath, "--json"]);
+};
+
+const assertSourceFileView = async (sourceCompared: unknown) => {
+  const wrongApplication = await runCli(
+    [
+      "compare-source-to-bundle",
+      JSON.stringify({
+        reference: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,
+        application: sourceCompared,
+      }),
+      "--json",
+    ],
+    {},
+    1,
+  );
+  expect(wrongApplication).toMatchObject({
+    error: "Application workflow failed",
+  });
+
+  const sourceViewRoot = await createTestTempDirectory("rea-cli-source-view-");
+  const referencePath = join(sourceViewRoot, "reference.json");
+  const sourceComparisonPath = join(sourceViewRoot, "comparison.json");
+  await writeFile(
+    referencePath,
+    JSON.stringify(SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference),
+  );
+  const requestedPath = relative(process.cwd(), referencePath);
+  const fileParent = parseEvidence(
+    await runCli([
+      "compare-source-to-bundle",
+      JSON.stringify({
+        reference: { kind: "file", path: requestedPath },
+        application: JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
+      }),
+      "--json",
+    ]),
+  );
+  expect(fileParent.normalized_result).toEqual(
+    parseEvidence(sourceCompared).normalized_result,
+  );
+  expect(fileParent.parameters.reference_source).toEqual({
+    kind: "file",
+    path: absoluteCallerPath(requestedPath),
+    requested_path: requestedPath,
+  });
+  await writeFile(sourceComparisonPath, JSON.stringify(fileParent));
+  const selectedSource = await runCli([
+    "inspect-analysis-view",
+    JSON.stringify({
+      source: { kind: "evidence-file", path: sourceComparisonPath },
+      view: {
+        kind: "source-to-bundle",
+        collection: "mappings",
+        source_paths: ["src/main.ts"],
+        fields: ["status"],
+      },
+    }),
+    "--json",
+  ]);
+  expect(selectedSource).toMatchObject({
+    normalized_result: {
+      parent_operation: "compare_source_to_bundle",
+      items: [
+        { source_path: "src/main.ts", source_index: 0, status: "removed" },
+      ],
+      coverage: { total: 1, exhausted: true },
+    },
+  });
 };

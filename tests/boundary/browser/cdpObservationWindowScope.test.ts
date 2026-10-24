@@ -346,11 +346,22 @@ it("represents absent timeline timestamps as unknown and preserves an observed z
           },
         },
         {
+          method: "Network.requestWillBeSent",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "actual-zero-clock-value",
+            type: "Document",
+            frameId: "frame-main",
+            timestamp: 0,
+            request: { url: `${origin}/document`, method: "GET" },
+          },
+        },
+        {
           method: "Network.loadingFailed",
           sessionId: command.sessionId,
           params: {
             requestId: "actual-zero-clock-value",
-            frameId: "frame-main",
+            type: "Document",
             errorText: "net::ERR_CONNECTION_REFUSED",
             timestamp: 0,
           },
@@ -374,3 +385,24 @@ it("represents absent timeline timestamps as unknown and preserves an observed z
     ]),
   );
 });
+
+it("ends an armed observation at a fatal protocol failure without waiting out its window", async () => {
+  const browser = await startFakeCdpBrowser({
+    malformedEventOnMethod: "Page.setLifecycleEventsEnabled",
+  });
+  trackBrowser(browser);
+  const started = performance.now();
+  const result = await new CdpBrowserProvider().observeSession(
+    observeWebSessionInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 10_000,
+    }),
+  );
+  expect(performance.now() - started).toBeLessThan(5_000);
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+  });
+}, 15_000);
