@@ -402,7 +402,7 @@ const likeGeneratedInteger = (
   );
 };
 
-/** Whether a later call's created fields are ones serving would write: its generated values in served forms, and no member it left out filled otherwise than it shows. */
+/** Whether a later call's created fields are ones serving would write: its generated values in served forms, its composed fields spelled as it shows them, and no member it left out filled otherwise than it shows. */
 const agreesLater = (
   context: EffectContext,
   draft: WriteDraft,
@@ -410,6 +410,7 @@ const agreesLater = (
   call: { readonly body: JsonObject; readonly observed: JsonObject },
 ): boolean =>
   followsGenerated(context, draft, created) &&
+  followsComposed(draft.plan.rules, created.fields, call.observed) &&
   !filledOtherwise(draft.plan.rules, call, created.fields);
 
 /** Whether a call left out a member the plan fills, with an echo's default or a reference's absence, and its observation shows that field otherwise. */
@@ -433,7 +434,7 @@ const filledOtherwise = (
     );
   });
 
-/** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values as the exemplar's kind of token, UUID identities as UUIDs, and sequences in order. */
+/** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values as the exemplar's kind of integer or token, UUID identities as UUIDs, and sequences in order. */
 const followsGenerated = (
   context: EffectContext,
   draft: WriteDraft,
@@ -452,9 +453,9 @@ const followsGenerated = (
       );
     if (rule.rule === "unique")
       return (
-        (isUuid(value) ||
-          isOpaqueToken(value, exemplar) ||
-          likeGeneratedInteger(value, exemplar)) &&
+        (generatedIntegerDigits(exemplar) === undefined
+          ? isUuid(value) || isOpaqueToken(value, exemplar)
+          : likeGeneratedInteger(value, exemplar)) &&
         !context.state
           .ofType(created.type)
           .some((held) => held.fields[rule.field] === value)
@@ -463,6 +464,19 @@ const followsGenerated = (
       rule.rule !== "identity" || rule.generator !== "uuid" || isUuid(value)
     );
   }) && followsSequences(context, draft, created);
+
+/** Whether a later call's response spells each composed field it shows as the plan rebuilds it. */
+const followsComposed = (
+  rules: readonly FieldRule[],
+  fields: JsonObject,
+  observed: JsonObject,
+): boolean =>
+  rules.every(
+    (rule) =>
+      rule.rule !== "composed" ||
+      !Object.hasOwn(observed, rule.field) ||
+      observed[rule.field] === fields[rule.field],
+  );
 
 /** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them unless a value the plan saw shows them at a fixed width. */
 const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
