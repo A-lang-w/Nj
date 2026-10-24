@@ -273,19 +273,43 @@ const isVariant = (
   [...conflictingLines(mine, shown)].some((line) => base.lines.has(line)) ||
   (namesNewParameter(record.query, base) && showsOtherMembers(mine, base));
 
+/** What replay keys are found against: every value each base line gave a parameter, and the parameters every base line names. */
+interface KeyBase {
+  readonly values: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly everywhere: readonly string[];
+}
+
+/** Parse the base lines' queries once, for any number of replayed lines. */
+const keyBase = (base: readonly (string | null | undefined)[]): KeyBase => {
+  const baseValues = base.map(queryValues);
+  const values = new Map<string, Set<string>>();
+  for (const line of baseValues)
+    for (const [name, given] of line) {
+      const seen = values.get(name) ?? new Set<string>();
+      values.set(name, seen);
+      for (const value of given) seen.add(value);
+    }
+  const everywhere = [...values.keys()].filter(
+    (name) =>
+      !PAGING.has(name.toLowerCase()) &&
+      baseValues.every((line) => line.has(name)),
+  );
+  return { values, everywhere };
+};
+
 /** The keys that tell replayed lines from base lines: a parameter or value only replayed lines give, or a parameter every base line names that one leaves out. */
 export const replayKeys = (
   base: readonly (string | null | undefined)[],
   replayed: readonly (string | null | undefined)[],
   retain: (bytes: number) => void = () => undefined,
+): ReplayKey[] => keysAgainst(keyBase(base), replayed, retain);
+
+/** The replay keys of replayed lines against base lines parsed once. */
+const keysAgainst = (
+  { values: baseValues, everywhere }: KeyBase,
+  replayed: readonly (string | null | undefined)[],
+  retain: (bytes: number) => void,
 ): ReplayKey[] => {
-  const baseValues = base.map(queryValues);
-  const named = new Set(baseValues.flatMap((values) => [...values.keys()]));
-  const everywhere = [...named].filter(
-    (name) =>
-      !PAGING.has(name.toLowerCase()) &&
-      baseValues.every((values) => values.has(name)),
-  );
   const keys = new Map<string, ReplayKey>();
   const add = (key: ReplayKey): void => {
     const id = JSON.stringify([
@@ -302,13 +326,9 @@ export const replayKeys = (
     const values = queryValues(query);
     for (const [name, given] of values) {
       if (PAGING.has(name.toLowerCase())) continue;
-      const unseen = given.filter(
-        (value) =>
-          !baseValues.some(
-            (other) => other.get(name)?.includes(value) === true,
-          ),
-      );
-      if (!named.has(name)) add({ name });
+      const seen = baseValues.get(name);
+      const unseen = given.filter((value) => seen?.has(value) !== true);
+      if (seen === undefined) add({ name });
       else for (const value of unseen) add({ name, value });
     }
     for (const name of everywhere)
@@ -391,6 +411,21 @@ export const replayReason = (
 const requestLine = (record: StateRecordFacts): string =>
   record.path + (record.query ?? "");
 
+/** The found lines a replay key tells from the other latest lines, which are parsed once for all of them. */
+const keyedVariants = (
+  latest: readonly StateRecordFacts[],
+  found: readonly StateRecordFacts[],
+): StateRecordFacts[] => {
+  if (found.length === 0) return [];
+  const variant = new Set(found);
+  const base = keyBase(
+    latest.filter((record) => !variant.has(record)).map((line) => line.query),
+  );
+  return found.filter(
+    (record) => keysAgainst(base, [record.query], () => undefined).length > 0,
+  );
+};
+
 /** The plan with the variants a key picks out moved to its replayed reads and their recordings dropped, or undefined when it replays nothing. */
 export const withoutVariants = (
   plan: StatePlan,
@@ -408,14 +443,7 @@ export const withoutVariants = (
   const release = facts.checkpoint();
   const found = variantLines(plan.latest, facts.shapeOf, facts.retain);
   release();
-  const unkeyed = plan.latest.filter((record) => !found.includes(record));
-  const variants = found.filter(
-    (record) =>
-      replayKeys(
-        unkeyed.map((line) => line.query),
-        [record.query],
-      ).length > 0,
-  );
+  const variants = keyedVariants(plan.latest, found);
   const lines = new Set(variants.map(requestLine));
   const latest = plan.latest.filter(
     (record) => !lines.has(requestLine(record)),

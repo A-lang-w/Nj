@@ -51,11 +51,11 @@ its cause in the recordings and the code. The five largest shared causes:
   skips exactly the successful reads serving replays, by the same decision. A filter role whose name matches no field
   needs two agreeing values. A tool whose lines would take more than 2^24 line pairs and entity lookups to compare
   pairwise keeps every line checked; otherwise lines are compared only with those showing one of the same entities,
-  through an index charged to the budget while it is held. An item line first recorded after the initial window is a
-  variant too, judged against the lines left once variants are dropped: when it names a new shaping parameter and its
-  object carries or lacks members theirs do not, or selects some fields and leaves out members they always show, and an
-  item only a replayed line showed, which the state never started with and in whose type no served create has added an
-  entity since, answers with its own recording.
+  through an index charged to the budget while it is held. The base lines' queries are parsed once for every variant
+  they key. An item line first recorded after the initial window is a variant too, judged against the lines left once
+  variants are dropped: when it names a new shaping parameter and its object carries or lacks members theirs do not, or
+  selects some fields and leaves out members they always show, and an item only a replayed line showed, which the state
+  never started with and in whose type no served create has added an entity since, answers with its own recording.
 
 ## Acceptance
 

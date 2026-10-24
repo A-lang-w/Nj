@@ -13,6 +13,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import type { Evidence } from "../evidence.js";
 import type { JsonValue } from "../jsonValue.js";
+import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import {
   projectAnalysisView,
   type AnalysisViewParent,
@@ -33,6 +34,7 @@ import {
   lineShapes,
   replayKeys,
   variantLines,
+  withoutVariants,
   type LineShape,
 } from "./environmentStateVariants.js";
 import { rewriteCuts } from "./environmentStateRewrites.js";
@@ -986,6 +988,43 @@ it("compares lines through the entities they show, so items read plainly and exp
   expect(walks()).toBeLessThan(10 * lines.length);
 });
 
+it("reads each base line's query a fixed number of times however many variants it keys", () => {
+  const items = 200;
+  const { lines, shapeOf } = expandedItemLines(items);
+  let reads = 0;
+  for (const line of lines.slice(0, items)) {
+    const { query } = line;
+    Object.defineProperty(line, "query", {
+      enumerable: true,
+      get: () => ((reads += 1), query),
+    });
+  }
+  const tool = {
+    name: "get_items_by_id",
+    method: "GET",
+    path_template: "/api/items/{id}",
+    record_ordinals: lines.map((line) => line.ordinal),
+  };
+  const plan = {
+    tool,
+    item: true,
+    type: "/api/items",
+    pointer: "",
+    recordings: lines,
+    latest: lines,
+  };
+  const split = withoutVariants(plan, {
+    shapeOf,
+    queryOf: (ordinal) => lines[ordinal]?.query,
+    position: (ordinal) => ordinal,
+    retain: () => undefined,
+    checkpoint: () => () => undefined,
+  });
+  expect(split?.plan.projected).toHaveLength(items);
+  // Keying each variant against the base lines anew reads every base line's query once per variant.
+  expect(reads).toBeLessThan(10 * items);
+});
+
 it("counts what it holds to compare lines by the entities they show against the budget", () => {
   const { lines, shapeOf } = expandedItemLines(100);
   let retained = 0;
@@ -1320,6 +1359,66 @@ it("chooses the earliest related write in timeline order, across ancestor and de
   expect(state.types).toMatchObject([{ init_before_ordinal: 2 }]);
   expect(state.entities).toMatchObject([{ fields: { title: "initial" } }]);
 });
+
+it.each<{
+  spelling: string;
+  starts: readonly [string, string, string];
+}>([
+  {
+    spelling: "minute-only offset timestamps",
+    starts: ["2026-10-20T09:00Z", "2026-10-20T09:02Z", "2026-10-20T09:01Z"],
+  },
+  {
+    spelling: "ten-digit fractional timestamps",
+    starts: [
+      "2026-10-20T09:00:00.0000000001Z",
+      "2026-10-20T09:00:00.0000000003Z",
+      "2026-10-20T09:00:00.0000000002Z",
+    ],
+  },
+])(
+  "keeps the pre-write document when $spelling put the write before an earlier ordinal",
+  ({ starts }) => {
+    const entries = starts.map((startedDateTime, ordinal) => ({
+      startedDateTime,
+      // Zero-duration requests isolate start ordering from interval precision.
+      time: 0,
+      request: {
+        method: ordinal === 2 ? "PATCH" : "GET",
+        url: "http://app.example/api/settings",
+        ...(ordinal === 2
+          ? {
+              postData: {
+                mimeType: "application/json",
+                text: '{"theme":"dark"}',
+              },
+            }
+          : {}),
+      },
+      response: {
+        status: 200,
+        content: {
+          mimeType: "application/json",
+          text: ordinal === 0 ? '{"theme":"light"}' : '{"theme":"dark"}',
+        },
+      },
+    }));
+    const capture = webNetworkCaptureSchema.parse(
+      environmentManifestCaptureFixture(entries),
+    );
+    expect(capture.records.map((record) => record.reported)).toEqual(entries);
+    const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
+    expect(state.documents).toEqual([
+      {
+        tool: "get_settings",
+        path: "/api/settings",
+        value: { theme: "light" },
+        record_ordinal: 0,
+      },
+    ]);
+    expect(state.timeline).toBe("recorded-start-time");
+  },
+);
 
 it("bounds a parameterized namespace by concrete writes before publishing new items", () => {
   const result = projectAnalysisView(
