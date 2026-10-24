@@ -1530,6 +1530,30 @@ describe("doctor configured scope edge cases", () => {
     );
   });
 
+  it("keeps the package-runner launcher in the suggested command", async () => {
+    const audit = await runDoctor(undefined, {
+      ...workstation(true),
+      packageRunner: "npx",
+    });
+    expect(audit.configured_scope?.argv.slice(0, 3)).toEqual([
+      "npx",
+      "rea-agents",
+      "doctor",
+    ]);
+    expect(audit.configured_scope?.command).toMatch(
+      /^npx rea-agents doctor --client cursor /u,
+    );
+    expect(
+      systemDoctorHost({
+        environment: {
+          npm_command: "exec",
+          npm_config_user_agent: "bun/1.3.0",
+        },
+      }).packageRunner,
+    ).toBe("bunx");
+    expect(systemDoctorHost({ environment: {} }).packageRunner).toBeUndefined();
+  });
+
   it("omits the configured workflow when nothing is set up", async () => {
     const audit = await runDoctor(
       undefined,

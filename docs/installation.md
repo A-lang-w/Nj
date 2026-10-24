@@ -391,7 +391,8 @@ the skill when any selected copy is installed, even partially. Its `healthy`
 applies the same scoped rules to just those components, reading the skill
 copies of those clients rather than every installed copy, and becomes false
 with the audit when doctor's own cleanup fails. `argv` holds the exact
-arguments of the `rea doctor` invocation that reports that scope; `command` is
+arguments of the `rea doctor` invocation that reports that scope, starting with
+`npx rea-agents` or `bunx rea-agents` when doctor was launched that way; `command` is
 the same invocation quoted for PowerShell on Windows and for POSIX shells
 elsewhere. It is omitted when no client or provider is set up.
 

@@ -51,6 +51,10 @@ import {
 } from "./ClientRegistrationStatus.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import {
+  invokingPackageRunner,
+  type PackageRunner,
+} from "./ClientRegistrationIdentity.js";
+import {
   collectDoctorDiagnostics,
   doctorHealthy,
 } from "./DoctorDiagnostics.js";
@@ -118,6 +122,8 @@ export interface DoctorHost {
    */
   readonly configurationIssues?: readonly ConfigurationSettingIssue[];
   readonly configuredIlspyCmdPath?: string;
+  /** Package runner (npx/bunx) that launched this process, when one did. */
+  readonly packageRunner?: PackageRunner;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   validTarget(path: string): Promise<boolean>;
@@ -331,14 +337,22 @@ const inspectConfiguredScope = async (
   host: DoctorHost,
   audit: Omit<
     Parameters<typeof configuredDoctorScope>[0],
-    "selection" | "target" | "skillInstalled" | "platform"
+    "selection" | "target" | "skillInstalled" | "platform" | "launcher"
   >,
   auditSkill: InstalledSkillIdentity | undefined,
   target: string | null,
 ): Promise<DoctorConfiguredScopeReport | undefined> => {
   const selection = selectConfiguredDoctorScope(audit);
   if (selection === undefined) return undefined;
-  const common = { selection, target, platform: host.platform };
+  const common = {
+    selection,
+    target,
+    platform: host.platform,
+    launcher:
+      host.packageRunner === undefined
+        ? ["rea"]
+        : [host.packageRunner, "rea-agents"],
+  };
   if (selection.clients.length === 0)
     return configuredDoctorScope({
       ...audit,
@@ -637,6 +651,7 @@ export const systemDoctorHost = (
   const hostExecFileOutput = options.execFileOutput ?? execFileOutput;
   const homeDirectory = homeDirectoryFromEnvironment(environment, platform);
   const commandEnvironment = { env: environment };
+  const packageRunner = invokingPackageRunner(environment, platform);
   const resourceScope: RetainedResourceScope = {
     retain: (owner, resource) =>
       resources.retain({
@@ -665,6 +680,7 @@ export const systemDoctorHost = (
     architecture,
     runtime: javaScriptRuntime(process.versions),
     homeDirectory,
+    ...(packageRunner === undefined ? {} : { packageRunner }),
     ...(environment.HOPPER_LAUNCHER_PATH === undefined
       ? {}
       : { configuredHopperPath: environment.HOPPER_LAUNCHER_PATH }),

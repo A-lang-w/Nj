@@ -96,6 +96,8 @@ export const configuredDoctorScope = (
     /** Whether any selected skill copy exists, including a partial install. */
     readonly skillInstalled: boolean;
     readonly platform: NodeJS.Platform;
+    /** How this process was launched: `rea`, or `npx`/`bunx rea-agents`. */
+    readonly launcher: readonly string[];
   },
 ): DoctorConfiguredScopeReport => {
   const { clients, providers } = input.selection;
@@ -108,7 +110,7 @@ export const configuredDoctorScope = (
     target: input.target,
   };
   const argv = [
-    "rea",
+    ...input.launcher,
     "doctor",
     ...clients.flatMap((client) => ["--client", client]),
     ...providers.flatMap((provider) => ["--provider", provider]),
