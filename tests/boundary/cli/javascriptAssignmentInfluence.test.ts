@@ -38,7 +38,7 @@ cliTest(
         arguments: ["analyze-javascript-application", directory, "--json"],
         environment,
       });
-      expect(analyzed.exitCode).toBe(0);
+      expect(analyzed.exitCode, `${name} analyzed: ${analyzed.stderr}`).toBe(0);
       const queryFile = join(root, `${name}.json`);
       const query = {
         application: analyzed.json,
@@ -51,7 +51,7 @@ cliTest(
       const traced = await cli.run({
         arguments: ["trace-javascript-semantics", queryFile, "--json"],
       });
-      expect(traced.exitCode).toBe(0);
+      expect(traced.exitCode, `${name} traced: ${traced.stderr}`).toBe(0);
       const { normalized_result: result } = z
         .object({ normalized_result: javaScriptSemanticTraceResultSchema })
         .parse(traced.json);
@@ -74,7 +74,7 @@ cliTest(
       const expanded = await cli.run({
         arguments: ["trace-javascript-semantics", queryFile, "--json"],
       });
-      expect(expanded.exitCode).toBe(0);
+      expect(expanded.exitCode, `${name} expanded: ${expanded.stderr}`).toBe(0);
       const expandedResult = z
         .object({ normalized_result: javaScriptSemanticTraceResultSchema })
         .parse(expanded.json).normalized_result;

@@ -159,3 +159,35 @@ The task harness SHA-256 is `93a2b5908013bdaaa39cc1492a61fc159fc71874fc7dad51a74
 Raw command receipts, stdout/stderr, equality checks and all 12 measurements
 are retained in the local maintenance evidence directory; generated runtime,
 large response files and local planning artifacts are not committed.
+
+## Current-main integration follow-up
+
+Integration `8f7b403a0b1349700a819eda373d3dcac0e6133f` includes main
+`85e38ac199dff15e8c43343d9170db7e0e46d284`. Main independently corrected the
+old discovery assertion and added mock-isolation path overrides. The merge
+retains main's SDK JSON Schema validator and tool-name discovery check, updates
+the isolation policy's two path assertions to the moved fixtures, and removes
+now-obsolete project includes/excludes. No test is assigned twice.
+
+The full static gate passed (63.836 s elapsed, 74.452 s waited-child CPU).
+The expanded selection passed 526 checks, including all assignment/ownership,
+worker, cancellation, 22 MCP view, headroom and 14 policy cases. The formerly
+failing source/CLI baseline cases pass on this newer main integration.
+One public assignment CLI case failed at process exit while this operator had
+incorrectly allowed the static gate's runtime compilation and built tests to
+overlap: its start was 34.664 s before gate completion. Its output did not retain
+the subprocess diagnostic, so the specific subprocess failure is unknown; this
+is not evidence of a main regression. After build completion, the complete
+five-fixture public assignment CLI case passed in 34.220 s (41.792 s CPU).
+The fixture now includes subprocess stderr and the fixture name in all exit
+assertions. The failed attempt is retained and is not counted as a passing run.
+
+Earlier head `4abe5509` CI run 40048477593 finished with 11 successful, 4 failed,
+19 skipped and 3 cancelled jobs. All 7 failed/cancelled logs, including aggregation
+gates, were inspected: 62 visible assertion markers were covered by exact-main
+controls; no unknown markers or failures of the repaired fixtures remained.
+The exact CI merge `3c8ed5cc` and its main parent `d81d6b67` reproduced both CLI
+failures with identical failure-message multisets. The new public assignment CLI
+passed on that CI merge. These controls apply to that executed revision; current
+head CI must be assessed separately, especially because main has since repaired
+several baseline cases. Cancelled jobs do not establish unexecuted coverage.
