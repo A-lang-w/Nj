@@ -273,3 +273,17 @@ Earlier real-ApiDemos measurements remain pinned to their stated source commits;
 they are not measurements of this package correction. Response schemas and
 valid ApiDemos facts are unchanged by source reasoning; no fresh speedup or
 whole-agent cost claim is made for this correctness change.
+
+Final executed source pin `7b86379e63448391973098572b884b692fbf5d8f`
+incorporates main `98ec00f4068bab894639d0d1d83ac0bfc428bcbf`. All **129**
+selected component/JADX/protocol/MCP checks pass: 47.290 s elapsed,
+41.923 CPU s, 1,486.0 MiB sampled peak process-family RSS. The retained-manifest
+MCP case passes with its existing 30-second deadline. Type/lint, full formatting
+and generated-document checks also pass. The preceding attempt had 127 passes,
+one obsolete huge-package identity expectation and one 30-second MCP timeout;
+these attempted costs are not excluded from the narrative. The fixture expectation
+is corrected as described above. No deterministic product failure was established
+from the timeout and no deadline was increased. This completed selection uses
+primed OS/file caches and a fresh runner; it is a validation cost, not a
+before/after performance comparison. Family-memory sampling limitations above
+remain applicable.
