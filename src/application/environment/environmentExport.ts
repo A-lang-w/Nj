@@ -24,6 +24,7 @@ import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js"
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   BundleFileHostFailure,
+  bundleTarballDigest,
   packageTarballRefusal,
   withBundleTarball,
   writeEnvironmentBundle,
@@ -390,13 +391,16 @@ const readerFailureError = (
   return error;
 };
 
-/** The package tarball's size, admitted and released as the export admits and releases it. */
+/** The package tarball's size after the same complete read and integrity check export uses. */
 export const packageTarballBytes = async (
   path: string,
 ): Promise<Result<number, AnalysisError>> => {
   try {
     return ok(
-      await withBundleTarball(path, (tarball) => Promise.resolve(tarball.size)),
+      await withBundleTarball(path, async (tarball) => {
+        await bundleTarballDigest(tarball);
+        return tarball.size;
+      }),
     );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return err(cause);
@@ -404,6 +408,8 @@ export const packageTarballBytes = async (
       return err(changedArtifact(cause));
     if (cause instanceof ArtifactReaderFailure)
       return err(readerFailureError(cause, undefined));
+    if (cause instanceof BundleFileHostFailure)
+      return err(packageTarballRefusal(path, cause));
     if (systemCode(cause) !== undefined)
       return err(packageTarballRefusal(path, cause));
     throw cause;

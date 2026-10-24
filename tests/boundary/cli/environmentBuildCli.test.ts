@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 
 import { expect } from "vitest";
@@ -174,7 +174,16 @@ cliTest(
       code: "invalid_request",
       details: { issues: [{ path: ["directory"] }] },
     });
+    const emptyWorkingDirectory = join(root, "empty-cwd");
+    await mkdir(emptyWorkingDirectory);
+    const emptyDirectory = await cli.run({
+      arguments: ["environment-build", har, "", "--json"],
+      cwd: emptyWorkingDirectory,
+    });
+    expect(emptyDirectory.exitCode).toBe(1);
+    expect(await readdir(emptyWorkingDirectory)).toEqual([]);
     expect((await readdir(root)).sort()).toEqual([
+      "empty-cwd",
       "grafana.har",
       "grafana.saz",
     ]);
