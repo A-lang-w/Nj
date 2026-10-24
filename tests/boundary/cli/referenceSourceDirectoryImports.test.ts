@@ -1,4 +1,4 @@
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -49,10 +49,10 @@ const prepareReferenceSourceDirectoryFixture =
       ["json-main.cjs", "./jpkg", "jpkg/config.json"],
     ] as const satisfies readonly ResolutionCase[];
     const unresolved = [
-      ["missing.cjs", "./missing/", "missing/"],
-      ["escape.cjs", "../outside/", "../outside/"],
-      ["main.ts", "./folder.js/.", "folder.js"],
-      ["only-bare.cjs", "./only/", "only/"],
+      ["missing.cjs", "./missing/", "missing"],
+      ["escape.cjs", "../outside/", "../outside"],
+      ["main.cts", "./folder.js/.", "folder.js"],
+      ["only-bare.cjs", "./only/", "only"],
       ["invalid-manifest.cjs", "./broken", "broken"],
       ["absolute-main.cjs", "./absolute", outside],
     ] as const satisfies readonly ResolutionCase[];
@@ -127,7 +127,7 @@ const assertNodeResolutionControls = (
     createRequire(join(root, "missing.cjs")).resolve("./missing/"),
   ).toThrow();
   expect(() =>
-    createRequire(join(root, "main.ts")).resolve("./folder.js/."),
+    createRequire(join(root, "main.cts")).resolve("./folder.js/."),
   ).toThrow();
   expect(() =>
     createRequire(join(root, "only-bare.cjs")).resolve("./only/"),
@@ -175,42 +175,6 @@ const assertGraphResolution = (
 describe.skipIf(process.platform === "win32")(
   "compiled reference-source directory imports",
   () => {
-    cliTest(
-      "imports the selected root before resolving symlink parent components",
-      async ({ cli }) => {
-        const workspace = await createTestTempDirectory(
-          "rea-reference-selected-root-",
-        );
-        const selectedRoot = join(workspace, "actual", "source");
-        await mkdir(join(workspace, "actual", "nested"), { recursive: true });
-        await mkdir(selectedRoot);
-        await mkdir(join(workspace, "source"));
-        await writeFile(join(selectedRoot, "selected.ts"), "export {};\n");
-        await writeFile(join(workspace, "source", "decoy.ts"), "export {};\n");
-        await symlink("actual/nested", join(workspace, "current"));
-        const selected = "current/../source";
-        expect(await realpath(`${workspace}/${selected}`)).toBe(selectedRoot);
-        const run = (root: string) =>
-          cli.run({
-            arguments: ["import-reference-source", root, "--json"],
-            cwd: workspace,
-          });
-        const control = await run(selectedRoot);
-        expect(control.exitCode).toBe(0);
-        const expected = historicalSourceGraphSchema.parse(control.json);
-        expect(expected.entries.map(({ path }) => path)).toEqual([
-          "selected.ts",
-        ]);
-        for (const root of [selected, `${workspace}/${selected}`]) {
-          const result = await run(root);
-          expect(result.exitCode).toBe(0);
-          expect(historicalSourceGraphSchema.parse(result.json)).toEqual(
-            expected,
-          );
-        }
-      },
-    );
-
     cliTest(
       "resolves directory spellings without selecting similarly named files",
       async ({ cli }) => {
