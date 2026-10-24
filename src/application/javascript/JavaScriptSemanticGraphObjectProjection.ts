@@ -1,3 +1,4 @@
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import {
   semanticSlotAtPath,
   semanticContainer,
@@ -8,7 +9,10 @@ import type {
   JavaScriptSemanticValue,
 } from "../../domain/javascript/javascriptSemanticValueTypes.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import type { JavaScriptSemanticObjectOperation } from "../../domain/javascript/javascriptSemanticIr.js";
+import type {
+  JavaScriptSemanticIr,
+  JavaScriptSemanticObjectOperation,
+} from "../../domain/javascript/javascriptSemanticIr.js";
 import {
   retainSemanticGraphNode,
   addSemanticGraphRelation,
@@ -16,7 +20,91 @@ import {
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import { foldedAssignedContainerValues } from "./JavaScriptSemanticGraphAssignedValues.js";
 import { semanticPropertySlot } from "./JavaScriptSemanticGraphValueProjection.js";
+
+/**
+ * Fold unconditional top-level `X.p = { container }` assignments into the
+ * values object reads resolve against, mirroring the initializer path. A
+ * path is only folded when that assignment is its single intersecting
+ * member write; conditional, nested or repeated writers keep the existing
+ * mutation-unknown semantics.
+ */
+const applyAssignedContainerValues = (
+  context: SemanticFlowProjectionContext,
+  values: ReadonlyMap<string, JavaScriptSemanticValue> &
+    Map<string, JavaScriptSemanticValue>,
+): void => {
+  for (const folded of foldedAssignedContainerValues(context)) {
+    const binding = context.ir.bindings.find(
+      (candidate) => candidate.name === folded.receiverName,
+    );
+    if (binding === undefined) continue;
+    const current = values.get(binding.bindingId);
+    if (current === undefined) continue;
+    values.set(
+      binding.bindingId,
+      valueWithAssignedContainer(current, folded.propertyPath, folded.value),
+    );
+  }
+};
+
+/** Overwrites one property path with an assigned container value. */
+const valueWithAssignedContainer = (
+  value: JavaScriptSemanticValue,
+  path: readonly string[],
+  assigned: JavaScriptSemanticValue,
+): JavaScriptSemanticValue => {
+  if (path.length === 0) return assigned;
+  const [name, ...rest] = path as [string, ...string[]];
+  if (value.status !== "object" && value.status !== "array")
+    return {
+      status: "object",
+      properties: [
+        {
+          name,
+          value: assignedAtRest(rest, assigned),
+          presence: "present",
+        },
+      ],
+      unknownProperties: false,
+      omittedProperties: 0,
+    };
+  const properties = value.status === "object" ? value.properties : value.items;
+  const updated = properties.map((property) =>
+    property.name === name
+      ? {
+          ...property,
+          value: valueWithAssignedContainer(property.value, rest, assigned),
+          presence: "present" as const,
+        }
+      : property,
+  );
+  if (
+    value.status === "object" &&
+    !updated.some((property) => property.name === name)
+  )
+    updated.push({
+      name,
+      value: assignedAtRest(rest, assigned),
+      presence: "present",
+    });
+  return value.status === "object"
+    ? { ...value, properties: updated }
+    : { ...value, items: updated };
+};
+
+const assignedAtRest = (
+  rest: readonly string[],
+  assigned: JavaScriptSemanticValue,
+): JavaScriptSemanticValue =>
+  rest.length === 0
+    ? assigned
+    : valueWithAssignedContainer(
+        { status: "unknown", reason: "assigned-container-parent" },
+        rest,
+        assigned,
+      );
 
 /** Project static object reads, writes, spreads, and destructuring. */
 export function* projectSemanticObjects(
@@ -25,6 +113,7 @@ export function* projectSemanticObjects(
   const values = new Map(
     context.ir.bindings.map((binding) => [binding.bindingId, binding.value]),
   );
+  applyAssignedContainerValues(context, values);
   for (const [index, operation] of context.ir.objectOperations.entries()) {
     if (index % 64 === 0) yield;
     const target = objectTarget(context, values, operation);

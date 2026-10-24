@@ -14,6 +14,7 @@ import { collectJavaScriptSemanticPromises } from "./javascriptSemanticPromises.
 import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import { collectJavaScriptSemanticResources } from "./javascriptSemanticResources.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
@@ -95,6 +96,7 @@ export function* collectJavaScriptDerivedSemanticsSteps(
   const assignmentFlows = yield* collectAssignmentFlowsSteps(
     program,
     callables,
+    state,
   );
   const functionFingerprints =
     yield* collectJavaScriptSemanticFingerprintsSteps({
@@ -127,14 +129,17 @@ export function* collectJavaScriptDerivedSemanticsSteps(
 function* collectAssignmentFlowsSteps(
   program: t.Program,
   callables: readonly JavaScriptSemanticCallable[],
+  state: JavaScriptSemanticAnalysisState,
 ): Generator<void, JavaScriptSemanticIr["assignmentFlows"]> {
   const flows: JavaScriptSemanticIr["assignmentFlows"][number][] = [];
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
+  let conditionalDepth = 0;
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
       stack.enter(node, parent);
+      if (CONDITIONAL_AST_NODES.has(node.type)) conditionalDepth += 1;
       if (!t.isAssignmentExpression(node)) return;
       const target = unwrapJavaScriptExpression(node.left).node;
       // Destructuring has its own property-selection owner.
@@ -147,9 +152,76 @@ function* collectAssignmentFlowsSteps(
           t.isIdentifier(source) || t.isMemberExpression(source),
         operator: node.operator,
         ownerCallableId: stack.callables.at(-1) ?? null,
+        ...assignedContainerValue(target, source, {
+          conditional: conditionalDepth > 0,
+          ownerCallableId: stack.callables.at(-1) ?? null,
+          state,
+        }),
       });
     },
-    exit: (node) => stack.exit(node),
+    exit: (node) => {
+      if (CONDITIONAL_AST_NODES.has(node.type)) conditionalDepth -= 1;
+      stack.exit(node);
+    },
   });
   return flows;
 }
+
+/** Constructs wrapping branches or loops make a write's survival uncertain. */
+const CONDITIONAL_AST_NODES = new Set([
+  "IfStatement",
+  "ConditionalExpression",
+  "LogicalExpression",
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+  "SwitchStatement",
+  "TryStatement",
+  "CatchClause",
+]);
+
+/**
+ * The static value an unconditional top-level `X.p = {…}` stores, so the
+ * graph can model later property assignments like initializers. Only a
+ * direct literal container is captured; conditional placement, compound
+ * operators, computed keys and destructuring keep the value unknown.
+ */
+const assignedContainerValue = (
+  target: t.Node,
+  source: t.Node,
+  options: {
+    readonly conditional: boolean;
+    readonly ownerCallableId: string | null;
+    readonly state: JavaScriptSemanticAnalysisState;
+  },
+): Pick<JavaScriptSemanticIr["assignmentFlows"][number], "assignedValue"> => {
+  if (options.conditional || options.ownerCallableId !== null) return {};
+  if (!t.isMemberExpression(target) || target.computed) return {};
+  const propertyPath = staticPropertyPath(target);
+  if (propertyPath === null) return {};
+  if (!t.isObjectExpression(source) && !t.isArrayExpression(source)) return {};
+  return {
+    assignedValue: {
+      receiverName: propertyPath.receiverName,
+      propertyPath: propertyPath.path,
+      value: evaluateSemanticExpression(source, options.state),
+    },
+  };
+};
+
+/** Splits `X.a.b` into the receiver binding name and the static path. */
+const staticPropertyPath = (
+  member: t.MemberExpression,
+): { receiverName: string; path: readonly string[] } | null => {
+  const path: string[] = [];
+  let node: t.Node = member;
+  while (t.isMemberExpression(node)) {
+    if (node.computed || !t.isIdentifier(node.property)) return null;
+    path.unshift(node.property.name);
+    node = unwrapJavaScriptExpression(node.object).node;
+  }
+  if (!t.isIdentifier(node)) return null;
+  return { receiverName: node.name, path };
+};
