@@ -211,8 +211,13 @@ const outgoingCallTargets = (
     const typedCall =
       edge.kind.available &&
       (edge.kind.call || (edge.kind.jump && intoOtherProcedure));
+    // An interior target also names the entry of the procedure that contains it.
     return classifiedCall || typedCall
-      ? [edge.target_address, target?.classification?.thunk_target]
+      ? [
+          edge.target_address,
+          ...(intoOtherProcedure ? [target?.address] : []),
+          target?.classification?.thunk_target,
+        ]
       : [];
   });
 };

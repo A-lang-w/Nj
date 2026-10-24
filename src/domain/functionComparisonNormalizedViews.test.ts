@@ -247,6 +247,34 @@ describe("normalized view projected facts and symbol names", () => {
     );
   });
 
+  it("ties known statuses to their projected facts", () => {
+    const result = compareFunctions(
+      ...syntheticPair(
+        addressRelocationText("0x411700"),
+        addressRelocationText("0x4116f0"),
+      ),
+      { includeNormalizedViews: true },
+    );
+    const [unchanged, other] = result.normalized_views!.views;
+    expect(unchanged).toMatchObject({ status: "unchanged" });
+    const withView = (view: object) => ({
+      ...result,
+      normalized_views: { ...result.normalized_views!, views: [view, other!] },
+    });
+    for (const contradiction of [
+      { text_delta: { added_lines: 1, removed_lines: 1, hunks: 1 } },
+      { right_digest: "0".repeat(64) },
+      { right_count: (unchanged!.right_count ?? 0) + 1 },
+      { status: "changed" },
+    ])
+      expect(
+        functionComparisonResultSchema.safeParse(
+          withView({ ...unchanged!, ...contradiction }),
+        ).success,
+        JSON.stringify(contradiction),
+      ).toBe(false);
+  });
+
   it("keeps projected facts when the bounded diff gives up", () => {
     const make = (base: string, prefix: string) => ({
       ...addressRelocationText(base),
@@ -1022,6 +1050,65 @@ describe("normalized view outgoing callee facts", () => {
         });
     },
   );
+});
+
+describe("normalized view callee facts beyond typed edges", () => {
+  it("treats the containing procedure of an interior call target as a masked callee", () => {
+    const make = (base: string, entry: string, interior: string) => {
+      const name = `FUN_${BigInt(entry).toString(16)}`;
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { ${name}(); }`,
+        assembly: [`${base}: CALL ${interior}`],
+        outgoingReferences: [
+          { source: base, target: interior, operandIndex: 0 },
+        ],
+      });
+      const edge = dossier.outgoing_references[0]!;
+      return {
+        ...dossier,
+        outgoing_references: [
+          {
+            ...edge,
+            target_procedure: {
+              address: entry,
+              name,
+              classification: null,
+              body: {
+                available: false as const,
+                reason: "extent not observed",
+              },
+            },
+            kind: {
+              ...edge.kind,
+              type: "UNCONDITIONAL_CALL",
+              flow: true,
+              call: true,
+              data: false,
+              read: false,
+            },
+          },
+        ],
+      };
+    };
+    const [before, after] = syntheticPair(
+      make("0x411700", "0x411860", "0x411870"),
+      make("0x511700", "0x511860", "0x511870"),
+    );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(dimension(result, "calls")).toMatchObject({ status: "unknown" });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining(
+          "cannot establish callee identity or call order",
+        ),
+      ]),
+    });
+  });
 
   it("treats a partially classified outgoing call target as a masked callee", () => {
     const make = (base: string, target: string) => {

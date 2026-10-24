@@ -181,6 +181,23 @@ export const functionNormalizedViewsSchema = z
           path: ["views"],
         });
     }
+    for (const [index, view] of normalizedViews.views.entries()) {
+      if (view.status === "unknown") continue;
+      const equal =
+        view.left_digest === view.right_digest &&
+        view.left_count === view.right_count &&
+        view.text_delta.hunks === 0 &&
+        view.text_delta.added_lines === 0 &&
+        view.text_delta.removed_lines === 0;
+      const different =
+        view.left_digest !== view.right_digest && view.text_delta.hunks > 0;
+      if (view.status === "unchanged" ? !equal : !different)
+        context.addIssue({
+          code: "custom",
+          message: `A ${view.status} normalized view contradicts its projected facts`,
+          path: ["views", index],
+        });
+    }
   });
 
 const functionMatchSchema = z.union([
