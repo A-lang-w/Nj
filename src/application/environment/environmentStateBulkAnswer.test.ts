@@ -33,6 +33,60 @@ const BULK_RENAME_ROWS: readonly TimedCaptureRow[] = [
 const shelved = (entity: Book, archived: boolean) => ({ ...entity, archived });
 
 describe("served bulk writes", () => {
+  it("learns a delete whose recording returned multiple entity objects", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      [
+        "DELETE",
+        "/api/books",
+        [{ id: 1 }, { id: 2 }],
+        200,
+        [{ id: 1 }, { id: 2 }],
+      ],
+      ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", []],
+    ]);
+    expect(books.answer("delete_books", { body: [{ id: 2 }] })).toMatchObject({
+      status: 200,
+      body: [{ id: 2 }],
+    });
+    expect(books.store.ofType("/api/books").map((book) => book.id)).toEqual([
+      "1",
+    ]);
+  });
+
+  it("learns an update whose recording returned multiple entity objects", () => {
+    const renamed = [FIRST_BOOK, SECOND_BOOK].map((book) =>
+      renamedBook(book, "Renamed Book", 3),
+    );
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books",
+        renamed,
+        200,
+        { ids: [1, 2], name: "Renamed Book" },
+      ],
+      ["GET", "/api/books/1", renamed[0]!],
+      ["GET", "/api/books/2", renamed[1]!],
+      ["GET", "/api/books", renamed],
+    ]);
+    expect(
+      books.answer("patch_books", { body: { ids: [2], name: "Changed" } }),
+    ).toMatchObject({
+      status: 200,
+      body: [{ id: 2, name: "Changed", slug: "changed" }],
+    });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
+      FIRST_BOOK,
+    );
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toMatchObject({
+      name: "Changed",
+    });
+  });
+
   it("deletes every row a call names, answering one element per row", () => {
     const books = servedFrom(BULK_DELETE_ROWS);
     expect(

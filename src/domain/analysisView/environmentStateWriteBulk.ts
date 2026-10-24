@@ -15,6 +15,7 @@ import {
 } from "./environmentStateWriteAddress.js";
 import { itemTarget } from "./environmentStateWriteChecks.js";
 import { deleteEntity } from "./environmentStateWriteDelete.js";
+import { responseShapeOf } from "./environmentStateWriteExplain.js";
 import {
   built,
   fail,
@@ -150,6 +151,25 @@ export const applyBulk = (
     draft.plan.body = deleteBody(options, identity);
     retainFixed(context, draft.plan.body.fixed);
   }
+  // Bulk serving repeats the first element's shape for the addressed entities;
+  // classify that element rather than asking the single-entity classifier to
+  // find one entity in the whole multi-row response.
+  if (!wasBuilt && built(draft))
+    draft.plan.response = context.io.withBody(
+      step.record.ordinal,
+      (recorded) => {
+        const array = Array.isArray(recorded);
+        const response = responseShapeOf(
+          step.record.ordinal,
+          array ? recorded[0] : recorded,
+          context.io.emptyResponse(step.record.ordinal),
+          { idField: context.idField(type), id: named[0]!.id },
+        );
+        return array && response.pointer === ""
+          ? { ...response, pointer: "/0" }
+          : response;
+      },
+    );
   // The plan's response is the exemplar's; serving answers any ids with it only in a shape it can render for them.
   const { response } = draft.plan;
   if (
