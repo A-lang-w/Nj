@@ -410,6 +410,53 @@ export const FILED_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/books", [listed(FILED_SEED), listed(ATLAS), listed(CHARTS)]],
 ];
 
+/** A book moved to another shelf by `shelf_id`, then renamed by a call that sends the shelf it already has. */
+export const REFILED_ROWS: readonly TimedCaptureRow[] = (() => {
+  const moved = filed(1, "Tide Tables", 2, "2026-10-01T09:00:00Z");
+  const renamed = { ...moved, name: "Tide Tables, Revised" };
+  return [
+    ...FILED_ROWS.slice(0, 5),
+    ["PATCH", "/api/books/1", moved, 200, { shelf_id: 2 }],
+    ["GET", "/api/books/1", moved],
+    ["GET", "/api/books", [listed(moved)]],
+    [
+      "PATCH",
+      "/api/books/1",
+      renamed,
+      200,
+      { name: "Tide Tables, Revised", shelf_id: 2 },
+    ],
+    ["GET", "/api/books/1", renamed],
+    ["GET", "/api/books", [listed(renamed)]],
+  ];
+})();
+
+/** Two book creates, one naming a shelf by `shelf_id` and one leaving it out, in the order given, each read back and listed. */
+export const optionallyFiledRows = (shelfFirst: boolean): TimedCaptureRow[] => {
+  const unfiled = (id: number, at: string): Entity => ({
+    id,
+    name: "Field Notes",
+    created_at: at,
+  });
+  const [first, second] = shelfFirst
+    ? [filed(2, "Coastal Atlas", 2, bookClock(5)), unfiled(3, bookClock(8))]
+    : [unfiled(2, bookClock(5)), filed(3, "Coastal Atlas", 2, bookClock(8))];
+  const sent = (book: Entity) =>
+    "shelf" in book
+      ? { name: book["name"]!, shelf_id: 2 }
+      : { name: book["name"]! };
+  const shown = (book: Entity) => ("shelf" in book ? listed(book) : book);
+  return [
+    ...FILED_ROWS.slice(0, 5),
+    ["POST", "/api/books", first, 201, sent(first)],
+    ["GET", "/api/books/2", first],
+    ["GET", "/api/books", [listed(FILED_SEED), shown(first)]],
+    ["POST", "/api/books", second, 201, sent(second)],
+    ["GET", "/api/books/3", second],
+    ["GET", "/api/books", [listed(FILED_SEED), shown(first), shown(second)]],
+  ];
+};
+
 const tagged = (
   id: number,
   name: string,

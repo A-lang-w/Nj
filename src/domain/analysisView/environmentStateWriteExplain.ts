@@ -393,6 +393,24 @@ const echoedSlugs = (
   return slugs;
 };
 
+/** A reference an earlier call showed for a field this call left as it was, when the call names the entity the field repeats through its member. */
+const keptReference = (
+  evidence: UpdateEvidence,
+  field: string,
+): FieldRule | undefined => {
+  const known = evidence.references?.find((rule) => rule.field === field);
+  if (known === undefined || evidence.named === undefined) return undefined;
+  const shown = referenceRule(
+    field,
+    evidence.after[field],
+    evidence.call.body,
+    evidence.named,
+  );
+  return shown?.member === known.member && shown.type === known.type
+    ? known
+    : undefined;
+};
+
 /** Explain an update: echoed members, fixed members whose stored value is constant, and the changes it made unsent. */
 export const explainUpdate = (
   evidence: UpdateEvidence,
@@ -442,10 +460,14 @@ export const explainUpdate = (
     if (
       Object.hasOwn(body, field) ||
       (!Object.hasOwn(evidence.before, field) &&
-        !(evidence.shown ?? []).includes(field)) ||
-      same(evidence.before[field], evidence.after[field])
+        !(evidence.shown ?? []).includes(field))
     )
       continue;
+    if (same(evidence.before[field], evidence.after[field])) {
+      const kept = keptReference(evidence, field);
+      if (kept !== undefined) rules.push(kept);
+      continue;
+    }
     const rule = changeRule(evidence, field, slugs);
     if (rule === undefined) unexplained.push(field);
     else rules.push(rule);

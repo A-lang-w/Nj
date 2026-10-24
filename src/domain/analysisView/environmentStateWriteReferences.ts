@@ -11,11 +11,11 @@ import type { FieldRule } from "./environmentStateWriteRules.js";
 
 type ReferenceRule = Extract<FieldRule, { rule: "reference" }>;
 
-/** The fields of the entity of a type with an id, as the state holds them; undefined when it holds none. */
+/** The fields of each entity of a type with an id the state holds, one per collection holding one. */
 export type ReferencedEntity = (
   type: string,
   id: string,
-) => JsonObject | undefined;
+) => readonly JsonObject[];
 
 /** A member name with its trailing id dropped and lower case, to tie `parentId` to `parent`. */
 const stemOf = (name: string): string =>
@@ -33,7 +33,8 @@ const projects = (object: JsonObject, fields: JsonObject): boolean =>
 /**
  * A created or updated object field that repeats fields of the entity a sent member names, as the state holds it: a
  * parent beside `parentId`. Several members naming such entities resolve to the one named like the field; undefined
- * when none does, or when that leaves more than one.
+ * when none does, or when that leaves more than one. An id that names entities of one type in several collections
+ * names none, since serving could not tell which.
  */
 export const referenceRule = (
   field: string,
@@ -46,8 +47,12 @@ export const referenceRule = (
   for (const [member, sent] of Object.entries(body)) {
     const id = scalarText(sent);
     if (id === undefined || id.length === 0) continue;
-    for (const entity of named(id))
-      if (projects(value, entity.fields))
+    const held = named(id);
+    for (const entity of held)
+      if (
+        projects(value, entity.fields) &&
+        held.filter((other) => other.type === entity.type).length === 1
+      )
         matches.set(`${member} ${entity.type}`, { member, type: entity.type });
   }
   const candidates = [...matches.values()];
@@ -74,10 +79,15 @@ export const referencedValue = (
 ): Result<JsonValue | undefined, string> => {
   if (!Object.hasOwn(body, rule.member)) return ok(undefined);
   const id = scalarText(body[rule.member]);
-  const fields = id === undefined ? undefined : referenced?.(rule.type, id);
+  const held = id === undefined ? [] : (referenced?.(rule.type, id) ?? []);
+  const [fields] = held;
   if (fields === undefined)
     return err(
       `Member ${rule.member} names no entity of ${rule.type} the environment holds, which ${rule.field} repeats.`,
+    );
+  if (held.length > 1)
+    return err(
+      `Member ${rule.member} names entities of ${rule.type} in ${held.length} collections, so ${rule.field} cannot tell which it repeats.`,
     );
   return ok(
     Object.fromEntries(

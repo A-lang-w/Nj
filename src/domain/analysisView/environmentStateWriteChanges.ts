@@ -41,6 +41,8 @@ export interface UpdateEvidence {
   readonly action?: boolean;
   /** The entities of any type the state holds under an id, which an object the update rewrote may repeat. */
   readonly named?: ((id: string) => readonly StateEntity[]) | undefined;
+  /** The references earlier calls showed, which a call naming the entity a field already repeats keeps. */
+  readonly references?: readonly Extract<FieldRule, { rule: "reference" }>[];
 }
 
 /** The rule a field the update changed without sending follows, if any; `slugs` maps each echoed member's slug to the first such member. */

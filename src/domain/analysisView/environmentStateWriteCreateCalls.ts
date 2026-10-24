@@ -17,9 +17,10 @@ const agreeing = (
   values: {
     readonly exemplar: JsonValue | undefined;
     readonly later: JsonValue | undefined;
+    readonly kept: ReadonlySet<string>;
   },
 ): FieldRule | undefined => {
-  const alike = alikeRules(held, later);
+  const alike = alikeRules(held, later, values.kept);
   if (alike !== undefined) return alike;
   if (held.rule !== "clock" || later.rule !== "clock") return undefined;
   const format = fittedClockFormat(held.format, values.later, values.exemplar);
@@ -48,7 +49,43 @@ interface FieldCalls {
   readonly later: { readonly entity: JsonObject; readonly body: JsonObject };
   readonly sentBefore: ReadonlySet<string>;
   readonly required: readonly string[];
+  readonly kept: ReadonlySet<string>;
 }
+
+/** A reference an earlier later call added: it stays while a call leaves its member out, and agrees with this call's when it shows it. */
+const addedReference = (
+  field: string,
+  added: Extract<FieldRule, { rule: "reference" }>,
+  calls: FieldCalls,
+): { readonly rule: FieldRule } | undefined => {
+  const { after, later } = calls;
+  if (!Object.hasOwn(later.entity, field))
+    return Object.hasOwn(later.body, added.member)
+      ? undefined
+      : { rule: added };
+  const rule =
+    after === undefined
+      ? undefined
+      : agreeing(added, after, {
+          exemplar: undefined,
+          later: later.entity[field],
+          kept: calls.kept,
+        });
+  return rule === undefined ? undefined : { rule };
+};
+
+/** A field one call shows alone, which must be a reference the other call did not send the member of. */
+const shownAlone = (
+  inExemplar: boolean,
+  calls: FieldCalls,
+): { readonly rule: FieldRule } | undefined => {
+  const own = inExemplar ? calls.before : calls.after;
+  if (own?.rule !== "reference") return undefined;
+  const sent = inExemplar
+    ? Object.hasOwn(calls.later.body, own.member)
+    : calls.sentBefore.has(own.member);
+  return sent ? undefined : { rule: own };
+};
 
 /** One field's rule in the merged plan, and the default it gives a member; undefined when the calls disagree on it. */
 const mergedField = (
@@ -57,19 +94,15 @@ const mergedField = (
 ): { readonly rule?: FieldRule; readonly default?: Default } | undefined => {
   const { before, after, exemplar, later } = calls;
   const inExemplar = Object.hasOwn(exemplar, field);
-  if (!inExemplar || !Object.hasOwn(later.entity, field)) {
-    // A field one call shows alone must be a reference the other call did not send the member of.
-    const own = inExemplar ? before : after;
-    if (own?.rule !== "reference") return undefined;
-    const sent = inExemplar
-      ? Object.hasOwn(later.body, own.member)
-      : calls.sentBefore.has(own.member);
-    return sent ? undefined : { rule: own };
-  }
+  if (!inExemplar && before?.rule === "reference")
+    return addedReference(field, before, calls);
+  if (!inExemplar || !Object.hasOwn(later.entity, field))
+    return shownAlone(inExemplar, calls);
   if (before !== undefined && after !== undefined) {
     const rule = agreeing(before, after, {
       exemplar: exemplar[field],
       later: later.entity[field],
+      kept: calls.kept,
     });
     return rule === undefined ? undefined : { rule };
   }
@@ -91,7 +124,7 @@ const mergedField = (
 
 /**
  * A create plan widened by a later call, explained on its own: both calls show the same fields, but for a reference
- * whose member the other did not send, every field both rule they rule alike, a field neither rules holds one value,
+ * whose member a call without it did not send (one an earlier call added stays), every field both rule they rule alike, a field neither rules holds one value,
  * and where only one echoes a member the other left out, the member becomes optional with the value the call that left
  * it out stored. Members either call sent are accepted, and only those every call sent are required. Undefined when the
  * calls disagree otherwise, so the later call stays unexplained.
@@ -105,6 +138,7 @@ export const mergedCreatePlan = (
     readonly rules: readonly FieldRule[];
     readonly contract: WriteBody;
   },
+  kept: ReadonlySet<string> = new Set(),
 ): { readonly rules: FieldRule[]; readonly body: WriteBody } | undefined => {
   const held = new Map(plan.rules.map((rule) => [rule.field, rule]));
   const shown = new Map(later.rules.map((rule) => [rule.field, rule]));
@@ -118,6 +152,7 @@ export const mergedCreatePlan = (
   for (const field of new Set([
     ...Object.keys(exemplar),
     ...Object.keys(later.entity),
+    ...held.keys(),
   ])) {
     const outcome = mergedField(field, {
       before: held.get(field),
@@ -126,6 +161,7 @@ export const mergedCreatePlan = (
       later,
       sentBefore,
       required: plan.body.required,
+      kept,
     });
     if (outcome === undefined) return undefined;
     if (outcome.rule !== undefined) merged.set(field, outcome.rule);

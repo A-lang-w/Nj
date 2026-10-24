@@ -105,27 +105,66 @@ describe("merging a later create into a plan", () => {
     ).toBeUndefined();
   });
 
+  const reference: FieldRule = {
+    field: "shelf",
+    rule: "reference",
+    member: "shelf_id",
+    type: "/api/shelves",
+    fields: ["id", "name"],
+  };
+  const shelved = (id: number, name: string) =>
+    later({
+      entity: { id, name, shelf: { id: 1, name: "Main" } },
+      body: { name, shelf_id: 1 },
+      rules: [...plan.rules, reference],
+      contract: body(["name", "shelf_id"]),
+    });
+  const unshelved = (id: number, name: string, sent: object = {}) =>
+    later({
+      entity: { id, name },
+      body: { name, ...sent },
+      rules: plan.rules,
+      contract: body(["name", ...Object.keys(sent)]),
+    });
+  const unshelvedExemplar = { id: 3, name: "Third" };
+
   it("takes a reference one call alone shows when the other did not send its member", () => {
-    const reference: FieldRule = {
-      field: "shelf",
-      rule: "reference",
-      member: "shelf_id",
-      type: "/api/shelves",
-      fields: ["id", "name"],
-    };
     const merged = mergedCreatePlan(
       plan,
-      { id: 3, name: "Third" },
-      later({
-        entity: { id: 4, name: "Fourth", shelf: { id: 1, name: "Main" } },
-        body: { name: "Fourth", shelf_id: 1 },
-        rules: [...plan.rules, reference],
-        contract: body(["name", "shelf_id"]),
-      }),
+      unshelvedExemplar,
+      shelved(4, "Fourth"),
     );
     expect(merged).toMatchObject({
       rules: expect.arrayContaining([reference]),
       body: { accepted: ["name", "shelf_id"], required: ["name"] },
     });
+  });
+
+  it("keeps a reference an earlier call added through calls that leave it out, and agrees with it when it returns", () => {
+    const added = mergedCreatePlan(
+      plan,
+      unshelvedExemplar,
+      shelved(4, "Fourth"),
+    )!;
+    const omitted = mergedCreatePlan(
+      added,
+      unshelvedExemplar,
+      unshelved(5, "Fifth"),
+    );
+    expect(omitted).toMatchObject({
+      rules: expect.arrayContaining([reference]),
+      body: { accepted: ["name", "shelf_id"], required: ["name"] },
+    });
+    expect(
+      mergedCreatePlan(omitted!, unshelvedExemplar, shelved(6, "Sixth")),
+    ).toMatchObject({ rules: expect.arrayContaining([reference]) });
+    // A call that sends the member yet stores no shelf contradicts the reference.
+    expect(
+      mergedCreatePlan(
+        added,
+        unshelvedExemplar,
+        unshelved(7, "Seventh", { shelf_id: 1 }),
+      ),
+    ).toBeUndefined();
   });
 });

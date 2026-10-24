@@ -6,6 +6,7 @@ import {
   FOLDER_ROWS,
   TAG_ROWS,
   TAGGED_ROWS,
+  optionallyFiledRows,
   shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
@@ -130,6 +131,27 @@ describe("served objects that repeat a named entity, and sorted arrays", () => {
       ),
     ).toContain("names no entity of /api/shelves");
   });
+
+  it.each([true, false])(
+    "answers a create with the shelf only when it names one, whichever recorded create was first (shelf first: %s)",
+    (shelfFirst) => {
+      const books = servedFrom(optionallyFiledRows(shelfFirst));
+      const plain = objectOf(
+        books.answer("post_books", { body: { name: "Loose Leaf" } }).body,
+      );
+      expect(plain).toMatchObject({ name: "Loose Leaf" });
+      expect(plain).not.toHaveProperty("shelf");
+      const shelved = objectOf(
+        books.answer("post_books", {
+          body: { name: "Pilot Guide", shelf_id: 1 },
+        }).body,
+      );
+      expect(shelved).toMatchObject({
+        name: "Pilot Guide",
+        shelf: { id: 1, name: "Main Hall", floor: "ground" },
+      });
+    },
+  );
 
   it("stores the tags a create sends in code-point order", () => {
     const books = servedFrom(TAGGED_ROWS);

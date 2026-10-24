@@ -20,20 +20,22 @@ write model did not cover:
 ## Behaviour
 
 - **Every call.** A later create is explained on its own and merged into the plan when both calls show the same fields,
-  but for a reference whose member one did not send, every field both rule they rule alike, and a field neither rules
-  holds one value. Members either call sent are accepted, only those every call sent are required, and an echoed member
+  but for a reference whose member a call without it did not send (one an earlier create added stays), every field
+  both rule they rule alike, and a field neither rules holds one value. Members either call sent are accepted, only those every call sent are required, and an echoed member
   a call left out takes the value that call stored (`body.defaults`). A later create that disagrees leaves the plan as
   it was and is judged as before. Merged rules keep the plan's order.
 - **Sorted arrays.** An echo is `sorted` when the application stored the sent strings in code-point order rather than
   as sent; serving stores them sorted. A plain echo and a sorted one agree, and the plan keeps the sorted one, since a
-  call whose array was already in order cannot show it.
+  call whose array was already in order cannot show it; once a call stored strings out of order as sent, they disagree.
 - **References.** A created or updated object field that holds fields of the entity a sent member names, as the state
   holds it, is a `reference` (member, type, fields). Several members naming such entities resolve to the one named like
   the field. The member is accepted with any value. Replay and serving look the entity up in the state they hold;
-  serving refuses a call naming one the environment does not hold, and the field is absent when the call does not send
-  the member.
-- **Nested view keys.** A view that always shows a field's objects with the same keys, fewer than an entity stores,
-  names them in `nested_fields`, and a stored object it never recorded renders with those keys.
+  serving refuses a call naming one the environment does not hold or holds in more than one collection, and the field
+  is absent, from the entity and the create's answer, when the call does not send the member. An update that sends the
+  member naming the entity the field already repeats keeps a reference an earlier call showed.
+- **Nested view keys.** A view that always shows a field's objects with the same keys, in any order, and fewer than
+  an entity stores, names them in `nested_fields` in the first recording's order, and a stored object it never
+  recorded renders with those keys.
 
 Plans and views that need none of this are unchanged.
 

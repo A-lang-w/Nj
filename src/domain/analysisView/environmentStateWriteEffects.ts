@@ -55,6 +55,7 @@ import {
 } from "./environmentStateWriteAddress.js";
 import {
   alikeRules,
+  keptOrders,
   pathValuesOf,
   siblingTrimmedClocks,
   type FieldRule,
@@ -87,6 +88,8 @@ export interface WriteDraft {
   readonly steady: Set<string>;
   /** Unsent clocks a call left as they were in its own second, which it cannot show it stamps. */
   readonly unstamped: Set<string>;
+  /** Members a call stored as sent with strings out of code-point order, which no plan may store sorted. */
+  readonly kept: Set<string>;
 }
 
 /** A write observation plus the fields its selected read view actually covers, if any. */
@@ -248,11 +251,13 @@ export const callOf = (
   body,
 });
 
-/** The fields of the entity of a type with an id, as the replayed state holds them. */
+/** The fields of each entity of a type with an id, as the replayed state holds them. */
 export const referencedIn =
   (context: EffectContext) =>
-  (type: string, id: string): JsonObject | undefined =>
-    context.state.ofType(type).find((entity) => entity.id === id)?.fields;
+  (type: string, id: string): JsonObject[] =>
+    context.state
+      .ofType(type)
+      .flatMap((entity) => (entity.id === id ? [entity.fields] : []));
 
 export const startOf = (
   context: EffectContext,
@@ -374,7 +379,9 @@ const refineUpdate = (
     // A later call may be the first to show an echoed array sorted.
     ...plan.rules.map((rule) => {
       const shown = later.get(rule.field);
-      return shown === undefined ? rule : (alikeRules(rule, shown) ?? rule);
+      return shown === undefined
+        ? rule
+        : (alikeRules(rule, shown, draft.kept) ?? rule);
     }),
     ...evidence.explained.rules.filter((rule) => !ruled.has(rule.field)),
   ];
@@ -543,8 +550,11 @@ export const updateEntity = (
       shown: shownBefore(context.viewOf, entity, after.ordinal),
       named: (named) => context.state.named(named),
       action: needs.action,
+      references: draft.plan.rules.filter((rule) => rule.rule === "reference"),
     }),
   );
+  for (const member of keptOrders(call.body, after.object))
+    draft.kept.add(member);
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");
     return recorded();
@@ -701,4 +711,4 @@ const contradictsPlan = (
 ): boolean =>
   contradictsEarlierCalls(draft, explained.rules) ||
   contradictsGeneratedClock(before, after, draft.plan.rules, explained) ||
-  conflictsWithPlan(draft.plan, explained);
+  conflictsWithPlan(draft.plan, explained, draft.kept);

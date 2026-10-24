@@ -187,6 +187,7 @@ export const refinedBody = (
 export const conflictsWithPlan = (
   plan: Pick<StateWritePlan, "body" | "rules">,
   explained: ReturnType<typeof explainUpdate>,
+  kept: ReadonlySet<string>,
 ): boolean => {
   const body = plan.body!;
   const fixed = new Map(body.fixed.map((entry) => [entry.member, entry.sent]));
@@ -204,7 +205,7 @@ export const conflictsWithPlan = (
     (identity !== null && fixed.has(identity)) ||
     explained.rules.some((rule) => {
       const held = rules.get(rule.field);
-      return held !== undefined && alikeRules(held, rule) === undefined;
+      return held !== undefined && alikeRules(held, rule, kept) === undefined;
     })
   );
 };

@@ -6,9 +6,10 @@ import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 /** Retain the bytes a view's learned members keep, as the gate's budget counts them. */
 type Retain = (bytes: number) => void;
 
-const sameKeys = (left: readonly string[], right: readonly string[]): boolean =>
-  left.length === right.length &&
-  left.every((key, index) => key === right[index]);
+/** Whether two objects show the same keys, in any order. */
+const sameKeys = (left: readonly string[], shown: JsonObject): boolean =>
+  left.length === Object.keys(shown).length &&
+  left.every((key) => Object.hasOwn(shown, key));
 
 /** The spellings a view always gives clock fields where its recordings spell the stored instant otherwise. */
 export class ClockSpellings {
@@ -21,7 +22,7 @@ export class ClockSpellings {
     }
   >();
 
-  /** Per object field, the keys every recording showed, or null once two differ, and whether one showed fewer than stored. */
+  /** Per object field, the keys every recording showed in the first one's order, or null once two differ, and whether one showed fewer than stored. */
   readonly #shapes = new Map<
     string,
     { keys: string[] | null; projects: boolean }
@@ -53,7 +54,7 @@ export class ClockSpellings {
       this.#shapes.set(field, { keys, projects });
       return;
     }
-    if (facts.keys !== null && !sameKeys(facts.keys, keys)) facts.keys = null;
+    if (facts.keys !== null && !sameKeys(facts.keys, shown)) facts.keys = null;
     facts.projects ||= projects;
   }
 

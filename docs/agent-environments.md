@@ -684,7 +684,8 @@ a read-back showed the application does, while the state keeps it in the order
 it was written, so a write's own answer echoes it. If a later counted read
 contradicts that ordering, the view stays recorded and its earlier reads no
 longer confirm served writes. A view that names a field in `nested_fields`
-always showed that field's objects with fewer keys than an entity stores, such
+always showed that field's objects with the same keys, in any order, and fewer
+than an entity stores, such
 as a list showing a parent without the parent's own nested type; a stored
 object it never recorded, such as a created entity's parent, is rendered with
 those keys. Members a view names in

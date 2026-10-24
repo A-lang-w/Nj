@@ -749,12 +749,15 @@ a generated value, a `reference` to an entity, or a `composed` string; other
 fields keep the observed value. A `reference` is an object holding fields of the
 entity a sent member names, as the state holds it (a parent beside `parentId`):
 the member is accepted with any value, serving looks the entity up and refuses a
-call naming one the environment does not hold, and the field is absent when the
-call does not send the member. Each later create widens its plan when, explained
-on its own, it agrees with it: both calls show the same fields but for a
-reference whose member one did not send, every field both rule they rule alike
-(an echo one showed sorted stays sorted), and a field neither rules holds one
-value. Members either call sent are accepted, only those every call sent are
+call naming one the environment does not hold or holds in more than one
+collection, and the field is absent, from the entity and the create's answer,
+when the call does not send the member. An id naming entities of one type in
+several collections teaches no reference. Each later create widens its plan
+when, explained on its own, it agrees with it: both calls show the same fields
+but for a reference whose member a call without it did not send (one an earlier
+create added stays), every field both rule they rule alike (an echo one showed
+sorted stays sorted, unless a call stored its strings out of order as sent),
+and a field neither rules holds one value. Members either call sent are accepted, only those every call sent are
 required, and an echoed member a call left out takes the value that call stored
 (`body.defaults`). A later create that disagrees leaves the plan as it was.
 A `composed` string is literal text and parts read from the fields other rules
@@ -775,7 +778,7 @@ recorded value (`body.fixed`) and stores the value the call that showed it
 recorded (the `value` of its `constant` rule), and a field it changed without
 sending must be a clock, a nested clock, an increment, a slug, a fresh `unique`
 value, a `stamp` of the acting user, a value `derived` from the one member it
-stores nowhere, a `reference` to the entity a sent member names, a `composed` string whose parts read members it stored as sent
+stores nowhere, a `reference` to the entity a sent member names (kept by a call that names the entity the field already repeats), a `composed` string whose parts read members it stored as sent
 or fields it left as they were and spell the value before the call too, or for
 an item action a `set` of a scalar to the value it showed, or the plan is
 `unexplained-change`; an increment, slug, stamp, derived

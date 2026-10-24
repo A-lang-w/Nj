@@ -62,6 +62,7 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import {
+  keptOrders,
   pathValuesOf,
   siblingTrimmedClocks,
   type FieldRule,
@@ -167,6 +168,8 @@ const refineCreate = (
   evidence: CreateCallEvidence,
 ): boolean => {
   const { explained, held } = explainedCall(context, draft, step, evidence);
+  for (const member of keptOrders(evidence.call.body, evidence.observed.object))
+    draft.kept.add(member);
   if (
     (explained.tied && draft.plan.collection === null) ||
     linkedUnexplained(explained.rules, evidence.observed.object, held)
@@ -186,6 +189,7 @@ const refineCreate = (
           : { envelope: evidence.envelope }),
       },
     },
+    draft.kept,
   );
   if (merged === undefined) return false;
   retainFixed(context, merged.body.fixed.slice(draft.plan.body!.fixed.length));
@@ -268,6 +272,8 @@ const buildCreate = (
     },
   );
   retainFixed(context, explained.body.fixed);
+  for (const member of keptOrders(evidence.call.body, evidence.observed.object))
+    draft.kept.add(member);
   Object.assign(draft.plan, {
     exemplar_ordinal: step.record.ordinal,
     observation: {

@@ -8,7 +8,10 @@ import {
   segmentsOf,
   type JsonObject,
 } from "./environmentStateRules.js";
-import type { ClockFormat } from "./environmentStateWriteValues.js";
+import {
+  sortedStrings,
+  type ClockFormat,
+} from "./environmentStateWriteValues.js";
 import {
   showsFixedWidth,
   trimmedLike,
@@ -145,16 +148,28 @@ export const siblingTrimmedClocks = (
 
 /**
  * Two calls' rules for a field as one plan holds them: equal, or echoes one of which sorted its strings (a call whose
- * array was already in order cannot show it), kept sorted. Undefined when they differ otherwise.
+ * array was already in order cannot show it), kept sorted unless a call kept strings out of order. Undefined when they
+ * differ otherwise.
  */
 export const alikeRules = (
   held: FieldRule,
   later: FieldRule,
+  kept: ReadonlySet<string> = new Set(),
 ): FieldRule | undefined => {
-  if (held.rule === "echo" && later.rule === "echo")
-    return held.sorted === true ? held : later;
-  return same(held, later) ? held : undefined;
+  if (held.rule !== "echo" || later.rule !== "echo")
+    return same(held, later) ? held : undefined;
+  if ((held.sorted === true) === (later.sorted === true)) return held;
+  if (kept.has(held.field)) return undefined;
+  return held.sorted === true ? held : later;
 };
+
+/** Members a call sent as strings out of code-point order and stored as sent, which shows the application keeps their order. */
+export const keptOrders = (body: JsonObject, stored: JsonObject): string[] =>
+  Object.keys(body).filter(
+    (member) =>
+      sortedStrings(body[member]) !== undefined &&
+      same(stored[member], body[member]),
+  );
 
 /** One part of a composed string: literal text, or another written field as written, slugged, or as a clock's calendar digits. */
 export type ComposedPart =

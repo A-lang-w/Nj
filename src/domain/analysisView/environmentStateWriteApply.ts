@@ -468,11 +468,28 @@ export const writtenDocument = (
   return ok(replaceAt(before, pointer, value));
 };
 
-/** A write's answer body from its recorded response: the entity or identity rendered in, nothing, or the recorded body. */
+/** The fields a create stores only when a call sends their member: references and echoes of members not every call sent, with no default. */
+export const optionalFields = (
+  plan: Pick<StateWritePlan, "effect" | "rules" | "body">,
+): string[] => {
+  if (plan.effect !== "create" || plan.body === null) return [];
+  const { required, defaults = [] } = plan.body;
+  return plan.rules.flatMap((rule) =>
+    (rule.rule === "reference" && !required.includes(rule.member)) ||
+    (rule.rule === "echo" &&
+      !required.includes(rule.field) &&
+      !defaults.some(({ member }) => member === rule.field))
+      ? [rule.field]
+      : [],
+  );
+};
+
+/** A write's answer body from its recorded response: the entity or identity rendered in, nothing, or the recorded body; optional fields show only when written. */
 export const writtenResponse = (
   response: WriteResponse,
   recorded: JsonValue | undefined,
   written: { readonly fields: JsonObject | undefined; readonly id: string },
+  optional: readonly string[] = [],
 ): Applied<JsonValue | undefined> => {
   if (response.shape === "empty") return ok(undefined);
   if (response.shape === "recorded" || recorded === undefined)
@@ -491,19 +508,24 @@ export const writtenResponse = (
     );
   if (!isObject(shown) || written.fields === undefined)
     return err("The recorded response does not carry the entity.");
+  const held = (field: string) => Object.hasOwn(written.fields!, field);
   const missing = Object.keys(shown).filter(
-    (field) => !Object.hasOwn(written.fields!, field),
+    (field) => !held(field) && !optional.includes(field),
   );
   if (missing.length > 0)
     return err(
       `The state holds no complete entity for this response: it lacks ${missing.join(", ")}.`,
     );
+  const fields = [
+    ...Object.keys(shown).filter(held),
+    ...optional.filter((field) => !Object.hasOwn(shown, field) && held(field)),
+  ];
   return ok(
     replaceAt(
       recorded,
       pointer,
       Object.fromEntries(
-        Object.keys(shown).map((field) => [field, written.fields![field]!]),
+        fields.map((field) => [field, written.fields![field]!]),
       ),
     ),
   );
