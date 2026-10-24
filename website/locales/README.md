@@ -130,6 +130,11 @@ website messages remain untranslated and use the labeled, nonindexable English
 fallback described above; the README translation does not establish website
 translation coverage.
 
+Roman Urdu (`ur-Latn`) has a translated README written in Latin script, with
+English technical terms retained. Its text direction is left to right. The
+website catalog is pending and uses the same labeled, nonindexable English
+fallback; the README does not establish a translated website.
+
 Bangla (`bn`) has a translated README and a complete website catalog, including
 setup guides, case studies, articles and Contributors. Like the other editions,
 it uses the labeled English fallback when a future source change leaves a

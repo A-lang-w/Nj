@@ -32,6 +32,11 @@ export default defineConfig({
           { text: "IL2CPP metadata", link: "/il2cpp-metadata" },
           { text: "Model artifacts", link: "/model-artifacts" },
           { text: "Rust dependencies", link: "/rust-binaries" },
+          { text: "PE certificates", link: "/pe-certificates" },
+          { text: "PE imports", link: "/pe-imports" },
+          { text: "ELF notes", link: "/elf-notes" },
+          { text: "CPython pyc files", link: "/python-pyc" },
+          { text: "Erlang BEAM", link: "/erlang-beam" },
           {
             text: "JavaScript and Electron",
             link: "/javascript-artifact-reconstruction",
@@ -83,6 +88,10 @@ export default defineConfig({
         items: [
           { text: "MCP contracts", link: "/mcp-contracts" },
           { text: "Tool design", link: "/tool-design" },
+          {
+            text: "Admission limits and recovery",
+            link: "/design/limits-and-recovery",
+          },
           { text: "Testing", link: "/testing" },
           { text: "Client verification", link: "/client-verification" },
           {

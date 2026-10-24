@@ -126,6 +126,12 @@
     "dir": "ltr"
   },
   {
+    "code": "ur-Latn",
+    "name": "Roman Urdu",
+    "readme": "docs/readme/README_ur-Latn.md",
+    "dir": "ltr"
+  },
+  {
     "code": "bn",
     "name": "বাংলা",
     "readme": "docs/readme/README_bn.md",
