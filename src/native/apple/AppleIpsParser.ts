@@ -21,6 +21,8 @@ import type { LosslessJson } from "./losslessJson.js";
 type Artifact = AppleIps["artifact"];
 
 const ZERO_UUID = "00000000000000000000000000000000";
+const recordedUuidPattern =
+  /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/u;
 const IPS_LIMITATIONS = [
   "Rows reproduce the selected .ips JSON; they do not establish that the process still exists or that a live kernel agrees with the recorded state.",
   "Opened Mach-O and dSYM UUID joins remain unobserved.",
@@ -31,14 +33,16 @@ const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 const canonicalUuid = (
   raw: string | null,
-): { uuid: string | null; unknown: boolean } => {
-  if (raw === null) return { uuid: null, unknown: true };
+): { uuid: string | null; unknown: boolean; malformed: boolean } => {
+  if (raw === null) return { uuid: null, unknown: true, malformed: false };
+  if (!recordedUuidPattern.test(raw))
+    return { uuid: null, unknown: true, malformed: true };
   const hex = raw.replaceAll("-", "").toUpperCase();
-  if (!/^[0-9A-F]{32}$/u.test(hex) || hex === ZERO_UUID)
-    return { uuid: null, unknown: true };
+  if (hex === ZERO_UUID) return { uuid: null, unknown: true, malformed: false };
   return {
     uuid: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
     unknown: false,
+    malformed: false,
   };
 };
 
@@ -188,7 +192,15 @@ const imagesOf = (
     const path = `body.usedImages[${String(index)}]`;
     const members = read.row(row, path);
     const source = read.text(members.source, `${path}.source`);
-    const uuid = canonicalUuid(read.text(members.uuid, `${path}.uuid`));
+    const recordedUuid = read.text(members.uuid, `${path}.uuid`);
+    const uuid = canonicalUuid(recordedUuid);
+    if (uuid.malformed && recordedUuid !== null)
+      read.mismatches.push({
+        path: `${path}.uuid`,
+        expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+        observed: "malformed UUID string",
+        recorded_value: recordedUuid,
+      });
     const arch = read.text(members.arch, `${path}.arch`);
     return {
       index,

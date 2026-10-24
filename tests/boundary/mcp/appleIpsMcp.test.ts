@@ -80,6 +80,39 @@ mcpTest(
       expect(evidence.normalized_result.classification.status).toBe(
         "unclassified",
       );
+      const unsupported = structuredClone(evidence);
+      Reflect.set(unsupported.normalized_result.metadata, "bug_type", "288");
+      expect(ajv.validate(outputSchema, unsupported)).toBe(false);
+
+      const malformedPath = join(root, "malformed-uuid.ips");
+      await writeFile(
+        malformedPath,
+        appleIpsBytes({ uuid: "malformed/report" }),
+      );
+      const malformed = await client.callTool({
+        name: "inspect_apple_ips",
+        arguments: { path: malformedPath },
+      });
+      expect(malformed.isError, JSON.stringify(malformed.content)).not.toBe(
+        true,
+      );
+      expect(
+        ajv.validate(outputSchema, malformed.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
+      const partial = toolContract("inspect_apple_ips").outputSchema.parse(
+        malformed.structuredContent,
+      ).normalized_result;
+      expect(partial.coverage.status).toBe("partial");
+      expect(partial.coverage.type_mismatches).toEqual([
+        {
+          path: "body.usedImages[0].uuid",
+          expected:
+            "32 hexadecimal UUID digits with optional canonical hyphens",
+          observed: "malformed UUID string",
+          recorded_value: "malformed/report",
+        },
+      ]);
     } finally {
       await session.close();
     }

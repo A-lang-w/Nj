@@ -115,7 +115,7 @@ const uuidSchema = z
   .regex(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u);
 
 const metadataSchema = z.strictObject({
-  bug_type: z.string().min(1),
+  bug_type: z.literal("309"),
   timestamp: z.string().min(1).nullable(),
   os_version: z.string().min(1).nullable(),
   bundle_id: z.string().min(1).nullable(),
@@ -212,11 +212,22 @@ const classificationMatchSchema = z.strictObject({
   ),
 });
 
-const typeMismatchSchema = z.strictObject({
+const mismatchFields = {
   path: z.string().min(1),
   expected: z.string().min(1),
   observed: z.string().min(1),
-});
+};
+const typeMismatchSchema = z.union([
+  z.strictObject(mismatchFields),
+  z.strictObject({
+    ...mismatchFields,
+    recorded_value: z
+      .string()
+      .describe(
+        "Exact source spelling when a string fails its documented format",
+      ),
+  }),
+]);
 
 const coverageSchema = z.strictObject({
   status: z.enum(["complete", "partial"]),

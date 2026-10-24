@@ -52,6 +52,9 @@ A present value whose JSON type differs from the documented one is never read
 as absent: it is listed in `coverage.type_mismatches` with its path, the
 expected type, and the observed type, and `coverage.status` becomes
 `partial`. A crash body without `threads` or `usedImages` is also `partial`.
+Malformed image UUID strings likewise make coverage partial; their exact spelling
+is retained in the mismatch's `recorded_value`, while the canonical image UUID
+remains unknown. Both 32 hexadecimal digits and canonical hyphenated UUIDs are accepted.
 
 `classification` matches only documented SIGKILL codes (compared by their
 canonical hexadecimal form), `EXC_GUARD` subtypes,

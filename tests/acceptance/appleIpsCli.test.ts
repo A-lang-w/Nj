@@ -1,10 +1,48 @@
 import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { appleIpsBytes } from "../fixtures/binaryDiagnostics/appleIps.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "decodes escape-dense IPS text within the selected Node heap",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apple-ips-escaped-");
+    const path = join(root, "escaped.ips");
+    const name = "\n".repeat(7_500_000);
+    await writeFile(
+      path,
+      `{"bug_type":"309"}\n${JSON.stringify({ procName: name, threads: [], usedImages: [] })}`,
+    );
+    const result = await cli.run({
+      arguments: [
+        "inspect-apple-ips",
+        path,
+        "--max-file-bytes",
+        "16777216",
+        "--json",
+      ],
+      environment: { NODE_OPTIONS: "--max-old-space-size=256" },
+      timeoutMs: 30000,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_apple_ips").outputSchema.parse(
+      result.json,
+    );
+    const actual = evidence.normalized_result.process.name;
+    expect(actual?.length).toBe(name.length);
+    expect(
+      createHash("sha256")
+        .update(actual ?? "")
+        .digest("hex"),
+    ).toBe(createHash("sha256").update(name).digest("hex"));
+    expect(evidence.normalized_result.coverage.status).toBe("complete");
+  },
+  45000,
+);
 
 cliTest(
   "reports Apple IPS crash facts through the public CLI",

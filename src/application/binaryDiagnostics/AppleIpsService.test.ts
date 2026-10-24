@@ -52,6 +52,21 @@ const report: AppleIps = {
   limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
 };
 
+it.each(["288", "309 "])(
+  "rejects unsupported crash kind %s from a custom provider",
+  async (bugType) => {
+    const malformed = structuredClone(report);
+    Reflect.set(malformed.metadata, "bug_type", bugType);
+    const result = await new AppleIpsService({
+      identity,
+      inspect: () => Promise.resolve(ok(malformed)),
+    }).inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected unsupported provider crash kind");
+    expect(result.error._tag).toBe("AnalysisOutputError");
+  },
+);
+
 it.each([null, { caller: "selected IPS request" }])(
   "preserves early cancellation cause %j before validation",
   async (reason) => {

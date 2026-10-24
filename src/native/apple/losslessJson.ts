@@ -305,48 +305,31 @@ class Parser {
     this.parseScalar();
   }
 
-  /** Decode a string by copying unescaped spans rather than single characters. */
+  /** Validate once, then let V8 decode escapes without a per-escape fragment array. */
   private parseString(): string {
-    const text = this.text;
-    this.position += 1;
-    let spanStart = this.position;
-    let parts: string[] | null = null;
-    while (this.position < text.length) {
-      const code = text.charCodeAt(this.position);
-      if (code === QUOTE) {
-        const tail = text.slice(spanStart, this.position);
-        this.position += 1;
-        if (parts === null) return tail;
-        parts.push(tail);
-        return parts.join("");
-      }
-      if (code === BACKSLASH) {
-        parts ??= [];
-        parts.push(text.slice(spanStart, this.position));
-        this.position += 1;
-        parts.push(this.escape());
-        spanStart = this.position;
-        continue;
-      }
-      if (code < 0x20)
-        throw new LosslessJsonFailure(
-          "Unescaped control character in JSON string",
-        );
-      this.position += 1;
-    }
-    throw new LosslessJsonFailure("Unterminated JSON string");
+    const start = this.position;
+    const escaped = this.skipString();
+    if (!escaped) return this.text.slice(start + 1, this.position - 1);
+    // A decoded JSON string cannot contain more code units than its literal.
+    // The input's byte allowance bounds this allocation, including dense escapes.
+    const decoded: unknown = JSON.parse(this.text.slice(start, this.position));
+    if (typeof decoded !== "string")
+      throw new LosslessJsonFailure("Expected a JSON string");
+    return decoded;
   }
 
-  private skipString(): void {
+  private skipString(): boolean {
     const text = this.text;
+    let escaped = false;
     this.position += 1;
     while (this.position < text.length) {
       const code = text.charCodeAt(this.position);
       if (code === QUOTE) {
         this.position += 1;
-        return;
+        return escaped;
       }
       if (code === BACKSLASH) {
+        escaped = true;
         this.position += 1;
         this.escape();
         continue;

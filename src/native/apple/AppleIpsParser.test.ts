@@ -22,6 +22,32 @@ const artifact = (bytes: Buffer) => ({
   bytes: bytes.length,
 });
 
+it.each([
+  "not-a-uuid",
+  "Z".repeat(32),
+  `A-${"A".repeat(31)}`,
+  ` ${"A".repeat(32)}`,
+])("retains malformed UUID spelling %s in partial coverage", (recorded) => {
+  const parsed = parse(
+    withBody(
+      JSON.stringify({
+        threads: [],
+        usedImages: [{ uuid: recorded, arch: "arm64" }],
+      }),
+    ),
+  );
+  expect(parsed.images[0]).toMatchObject({ uuid: null, uuid_unknown: true });
+  expect(parsed.coverage.status).toBe("partial");
+  expect(parsed.coverage.type_mismatches).toEqual([
+    {
+      path: "body.usedImages[0].uuid",
+      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      observed: "malformed UUID string",
+      recorded_value: recorded,
+    },
+  ]);
+});
+
 const integerAmplificationBytes = (): Buffer => {
   const base = `1${"0".repeat(20000)}`;
   const frames = Array.from(
