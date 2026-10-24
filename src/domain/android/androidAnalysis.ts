@@ -108,6 +108,27 @@ const integral = <Type extends string>(type: Type, min: number, max: number) =>
     type: z.literal(type),
     value: z.int().min(min).max(max),
   });
+const LONG_MIN = -(2n ** 63n);
+const LONG_MAX = 2n ** 63n - 1n;
+/** Finite text must name a value of the given width; only zero text may round to zero. */
+const floating = <Type extends "float" | "double">(
+  type: Type,
+  round: (value: number) => number,
+) =>
+  z.strictObject({
+    type: z.literal(type),
+    value: z
+      .string()
+      .regex(/^(?:NaN|-?Infinity|-?\d+\.\d+(?:E-?\d+)?)$/u)
+      .refine((text) => {
+        if (/^(?:NaN|-?Infinity)$/u.test(text)) return true;
+        const rounded = round(Number(text));
+        return (
+          Number.isFinite(rounded) &&
+          (rounded !== 0 || /^-?0\.0+(?:E-?\d+)?$/u.test(text))
+        );
+      }),
+  });
 /** A static final field's DEX static value; wide and floating values keep Java text. */
 export const dexStaticValueSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("boolean"), value: z.boolean() }),
@@ -117,12 +138,13 @@ export const dexStaticValueSchema = z.discriminatedUnion("type", [
   integral("int", -2_147_483_648, 2_147_483_647),
   z.strictObject({
     type: z.literal("long"),
-    value: z.string().regex(/^-?(?:0|[1-9]\d*)$/u),
+    value: z
+      .string()
+      .regex(/^(?:0|-?[1-9]\d*)$/u)
+      .refine((text) => BigInt(text) >= LONG_MIN && BigInt(text) <= LONG_MAX),
   }),
-  z.strictObject({
-    type: z.enum(["float", "double"]),
-    value: z.string().regex(/^(?:NaN|-?Infinity|-?\d+\.\d+(?:E-?\d+)?)$/u),
-  }),
+  floating("float", Math.fround),
+  floating("double", (value) => value),
   z.strictObject({ type: z.literal("string"), value: z.string() }),
 ]);
 

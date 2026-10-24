@@ -339,6 +339,60 @@ it.each([
 );
 
 it.each([
+  { type: "byte", value: -128 },
+  { type: "byte", value: 127 },
+  { type: "short", value: -32_768 },
+  { type: "char", value: 65_535 },
+  { type: "int", value: -2_147_483_648 },
+  { type: "int", value: 2_147_483_647 },
+  { type: "long", value: "-9223372036854775808" },
+  { type: "long", value: "9223372036854775807" },
+  { type: "float", value: "3.4028235E38" },
+  { type: "float", value: "-3.4028235E38" },
+  { type: "float", value: "1.4E-45" },
+  { type: "float", value: "-0.0" },
+  { type: "float", value: "NaN" },
+  { type: "float", value: "-Infinity" },
+  { type: "double", value: "1.7976931348623157E308" },
+  { type: "double", value: "4.9E-324" },
+  { type: "double", value: "0.0" },
+  { type: "double", value: "Infinity" },
+])(
+  "accepts the boundary DEX static value $type $value",
+  async (dex_static_value) => {
+    await expect(
+      inspectClassWithFields([
+        { name: "VALUE", type: "int", def_pos: 0, dex_static_value },
+      ]),
+    ).resolves.toMatchObject({ fields: [{ dex_static_value }] });
+  },
+);
+
+it.each([
+  { type: "byte", value: 128 },
+  { type: "short", value: -32_769 },
+  { type: "char", value: -1 },
+  { type: "int", value: 2_147_483_648 },
+  { type: "long", value: "9223372036854775808" },
+  { type: "long", value: "-9223372036854775809" },
+  { type: "long", value: "-0" },
+  { type: "float", value: "1.0E40" },
+  { type: "float", value: "3.4028236E38" },
+  { type: "float", value: "1.0E-50" },
+  { type: "double", value: "1.8E308" },
+  { type: "double", value: "1.0E-400" },
+])(
+  "refuses an out-of-range DEX static value $type $value",
+  async (dex_static_value) => {
+    await expect(
+      inspectClassWithFields([
+        { name: "VALUE", type: "int", def_pos: 0, dex_static_value },
+      ]),
+    ).rejects.toThrow("JADX class summary failed or was malformed");
+  },
+);
+
+it.each([
   { operation: "inspect_android_class", input: {}, values: true },
   {
     operation: "inspect_android_method",
