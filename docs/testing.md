@@ -72,6 +72,16 @@ preparation use that entrypoint; a raw Turbo compiler task without matching
 identity fails instead of publishing an ambiguous successful cache entry.
 A missing binary on a supported host also fails without silently falling back.
 
+Development verifiers load their shared command, terminal and file owners from
+source using Node's in-process TypeScript transformation. A single process-lifetime
+loader handles this checkout's `src/` and `scripts/lib/` graphs, resolving missing
+relative `.js`/`.mjs` imports to their `.ts`/`.mts` source. Existing JavaScript and
+modules outside those roots keep native resolution and failures. Node's module
+cache shares source identities within the verifier process; transformed output
+is not cached across Node versions. Restart the verifier after source edits.
+This avoids a cold-cache compiler subprocess surviving command cleanup; the
+live process-lineage checks remain required.
+
 The Rust compiler defaults to at most two checker threads. For `--noEmit` checks,
 `--maxMemory 3G` also sets a soft memory target; emit builds do not use that target.
 Explicit compiler arguments can override the defaults. These controls do not
@@ -396,6 +406,11 @@ owned cleanup seams while preserving real cleanup where feasible. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
+For ZIP extraction, replace the pathname after inventory reader close while the
+admitted root descriptor remains owned. Verify that identical member bytes in a
+different carrier, a directory, or a missing pathname cannot switch the
+materialized source. Exercise descriptor close failure and retry before output
+publication.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
 
@@ -838,16 +853,17 @@ installation (`application.java.min` through `application.java.max`). Current
 12.1 releases require JDK 21 or newer and set no maximum. The lanes below still
 prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 
-| Ghidra lane                                | Supported runner/target                                                                                         | Additional local tools                                              |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                                   | Host C compiler, Ghidra 12.1.4, and full JDK 21                     |
-| `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback, not-applicable and unknown analyzer names | Ghidra 12.1.4 and full JDK 21                                       |
-| `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                          | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                 |
-| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 ELF through CLI and MCP                                      | RISC-V Clang, LLD, LLVM readelf, Ghidra 12.1.4, and full JDK 21     |
-| `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                                                 | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
-| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O                 | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
-| `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                              | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
-| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                  | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
+| Ghidra lane                                | Supported runner/target                                                                                          | Additional local tools                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                                    | Host C compiler, Ghidra 12.1.4, and full JDK 21                             |
+| `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback, not-applicable and unknown analyzer names  | Ghidra 12.1.4 and full JDK 21                                               |
+| `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                           | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                         |
+| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 ELF through CLI and MCP                                       | RISC-V Clang, LLD, LLVM readelf, Ghidra 12.1.4, and full JDK 21             |
+| `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                                                  | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21            |
+| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O                  | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21           |
+| `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                               | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites         |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                   | Ghidra 12.1.4, full JDK 21, and the matching native artifact                |
+| `npm run verify:ghidra:dol`                | Any supported Ghidra host; source-owned PowerPC GameCube DOL fixture built from a linker script (never executed) | Clang with PowerPC target, LLD, GNU readelf, Ghidra 12.1.4, and full JDK 21 |
 
 The optional Swift lane compiles a source-owned fixture and checks modern and
 provider-demangled procedure names through real stdio MCP, with and without the
@@ -1934,13 +1950,15 @@ would remain after the pause, the verifier waits 90 seconds and runs once more,
 recording `attempts: 2` and `retried_for` in the receipt. Any other failure
 ends the lane at once.
 
-The verifier writes the Grafana-shaped HAR the view tests own, inspects it and
-projects the `environment-manifest` view with all three template rules through
-the built CLI, packs the checkout with `npm pack`, exports the bundle with
-`--package-tarball` so the image installs this checkout rather than the
-registry package, and runs `agent-env run` on the bundle. It checks that the
-export reports the planned file set with the inputs copied byte-exact and a
-bundle served from the derived state, which serves fewer tools than the
+The verifier writes the Grafana-shaped HAR the view tests own, packs the
+checkout with `npm pack`, builds the bundle from the HAR with
+`rea environment-build --package-tarball` through the built CLI, the command
+users run, so the image installs this checkout rather than the registry
+package, and runs `agent-env run` on the bundle. It checks that the build
+reports the 28-record capture, the default template rules, the planned file set
+with the shipped manifest naming the reported capture, a coverage summary whose
+read and served write tools add up to the served tool count, and a bundle
+served from the derived state, which serves fewer tools than the
 manifest because write tools the capture did not confirm are not served, that the runner exits `0` with
 `tasks/smoke.json` reported as passed and the verifier's description naming
 that served tool count, and that no container exists

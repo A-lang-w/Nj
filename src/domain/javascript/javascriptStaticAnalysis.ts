@@ -14,7 +14,10 @@ import {
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
 
-import { isElectronRendererLoad } from "./electronStaticRenderer.js";
+import {
+  isElectronRendererLoad,
+  resolveElectronBrowserWindowReceiver,
+} from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
@@ -109,11 +112,16 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   );
   const findings: JavaScriptFindingContext = {
     pathIntrinsics: createStaticPathIntrinsicQuery(index),
+    browserWindowReceiver: (node, site, suffix) =>
+      resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
     rendererLoad: (callee, site) =>
       isElectronRendererLoad(callee, site, findings, index),
     source,
     accumulator,
-    vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
+    vitePreloadDependencyTable: indexVitePreloadDependencyTable(
+      file.program,
+      bindings.erasedSyntaxNodes,
+    ),
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
     electronExportIntact: electronIdentity.intactExport,
@@ -167,7 +175,8 @@ function* traverseStaticSourceSteps(
     enter: (node, parent) => {
       findings.accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
-      inspectNode(node, findings, bindings);
+      if (!bindings.erasedSyntaxNodes.has(node))
+        inspectNode(node, findings, bindings);
       return undefined;
     },
   });
