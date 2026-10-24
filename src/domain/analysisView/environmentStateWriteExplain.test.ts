@@ -14,7 +14,7 @@ import {
 } from "./environmentStateWriteExplain.js";
 import {
   callRenewal,
-  disagreeingRenewals,
+  unexplainedRenewals,
   renewedUuids,
 } from "./environmentStateWriteGenerated.js";
 import {
@@ -553,6 +553,7 @@ it.each<[JsonValue | undefined, JsonValue | undefined, number | undefined]>([
   ["10", 9, 1],
   ["7", 7, 0],
   ["2026-03-04T05:00:00Z", "2026-03-04T06:30:00+02:00", 1],
+  ["2026-03-04T05:00:00.123000001Z", "2026-03-04T05:00:00.123000002Z", -1],
   [Date.UTC(2026, 2, 4, 6) / 1000, "2026-03-04T05:00:00Z", 1],
   ["apple", "banana", -1],
   ["Zebra", "apple", -1],
@@ -581,6 +582,26 @@ it("offers each strictly ordered field in its direction, then last and first", (
   const fallback = [{ rule: "last" }, { rule: "first" }];
   expect(insertCandidates([{ id: 1 }], ["id"])).toEqual(fallback);
   expect(insertCandidates([], ["id"])).toEqual(fallback);
+});
+
+it("uses retained submillisecond precision to recognize and place sorted timestamps", () => {
+  const members = [
+    { at: "2026-03-04T05:00:00.123000002Z" },
+    { at: "2026-03-04T05:00:00.123000003Z" },
+  ];
+  const rule: InsertRule = {
+    rule: "sorted",
+    field: "at",
+    direction: "ascending",
+  };
+  expect(insertCandidates(members, ["at"])).toEqual([
+    rule,
+    { rule: "last" },
+    { rule: "first" },
+  ]);
+  expect(
+    insertIndex(rule, members, { at: "2026-03-04T05:00:00.123000001Z" }),
+  ).toBe(0);
 });
 
 const ASCENDING = [{ n: 1 }, { n: 3 }, { n: 5 }];
@@ -921,23 +942,70 @@ it("renews one UUID alike in either letter case, and spells each place in its ow
     toc: [{ ref }],
   });
   expect(
-    disagreeingRenewals(
-      rules,
+    unexplainedRenewals(rules, {
       before,
-      renewed(LETTERED("b"), LETTERED("c").toUpperCase()),
-    ),
+      after: renewed(LETTERED("b"), LETTERED("c").toUpperCase()),
+      call: { body: {} },
+      others: [],
+    }),
   ).toEqual(["toc"]);
   expect(
-    disagreeingRenewals(
-      rules,
+    unexplainedRenewals(rules, {
       before,
-      renewed(LETTERED("b"), LETTERED("b").toUpperCase()),
-    ),
+      after: renewed(LETTERED("b"), LETTERED("b").toUpperCase()),
+      call: { body: {} },
+      others: [],
+    }),
   ).toEqual([]);
   const renew = callRenewal("call");
   const row = renew(LETTERED("a"));
   expect(renew(LETTERED("a").toUpperCase())).toBe(row.toUpperCase());
   expect(row).toBe(row.toLowerCase());
+});
+
+it("owns one canonical renewal for mixed-case occurrences of the same UUID", () => {
+  expect(
+    renewedUuids(
+      [LETTERED("a"), LETTERED("a").toUpperCase()],
+      [LETTERED("b"), LETTERED("b").toUpperCase()],
+    ),
+  ).toEqual({
+    uuids: new Map([[LETTERED("a"), LETTERED("b")]]),
+    pointers: ["/*"],
+  });
+});
+
+it.each(["kept-in-renewed-field", "other-entity"] as const)(
+  "does not renew a UUID already owned by %s",
+  (owner) => {
+    const rules: FieldRule[] = [
+      { field: "left", rule: "renewed", pointers: ["/id"] },
+    ];
+    const before: JsonObject = { left: { id: ID(1) } };
+    const after: JsonObject = { left: { id: ID(3) } };
+    if (owner === "kept-in-renewed-field") {
+      rules.push({ field: "right", rule: "renewed", pointers: ["/id"] });
+      before.right = { id: ID(2), reference: ID(3) };
+      after.right = { id: ID(4), reference: ID(3) };
+    }
+    expect(
+      unexplainedRenewals(rules, {
+        before,
+        after,
+        call: { body: {} },
+        others: owner === "other-entity" ? [{ reference: ID(3) }] : [],
+      }),
+    ).toEqual(["left"]);
+  },
+);
+
+it("does not independently generate a scalar UUID another entity holds under another field", () => {
+  const result = explainUpdate({
+    ...updated({ id: "42", version: ID(1) }, { id: "42", version: ID(3) }, {}),
+    others: [{ reference: ID(3) }],
+  });
+  expect(result.unexplained).toContain("version");
+  expect(ruleFor(result.rules, "version")).toBeUndefined();
 });
 
 it("refuses renewals that join two old UUIDs onto one new one", () => {
@@ -946,11 +1014,12 @@ it("refuses renewals that join two old UUIDs onto one new one", () => {
     { field: "right", rule: "renewed", pointers: ["/*"] },
   ];
   expect(
-    disagreeingRenewals(
-      rules,
-      { left: [ID(1)], right: [ID(2)] },
-      { left: [ID(3)], right: [ID(3)] },
-    ),
+    unexplainedRenewals(rules, {
+      before: { left: [ID(1)], right: [ID(2)] },
+      after: { left: [ID(3)], right: [ID(3)] },
+      call: { body: {} },
+      others: [],
+    }),
   ).toEqual(["right"]);
 });
 

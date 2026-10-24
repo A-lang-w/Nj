@@ -30,7 +30,7 @@ import {
   templateRule,
 } from "./environmentStateWriteCopies.js";
 import {
-  disagreeingRenewals,
+  unexplainedRenewals,
   freshUuid,
   GENERATED,
   renewedRule,
@@ -378,9 +378,7 @@ export const explainUpdate = (
     else rules.push(rule);
   }
   // Serving renews one UUID alike in every field, so the call must have.
-  unexplained.push(
-    ...disagreeingRenewals(rules, evidence.before, evidence.after),
-  );
+  unexplained.push(...unexplainedRenewals(rules, evidence));
   const shaped = bodyOf(
     Object.fromEntries(
       Object.entries(body).filter(([member]) => member !== identity),
@@ -433,7 +431,8 @@ export const compareValues = (
   const [a, b] = [integerOf(left), integerOf(right)];
   if (a !== undefined && b !== undefined) return a - b;
   const [c, d] = [readClock(left), readClock(right)];
-  if (c !== undefined && d !== undefined) return c.ms - d.ms;
+  if (c !== undefined && d !== undefined)
+    return c.ms - d.ms || c.subMillisecond - d.subMillisecond;
   return typeof left === "string" && typeof right === "string"
     ? compare(left, right)
     : undefined;

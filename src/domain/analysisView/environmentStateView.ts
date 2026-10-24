@@ -8,6 +8,7 @@ import type {
   UnsignedAnalysisView,
 } from "./analysisView.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
+import { isClockZone } from "./environmentStateWriteValues.js";
 import {
   groupCaptureRecords,
   templateRulesSchema,
@@ -35,7 +36,7 @@ const queryParameterSchema = z.discriminatedUnion("role", [
     fields: z
       .array(z.string())
       .describe(
-        "Entities with a string field containing a plain substring value, ignoring case; an empty value matches every entity. Syntax-like operators replay instead.",
+        "Entities with a string field containing a plain substring value, ignoring case using Unicode simple case folding; an empty value matches every entity. Syntax-like operators replay instead.",
       ),
   }),
   z
@@ -90,6 +91,15 @@ const checkedSchema = z
   .describe(
     "Latest init record per request line that the view reproduced from the state.",
   );
+const clockFormatSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("iso"),
+    separator: z.enum(["T", " "]),
+    fraction: z.number().int().nonnegative().max(9),
+    zone: z.string().refine(isClockZone),
+  }),
+  z.strictObject({ kind: z.literal("epoch"), unit: z.enum(["s", "ms"]) }),
+]);
 const entityViewFields = {
   tool: z.string(),
   type: z.string(),
@@ -103,6 +113,12 @@ const entityViewFields = {
     .describe("Ordered fields the view shows of each entity."),
   required_fields: z.array(z.string()),
   checked_record_ordinals: checkedSchema,
+  clock_formats: z
+    .record(z.string(), clockFormatSchema)
+    .optional()
+    .describe(
+      "How the view spells clock fields it always spells otherwise than the entities' stored values; a stored value the view never recorded is spelled this way.",
+    ),
 };
 const viewSchema = z.discriminatedUnion("shape", [
   z.strictObject({
@@ -169,15 +185,6 @@ const viewSchema = z.discriminatedUnion("shape", [
 ]);
 
 const ordinalSchema = z.number().int().nonnegative();
-const clockFormatSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("iso"),
-    separator: z.enum(["T", " "]),
-    fraction: z.number().int().nonnegative(),
-    zone: z.string(),
-  }),
-  z.strictObject({ kind: z.literal("epoch"), unit: z.enum(["s", "ms"]) }),
-]);
 const ruled = { field: z.string() };
 const fieldRuleSchema = z.discriminatedUnion("rule", [
   z.strictObject({

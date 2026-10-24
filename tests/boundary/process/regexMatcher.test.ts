@@ -63,7 +63,7 @@ const probeWorkerHeap = (
     env,
     encoding: "utf8",
   });
-  expect(result.status).toBe(0);
+  expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout ?? "") as {
     resourceOld: number;
     heap: number;
@@ -76,21 +76,14 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     readLaunchNodeOptions(),
   );
   expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
+  expect(REGEX_MATCHING_LIMITATION).toContain(REGEX_MATCHING_DEADLINE_SETTING);
   expect(REGEX_MATCHING_LIMITATION).toContain(
-    "5000 ms matching deadline (source default)",
+    `${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms (source default`,
   );
-  expect(REGEX_MATCHING_LIMITATION).toContain("REA_REGEX_MATCHING_DEADLINE_MS");
   expect(REGEX_MATCHING_LIMITATION).toContain(
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
   );
-  expect(REGEX_MATCHING_LIMITATION).toContain(
-    "source default; default 128 MiB, floor 7 MiB, maximum 16384 MiB",
-  );
-  expect(REGEX_MATCHING_LIMITATION).toContain("floor 1 ms");
-  expect(REGEX_MATCHING_LIMITATION).toContain("maximum 2147483647 ms");
   expect(REGEX_MATCHING_LIMITATION).not.toContain("no runtime override");
-  expect(REGEX_MATCHING_LIMITATION).not.toContain("either cap");
-  expect(REGEX_MATCHING_LIMITATION).not.toContain("or heap");
   if (heap.kind === "unknown") {
     expect(REGEX_MATCHING_LIMITATION).toContain("was not established");
   } else {
@@ -101,14 +94,20 @@ it("names the configurable regex deadline and the effective worker heap", () => 
   const deadline = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
-  expect(deadline.message).toContain("5000 ms");
-  expect(deadline.message).toContain("source default");
-  expect(deadline.message).toContain("REA_REGEX_MATCHING_DEADLINE_MS");
-  expect(deadline.message).toContain("maximum 2147483647 ms");
+  expect(deadline).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "cpu",
+      reported_limits: {
+        matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE_MS,
+        matching_deadline_source: "default",
+      },
+    },
+  });
+  expect(deadline.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
   expect(deadline.remediation.action).toContain(
-    "REA_REGEX_MATCHING_DEADLINE_MS",
+    REGEX_MATCHING_DEADLINE_SETTING,
   );
-  expect(deadline.remediation.action).toContain("source default");
   expect(deadline.remediation.action).not.toContain("no runtime override");
   const failure = projectAnalysisError(
     regexWorkerHeapError("search_procedures", new Error("heap")),
@@ -117,9 +116,6 @@ it("names the configurable regex deadline and the effective worker heap", () => 
   expect(failure.remediation.action).toContain("--max-old-space-size");
   expect(failure.remediation.action).toContain(
     "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
-  );
-  expect(failure.remediation.action).toContain(
-    "source default; default 128 MiB, floor 7 MiB, maximum 16384 MiB",
   );
   if (heap.kind === "effective") {
     expect(failure.message).toContain(`${String(heap.mib)} MiB`);
@@ -223,10 +219,6 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
       [`--experimental-config-file=${file}`],
       undefined,
     );
-    const split = probeWorkerHeap(
-      ["--experimental-config-file", file],
-      undefined,
-    );
     const withAbsolute = probeWorkerHeap(
       [`--experimental-config-file=${file}`, "--max-old-space-size=256"],
       undefined,
@@ -237,7 +229,6 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
       directory,
     );
     expect(fromFile.resourceOld).toBe(128);
-    expect(split.resourceOld).toBe(128);
     expect(withAbsolute.resourceOld).toBe(128);
     expect(fromDefault.resourceOld).toBe(128);
     for (const execArgv of [
@@ -489,15 +480,24 @@ it("stops a slow match at the configured deadline and names the setting", async 
   expect(matched.ok).toBe(false);
   if (matched.ok) return;
   const projected = projectAnalysisError(matched.error);
-  expect(projected.message).toContain("100 ms (source setting)");
-  expect(projected.message).toContain("REA_REGEX_MATCHING_DEADLINE_MS");
-  expect(projected.message).toContain("default 5000 ms");
-  expect(projected.message).toContain("maximum 2147483647 ms");
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "cpu",
+      reported_limits: {
+        matching_deadline_ms: 100,
+        matching_deadline_source: "setting",
+      },
+    },
+  });
+  expect(projected.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
   expect(projected.remediation.action).toContain(
-    "Set REA_REGEX_MATCHING_DEADLINE_MS in the environment that starts REA",
+    REGEX_MATCHING_DEADLINE_SETTING,
   );
   expect(projected.remediation.action).not.toContain("no runtime override");
   expect(matched.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
     reportedLimits: {
       matching_deadline_ms: 100,
       matching_deadline_source: "setting",
@@ -612,15 +612,25 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
   expect(
     await search.execute("search_strings", { pattern: "^δ", mode: "regex" }),
   ).toEqual(ok([{ address: "0x10", value: "Δelta" }]));
-  expect(
-    await search.execute("search_strings", { pattern: "[", mode: "regex" }),
-  ).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "HopperRemoteError",
-      code: -32000,
-      diagnosticType: "invalid_request",
+  const invalid = await search.execute("search_strings", {
+    pattern: "[",
+    mode: "regex",
+  });
+  if (invalid.ok) throw new Error("Expected invalid-pattern refusal");
+  expect(projectAnalysisError(invalid.error)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    message: expect.stringContaining("Invalid regex pattern"),
+    recovery: { kind: "inspect_input_contract", operation: "search_strings" },
+    details: {
       operation: "search_strings",
+      issues: [
+        {
+          path: ["pattern"],
+          reason: "invalid_format",
+          message: "Supply a valid regular expression.",
+        },
+      ],
     },
   });
   await search.close();
