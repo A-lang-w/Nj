@@ -38,7 +38,7 @@ const TRIMMED = {
   trimmed: true,
 } as const;
 
-describe("values an application derives from others", () => {
+describe("clock spellings an application derives", () => {
   it("serves creates whose clocks drop trailing fraction zeros, as Go spells nanoseconds", () => {
     expect(planOf(TAG_ROWS, "post_tags")).toMatchObject({
       served: true,
@@ -133,7 +133,9 @@ describe("values an application derives from others", () => {
       ]),
     });
   });
+});
 
+describe("values an application composes or generates", () => {
   it("serves creates whose snapshot address joins the creation time and the sent URL, accepting any URL", () => {
     expect(planOf(BOOKMARK_ROWS, "post_bookmarks")).toMatchObject({
       served: true,
