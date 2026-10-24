@@ -20,7 +20,7 @@ import {
   bufferedJsonParts,
   jsonParts,
 } from "../../domain/jsonSerialization.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
+import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
@@ -118,33 +118,12 @@ export interface EnvironmentBuildInput {
   readonly progress?: ((stage: string) => void) | undefined;
   /** Checked between stages; a build cancelled before the write writes nothing. */
   readonly signal?: AbortSignal | undefined;
+  /** Refuse an existing directory and never create its parent, as MCP output directories require. */
+  readonly exclusiveDestination?: boolean | undefined;
 }
 
-export interface EnvironmentBuildReport {
-  readonly status: "built" | "planned";
-  readonly directory: string | null;
-  readonly name: string;
-  readonly capture: {
-    readonly evidence_id: string;
-    readonly operation: string;
-    readonly records: number;
-    readonly input: EnvironmentBuildCaptureInput;
-  };
-  readonly manifest: {
-    readonly evidence_id: string;
-    readonly tools: number;
-    readonly excluded_groups: number;
-    readonly template_rules: readonly TemplateRule[];
-  };
-  readonly state: PreparedState["report"];
-  /** Null when the state is unavailable and the bundle serves replay. */
-  readonly coverage: EnvironmentCoverage | null;
-  readonly tool_count: number;
-  readonly package_source: JsonValue;
-  readonly files: readonly WrittenBundleFile[];
-  readonly warnings: readonly EnvironmentBuildWarning[];
-  readonly next: readonly string[];
-}
+/** The report environment-build prints and export_environment_bundle returns. */
+export type { EnvironmentBuildReport };
 
 const captureOperations = new Set([
   "inspect_web_network_capture",
@@ -165,7 +144,7 @@ const harAsJson = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `${path} is a HAR document; name it with .har to inspect it.`,
+      userMessage: `${path} is a HAR document, not capture Evidence; build it as a .har file, or inspect it with inspect-web-network-capture first.`,
     },
     [
       {
@@ -228,14 +207,14 @@ const unnamed = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `The capture's origin is a loopback or IP address, and ${path} yields no portable environment name (a kebab-case label of at most 64 characters that is not a Windows device name); pass --name.`,
+      userMessage: `The capture's origin is a loopback or IP address, and ${path} yields no portable environment name (a kebab-case label of at most 64 characters that is not a Windows device name); name the environment.`,
     },
     [
       {
         path: ["name"],
         reason: "invalid_value",
         message:
-          "Name the environment with --name: a kebab-case label of lowercase letters, digits and single hyphens.",
+          "Name the environment: a kebab-case label of lowercase letters, digits and single hyphens.",
       },
     ],
   );
@@ -243,7 +222,7 @@ const unnamed = (path: string): AnalysisInputError =>
 const missingDirectory = (): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
-    { userMessage: "Name the bundle directory, or pass --dry-run." },
+    { userMessage: "Name the bundle directory, or plan a dry run." },
     [
       {
         path: ["directory"],
@@ -265,7 +244,8 @@ const environmentName = (
   if (!isPortableBundleName(name)) return err(unnamed(input.capturePath));
   warnings.push({
     code: "name-from-file",
-    message: `The capture's origin ${manifest.origin} names no application, so the environment is named ${name} after the capture file; pass --name to choose another.`,
+    pointers: [],
+    message: `The capture's origin ${manifest.origin} names no application, so the environment is named ${name} after the capture file; name it explicitly to choose another.`,
   });
   return ok(name);
 };
@@ -274,7 +254,9 @@ const environmentName = (
 const shellWord = (path: string): string =>
   /^[\w./@%+=:,-]+$/u.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
 
-const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
+const packageSourceValue = (
+  source: EnvironmentPackageSource,
+): EnvironmentBuildReport["package_source"] =>
   source.kind === "registry"
     ? { kind: "registry", specifier: source.specifier }
     : { kind: "tarball", path: source.path };
@@ -472,6 +454,7 @@ export const buildEnvironment = async (
     directory,
     name,
     packageTarball: input.packageTarball,
+    exclusiveDestination: input.exclusiveDestination,
   });
   if (!exported.ok) return exported;
   const report: EnvironmentBuildReport = {
@@ -479,8 +462,8 @@ export const buildEnvironment = async (
     directory,
     ...base,
     tool_count: exported.value.tool_count,
-    package_source: exported.value.package_source,
-    files: exported.value.files,
+    package_source: packageSourceValue(packageSource),
+    files: [...exported.value.files],
     next: [`agent-env run ${shellWord(directory)}`],
   };
   // A cancellation that arrives during the write still names the bundle it wrote.

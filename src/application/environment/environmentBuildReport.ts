@@ -2,14 +2,12 @@ import { basename } from "node:path";
 import { isIP } from "node:net";
 
 import { readRecordedResponseBody } from "../../domain/analysisView/recordedResponseBody.js";
+import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 
 /** A note the build report carries; warnings never change what is built. */
-export interface EnvironmentBuildWarning {
-  readonly code: "name-from-file" | "credential-named-members";
-  readonly message: string;
-  readonly pointers?: readonly string[];
-}
+export type EnvironmentBuildWarning =
+  EnvironmentBuildReport["warnings"][number];
 
 /** Whole name segments that name credentials; `author` is not `auth`. */
 const CREDENTIAL_SEGMENTS = new Set([
@@ -122,7 +120,7 @@ const namedValues = (value: unknown): (readonly [string, unknown])[] =>
  */
 export const scanCredentialNames = (
   records: readonly WebNetworkCaptureRecord[],
-): { readonly count: number; readonly pointers: readonly string[] } => {
+): { readonly count: number; readonly pointers: string[] } => {
   let count = 0;
   const pointers: string[] = [];
   const found = (pointer: string): void => {
