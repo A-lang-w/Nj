@@ -681,6 +681,12 @@ search permissions (`0700`) on a directory you own before retrying.
 
 On supported Linux distributions, approved setup verifies Hopper's official
 `.deb`, `.rpm`, or Arch package before invoking the native package manager.
+On apt systems, Hopper's runtime dependencies are installed with
+`--no-upgrade` in their own transaction, so setup no longer names an
+already-installed dependency as an upgrade target. apt can still upgrade a
+package that the Hopper package or the Python library repair requires at a
+newer version. Arch's `pacman -S --needed` still updates an outdated
+dependency.
 The official release feed selects the current public demo without a version
 pin. REA verifies the package's detached PGP signature against Hopper's stable
 primary fingerprint `7C2D73BAFAF5B9A710A69DA1A26DF815099B1BCD`, then checks
@@ -1461,6 +1467,13 @@ writes the same package-runner shape, or `bunx rea-agents@<version> mcp` when
 setup runs through `bunx`, and pins it to the exact version that performed
 setup. Run current setup to refresh an older registration, then restart the
 client.
+
+Package runners key their package cache by the requested spec, so the entry
+installed for the `@latest` invocation that ran setup cannot serve the pinned
+registration. Setup therefore materializes the pinned entry once, best-effort
+with a bounded timeout, before finishing. When that step cannot run, for
+example offline, the first client start performs the one-time install inside
+the client's MCP startup deadline and may need one more restart.
 
 ## Package runners and global installation
 
