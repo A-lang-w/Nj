@@ -179,4 +179,32 @@ describe("JvmClassReader", () => {
     b[10] = 99; // unknown tag
     expect(parseJvmClass(b)).toBeNull();
   });
+
+  it("rejects empty constant pools and invalid pre-preview minor versions", () => {
+    // 24-byte CAFEBABE buffer with cpCount = 0 and thisClass = 0
+    const emptyPool = new Uint8Array(24);
+    const emptyView = new DataView(emptyPool.buffer);
+    emptyView.setUint32(0, 0xcafebabe, false);
+    emptyView.setUint16(4, 0, false);
+    emptyView.setUint16(6, 61, false);
+    emptyView.setUint16(8, 0, false); // cpCount = 0 (invalid per JVMS)
+    expect(parseJvmClass(emptyPool)).toBeNull();
+
+    // Pre-preview Java 8 (major 52) with non-zero minor version (52.3) is invalid
+    const invalidJava8 = new Uint8Array(createMockClassFile());
+    new DataView(invalidJava8.buffer).setUint16(4, 3, false); // minor = 3
+    new DataView(invalidJava8.buffer).setUint16(6, 52, false); // major = 52
+    expect(parseJvmClass(invalidJava8)).toBeNull();
+
+    // Java 17 preview (61.65535) and Java 1.1 (45.3) remain valid
+    const previewJava17 = new Uint8Array(createMockClassFile());
+    new DataView(previewJava17.buffer).setUint16(4, 0xffff, false);
+    new DataView(previewJava17.buffer).setUint16(6, 61, false);
+    expect(parseJvmClass(previewJava17)?.minorVersion).toBe(0xffff);
+
+    const legacyJava11 = new Uint8Array(createMockClassFile());
+    new DataView(legacyJava11.buffer).setUint16(4, 3, false);
+    new DataView(legacyJava11.buffer).setUint16(6, 45, false);
+    expect(parseJvmClass(legacyJava11)?.majorVersion).toBe(45);
+  });
 });

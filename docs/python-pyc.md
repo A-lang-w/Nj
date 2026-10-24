@@ -20,6 +20,60 @@ requires an absolute filesystem path and preserves that exact selection:
 }
 ```
 
+## Selected code objects
+
+Complete output remains the default. To read selected code objects from a large
+report, request MCP `detail: "summary"`. The summary contains artifact/header
+identity, source coverage and a limitation count; its
+`normalized_result.parent_evidence_id` identifies the complete retained report.
+Use that parent ID with `inspect_analysis_view` and:
+
+```json
+{
+  "kind": "python-pyc",
+  "collection": "code_objects",
+  "names": ["parse_args", "parse_known_args"],
+  "fields": [
+    "name",
+    "qualname",
+    "filename",
+    "firstlineno",
+    "bytecode",
+    "nested_code"
+  ],
+  "offset": 0,
+  "limit": 64
+}
+```
+
+This is the request's `view` field. To receive these selected facts in the first
+call, include the same `view` directly in `inspect_python_pyc` alongside
+`detail: "summary"`. Later pages use the returned parent ID with
+`inspect_analysis_view`. `view` requires summary delivery; complete delivery
+rejects a view instead of ignoring it. `names` matches retained display strings and
+returns every same-name object. `indices` selects original `code_objects`
+indexes; combining names and indices intersects those selectors. Omitted
+selectors include all rows, while `[]` selects none. Each row always includes
+`source_index`, scoped to its parent Evidence; `fields: []` returns only that
+index. Filtering preserves source order, and paging counts matching rows.
+The view's `pyc.coverage` preserves source coverage independently of page
+coverage. Views preserve `nested_code` indexes and their code-constant semantics.
+
+CLI summary delivery requires a durable destination for the complete Evidence:
+
+```bash
+rea inspect-python-pyc module.pyc --detail summary --evidence_output module.evidence.json --json
+```
+
+Add `--view '{"kind":"python-pyc","collection":"code_objects","names":["parse_args"],"fields":["name","bytecode"]}'`
+to select facts in that initial CLI call.
+
+The output's `summary` is derived Evidence. Pass its parent ID and the saved
+bundle to `inspect-analysis-view --evidence-bundle module.evidence.json` for
+offline queries. MCP views read retained Evidence, and offline views read the
+bundle; neither requires the original pyc to remain present. Parse budgets and
+complete-source retention still apply to summary delivery.
+
 ## Observations
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
@@ -49,34 +103,63 @@ filename, the signed 32-bit `co_firstlineno` value, argument counts, flags,
 names, locals (or `localsplusnames` on 3.11+), const
 summaries, and bytecode length plus SHA-256.
 
-Code-object equality used by sets and dictionaries follows the selected layout:
+Code-object equality used by sets and dictionaries follows the selected CPython format:
 3.7–3.10 derive `CO_NOFREE` from the free/cell tables for equality, while
 3.11+ compare raw flags; raw `co_flags` remain in reported facts. The older
-layouts ignore line tables, while 3.11+ include line and exception tables. The
-artifact SHA-256 identifies the exact selected `.pyc` bytes independently of
-this decoded object graph. Reference slots follow each tag's CPython behavior:
+layouts ignore line tables, while 3.11+ include line and exception tables and
+skip inline-cache code units according to the cache table for the exact magic.
+Reported bytecode length and SHA-256 still describe the original code bytes.
+This does not emulate CPython's deoptimization of specialized or instrumented
+opcode bytes in handcrafted pyc files.
+The artifact SHA-256 identifies the exact selected `.pyc` bytes independently
+of this decoded object graph. Reference slots follow each tag's CPython behavior:
 singleton values and `TYPE_REF` do not reserve new slots even when their tag
 has `FLAG_REF` set.
+
+Reported names are JavaScript display strings; distinct CPython Unicode names
+can therefore have the same displayed value and cannot always be reconstructed
+from that field alone. Code equality uses the retained marshal string bytes,
+while the artifact SHA-256 continues to identify the original file bytes.
 
 Bytecode is not decompiled. Const strings may be truncated in the summary while
 the marshal walk still consumed the original bytes; a string summary's `bytes`
 is that marshal length. Integer consts report `bits`; their decimal `value` is
 `null` above 256 bits. Non-finite float and complex parts use CPython's `inf`,
-`-inf`, and `nan` spellings. Dictionary and set lengths follow CPython:
+`-inf`, and `nan` spellings; negative zero uses `"-0.0"` so JSON preserves its
+sign. String previews preserve source lone surrogates but never split a valid
+surrogate pair at the preview boundary. Dictionary and set lengths follow CPython:
 unhashable keys and members fail the walk, equal set members count once, equal
 dictionary keys keep the first key object and replace only its value, code
-objects are valid keys and members, and a null dictionary value ends the dict
-without that entry.
+objects are valid keys and members only when all of their consts are hashable,
+and a null dictionary value ends the dict without that entry.
 
 ## Limits and failures
 
 The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
-budget fails without partial success. Argument counts, positional-only counts,
-keyword-only counts, local counts, and stack size are signed CPython fields; a
-negative encoding is malformed. Code `flags` preserve signed `co_flags` values;
-CPython 3.8+ rejects negative flags, while 3.7 accepts them. On the 3.11+
-layout, `co_code` must cover a
+budget fails without partial success. Decode-limit failures are deterministic:
+the recovery action names the selected field and CLI option, its effective
+value, and its accepted maximum. Raise that field on the next call when the
+maximum permits it; waiting for another analysis or increasing host memory does
+not raise these controls. Argument counts, positional-only counts,
+keyword-only counts, and local counts must be non-negative. `co_stacksize` and
+`co_flags` are retained as signed 32-bit source fields when the selected CPython
+constructor accepted them. CPython 3.7 and 3.8 alpha constructors through
+3.8.0a4 did not reject negative stack sizes or flags; the check was added by
+[CPython commit a9f05d69](https://github.com/python/cpython/commit/a9f05d69ccbf3c75cdd604c25094282697789a62).
+Magic 3410 is ambiguous: 3.8.0a4 and 3.8.0b1 both use it, but they are on
+opposite sides of that constructor change. Negative values under magic 3410
+are preserved with an explicit limitation because the header cannot identify
+which constructor revision produced them. Magic 3411 and later 3.8 magics were
+introduced after that change, so their constructors reject negative values.
+The pinned magic entries distinguish these cases; see the CPython
+[3.7.0 constructor](https://github.com/python/cpython/blob/v3.7.0/Objects/codeobject.c),
+[3.8.0a4 constructor](https://github.com/python/cpython/blob/v3.8.0a4/Objects/codeobject.c),
+[3.8.0b1 constructor](https://github.com/python/cpython/blob/v3.8.0b1/Objects/codeobject.c),
+and [3.8.0b2 magic table](https://github.com/python/cpython/blob/v3.8.0b2/Lib/importlib/_bootstrap_external.py).
+Complete marshal coverage means all fields in the selected file were decoded;
+it does not establish that CPython will accept or execute the code object. On
+the 3.11+ layout, `co_code` must cover a
 whole number of code units. Every layout rejects argument counts that do not
 fit the local table CPython checks (`co_varnames`, including `*args` /
 `**kwargs`, or fast locals on 3.11+). Those files are malformed, so the

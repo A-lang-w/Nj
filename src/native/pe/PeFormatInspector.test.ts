@@ -181,4 +181,16 @@ describe("PeFormatInspector", () => {
     const truncatedSectionsBuf = createMockPeBinary().subarray(0, 432);
     expect(inspectPeFormat(truncatedSectionsBuf)).toBeNull();
   });
+
+  it("omits entropy and packed classification when a declared section raw range extends past EOF", () => {
+    const truncatedPayloadBuf = createMockPeBinary().subarray(0, 1250);
+    // .text declares rawOffset = 1200, rawSize = 128 (end 1328 > 1250)
+    // .data declares rawOffset = 1400, rawSize = 64 (end 1464 > 1250)
+    const report = inspectPeFormat(truncatedPayloadBuf);
+    expect(report).not.toBeNull();
+    expect(report?.sections[0]?.entropy).toBeUndefined();
+    expect(report?.sections[0]?.isPackedOrEncrypted).toBeUndefined();
+    expect(report?.sections[1]?.entropy).toBeUndefined();
+    expect(report?.sections[1]?.isPackedOrEncrypted).toBeUndefined();
+  });
 });

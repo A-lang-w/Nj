@@ -1,3 +1,5 @@
+import { isJvmClassFile } from "../domain/apple/jvmClassFile.js";
+
 /**
  * Pure TypeScript Java Class (.class) byte format analyzer.
  * Parses constant pool, access flags, interfaces, fields, methods, and attributes.
@@ -262,7 +264,7 @@ const parseMembers = (
 
 /** Parse Java .class bytes into structured class metadata. */
 export const parseJvmClass = (bytes: Uint8Array): JvmClassReport | null => {
-  if (bytes.length < 24) return null;
+  if (!isJvmClassFile(bytes)) return null;
 
   try {
     const cursor = new ClassByteCursor(bytes);

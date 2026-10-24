@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { gzipSync } from "node:zlib";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -96,7 +96,11 @@ describe("GzipArtifactReader", () => {
 
   it("records a limitation and partial coverage when FNAME is unsafe or unterminated", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "rea-gzip-unsafe-fname-"));
-    for (const badName of ["../evil.bin\0", "C:payload.bin\0"]) {
+    for (const badName of [
+      "../evil.bin\0",
+      "C:/payload.bin\0",
+      "dir\\payload.bin\0",
+    ]) {
       const gzipPath = join(tempDir, "archive.gz");
       const baseCompressed = gzipSync(Buffer.from("inner payload"));
       const header = Buffer.from(baseCompressed.subarray(0, 10));
@@ -129,5 +133,36 @@ describe("GzipArtifactReader", () => {
       await reader.close();
     }
     await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("normalizes carrier-derived fallback names that fail artifact path validation", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "rea-gzip-carrier-fallback-"));
+    const backingPath = join(tempDir, "carrier.gz");
+    await writeFile(backingPath, gzipSync(Buffer.from("payload")));
+    const handle = await open(backingPath, "r");
+    try {
+      const initial = await handle.stat();
+      for (const unsafeCarrierPath of [
+        "/tmp/...gz",
+        "/tmp/..gz",
+        "/tmp/\0bad.gz",
+        "/tmp/\0bad",
+      ]) {
+        const reader = new GzipArtifactReader(unsafeCarrierPath, {
+          handle,
+          initial,
+        });
+        const entries = [];
+        for await (const entry of reader.entries()) {
+          entries.push(entry);
+        }
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.path).toBe("decompressed_payload");
+        await reader.close();
+      }
+    } finally {
+      await handle.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

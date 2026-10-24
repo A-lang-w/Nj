@@ -321,11 +321,11 @@ it("charges long digits to the string budget and keeps large previews bounded", 
 
 it("decodes marshal strings with CPython surrogatepass rules", () => {
   const report = parse(
-    withConsts([marshalUnicode(Buffer.from([0x73, 0xed, 0xa0, 0x80]))]),
+    withConsts([marshalUnicode(Buffer.from("efbbbf73eda080efbbbf", "hex"))]),
   );
   expect(root(report).consts[0]).toMatchObject({
     kind: "str",
-    value: "s\ud800",
+    value: "\ufeffs\ud800\ufeff",
   });
   expect(() =>
     parse(withConsts([marshalUnicode(Buffer.from([0xf0, 0x90, 0x80]))])),
@@ -335,21 +335,56 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   ).toThrow(PythonPycFormatFailure);
 });
 
-it("keeps non-finite float and complex constants JSON-safe", () => {
+it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
+  "classifies a negative signed marshal count (tag %i) before applying limits",
+  (tag) => {
+    expect(() =>
+      parse(withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])])),
+    ).toThrow(PythonPycFormatFailure);
+  },
+);
+
+it("keeps signed zero and non-finite float and complex constants JSON-safe", () => {
   const report = parse(
     withConsts([
       Buffer.concat([Buffer.from([0x67]), f64(Infinity)]),
       Buffer.concat([Buffer.from([0x79]), f64(0), f64(-Infinity)]),
       Buffer.concat([Buffer.from([0x67]), f64(Number.NaN)]),
+      Buffer.concat([Buffer.from([0x67]), f64(-0)]),
+      Buffer.concat([Buffer.from([0x67]), f64(0)]),
+      Buffer.concat([Buffer.from([0x79]), f64(-0), f64(-0)]),
     ]),
   );
   expect(root(report).consts).toEqual([
     { kind: "float", value: "inf" },
     { kind: "complex", real: 0, imag: "-inf" },
     { kind: "float", value: "nan" },
+    { kind: "float", value: "-0.0" },
+    { kind: "float", value: 0 },
+    { kind: "complex", real: "-0.0", imag: "-0.0" },
   ]);
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+});
+
+it("truncates string previews without introducing a lone surrogate", () => {
+  const prefix = "x".repeat(79);
+  const report = parse(
+    withConsts([
+      marshalUnicode(Buffer.from(`${prefix}😀tail`)),
+      marshalUnicode(
+        Buffer.concat([
+          Buffer.from(prefix),
+          Buffer.from("eda080", "hex"),
+          Buffer.from("tail"),
+        ]),
+      ),
+    ]),
+  );
+  expect(root(report).consts).toEqual([
+    { kind: "str", bytes: 87, truncated: true, value: prefix },
+    { kind: "str", bytes: 86, truncated: true, value: `${prefix}\ud800` },
+  ]);
 });
 
 it("accepts an empty co_filename", () => {
@@ -933,6 +968,79 @@ it("accepts code objects as set members and dictionary keys", () => {
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
+it("rejects code keys and members whose consts are unhashable", () => {
+  const list = Buffer.concat([Buffer.from([0x5b]), u32(0)]);
+  const int = Buffer.concat([Buffer.from([0x69]), i32(1)]);
+  const tuple = (...items: Buffer[]): Buffer =>
+    Buffer.concat([Buffer.from([0x29, items.length]), ...items]);
+  const code = (...consts: Buffer[]): Buffer =>
+    marshalCode("py311", { name: "u", qualname: "u", consts });
+  const setOf = (kind: number, member: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([kind]), u32(1), member]);
+  const dictKey = (key: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([0x7b]), key, int, Buffer.from([0x30])]);
+  for (const key of [code(list), code(tuple(int, list)), code(code(list))]) {
+    expect(() => parse(withConsts([setOf(0x3c, key)]))).toThrow(
+      PythonPycFormatFailure,
+    );
+    expect(() => parse(withConsts([setOf(0x3e, key)]))).toThrow(
+      PythonPycFormatFailure,
+    );
+    expect(() => parse(withConsts([dictKey(key)]))).toThrow(
+      PythonPycFormatFailure,
+    );
+  }
+  const cyclic = Buffer.concat([
+    Buffer.from([0x29 | 0x80, 1]),
+    marshalCode("py311", {
+      name: "u",
+      qualname: "u",
+      flagged: true,
+      constsObject: tuple(marshalRef(0)),
+    }),
+  ]);
+  expect(() => parse(withConsts([cyclic, setOf(0x3c, marshalRef(1))]))).toThrow(
+    PythonPycFormatFailure,
+  );
+
+  // A set inside a tuple that reaches the unfinished tuple, directly, inside
+  // a code object's consts, or as those consts, before the list is read.
+  for (const member of [
+    marshalRef(0),
+    marshalCode("py311", {
+      name: "u",
+      qualname: "u",
+      constsObject: tuple(marshalRef(0)),
+    }),
+    marshalCode("py311", {
+      name: "u",
+      qualname: "u",
+      constsObject: marshalRef(0),
+    }),
+  ])
+    expect(() =>
+      parse(
+        withConsts([
+          Buffer.concat([
+            Buffer.from([0x29 | 0x80, 2]),
+            setOf(0x3c, member),
+            list,
+          ]),
+        ]),
+      ),
+    ).toThrow(PythonPycFormatFailure);
+
+  const unhashed = parse(withConsts([tuple(code(list))]));
+  expect(unhashed.coverage.status).toBe("complete");
+  expect(unhashed.code_objects[1]?.consts[0]).toEqual({
+    kind: "list",
+    length: 0,
+  });
+  const hashable = parse(withConsts([setOf(0x3c, code(tuple(int)))]));
+  expect(root(hashable).consts[0]).toEqual({ kind: "set", length: 1 });
+  expect(hashable.coverage.status).toBe("complete");
+});
+
 it("uses the code equality fields for each CPython layout", () => {
   const codeCollections = (
     layout: "py38" | "py311",
@@ -1069,6 +1177,30 @@ const parseWith = (bytes: Buffer, limits: Partial<typeof defaults> = {}) =>
     },
     { ...defaults, ...limits },
   );
+
+it("preflights expanded shared code-name keys before building their hex table", () => {
+  const width = 1000;
+  const name = Buffer.alloc(1100, 0x61);
+  const namesObject = Buffer.concat([
+    Buffer.from([0x28]),
+    i32(width),
+    Buffer.from([0x61 | 0x80]),
+    u32(name.length),
+    name,
+    ...Array.from({ length: width - 1 }, () => marshalRef(0)),
+  ]);
+  const child = marshalCode("py311", { namesObject });
+  const bytes = withConsts([
+    Buffer.concat([Buffer.from([0x3e]), u32(1), child]),
+  ]);
+
+  expect(() => parseWith(bytes, { max_string_bytes: 4096 })).toThrow(
+    expect.objectContaining({
+      boundary: "string",
+      message: expect.stringContaining("max_string_bytes 4096"),
+    }),
+  );
+});
 
 it("keeps one descendant list when many wrappers share a container", () => {
   const children = 1800;
@@ -1423,8 +1555,11 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   expect(() => parse(file("py311", 3531, { flags: 0x80000000 }))).toThrow(
     /co_flags is negative/,
   );
-  expect(() => parse(file("py37", 3401, { flags: 0x80000000 }))).toThrow(
+  expect(() => parse(file("py38", 3411, { flags: 0x80000000 }))).toThrow(
     /co_flags is negative/,
+  );
+  expect(() => parse(file("py38", 3411, { stacksize: 0xffffffff }))).toThrow(
+    /co_stacksize is negative/,
   );
 
   const valid = parse(
@@ -1447,6 +1582,25 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   const negativePy37Flags = parse(file("py37", 3394, { flags: 0x80000000 }));
   expect(root(negativePy37Flags).flags).toBe(-0x80000000);
   expect(pythonPycSchema.safeParse(negativePy37Flags).success).toBe(true);
+  const negativePy37Stacksize = parse(
+    file("py37", 3394, { stacksize: 0xffffffff }),
+  );
+  expect(root(negativePy37Stacksize).stacksize).toBe(-1);
+  expect(pythonPycSchema.safeParse(negativePy37Stacksize).success).toBe(true);
+  const negativePy38AlphaFlags = parse(
+    file("py37", 3401, { flags: 0x80000000 }),
+  );
+  expect(root(negativePy38AlphaFlags).flags).toBe(-0x80000000);
+  const ambiguousPy38Fields = parse(
+    file("py38", 3410, { stacksize: 0xffffffff, flags: 0x80000000 }),
+  );
+  expect(root(ambiguousPy38Fields)).toMatchObject({
+    stacksize: -1,
+    flags: -0x80000000,
+  });
+  expect(ambiguousPy38Fields.limitations).toEqual(
+    expect.arrayContaining([expect.stringContaining("Magic 3410 is shared")]),
+  );
   const py37 = parse(
     file("py37", 3394, {
       argcount: 1,
@@ -1471,3 +1625,21 @@ it("leaves 3.11 alpha magics with other code layouts unsupported", () => {
     parse(pythonPycFixture("py311", { magic: 3495 })).header,
   ).toMatchObject({ python_version: "3.11", code_layout: "py311" });
 });
+
+it.each([false, true])(
+  "preserves a source-encoded lone surrogate at the preview boundary (truncated=%s)",
+  (truncated) => {
+    const text = Buffer.concat([
+      Buffer.from("a".repeat(79)),
+      Buffer.from([0xed, 0xa0, 0x80]),
+      ...(truncated ? [Buffer.from("z")] : []),
+    ]);
+    const report = parse(withConsts([marshalUnicode(text)]));
+    expect(root(report).consts[0]).toEqual({
+      kind: "str",
+      value: "a".repeat(79) + "\ud800",
+      bytes: truncated ? 83 : 82,
+      truncated,
+    });
+  },
+);

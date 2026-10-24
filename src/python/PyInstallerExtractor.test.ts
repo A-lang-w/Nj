@@ -499,3 +499,50 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
     );
   });
 });
+
+describe("PyInstallerExtractor - CArchive cookie layout", () => {
+  it("determines CArchive v2.0 24-byte cookie layout structurally when followed by a trailing signature overlay", () => {
+    const bootloader = Buffer.alloc(64, 0x90);
+    const scriptPayload = Buffer.from("LEGACY_V20_SCRIPT_CODE_OBJECT");
+    const nameBytes = Buffer.from("legacy_main.py\0", "utf8");
+    const tocLen = 18 + nameBytes.length;
+    const tocEntry = Buffer.alloc(tocLen);
+    tocEntry.writeUInt32BE(tocLen, 0);
+    tocEntry.writeUInt32BE(0, 4);
+    tocEntry.writeUInt32BE(scriptPayload.length, 8);
+    tocEntry.writeUInt32BE(scriptPayload.length, 12);
+    tocEntry.writeUInt8(0, 16); // uncompressed
+    tocEntry.writeUInt8("s".charCodeAt(0), 17);
+    nameBytes.copy(tocEntry, 18);
+
+    const tocOffset = scriptPayload.length;
+    const pkgLength = scriptPayload.length + tocLen + 24;
+    const cookieV20 = Buffer.alloc(24);
+    PYINSTALLER_MAGIC.copy(cookieV20, 0);
+    cookieV20.writeUInt32BE(pkgLength, 8);
+    cookieV20.writeUInt32BE(tocOffset, 12);
+    cookieV20.writeUInt32BE(tocLen, 16);
+    cookieV20.writeInt32BE(27, 20); // Python 2.7
+
+    // Trailing 128-byte code signature overlay (>= 64 bytes past the 24-byte cookie)
+    const signatureOverlay = Buffer.alloc(128, 0xfe);
+
+    const signedLegacyBinary = Buffer.concat([
+      bootloader,
+      scriptPayload,
+      tocEntry,
+      cookieV20,
+      signatureOverlay,
+    ]);
+
+    const cookie = findPyInstallerCookie(signedLegacyBinary);
+    expect(cookie?.layout).toBe("2.0");
+    expect(cookie?.pythonLibName).toBe("");
+
+    const archive = parsePyInstallerArchive(signedLegacyBinary);
+    expect(archive).not.toBeNull();
+    expect(archive?.carchiveOffset).toBe(bootloader.length);
+    expect(archive?.tocEntries).toHaveLength(1);
+    expect(archive?.tocEntries[0]?.name).toBe("legacy_main.py");
+  });
+});

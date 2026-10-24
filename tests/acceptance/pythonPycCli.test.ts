@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { pythonPycSchema } from "../../src/domain/python/pythonPyc.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   marshalCode,
@@ -9,6 +11,211 @@ import {
 } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const completePycEvidenceSchema = toolContract(
+  "inspect_python_pyc",
+).outputSchema.safeExtend({ normalized_result: pythonPycSchema });
+
+const marshalUtf8 = (bytes: Buffer): Buffer => {
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(bytes.length);
+  return Buffer.concat([Buffer.from([0x75]), length, bytes]);
+};
+
+const marshalInt64 = (value: bigint): Buffer => {
+  const payload = Buffer.alloc(8);
+  payload.writeBigInt64LE(value);
+  return Buffer.concat([Buffer.from([0x49]), payload]);
+};
+
+const marshalInt32 = (value: number): Buffer => {
+  const payload = Buffer.alloc(4);
+  payload.writeInt32LE(value);
+  return Buffer.concat([Buffer.from([0x69]), payload]);
+};
+
+const marshalSingleItemTuple = (item: Buffer): Buffer =>
+  Buffer.concat([Buffer.from([0x29, 1]), item]);
+
+cliTest(
+  "reads backward-compatible signed 64-bit marshal integers",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-int64-");
+    for (const [name, value, bits] of [
+      ["positive", 42n, 6],
+      ["negative", -1n, 1],
+      ["minimum", -(1n << 63n), 64],
+      ["maximum", (1n << 63n) - 1n, 63],
+    ] as const) {
+      const path = join(root, `${name}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([
+          pythonPycHeader(3531),
+          marshalCode("py311", {
+            constsObject: marshalSingleItemTuple(marshalInt64(value)),
+          }),
+        ]),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = completePycEvidenceSchema.parse(result.json);
+      expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual(
+        { kind: "int", bits, value: value.toString() },
+      );
+    }
+
+    const ordinaryIntPath = join(root, "ordinary-int.pyc");
+    await writeFile(
+      ordinaryIntPath,
+      Buffer.concat([
+        pythonPycHeader(3531),
+        marshalCode("py311", {
+          constsObject: marshalSingleItemTuple(marshalInt32(-42)),
+        }),
+      ]),
+    );
+    const ordinaryInt = await cli.run({
+      arguments: ["inspect-python-pyc", ordinaryIntPath, "--json"],
+    });
+    expect(ordinaryInt.exitCode, ordinaryInt.stderr).toBe(0);
+    const ordinaryEvidence = completePycEvidenceSchema.parse(ordinaryInt.json);
+    expect(
+      ordinaryEvidence.normalized_result.code_objects[0]?.consts,
+    ).toContainEqual({ kind: "int", bits: 6, value: "-42" });
+
+    const truncatedPath = join(root, "truncated.pyc");
+    await writeFile(
+      truncatedPath,
+      Buffer.concat([
+        pythonPycHeader(3531),
+        Buffer.from([0x49]),
+        Buffer.alloc(7),
+      ]),
+    );
+    const truncated = await cli.run({
+      arguments: ["inspect-python-pyc", truncatedPath, "--json"],
+    });
+    expect(truncated.exitCode).toBe(1);
+    expect(truncated.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_python_pyc",
+        issues: [
+          {
+            reason: "invalid_format",
+            message: expect.stringContaining("64-bit integer"),
+          },
+        ],
+      },
+    });
+  },
+);
+
+cliTest(
+  "uses magic-specific cache tables for synthetic pyc bytecode equality",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-inline-cache-");
+    const cases = [
+      { magic: 3495, opcode: 166, cacheUnits: 1 },
+      { magic: 3500, opcode: 25, cacheUnits: 4 },
+      { magic: 3524, opcode: 25, cacheUnits: 1 },
+      { magic: 3531, opcode: 106, cacheUnits: 9 },
+      { magic: 3550, opcode: 25, cacheUnits: 1 },
+      { magic: 3553, opcode: 25, cacheUnits: 1 },
+      { magic: 3564, opcode: 58, cacheUnits: 1 },
+      { magic: 3571, opcode: 81, cacheUnits: 9 },
+    ];
+    for (const { magic, opcode, cacheUnits } of cases) {
+      const cache = Buffer.alloc(cacheUnits * 2);
+      const bytecode = (arg: number, cachePayload: Buffer) =>
+        Buffer.concat([
+          Buffer.from([opcode, arg]),
+          cachePayload,
+          Buffer.from([83, 0]),
+        ]);
+      const changedCache = Buffer.from(cache);
+      changedCache[0] = 1;
+      const frozenSet = Buffer.concat([
+        Buffer.from([0x3e, 4, 0, 0, 0]),
+        ...[
+          bytecode(0, cache),
+          bytecode(0, changedCache),
+          bytecode(1, cache),
+          Buffer.concat([bytecode(0, cache), Buffer.from([0, 0])]),
+        ].map((code) => marshalCode("py311", { bytecode: code })),
+      ]);
+      const pyc = Buffer.concat([
+        pythonPycHeader(magic),
+        marshalCode("py311", { consts: [frozenSet] }),
+      ]);
+      const path = join(root, `inline-caches-${magic}.pyc`);
+      await writeFile(path, pyc);
+
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(
+        result.exitCode,
+        `${result.stderr}\n${JSON.stringify(result.json)}`,
+      ).toBe(0);
+      const evidence = completePycEvidenceSchema.parse(result.json);
+      expect(evidence.normalized_result.code_objects[0]?.consts).toEqual([
+        expect.objectContaining({ kind: "frozenset", length: 3 }),
+      ]);
+      expect(evidence.normalized_result.code_objects[1]?.bytecode).toEqual({
+        bytes: bytecode(0, cache).length,
+        sha256: createHash("sha256").update(bytecode(0, cache)).digest("hex"),
+      });
+      expect(evidence.normalized_result.artifact.sha256).toBe(
+        createHash("sha256").update(pyc).digest("hex"),
+      );
+    }
+  },
+);
+
+cliTest(
+  "keeps distinct Python code names distinct when JavaScript display strings collide",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-unicode-name-");
+    const scalar = Buffer.from([0xf0, 0x9f, 0x98, 0x80]);
+    const surrogatePair = Buffer.from([0xed, 0xa0, 0xbd, 0xed, 0xb8, 0x80]);
+    const code = (name: Buffer) =>
+      marshalCode("py311", {
+        nameObject: marshalUtf8(name),
+        qualnameObject: marshalUtf8(name),
+      });
+    const frozenSet = Buffer.concat([
+      Buffer.from([0x3e, 2, 0, 0, 0]),
+      code(scalar),
+      code(surrogatePair),
+    ]);
+    const path = join(root, "unicode-names.pyc");
+    await writeFile(
+      path,
+      Buffer.concat([
+        pythonPycHeader(3531),
+        marshalCode("py311", { consts: [frozenSet] }),
+      ]),
+    );
+
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(
+      result.exitCode,
+      `${result.stderr}\n${JSON.stringify(result.json)}`,
+    ).toBe(0);
+    const evidence = completePycEvidenceSchema.parse(result.json);
+    const codes = evidence.normalized_result.code_objects;
+    expect(codes[1]?.name).toBe(codes[2]?.name);
+    expect(codes[0]?.consts).toEqual([
+      expect.objectContaining({ kind: "frozenset", length: 2 }),
+    ]);
+  },
+);
 
 cliTest(
   "reports nested CPython code objects through the public CLI",
@@ -20,9 +227,7 @@ cliTest(
       arguments: ["inspect-python-pyc", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-      result.json,
-    );
+    const evidence = completePycEvidenceSchema.parse(result.json);
     expect(evidence.normalized_result.header.python_version).toBe("3.12");
     expect(evidence.normalized_result.code_objects[1]?.name).toBe("inner");
   },
@@ -65,9 +270,7 @@ cliTest(
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-        result.json,
-      );
+      const evidence = completePycEvidenceSchema.parse(result.json);
       expect(evidence.normalized_result.header.magic).toBe(magic);
       expect(evidence.normalized_result.code_objects[0]?.bytecode.bytes).toBe(
         4,
@@ -77,84 +280,128 @@ cliTest(
 );
 
 cliTest(
-  "rejects constructor-invalid signed code flags and preserves unknown positive flags",
+  "preserves historical signed code fields and reports the ambiguous 3410 constructor revision",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-python-pyc-flags-");
-    for (const { name, magic, layout, flags, expected, valid } of [
+    const root = await createTestTempDirectory("rea-python-pyc-signed-fields-");
+    for (const { name, magic, layout, fields, expected } of [
       {
         name: "zero",
         magic: 3531,
         layout: "py311",
-        flags: 0,
-        expected: 0,
-        valid: true,
+        fields: { flags: 0 },
+        expected: { stacksize: 1, flags: 0 },
       },
       {
-        name: "unknown-positive",
+        name: "unknown-positive-flags",
         magic: 3531,
         layout: "py311",
-        flags: 0x40000000,
-        expected: 0x40000000,
-        valid: true,
+        fields: { flags: 0x40000000 },
+        expected: { stacksize: 1, flags: 0x40000000 },
       },
       {
-        name: "negative-py311",
-        magic: 3531,
-        layout: "py311",
-        flags: 0x80000000,
-        expected: -0x80000000,
-        valid: false,
-      },
-      {
-        name: "negative-plus-one-py311",
-        magic: 3531,
-        layout: "py311",
-        flags: 0x80000001,
-        expected: -0x7fffffff,
-        valid: false,
-      },
-      {
-        name: "negative-py37",
+        name: "negative-stacksize-py37",
         magic: 3394,
         layout: "py37",
-        flags: 0x80000000,
-        expected: -0x80000000,
-        valid: true,
+        fields: { stacksize: 0xffffffff },
+        expected: { stacksize: -1, flags: 0 },
+      },
+      {
+        name: "negative-flags-py38-alpha",
+        magic: 3401,
+        layout: "py37",
+        fields: { flags: 0x80000000 },
+        expected: { stacksize: 1, flags: -0x80000000 },
+      },
+      {
+        name: "negative-stack-and-flags-py38-ambiguous",
+        magic: 3410,
+        layout: "py38",
+        fields: { stacksize: 0xffffffff, flags: 0x80000000 },
+        expected: { stacksize: -1, flags: -0x80000000 },
       },
     ] as const) {
       const path = join(root, `${name}.pyc`);
       await writeFile(
         path,
-        Buffer.concat([pythonPycHeader(magic), marshalCode(layout, { flags })]),
+        Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
       );
       const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
-      if (valid) {
-        expect(result.exitCode, result.stderr).toBe(0);
-        const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-          result.json,
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = completePycEvidenceSchema.parse(result.json);
+      expect(evidence.normalized_result.code_objects[0]).toMatchObject(
+        expected,
+      );
+      if (magic === 3410)
+        expect(evidence.normalized_result.limitations).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining("Magic 3410 is shared"),
+          ]),
         );
-        expect(evidence.normalized_result.code_objects[0]?.flags).toBe(
-          expected,
-        );
-      } else {
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject({
-          code: "invalid_request",
-          category: "invalid_input",
-          details: {
-            operation: "inspect_python_pyc",
-            issues: [
-              {
-                reason: "invalid_format",
-                message: expect.stringContaining("co_flags is negative"),
-              },
-            ],
-          },
-        });
-        expect(result.json).not.toHaveProperty("normalized_result");
-      }
+    }
+  },
+);
+
+cliTest(
+  "rejects negative code fields after the pinned constructor validation transition",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-python-pyc-signed-rejection-",
+    );
+    for (const { name, magic, layout, fields, message } of [
+      {
+        name: "negative-stacksize-py38-b2",
+        magic: 3411,
+        layout: "py38",
+        fields: { stacksize: 0xffffffff },
+        message: "co_stacksize is negative",
+      },
+      {
+        name: "negative-flags-py38-b2",
+        magic: 3411,
+        layout: "py38",
+        fields: { flags: 0x80000000 },
+        message: "co_flags is negative",
+      },
+      {
+        name: "negative-stacksize-py311",
+        magic: 3531,
+        layout: "py311",
+        fields: { stacksize: 0xffffffff },
+        message: "co_stacksize is negative",
+      },
+      {
+        name: "negative-flags-py311",
+        magic: 3531,
+        layout: "py311",
+        fields: { flags: 0x80000000 },
+        message: "co_flags is negative",
+      },
+    ] as const) {
+      const path = join(root, `${name}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "inspect_python_pyc",
+          issues: [
+            {
+              reason: "invalid_format",
+              message: expect.stringContaining(message),
+            },
+          ],
+        },
+      });
+      expect(result.json).not.toHaveProperty("normalized_result");
     }
   },
 );
@@ -180,9 +427,7 @@ cliTest(
       arguments: ["inspect-python-pyc", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-      result.json,
-    );
+    const evidence = completePycEvidenceSchema.parse(result.json);
     expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
     expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual({
       kind: "code",
@@ -232,9 +477,7 @@ cliTest(
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-        result.json,
-      );
+      const evidence = completePycEvidenceSchema.parse(result.json);
       expect(evidence.normalized_result.code_objects[0]?.consts).toMatchObject(
         testCase.expected,
       );
@@ -284,9 +527,7 @@ cliTest(
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-        result.json,
-      );
+      const evidence = completePycEvidenceSchema.parse(result.json);
       expect(
         evidence.normalized_result.code_objects[0]?.consts.map((value) =>
           value.kind === "frozenset" || value.kind === "dict"
@@ -367,9 +608,7 @@ cliTest(
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-        result.json,
-      );
+      const evidence = completePycEvidenceSchema.parse(result.json);
       expect(
         evidence.normalized_result.code_objects[0]?.consts.map((value) =>
           value.kind === "frozenset" || value.kind === "dict"
@@ -400,9 +639,7 @@ cliTest(
         arguments: ["inspect-python-pyc", rawPath, "--json"],
       });
       expect(rawResult.exitCode, rawResult.stderr).toBe(0);
-      const rawEvidence = toolContract("inspect_python_pyc").outputSchema.parse(
-        rawResult.json,
-      );
+      const rawEvidence = completePycEvidenceSchema.parse(rawResult.json);
       expect(rawEvidence.normalized_result.code_objects[0]?.flags).toBe(0x40);
     }
   },
@@ -418,9 +655,7 @@ cliTest(
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-      result.json,
-    );
+    const evidence = completePycEvidenceSchema.parse(result.json);
     expect(evidence.normalized_result.header.python_version).toBe("3.7");
     expect(evidence.subject?.local_path).toBe(join(root, "sample.pyc"));
   },
@@ -440,9 +675,7 @@ cliTest.skipIf(process.platform === "win32")(
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
-      result.json,
-    );
+    const evidence = completePycEvidenceSchema.parse(result.json);
     expect(evidence.normalized_result.header.python_version).toBe("3.7");
     expect(evidence.subject?.local_path).toBe(`${root}/link/../sample.pyc`);
   },
@@ -461,3 +694,125 @@ cliTest("reports a truncated pyc as invalid input", async ({ cli }) => {
     details: { operation: "inspect_python_pyc" },
   });
 });
+
+cliTest(
+  "preserves whole Unicode scalars in bounded pyc previews through CLI and MCP",
+  async ({ cli }) => {
+    const cases = [
+      {
+        input: "a" + "😀".repeat(40),
+        preview: "a" + "😀".repeat(39),
+        bytes: 161,
+        truncated: true,
+      },
+      {
+        input: "a" + "😀".repeat(40) + "z",
+        preview: "a" + "😀".repeat(39),
+        bytes: 162,
+        truncated: true,
+      },
+      {
+        input: "a" + "😀".repeat(39),
+        preview: "a" + "😀".repeat(39),
+        bytes: 157,
+        truncated: false,
+      },
+      {
+        input: "😀".repeat(40),
+        preview: "😀".repeat(40),
+        bytes: 160,
+        truncated: false,
+      },
+      {
+        input: "z".repeat(81),
+        preview: "z".repeat(80),
+        bytes: 81,
+        truncated: true,
+      },
+    ];
+    const consts = cases.map(({ input }) => {
+      const text = Buffer.from(input, "utf8");
+      const header = Buffer.alloc(5);
+      header[0] = 0x75;
+      header.writeUInt32LE(text.length, 1);
+      return Buffer.concat([header, text]);
+    });
+    const bytes = Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", { consts }),
+    ]);
+    const root = await createTestTempDirectory("rea-python-pyc-preview-");
+    const path = join(root, "unicode.pyc");
+    await writeFile(path, bytes);
+    const response = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const report = completePycEvidenceSchema.parse(
+      response.json,
+    ).normalized_result;
+    expect(report.coverage.status).toBe("complete");
+    expect(report.code_objects[0]?.consts).toEqual(
+      cases.map((entry) => ({
+        kind: "str",
+        value: entry.preview,
+        bytes: entry.bytes,
+        truncated: entry.truncated,
+      })),
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+    const mcp = await call("inspect_python_pyc", { path });
+    expect(mcp.isError).not.toBe(true);
+    expect(
+      completePycEvidenceSchema.parse(mcp.structuredContent).normalized_result,
+    ).toEqual(report);
+    const toon = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--format", "toon"],
+    });
+    expect(toon.exitCode, toon.stderr).toBe(0);
+    expect(toon.stdout).not.toContain("�");
+  },
+);
+
+cliTest(
+  "distinguishes source surrogate code points from astral scalars at the preview cut",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-source-boundary-");
+    const path = join(root, "source-boundaries.pyc");
+    const prefix = "a".repeat(79);
+    const scalar = Buffer.from(prefix + "𐀀z");
+    const separate = Buffer.concat([
+      Buffer.from(prefix),
+      Buffer.from([0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80]),
+      Buffer.from("z"),
+    ]);
+    await writeFile(
+      path,
+      Buffer.concat([
+        pythonPycHeader(3531),
+        marshalCode("py311", {
+          consts: [marshalUtf8(scalar), marshalUtf8(separate)],
+        }),
+      ]),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const report = completePycEvidenceSchema.parse(
+      response.json,
+    ).normalized_result;
+    expect(report.code_objects[0]?.consts).toEqual([
+      { kind: "str", value: prefix, bytes: 84, truncated: true },
+      { kind: "str", value: prefix + "\ud800", bytes: 86, truncated: true },
+    ]);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+    const mcp = await call("inspect_python_pyc", { path });
+    expect(mcp.isError).not.toBe(true);
+    expect(
+      completePycEvidenceSchema.parse(mcp.structuredContent).normalized_result,
+    ).toEqual(report);
+  },
+);

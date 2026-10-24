@@ -1,8 +1,8 @@
+import { jsonTextCodeUnits } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
 import {
   isObject,
-  isStateWrite,
   locateItem,
   at,
   same,
@@ -67,6 +67,8 @@ export interface WriteDraft {
   readonly updates: UpdateCall[];
   /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
   readonly sequences: Map<string, number>;
+  /** The collection a create writes into when its own path names no state type: the one its returned id was read under. */
+  readonly linked?: string | undefined;
 }
 
 /** A write observation plus the fields its selected read view actually covers, if any. */
@@ -83,12 +85,15 @@ export interface WriteIo {
   readonly requestBody: (ordinal: number) => JsonValue | undefined;
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => void;
+  readonly queryOf: (ordinal: number) => string | null | undefined;
 }
 
 /** What the write gate reads: the manifest tools, the timeline, the read views and the initial state. */
 export interface WriteSimulationInput {
   readonly tools: readonly StateToolFacts[];
   readonly records: readonly StateRecordFacts[];
+  /** POST tools whose calls read state rather than change it. */
+  readonly readOnly: ReadonlySet<string>;
   readonly timed: boolean;
   readonly views: ReadonlyMap<string, StateView>;
   readonly types: readonly StateType[];
@@ -104,6 +109,8 @@ export interface EffectContext {
   readonly io: WriteIo;
   readonly records: readonly StateRecordFacts[];
   readonly timed: boolean;
+  /** Whether a record may change state: a write the capture does not show reading only. */
+  readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly idField: (type: string) => string;
   /** Mark a later read as a create's or update's observation, so it does not check that write. */
@@ -213,6 +220,7 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   ...(context.timed ? { after: step.record.end } : {}),
   viewOf: context.viewOf,
   withBody: context.io.withBody,
+  queryOf: context.io.queryOf,
 });
 
 /** The entity an update's response shows, located by its identity, else a later item read of the target the write resolved. */
@@ -255,7 +263,7 @@ const updatedObservation = (
     idField: entity.idField,
     id: entity.id,
     held: () => true,
-    isWrite: isStateWrite,
+    isWrite: context.isWrite,
     sameItem: (record) => {
       const found = itemTarget(context.state, entity.type, record);
       return found.collection === entity.collection && found.id === entity.id;
@@ -306,8 +314,7 @@ export const retainFixed = (
   context: EffectContext,
   fixed: readonly { readonly sent: JsonValue }[],
 ): void => {
-  if (fixed.length > 0)
-    context.io.retain(64 + JSON.stringify(fixed).length * 2);
+  if (fixed.length > 0) context.io.retain(64 + jsonTextCodeUnits(fixed) * 2);
 };
 
 /** Build an update plan from its exemplar, or add what a later call showed. */
@@ -438,10 +445,10 @@ export const applyUpdate = (
   if (!written.ok || disagrees || unknown) return recorded();
   const facts = { shown: scalars(after.object), sent: scalars(body), kept };
   context.io.retain(
-    64 + JSON.stringify([...facts.shown, ...facts.sent, kept]).length * 2,
+    64 + jsonTextCodeUnits([...facts.shown, ...facts.sent, kept]) * 2,
   );
   draft.updates.push(facts);
-  context.io.retain(64 + JSON.stringify(written.value).length * 2);
+  context.io.retain(64 + jsonTextCodeUnits(written.value) * 2);
   context.state.put(updatedEntity(entity, written.value));
   // A later read that also shows an unmodelled change checks only the members this call sent.
   const sent = Object.keys(body).filter(

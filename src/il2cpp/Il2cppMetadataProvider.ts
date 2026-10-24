@@ -1,3 +1,4 @@
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
@@ -10,9 +11,9 @@ import {
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  ArtifactFileCleanupFailure,
-  artifactFilePrimaryFailure,
-  ArtifactFileCancelled,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  artifactFileCompletion,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
@@ -66,13 +67,15 @@ const BINARY_BYTES = 1024 * 1024 * 1024;
 // A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
 const OUTPUT_BYTES = 64 * 1024 * 1024;
 const failureForPrimary = (
-  cause: unknown,
+  facts: ArtifactFilePrimaryFacts,
   path: string,
   field: "path" | "binary_path" = "path",
   maximum = INPUT_BYTES,
   metadataPath = path,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
+  const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "capacity")
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -109,15 +112,26 @@ const failureForPrimary = (
           },
         ]);
   }
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "integrity"
+  )
     return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
       cause,
     });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
-  if (cause instanceof ArtifactReaderFailure) {
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -139,11 +153,7 @@ const failureForPrimary = (
       return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
         cause,
       });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
+    if (isSelectedRegularFileError(cause))
       return new AnalysisInputError(OPERATION, { cause }, [
         {
           path: [field],
@@ -173,7 +183,7 @@ const failureFor = (
   metadataPath = path,
 ): AnalysisError => {
   const primary = failureForPrimary(
-    artifactFilePrimaryFailure(cause),
+    artifactFilePrimaryFacts(cause),
     path,
     field,
     maximum,
@@ -535,7 +545,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               ? "Field, parameter and return types are not recovered without binary_path; type indices refer to the native binary."
               : decoded.metadata_version === 27
                 ? "Field, parameter and return type names are null for metadata version 27: versions 27.0 to 27.2 share that header number but place the Il2CppType byref flag differently, so a name could gain or lose & without warning; type indices are still reported."
-                : "Field, parameter and return type names are rendered from the binary's Il2CppType table in a C#-like form (keywords for primitives, Namespace.Outer+Inner, generic parameters by metadata name); custom modifiers, array bounds and attributes are not reported.",
+                : "Field, parameter and return type names are rendered from the binary's Il2CppType table in a C#-like form (keywords for primitives, Namespace.Outer+Inner, generic parameters by metadata name); nested generic arguments stay with the type component that declares them. An unresolved type-table slot retains its type index with a null name; a loader-unresolved value inside the type graph is refused rather than rendered from stored placeholder bytes. Custom modifiers, array bounds and attributes are not reported.",
             ...(linked.binary !== null &&
             linked.binary.code_gen_modules_field === null
               ? [
@@ -593,16 +603,11 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
       observe(sourceArtifact(path, snapshot));
       return snapshot;
     } catch (cause) {
-      const outcome =
-        cause instanceof ArtifactFileCleanupFailure
-          ? (cause as ArtifactFileCleanupFailure<StableArtifactSnapshot>)
-              .fileCleanupFailure.outcome
-          : cause instanceof ArtifactFileCancelled
-            ? (cause as ArtifactFileCancelled<StableArtifactSnapshot>)
-                .fileCancellation.outcome
-            : undefined;
-      if (outcome?.kind === "completed")
-        observe(sourceArtifact(path, outcome.value));
+      const completion = artifactFileCompletion(cause);
+      if (completion !== undefined)
+        observe(
+          sourceArtifact(path, completion.value as StableArtifactSnapshot),
+        );
       throw cause;
     }
   }

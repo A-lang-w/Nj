@@ -20,6 +20,8 @@ type MagicEntry = {
   readonly python_version: string;
   readonly code_layout: PythonPycCodeLayout;
   readonly header_bytes: 12 | 16;
+  /** CPython constructor policy for negative co_stacksize/co_flags fields. */
+  readonly negative_code_fields: "accepted" | "revision-dependent" | "rejected";
 };
 
 const magics = (
@@ -27,8 +29,12 @@ const magics = (
   python_version: string,
   code_layout: PythonPycCodeLayout,
   header_bytes: 12 | 16 = PYTHON_PYC_HEADER_BYTES,
+  negative_code_fields: MagicEntry["negative_code_fields"] = "rejected",
 ): ReadonlyArray<readonly [number, MagicEntry]> =>
-  values.map((magic) => [magic, { python_version, code_layout, header_bytes }]);
+  values.map((magic) => [
+    magic,
+    { python_version, code_layout, header_bytes, negative_code_fields },
+  ]);
 
 const consecutive = (
   start: number,
@@ -48,10 +54,12 @@ const consecutive = (
  * bytecode opcode tables.
  */
 export const PYTHON_PYC_MAGIC_TABLE: ReadonlyMap<number, MagicEntry> = new Map([
-  ...magics([3390, 3391], "3.7", "py37", 12),
-  ...magics([3392, 3393, 3394], "3.7", "py37"),
-  ...magics([3400, 3401], "3.8", "py37"),
-  ...magics([3410, 3411, 3412, 3413], "3.8", "py38"),
+  ...magics([3390, 3391], "3.7", "py37", 12, "accepted"),
+  ...magics([3392, 3393, 3394], "3.7", "py37", 16, "accepted"),
+  ...magics([3400, 3401], "3.8", "py37", 16, "accepted"),
+  // 3410 spans 3.8.0a4 and b1; a9f05d69 added constructor sign checks between.
+  ...magics([3410], "3.8", "py38", 16, "revision-dependent"),
+  ...magics([3411, 3412, 3413], "3.8", "py38", 16, "rejected"),
   ...magics([3420, 3421, 3422, 3423, 3424, 3425], "3.9", "py38"),
   ...magics(
     [3430, 3431, 3432, 3433, 3434, 3435, 3436, 3437, 3438, 3439],
@@ -69,6 +77,13 @@ export const PYTHON_PYC_MAGIC_TABLE: ReadonlyMap<number, MagicEntry> = new Map([
 export const pythonPycMagicEntry = (magic: number): MagicEntry | null =>
   PYTHON_PYC_MAGIC_TABLE.get(magic) ?? null;
 
+export const PYTHON_PYC_LIMIT_MAXIMA = {
+  max_file_bytes: 64 * 1024 * 1024,
+  max_objects: 65536,
+  max_depth: 256,
+  max_string_bytes: 8 * 1024 * 1024,
+} as const;
+
 export const inspectPythonPycInputSchema = z.strictObject({
   path: localPathStringSchema.describe(
     "Absolute filesystem path to the selected CPython .pyc file",
@@ -77,7 +92,7 @@ export const inspectPythonPycInputSchema = z.strictObject({
     .number()
     .int()
     .min(16)
-    .max(64 * 1024 * 1024)
+    .max(PYTHON_PYC_LIMIT_MAXIMA.max_file_bytes)
     .default(16 * 1024 * 1024)
     .describe(
       "Maximum selected file size in bytes; exceeding the budget fails without partial success",
@@ -86,7 +101,7 @@ export const inspectPythonPycInputSchema = z.strictObject({
     .number()
     .int()
     .min(1)
-    .max(65536)
+    .max(PYTHON_PYC_LIMIT_MAXIMA.max_objects)
     .default(16384)
     .describe(
       "Maximum marshal objects to examine; exceeding the budget fails without partial success",
@@ -95,7 +110,7 @@ export const inspectPythonPycInputSchema = z.strictObject({
     .number()
     .int()
     .min(1)
-    .max(256)
+    .max(PYTHON_PYC_LIMIT_MAXIMA.max_depth)
     .default(64)
     .describe(
       "Maximum marshal nesting depth; exceeding the budget fails without partial success",
@@ -104,7 +119,7 @@ export const inspectPythonPycInputSchema = z.strictObject({
     .number()
     .int()
     .min(1)
-    .max(8 * 1024 * 1024)
+    .max(PYTHON_PYC_LIMIT_MAXIMA.max_string_bytes)
     .default(1024 * 1024)
     .describe(
       "Maximum bytes retained for one marshal string or byte string; exceeding the budget fails without partial success",
@@ -116,7 +131,10 @@ export const PYTHON_PYC_CONST_PREVIEW_LIMIT = 80;
 export const PYTHON_PYC_INT_PREVIEW_BITS = 256;
 
 /** CPython float repr for values JSON numbers cannot carry. */
-const pythonFloatSchema = z.union([z.number(), z.enum(["inf", "-inf", "nan"])]);
+const pythonFloatSchema = z.union([
+  z.number(),
+  z.enum(["inf", "-inf", "nan", "-0.0"]),
+]);
 
 const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("none") }),
@@ -166,7 +184,7 @@ const pythonCodeFields = {
   posonlyargcount: nonNegativeInt32.nullable(),
   kwonlyargcount: nonNegativeInt32,
   nlocals: nonNegativeInt32.nullable(),
-  stacksize: nonNegativeInt32,
+  stacksize: signedInt32,
   flags: signedInt32,
   names: z.array(z.string()),
   varnames: z.array(z.string()).nullable(),

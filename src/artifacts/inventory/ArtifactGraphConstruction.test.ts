@@ -15,10 +15,35 @@ import {
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
+import { pe } from "../../domain/binaryTarget.fixture.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 import { inventoryCoverage } from "./reader.js";
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
+
+it("joins only observed PE signature bytes across stream chunks", () => {
+  const bytes = pe(0x8664, 8190);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes.subarray(0, 8191));
+  probe.write(bytes.subarray(8191, 8192));
+  const partial = probe.finish(bytes.length);
+  expect(partial.mzWindowsHeaderSignature).toEqual({
+    offset: 8190,
+    bytes: Buffer.from("PE"),
+  });
+  expect(
+    classifyArtifactContent("native.exe", partial, bytes.length).format,
+  ).toBe("unknown");
+  probe.write(bytes.subarray(8192));
+  const complete = probe.finish(bytes.length);
+  expect(complete.mzWindowsHeaderSignature).toEqual({
+    offset: 8190,
+    bytes: Buffer.from([0x50, 0x45, 0, 0]),
+  });
+  expect(
+    classifyArtifactContent("native.exe", complete, bytes.length).format,
+  ).toBe("pe");
+});
 
 it("keeps an ambiguous DOS MZ inventory candidate unknown", () => {
   const bytes = Buffer.alloc(128);
@@ -48,6 +73,19 @@ const entry = (path: string, kind: ArtifactEntry["kind"]): ArtifactEntry => ({
   limitations: [],
   adapterKey: path,
 });
+
+it.each([false, true])(
+  "preserves only a declared ASAR companion fact (unpacked=%s)",
+  (unpacked) => {
+    const occurrence = createOccurrence(
+      { ...entry("main.js", "file"), unpacked },
+      "main.js",
+      null,
+    );
+    if (unpacked) expect(occurrence.unpacked).toBe(true);
+    else expect(occurrence).not.toHaveProperty("unpacked");
+  },
+);
 
 describe("occurrence parent ownership", () => {
   it("selects the nearest unique nested parent", () => {
@@ -359,6 +397,18 @@ describe("bounded FAT inventory classification", () => {
   });
 });
 
+it("keeps byte content format separate from path-specific package role", () => {
+  const probe = createArtifactClassificationProbe();
+  probe.write(Buffer.from("PK\x03\x04", "binary"));
+  expect(
+    classifyArtifactContent("application.apk", probe.finish(4), 4),
+  ).toEqual({
+    kind: "container",
+    format: "apk",
+    contentFormat: "zip",
+  });
+});
+
 describe("FAT prefix observation coverage", () => {
   it("does not invent an observation for a header beyond the retained prefix", () => {
     const bytes = Buffer.alloc(8_224);
@@ -521,7 +571,7 @@ describe("extended artifact signature classification", () => {
       format: "jvm-class",
     });
 
-    // Java 1.1 (45.3) and Java 8 (52.3) class files with non-zero minor versions
+    // Java 1.1 (45.3) allows non-zero minor versions; pre-preview Java 8 (52.3) does not
     const java11Prefix = Buffer.from(prefix);
     java11Prefix.writeUInt16BE(3, 4); // minor = 3
     java11Prefix.writeUInt16BE(45, 6); // major = 45 (Java 1.1)
@@ -533,10 +583,24 @@ describe("extended artifact signature classification", () => {
     });
 
     const java8MinorPrefix = Buffer.from(prefix);
-    java8MinorPrefix.writeUInt16BE(3, 4); // minor = 3
+    java8MinorPrefix.writeUInt16BE(3, 4); // minor = 3 (invalid for major 52)
     java8MinorPrefix.writeUInt16BE(52, 6); // major = 52 (Java 8)
     expect(
       classifyArtifactBytesAtPath("Java8Minor.class", java8MinorPrefix, 65536),
+    ).toEqual({
+      kind: "resource",
+      format: "file",
+    });
+
+    const java17PreviewPrefix = Buffer.from(prefix);
+    java17PreviewPrefix.writeUInt16BE(0xffff, 4); // preview minor = 65535
+    java17PreviewPrefix.writeUInt16BE(61, 6); // major = 61 (Java 17)
+    expect(
+      classifyArtifactBytesAtPath(
+        "Preview17.class",
+        java17PreviewPrefix,
+        65536,
+      ),
     ).toEqual({
       kind: "executable",
       format: "jvm-class",

@@ -1,4 +1,4 @@
-import { hasBoundedJvmClassFraming } from "./jvmClassFile.js";
+import { isJvmClassFile } from "./jvmClassFile.js";
 
 /** loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit. */
 export const machoLoadCommandAlignment = (wide: boolean): 4 | 8 =>
@@ -12,6 +12,8 @@ export interface FatSliceDeclaration {
   readonly alignmentExponent: number;
   readonly cpuType: number;
   readonly cpuSubtype: number;
+  /** FAT64's raw reserved field; FAT32 has no corresponding field. */
+  readonly reserved: number | null;
 }
 
 export interface FatSliceRangeIssue {
@@ -116,8 +118,6 @@ export const readFatContainerHeader = (
   fileSize: number,
 ): FatContainerHeader => {
   if (!hasFatMagic(bytes)) return { state: "not-fat" };
-  if (fileSize <= 16 * 1024 * 1024 && hasBoundedJvmClassFraming(bytes))
-    return { state: "not-fat" };
   if (!Number.isSafeInteger(fileSize) || fileSize < bytes.byteLength)
     return {
       state: "malformed",
@@ -132,6 +132,8 @@ export const readFatContainerHeader = (
     }
     return table;
   }
+  if (bytes.byteLength === fileSize && isJvmClassFile(bytes))
+    return { state: "not-fat" };
   if (table.tableEnd > fileSize) return { state: "not-fat" };
   return {
     ...table,
@@ -273,9 +275,28 @@ export const readFatSliceDeclarations = (
       alignmentExponent: view.getUint32(base + (wide ? 24 : 16), littleEndian),
       cpuType: view.getUint32(base, littleEndian),
       cpuSubtype: view.getUint32(base + 4, littleEndian),
+      reserved: wide ? view.getUint32(base + 28, littleEndian) : null,
     });
   }
   return { status: "parsed", slices };
+};
+
+/** Find an overlapping pair without changing the declarations' table order. */
+export const findOverlappingFatSlices = (
+  declarations: readonly FatSliceDeclaration[],
+): readonly [FatSliceDeclaration, FatSliceDeclaration] | null => {
+  const ranges = [...declarations].sort((a, b) => a.offset - b.offset);
+  for (let index = 1; index < ranges.length; index++) {
+    const previous = ranges[index - 1];
+    const current = ranges[index];
+    if (
+      previous !== undefined &&
+      current !== undefined &&
+      current.offset < previous.offset + previous.size
+    )
+      return [previous, current];
+  }
+  return null;
 };
 
 /** Validate byte-range and table/header identity facts shared by Mach-O readers. */

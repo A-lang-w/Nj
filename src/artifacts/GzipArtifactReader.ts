@@ -22,20 +22,6 @@ import {
 
 const MAX_GZIP_FNAME_BYTES = 4_096;
 
-const deriveFallbackFilename = (fallbackPath: string): string => {
-  const base = basename(fallbackPath);
-  if (base.toLowerCase().endsWith(".gz")) {
-    const stem = base.slice(0, -3);
-    if (stem.length > 0 && stem !== "." && stem !== "..") {
-      return stem;
-    }
-    return "decompressed_payload";
-  }
-  return base.length > 0 && base !== "." && base !== ".."
-    ? `${base}.unpacked`
-    : "decompressed_payload";
-};
-
 const normalizeSafeGzipFilename = (name: string): string | null => {
   if (name.includes("/") || name.includes("\\")) {
     return null;
@@ -47,6 +33,17 @@ const normalizeSafeGzipFilename = (name: string): string | null => {
   }
 };
 
+const deriveFallbackFilename = (fallbackPath: string): string => {
+  const base = basename(fallbackPath);
+  if (base.toLowerCase().endsWith(".gz")) {
+    const stem = base.slice(0, -3);
+    return normalizeSafeGzipFilename(stem) ?? "decompressed_payload";
+  }
+  const unpacked =
+    base.length > 0 && base !== "." && base !== ".." ? `${base}.unpacked` : "";
+  return normalizeSafeGzipFilename(unpacked) ?? "decompressed_payload";
+};
+
 /** Extract original filename from GZIP header flags (RFC 1952) if present. */
 const resolveGzipOriginalFilename = async (
   handle: FileHandle,
@@ -54,6 +51,7 @@ const resolveGzipOriginalFilename = async (
   fallbackPath: string,
 ): Promise<{
   readonly path: string;
+  readonly sourcePath?: string;
   readonly limitations: readonly string[];
 }> => {
   const fallback = deriveFallbackFilename(fallbackPath);
@@ -129,7 +127,11 @@ const resolveGzipOriginalFilename = async (
     };
   }
 
-  return { path: normalizedName, limitations: [] };
+  return {
+    path: normalizedName,
+    ...(normalizedName !== name ? { sourcePath: name } : {}),
+    limitations: [],
+  };
 };
 
 /** Single-stream decompression reader for GZIP archives. */
@@ -195,11 +197,15 @@ export class GzipArtifactReader implements ArtifactReader {
     }
     if (this.cachedEntry === null) {
       const { handle, size } = await this.ensureOpen(signal);
-      const { path: innerName, limitations } =
-        await resolveGzipOriginalFilename(handle, size, this.path);
+      const {
+        path: innerName,
+        sourcePath,
+        limitations,
+      } = await resolveGzipOriginalFilename(handle, size, this.path);
 
       this.cachedEntry = {
         path: innerName,
+        ...(sourcePath !== undefined ? { sourcePath } : {}),
         kind: "file",
         declaredSize: null,
         compressedSize: size,

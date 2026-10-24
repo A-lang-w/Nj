@@ -539,7 +539,8 @@ export const createAnalysisSnapshotWorkflowEntry = (input: {
   };
 };
 
-const evidenceMatchesEntry = (
+/** Match an authenticated Evidence record to one exact provider cache binding. */
+export const evidenceMatchesEntry = (
   evidence: Evidence,
   entry: AnalysisSnapshotEntry,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -881,7 +882,8 @@ const isWorkflowEvidence = (
   evidence.provider.name === entry.execution.provider.name &&
   evidence.provider.version === entry.execution.provider.version;
 
-const evidenceMatchesWorkflowEntry = (
+/** Match an authenticated Evidence record to one exact composed cache binding. */
+export const evidenceMatchesWorkflowEntry = (
   evidence: Evidence,
   entry: AnalysisSnapshotWorkflowEntry,
   snapshot: Pick<AnalysisSnapshot, "target">,

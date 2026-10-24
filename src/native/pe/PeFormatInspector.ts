@@ -162,26 +162,28 @@ const parseSections = (
     const rawOffset = secBuf.readUInt32LE(20);
     const characteristics = secBuf.readUInt32LE(36);
 
-    const endOffset = Math.min(rawOffset + rawSize, buffer.length);
-    const sectionBytes =
-      rawOffset < buffer.length && endOffset >= rawOffset
-        ? buffer.subarray(rawOffset, endOffset)
-        : new Uint8Array(0);
+    const isRangeComplete =
+      rawSize === 0 ||
+      (rawOffset <= buffer.length && rawOffset + rawSize <= buffer.length);
 
-    const rangeKey = `${rawOffset}:${sectionBytes.length}`;
     let entropy: number | undefined;
-    const cached = entropyCache.get(rangeKey);
-    if (cached !== undefined) {
-      entropy = cached;
-    } else if (
-      totalScannedBytes + sectionBytes.length <=
-      MAX_TOTAL_SECTION_SCAN_BYTES
-    ) {
-      entropy = calculateShannonEntropy(sectionBytes);
-      totalScannedBytes += sectionBytes.length;
-      entropyCache.set(rangeKey, entropy);
-    } else {
-      entropy = undefined;
+    if (isRangeComplete) {
+      const sectionBytes =
+        rawSize > 0
+          ? buffer.subarray(rawOffset, rawOffset + rawSize)
+          : new Uint8Array(0);
+      const rangeKey = `${rawOffset}:${sectionBytes.length}`;
+      const cached = entropyCache.get(rangeKey);
+      if (cached !== undefined) {
+        entropy = cached;
+      } else if (
+        totalScannedBytes + sectionBytes.length <=
+        MAX_TOTAL_SECTION_SCAN_BYTES
+      ) {
+        entropy = calculateShannonEntropy(sectionBytes);
+        totalScannedBytes += sectionBytes.length;
+        entropyCache.set(rangeKey, entropy);
+      }
     }
 
     const isPacked =

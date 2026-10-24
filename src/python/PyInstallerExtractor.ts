@@ -9,6 +9,10 @@ import {
   isCArchiveDeclaration,
   MAX_TOC_BYTES,
   MAX_TOC_ENTRIES,
+  parseCArchiveCookieAt,
+  PYINSTALLER_COOKIE_SEARCH_BYTES,
+  PYINSTALLER_COOKIE_V20_BYTES,
+  PYINSTALLER_COOKIE_V21_BYTES,
 } from "../artifacts/pyinstaller/CArchiveLayout.js";
 import { MAX_PYZ_TABLE_BYTES } from "../artifacts/pyinstaller/PyzArchive.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
@@ -34,6 +38,7 @@ export interface PyInstallerCookie {
   readonly tocLength: number;
   readonly pythonVersion: number;
   readonly pythonLibName: string;
+  readonly layout?: "2.0" | "2.1" | undefined;
 }
 
 export interface PyInstallerTocEntry {
@@ -90,44 +95,53 @@ export const isPyInstallerBinary = (buffer: Buffer): boolean => {
   return findPyInstallerCookie(buffer) !== null;
 };
 
-/** Scan binary buffer backwards to locate the PyInstaller CArchive cookie. */
+const scanCookieWithMagic = (
+  tail: Buffer,
+  tailStart: number,
+  fileSize: number,
+  magic: Buffer,
+): PyInstallerCookie | null => {
+  let from = tail.length;
+  while (from >= magic.length) {
+    const relative = tail.subarray(0, from).lastIndexOf(magic);
+    if (relative < 0) break;
+    const cookieOffset = tailStart + relative;
+    const parsed = parseCArchiveCookieAt(
+      tail,
+      relative,
+      cookieOffset,
+      fileSize,
+    );
+    if (parsed.ok) {
+      return {
+        offset: cookieOffset,
+        magic,
+        pkgLength: parsed.value.packageLength,
+        tocOffset: parsed.value.tocOffset,
+        tocLength: parsed.value.tocLength,
+        pythonVersion: tail.readInt32BE(relative + 20),
+        pythonLibName: parsed.value.pythonLibrary ?? "",
+        layout: parsed.value.layout,
+      };
+    }
+    from = relative;
+  }
+  return null;
+};
+
+/** Scan binary buffer backwards to locate a structurally valid PyInstaller CArchive cookie. */
 export const findPyInstallerCookie = (
   buffer: Buffer,
 ): PyInstallerCookie | null => {
-  if (buffer.length < 24) return null;
+  if (buffer.length < PYINSTALLER_COOKIE_V20_BYTES) return null;
+  const tailSize = Math.min(buffer.length, PYINSTALLER_COOKIE_SEARCH_BYTES);
+  const tailStart = buffer.length - tailSize;
+  const tail = buffer.subarray(tailStart);
 
-  let offset = buffer.lastIndexOf(PYINSTALLER_MAGIC);
-  let magic = PYINSTALLER_MAGIC;
-  if (offset === -1) {
-    offset = buffer.lastIndexOf(PYINSTALLER_OLD_MAGIC);
-    magic = PYINSTALLER_OLD_MAGIC;
-  }
-  if (offset === -1 || buffer.length - offset < 24) {
-    return null;
-  }
-
-  const pkgLength = buffer.readUInt32BE(offset + 8);
-  const tocOffset = buffer.readUInt32BE(offset + 12);
-  const tocLength = buffer.readUInt32BE(offset + 16);
-  const pythonVersion = buffer.readInt32BE(offset + 20);
-
-  let pythonLibName = "";
-  if (buffer.length >= offset + 88) {
-    pythonLibName = buffer
-      .subarray(offset + 24, offset + 88)
-      .toString("ascii")
-      .replace(/\0.*$/s, "");
-  }
-
-  return {
-    offset,
-    magic,
-    pkgLength,
-    tocOffset,
-    tocLength,
-    pythonVersion,
-    pythonLibName,
-  };
+  return (
+    scanCookieWithMagic(tail, tailStart, buffer.length, PYINSTALLER_MAGIC) ??
+    scanCookieWithMagic(tail, tailStart, buffer.length, PYINSTALLER_OLD_MAGIC)
+  );
 };
 
 /** Parse Table of Contents and structure from a PyInstaller executable buffer. */
@@ -137,7 +151,15 @@ export const parsePyInstallerArchive = (
   const cookie = findPyInstallerCookie(buffer);
   if (!cookie) return null;
 
-  const cookieBytes = buffer.length >= cookie.offset + 88 ? 88 : 24;
+  const cookieBytes =
+    cookie.layout === "2.0"
+      ? PYINSTALLER_COOKIE_V20_BYTES
+      : cookie.layout === "2.1"
+        ? PYINSTALLER_COOKIE_V21_BYTES
+        : cookie.pkgLength ===
+            cookie.tocOffset + cookie.tocLength + PYINSTALLER_COOKIE_V20_BYTES
+          ? PYINSTALLER_COOKIE_V20_BYTES
+          : PYINSTALLER_COOKIE_V21_BYTES;
   const carchiveOffset = cookie.offset + cookieBytes - cookie.pkgLength;
   if (carchiveOffset < 0 || carchiveOffset + cookie.pkgLength > buffer.length) {
     return null;
