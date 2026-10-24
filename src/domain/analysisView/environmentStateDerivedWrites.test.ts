@@ -48,6 +48,8 @@ describe("values an application derives from others", () => {
   it.each([
     ["2026-10-01T09:00:00.12345678Z", "2026-10-01T10:00:00.120000000Z"],
     ["2026-10-01T09:00:00.120000000Z", "2026-10-01T10:00:00.12345678Z"],
+    ["2026-10-01T09:00:00.12345678Z", "2026-10-01T10:00:00.123456780Z"],
+    ["2026-10-01T09:00:00.123456780Z", "2026-10-01T10:00:00.12345678Z"],
   ])(
     "keeps a create's clock at a fixed width when a held value ends its fraction in a zero (%s, %s)",
     (first, second) => {
