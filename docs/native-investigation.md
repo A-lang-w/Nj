@@ -265,7 +265,11 @@ Undecodable objects retain native display text with `decoding.available: false`
 and a reason, so one uncertain object does not block unrelated inspections.
 Function dossiers and `trace_feature` string matches retain this same string
 evidence, including decoding uncertainty; procedure matches keep their own
-named observation fields without invented string qualifications. Native call edges retain
+named observation fields without invented string qualifications. Tracing keeps
+same-address search alternatives, including different string encodings, in their
+original search order and shares one reference read per target address within
+the call. Reference rows are emitted once per target address, preserving any
+duplicates in the provider's observation. Native call edges retain
 Hopper's partial `CallReference` classification and exact endpoints; detailed
 reference flags remain unavailable rather than being invented. Caller and callee
 procedure inventories come from independent Hopper APIs; REA retains observed
@@ -543,7 +547,12 @@ complete observation.
   when either source is incomplete. Resource wrappers retain their serialized
   class and authored runtime class, including AppKit `NSCustomResource` names.
   Invalid producer JSON and subprocess failures retain captured output with
-  their typed failure reason. Catalog-reader cleanup retains the primary
+  their typed failure reason and selected catalog path. A complete normal
+  assetutil exit declaring that exact catalog path `is not a valid AssetCatalog`,
+  or its observed `Undefined error: 0` / `invalid file` rejection, reports an
+  invalid-artifact failure. Other tool failures retain their own
+  classification; unrecognized diagnostics do not establish malformed bytes.
+  Catalog-reader cleanup retains the primary
   integrity, utility or cancellation failure and its cleanup resources; the
   provider retains catalog, Interface Builder and keyed-archive readers until
   cleanup is confirmed. A catalog failure also retains cleanup failures from

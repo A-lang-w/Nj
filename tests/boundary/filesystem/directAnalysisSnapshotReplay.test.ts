@@ -46,6 +46,7 @@ import {
   CAPABILITIES as GHIDRA_CAPABILITIES,
   GHIDRA_PROVIDER_IDENTITY,
 } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { nativeInventoryRowsSchemas } from "../../../src/domain/native/nativeInventory.js";
 import { APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE } from "../../../src/native/NativeMacOSProviderMetadata.js";
 
 const IDENTITY = {
@@ -209,7 +210,9 @@ const makeProvider = (
             list_procedures: ["0x1000"],
             list_strings: { "0x1000": "fixture" },
             analyze_function: functionDossier,
-            list_names: [{ address: "0x1000", value: "fixture" }],
+            list_names: [
+              { address: "0x1000", value: "fixture" },
+            ] satisfies z.infer<typeof nativeInventoryRowsSchemas.names>,
             search_strings: [{ address: "0x1000", value: "fixture" }],
             search_procedures: [{ address: "0x1000", value: "fixture" }],
             xrefs: [],
