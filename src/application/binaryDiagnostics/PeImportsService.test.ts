@@ -75,6 +75,42 @@ it("records the selected PE and an absent import table", async () => {
   });
 });
 
+it.each(["import_directory", "delay_import_directory"] as const)(
+  "accepts unexamined %s declarations only with partial coverage",
+  async (field) => {
+    for (const status of ["complete", "partial"] as const) {
+      const value: PeImports = {
+        ...report,
+        [field]: { rva: 0xfffffff0, size: 40, locations: [] },
+        coverage: {
+          ...report.coverage,
+          status,
+          reason:
+            status === "partial"
+              ? "First descriptor cannot be examined."
+              : null,
+        },
+        issues:
+          status === "partial"
+            ? [
+                {
+                  code: "malformed_entry",
+                  location: "0xfffffff0",
+                  message: "First descriptor cannot be examined.",
+                },
+              ]
+            : [],
+      };
+      const result = await new PeImportsService({
+        identity,
+        inspect: () => Promise.resolve(ok(value)),
+      }).inspect({ path: report.artifact.path });
+      expect(result.ok).toBe(status === "partial");
+      if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    }
+  },
+);
+
 it("discards an observation if the caller cancels while the provider completes", async () => {
   const controller = new AbortController();
   const service = new PeImportsService({

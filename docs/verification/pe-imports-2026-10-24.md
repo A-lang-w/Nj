@@ -152,3 +152,37 @@ passes **201** checks in 54.062 s (60.363 s waited-child CPU). Sets above overla
 Later main-integration performance was not remeasured; the cost table remains
 pinned to its recorded revisions. These tests use built-in static parsing, not
 a simulated claim of deep-engine behavior.
+
+## Additional RVA review and independent ordinal control
+
+The pre-merge review found a real missing boundary: PE32+ virtual mappings could
+carry descriptors, their terminator, or a DLL name beyond the 32-bit RVA end.
+Five new controls fail before correction (four standard/delay directory cases
+and one NUL beyond the RVA end). The producer now owns one RVA-span predicate
+used by primitive reads and partial row admission. CString reads include only
+bytes within that space. A name whose NUL is the final legal byte still passes.
+
+An unexamined first descriptor retains the declared directory with zero consumed
+locations and partial coverage. The schema represents that observation; the
+service rejects an empty consumed-span list claimed as complete. Four public
+CLI cases and the real MCP SDK/advertised AJV schema exercise both zero-span and
+preceding-row outcomes. The expanded selected workflow passes **213** checks
+in 71.408 s (71.595 s waited-child CPU). The full static gate passes. The earlier
+cost table remains pinned to its revisions; these later RVA checks were not
+included in those measurements.
+
+The ordinal-mask suggestion was tested rather than applied: installed pefile
+2024.8.26 itself uses `addr_of_data & 0x7FFFFFFF` in its ordinal corruption
+heuristic, including PE32+. Independent images with both ILT/IAT words rewritten
+produce these results:
+
+| Raw PE32+ thunk    | pefile result                                               | Native result                          |
+| ------------------ | ----------------------------------------------------------- | -------------------------------------- |
+| `8000000100000001` | ordinal 1 + ExitProcess; `72d9cd67504bb3b9f29c37a226bf4331` | identical, complete raw thunk retained |
+| `8000000000010001` | import table discarded; empty hash                          | hash withheld                          |
+| `8000000000000001` | ordinal 1 + ExitProcess; `72d9cd67504bb3b9f29c37a226bf4331` | identical                              |
+
+All three controls already pass before the RVA correction. Expanding the mask
+to 63 payload bits would diverge from this pinned pefile behavior. The reason
+text now specifies the low 31-bit payload; the raw thunk remains available, and
+matching pefile does not claim loader validity for reserved bits.

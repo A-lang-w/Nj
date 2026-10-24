@@ -30,6 +30,10 @@ the file spans actually read for the descriptor array and its terminator. When
 consecutive descriptors map to discontiguous file bytes (for example across a
 section boundary), each span is reported separately, and each becomes its own
 Evidence file-offset range.
+If the first descriptor cannot be examined, the directory declaration remains
+present with no consumed `locations`, and coverage is partial. Descriptors,
+thunks and NUL-terminated names stay within PE's 32-bit RVA space, including
+PE32+ images; earlier valid rows survive an overflowing descriptor walk.
 
 Each `imports[]` item reports the DLL name, descriptor RVAs, and named or
 ordinal functions with ILT/IAT RVAs. `delay_imports[]` reports RVA-based

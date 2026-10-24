@@ -7,6 +7,7 @@ import {
   peImportFixtureOffset,
   peImportLeadingSectionImage,
   peImportManySectionsImage,
+  peImportDirectoryAtRva,
   peWithoutImportTableFixture,
 } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -60,6 +61,43 @@ cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
     details: { operation: "inspect_pe_imports" },
   });
 });
+
+cliTest(
+  "preserves directory declarations and partial rows at the RVA ceiling",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-pe-imports-cli-directory-rva-",
+    );
+    for (const [kind, rva, retained] of [
+      ["standard", 0xffffffec, 1],
+      ["standard", 0xfffffff0, 0],
+      ["delay", 0xffffffe0, 1],
+      ["delay", 0xfffffff0, 0],
+    ] as const) {
+      const path = join(root, `${kind}-${String(rva)}.exe`);
+      await writeFile(path, peImportDirectoryAtRva(kind, rva));
+      const result = await cli.run({
+        arguments: ["inspect-pe-imports", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = toolContract("inspect_pe_imports").outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      const directory =
+        kind === "standard"
+          ? report.import_directory
+          : report.delay_import_directory;
+      const rows = kind === "standard" ? report.imports : report.delay_imports;
+      expect(directory).toMatchObject({ rva });
+      expect(directory?.locations).toHaveLength(retained);
+      expect(rows).toHaveLength(retained);
+      expect(report.coverage.status).toBe("partial");
+      expect(report.imphash.md5).toBe(
+        kind === "delay" ? "92cef6cc91a85825f3c8a0516517c66f" : null,
+      );
+    }
+  },
+);
 
 cliTest(
   "retains a partial inventory when an IAT RVA overflows",

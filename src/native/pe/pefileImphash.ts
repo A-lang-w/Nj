@@ -98,8 +98,11 @@ const rowDivergence = (
   if (thunk >= tableRva && thunk <= entryRva)
     return "has a thunk that points into its own lookup table; pefile truncates there.";
   if (row.ordinal !== null) {
+    // Pinned pefile 2024.8.26 masks only 31 bits for both widths. In PE32+
+    // it ignores reserved bits 31–62; retain that compatibility behavior and
+    // the source thunk, without asserting that a loader accepts those bits.
     if ((thunk & 0x7fffffffn) > 0xffffn)
-      return "has an ordinal thunk with bits above the 16-bit ordinal; pefile discards the table.";
+      return "has an ordinal thunk whose low 31-bit payload exceeds 16 bits; pefile discards the table.";
     return row.ordinal === 0 ? "imports ordinal 0, which pefile omits." : null;
   }
   return row.name === null ||

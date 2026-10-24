@@ -9,6 +9,8 @@ import {
   peImportImage,
   peImportLeadingSectionImage,
   peImportManySectionsImage,
+  peImportDirectoryAtRva,
+  peImportNameAtRva,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
 import { parsePeImports, PeImportLimitFailure } from "./PeImportParser.js";
@@ -40,6 +42,78 @@ it("reads named PE32+ imports and a pefile-compatible import hash", async () => 
 });
 
 const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
+
+it.each([
+  ["standard", 0xffffffec, 1, "0x100000000"],
+  ["standard", 0xfffffff0, 0, "0xfffffff0"],
+  ["delay", 0xffffffe0, 1, "0x100000000"],
+  ["delay", 0xfffffff0, 0, "0xfffffff0"],
+] as const)(
+  "stops the %s descriptor walk at RVA %s",
+  async (kind, rva, retained, invalid) => {
+    const report = await parse(peImportDirectoryAtRva(kind, rva));
+    const directory =
+      kind === "standard"
+        ? report.import_directory
+        : report.delay_import_directory;
+    const rows = kind === "standard" ? report.imports : report.delay_imports;
+    expect(rows).toHaveLength(retained);
+    expect(directory?.rva).toBe(rva);
+    expect(directory?.locations).toHaveLength(retained);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "malformed_entry", location: invalid }),
+      ]),
+    );
+    expect(peImportsSchema.safeParse(report).success).toBe(true);
+    expect(report.imphash.md5).toBe(
+      kind === "delay" ? "92cef6cc91a85825f3c8a0516517c66f" : null,
+    );
+  },
+);
+
+it("does not consume a DLL name past the uint32 RVA end", async () => {
+  const report = await parse(peImportNameAtRva(0xfffffff8));
+  expect(report.imports[0]?.name).toBeNull();
+  expect(report.imports[0]?.functions).toHaveLength(2);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "name_unreadable",
+        location: "0xfffffff8",
+      }),
+    ]),
+  );
+  expect(report.imphash.md5).toBeNull();
+});
+
+it("accepts a DLL name whose NUL is the final uint32 RVA byte", async () => {
+  const report = await parse(peImportNameAtRva(0xfffffff3));
+  expect(report.imports[0]?.name).toBe("KERNEL32.dll");
+  expect(report.coverage.status).toBe("complete");
+  expect(report.imphash.md5).toBe("92cef6cc91a85825f3c8a0516517c66f");
+});
+
+it.each([
+  [0x8000000100000001n, "72d9cd67504bb3b9f29c37a226bf4331"],
+  [0x8000000000010001n, null],
+  [0x8000000000000001n, "72d9cd67504bb3b9f29c37a226bf4331"],
+] as const)(
+  "matches pefile 2024.8.26 for ordinal thunk %s",
+  async (thunk, expected) => {
+    const bytes = peImportImage();
+    for (const rva of [0x1028, 0x1040])
+      bytes.writeBigUInt64LE(thunk, peImportFixtureOffset(rva));
+    const report = await parse(bytes);
+    expect(report.imports[0]?.functions[0]).toMatchObject({
+      ordinal: 1,
+      thunk_hex: thunk.toString(16),
+    });
+    expect(report.imphash.md5).toBe(expected);
+  },
+);
 
 it("withholds the hash beyond pefile's section parser capacity", async () => {
   const report = await parse(peImportManySectionsImage(2049, 2));

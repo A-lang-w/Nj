@@ -154,7 +154,13 @@ const validReport = (
     report.import_directory,
     report.delay_import_directory,
   ]) {
-    if (directory !== null && !directory.locations.every(inside)) return false;
+    if (
+      directory !== null &&
+      (!directory.locations.every(inside) ||
+        (directory.locations.length === 0 &&
+          report.coverage.status === "complete"))
+    )
+      return false;
   }
   const descriptorsFit = (
     rows: readonly { location: { offset: number; bytes: number } }[],

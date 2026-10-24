@@ -174,6 +174,61 @@ export const peImportImage = (
 export const peWithoutImportTableFixture = (bits: 32 | 64 = 64): Buffer =>
   peImportImage({ bits, importDirectory: false, delayDlls: [] });
 
+/** Add a file-backed PE32+ range while preserving the ordinary low-RVA payload. */
+const withHighImportRange = (
+  source: Buffer,
+  rva: number,
+  data: Buffer,
+): Buffer => {
+  const offset = 0x1000;
+  const bytes = Buffer.alloc(offset + data.length);
+  source.copy(bytes);
+  data.copy(bytes, offset);
+  bytes.writeUInt16LE(2, 134);
+  const section = 152 + 240 + 40;
+  bytes.write(".high", section, "ascii");
+  bytes.writeUInt32LE(data.length, section + 8);
+  bytes.writeUInt32LE(rva, section + 12);
+  bytes.writeUInt32LE(data.length, section + 16);
+  bytes.writeUInt32LE(offset, section + 20);
+  bytes.writeUInt32LE(0x40000040, section + 36);
+  return bytes;
+};
+
+/** Directory descriptor/terminator whose mapped range crosses the uint32 RVA end. */
+export const peImportDirectoryAtRva = (
+  kind: "standard" | "delay",
+  rva: number,
+): Buffer => {
+  const source = peImportImage({
+    delayDlls:
+      kind === "delay"
+        ? [{ name: "ADVAPI32.dll", functions: [{ name: "RegOpenKeyExW" }] }]
+        : [],
+  });
+  const width = kind === "standard" ? 20 : 32;
+  const directory = 152 + 112 + (kind === "standard" ? 1 : 13) * 8;
+  const oldOffset = peImportFixtureOffset(source.readUInt32LE(directory));
+  const bytes = withHighImportRange(
+    source,
+    rva,
+    source.subarray(oldOffset, oldOffset + 2 * width),
+  );
+  bytes.writeUInt32LE(rva, directory);
+  return bytes;
+};
+
+/** A DLL name whose NUL lies outside the uint32 RVA space. */
+export const peImportNameAtRva = (rva: number): Buffer => {
+  const bytes = withHighImportRange(
+    peImportImage(),
+    rva,
+    Buffer.from("KERNEL32.dll\0", "latin1"),
+  );
+  bytes.writeUInt32LE(rva, peImportFixtureOffset(0x1000) + 12);
+  return bytes;
+};
+
 /** Later import section behind an empty or suspicious first section header. */
 export const peImportLeadingSectionImage = (suspicious: boolean): Buffer => {
   const bytes = peImportImage();

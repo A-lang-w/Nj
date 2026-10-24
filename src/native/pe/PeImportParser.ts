@@ -34,6 +34,23 @@ const MAXIMUM_NAME_BYTES = 4096;
 const ENTRIES_PER_YIELD = 1024;
 const ORDINAL_FLAG32 = 0x80000000n;
 const ORDINAL_FLAG64 = 0x8000000000000000n;
+const PE_RVA_END = 0x100000000;
+
+/** PE32+ keeps 32-bit RVAs even though preferred virtual addresses are 64-bit. */
+const fitsRva = (rva: number, size: number): boolean =>
+  Number.isSafeInteger(rva) &&
+  rva >= 0 &&
+  Number.isSafeInteger(size) &&
+  size > 0 &&
+  rva <= PE_RVA_END - size;
+
+const requireRva = (rva: number, size: number): void => {
+  if (!fitsRva(rva, size))
+    throw new BinaryFormatFailure(
+      "malformed",
+      `PE RVA ${hex(rva)} span of ${String(size)} bytes extends beyond the 32-bit RVA space`,
+    );
+};
 
 const PE_LIMITATIONS = [
   "Rows reproduce the PE import and delay-load directories; they do not establish that an import is bound, forwarded or reachable at runtime.",
@@ -150,6 +167,7 @@ export const parsePeImports = async (
   const compatibleRead = createPefileReadCompatibility(image, bytes.length);
   let mappingCompatibility = true;
   const map = (rva: number, size: number): number => {
+    requireRva(rva, size);
     const offset = lookup.offset(base + BigInt(rva), size);
     mappingCompatibility &&= compatibleRead(rva, size, offset);
     return offset;
@@ -163,6 +181,15 @@ export const parsePeImports = async (
     architecture: image.architecture,
   };
   const issues: PeImportIssue[] = [];
+  const admitRva = (rva: number, size: number, label: string): boolean => {
+    if (fitsRva(rva, size)) return true;
+    issues.push({
+      code: "malformed_entry",
+      location: hex(rva),
+      message: `${label} span of ${String(size)} bytes extends beyond the 32-bit RVA space`,
+    });
+    return false;
+  };
   const retain = createRetention();
   let examinedDlls = 0;
   let examinedFunctions = 0;
@@ -175,10 +202,11 @@ export const parsePeImports = async (
   };
 
   const cString = (rva: number): string => {
+    requireRva(rva, 1);
     const raw = lookup.readCString(
       bytes,
       base + BigInt(rva),
-      MAXIMUM_NAME_BYTES,
+      Math.min(MAXIMUM_NAME_BYTES, PE_RVA_END - rva - 1),
     );
     if (raw.length === 0)
       throw new BinaryFormatFailure(
@@ -226,15 +254,7 @@ export const parsePeImports = async (
       await checkpoint();
       const nameRva = nameTableRva + index * thunkWidth;
       const iatRva = addressTableRva + index * thunkWidth;
-      if (nameRva > 0x100000000 - thunkWidth) {
-        issues.push({
-          code: "malformed_entry",
-          location: hex(nameRva),
-          message:
-            "Import lookup table slot extends beyond the 32-bit RVA space",
-        });
-        break;
-      }
+      if (!admitRva(nameRva, thunkWidth, "Import lookup table")) break;
       let thunk: bigint;
       try {
         thunk = reader.word(map(nameRva, thunkWidth), bits);
@@ -247,15 +267,7 @@ export const parsePeImports = async (
         break;
       }
       if (thunk === 0n) break;
-      if (iatRva > 0x100000000 - thunkWidth) {
-        issues.push({
-          code: "malformed_entry",
-          location: hex(iatRva),
-          message:
-            "Import address table slot extends beyond the 32-bit RVA space",
-        });
-        break;
-      }
+      if (!admitRva(iatRva, thunkWidth, "Import address table")) break;
       examinedFunctions += 1;
       functionBudget(examinedFunctions, input.max_functions);
       const thunkHex = thunk.toString(16);
@@ -364,6 +376,10 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         importDirectory.virtual_address + index * IMPORT_DESCRIPTOR_BYTES;
+      if (
+        !admitRva(descriptorRva, IMPORT_DESCRIPTOR_BYTES, "Import descriptor")
+      )
+        break;
       const descriptor = map(descriptorRva, IMPORT_DESCRIPTOR_BYTES);
       consume(spans, descriptor, IMPORT_DESCRIPTOR_BYTES);
       const originalFirstThunk = reader.u32(descriptor);
@@ -433,6 +449,14 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         delayDirectory.virtual_address + index * DELAY_DESCRIPTOR_BYTES;
+      if (
+        !admitRva(
+          descriptorRva,
+          DELAY_DESCRIPTOR_BYTES,
+          "Delay-load descriptor",
+        )
+      )
+        break;
       const descriptor = map(descriptorRva, DELAY_DESCRIPTOR_BYTES);
       consume(spans, descriptor, DELAY_DESCRIPTOR_BYTES);
       const attributes = reader.u32(descriptor);

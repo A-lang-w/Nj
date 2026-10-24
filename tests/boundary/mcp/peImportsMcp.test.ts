@@ -5,7 +5,11 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
+import {
+  peImportImage,
+  peImportDirectoryAtRva,
+} from "../../fixtures/binaryDiagnostics/peImports.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
@@ -22,9 +26,11 @@ mcpTest(
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
-      const advertised = (await client.listTools()).tools.find(
-        (tool) => tool.name === "inspect_pe_imports",
-      );
+      const {
+        toolDefinition: advertised,
+        ajv,
+        outputSchema,
+      } = await advertisedMcpToolSchemas(client, "inspect_pe_imports");
       expect(advertised?.annotations).toMatchObject({
         readOnlyHint: false,
         idempotentHint: true,
@@ -37,6 +43,10 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      expect(
+        ajv.validate(outputSchema, response.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
       const evidence = toolContract("inspect_pe_imports").outputSchema.parse(
         response.structuredContent,
       );
@@ -45,6 +55,29 @@ mcpTest(
       expect(
         evidence.normalized_result.imports[0]?.functions.map((row) => row.name),
       ).toEqual(["GetProcAddress", "ExitProcess"]);
+      const partialPath = join(root, "invalid-first-descriptor.exe");
+      await writeFile(
+        partialPath,
+        peImportDirectoryAtRva("standard", 0xfffffff0),
+      );
+      const partial = await client.callTool({
+        name: "inspect_pe_imports",
+        arguments: { path: partialPath },
+      });
+      expect(partial.isError, JSON.stringify(partial.content)).not.toBe(true);
+      expect(
+        ajv.validate(outputSchema, partial.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
+      const partialReport = toolContract(
+        "inspect_pe_imports",
+      ).outputSchema.parse(partial.structuredContent).normalized_result;
+      expect(partialReport.import_directory).toMatchObject({
+        rva: 0xfffffff0,
+        locations: [],
+      });
+      expect(partialReport.coverage.status).toBe("partial");
+      expect(partialReport.imphash.md5).toBeNull();
     } finally {
       await session.close();
     }

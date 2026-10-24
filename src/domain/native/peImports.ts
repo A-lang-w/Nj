@@ -89,12 +89,14 @@ const peDelayImportDllSchema = z.strictObject({
  * `locations` are the file spans the parser actually consumed for the
  * descriptor array and its terminator, in RVA order. Consecutive descriptors
  * that map to discontiguous file bytes produce separate spans.
+ * No bytes are consumed when the first slot cannot be examined; the declared
+ * directory remains present and coverage is partial.
  */
 const directorySchema = z
   .strictObject({
     rva: uint,
     size: uint,
-    locations: z.array(range).min(1),
+    locations: z.array(range),
   })
   .nullable();
 
