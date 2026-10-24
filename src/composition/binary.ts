@@ -4,6 +4,7 @@ import type { AppConfig } from "../config/types.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
+import { BinaryNinjaHeadlessProvider } from "../binaryNinjaHeadless/BinaryNinjaHeadlessProvider.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
 import type { Logger } from "pino";
@@ -57,6 +58,11 @@ const composeDeepBinarySession = (
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
+  const binaryNinjaHeadless = new BinaryNinjaHeadlessProvider(
+    config,
+    environment,
+    { logger: logger.child({ layer: "bridge", provider: "binary-ninja" }) },
+  );
   const auxiliaryDeclarations =
     auxiliaryAnalysisProviderDeclarations(environment);
   const nativeInspectionAvailable =
@@ -68,7 +74,7 @@ const composeDeepBinarySession = (
     );
   return composeBinarySession(
     new AnalysisProviderRegistry(
-      [hopper, ghidra, ida, kuna],
+      [hopper, ghidra, ida, kuna, binaryNinjaHeadless],
       config.analysisProvider,
       nativeInspectionAvailable ? isAppleDispatchMetadataTarget : undefined,
     ),

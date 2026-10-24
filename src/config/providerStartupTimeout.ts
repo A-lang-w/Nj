@@ -6,6 +6,9 @@ export const DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS = 330_000;
 /** Default absolute deadline for Hopper launch, analysis, bridge, and readiness. */
 export const DEFAULT_HOPPER_STARTUP_TIMEOUT_MS = 120_000;
 
+/** Default absolute deadline for Binary Ninja API import, target load, and analysis. */
+export const DEFAULT_BINARY_NINJA_STARTUP_TIMEOUT_MS = 180_000;
+
 /** Default deadline for Darwin ownership-helper `swiftc` compilation. */
 /** Fresh Swift SDK cache took ~88s on the supported Intel macOS VM. */
 export const DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS = 120_000;

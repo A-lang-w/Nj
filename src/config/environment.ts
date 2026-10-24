@@ -10,6 +10,7 @@ import {
 } from "./ghidraLanguageOverride.js";
 import { ghidraDisabledAnalyzersSchema } from "./ghidraDisabledAnalyzers.js";
 import {
+  DEFAULT_BINARY_NINJA_STARTUP_TIMEOUT_MS,
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
@@ -54,6 +55,19 @@ const environmentSchema = z.object({
     .refine(isAbsolute, "REA_IDA_MCP_CONFIG must be absolute")
     .optional(),
   REA_JEB_MCP_TIMEOUT_MS: providerStartupTimeoutSchema.optional(),
+  BINARY_NINJA_INSTALL_DIR: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "BINARY_NINJA_INSTALL_DIR must be absolute")
+    .optional(),
+  REA_BINARY_NINJA_PYTHON: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_BINARY_NINJA_PYTHON must be absolute")
+    .optional(),
+  REA_BINARY_NINJA_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema.default(
+    DEFAULT_BINARY_NINJA_STARTUP_TIMEOUT_MS,
+  ),
   GHIDRA_INSTALL_DIR: z
     .string()
     .min(1)

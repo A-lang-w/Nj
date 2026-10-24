@@ -113,6 +113,13 @@ export const parseConfig = (
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
       : { idaMcpConfigPath: env.REA_IDA_MCP_CONFIG }),
+    ...(env.BINARY_NINJA_INSTALL_DIR === undefined
+      ? {}
+      : { binaryNinjaInstallDir: env.BINARY_NINJA_INSTALL_DIR }),
+    ...(env.REA_BINARY_NINJA_PYTHON === undefined
+      ? {}
+      : { binaryNinjaPythonPath: env.REA_BINARY_NINJA_PYTHON }),
+    binaryNinjaStartupTimeoutMs: env.REA_BINARY_NINJA_STARTUP_TIMEOUT_MS,
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: env.REA_GHIDRA_STARTUP_TIMEOUT_MS,

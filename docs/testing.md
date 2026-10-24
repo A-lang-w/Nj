@@ -1235,6 +1235,43 @@ Native IDA MCP verification uses `"protocol": "native"` with an already-running 
 
 The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/main/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](ida-provider.md#optional-native-ida-mcp-bridge).
 
+## Binary Ninja headless lane
+
+Adapter tests in `src/binaryNinjaHeadless/` replace the Python interpreter
+with `tests/fixtures/fakeBinaryNinjaBridge.mjs`, a Node process that speaks the
+bridge's newline-delimited JSON protocol and misbehaves on request. They cover
+the isolated launch contract (`-I -u`, `--api-dir`, disabled user plugins and
+settings), inventory and function projections against the shared dossier and
+instruction-window schemas, caller-mistake attribution, startup failure
+attribution (API import failure, digest and view-type mismatch, early exit),
+the startup deadline, cancellation during load, protocol faults, reply-size
+bounds, and idempotent close. `bridge/binaryninja/test_rea_binaryninja_bridge.py`
+runs under `npm run test:python` with a fake `binaryninja` module and covers
+request framing, the Raw-view digest check before analysis, facet selection and
+observation shaping. None of this establishes real engine behavior.
+
+There is no `verify:binary-ninja-headless` lane yet. The initial real-engine
+check ran the production CLI by hand on Windows 11 x64 with Binary Ninja
+6.0.10905 (engine-reported product type `User`, bundled CPython 3.13.14) against
+the shipped `C:\Windows\System32\where.exe` (SHA-256
+`f51fab8041e5023d7290b540a2106f051ef0bd2bc3443c9daf318628b560fa29`), with no
+path settings so the vendor default installation was discovered:
+`rea decompile --procedure __wmainCRTStartup`, `rea function --procedure
+__wmainCRTStartup --detail complete`, `rea analyze`, `rea search --pattern
+'cannot be run'` and `rea trace --query 'cannot be run'`, each with
+`--provider binary-ninja-headless --json`. Every result parsed against the
+built Evidence schema and its tool output contract; the dossier parsed against
+`functionDossierSchema` with 2 body ranges, 93 instructions, 31 basic blocks, 1
+caller, 7 callees, 2 unresolved call sites and 35 outgoing references, and the
+overview reported 111 procedures and 530 strings without segments. Each
+one-shot CLI run took about 5.8 s wall clock cold, of which the bridge reported
+about 2.6 s for load plus auto-analysis; the API import took about 1.2 s in a
+separate direct probe. Token, CPU and memory costs were not measured.
+MCP parity, Linux and macOS hosts, ELF and Mach-O targets, other Binary Ninja
+releases and license editions, and cancellation against the real engine remain
+unverified. A verifier lane modeled on `scripts/verify-real-ida.mjs` is the
+proposed next step; see the [provider guide](binaryninja-headless-provider.md).
+
 ## Kuna lane
 
 `npm run verify:kuna` requires a caller-supplied `kuna` in `REA_KUNA_COMMAND`

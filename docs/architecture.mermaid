@@ -15,6 +15,7 @@ graph TD
         SERVER["src/server/<br/>MCP request translation<br/>createServer, tool registration, toolResult<br/>http/: streamable HTTP listener and node:http bridge"]
         HOPPER_BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
         GHIDRA_BRIDGE["bridge/ghidra/ReaGhidraBridge.java<br/>Packaged HeadlessScript<br/>inventory, decompiler, references, CFG"]
+        BINARY_NINJA_BRIDGE["bridge/binaryninja/rea_binaryninja_bridge.py<br/>Runs in an owned headless Binary Ninja interpreter<br/>NDJSON stdio: inventory, Pseudo C, references, CFG"]
         INSTALL["src/cli/ + src/application/Setup*<br/>Host installation adapters<br/>macOS: verified vendor DMG to ~/Applications<br/>Linux: verified vendor package + apt/dnf/pacman"]
     end
 
@@ -36,6 +37,7 @@ graph TD
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
         GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & function analysis<br/>snapshot, Unix/Windows transport, bounded lifecycle"]
         IDA["src/ida/<br/>Upstream MCP contract adaptation<br/>live GUI binding or owned headless database"]
+        BINARY_NINJA["src/binaryNinjaHeadless/<br/>BYO Binary Ninja headless candidate<br/>install discovery, owned interpreter, digest-bound view"]
         KUNA["src/kuna/<br/>BYO Kuna deep analysis candidate<br/>discovery reads metadata; version probe on target open"]
         IDA_MCP["External ida-pro-mcp<br/>GUI proxy or database supervisor<br/>upstream installation and engine lifecycle"]
 
@@ -126,11 +128,14 @@ graph TD
     COMPOSITION --> HOPPER
     COMPOSITION --> GHIDRA
     COMPOSITION --> IDA
+    COMPOSITION --> BINARY_NINJA
     COMPOSITION --> KUNA
     COMPOSITION --> AUX
     IDA --> IDA_MCP
     IDA --> CONTRACTS
     IDA --> DOMAIN
+    BINARY_NINJA --> CONTRACTS
+    BINARY_NINJA --> DOMAIN
     SESSION --> AUX
     APP --> JS_RECON
     APP --> INSTALL
@@ -155,8 +160,10 @@ graph TD
     GDB --> DOMAIN
     HOPPER --> HOPPER_BRIDGE
     GHIDRA --> GHIDRA_BRIDGE
+    BINARY_NINJA --> BINARY_NINJA_BRIDGE
     HOPPER --> PROCESS
     GHIDRA --> PROCESS
+    BINARY_NINJA --> PROCESS
     KUNA --> PROCESS
     GHIDRA --> PROVIDER_OWNERS
     APP --> PROVIDER_OWNERS
