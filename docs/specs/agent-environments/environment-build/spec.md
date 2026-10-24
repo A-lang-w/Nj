@@ -29,7 +29,7 @@ before building.
   repeated rule is refused, as the views refuse it.
 - For the same capture path, every bundle file is byte-identical to what
   `inspect-web-network-capture --format json`, `inspect-analysis-view --format
-json` (the same rules in the views' order) and `environment-export` (the
+  json` (the same rules in the views' order) and `environment-export` (the
   build's name) write, Evidence ids included. The Evidence is serialized once
   into one exactly sized buffer, whose bytes are both authenticated and shipped.
 - The name is `--name`, else the manifest's, unless the origin is a loopback
