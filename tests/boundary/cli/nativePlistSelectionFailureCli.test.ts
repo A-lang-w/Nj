@@ -6,6 +6,8 @@ import { describe, expect } from "vitest";
 import { z } from "zod";
 
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { inspectPlistSchema } from "../../../src/domain/native/nativeInspection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -147,11 +149,7 @@ describe.skipIf(process.platform !== "darwin")(
 describe.skipIf(process.platform !== "darwin")(
   "native plist CLI decode diagnostics",
   () => {
-    cliTest.for([
-      "not a property list",
-      "<plist><dict><key>value</key><integer> 42 </integer></dict></plist>",
-      "<plist><dict><key>value</key><true>x</true></dict></plist>",
-    ])(
+    cliTest.for(["not a property list"])(
       "preserves native decode diagnostics for %s",
       async (source, { cli }) => {
         const app = await fixtureApp();
@@ -203,6 +201,23 @@ describe.skipIf(process.platform !== "darwin")(
         expect(capturedDiagnostic(fallback.json)).toContain(
           "Property List error:",
         );
+        for (const args of [[], ["--relative-path", malformed]]) {
+          const direct = await cli.run({
+            arguments: ["inspect-plist", malformed, ...args, "--json"],
+            environment,
+          });
+          expect(direct.exitCode).toBe(1);
+          expect(direct.json).toMatchObject({
+            code: "invalid_request",
+            details: {
+              issues: [{ path: ["path"], reason: "invalid_value" }],
+              captured_output: { exit_code: 1 },
+            },
+          });
+          expect(capturedDiagnostic(direct.json)).toContain(
+            "Property List error:",
+          );
+        }
         expect(await readFile(malformed, "utf8")).toBe(source);
         expect(await readFile(defaultPlist, "utf8")).toBe(source);
       },
@@ -211,40 +226,57 @@ describe.skipIf(process.platform !== "darwin")(
 );
 
 describe.skipIf(process.platform !== "darwin")(
-  "native plist CLI direct target selection",
+  "native plist CLI unresolved source scalars",
   () => {
     cliTest.for([
-      "<plist><dict><key>value</key><integer> 42 </integer></dict></plist>",
-      "<plist><dict><key>value</key><true>x</true></dict></plist>",
-    ])(
-      "classifies the selected malformed plist as input: %s",
-      async (source, { cli }) => {
-        const root = await createTestTempDirectory("rea-plist-target-input-");
-        const path = join(root, "chosen.plist");
+      ["integer", " 42 "],
+      ["true", "x"],
+    ] as const)(
+      "retains the unresolved <%s> literal %j through plist selections",
+      async ([element, literal], { cli }) => {
+        const app = await fixtureApp();
+        const path = join(app, "Contents/Chosen.plist");
+        const defaultPath = join(app, "Contents/Info.plist");
+        const source = `<plist><dict><key>CFBundleExecutable</key><string>App</string><key>value</key><${element}>${literal}</${element}></dict></plist>`;
         await writeFile(path, source);
-        for (const args of [[], ["--relative-path", path]]) {
+        await writeFile(defaultPath, source);
+        for (const [args, sourcePath] of [
+          [[app, "--relative-path", "Contents/Chosen.plist"], path],
+          [[join(app, "Contents/MacOS/App")], defaultPath],
+          [[path], path],
+          [[path, "--relative-path", path], path],
+        ] as const) {
           const result = await cli.run({
-            arguments: ["inspect-plist", path, ...args, "--json"],
+            arguments: ["inspect-plist", ...args, "--json"],
             environment,
           });
-          expect(result.exitCode).toBe(1);
-          expect(result.json).toMatchObject({
-            code: "invalid_request",
-            details: {
-              issues: [
-                {
-                  path: ["path"],
-                  message: expect.stringContaining("Property List error:"),
-                },
-              ],
-              captured_output: { exit_code: 1 },
-            },
-          });
-          expect(capturedDiagnostic(result.json)).toContain(
-            "Property List error:",
+          expect(result.exitCode, result.stdout).toBe(0);
+          const observed = inspectPlistSchema.parse(
+            parseEvidence(result.json).normalized_result,
           );
+          expect(observed).toMatchObject({
+            format: "xml",
+            source_path: sourcePath,
+            value: {
+              CFBundleExecutable: "App",
+              value: {
+                $plist_type: "unknown",
+                element,
+                literal,
+                reason: "invalid-literal",
+              },
+            },
+            limitations: [
+              expect.stringMatching(
+                /^1 XML scalar value\(s\) could not be established/u,
+              ),
+            ],
+            provenance: [{ tool: "file", exit: { code: 0, signal: null } }],
+          });
+          expect(observed.provenance.map(({ tool }) => tool)).toEqual(["file"]);
         }
         expect(await readFile(path, "utf8")).toBe(source);
+        expect(await readFile(defaultPath, "utf8")).toBe(source);
       },
     );
   },
