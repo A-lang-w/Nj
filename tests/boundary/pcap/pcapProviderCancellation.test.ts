@@ -144,9 +144,14 @@ const probeCleanupFixture = async (rereadCloseFailure = false) => {
     if (tsharkReads !== 3) return snapshot;
     if (!rereadCloseFailure) return { ...snapshot, sha256: "0".repeat(64) };
     const resource = `executable-read:${tshark}`;
+    const lease = new AnalysisCleanupLease(async () => {}, [resource]);
+    const scope = args[4];
+    if (scope === undefined)
+      throw new Error("Expected artifact resource owner");
+    scope.retain({ kind: "lease", resource, lease });
     throw new ArtifactReaderFailure("io", "injected executable read failure", {
       cleanup: { reason: "injected file close failure", resources: [resource] },
-      cleanupLeases: [new AnalysisCleanupLease(async () => {}, [resource])],
+      cleanupLeases: [lease],
     });
   };
   const provider = new PcapProvider({
@@ -196,6 +201,9 @@ it("keeps an executable re-read's own cleanup live beside the probe's pending cl
       expect.stringMatching(/^process-group:/u),
     ]),
   );
+  await provider.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupResources).toEqual([]);
 });
 
 it("availability surfaces a probe's pending cleanup instead of reporting the tool unavailable", async () => {

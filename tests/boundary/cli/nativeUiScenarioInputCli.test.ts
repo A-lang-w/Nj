@@ -28,11 +28,10 @@ describe("native UI scenario CLI input", () => {
 
       expect(result.exitCode).not.toBe(0);
       expect(result.json).toMatchObject({
-        code: "invalid_request",
-        details: {
-          operation: "capture_native_ui_scenario",
-          issues: [{ path: ["steps"], reason: "missing_argument" }],
-        },
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({ path: "steps", code: "invalid_type" }),
+        ],
       });
     },
   );

@@ -30,6 +30,7 @@ const probeResultSchema = z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
       name: z.literal("fixture-procedure"),
+      symbol: z.null(),
       classification: z.null(),
       body: z.strictObject({
         available: z.literal(false),
@@ -44,6 +45,7 @@ const probeResultSchema = z.strictObject({
     length: z.number(),
     signature: z.literal("int fixture-procedure()"),
     locals: z.array(z.unknown()),
+    symbol: z.null(),
     classification: z.null(),
     body: z.strictObject({
       available: z.literal(false),
@@ -55,6 +57,7 @@ const probeResultSchema = z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
       name: z.literal("fixture-procedure"),
+      symbol: z.null(),
       classification: z.null(),
       body: z.strictObject({
         available: z.literal(false),

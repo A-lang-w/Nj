@@ -19,7 +19,31 @@ const fileClose = vi.hoisted(() => ({
   deniedRemoval: undefined as string | undefined,
   cancel: undefined as AbortController | undefined,
   handles: [] as FileHandle[],
+  physicalFailure: undefined as unknown,
 }));
+
+vi.mock(
+  "../../../src/artifacts/ArtifactFileOperation.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../../src/artifacts/ArtifactFileOperation.js")
+      >();
+    return {
+      ...actual,
+      withArtifactRegularFile: async (
+        ...args: Parameters<typeof actual.withArtifactRegularFile>
+      ) => {
+        try {
+          return await actual.withArtifactRegularFile(...args);
+        } catch (cause: unknown) {
+          if (fileClose.selected(args[0])) fileClose.physicalFailure = cause;
+          throw cause;
+        }
+      },
+    };
+  },
+);
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -59,6 +83,7 @@ afterEach(() => {
   fileClose.deniedRemoval = undefined;
   fileClose.cancel = undefined;
   fileClose.handles = [];
+  fileClose.physicalFailure = undefined;
 });
 
 const linuxX64 = it.skipIf(
@@ -177,7 +202,8 @@ linuxX64.each([
     expect(result.error).toBeInstanceOf(
       denied ? ProviderCleanupError : AnalysisCancelledError,
     );
-    const failure = result.error.cause;
+    if (!denied) expect(result.error.cause).toBe(controller.signal.reason);
+    const failure = denied ? result.error.cause : fileClose.physicalFailure;
     const physical =
       failure instanceof ArtifactFileCleanupFailure
         ? failure.fileCleanupFailure

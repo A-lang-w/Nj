@@ -271,9 +271,12 @@ it.each([
       },
     };
     let failed = false;
+    let displaySeen = false;
     const runner: NativeCommandRunner = {
       async run(tool, args) {
-        const slice = args.includes("-a");
+        const display = args.includes("--verbose=4");
+        const slice = display && displaySeen;
+        if (display) displaySeen = true;
         const selected =
           stage === "slice"
             ? slice
@@ -281,9 +284,7 @@ it.each([
               ? args.includes("-r-")
               : stage === "entitlements"
                 ? args.includes("--entitlements")
-                : !args.includes("-r-") &&
-                  !args.includes("--entitlements") &&
-                  !slice;
+                : display && !slice;
         if (selected) {
           failed = true;
           await rm(path);
@@ -296,6 +297,10 @@ it.each([
             ).run(tool, args);
           return err(new NativeCommandFailure(tool, "nonzero-exit", 1));
         }
+        if (stage === "slice" && display && !slice)
+          return new NativeFixtureRunner({
+            codesign: "Format=Mach-O universal (arm64 x86_64)\n",
+          }).run(tool, args);
         if (stage === "slice" && args.includes("-r-"))
           return unsigned.run(tool, args, {});
         return replay.run(tool, args);
@@ -498,7 +503,7 @@ it.skipIf(process.platform !== "darwin")(
     if (!result.ok) throw result.error;
     const parsed = inspectSignatureSchema.parse(result.value.result);
     expect(parsed).toMatchObject({ signed: false });
-    expect(parsed.provenance).toHaveLength(3);
+    expect(parsed.provenance).toHaveLength(5);
     expect(parsed.provenance.every(({ exit }) => exit.code === 1)).toBe(true);
   },
 );

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
-import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
@@ -32,20 +32,30 @@ describe("artifact directory diagnostics", () => {
         const result = await new ArtifactProvider(process.env)
           .createClient(target.value)
           .execute("inventory_artifact", {});
-        expect(result.ok).toBe(false);
-        if (result.ok) return;
-        expect(projectAnalysisError(result.error)).toMatchObject({
-          code: "artifact_operation_failed",
-          details: {
-            operation: "inventory_artifact",
-            reason: "io",
-          },
+        if (!result.ok) throw result.error;
+        const inventory = artifactInventoryResultSchema.parse(
+          result.value.result,
+        );
+        expect(inventory.coverage.status).toBe("unknown");
+        const blocked = inventory.occurrences.find(
+          ({ logical_path }) => logical_path === "Contents/blocked.txt",
+        );
+        expect(blocked).toMatchObject({
+          hash_status: "unavailable",
+          artifact_id: null,
         });
-        const projected = projectAnalysisError(result.error);
-        const detail = projected.details?.detail;
-        expect(typeof detail).toBe("string");
-        expect(detail).toContain("Denied.app/Contents/blocked.txt");
-        expect(detail).toContain("EACCES");
+        expect(blocked?.limitations.join("\n")).toContain(
+          "Denied.app/Contents/blocked.txt",
+        );
+        expect(blocked?.limitations.join("\n")).toContain("EACCES");
+        expect(inventory.occurrences).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              logical_path: "Contents/MacOS/Fixture",
+              hash_status: "verified",
+            }),
+          ]),
+        );
       } finally {
         await chmod(blockedPath, 0o600);
       }

@@ -13,7 +13,10 @@ import { build } from "plist";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
+import {
+  execFileOutput,
+  ExecFileOutputCancelledError,
+} from "../../../../src/process/ExecFileOutput.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -981,11 +984,7 @@ describe("DMG attach cancellation and preexisting mounts", () => {
                   join(mountPoint ?? "", "hello.txt"),
                   "after exit",
                 );
-                reject(
-                  Object.assign(new Error("attach aborted"), {
-                    name: "AbortError",
-                  }),
-                );
+                reject(new ExecFileOutputCancelledError(signal?.reason));
               });
             },
             { once: true },

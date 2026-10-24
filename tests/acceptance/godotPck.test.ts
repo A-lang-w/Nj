@@ -329,7 +329,9 @@ cliTest(
     });
     const saved = await readEvidenceBundle(bundle);
     if (!saved.ok) throw saved.error;
-    const evidence = saved.value.records[0];
+    const evidence = saved.value.records.find(
+      (record) => record.operation === "inspect_artifact",
+    );
     if (evidence === undefined) throw new Error("Missing complete inspection");
     expect(graphFrom(evidence).occurrences).toHaveLength(3);
     const before = await readFile(bundle);

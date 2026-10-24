@@ -586,6 +586,7 @@ describe("full-output token counts", () => {
         category: "unavailable",
         message: "Missing target",
         retryable: false,
+        remediation: { action: "Select an available target." },
       },
       { command: "fixture", duration: "0ms", format: "toon" },
     );
@@ -729,7 +730,11 @@ describe("CLI result output surface", () => {
         details: {
           reported_limits: {
             formatted_characters:
-              expectedCharacters +
+              '{"methods":['.length +
+              count * encodedLeaf.length +
+              (count - 1) +
+              "]}".length +
+              1 +
               JSON.stringify({ ok: true, data: null, meta: report.meta })
                 .length -
               4,

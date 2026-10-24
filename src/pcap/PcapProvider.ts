@@ -280,7 +280,6 @@ export class PcapProvider {
     let cleanup: PcapCommandCleanup | undefined;
     let retainedCommand: RetainedPcapCommand | undefined;
     let output: Awaited<ReturnType<typeof runPcapCommand>>;
-    let commandReturned = false;
     const selected = this.wiresharkIdentities.get(command);
     try {
       if (selected !== undefined) {
@@ -327,7 +326,6 @@ export class PcapProvider {
           cleanup = { reason, resources, capturedOutput };
         },
       });
-      commandReturned = true;
       if (selected !== undefined) {
         const after = await this.readToolIdentity(operation, selected.path);
         assertWiresharkExecutableIdentity(
@@ -346,18 +344,10 @@ export class PcapProvider {
       }
       assertValidPcapCommandText(operation, stage, output);
     } catch (cause) {
-      if (
-        retainedCommand !== undefined &&
-        cause instanceof AnalysisError &&
-        cause.cleanupIncomplete
-      ) {
-        retainedCommand.failure = cause;
-        throw cause;
-      }
-      // A returned probe has no snapshot to carry its pending command cleanup,
-      // so a later failure (such as the post-run identity check) must carry it.
-      // Failures raised by the command itself keep their own cleanup outcome.
-      if (commandReturned && inputPath === undefined && cleanup !== undefined) {
+      // A probe has no snapshot to carry its retained command cleanup. Keep
+      // that owner live through command failure and post-run identity failure,
+      // independently of any cleanup owned by the classified error itself.
+      if (inputPath === undefined && cleanup !== undefined) {
         const pending = probeCleanupFailure(
           operation,
           cleanup,
@@ -373,6 +363,12 @@ export class PcapProvider {
           operation,
         ).bindCleanupDependencies([primary, pending]);
       }
+      if (
+        retainedCommand !== undefined &&
+        cause instanceof AnalysisError &&
+        cause.cleanupIncomplete
+      )
+        retainedCommand.failure = cause;
       throw cause;
     }
     if (inputPath === undefined && cleanup !== undefined) {

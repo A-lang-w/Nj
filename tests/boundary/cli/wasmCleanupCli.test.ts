@@ -108,11 +108,16 @@ it.runIf(canDenyCleanup)(
       expect(primaryAndCleanupFail).toMatchObject({
         code: "cleanup_incomplete",
         details: {
-          execution_failure: "execution_failure",
+          execution_failure: "invalid_request",
           diagnostics: {
             primary_error: { code: "cleanup_incomplete" },
             cleanup_error: { code: "cleanup_incomplete" },
           },
+        },
+      });
+      expect(primaryAndCleanupFail.details).toMatchObject({
+        partial_observation: {
+          normalized_result: { validation: "rejected-by-selected-profile" },
         },
       });
       expect(JSON.stringify(primaryAndCleanupFail.details)).toContain(

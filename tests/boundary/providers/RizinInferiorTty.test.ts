@@ -549,6 +549,7 @@ async function startFakeInferiorSession(
   const targetPath = join(testDirectory, "inferior.mjs");
   const pidPath = join(testDirectory, "target.pid");
   const provider = join(testDirectory, "fake-rizin.cjs");
+  const repairedInventory = join(testDirectory, "repaired-inventory");
   const launchTarget = options.launchTarget ?? true;
   await writeFile(targetPath, "setInterval(() => {}, 1000);\n");
   const initialRows = options.initialRows ?? null;
@@ -579,7 +580,8 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, end); input = input.slice(end + 1);
     if (line === "olj") {
       oljCalls += 1;
-      if (truncateOlj && oljCalls === 1) process.stdout.write("x".repeat(16 * 1024 * 1024 + 1) + "\\0");
+      if (fs.existsSync(${JSON.stringify(repairedInventory)})) process.stdout.write("[]\\0");
+      else if (truncateOlj && oljCalls === 1) process.stdout.write("x".repeat(16 * 1024 * 1024 + 1) + "\\0");
       else process.stdout.write((detached ? afterDetach : initialRows) + "\\0");
     }
     else if (line.startsWith("o- ")) detached = true;
@@ -657,6 +659,12 @@ async function expectCloseRejectedAndReleased(
 ): Promise<void> {
   expect((await manager!.close(sessionId)).ok).toBe(false);
   expect(manager!.status(sessionId)?.state).toBe("closed");
+  // A new request cannot silently heal the intentionally bad provider facts.
+  expect((await manager!.close(sessionId)).ok).toBe(false);
+  if (testDirectory === undefined)
+    throw new Error("Missing fake provider owner");
+  // Simulate an explicit external detach/inspection before the cleanup retry.
+  await writeFile(join(testDirectory, "repaired-inventory"), "no inferior");
   await manager!.closeAll();
   expect(manager!.status(sessionId)).toBeUndefined();
 }
