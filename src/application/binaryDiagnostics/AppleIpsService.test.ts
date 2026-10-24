@@ -180,3 +180,34 @@ it("discards an observation if the caller cancels while the provider completes",
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
 });
+
+it.each([
+  [19, false],
+  [20, true],
+] as const)(
+  "charges rejected integer literals from custom providers against %s bytes",
+  async (maximum, accepted) => {
+    const partial: AppleIps = {
+      ...report,
+      coverage: {
+        ...report.coverage,
+        status: "partial",
+        reason: "Unresolved index",
+        type_mismatches: [
+          {
+            path: "body.faultingThread",
+            expected: "unsigned 32-bit integer",
+            observed: "integer out of range",
+            recorded_integer: "4294967296",
+          },
+        ],
+      },
+    };
+    const result = await new AppleIpsService({
+      identity,
+      inspect: () => Promise.resolve(ok(partial)),
+    }).inspect({ path: report.artifact.path, max_integer_text_bytes: maximum });
+    expect(result.ok).toBe(accepted);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+  },
+);

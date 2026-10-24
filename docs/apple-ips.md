@@ -31,11 +31,13 @@ stackshots, return no crash result.
 `process`, `exception`, `termination`, `faulting_thread`, `threads`, and
 `images` reproduce documented body fields when present. Integers keep their
 decimal literals and a hexadecimal form, including arm64e registers above
-2^53. Frame roles follow physical frame depth: the top frame of the faulting
-thread is `faulting_instruction`, the top frame of every other thread is that
-thread's sampled `current_instruction`, and deeper frames are
-`return_address`. Rows marked `inline` share the address of the frame below
-them. When the report records no `faultingThread`, top frames are `unknown`.
+2^53. Frame roles follow the recorded frame index: row zero of the resolved
+faulting thread is `faulting_instruction`, row zero of other threads is
+`current_instruction`, and later rows are `return_address`. Each runtime
+address uses that row's own image base and offset. The recorded `inline` flag
+does not supply a missing offset or authorize borrowing another row's address.
+When `faultingThread` is missing or does not resolve to a recorded thread
+object, row-zero roles are `unknown`; the recorded lookup remains available.
 `process.os_version` keeps the producer's dictionary (`train`, `build`,
 `release_type`, `is_embedded`) or the older string form. Image UUIDs are uppercase 8-4-4-4-12; an all-zero UUID
 or a missing `arch` is `uuid_unknown`. Image `source` letters keep their
@@ -55,6 +57,10 @@ expected type, and the observed type, and `coverage.status` becomes
 Malformed image UUID strings likewise make coverage partial; their exact spelling
 is retained in the mismatch's `recorded_value`, while the canonical image UUID
 remains unknown. Both 32 hexadecimal digits and canonical hyphenated UUIDs are accepted.
+Unresolved thread/image references also make coverage partial. A rejected
+integer lookup keeps its exact decimal literal in `recorded_integer`, including
+negative values and values above uint32. Valid uint32 lookup values remain in
+`faulting_thread` or `image_index` even when the referenced row is unavailable.
 
 `classification` matches only documented SIGKILL codes (compared by their
 canonical hexadecimal form), `EXC_GUARD` subtypes,
@@ -79,7 +85,7 @@ fail without partial success.
 
 `max_integer_text_bytes` (`--max-integer-text-bytes` in the CLI) separately
 bounds retained decimal and hexadecimal integer text, including every derived
-runtime address. Its default is 8 MiB of UTF-16 text storage and its maximum is
+runtime address and rejected lookup literal. Its default is 8 MiB of UTF-16 text storage and its maximum is
 64 MiB. Each appearance counts, even when an object could be shared in memory
 but would be serialized more than once. The parser reserves a conservative
 upper bound before numeric conversion or address expansion, then releases the

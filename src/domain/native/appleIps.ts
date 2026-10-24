@@ -222,6 +222,13 @@ const typeMismatchSchema = z.strictObject({
     .describe(
       "Exact source spelling when a string fails its documented format",
     ),
+  recorded_integer: z
+    .string()
+    .regex(/^-?(?:0|[1-9][0-9]*)$/u)
+    .exactOptional()
+    .describe(
+      "Exact decimal literal of a rejected integer lookup; charged to the integer text allowance",
+    ),
 });
 
 const coverageSchema = z.strictObject({
@@ -309,5 +316,7 @@ export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
         appleIpsIntegerTextBytes(frame.image_offset) +
         appleIpsIntegerTextBytes(frame.runtime_address);
   }
+  for (const mismatch of report.coverage.type_mismatches)
+    bytes += 2 * (mismatch.recorded_integer?.length ?? 0);
   return bytes;
 };

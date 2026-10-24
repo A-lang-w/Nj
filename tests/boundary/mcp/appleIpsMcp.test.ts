@@ -91,6 +91,28 @@ it("advertises and validates IPS facts and failures through production stdio MCP
       recorded_value: "malformed/report",
     },
   ]);
+  const indexPath = join(root, "unresolved-indexes.ips");
+  await writeFile(
+    indexPath,
+    '{"bug_type":"309"}\n{"faultingThread":5,"threads":[{"frames":[{"imageIndex":-1},{"imageIndex":4294967296}]}],"usedImages":[]}',
+  );
+  const indexes = await call("inspect_apple_ips", { path: indexPath });
+  expect(indexes.isError, JSON.stringify(indexes.content)).not.toBe(true);
+  expect(
+    ajv.validate(outputSchema, indexes.structuredContent),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+  const unresolved = appleIpsSchema.parse(
+    parseEvidence(indexes.structuredContent).normalized_result,
+  );
+  expect(unresolved.faulting_thread).toBe(5);
+  expect(unresolved.threads[0]?.frames[0]?.role).toBe("unknown");
+  expect(unresolved.coverage.status).toBe("partial");
+  expect(
+    unresolved.coverage.type_mismatches.map(
+      (mismatch) => mismatch.recorded_integer,
+    ),
+  ).toEqual(["5", "-1", "4294967296"]);
   const relative = await call("inspect_apple_ips", { path: "report.ips" });
   expect(relative.isError).toBe(true);
   expect(parseMcpToolError(relative).error).toMatchObject({

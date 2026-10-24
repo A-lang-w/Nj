@@ -185,10 +185,10 @@ const threadStateOf = (
 };
 
 const imagesOf = (
-  value: LosslessJson | undefined,
+  rows: readonly LosslessJson[],
   read: FieldReader,
 ): AppleIpsImage[] =>
-  (read.array(value, "body.usedImages", true) ?? []).map((row, index) => {
+  rows.map((row, index) => {
     const path = `body.usedImages[${String(index)}]`;
     const members = read.row(row, path);
     const source = read.text(members.source, `${path}.source`);
@@ -217,15 +217,15 @@ const imagesOf = (
 
 /**
  * Frame 0 is the thread's sampled program counter; later frames are unwound
- * return addresses. Inlined frames share the address of the frame after them,
- * so depth counts physical frames rather than rows.
+ * return addresses. Keep each row's own recorded address, including inline
+ * rows: the inline flag does not establish a replacement address or row index.
  */
 const frameRole = (
-  physicalDepth: number,
+  frameIndex: number,
   threadIndex: number,
   faultingThread: number | null,
 ): AppleIpsFrame["role"] => {
-  if (physicalDepth > 0) return "return_address";
+  if (frameIndex > 0) return "return_address";
   if (faultingThread === null) return "unknown";
   return threadIndex === faultingThread
     ? "faulting_instruction"
@@ -233,15 +233,15 @@ const frameRole = (
 };
 
 const threadsOf = (
-  value: LosslessJson | undefined,
+  rows: readonly LosslessJson[],
+  imageRows: readonly LosslessJson[],
   images: readonly AppleIpsImage[],
   faultingThread: number | null,
   read: FieldReader,
 ): AppleIpsThread[] =>
-  (read.array(value, "body.threads", true) ?? []).map((row, threadIndex) => {
+  rows.map((row, threadIndex) => {
     const path = `body.threads[${String(threadIndex)}]`;
     const members = read.row(row, path);
-    let physicalDepth = 0;
     const frames = (
       read.array(members.frames, `${path}.frames`, false) ?? []
     ).map((frame, frameIndex): AppleIpsFrame => {
@@ -251,14 +251,18 @@ const threadsOf = (
         frameMembers.imageIndex,
         `${framePath}.imageIndex`,
       );
-      const image = imageIndex === null ? undefined : images[imageIndex];
+      const resolvedImage = read.resolveIndex(
+        imageIndex,
+        imageRows,
+        `${framePath}.imageIndex`,
+      );
+      const image = resolvedImage === null ? undefined : images[resolvedImage];
       const imageOffset = read.integer(
         frameMembers.imageOffset,
         `${framePath}.imageOffset`,
       );
       const inline = read.boolean(frameMembers.inline, `${framePath}.inline`);
-      const role = frameRole(physicalDepth, threadIndex, faultingThread);
-      if (inline !== true) physicalDepth += 1;
+      const role = frameRole(frameIndex, threadIndex, faultingThread);
       return {
         thread_index: threadIndex,
         frame_index: frameIndex,
@@ -353,7 +357,7 @@ const coverageOf = (
     reason:
       mismatches.length === 0
         ? null
-        : `${String(mismatches.length)} recorded value(s) did not have the documented JSON type and were not interpreted; see type_mismatches`,
+        : `${String(mismatches.length)} recorded value(s) did not satisfy the documented type, format or reference and were not interpreted; see type_mismatches`,
     threads: threads.length,
     frames,
     images: images.length,
@@ -387,9 +391,22 @@ export const parseAppleIps = (
       "IPS crash body is not a JSON object",
     );
   const body = bodyJson.members;
-  const images = imagesOf(body.usedImages, read);
+  const imageRows = read.array(body.usedImages, "body.usedImages", true) ?? [];
+  const images = imagesOf(imageRows, read);
+  const threadRows = read.array(body.threads, "body.threads", true) ?? [];
   const faultingThread = read.index(body.faultingThread, "body.faultingThread");
-  const threads = threadsOf(body.threads, images, faultingThread, read);
+  const resolvedFaultingThread = read.resolveIndex(
+    faultingThread,
+    threadRows,
+    "body.faultingThread",
+  );
+  const threads = threadsOf(
+    threadRows,
+    imageRows,
+    images,
+    resolvedFaultingThread,
+    read,
+  );
   const exception = exceptionOf(body.exception, read);
   const termination = terminationOf(body.termination, read);
   return {

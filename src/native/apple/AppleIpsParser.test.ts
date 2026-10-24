@@ -296,13 +296,12 @@ it("keeps ReportCrash-shaped producer facts and reports complete coverage", () =
   });
 });
 
-it("assigns frame roles by physical frame depth", () => {
+it("assigns frame roles by recorded row without inventing inline stack addresses", () => {
   const roles = (parsed: ReturnType<typeof parse>) =>
     parsed.threads.map((thread) => thread.frames.map((frame) => frame.role));
   expect(roles(report({}))).toEqual([
     ["faulting_instruction", "return_address"],
-    // The inlined row shares the sampled program counter with the next row.
-    ["current_instruction", "current_instruction", "return_address"],
+    ["current_instruction", "return_address", "return_address"],
   ]);
   expect(report({}).threads[1]?.frames[0]?.inline).toBe(true);
   const unknownFault = parse(
@@ -311,8 +310,120 @@ it("assigns frame roles by physical frame depth", () => {
   expect(unknownFault.faulting_thread).toBeNull();
   expect(roles(unknownFault)).toEqual([
     ["unknown", "return_address"],
-    ["unknown", "unknown", "return_address"],
+    ["unknown", "return_address", "return_address"],
   ]);
+});
+
+it.each(["5", "4294967295"])(
+  "preserves unresolved faulting index %s without establishing top-frame roles",
+  (index) => {
+    const parsed = parse(
+      withBody(
+        `{"faultingThread":${index},"threads":[{"frames":[{},{}]}],"usedImages":[]}`,
+      ),
+    );
+    expect(parsed.faulting_thread).toBe(Number(index));
+    expect(parsed.threads[0]?.frames.map((frame) => frame.role)).toEqual([
+      "unknown",
+      "return_address",
+    ]);
+    expect(parsed.coverage.status).toBe("partial");
+    expect(parsed.coverage.type_mismatches).toContainEqual(
+      expect.objectContaining({
+        path: "body.faultingThread",
+        recorded_integer: index,
+      }),
+    );
+  },
+);
+
+it("does not resolve a faulting reference to a malformed thread row", () => {
+  const parsed = parse(
+    withBody(
+      '{"faultingThread":0,"threads":[null,{"frames":[{}]}],"usedImages":[]}',
+    ),
+  );
+  expect(parsed.faulting_thread).toBe(0);
+  expect(parsed.threads[1]?.frames[0]?.role).toBe("unknown");
+  expect(parsed.coverage.type_mismatches).toContainEqual(
+    expect.objectContaining({
+      path: "body.faultingThread",
+      recorded_integer: "0",
+    }),
+  );
+});
+
+it.each(["-1", "4294967296", `1${"0".repeat(1000)}`])(
+  "preserves rejected index spelling (case %#)",
+  (index) => {
+    const parsed = parse(
+      withBody(
+        `{"faultingThread":${index},"threads":[{"frames":[{"imageIndex":${index}}]}],"usedImages":[]}`,
+      ),
+    );
+    expect(parsed.faulting_thread).toBeNull();
+    expect(parsed.threads[0]?.frames[0]?.image_index).toBeNull();
+    expect(
+      parsed.coverage.type_mismatches.map(
+        (mismatch) => mismatch.recorded_integer,
+      ),
+    ).toEqual([index, index]);
+  },
+);
+
+it("bounds rejected index text before retaining it", () => {
+  const bytes = withBody(
+    '{"faultingThread":4294967296,"threads":[],"usedImages":[]}',
+  );
+  expect(() =>
+    parseAppleIps(bytes, artifact(bytes), {
+      ...input,
+      max_integer_text_bytes: 19,
+    }),
+  ).toThrow(expect.objectContaining({ boundary: "integer_text", maximum: 19 }));
+  const parsed = parseAppleIps(bytes, artifact(bytes), {
+    ...input,
+    max_integer_text_bytes: 20,
+  });
+  expect(parsed.coverage.type_mismatches[0]).toMatchObject({
+    recorded_integer: "4294967296",
+  });
+});
+
+it("leaves inline addresses unknown when their own offset is absent", () => {
+  const parsed = parse(
+    withBody(
+      '{"faultingThread":0,"threads":[{"frames":[{"imageIndex":0,"inline":true},{"imageIndex":0,"imageOffset":8,"inline":true},{"imageIndex":1,"imageOffset":16}]}],"usedImages":[{"base":4096},{"base":8192}]}',
+    ),
+  );
+  expect(
+    parsed.threads[0]?.frames.map(
+      (frame) => frame.runtime_address?.decimal ?? null,
+    ),
+  ).toEqual([null, "4104", "8208"]);
+  expect(
+    parsed.threads[0]?.frames.map(
+      (frame) => frame.image_offset?.decimal ?? null,
+    ),
+  ).toEqual([null, "8", "16"]);
+});
+
+it("preserves an unresolved image index without claiming complete coverage", () => {
+  const parsed = parse(
+    withBody(
+      '{"threads":[{"frames":[{"imageIndex":7,"imageOffset":8}]}],"usedImages":[]}',
+    ),
+  );
+  expect(parsed.threads[0]?.frames[0]).toMatchObject({
+    image_index: 7,
+    image_offset: { decimal: "8" },
+    runtime_address: null,
+  });
+  expect(parsed.coverage.status).toBe("partial");
+  expect(parsed.coverage.type_mismatches[0]).toMatchObject({
+    path: "body.threads[0].frames[0].imageIndex",
+    recorded_integer: "7",
+  });
 });
 
 it("classifies SIGKILL codes by canonical hex, not a near-miss decimal", () => {
@@ -392,12 +503,14 @@ it("records wrong-type rows, scalars and registers with their source path", () =
       path: "body.faultingThread",
       expected: "unsigned 32-bit integer",
       observed: "integer out of range",
+      recorded_integer: "-1",
     },
     { path: "body.threads[0]", expected: "object", observed: "integer" },
     {
       path: "body.threads[1].frames[0].imageIndex",
       expected: "unsigned 32-bit integer",
       observed: "integer out of range",
+      recorded_integer: "99999999999",
     },
     {
       path: "body.threads[1].frames[0].imageOffset",

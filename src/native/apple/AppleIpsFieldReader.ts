@@ -110,15 +110,40 @@ export class FieldReader {
       const index = value.decimal.length <= 10 ? Number(value.decimal) : NaN;
       if (Number.isInteger(index) && index >= 0 && index <= UINT32_MAX)
         return index === 0 ? 0 : index;
+      this.#reserve(value.decimal.length, false);
       this.mismatches.push({
         path,
         expected: "unsigned 32-bit integer",
         observed: "integer out of range",
+        recorded_integer: value.decimal,
       });
       return null;
     }
     if (value === undefined || value.kind === "null") return null;
     this.mismatch(path, "unsigned 32-bit integer", value);
+    return null;
+  }
+
+  /** Keep a recorded lookup separate from whether it resolves to an object. */
+  resolveIndex(
+    index: number | null,
+    rows: readonly LosslessJson[],
+    path: string,
+  ): number | null {
+    if (index === null) return null;
+    const row = rows[index];
+    if (row?.kind === "object") return index;
+    const decimal = String(index);
+    this.#reserve(decimal.length, false);
+    this.mismatches.push({
+      path,
+      expected: "index of a recorded object row",
+      observed:
+        row === undefined
+          ? "integer reference out of range"
+          : "integer references a non-object row",
+      recorded_integer: decimal,
+    });
     return null;
   }
 
