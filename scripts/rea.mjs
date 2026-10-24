@@ -80,19 +80,22 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   );
   const timingRequested = doctorCliArguments.length !== doctorArguments.length;
   const started = performance.now();
-  const { runProductionMcpDoctorCli } =
-    await import("../dist/cli-runtime/mcpDoctor.js");
-  const result = await runProductionMcpDoctorCli(doctorCliArguments, {
-    dispatcherPath: fileURLToPath(import.meta.url),
-    packageRoot,
-    stdoutIsTerminal: process.stdout.isTTY === true,
-  });
-  writeStdout(result.output);
-  if (timingRequested)
-    process.stderr.write(
-      `${JSON.stringify({ rea_timings: { version: 1, command_ms: Math.round(performance.now() - started) } })}\n`,
-    );
-  process.exitCode = result.exitCode;
+  try {
+    const { runProductionMcpDoctorCli } =
+      await import("../dist/cli-runtime/mcpDoctor.js");
+    const result = await runProductionMcpDoctorCli(doctorCliArguments, {
+      dispatcherPath: fileURLToPath(import.meta.url),
+      packageRoot,
+      stdoutIsTerminal: process.stdout.isTTY === true,
+    });
+    writeStdout(result.output);
+    process.exitCode = result.exitCode;
+  } finally {
+    if (timingRequested)
+      process.stderr.write(
+        `${JSON.stringify({ rea_timings: { version: 1, command_ms: Math.round(performance.now() - started) } })}\n`,
+      );
+  }
 } else {
   const {
     cliConfigurationError,
