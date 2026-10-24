@@ -221,7 +221,7 @@ it("does not lend tree ownership to an unknown source wrapped by a real file clo
       join(f.root, "unknown"),
       resources,
       undefined,
-      async (handle) => {
+      async ({ handle }) => {
         outer = handle;
         vi.spyOn(handle, "close").mockRejectedValueOnce(
           new Error("controlled exact outer close refusal"),

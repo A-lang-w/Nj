@@ -321,7 +321,7 @@ it.each(["cancelled", "input", "unsupported"] as const)(
         path,
         scope,
         undefined,
-        async (handle) => {
+        async ({ handle }) => {
           file = handle;
           vi.spyOn(handle, "close").mockRejectedValueOnce(
             new Error("outer close failed"),

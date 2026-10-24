@@ -122,7 +122,7 @@ it.each(
         input,
         resources,
         undefined,
-        async (handle) => {
+        async ({ handle }) => {
           inputHandle = handle;
           const source =
             sourceFailure === "io"

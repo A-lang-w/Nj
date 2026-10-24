@@ -229,7 +229,7 @@ it.each([false, true])(
         input,
         resources,
         undefined,
-        async (handle) => {
+        async ({ handle }) => {
           if (failClose)
             vi.spyOn(handle, "close").mockRejectedValueOnce(cleanup);
           return tree.write("../outside", readArtifactFileChunks(handle), {

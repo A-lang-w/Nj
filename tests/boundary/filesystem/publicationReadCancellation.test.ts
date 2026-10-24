@@ -59,7 +59,7 @@ it.each(
               input,
               resources,
               controller.signal,
-              (handle) =>
+              ({ handle }) =>
                 tree.write(
                   "file",
                   readArtifactFileChunks(handle, { signal: controller.signal }),

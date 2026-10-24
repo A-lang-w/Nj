@@ -218,7 +218,7 @@ it.each(
         outerPath,
         scope,
         undefined,
-        async (handle) => {
+        async ({ handle }) => {
           outer = handle;
           vi.spyOn(handle, "close").mockRejectedValueOnce(
             new Error("controlled outer close refusal"),
