@@ -1,3 +1,5 @@
+import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import { registerDevicetreeTool } from "./registerDevicetreeTool.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { registerGpuCodeObjectsTools } from "./registerGpuCodeObjectsTools.js";
@@ -25,6 +27,7 @@ import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
   createElfNotesService,
   createAppleIpsService,
+  createDevicetreeService,
   createPeCertificatesService,
   createPeImportsService,
   createNativeExportsService,
@@ -472,6 +475,7 @@ export const createServer = (
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
   const nativeExports = createNativeExportsService();
+  const devicetree = createDevicetreeService();
   const elfNotes = createElfNotesService();
   const appleIps = createAppleIpsService();
   const peCertificates = createPeCertificatesService();
@@ -585,6 +589,7 @@ export const createServer = (
       gpuCodeObjects.close(),
       peResources.close(),
       nativeExports.close(),
+      devicetree.close(),
       elfNotes.close(),
       appleIps.close(),
       peCertificates.close(),
@@ -655,6 +660,7 @@ export const createServer = (
     il2cppMetadata,
     peResources,
     nativeExports,
+    devicetree,
     elfNotes,
     appleIps,
     peCertificates,
@@ -894,6 +900,7 @@ const registerConfiguredAnalysisTools = (
     il2cppMetadata,
     peResources,
     nativeExports,
+    devicetree,
     elfNotes,
     appleIps,
     peCertificates,
@@ -952,6 +959,14 @@ const registerConfiguredAnalysisTools = (
   registerNativeExportsTool(
     server,
     nativeExports,
+    toolLogger,
+    recordEvidence,
+    evidenceById,
+    withAdmittedAnalysis,
+  );
+  registerDevicetreeTool(
+    server,
+    devicetree,
     toolLogger,
     recordEvidence,
     evidenceById,
@@ -1140,6 +1155,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
   readonly nativeExports: NativeExportsService;
+  readonly devicetree: DevicetreeService;
   readonly elfNotes: ElfNotesService;
   readonly appleIps: AppleIpsService;
   readonly peCertificates: PeCertificatesService;
