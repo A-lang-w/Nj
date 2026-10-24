@@ -131,8 +131,7 @@ class SetupCleanupChild {
       this.#reason =
         (this.task.rejectedPrefix === undefined
           ? ""
-          : this.task.rejectedPrefix + ": ") +
-        (cause instanceof Error ? cause.message : String(cause));
+          : this.task.rejectedPrefix + ": ") + setupCleanupReason(failure);
     }
     if (!failure.hasCleanupOwner) {
       this.#resources = [...failure.cleanupResources];

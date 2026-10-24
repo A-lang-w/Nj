@@ -5,6 +5,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 it("updates every report through mixed cleanup outcomes and exact retries", async () => {
@@ -299,3 +300,39 @@ it("starts a fresh report when a prior source resolves inside a retry before a n
   expect(await owner.close()).toBeUndefined();
   expect(calls).toBe(2);
 });
+
+it.each(["artifact", "analysis"] as const)(
+  "preserves a rejected %s producer's detailed cleanup reason",
+  async (kind) => {
+    const observation = {
+      reason: "Unlink denied because the owned file remains locked",
+      resources: ["/fixture/owned"],
+    };
+    const failure =
+      kind === "artifact"
+        ? new ArtifactReaderFailure(
+            "unavailable",
+            "Retained resources: /fixture/owned",
+            { cleanup: observation },
+          )
+        : new ProviderCleanupError(
+            "fixture",
+            observation.resources,
+            {},
+            { cleanup: observation },
+          );
+    const owner = new SetupCleanupOwner([
+      {
+        rejectedPrefix: "Publisher cleanup failed",
+        close: async () => {
+          throw failure;
+        },
+      },
+    ]);
+    const report = await owner.close();
+    expect(report?.cleanup?.reason).toBe(
+      "Publisher cleanup failed: " + observation.reason,
+    );
+    expect(report?.cleanupResources).toEqual(observation.resources);
+  },
+);

@@ -111,7 +111,9 @@ describe("setup skill backup cleanup ownership", () => {
         expect(new Set(close.attempts).size).toBe(1);
         expect(await actualFs.readFile(manifest, "utf8")).toBe(original);
         const report = await host.close?.();
-        expect(report?.cleanup?.reason).toContain(backup);
+        expect(report?.cleanup?.reason).toBe(
+          "test holds the skill handle open",
+        );
         expect(report?.cleanupResources).toEqual([backup]);
         const primary = new ConfigurationError(
           "Controlled setup state failure",
