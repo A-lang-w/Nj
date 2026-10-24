@@ -326,35 +326,44 @@ Use it to record an application's API, including writes, when driving the UI
 for each call would be slower or less exact than calling the endpoint the UI
 calls. It is the only action that changes application state without a user
 gesture, so run scenarios with write requests only against an instance whose
-data you may change.
+data you may change. This scenario creates one item:
 
 ```json
 {
-  "step_id": "create-item",
-  "action": "request",
-  "method": "POST",
-  "path": "/api/items",
-  "query": [
-    { "name": "notify", "value": { "source": "literal", "value": "false" } }
-  ],
-  "headers": [
+  "browser": {
+    "mode": "launch",
+    "executable_path": "/absolute/path/to/chromium"
+  },
+  "start_url": { "url": "http://127.0.0.1:3000" },
+  "actions": [
     {
-      "name": "X-CSRFToken",
-      "value": { "source": "cookie", "name": "csrftoken" }
-    },
-    {
-      "name": "Authorization",
-      "value": {
-        "source": "local_storage",
-        "key": "auth",
-        "json_pointer": "/token"
-      },
-      "prefix": "Bearer "
+      "step_id": "create-item",
+      "action": "request",
+      "method": "POST",
+      "path": "/api/items",
+      "query": [
+        { "name": "notify", "value": { "source": "literal", "value": "false" } }
+      ],
+      "headers": [
+        {
+          "name": "X-CSRFToken",
+          "value": { "source": "cookie", "name": "csrftoken" }
+        },
+        {
+          "name": "Authorization",
+          "value": {
+            "source": "local_storage",
+            "key": "auth",
+            "json_pointer": "/token"
+          },
+          "prefix": "Bearer "
+        }
+      ],
+      "json": { "title": "Scratch item 1" },
+      "expected_status": [201],
+      "timeout_ms": 10000
     }
-  ],
-  "json": { "title": "Scratch item 1" },
-  "expected_status": [201],
-  "timeout_ms": 10000
+  ]
 }
 ```
 
