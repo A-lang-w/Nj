@@ -12,6 +12,7 @@ import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import { captureStorage } from "./CdpCaptureStorage.js";
+import { captureCssVariables } from "./CdpCaptureCssVariables.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import {
@@ -66,6 +67,7 @@ interface CapturedSections {
   readonly resources: WebPageInspection["resources"];
   readonly workers: WebPageInspection["workers"];
   readonly storage: WebPageInspection["storage"];
+  readonly cssVariables: WebPageInspection["css_variables"];
 }
 
 export interface CapturedPage {
@@ -194,6 +196,7 @@ const captureAuthorizedPage = async (
     attachedUrl,
     limitations,
   );
+  const cssVariables = await captureCssVariables(context, limitations);
   if (!input.include_storage_keys)
     state.events.completeness.exclude("storage_keys", "not_approved", null);
   else if (storageCapture.keysExclusion !== undefined)
@@ -230,6 +233,7 @@ const captureAuthorizedPage = async (
       resources,
       workers,
       storage: storageCapture.value,
+      cssVariables,
     }),
     sourceMapRequests: scripts.sourceMapRequests,
   };
@@ -422,6 +426,7 @@ const normalizedInspection = (
     headers_allowlisted: true,
   },
   storage: captured.storage,
+  css_variables: captured.cssVariables,
   limitations: state.limitations,
 });
 

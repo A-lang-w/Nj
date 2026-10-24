@@ -216,6 +216,10 @@ const inspectWebPageInputFacts = {
   include_websocket_shapes: z.boolean().default(false),
   include_storage_keys: z.boolean().default(false),
   include_storage_fingerprints: z.boolean().default(false),
+  include_css_variables: z
+    .boolean()
+    .default(false)
+    .describe("Include root CSS custom properties and variables"),
 } as const;
 
 const inspectWebPageWithoutSourceSchema = z.strictObject({
