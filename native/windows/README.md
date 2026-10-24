@@ -36,32 +36,33 @@ from another REA version; the loader verifies the manifest version, ABI,
 architecture, and addon digest before it grants authority.
 
 From the checkout root, replace `<matching-version>` with the `version` in
-`package.json`:
+`package.json`.
 
 In PowerShell (Windows 10+):
 
 ```powershell
 npm pack rea-agents@<matching-version>
-tar -xzf rea-agents-<matching-version>.tgz package/native/windows/build
+New-Item -ItemType Directory -Path .tmp-restore -Force
+tar -xzf rea-agents-<matching-version>.tgz -C .tmp-restore package/native/windows/build
 New-Item -ItemType Directory -Force -Path native/windows/build
-Copy-Item package/native/windows/build/* native/windows/build/ -Force
-Remove-Item -Recurse -Force package, rea-agents-<matching-version>.tgz
+Copy-Item .tmp-restore/package/native/windows/build/* native/windows/build/ -Force
+Remove-Item -Recurse -Force .tmp-restore, rea-agents-<matching-version>.tgz
+npm run verify:windows-native:artifact
 ```
 
 In POSIX shell (Git Bash / WSL):
 
 ```sh
 npm pack rea-agents@<matching-version>
-tar -xzf rea-agents-<matching-version>.tgz package/native/windows/build
-mkdir -p native/windows/build
-cp package/native/windows/build/manifest.json native/windows/build/
-cp package/native/windows/build/rea-windows-x64.node native/windows/build/
-rm -rf package rea-agents-<matching-version>.tgz
+mkdir -p .tmp-restore native/windows/build
+tar -xzf rea-agents-<matching-version>.tgz -C .tmp-restore package/native/windows/build
+cp .tmp-restore/package/native/windows/build/manifest.json native/windows/build/
+cp .tmp-restore/package/native/windows/build/rea-windows-x64.node native/windows/build/
+rm -rf .tmp-restore rea-agents-<matching-version>.tgz
+npm run verify:windows-native:artifact
 ```
 
-Targeting `package/native/windows/build` unpacks only the required native files
-rather than the entire package distribution, and the cleanup command removes the
-temporary archive and extracted files so the working tree remains clean.
+Extracting only `package/native/windows/build` skips the rest of the package.
 
 This is a manual recovery step. REA does not fetch or install the artifact
 automatically. Alternatively, build it using the Linux/MinGW lane above.
