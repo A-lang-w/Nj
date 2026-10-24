@@ -39,7 +39,7 @@ export const functionComparisonInputSchema = z.strictObject({
     .boolean()
     .default(false)
     .describe(
-      "Opt in to separate address-normalized pseudocode and assembly views beside the eight exact dimensions. Exact dimensions, changes, summary counts, and overall status keep their current meaning. Normalized views replace recognized address-derived identifiers and dossier-corroborated addresses with ordinal placeholders, so normalized equality does not establish that both sides reference the same procedure, data, or label.",
+      "Opt in to separate address-normalized pseudocode and assembly views beside the eight exact dimensions. Exact dimensions, changes, summary counts, and overall status keep their current meaning. Normalized views rewrite recognized address-derived identifiers and dossier-corroborated addresses as entry-relative offsets inside the observed function body and as side-local ordinal placeholders outside it, so normalized equality does not establish that both sides reference the same procedure, data, or label.",
     ),
 });
 
