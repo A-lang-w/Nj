@@ -46,13 +46,13 @@ mcpTest(
       expect(constrained.isError).toBe(true);
       expect(parseMcpToolError(constrained).error).toMatchObject({
         code: "resource_constraint",
+        remediation: {
+          action: expect.stringContaining(
+            "Raise max_integer_text_bytes on the next call",
+          ),
+        },
         details: {
           reported_limits: { boundary: "integer_text", maximum: 1 },
-          remediation: {
-            action: expect.stringContaining(
-              "Raise max_integer_text_bytes on the next call",
-            ),
-          },
         },
       });
       const response = await client.callTool({

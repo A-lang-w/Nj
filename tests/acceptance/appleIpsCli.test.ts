@@ -24,11 +24,11 @@ cliTest(
     expect(constrained.exitCode, constrained.stderr).toBe(1);
     expect(constrained.json).toMatchObject({
       code: "resource_constraint",
+      remediation: {
+        action: expect.stringContaining("max_integer_text_bytes"),
+      },
       details: {
         reported_limits: { boundary: "integer_text", maximum: 1 },
-        remediation: {
-          action: expect.stringContaining("max_integer_text_bytes"),
-        },
       },
     });
     const result = await cli.run({
