@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises";
+import { setImmediate } from "node:timers/promises";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -187,11 +188,13 @@ const repeatedRules = (): AnalysisInputError =>
   ]);
 
 /** A cancellation, naming the bundle when it arrived after the bundle was written. */
-const cancelled = (
+const cancelled = async (
   signal: AbortSignal | undefined,
   written?: string,
-): AnalysisCancelledError | undefined =>
-  signal?.aborted === true
+): Promise<AnalysisCancelledError | undefined> => {
+  // The stages are synchronous; yield so a pending interrupt is dispatched before checking.
+  if (signal !== undefined) await setImmediate();
+  return signal?.aborted === true
     ? new AnalysisCancelledError(ENVIRONMENT_BUILD_OPERATION, {
         cause: signal.reason,
         ...(written === undefined
@@ -202,6 +205,7 @@ const cancelled = (
             }),
       })
     : undefined;
+};
 
 const notCaptureEvidence = (operation: string): AnalysisInputError =>
   new AnalysisInputError(
@@ -352,7 +356,7 @@ export const buildEnvironment = async (
     (id) => (id === capture.evidence_id ? capture : undefined),
   );
   if (!projected.ok) return projected;
-  const stopped = cancelled(input.signal);
+  const stopped = await cancelled(input.signal);
   if (stopped !== undefined) return err(stopped);
   const manifest = await environmentExportFile(
     "manifest",
@@ -371,7 +375,7 @@ export const buildEnvironment = async (
   const named = environmentName(input, source.value.manifest, warnings);
   if (!named.ok) return named;
   const name = named.value ?? source.value.manifest.name;
-  const beforeState = cancelled(input.signal);
+  const beforeState = await cancelled(input.signal);
   if (beforeState !== undefined) return err(beforeState);
   input.progress?.("state");
   // Prepared as the export prepares it, so its report and the bundle's README match the three-step path.
@@ -421,7 +425,7 @@ export const buildEnvironment = async (
     warnings,
   };
   if (input.dryRun) {
-    const beforePlan = cancelled(input.signal);
+    const beforePlan = await cancelled(input.signal);
     if (beforePlan !== undefined) return err(beforePlan);
     const plan = planEnvironmentBundle(source.value, {
       name,
@@ -457,7 +461,7 @@ export const buildEnvironment = async (
   }
   const directory = input.directory;
   if (directory === undefined) return err(missingDirectory());
-  const beforeWrite = cancelled(input.signal);
+  const beforeWrite = await cancelled(input.signal);
   if (beforeWrite !== undefined) return err(beforeWrite);
   input.progress?.("bundle");
   const exported = await exportEnvironmentBundle({
@@ -480,6 +484,6 @@ export const buildEnvironment = async (
     next: [`agent-env run ${shellWord(directory)}`],
   };
   // A cancellation that arrives during the write still names the bundle it wrote.
-  const afterWrite = cancelled(input.signal, directory);
+  const afterWrite = await cancelled(input.signal, directory);
   return afterWrite === undefined ? ok(report) : err(afterWrite);
 };
