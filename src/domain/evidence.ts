@@ -27,6 +27,7 @@ import {
   freezeOwnedJsonTreeSnapshot,
   canBorrowParsedJsonSnapshot,
   isImmutableJsonSnapshot,
+  immutableJsonSnapshotMember,
 } from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -355,11 +356,7 @@ export const rebindEvidenceToTargetPath = (
   // The original authenticated Evidence owns immutable payloads. Only the
   // small display subject and envelope are new, so preserve those payloads
   // without reparsing a potentially large analysis result.
-  Object.freeze(reboundSubject.digest);
-  Object.freeze(reboundSubject);
-  Object.freeze(reboundEvidence);
-  immutableEvidenceSnapshots.set(reboundEvidence, reboundEvidence);
-  return reboundEvidence;
+  return rememberReboundImmutableEvidence(evidence, reboundEvidence);
 };
 
 /** Bind the exact selected request path without changing semantic identity or stored history. */
@@ -372,12 +369,10 @@ export const withEvidenceCallerInputPath = (
   if (owned.caller_input_path === callerInputPath) return owned;
   // The authenticated source owns its immutable payloads. Only this small
   // envelope changes, so replay does not copy a document-sized result.
-  const rebound = Object.freeze({
+  return rememberReboundImmutableEvidence(owned, {
     ...owned,
     caller_input_path: callerInputPath,
   });
-  immutableEvidenceSnapshots.set(rebound, rebound);
-  return rebound;
 };
 
 /** Recognize authenticated Evidence whose complete reachable JSON data is immutable. */
@@ -388,6 +383,18 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
   freezeJsonSnapshot(evidence);
   immutableEvidenceSnapshots.set(evidence, evidence);
   return evidence;
+};
+
+// Rebinding changes only a small envelope. Carry the sealing proof for each
+// borrowed member before sealing that envelope, so large payloads are neither
+// traversed again nor copied by JSON/error projections that consume the result.
+const rememberReboundImmutableEvidence = (
+  source: Evidence,
+  rebound: Evidence,
+): Evidence => {
+  for (const key of Object.keys(source))
+    immutableJsonSnapshotMember(source, key);
+  return rememberImmutableEvidence(rebound);
 };
 
 /** Ownership policy for the freshly parsed Evidence snapshot. */
