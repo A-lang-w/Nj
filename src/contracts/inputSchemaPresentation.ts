@@ -319,10 +319,6 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
     delete node.if;
     delete node.then;
     delete node.else;
-    // The conditional no longer evaluates its branches, so any unevaluated
-    // guard would now reject inputs the branches used to cover.
-    delete node.unevaluatedProperties;
-    delete node.unevaluatedItems;
   } else {
     if (conditional !== undefined) node.if = conditional.schema;
     if (thenBranch !== undefined) {

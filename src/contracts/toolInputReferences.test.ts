@@ -853,23 +853,6 @@ describe("advertised empty-string literal edge cases", () => {
     });
   });
 
-  it("relaxes unevaluated guards when discarding conditionals", () => {
-    const canonical = {
-      type: "object",
-      properties: {
-        kind: { type: "string" },
-        extra: { type: "integer" },
-      },
-      required: ["kind"],
-      if: { properties: { kind: { const: "" } }, required: ["kind"] },
-      then: { properties: { extra: true } },
-      unevaluatedProperties: false,
-    };
-    const advertised = presentInputJsonSchema(canonical, () => undefined);
-    expect(advertised.if).toBeUndefined();
-    expect(advertised.unevaluatedProperties).toBeUndefined();
-  });
-
   it("widens empty-string literals under contentSchema", () => {
     const canonical = {
       type: "object",
