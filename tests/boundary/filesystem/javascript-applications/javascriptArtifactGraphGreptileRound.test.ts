@@ -7,8 +7,8 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { readJavaScriptArtifactFiles } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { analyzeJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { analyzeArtifactFiles } from "../../../fixtures/javascriptArtifactAnalysis.js";
+import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
 
 const sources = [
   {
@@ -1551,10 +1551,10 @@ it("retains reviewed callback and descriptor endpoints with source provenance", 
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
     const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const graph = buildJavaScriptArtifactGraph(
+    const graph = await immutableArtifactGraph(
       snapshot,
       files,
-      analyzeJavaScriptArtifactFiles(files),
+      (await analyzeArtifactFiles(files)).analysis,
     );
     const observations = graph.nodes
       .filter(({ kind }) => kind === "endpoint")
