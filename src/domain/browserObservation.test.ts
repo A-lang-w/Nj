@@ -374,5 +374,13 @@ describe("browser observation CSS variables contracts", () => {
         ],
       }).success,
     ).toBe(false);
+
+    // Preserves whitespace verbatim without trimming producer values
+    const itemWithWhitespace = { name: "--spaced-val", value: " 16px " };
+    const parsedWithWhitespace = browserCssVariablesSchema.parse({
+      ...valid,
+      items: [itemWithWhitespace],
+    });
+    expect(parsedWithWhitespace.items[0]?.value).toBe(" 16px ");
   });
 });

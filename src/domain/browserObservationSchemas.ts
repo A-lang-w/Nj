@@ -269,7 +269,6 @@ export const browserCssVariableItemSchema = z.object({
     .max(128),
   value: z
     .string()
-    .trim()
     .max(512)
     .refine(
       (val) =>

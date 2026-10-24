@@ -397,3 +397,82 @@ it("records informational limitation when CSS variables are truncated", async ()
     limitations.some((lim) => lim.includes("truncated to 250 items")),
   ).toBe(true);
 });
+
+it("redacts URL transport credentials from CSS url() values", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        {
+          name: "--bg-asset",
+          value: "url('https://alice:secret123@example.test/assets/bg.png')",
+        },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.items).toHaveLength(1);
+  const item = result.items[0];
+  expect(item?.value).not.toContain("secret123");
+  expect(item?.value).toBe("url('https://example.test/assets/bg.png')");
+});
+
+it("treats missing or non-array computedStyle as unavailable with limitation", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: "not-an-array",
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("unavailable");
+  expect(
+    limitations.some((lim) =>
+      lim.includes(
+        "CSS.getComputedStyleForNode response omitted valid computedStyle",
+      ),
+    ),
+  ).toBe(true);
+});

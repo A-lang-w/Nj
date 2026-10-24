@@ -1,4 +1,7 @@
-import type { InspectWebPageInput } from "../domain/browserObservation.js";
+import {
+  sanitizeBrowserUrl,
+  type InspectWebPageInput,
+} from "../domain/browserObservation.js";
 import {
   browserCssVariableItemSchema,
   type BrowserCssVariableItem,
@@ -19,6 +22,23 @@ const MAX_RETAINED_CSS_VARIABLES = 250;
 const MAX_INTAKE_CSS_VARIABLES = 2000;
 const MAX_REJECTED_PREVIEWS = 3;
 const MAX_PREVIEW_NAME_LENGTH = 64;
+
+const CSS_URL_PATTERN = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
+
+export const redactCssUrlCredentials = (value: string): string => {
+  if (!value.toLowerCase().includes("url(")) return value;
+  return value.replace(
+    CSS_URL_PATTERN,
+    (_fullMatch, quote: string, rawUrl: string) => {
+      try {
+        const sanitized = sanitizeBrowserUrl(rawUrl).url;
+        return `url(${quote}${sanitized}${quote})`;
+      } catch {
+        return _fullMatch;
+      }
+    },
+  );
+};
 
 const emptyCssVariables = (
   status: BrowserCssVariables["status"],
@@ -113,9 +133,15 @@ export const captureCssVariables = async (
     return emptyCssVariables("unavailable");
   }
 
-  const computedProps = recordsValue(
-    recordValue(computedResult)?.computedStyle,
-  );
+  const computedStyleVal = recordValue(computedResult)?.computedStyle;
+  if (!Array.isArray(computedStyleVal)) {
+    limitations.push(
+      "CSS.getComputedStyleForNode response omitted valid computedStyle property list.",
+    );
+    return emptyCssVariables("unavailable");
+  }
+
+  const computedProps = recordsValue(computedStyleVal);
   const validItems: BrowserCssVariableItem[] = [];
   let totalObserved = 0;
   let rejectedCount = 0;
@@ -123,12 +149,13 @@ export const captureCssVariables = async (
 
   for (const prop of computedProps) {
     const name = cdpStringValue(prop.name);
-    const value = cdpStringValue(prop.value);
-    if (name === undefined || value === undefined) continue;
+    const rawValue = cdpStringValue(prop.value);
+    if (name === undefined || rawValue === undefined) continue;
     if (!name.startsWith("--")) continue;
 
     totalObserved += 1;
 
+    const value = redactCssUrlCredentials(rawValue);
     const parsed = browserCssVariableItemSchema.safeParse({ name, value });
     if (parsed.success) {
       if (validItems.length < MAX_INTAKE_CSS_VARIABLES) {

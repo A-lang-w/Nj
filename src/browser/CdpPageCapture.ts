@@ -197,6 +197,13 @@ const captureAuthorizedPage = async (
     limitations,
   );
   const cssVariables = await captureCssVariables(context, limitations);
+  if (input.include_css_variables) {
+    if (cssVariables.status === "unavailable") {
+      state.events.completeness.unavailable("css_variables");
+    } else if (cssVariables.status === "truncated") {
+      state.events.completeness.truncate("css_variables");
+    }
+  }
   if (!input.include_storage_keys)
     state.events.completeness.exclude("storage_keys", "not_approved", null);
   else if (storageCapture.keysExclusion !== undefined)
