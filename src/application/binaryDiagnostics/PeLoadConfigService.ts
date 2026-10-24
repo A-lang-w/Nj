@@ -77,6 +77,7 @@ export class PeLoadConfigService {
       { kind: "artifact-path" as const, path: value.artifact.path },
       ...fileRange(value.tls?.directory ?? null),
       ...fileRange(value.load_config?.directory ?? null),
+      ...structureRange(value.load_config),
       ...(value.tls?.callback_array_locations ?? []).map(
         ({ offset, bytes }) => ({
           kind: "file-offset-range" as const,
@@ -132,6 +133,23 @@ const fileRange = (
         },
       ];
 
+/** The checked `Size` span, when it differs from the declared directory range. */
+const structureRange = (
+  loadConfig: PeLoadConfig["load_config"],
+): { kind: "file-offset-range"; start: number; end: number }[] =>
+  loadConfig === null ||
+  loadConfig.structure_location.bytes === loadConfig.directory.size
+    ? []
+    : [
+        {
+          kind: "file-offset-range",
+          start: loadConfig.structure_location.offset,
+          end:
+            loadConfig.structure_location.offset +
+            loadConfig.structure_location.bytes,
+        },
+      ];
+
 const validReport = (
   report: PeLoadConfig,
   input: { max_callbacks: number; max_file_bytes: number },
@@ -147,7 +165,12 @@ const validReport = (
     ...fileRange(report.tls?.directory ?? null),
     ...fileRange(report.load_config?.directory ?? null),
   ];
+  const structure = report.load_config?.structure_location;
   return (
+    (structure === undefined ||
+      (structure.offset === report.load_config?.directory.file_offset &&
+        structure.bytes === report.load_config.size &&
+        structure.offset <= report.artifact.bytes - structure.bytes)) &&
     ranges.every(
       ({ start, end }) => start <= end && end <= report.artifact.bytes,
     ) &&

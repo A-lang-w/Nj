@@ -313,3 +313,59 @@ const writeLoadConfig = (
     writeDirectory(bytes, directories, 10, directoryRva, directorySize);
   }
 };
+
+/**
+ * PE32+ image with `sectionCount` sections and `callbackCount` TLS callbacks.
+ * `.data` holds the TLS directory and callback array; every other section is
+ * virtual-only, and every callback targets the last one.
+ */
+export const peManySectionsImage = (
+  sectionCount: number,
+  callbackCount: number,
+): Buffer => {
+  const optional = 152;
+  const optionalSize = 112 + 16 * 8;
+  const table = optional + optionalSize;
+  const headers = Math.ceil((table + sectionCount * 40) / 0x200) * 0x200;
+  // Sections start past the header mapping so it cannot overlap `.data`.
+  const dataRva = Math.ceil(headers / 0x1000) * 0x1000;
+  const dataBytes =
+    Math.ceil(((callbackCount + 1) * 8 + 0x100) / 0x200) * 0x200;
+  const virtualRva = dataRva + Math.ceil(dataBytes / 0x1000) * 0x1000;
+  const base = 0x180000000n;
+  const bytes = Buffer.alloc(headers + dataBytes);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt32LE(128, 60);
+  bytes.write("PE\0\0", 128, "ascii");
+  bytes.writeUInt16LE(0x8664, 132);
+  bytes.writeUInt16LE(sectionCount, 134);
+  bytes.writeUInt16LE(optionalSize, 148);
+  bytes.writeUInt16LE(0x20b, optional);
+  bytes.writeBigUInt64LE(base, optional + 24);
+  bytes.writeUInt32LE(0x1000, optional + 32);
+  bytes.writeUInt32LE(0x200, optional + 36);
+  bytes.writeUInt32LE(headers, optional + 60);
+  bytes.writeUInt32LE(16, optional + 108);
+  writeSection(bytes, table, ".data", {
+    virtualSize: dataBytes,
+    virtualAddress: dataRva,
+    rawSize: dataBytes,
+    rawOffset: headers,
+    characteristics: 0xc0000040,
+  });
+  for (let index = 1; index < sectionCount; index++)
+    writeSection(bytes, table + index * 40, ".v", {
+      virtualSize: 0x1000,
+      virtualAddress: virtualRva + (index - 1) * 0x1000,
+      rawSize: 0,
+      rawOffset: 0,
+      characteristics: 0x60000020,
+    });
+  const target = base + BigInt(virtualRva + (sectionCount - 2) * 0x1000);
+  const callbacksRva = dataRva + 0x100;
+  bytes.writeBigUInt64LE(base + BigInt(callbacksRva), headers + 24);
+  for (let index = 0; index < callbackCount; index++)
+    bytes.writeBigUInt64LE(target, headers + 0x100 + index * 8);
+  writeDirectory(bytes, optional + 112, 9, dataRva, 40);
+  return bytes;
+};

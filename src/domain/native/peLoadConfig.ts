@@ -339,6 +339,8 @@ const loadConfigSchema = z
   .strictObject({
     directory: directorySchema,
     size: uint,
+    /** File span of the `Size` bytes checked as file-backed; may exceed `directory`. */
+    structure_location: range,
     security_cookie: locatedSchema.nullable(),
     se_handler_table: locatedSchema.nullable(),
     se_handler_count: safeCount.nullable(),

@@ -22,7 +22,9 @@ and section are derived locations; unknown mappings are `null`.
 field. MSVC x86 images often declare a 64-byte load-config data directory while
 the structure's own `Size` is larger; like the Windows loader, REA reads `Size`
 bytes when they are file-backed in one run, and reports both
-`directory.size` and `size`. Unavailable fields are `null`; a covered zero pointer remains `"0x0"`.
+`directory.size` and `size`. `structure_location` is the file range of the
+`Size` bytes REA checked; Evidence locations include it beside the declared
+directory range when the two differ. Unavailable fields are `null`; a covered zero pointer remains `"0x0"`.
 The report includes the security cookie, PE32 SafeSEH table/count, CFG pointers
 and table/count, address-taken IAT and long-jump tables/counts, EH continuation
 table/count, and XFG check pointer. CHPE and dynamic relocation pointers are raw

@@ -7,7 +7,7 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../metadata/BinaryContainer.js";
-import { readPeImage } from "../metadata/PeImage.js";
+import { readPeImage, type PeImage } from "../metadata/PeImage.js";
 import {
   guardFlagRecord,
   loadConfigFieldCovered,
@@ -70,6 +70,71 @@ const consume = (
 
 type DirectorySpan = PeLoadConfigTls["directory"];
 
+/** One run of RVAs with a constant set of owning sections. */
+interface SectionSegment {
+  readonly start: number;
+  readonly owners: number;
+  readonly name: string;
+}
+
+/**
+ * Build the RVA-to-section-name lookup once per image. Section spans are split
+ * into disjoint segments so each lookup is a binary search; an RVA owned by
+ * more than one section still fails as ambiguous.
+ */
+const sectionNameIndex = (
+  sections: PeImage["sections"],
+): ((rva: number) => string | null) => {
+  const events: { at: number; index: number; open: boolean }[] = [];
+  sections.forEach((section, index) => {
+    if (section.format !== "pe") return;
+    const span =
+      section.virtual_size === 0 ? section.raw_size : section.virtual_size;
+    if (span <= 0) return;
+    events.push(
+      { at: section.virtual_address, index, open: true },
+      { at: section.virtual_address + span, index, open: false },
+    );
+  });
+  events.sort((left, right) => left.at - right.at);
+  const segments: SectionSegment[] = [];
+  const active = new Set<number>();
+  for (let cursor = 0; cursor < events.length;) {
+    const at = events[cursor]!.at;
+    for (; cursor < events.length && events[cursor]!.at === at; cursor++) {
+      const event = events[cursor]!;
+      if (event.open) active.add(event.index);
+      else active.delete(event.index);
+    }
+    const [only] = active;
+    segments.push({
+      start: at,
+      owners: active.size,
+      name: active.size === 1 ? (sections[only!]?.name ?? "") : "",
+    });
+  }
+  return (rva) => {
+    let low = 0;
+    let high = segments.length - 1;
+    let found: SectionSegment | undefined;
+    while (low <= high) {
+      const middle = (low + high) >>> 1;
+      const segment = segments[middle]!;
+      if (segment.start <= rva) {
+        found = segment;
+        low = middle + 1;
+      } else high = middle - 1;
+    }
+    if (found === undefined || found.owners === 0) return null;
+    if (found.owners > 1)
+      throw new BinaryMappingFailure(
+        "ambiguous",
+        `PE RVA ${hex(rva)} belongs to multiple sections`,
+      );
+    return found.name.length === 0 ? null : found.name;
+  };
+};
+
 /**
  * Read one PE TLS directory and load configuration without executing the image.
  * Yields to the event loop and honors cancellation every
@@ -123,25 +188,7 @@ export const parsePeLoadConfig = async (
     return delta <= 0xffffffffn ? Number(delta) : null;
   };
 
-  const sectionName = (rva: number): string | null => {
-    const owners = image.sections.filter((section) => {
-      if (section.format !== "pe") return false;
-      const span =
-        section.virtual_size === 0 ? section.raw_size : section.virtual_size;
-      return (
-        span > 0 &&
-        rva >= section.virtual_address &&
-        rva < section.virtual_address + span
-      );
-    });
-    if (owners.length > 1)
-      throw new BinaryMappingFailure(
-        "ambiguous",
-        `PE RVA ${hex(rva)} belongs to multiple sections`,
-      );
-    const name = owners[0]?.name ?? "";
-    return name.length === 0 ? null : name;
-  };
+  const sectionName = sectionNameIndex(image.sections);
 
   const locate = (va: bigint): PeLoadConfigLocated => {
     if (va === 0n)
@@ -404,6 +451,7 @@ const readLoadConfig = ({
   return {
     directory,
     size,
+    structure_location: { offset: directory.file_offset, bytes: size },
     security_cookie: located("security_cookie"),
     se_handler_table: located("se_handler_table"),
     se_handler_count: count("se_handler_count"),

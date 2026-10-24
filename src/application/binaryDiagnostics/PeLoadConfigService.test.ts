@@ -15,6 +15,37 @@ const report: PeLoadConfig = {
   examined_callbacks: 0,
   limitations: [],
 };
+const legacyX86: PeLoadConfig = {
+  ...report,
+  artifact: { ...report.artifact, bytes: 0x400 },
+  format: "pe32",
+  machine: 0x14c,
+  bits: 32,
+  architecture: "386",
+  load_config: {
+    directory: { rva: 0x1040, size: 64, file_offset: 0x240 },
+    size: 188,
+    structure_location: { offset: 0x240, bytes: 188 },
+    security_cookie: null,
+    se_handler_table: null,
+    se_handler_count: 7,
+    guard_cf_check_function_pointer: null,
+    guard_cf_dispatch_function_pointer: null,
+    guard_cf_function_table: null,
+    guard_cf_function_count: null,
+    guard_flags: null,
+    guard_address_taken_iat_entry_table: null,
+    guard_address_taken_iat_entry_count: null,
+    guard_long_jump_target_table: null,
+    guard_long_jump_target_count: null,
+    dynamic_value_reloc_table: null,
+    chpe_metadata_pointer: null,
+    guard_eh_continuation_table: null,
+    guard_eh_continuation_count: null,
+    guard_xfg_check_function_pointer: null,
+    inferences: [],
+  },
+};
 const service = (value: PeLoadConfig = report) =>
   new PeLoadConfigService({
     identity: PE_LOAD_CONFIG_PROVIDER,
@@ -29,6 +60,17 @@ it("retains absent directories and artifact provenance", async () => {
     subject: { format: "pe", architecture: "x86_64" },
     normalized_result: report,
   });
+});
+it("locates both the declared directory and the checked Size span", async () => {
+  const result = await service(legacyX86).inspect({
+    path: report.artifact.path,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.locations).toEqual([
+    { kind: "artifact-path", path: report.artifact.path },
+    { kind: "file-offset-range", start: 0x240, end: 0x240 + 64 },
+    { kind: "file-offset-range", start: 0x240, end: 0x240 + 188 },
+  ]);
 });
 it("rejects input and cancellation before reading", async () => {
   const boundary = new PeLoadConfigService({
@@ -58,6 +100,21 @@ it.each([
   { ...report, bits: 32 as const },
   { ...report, artifact: { ...report.artifact, path: "/another.exe" } },
   { ...report, artifact: { ...report.artifact, bytes: 67108865 } },
+  ...[
+    { offset: 0x241, bytes: 188 },
+    { offset: 0x240, bytes: 187 },
+  ].map((structure_location) => ({
+    ...legacyX86,
+    load_config: { ...legacyX86.load_config!, structure_location },
+  })),
+  {
+    ...legacyX86,
+    load_config: {
+      ...legacyX86.load_config!,
+      size: 0x400,
+      structure_location: { offset: 0x240, bytes: 0x400 },
+    },
+  },
 ])("rejects inconsistent provider output", async (value) => {
   const result = await service(value).inspect({ path: report.artifact.path });
   expect(result.ok).toBe(false);
