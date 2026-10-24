@@ -1,12 +1,13 @@
 import { jsonTextCodeUnits } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
-import { ok } from "../result.js";
+import { err, ok, type Result } from "../result.js";
 import {
   collectionPathOf,
   isObject,
   isParam,
   normalizedPath,
   scalarText,
+  same,
   segmentsOf,
   selectedCollection,
   type JsonObject,
@@ -19,6 +20,7 @@ import {
   unenveloped,
   createdToken,
   isOpaqueToken,
+  nestedClockValue,
   restampedFields,
   sameQuery,
   variedMembers,
@@ -301,13 +303,6 @@ const followsGenerated = (
       return (
         JSON.stringify(readClock(value)?.format) === JSON.stringify(rule.format)
       );
-    if (rule.rule === "nested-clock")
-      return rule.members.every(
-        (member) =>
-          isObject(value ?? null) &&
-          JSON.stringify(readClock((value as JsonObject)[member])?.format) ===
-            JSON.stringify(rule.format),
-      );
     if (rule.rule === "unique")
       return (
         (isUuid(value) || isOpaqueToken(value, draft.observed?.[rule.field])) &&
@@ -425,6 +420,28 @@ const insertCreated = (
   return entityTarget(entity.type, entity.collection, entity.id);
 };
 
+/** A recorded generated value, checking a nested clock against the same complete-object renderer serving uses. */
+const recordedGeneration = (
+  rule: FieldRule,
+  exemplar: JsonObject,
+  recorded: JsonObject,
+): Result<JsonValue, string> => {
+  const value = recorded[rule.field] ?? null;
+  if (rule.rule !== "nested-clock") return ok(value);
+  const clock = isObject(value) ? value[rule.members[0]!] : undefined;
+  if (
+    clock === undefined ||
+    JSON.stringify(readClock(clock)?.format) !== JSON.stringify(rule.format)
+  )
+    return err(`The recorded ${rule.field} has no clock in the plan's format.`);
+  const rebuilt = nestedClockValue(exemplar[rule.field], rule, clock);
+  return rebuilt.ok && same(rebuilt.value, value)
+    ? rebuilt
+    : err(
+        `The recorded ${rule.field} differs from its nested-clock rendering.`,
+      );
+};
+
 /** Apply a recorded create, with the values it recorded for generated fields; an unexplained create adds what it recorded. */
 export const applyCreate = (
   context: EffectContext,
@@ -509,7 +526,7 @@ export const applyCreate = (
       pathValuesOf(step.tool.path_template, collection) ?? call.pathValues,
   };
   const fields = createdFields(draft.plan, draft.observed!, created, (rule) =>
-    ok(observed.object[rule.field] ?? null),
+    recordedGeneration(rule, draft.observed!, observed.object),
   );
   const id = fields.ok ? scalarText(fields.value[idField]) : undefined;
   if (

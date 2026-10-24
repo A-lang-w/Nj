@@ -174,3 +174,78 @@ it.each(["2", "02"])(
     });
   },
 );
+
+const nestedClockRows = (edit: {
+  [key: string]: string;
+}): TimedCaptureRow[] => {
+  const first = {
+    ...FIRST_BOOK,
+    edit: {
+      at: FIRST_BOOK.created_at!,
+      seen_at: FIRST_BOOK.created_at!,
+      by: "alice",
+    },
+  };
+  const second = {
+    ...SECOND_BOOK,
+    edit: {
+      at: SECOND_BOOK.created_at!,
+      seen_at: SECOND_BOOK.created_at!,
+      by: "alice",
+    },
+  };
+  const third = {
+    ...book(3, "Third", bookClock(3)),
+    edit: { at: bookClock(3), seen_at: bookClock(3), by: "alice" },
+  };
+  const fourth = { ...book(4, "Fourth", bookClock(5)), edit };
+  return [
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["POST", "/api/books", third, 201, { name: "Third" }],
+    ["GET", "/api/books/3", third],
+    ["POST", "/api/books", fourth, 201, { name: "Fourth" }],
+    ["GET", "/api/books/4", fourth],
+    ["GET", "/api/books", [first, second, third, fourth]],
+  ];
+};
+
+it.each<{ name: string; edit: { [key: string]: string } }>([
+  {
+    name: "changed editor",
+    edit: { at: bookClock(5), seen_at: bookClock(5), by: "bob" },
+  },
+  {
+    name: "added member",
+    edit: {
+      at: bookClock(5),
+      seen_at: bookClock(5),
+      by: "alice",
+      role: "admin",
+    },
+  },
+  { name: "omitted member", edit: { at: bookClock(5), seen_at: bookClock(5) } },
+  {
+    name: "different clock values",
+    edit: { at: bookClock(5), seen_at: bookClock(6), by: "alice" },
+  },
+])(
+  "withholds creates whose nested-clock renderer cannot reproduce a later $name",
+  ({ edit }) => {
+    expect(
+      servedFrom(nestedClockRows(edit)).state.writes.get("post_books"),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+  },
+);
+
+it("serves successive creates whose complete nested-clock objects are reproducible", () => {
+  const books = servedFrom(
+    nestedClockRows({ at: bookClock(5), seen_at: bookClock(5), by: "alice" }),
+  );
+  expect(books.state.writes.get("post_books")).toMatchObject({ served: true });
+  const result = books.answer("post_books", { body: { name: "Caller" } });
+  expect(result.body).toMatchObject({ name: "Caller", edit: { by: "alice" } });
+  const edit = (result.body as { edit: { at: string; seen_at: string } }).edit;
+  expect(edit.at).toBe(edit.seen_at);
+});
