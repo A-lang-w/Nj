@@ -668,6 +668,21 @@ it("budgets register slots before expanding threadState rows", () => {
   );
 });
 
+it("budgets Rosetta registers with the ordinary registers they follow", () => {
+  const rosetta = (third: string): Buffer =>
+    withBody(
+      `{"threads":[{"threadState":{"x":[0],"rosetta":{"tmp0":0,"tmp1":0,"tmp2":${third}}}}],"usedImages":[]}`,
+    );
+  expect(parse(rosetta("0"), { max_registers: 4 }).coverage).toMatchObject({
+    status: "complete",
+    registers: 4,
+  });
+  // The register past the allowance is invalid JSON; the budget must refuse first.
+  expect(() => parse(rosetta("?"), { max_registers: 3 })).toThrow(
+    expect.objectContaining({ boundary: "registers", maximum: 3 }),
+  );
+});
+
 it("refuses an over-budget collection before parsing the rows past the allowance", () => {
   // Rows after the allowance are invalid JSON; the budget must refuse first.
   const threads = withBody(`{"threads":[{},{},{},?],"usedImages":[]}`);
