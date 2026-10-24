@@ -76,6 +76,14 @@ write tool is lost.
   Every census, serving-check and session-replay row equals the previous head's. On a synthetic capture of a list and
   1,000 items read plainly and with `?expand=`, the variant pass falls from 401 ms to 2 ms and the state build from 659
   ms to 216 ms (Node v22.23.1).
+- **Twelfth round** (on main `d87e73f2`, second performance review): the write gate lists a type's collections only when
+  the path's own collection holds no id, and the variant pass parses base lines once. Every census, serving-check and
+  session-replay row equals the previous head's. The synthetic 1,000-item capture takes 259–264 ms against main's
+  244–247 ms (378–397 ms before this round; Node v22.23.1, medians of seven warm runs). Over the 50 captures, the
+  environment-state and environment-manifest views together take 2.96 s wall and 3.82 s CPU with a 540 MiB peak RSS,
+  against main's 2.61 s, 3.41 s and 516 MiB (one Node v24.22.1 process per sweep, warm medians of three runs; the cold
+  first run is within 2% of them); the environment-state view alone takes 2,093 ms against 1,791 ms, and its results
+  grow from 3.69 MB to 3.84 MB. Agent tokens were not measured.
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged
