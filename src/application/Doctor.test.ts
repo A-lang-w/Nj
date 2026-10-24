@@ -1576,6 +1576,25 @@ describe("doctor configured scope edge cases", () => {
     });
   });
 
+  it.each([
+    ["win32", "@sample.exe", "'@sample.exe'"],
+    ["win32", "a,b.exe", "'a,b.exe'"],
+    ["win32", "dir/a@b.exe", "dir/a@b.exe"],
+    ["linux", "@sample.exe", "@sample.exe"],
+  ] as const)(
+    "quotes PowerShell splatting and array tokens only on Windows (%s %s)",
+    async (platform, target, quoted) => {
+      const audit = await runDoctor(target, {
+        ...workstation(true),
+        platform,
+      });
+      expect(audit.configured_scope?.argv.at(-1)).toBe(target);
+      expect(
+        audit.configured_scope?.command.endsWith(`--target ${quoted}`),
+      ).toBe(true);
+    },
+  );
+
   it("omits the configured workflow when nothing is set up", async () => {
     const audit = await runDoctor(
       undefined,

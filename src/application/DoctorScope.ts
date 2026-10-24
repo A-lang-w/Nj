@@ -137,11 +137,16 @@ export const configuredDoctorScope = (
 /**
  * Quote one argument only when it needs it: single quotes with doubled quotes
  * for PowerShell, REA's documented Windows shell, or POSIX escaping elsewhere.
+ * PowerShell also gives a leading `@` (splatting, `@()`, `@{}`) and `,` (array
+ * construction) special meaning in argument mode, so those are quoted there.
  */
 const shellArgument = (value: string, platform: NodeJS.Platform): string => {
-  if (/^[\w./:@%+=,-]+$/u.test(value)) return value;
-  return platform === "win32"
-    ? `'${value.replaceAll("'", "''")}'`
+  if (platform === "win32")
+    return /^(?!@)[\w./:@%+=-]+$/u.test(value)
+      ? value
+      : `'${value.replaceAll("'", "''")}'`;
+  return /^[\w./:@%+=,-]+$/u.test(value)
+    ? value
     : `'${value.replaceAll("'", "'\\''")}'`;
 };
 
