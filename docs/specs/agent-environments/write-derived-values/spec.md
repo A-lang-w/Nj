@@ -39,8 +39,9 @@ model could not explain, though the application derives it deterministically:
   holds a distinct one of the same length and JSON kind and none is a clock, is `unique`. Serving draws a seeded integer
   of that length and kind that no held entity has. One that another field of the created entity also holds, as a value,
   a number at any depth or a delimited part of a nested string, is not `unique`, and the create is withheld as
-  `unexplained-change`, since seeding cannot keep the two equal. Compare treats two such integers of one JSON kind and
-  length under a `unique` rule as generated values.
+  `unexplained-change`, since seeding cannot keep the two equal. A create is also withheld when another string holds its
+  digits and no `template` or `composed` rule rebuilds that string from it. Compare treats two such integers of one JSON
+  kind and length under a `unique` rule as generated values.
 
 Plans that need none of this are unchanged.
 

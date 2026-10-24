@@ -320,21 +320,41 @@ describe("values an application composes or generates", () => {
       });
     },
   );
+});
 
-  /** The folder rows with each folder's numeric id repeated where `mirror` puts it. */
-  const mirrored = (mirror: (id: number) => JsonObject): TimedCaptureRow[] => {
-    const repeated = (value: JsonValue): JsonValue =>
-      Array.isArray(value)
-        ? value.map(repeated)
-        : isObject(value) && typeof value.id === "number"
-          ? { ...value, ...mirror(value.id) }
-          : value;
-    return FOLDER_ROWS.map((row): TimedCaptureRow => {
-      const [method, path, body, ...rest] = row;
-      return body === undefined ? row : [method, path, repeated(body), ...rest];
-    });
-  };
+/** The folder rows with each folder's numeric id repeated where `mirror` puts it, and in each create's body when `sent`. */
+const mirrored = (
+  mirror: (id: number) => JsonObject,
+  sent = false,
+): TimedCaptureRow[] => {
+  const repeated = (value: JsonValue): JsonValue =>
+    Array.isArray(value)
+      ? value.map(repeated)
+      : isObject(value) && typeof value.id === "number"
+        ? { ...value, ...mirror(value.id) }
+        : value;
+  return FOLDER_ROWS.map((row): TimedCaptureRow => {
+    const [method, path, body, ...rest] = row;
+    if (body === undefined) return row;
+    const answered = repeated(body);
+    const [status, request] = rest;
+    return sent &&
+      method === "POST" &&
+      isObject(answered) &&
+      status !== undefined &&
+      isObject(request)
+      ? [
+          method,
+          path,
+          answered,
+          status,
+          { ...request, ...mirror(Number(answered.id)) },
+        ]
+      : [method, path, answered, ...rest];
+  });
+};
 
+describe("generated integers another field repeats", () => {
   it("withholds folder creates whose generated numeric id another field repeats, which seeding cannot keep", () => {
     expect(
       planOf(
@@ -351,5 +371,41 @@ describe("values an application composes or generates", () => {
         "post_folders",
       ),
     ).toMatchObject({ served: false, reason: "unexplained-change" });
+  });
+
+  it.each([
+    [
+      "an echoed string of its digits",
+      (id: number) => ({ serialText: String(id) }),
+      true,
+    ],
+    [
+      "a string another rule generates around its digits",
+      (id: number) => ({ ref: `folder-${id}` }),
+      false,
+    ],
+  ])(
+    "withholds folder creates whose generated numeric id %s repeats",
+    (_, mirror, sent) => {
+      expect(planOf(mirrored(mirror, sent), "post_folders")).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+    },
+  );
+
+  it("serves folder creates whose string of the id's digits a template rebuilds from it", () => {
+    expect(
+      planOf(
+        mirrored((id) => ({ idText: String(id) })),
+        "post_folders",
+      ),
+    ).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        { field: "id", rule: "unique" },
+        { field: "idText", rule: "template", from: "id" },
+      ]),
+    });
   });
 });
