@@ -296,6 +296,14 @@ const nextCharacter = (text: string, at: number): string | undefined => {
   return point === undefined ? undefined : String.fromCodePoint(point);
 };
 
+/** Whether the character before UTF-16 offset `at` is a letter or digit, joining text that starts there to its left. */
+export const joinsBefore = (text: string, at: number): boolean =>
+  isAlphanumeric(previousCharacter(text, at));
+
+/** Whether the character at UTF-16 offset `at` is a letter or digit, joining text that ends there to its right. */
+export const joinsAfter = (text: string, at: number): boolean =>
+  isAlphanumeric(nextCharacter(text, at));
+
 /** Start offsets of `token` in `text` where neither neighbour is a letter or digit. */
 export const delimitedOffsets = (text: string, token: string): number[] => {
   const offsets: number[] = [];
@@ -303,8 +311,7 @@ export const delimitedOffsets = (text: string, token: string): number[] => {
   let at = text.indexOf(token);
   while (at >= 0) {
     const delimited =
-      !isAlphanumeric(previousCharacter(text, at)) &&
-      !isAlphanumeric(nextCharacter(text, at + token.length));
+      !joinsBefore(text, at) && !joinsAfter(text, at + token.length);
     if (delimited) offsets.push(at);
     // A rejected match may overlap a delimited one, so the search moves on by one character.
     at = text.indexOf(token, at + (delimited ? token.length : 1));

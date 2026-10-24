@@ -47,7 +47,7 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import { plannedBody, restampedFields } from "./environmentStateWriteStamps.js";
-import { readClock } from "./environmentStateWriteValues.js";
+import { readClock, type ClockFormat } from "./environmentStateWriteValues.js";
 import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
 import {
   actionItemPath,
@@ -594,14 +594,17 @@ export const updateEntity = (
   };
 };
 
-/** A later update's clocks in the plan's format, the plan's widened to the trimmed spelling the call showed when one covers both. */
+/** A later update's clocks in the plan's format, the plan's widened to the trimmed spelling the call showed when one covers both, and its siblings with it wherever the call's values fit. */
 const fitUpdateClocks = (
   draft: WriteDraft,
   after: JsonObject,
   explained: ReturnType<typeof explainUpdate>,
 ): ReturnType<typeof explainUpdate> => {
   if (!built(draft)) return explained;
-  const fitted = new Map<string, FieldRule>();
+  const fits = (format: ClockFormat, field: string): boolean =>
+    JSON.stringify(
+      fittedClockFormat(format, after[field], draft.observed?.[field]),
+    ) === JSON.stringify(format);
   const rules = draft.plan.rules.map((rule) => {
     const later = explained.rules.find((other) => other.field === rule.field);
     if (
@@ -615,18 +618,21 @@ const fitUpdateClocks = (
       after[rule.field],
       draft.observed?.[rule.field],
     );
-    if (format === undefined) return rule;
-    const widened = { ...rule, format };
-    fitted.set(rule.field, widened);
-    return widened;
+    return format === undefined ? rule : { ...rule, format };
   });
   draft.plan.rules = siblingTrimmedClocks(rules, draft.observed);
-  return fitted.size === 0
-    ? explained
-    : {
-        ...explained,
-        rules: explained.rules.map((rule) => fitted.get(rule.field) ?? rule),
-      };
+  const planned = new Map(draft.plan.rules.map((rule) => [rule.field, rule]));
+  return {
+    ...explained,
+    rules: explained.rules.map((rule) => {
+      const held = planned.get(rule.field);
+      return rule.rule === "clock" &&
+        held?.rule === "clock" &&
+        fits(held.format, rule.field)
+        ? { ...rule, format: held.format }
+        : rule;
+    }),
+  };
 };
 
 /** Serving regenerates a learned clock on every update, so recorded calls must advance it. */

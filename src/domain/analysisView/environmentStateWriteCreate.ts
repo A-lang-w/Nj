@@ -47,6 +47,7 @@ import {
   type WriteStep,
 } from "./environmentStateWriteEffects.js";
 import {
+  createdInteger,
   explainCreate,
   insertCandidates,
   insertIndex,
@@ -135,6 +136,15 @@ const createdObservation = (
 const fieldsOf = (entities: readonly StateEntity[]): JsonObject[] =>
   entities.map((entity) => entity.fields);
 
+/** Whether a created field holds a generated token or integer that another field holds too, which no rule rebuilds. */
+const linkedGenerated = (
+  field: string,
+  entity: JsonObject,
+  type: readonly JsonObject[],
+): boolean =>
+  createdToken(field, entity, type) === "linked" ||
+  createdInteger(field, entity, type) === "linked";
+
 /** Build a create plan from its exemplar's observation. */
 const buildCreate = (
   context: EffectContext,
@@ -165,7 +175,7 @@ const buildCreate = (
     Object.keys(evidence.observed.object).some(
       (field) =>
         !explainedFields.has(field) &&
-        createdToken(field, evidence.observed.object, held) === "linked",
+        linkedGenerated(field, evidence.observed.object, held),
     )
   ) {
     refuse(draft, step, "unexplained-change");
@@ -493,11 +503,11 @@ export const applyCreate = (
     draft.plan.rules.some(
       (rule) =>
         rule.rule === "unique" &&
-        createdToken(
+        linkedGenerated(
           rule.field,
           observed.object,
           fieldsOf(context.state.ofType(type)),
-        ) === "linked",
+        ),
     )
   ) {
     refuse(draft, step, "unexplained-change");

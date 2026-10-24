@@ -46,6 +46,22 @@ export const fittedClockFormat = (
     : { ...format, fraction: spelled.fraction };
 };
 
+/** Whether a value spells a clock as an ISO format does with a fraction ending in a zero, which no trimmed spelling shows. */
+export const showsFixedWidth = (
+  format: ClockFormat,
+  value: JsonValue | undefined,
+): boolean => {
+  const reading = readClock(value);
+  return (
+    reading !== undefined &&
+    reading.fixedWidth &&
+    format.kind === "iso" &&
+    reading.format.kind === "iso" &&
+    reading.format.separator === format.separator &&
+    reading.format.zone === format.zone
+  );
+};
+
 /** A clock format trimmed as a sibling's is, when it is spelled alike and its own value does not show a fixed width. */
 export const trimmedLike = (
   format: ClockFormat,

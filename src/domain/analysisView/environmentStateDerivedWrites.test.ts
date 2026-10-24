@@ -7,10 +7,17 @@ import {
 import {
   BOOKMARK_ROWS,
   FOLDER_ROWS,
+  goClock,
   TAG_ROWS,
   TAG_UPDATE_ROWS,
+  TWO_CLOCK_TAG_UPDATE_ROWS,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
+import {
+  environmentStateViewOf,
+  numberedUuid,
+} from "../../../tests/fixtures/environmentStateWrites.js";
+import type { JsonValue } from "../jsonValue.js";
+import { isObject } from "./environmentStateRules.js";
 
 const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
   const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
@@ -38,11 +45,57 @@ describe("values an application derives from others", () => {
     });
   });
 
+  it.each([
+    ["2026-10-01T09:00:00.12345678Z", "2026-10-01T10:00:00.120000000Z"],
+    ["2026-10-01T09:00:00.120000000Z", "2026-10-01T10:00:00.12345678Z"],
+  ])(
+    "keeps a create's clock at a fixed width when a held value ends its fraction in a zero (%s, %s)",
+    (first, second) => {
+      const held = [first, second].map((updatedAt, index) => ({
+        id: numberedUuid(index + 1),
+        name: `Held ${index + 1}`,
+        updatedAt,
+      }));
+      const created = {
+        id: numberedUuid(3),
+        name: "Heavy",
+        updatedAt: goClock(3, "374763655"),
+      };
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/tags", held],
+        ...held.map((tag): TimedCaptureRow => [
+          "GET",
+          `/api/tags/${tag.id}`,
+          tag,
+        ]),
+        ["POST", "/api/tags", created, 201, { name: "Heavy" }],
+        ["GET", `/api/tags/${created.id}`, created],
+      ];
+      expect(planOf(rows, "post_tags").rules).toContainEqual({
+        field: "updatedAt",
+        rule: "clock",
+        format: { kind: "iso", separator: "T", fraction: 9, zone: "Z" },
+      });
+    },
+  );
+
   it("serves updates whose clock a later call shows trimmed", () => {
     expect(planOf(TAG_UPDATE_ROWS, "patch_tags_by_uuid")).toMatchObject({
       served: true,
       rules: expect.arrayContaining([
         { field: "updatedAt", rule: "clock", format: TRIMMED },
+      ]),
+    });
+  });
+
+  it("serves updates whose two clocks a later call shows trimmed for one only", () => {
+    expect(
+      planOf(TWO_CLOCK_TAG_UPDATE_ROWS, "patch_tags_by_uuid"),
+    ).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        { field: "updatedAt", rule: "clock", format: TRIMMED },
+        { field: "syncedAt", rule: "clock", format: TRIMMED },
       ]),
     });
   });
@@ -85,6 +138,23 @@ describe("values an application derives from others", () => {
     expect(planOf(FOLDER_ROWS, "put_folders_by_uuid")).toMatchObject({
       served: true,
       rules: expect.arrayContaining([url]),
+    });
+  });
+
+  it("withholds folder creates whose generated numeric id another field repeats, which seeding cannot keep", () => {
+    const repeated = (value: JsonValue): JsonValue =>
+      Array.isArray(value)
+        ? value.map(repeated)
+        : isObject(value) && typeof value.id === "number"
+          ? { ...value, folderId: value.id }
+          : value;
+    const rows = FOLDER_ROWS.map((row): TimedCaptureRow => {
+      const [method, path, body, ...rest] = row;
+      return body === undefined ? row : [method, path, repeated(body), ...rest];
+    });
+    expect(planOf(rows, "post_folders")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
     });
   });
 });

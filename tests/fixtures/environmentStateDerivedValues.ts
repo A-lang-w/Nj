@@ -238,3 +238,54 @@ export const TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
   ],
   ["GET", `/api/tags/${numberedUuid(2)}`, RENAMED_SECOND_TAG],
 ];
+
+const synced = (entity: Entity, syncedAt: string): Entity => ({
+  ...entity,
+  syncedAt,
+});
+
+/** The same renames stamping a second clock, which the later call still shows with nine digits. */
+export const TWO_CLOCK_TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/tags",
+    [
+      synced(FIRST_TAG, "2026-10-01T09:00:00.123456793Z"),
+      synced(SECOND_TAG, "2026-10-01T10:00:00.223456793Z"),
+    ],
+  ],
+  [
+    "GET",
+    `/api/tags/${numberedUuid(1)}`,
+    synced(FIRST_TAG, "2026-10-01T09:00:00.123456793Z"),
+  ],
+  [
+    "GET",
+    `/api/tags/${numberedUuid(2)}`,
+    synced(SECOND_TAG, "2026-10-01T10:00:00.223456793Z"),
+  ],
+  [
+    "PATCH",
+    `/api/tags/${numberedUuid(1)}`,
+    synced(RENAMED_FIRST_TAG, goClock(3, "512345681")),
+    200,
+    { name: "Fragile glass" },
+  ],
+  [
+    "GET",
+    `/api/tags/${numberedUuid(1)}`,
+    synced(RENAMED_FIRST_TAG, goClock(3, "512345681")),
+  ],
+  [
+    "PATCH",
+    `/api/tags/${numberedUuid(2)}`,
+    synced(RENAMED_SECOND_TAG, goClock(5, "612345683")),
+    200,
+    { name: "Outdoor gear" },
+  ],
+  [
+    "GET",
+    `/api/tags/${numberedUuid(2)}`,
+    synced(RENAMED_SECOND_TAG, goClock(5, "612345683")),
+  ],
+];

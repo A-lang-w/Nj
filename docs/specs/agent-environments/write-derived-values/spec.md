@@ -34,7 +34,8 @@ model could not explain, though the application derives it deterministically:
   is the most digits shown, and serving drops trailing zeros and the point with them.
 - **Generated integers.** A created integer of 10 to 20 digits that no entity of the type holds, where every held
   entity holds a distinct one of the same length and JSON kind and none is a clock, is `unique`. Serving draws a seeded
-  integer of that length and kind that no held entity has.
+  integer of that length and kind that no held entity has. One that another field of the created entity also holds is
+  not `unique`, and the create is withheld as `unexplained-change`, since seeding cannot keep the two equal.
 
 Plans that need none of this are unchanged.
 
