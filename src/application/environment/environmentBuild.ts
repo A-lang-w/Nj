@@ -7,10 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
-import {
-  summarizeEnvironmentCoverage,
-  type EnvironmentCoverage,
-} from "../../domain/analysisView/environmentCoverageView.js";
+import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
 import {
   TEMPLATE_RULES,
   type TemplateRule,
@@ -47,7 +44,7 @@ import {
   parseCaptureEvidence,
   parseEvidenceFile,
 } from "./environmentSource.js";
-import { prepareServedState, type PreparedState } from "./environmentState.js";
+import { prepareServedState } from "./environmentState.js";
 
 /** Operation name the build command's own refusals report; each stage keeps its own. */
 export const ENVIRONMENT_BUILD_OPERATION = "environment-build";

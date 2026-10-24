@@ -34,14 +34,14 @@ const read = (step_id, path) => ({
   expected_status: [200],
 });
 
-const write = (step_id, method, path, json, expected_status) => ({
+const write = (step_id, method, path, { json, status }) => ({
   step_id,
   action: "request",
   method,
   path,
   headers: authenticated,
   ...(json === undefined ? {} : { json }),
-  expected_status,
+  expected_status: [status],
 });
 
 const pause = (step_id) => ({
@@ -66,47 +66,35 @@ const writeSession = (executable, origin) =>
       read("list-1", "/api/items"),
       read("list-2", "/api/items"),
       read("item-1", "/api/items/1"),
-      write(
-        "create-1",
-        "POST",
-        "/api/items",
-        { title: "Scratch item 1" },
-        [201],
-      ),
+      write("create-1", "POST", "/api/items", {
+        json: { title: "Scratch item 1" },
+        status: 201,
+      }),
       read("created-1", "/api/items/3"),
       read("list-created-1", "/api/items"),
-      write(
-        "create-2",
-        "POST",
-        "/api/items",
-        { title: "Scratch item 2" },
-        [201],
-      ),
+      write("create-2", "POST", "/api/items", {
+        json: { title: "Scratch item 2" },
+        status: 201,
+      }),
       read("created-2", "/api/items/4"),
       read("list-created-2", "/api/items"),
       pause("settle-creates"),
-      write(
-        "update-1",
-        "PUT",
-        "/api/items/3",
-        { title: "Scratch item 1 renamed", done: true },
-        [200],
-      ),
+      write("update-1", "PUT", "/api/items/3", {
+        json: { title: "Scratch item 1 renamed", done: true },
+        status: 200,
+      }),
       read("updated-1", "/api/items/3"),
       read("list-updated-1", "/api/items"),
-      write(
-        "update-2",
-        "PUT",
-        "/api/items/4",
-        { title: "Scratch item 2 renamed", done: false },
-        [200],
-      ),
+      write("update-2", "PUT", "/api/items/4", {
+        json: { title: "Scratch item 2 renamed", done: false },
+        status: 200,
+      }),
       read("updated-2", "/api/items/4"),
       read("list-updated-2", "/api/items"),
-      write("delete-1", "DELETE", "/api/items/3", undefined, [204]),
+      write("delete-1", "DELETE", "/api/items/3", { status: 204 }),
       { ...read("deleted-1", "/api/items/3"), expected_status: [404] },
       read("list-deleted-1", "/api/items"),
-      write("delete-2", "DELETE", "/api/items/4", undefined, [204]),
+      write("delete-2", "DELETE", "/api/items/4", { status: 204 }),
       { ...read("deleted-2", "/api/items/4"), expected_status: [404] },
       read("list-deleted-2", "/api/items"),
       read("session", "/api/session"),
@@ -116,6 +104,119 @@ const writeSession = (executable, origin) =>
       network: { request_body: true, response_body: true, header_values: true },
     },
   });
+
+const runCli = async (entrypoint, args, maxBuffer) =>
+  (
+    await run(process.execPath, [entrypoint, ...args, "--json"], {
+      env: {
+        ...process.env,
+        REA_LOG_LEVEL: "silent",
+        HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
+      },
+      timeout: 120_000,
+      maxBuffer,
+    })
+  ).stdout;
+
+const captureOf = async (entrypoint, scenario, maxBuffer) => {
+  const stdout = await runCli(
+    entrypoint,
+    ["capture-browser-scenario", JSON.stringify(scenario)],
+    maxBuffer,
+  );
+  const evidence = parseEvidence(JSON.parse(stdout));
+  return {
+    stdout,
+    evidence,
+    capture: browserScenarioCaptureSchema.parse(evidence.normalized_result),
+  };
+};
+
+/** Every request step completed and sent exactly its own request. */
+const assertRequestsAttributed = (scenario, capture) => {
+  const steps = capture.steps.filter(
+    (step) => step.step_id !== "scenario_start",
+  );
+  assert.equal(steps.length, scenario.actions.length);
+  for (const step of steps)
+    assert.equal(step.status, "completed", JSON.stringify(step));
+  const requests = capture.events.items.filter(
+    (event) => event.kind === "request",
+  );
+  scenario.actions.forEach((action, index) => {
+    if (action.action !== "request") return;
+    const stepIndex = capture.steps.findIndex(
+      (step) => step.step_id === action.step_id,
+    );
+    assert.equal(capture.steps[stepIndex].action, "request");
+    const sent = requests.filter(
+      (event) =>
+        event.step_index === stepIndex &&
+        event.method === action.method &&
+        new URL(event.url.url).pathname === action.path,
+    );
+    assert.equal(sent.length, 1, `step ${String(index)} ${action.step_id}`);
+  });
+};
+
+/** The CSRF cookie and stored token reached the server but no record keeps them. */
+const assertPageValuesRedacted = (evidence, capture) => {
+  // Bodies are base64 in the Evidence, so decode them before looking for the values.
+  const contents = capture.events.items.filter(
+    (event) => event.kind === "network-content",
+  );
+  const bodies = contents
+    .filter((event) => event.body.state === "captured")
+    .map((event) => Buffer.from(event.body.content, "base64").toString());
+  const headerValues = contents.flatMap((event) =>
+    event.headers.state === "captured"
+      ? event.headers.items.map((item) => item.value ?? "")
+      : [],
+  );
+  const retained = [JSON.stringify(evidence), ...bodies, ...headerValues];
+  for (const value of [requestFixtureCsrf, requestFixtureToken])
+    assert.ok(
+      retained.every((text) => !text.includes(value)),
+      `${value} was retained`,
+    );
+  assert.ok(
+    headerValues.some((value) =>
+      value.includes("[REDACTED:page:create-1.X-CSRFToken]"),
+    ),
+    "the CSRF header was not recorded redacted",
+  );
+  assert.ok(
+    bodies.some(
+      (body) =>
+        body.includes('"token"') && body.includes("[REDACTED:page:create-1."),
+    ),
+    "the session response was not recorded redacted",
+  );
+  assert.ok(
+    capture.limitations.some((line) => line.startsWith("Request steps sent")),
+  );
+};
+
+/** A status outside expected_status fails the step and cancels the rest. */
+const assertUnexpectedStatusFails = async (entrypoint, scenario) => {
+  const failing = browserScenarioSchema.parse({
+    ...scenario,
+    actions: [
+      write("delete-missing", "DELETE", "/api/items/999", { status: 204 }),
+      read("after", "/api/items"),
+    ],
+  });
+  const { capture } = await captureOf(entrypoint, failing, 16 * 1024 * 1024);
+  const missing = capture.steps.find(
+    ({ step_id }) => step_id === "delete-missing",
+  );
+  assert.equal(missing.status, "failed");
+  assert.match(missing.error ?? "", /answered 404; expected 204/u);
+  assert.equal(
+    capture.steps.find(({ step_id }) => step_id === "after").status,
+    "cancelled",
+  );
+};
 
 /**
  * Record a write session through request steps in a real browser, then build
@@ -130,102 +231,25 @@ export async function verifyBrowserRequestSteps(
   const site = await startBrowserRequestSite();
   const root = await mkdtemp(join(tmpdir(), "rea-request-e2e-"));
   try {
-    const env = {
-      ...process.env,
-      REA_LOG_LEVEL: "silent",
-      HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
-    };
     const scenario = writeSession(executable, site.origin);
-    const { stdout } = await run(
-      process.execPath,
-      [
-        entrypoint,
-        "capture-browser-scenario",
-        JSON.stringify(scenario),
-        "--json",
-      ],
-      { env, timeout: 120_000, maxBuffer: 64 * 1024 * 1024 },
+    const { stdout, evidence, capture } = await captureOf(
+      entrypoint,
+      scenario,
+      64 * 1024 * 1024,
     );
-    const evidence = parseEvidence(JSON.parse(stdout));
-    const capture = browserScenarioCaptureSchema.parse(
-      evidence.normalized_result,
-    );
-    const steps = capture.steps.filter(
-      (step) => step.step_id !== "scenario_start",
-    );
-    assert.equal(steps.length, scenario.actions.length);
-    for (const step of steps)
-      assert.equal(step.status, "completed", JSON.stringify(step));
-    const requests = capture.events.items.filter(
-      (event) => event.kind === "request",
-    );
-    scenario.actions.forEach((action, index) => {
-      if (action.action !== "request") return;
-      const stepIndex = capture.steps.findIndex(
-        (step) => step.step_id === action.step_id,
-      );
-      assert.equal(capture.steps[stepIndex].action, "request");
-      const sent = requests.filter(
-        (event) =>
-          event.step_index === stepIndex &&
-          event.method === action.method &&
-          new URL(event.url.url).pathname === action.path,
-      );
-      assert.equal(sent.length, 1, `step ${String(index)} ${action.step_id}`);
-    });
+    assertRequestsAttributed(scenario, capture);
     assert.equal(site.writes.length, 6);
     assert.ok(site.writes.every(({ csrf, bearer }) => csrf && bearer));
-    // Bodies are base64 in the Evidence, so decode them before looking for the values.
-    const contents = capture.events.items.filter(
-      (event) => event.kind === "network-content",
-    );
-    const bodies = contents
-      .filter((event) => event.body.state === "captured")
-      .map((event) => Buffer.from(event.body.content, "base64").toString());
-    const headerValues = contents.flatMap((event) =>
-      event.headers.state === "captured"
-        ? event.headers.items.map((item) => item.value ?? "")
-        : [],
-    );
-    const retained = [JSON.stringify(evidence), ...bodies, ...headerValues];
-    for (const value of [requestFixtureCsrf, requestFixtureToken])
-      assert.ok(
-        retained.every((text) => !text.includes(value)),
-        `${value} was retained`,
-      );
-    assert.ok(
-      headerValues.some((value) =>
-        value.includes("[REDACTED:page:create-1.X-CSRFToken]"),
-      ),
-      "the CSRF header was not recorded redacted",
-    );
-    assert.ok(
-      bodies.some(
-        (body) =>
-          body.includes('"token"') && body.includes("[REDACTED:page:create-1."),
-      ),
-      "the session response was not recorded redacted",
-    );
-    assert.ok(
-      capture.limitations.some((line) => line.startsWith("Request steps sent")),
-    );
+    assertPageValuesRedacted(evidence, capture);
 
     const capturePath = join(root, "items.capture.json");
     await writeFile(capturePath, stdout);
     const built = JSON.parse(
-      (
-        await run(
-          process.execPath,
-          [
-            entrypoint,
-            "environment-build",
-            capturePath,
-            join(root, "env"),
-            "--json",
-          ],
-          { env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
-        )
-      ).stdout,
+      await runCli(
+        entrypoint,
+        ["environment-build", capturePath, join(root, "env")],
+        16 * 1024 * 1024,
+      ),
     );
     assert.equal(built.status, "built");
     assert.equal(built.name, "items");
@@ -236,41 +260,7 @@ export async function verifyBrowserRequestSteps(
       JSON.stringify(built.coverage),
     );
 
-    const failing = browserScenarioSchema.parse({
-      ...scenario,
-      actions: [
-        write("delete-missing", "DELETE", "/api/items/999", undefined, [204]),
-        read("after", "/api/items"),
-      ],
-    });
-    const refused = parseEvidence(
-      JSON.parse(
-        (
-          await run(
-            process.execPath,
-            [
-              entrypoint,
-              "capture-browser-scenario",
-              JSON.stringify(failing),
-              "--json",
-            ],
-            { env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
-          )
-        ).stdout,
-      ),
-    );
-    const outcome = browserScenarioCaptureSchema.parse(
-      refused.normalized_result,
-    );
-    const missing = outcome.steps.find(
-      ({ step_id }) => step_id === "delete-missing",
-    );
-    assert.equal(missing.status, "failed");
-    assert.match(missing.error ?? "", /answered 404; expected 204/u);
-    assert.equal(
-      outcome.steps.find(({ step_id }) => step_id === "after").status,
-      "cancelled",
-    );
+    await assertUnexpectedStatusFails(entrypoint, scenario);
     return {
       request_steps: scenario.actions.filter(
         ({ action }) => action === "request",

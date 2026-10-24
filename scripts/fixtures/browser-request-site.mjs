@@ -13,13 +13,43 @@ const json = (response, status, value) => {
   response.end(value === undefined ? undefined : JSON.stringify(value));
 };
 
+/** The item API's answer to one authorized request, as a status and body. */
+const answerItems = (store, method, id, body) => {
+  const { items } = store;
+  if (id === undefined) {
+    if (method === "GET")
+      return [200, { count: items.size, results: [...items.values()] }];
+    if (method === "POST") {
+      const created = { id: store.next++, title: body.title, done: false };
+      items.set(created.id, created);
+      return [201, created];
+    }
+    return [405, { error: "method not allowed" }];
+  }
+  const item = items.get(id);
+  if (item === undefined) return [404, { error: "not found" }];
+  if (method === "GET") return [200, item];
+  if (method === "PUT") {
+    const updated = { ...item, title: body.title, done: body.done };
+    items.set(id, updated);
+    return [200, updated];
+  }
+  if (method === "DELETE") {
+    items.delete(id);
+    return [204, undefined];
+  }
+  return [405, { error: "method not allowed" }];
+};
+
 /** Start a small item API that, like a cookie-session app with a CSRF header and a stored bearer token, refuses writes without both. */
 export async function startBrowserRequestSite() {
-  const items = new Map([
-    [1, { id: 1, title: "Seeded item", done: false }],
-    [2, { id: 2, title: "Second seeded item", done: true }],
-  ]);
-  let next = 3;
+  const store = {
+    items: new Map([
+      [1, { id: 1, title: "Seeded item", done: false }],
+      [2, { id: 2, title: "Second seeded item", done: true }],
+    ]),
+    next: 3,
+  };
   const writes = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://fixture.test");
@@ -66,43 +96,8 @@ export async function startBrowserRequestSite() {
         return;
       }
     }
-    if (id === undefined) {
-      if (request.method === "GET") {
-        json(response, 200, {
-          count: items.size,
-          results: [...items.values()],
-        });
-        return;
-      }
-      if (request.method === "POST") {
-        const created = { id: next++, title: body.title, done: false };
-        items.set(created.id, created);
-        json(response, 201, created);
-        return;
-      }
-    } else {
-      const item = items.get(id);
-      if (item === undefined) {
-        json(response, 404, { error: "not found" });
-        return;
-      }
-      if (request.method === "GET") {
-        json(response, 200, item);
-        return;
-      }
-      if (request.method === "PUT") {
-        const updated = { ...item, title: body.title, done: body.done };
-        items.set(id, updated);
-        json(response, 200, updated);
-        return;
-      }
-      if (request.method === "DELETE") {
-        items.delete(id);
-        json(response, 204);
-        return;
-      }
-    }
-    json(response, 405, { error: "method not allowed" });
+    const [status, value] = answerItems(store, request.method, id, body);
+    json(response, status, value);
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -112,7 +107,7 @@ export async function startBrowserRequestSite() {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     writes,
-    items,
+    items: store.items,
     async close() {
       server.closeAllConnections();
       await new Promise((resolve, reject) =>

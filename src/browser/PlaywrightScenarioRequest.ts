@@ -49,12 +49,15 @@ const pointerText = (value: unknown, pointer: string): string | undefined => {
 
 /** Resolve one header value; values read from the page are redacted from later records. */
 const headerValue = async (
-  page: Page,
-  url: URL,
-  stepId: string,
+  step: {
+    readonly page: Page;
+    readonly url: URL;
+    readonly stepId: string;
+    readonly secrets: BrowserScenarioSecrets;
+  },
   header: BrowserScenarioRequestHeader,
-  secrets: BrowserScenarioSecrets,
 ): Promise<string> => {
+  const { page, url, stepId, secrets } = step;
   const { value } = header;
   if (value.source === "literal" || value.source === "secret")
     return secrets.value(value);
@@ -125,11 +128,12 @@ export const performScenarioRequest = async (input: {
     );
   for (const { name, value } of action.query)
     url.searchParams.append(name, secrets.value(value));
+  const step = { page, url, stepId: action.step_id, secrets };
   const headers: [string, string][] = [];
   for (const header of action.headers)
     headers.push([
       header.name,
-      `${header.prefix ?? ""}${await headerValue(page, url, action.step_id, header, secrets)}`,
+      `${header.prefix ?? ""}${await headerValue(step, header)}`,
     ]);
   const hasContentType = headers.some(
     ([name]) => name.toLowerCase() === "content-type",
