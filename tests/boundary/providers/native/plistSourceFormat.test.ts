@@ -27,6 +27,7 @@ const DATA = { $plist_type: "data", base64: "3q2+7w==" };
 
 class PlistSourceRunner extends NativeFixtureRunner {
   constructor(
+    private readonly path: string,
     description: string,
     private readonly xmlFallback: boolean,
     private readonly convertedXml: string = XML,
@@ -36,10 +37,23 @@ class PlistSourceRunner extends NativeFixtureRunner {
 
   override async run(tool: string, arguments_: readonly string[]) {
     const result = await super.run(tool, arguments_);
-    if (result.ok && tool === "plutil" && arguments_[0] === "-lint")
-      return ok({ ...result.value, stdout: "OK\n", stdoutBytes: 3 });
-    if (!result.ok || tool !== "plutil" || !this.xmlFallback) return result;
-    const json = arguments_.includes("json");
+    if (!result.ok || tool !== "plutil") return result;
+    if (arguments_[0] === "-lint") {
+      expect(arguments_).toEqual(["-lint", "--", this.path]);
+      return ok({ ...result.value, stdout: "", stdoutBytes: 0 });
+    }
+    const format = arguments_[1];
+    expect(["json", "xml1"]).toContain(format);
+    expect(arguments_).toEqual([
+      "-convert",
+      format,
+      "-o",
+      "-",
+      "--",
+      this.path,
+    ]);
+    if (!this.xmlFallback) return result;
+    const json = format === "json";
     const stdout = json ? "" : this.convertedXml;
     return ok({
       ...result.value,
@@ -194,7 +208,7 @@ it.for<PlistSourceCase>([
     await writeFile(path, contents);
     const client = new NativeMacOSProvider(
       {},
-      new PlistSourceRunner(description, xmlFallback, convertedXml),
+      new PlistSourceRunner(path, description, xmlFallback, convertedXml),
       "darwin",
     ).createClient(nativeMachoTarget(join(root, "target")));
     onTestFinished(async () => {
