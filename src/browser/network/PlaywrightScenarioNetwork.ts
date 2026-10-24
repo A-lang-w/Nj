@@ -26,18 +26,25 @@ export interface ScenarioNetworkRequest extends NetworkHeadersSource {
   postDataBuffer(): Buffer | null;
   redirectedFrom(): ScenarioNetworkRequest | null;
   failure(): { errorText: string } | null;
-  /** Browser resource timing; `responseEnd` is milliseconds after the start, or -1 when unknown. */
-  timing?(): { readonly responseEnd: number };
+  /** Browser resource timing: `startTime` in epoch milliseconds (0 until known), `responseEnd` after it (-1 when unknown). */
+  timing?(): { readonly startTime: number; readonly responseEnd: number };
 }
 
-/** The browser-reported time to the end of the response, when it reported one. */
-const elapsedMs = (
+/** The browser's own start and duration for a finished or failed request, as far as it reported them. */
+const browserTiming = (
   request: ScenarioNetworkRequest,
-): { readonly elapsed_ms?: number } => {
-  const end = request.timing?.().responseEnd;
-  return end !== undefined && Number.isFinite(end) && end >= 0
-    ? { elapsed_ms: end }
-    : {};
+): { readonly started_at?: string; readonly elapsed_ms?: number } => {
+  const timing = request.timing?.();
+  if (timing === undefined) return {};
+  const { startTime, responseEnd } = timing;
+  return {
+    ...(Number.isFinite(startTime) && startTime > 0
+      ? { started_at: new Date(startTime).toISOString() }
+      : {}),
+    ...(Number.isFinite(responseEnd) && responseEnd >= 0
+      ? { elapsed_ms: responseEnd }
+      : {}),
+  };
 };
 
 /** A response's body becomes eligible for reading only after requestfinished. */
@@ -114,8 +121,6 @@ interface NetworkCaptureOptions {
   readonly signal?: AbortSignal;
   /** Production uses 5s; a fixture can supply its own bounded-read clock. */
   readonly readTimeoutMs?: number;
-  /** Wall clock stamping when a request was observed; production uses Date.now. */
-  readonly now?: () => number;
 }
 
 /** Captures correlated network phases and drains selected content before browser cleanup. */
@@ -169,7 +174,7 @@ export class PlaywrightScenarioNetwork {
       return;
     }
     if (transaction.requestObserved) return;
-    const observedAt = new Date((this.options.now ?? Date.now)()).toISOString();
+    const observedAt = new Date().toISOString();
     if (
       !this.admitMetadata(transaction, "request", request, undefined, [
         observedAt,
@@ -274,13 +279,23 @@ export class PlaywrightScenarioNetwork {
       return;
     }
     transaction.terminal = "finished";
-    if (!this.admitMetadata(transaction, "request-finished", request)) return;
+    const timing = browserTiming(request);
+    if (
+      !this.admitMetadata(
+        transaction,
+        "request-finished",
+        request,
+        undefined,
+        timing.started_at === undefined ? [] : [timing.started_at],
+      )
+    )
+      return;
     const admission = this.options.emit({
       ...this.metadata(request, transaction),
       kind: "request-finished",
       status: null,
       failure: null,
-      ...elapsedMs(request),
+      ...timing,
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(
@@ -304,9 +319,11 @@ export class PlaywrightScenarioNetwork {
     }
     transaction.terminal = "failed";
     const failure = request.failure()?.errorText || "Unknown request failure";
+    const timing = browserTiming(request);
     if (
       !this.admitMetadata(transaction, "request-failed", request, undefined, [
         failure,
+        ...(timing.started_at === undefined ? [] : [timing.started_at]),
       ])
     )
       return;
@@ -316,7 +333,7 @@ export class PlaywrightScenarioNetwork {
       kind: "request-failed",
       status: null,
       failure: message,
-      ...elapsedMs(request),
+      ...timing,
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(

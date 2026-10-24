@@ -103,34 +103,44 @@ const reportedRequest = (
   };
 };
 
-/** Each transaction's browser-timed duration, from its single finished or failed event. */
-const elapsedByTransaction = (
+interface BrowserTiming {
+  readonly started_at?: string | undefined;
+  readonly elapsed_ms?: number | undefined;
+}
+
+/** Each transaction's browser-reported start and duration, from its single finished or failed event. */
+const timingByTransaction = (
   events: RetainedBrowserScenarioCapture["events"]["items"],
-): ReadonlyMap<string, number | undefined> => {
-  const elapsed = new Map<string, number | undefined>();
+): ReadonlyMap<string, BrowserTiming> => {
+  const timing = new Map<string, BrowserTiming>();
   for (const event of events) {
     if (event.kind !== "request-finished" && event.kind !== "request-failed")
       continue;
-    // A transaction ending twice has no single duration.
-    elapsed.set(
+    // A transaction ending twice has no single start or duration.
+    timing.set(
       event.transaction_id,
-      elapsed.has(event.transaction_id) ? undefined : event.elapsed_ms,
+      timing.has(event.transaction_id)
+        ? {}
+        : { started_at: event.started_at, elapsed_ms: event.elapsed_ms },
     );
   }
-  return elapsed;
+  return timing;
 };
 
-/** HAR timing for a record: when the request was observed and how long it took (0 when the browser reported no duration). */
+/**
+ * HAR timing for a record: the browser's start when it reported one, else when the request was observed, and the
+ * browser's duration (0 when it reported none).
+ */
 const recordTiming = (
   request: RequestEvent,
-  elapsed: ReadonlyMap<string, number | undefined>,
-): { readonly startedDateTime: string; readonly time: number } | undefined =>
-  request.observed_at === undefined
+  timing: ReadonlyMap<string, BrowserTiming>,
+): { readonly startedDateTime: string; readonly time: number } | undefined => {
+  const browser = timing.get(request.transaction_id);
+  const started = browser?.started_at ?? request.observed_at;
+  return started === undefined
     ? undefined
-    : {
-        startedDateTime: request.observed_at,
-        time: elapsed.get(request.transaction_id) ?? 0,
-      };
+    : { startedDateTime: started, time: browser?.elapsed_ms ?? 0 };
+};
 
 const record = (
   ordinal: number,
@@ -217,13 +227,13 @@ export const scenarioCaptureRecords = (
   purpose: "manifest" | "replay",
 ): ScenarioCaptureRecords => {
   const index = indexBrowserScenarioTransactions(capture.events.items);
-  const elapsed = elapsedByTransaction(capture.events.items);
+  const timings = timingByTransaction(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];
   const responseBodies = new Map<number, ScenarioResponseBodyRetention>();
   let timed = false;
   for (const [item, event] of capture.events.items.entries()) {
     if (event.kind !== "request") continue;
-    const timing = recordTiming(event, elapsed);
+    const timing = recordTiming(event, timings);
     timed ||= timing !== undefined;
     const projected = record(
       records.length,
@@ -244,7 +254,7 @@ export const scenarioCaptureRecords = (
       "Scenario records are the capture's network transactions in request order; each record ordinal is the transaction's zero-based position.",
       ...(timed
         ? [
-            "Scenario record start times are when the provider observed each request, shortly after the browser started it; durations are the browser's own timing.",
+            "Scenario record start times are the browser's own, from when the request ended, or when the provider observed the request where the browser reported none; durations are the browser's own, or 0 where it reported none.",
           ]
         : []),
       ...(capture.events.dropped > 0

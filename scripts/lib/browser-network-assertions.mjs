@@ -152,11 +152,14 @@ export function assertBrowserNetworkEvidence(
       Number.isFinite(Date.parse(request.observed_at)),
       `Request ${request.url.url} has no observation time`,
     );
-  const timed = events.filter(
-    (event) =>
-      event.kind === "request-finished" && typeof event.elapsed_ms === "number",
-  );
-  assert.ok(timed.length > 0, "No finished request carries elapsed_ms");
+  const timed = events.filter((event) => event.kind === "request-finished");
+  for (const finished of timed)
+    assert.ok(
+      typeof finished.elapsed_ms === "number" &&
+        Number.isFinite(Date.parse(finished.started_at)),
+      `Finished request ${finished.url.url} has no browser start or duration`,
+    );
+  assert.ok(timed.length > 0, "No request finished");
   return {
     timed_requests: requestEvents.length,
     timed_completions: timed.length,

@@ -582,7 +582,9 @@ describe("browser scenario network comparison stability", () => {
       ),
     ).toBe("changed");
   });
+});
 
+describe("browser scenario network request times", () => {
   it("ignores when requests were observed and how long they took", () => {
     const timed = (
       capture: BrowserScenarioCapture,
@@ -601,7 +603,13 @@ describe("browser scenario network comparison stability", () => {
               }
             : event.kind === "request-finished" ||
                 event.kind === "request-failed"
-              ? { ...event, elapsed_ms: 3 + offset }
+              ? {
+                  ...event,
+                  started_at: new Date(
+                    Date.parse("2026-10-24T04:59:59.990Z") + offset,
+                  ).toISOString(),
+                  elapsed_ms: 3 + offset,
+                }
               : event,
         ),
       },
@@ -614,6 +622,15 @@ describe("browser scenario network comparison stability", () => {
       }),
     );
     expect(compared.overall_status).toBe("unchanged");
+    // A capture made before request times were recorded compares with a timed one.
+    expect(
+      compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: concurrentCapture(["a", "b"], statuses),
+          after_scenario: timed(concurrentCapture(["a", "b"], statuses), 0),
+        }),
+      ).overall_status,
+    ).toBe("unchanged");
     expect(compared.normalization.built_in_rules).toContain(
       "ignore_network_request_timing",
     );

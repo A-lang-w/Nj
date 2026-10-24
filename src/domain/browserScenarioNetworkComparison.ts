@@ -155,17 +155,22 @@ export const scenarioNetworkCoverageReason = (
   return undefined;
 };
 
-/** Hash normalized own evidence and its complete parent fingerprint in linear graph space. */
 /** Request times differ on every run, so comparisons leave them out. */
 const withoutRequestTiming = (event: object): object => {
   const {
     observed_at: _observed,
+    started_at: _started,
     elapsed_ms: _elapsed,
     ...rest
-  } = event as { observed_at?: unknown; elapsed_ms?: unknown };
+  } = event as {
+    observed_at?: unknown;
+    started_at?: unknown;
+    elapsed_ms?: unknown;
+  };
   return rest;
 };
 
+/** Hash normalized own evidence and its complete parent fingerprint in linear graph space. */
 export const fingerprintScenarioNetworkTransactions = (
   nodes: readonly ScenarioNetworkTransaction[],
   rules: readonly BrowserScenarioNormalizationRule[] = [],

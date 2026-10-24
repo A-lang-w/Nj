@@ -945,7 +945,7 @@ it("does not read content when phase metadata was omitted", async () => {
   expect(collector.limitations().join(" ")).toContain("incomplete");
 });
 
-it("stamps when each request was observed and how long the browser timed it", async () => {
+it("stamps when each request was observed, and the browser's own start and duration once it ends", async () => {
   vi.useFakeTimers({ now: Date.parse("2026-10-24T05:00:00.250Z") });
   const { collector, events } = harness({
     request_body: false,
@@ -955,31 +955,39 @@ it("stamps when each request was observed and how long the browser timed it", as
   class TimedRequest extends RequestFixture {
     constructor(
       marker: string,
+      readonly startTime: number,
       readonly responseEnd: number,
     ) {
       super(marker);
     }
     timing() {
-      return { responseEnd: this.responseEnd };
+      return { startTime: this.startTime, responseEnd: this.responseEnd };
     }
   }
-  const finished = new TimedRequest("timed", 12.5);
-  const failed = new TimedRequest("untimed", -1);
+  const finished = new TimedRequest(
+    "timed",
+    Date.parse("2026-10-24T05:00:00.200Z"),
+    12.5,
+  );
+  const failed = new TimedRequest("untimed", 0, -1);
   collector.request(finished);
   collector.request(failed);
   collector.finished(finished);
   collector.failed(failed);
   await collector.finish();
-  expect(
-    events.filter(({ kind }) => kind === "request").map((event) => event),
-  ).toEqual([
+  expect(events.filter(({ kind }) => kind === "request")).toEqual([
     expect.objectContaining({ observed_at: "2026-10-24T05:00:00.250Z" }),
     expect.objectContaining({ observed_at: "2026-10-24T05:00:00.250Z" }),
   ]);
   expect(events).toContainEqual(
-    expect.objectContaining({ kind: "request-finished", elapsed_ms: 12.5 }),
+    expect.objectContaining({
+      kind: "request-finished",
+      started_at: "2026-10-24T05:00:00.200Z",
+      elapsed_ms: 12.5,
+    }),
   );
   const failure = events.find(({ kind }) => kind === "request-failed");
   expect(failure).toBeDefined();
+  expect(failure).not.toHaveProperty("started_at");
   expect(failure).not.toHaveProperty("elapsed_ms");
 });
