@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -315,6 +315,129 @@ describe("buildEnvironment naming and refusals", () => {
     if (built.ok) throw new Error("Expected a refusal");
     expect(projectAnalysisError(built.error).code).toBe("invalid_request");
     expect(await listFiles(input.directory!)).toEqual(["notes.md"]);
+  });
+});
+
+describe("buildEnvironment cancellation and input checks", () => {
+  it("writes nothing when cancelled before the bundle stage", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-stop-");
+    const controller = new AbortController();
+    const input = await buildInput(root, undefined, {
+      signal: controller.signal,
+      progress: (stage) => {
+        if (stage === "state") controller.abort();
+      },
+    });
+    const built = await buildEnvironment(input);
+    if (built.ok) throw new Error("Expected a cancellation");
+    expect(projectAnalysisError(built.error)).toMatchObject({
+      code: "cancelled",
+      details: { operation: "environment-build" },
+    });
+    await expect(readdir(input.directory!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("names the written bundle when cancelled during the write", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-late-");
+    const controller = new AbortController();
+    const input = await buildInput(root, undefined, {
+      signal: controller.signal,
+      progress: (stage) => {
+        if (stage === "bundle") controller.abort();
+      },
+    });
+    const built = await buildEnvironment(input);
+    if (built.ok) throw new Error("Expected a cancellation");
+    const projected = projectAnalysisError(built.error);
+    expect(projected.code).toBe("cancelled");
+    expect(JSON.stringify(projected)).toContain(
+      `"output_directory":${JSON.stringify(input.directory)}`,
+    );
+    expect(await listFiles(input.directory!)).toHaveLength(7);
+  });
+
+  it("refuses repeated rules and a HAR document saved as JSON", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-input-");
+    const repeated = await buildEnvironment(
+      await buildInput(root, undefined, {
+        templateRules: ["opaque-token", "opaque-token"],
+      }),
+    );
+    if (repeated.ok) throw new Error("Expected a refusal");
+    expect(projectAnalysisError(repeated.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["template_rules"] }] },
+    });
+    const harPath = join(root, "grafana.json");
+    await writeFile(harPath, JSON.stringify({ log: { entries: [] } }));
+    const har = await readEnvironmentExportFile("evidence", harPath);
+    if (!har.ok) throw har.error;
+    const asJson = await buildEnvironment({
+      capture: har.value,
+      captureInput: "evidence",
+      capturePath: harPath,
+      templateRules: DEFAULT_BUILD_TEMPLATE_RULES,
+      dryRun: true,
+    });
+    if (asJson.ok) throw new Error("Expected a refusal");
+    expect(projectAnalysisError(asJson.error)).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining(".har"),
+      details: { issues: [{ path: ["capture"] }] },
+    });
+  });
+
+  it("refuses an unreadable package tarball on a dry run as a build does", async () => {
+    if (process.getuid?.() === 0) return;
+    const root = await createTestTempDirectory("rea-environment-build-tgz-");
+    const tarball = join(root, "rea-agents.tgz");
+    await writeFile(tarball, "packed");
+    await chmod(tarball, 0o000);
+    try {
+      const planned = await buildEnvironment(
+        await buildInput(root, undefined, {
+          dryRun: true,
+          packageTarball: tarball,
+        }),
+      );
+      const built = await buildEnvironment(
+        await buildInput(root, undefined, { packageTarball: tarball }),
+      );
+      if (planned.ok || built.ok) throw new Error("Expected both refusals");
+      expect(projectAnalysisError(planned.error).code).toBe("access_denied");
+      expect(projectAnalysisError(built.error).code).toBe("access_denied");
+    } finally {
+      await chmod(tarball, 0o600);
+    }
+  });
+
+  it("refuses a loopback capture whose file name is too long, and quotes the next command", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-long-");
+    const long = await captureFile(
+      root,
+      loopbackCapture(),
+      `${"a".repeat(70)}.capture.json`,
+    );
+    const refused = await buildEnvironment({
+      capture: long,
+      captureInput: "evidence",
+      capturePath: long.path,
+      templateRules: DEFAULT_BUILD_TEMPLATE_RULES,
+      dryRun: true,
+    });
+    if (refused.ok) throw new Error("Expected a refusal");
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      details: { operation: "environment-build", issues: [{ path: ["name"] }] },
+    });
+    const built = await buildEnvironment(
+      await buildInput(root, undefined, { directory: join(root, "my bundle") }),
+    );
+    if (!built.ok) throw built.error;
+    expect(built.value.next).toEqual([
+      `agent-env run '${join(root, "my bundle")}'`,
+    ]);
   });
 });
 

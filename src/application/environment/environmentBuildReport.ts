@@ -13,14 +13,21 @@ export interface EnvironmentBuildWarning {
 
 /** Whole name segments that name credentials; `author` is not `auth`. */
 const CREDENTIAL_SEGMENTS = new Set([
+  "accesstoken",
+  "apikey",
+  "apikeys",
+  "apitoken",
   "auth",
+  "authorization",
   "bearer",
   "cookie",
   "credential",
   "credentials",
   "jwt",
+  "passphrase",
   "passwd",
   "password",
+  "privatekey",
   "pwd",
   "secret",
   "secrets",
@@ -28,26 +35,27 @@ const CREDENTIAL_SEGMENTS = new Set([
   "sessionid",
   "token",
   "tokens",
-  "apikey",
-  "privatekey",
 ]);
 const CREDENTIAL_PAIRS = new Set([
   "access key",
   "api key",
+  "api keys",
   "client secret",
   "private key",
   "session id",
+  "ssh key",
 ]);
 
 /** Split a member name into lowercase segments at case changes and separators. */
 const nameSegments = (name: string): string[] =>
   name
     .replaceAll(/([a-z0-9])([A-Z])/gu, "$1 $2")
+    .replaceAll(/([A-Z]+)([A-Z][a-z])/gu, "$1 $2")
     .toLowerCase()
     .split(/[^a-z0-9]+/u)
     .filter((segment) => segment.length > 0);
 
-/** Whether a body member's name looks like it holds a credential. */
+/** Whether a member, header or query name looks like it holds a credential. */
 export const credentialNamed = (name: string): boolean => {
   const segments = nameSegments(name);
   return segments.some(
@@ -65,61 +73,104 @@ const REPORTED_POINTERS = 20;
 const pointerToken = (name: string): string =>
   name.replaceAll("~", "~0").replaceAll("/", "~1");
 
-const parsedBody = (text: string | null | undefined): unknown => {
+/** A held value: a non-empty string, or an array holding one. */
+const holdsValue = (value: unknown): boolean =>
+  (typeof value === "string" && value !== "") ||
+  (Array.isArray(value) &&
+    value.some((item) => typeof item === "string" && item !== ""));
+
+const member = (value: unknown, name: string): unknown =>
+  typeof value === "object" && value !== null
+    ? Reflect.get(value, name)
+    : undefined;
+
+/** A recorded body as JSON or form members, or undefined when it is neither. */
+const parsedBody = (text: unknown): unknown => {
   if (typeof text !== "string" || text.length > SCAN_BODY_LIMIT_BYTES)
     return undefined;
   const start = text.trimStart()[0];
-  if (start !== "{" && start !== "[") return undefined;
+  if (start === "{" || start === "[") {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!/^[^=&\s]+=[^&]*(?:&[^=&\s]+=[^&]*)*$/u.test(text)) return undefined;
   try {
-    return JSON.parse(text);
+    return Object.fromEntries(new URLSearchParams(text));
   } catch {
     return undefined;
   }
 };
 
-const requestText = (record: WebNetworkCaptureRecord): string | undefined => {
-  const reported: unknown = record.reported;
-  if (typeof reported !== "object" || reported === null) return undefined;
-  const request: unknown = Reflect.get(reported, "request");
-  if (typeof request !== "object" || request === null) return undefined;
-  const postData: unknown = Reflect.get(request, "postData");
-  if (typeof postData !== "object" || postData === null) return undefined;
-  const text: unknown = Reflect.get(postData, "text");
-  return typeof text === "string" ? text : undefined;
-};
+/** Name/value pairs such as HAR headers and query strings. */
+const namedValues = (value: unknown): (readonly [string, unknown])[] =>
+  Array.isArray(value)
+    ? value.flatMap((entry: unknown) => {
+        const name = member(entry, "name");
+        return typeof name === "string"
+          ? [[name, member(entry, "value")] as const]
+          : [];
+      })
+    : [];
 
-/** Credential-named members with a non-empty string value in recorded JSON bodies: a count and the first pointers, never values. */
+/**
+ * Credential-named members that hold a value in recorded JSON and form
+ * bodies, headers and query strings: a count and the first pointers, never
+ * values. The walk keeps its own stack, so nesting depth cannot overflow it.
+ */
 export const scanCredentialNames = (
   records: readonly WebNetworkCaptureRecord[],
 ): { readonly count: number; readonly pointers: readonly string[] } => {
   let count = 0;
   const pointers: string[] = [];
-  const visit = (value: unknown, pointer: string, label: string): void => {
-    if (Array.isArray(value)) {
-      value.forEach((child, index) =>
-        visit(child, `${pointer}/${String(index)}`, label),
-      );
-      return;
-    }
-    if (typeof value !== "object" || value === null) return;
-    for (const [name, child] of Object.entries(value)) {
-      const path = `${pointer}/${pointerToken(name)}`;
-      if (credentialNamed(name) && typeof child === "string" && child !== "") {
-        count++;
-        if (pointers.length < REPORTED_POINTERS)
-          pointers.push(`${label} ${path}`);
+  const found = (pointer: string): void => {
+    count++;
+    if (pointers.length < REPORTED_POINTERS) pointers.push(pointer);
+  };
+  const walk = (root: unknown, label: string): void => {
+    const stack: [unknown, string][] = [[root, ""]];
+    while (stack.length > 0) {
+      const [value, pointer] = stack.pop()!;
+      if (typeof value !== "object" || value === null) continue;
+      if (Array.isArray(value)) {
+        for (let index = value.length - 1; index >= 0; index--)
+          stack.push([value[index], `${pointer}/${String(index)}`]);
+        continue;
       }
-      visit(child, path, label);
+      const entries = Object.entries(value);
+      for (let index = entries.length - 1; index >= 0; index--) {
+        const [name, child] = entries[index]!;
+        const path = `${pointer}/${pointerToken(name)}`;
+        if (credentialNamed(name) && holdsValue(child))
+          found(`${label} ${path}`);
+        stack.push([child, path]);
+      }
     }
   };
   for (const record of records) {
     const ordinal = String(record.ordinal);
-    visit(parsedBody(requestText(record)), "", `record ${ordinal} request`);
-    visit(
+    const request = member(record.reported, "request");
+    const response = member(record.reported, "response");
+    for (const [side, message] of [
+      ["request", request],
+      ["response", response],
+    ] as const)
+      for (const [name, value] of namedValues(member(message, "headers")))
+        if (credentialNamed(name) && holdsValue(value))
+          found(`record ${ordinal} ${side} header ${name}`);
+    for (const [name, value] of namedValues(member(request, "queryString")))
+      if (credentialNamed(name) && holdsValue(value))
+        found(`record ${ordinal} request query ${name}`);
+    walk(
+      parsedBody(member(member(request, "postData"), "text")),
+      `record ${ordinal} request`,
+    );
+    walk(
       parsedBody(
         readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES).bodyText,
       ),
-      "",
       `record ${ordinal} response`,
     );
   }
@@ -134,7 +185,10 @@ export const anonymousOrigin = (origin: string): boolean => {
   } catch {
     return false;
   }
-  const bare = host.startsWith("[") ? host.slice(1, -1) : host;
+  const bracketless = host.startsWith("[") ? host.slice(1, -1) : host;
+  const bare = bracketless.endsWith(".")
+    ? bracketless.slice(0, -1)
+    : bracketless;
   return (
     bare === "localhost" || bare.endsWith(".localhost") || isIP(bare) !== 0
   );

@@ -51,6 +51,12 @@ describe("credentialNamed", () => {
       "client_secret",
       "X-Session",
       "refresh.token",
+      "Authorization",
+      "APIToken",
+      "accesstoken",
+      "passphrase",
+      "api_keys",
+      "ssh_key",
     ])
       expect(credentialNamed(name), name).toBe(true);
     for (const name of ["author", "authority_level", "keyboard", "tokenizer"])
@@ -78,6 +84,61 @@ describe("scanCredentialNames", () => {
     });
     expect(JSON.stringify(scanned)).not.toContain("s3cr3t");
   });
+
+  it("scans header and query names, form bodies and string arrays", () => {
+    const withHeaders = {
+      ordinal: 7,
+      reported: {
+        request: {
+          method: "POST",
+          url: "http://127.0.0.1/api?api_key=k&page=1",
+          headers: [
+            { name: "X-Api-Key", value: "k-123" },
+            { name: "Accept", value: "application/json" },
+            { name: "Authorization", value: null },
+          ],
+          queryString: [
+            { name: "api_key", value: "k" },
+            { name: "page", value: "1" },
+          ],
+          postData: {
+            mimeType: "application/x-www-form-urlencoded",
+            text: "user=a&password=hunter22",
+          },
+        },
+        response: {
+          status: 200,
+          headers: [{ name: "X-Auth-Token", value: "t-9" }],
+          content: {
+            mimeType: "application/json",
+            text: JSON.stringify({ tokens: ["a", "b"], token_count: 2 }),
+          },
+        },
+      },
+      redactions: [],
+      binary_fields: [],
+    } as unknown as WebNetworkCaptureRecord;
+    expect(scanCredentialNames([withHeaders])).toEqual({
+      count: 5,
+      pointers: [
+        "record 7 request header X-Api-Key",
+        "record 7 response header X-Auth-Token",
+        "record 7 request query api_key",
+        "record 7 request /password",
+        "record 7 response /tokens",
+      ],
+    });
+  });
+
+  it("walks bodies nested deeper than the call stack allows", () => {
+    const depth = 20_000;
+    const deep = record(1, undefined, undefined);
+    (
+      deep.reported as { response: { content: { text: string } } }
+    ).response.content.text =
+      `${"[".repeat(depth)}{"token":"x"}${"]".repeat(depth)}`;
+    expect(scanCredentialNames([deep]).count).toBe(1);
+  });
 });
 
 describe("anonymousOrigin", () => {
@@ -90,6 +151,7 @@ describe("anonymousOrigin", () => {
       "http://10.0.0.5",
     ])
       expect(anonymousOrigin(origin), origin).toBe(true);
+    expect(anonymousOrigin("http://localhost.:3000")).toBe(true);
     for (const origin of ["https://grafana.example", "not a url"])
       expect(anonymousOrigin(origin), origin).toBe(false);
   });

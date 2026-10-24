@@ -32,6 +32,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createLogger } from "../logger.js";
 import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.js";
+import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
@@ -321,6 +322,7 @@ interface BuildArguments {
   readonly formatRulesOnly: boolean;
   readonly packageTarball?: string | undefined;
   readonly dryRun: boolean;
+  readonly captureTimeoutMs?: number | undefined;
 }
 
 const conflictingRules = (): JsonValue =>
@@ -344,6 +346,7 @@ const isEvidenceValue = (value: unknown): boolean =>
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
+  captureTimeoutMs: number | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
 ): Promise<Result<EnvironmentExportFile, JsonValue>> => {
@@ -357,7 +360,16 @@ const inspectBuildHar = async (
   const service = createWebNetworkCaptureService(environment);
   const inspected = await finishAnalysisCommand(
     () =>
-      service.inspect({ capture_path: capturePath, format: "har" }, { signal }),
+      service.inspect(
+        {
+          capture_path: capturePath,
+          format: "har",
+          ...(captureTimeoutMs === undefined
+            ? {}
+            : { capture_timeout_ms: captureTimeoutMs }),
+        },
+        { signal },
+      ),
     service,
     "web-network-capture",
     "inspect_web_network_capture",
@@ -395,6 +407,20 @@ const buildEnvironmentCommand = async (
   const capturePath = absoluteCallerPath(input.capture);
   const kind = classifyBuildCapture(capturePath);
   if (!kind.ok) return cliError(kind.error);
+  if (input.directory === undefined && !input.dryRun)
+    return cliError(
+      new AnalysisInputError(
+        CLI_COMMANDS.environmentBuild,
+        { userMessage: "Name the bundle directory, or pass --dry-run." },
+        [
+          {
+            path: ["directory"],
+            reason: "invalid_value",
+            message: "The bundle directory may be omitted only with --dry-run.",
+          },
+        ],
+      ),
+    );
   const commandLogger = infoLogger(environment, logger);
   const progress = (stage: string): void => {
     commandLogger.info({ stage }, "Building environment");
@@ -402,7 +428,12 @@ const buildEnvironmentCommand = async (
   let capture: EnvironmentExportFile;
   if (kind.value === "har") {
     progress("inspect");
-    const inspected = await inspectBuildHar(capturePath, environment, signal);
+    const inspected = await inspectBuildHar(
+      capturePath,
+      input.captureTimeoutMs,
+      environment,
+      signal,
+    );
     if (!inspected.ok) return inspected.error;
     capture = inspected.value;
   } else {
@@ -437,6 +468,7 @@ const buildEnvironmentCommand = async (
         : absoluteCallerPath(input.packageTarball),
     dryRun: input.dryRun,
     progress,
+    signal,
   });
   return built.ok
     ? (built.value as unknown as JsonValue)
@@ -492,6 +524,8 @@ const registerBuildCommand = (
         .boolean()
         .default(false)
         .describe("Run every stage and report, but write nothing"),
+      captureTimeoutMs:
+        inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -505,6 +539,7 @@ const registerBuildCommand = (
               formatRulesOnly: options.formatRulesOnly,
               packageTarball: options.packageTarball,
               dryRun: options.dryRun,
+              captureTimeoutMs: options.captureTimeoutMs,
             },
             environment,
             logger,

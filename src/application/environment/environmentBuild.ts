@@ -1,7 +1,11 @@
-import { stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import {
   summarizeEnvironmentCoverage,
   type EnvironmentCoverage,
@@ -20,6 +24,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
+  isPortableBundleName,
   planEnvironmentBundle,
   registryPackageSource,
   type EnvironmentPackageSource,
@@ -110,6 +115,8 @@ export interface EnvironmentBuildInput {
   readonly dryRun: boolean;
   /** Called as each stage starts. */
   readonly progress?: ((stage: string) => void) | undefined;
+  /** Checked between stages; a build cancelled before the write writes nothing. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface EnvironmentBuildReport {
@@ -143,6 +150,59 @@ const captureOperations = new Set([
   "capture_browser_scenario",
 ]);
 
+const harDocument = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  const log: unknown = Reflect.get(value, "log");
+  return (
+    typeof log === "object" &&
+    log !== null &&
+    Array.isArray(Reflect.get(log, "entries"))
+  );
+};
+
+const harAsJson = (path: string): AnalysisInputError =>
+  new AnalysisInputError(
+    ENVIRONMENT_BUILD_OPERATION,
+    {
+      userMessage: `${path} is a HAR document; name it with .har to inspect it.`,
+    },
+    [
+      {
+        path: ["capture"],
+        reason: "invalid_value",
+        expected: "capture Evidence JSON, or a .har file",
+        message:
+          "A .json capture must be capture Evidence; a HAR document is inspected only from a .har file.",
+      },
+    ],
+  );
+
+const repeatedRules = (): AnalysisInputError =>
+  new AnalysisInputError(ENVIRONMENT_BUILD_OPERATION, undefined, [
+    {
+      path: ["template_rules"],
+      reason: "invalid_value",
+      message: "template_rules must not repeat a rule",
+    },
+  ]);
+
+/** A cancellation, naming the bundle when it arrived after the bundle was written. */
+const cancelled = (
+  signal: AbortSignal | undefined,
+  written?: string,
+): AnalysisCancelledError | undefined =>
+  signal?.aborted === true
+    ? new AnalysisCancelledError(ENVIRONMENT_BUILD_OPERATION, {
+        cause: signal.reason,
+        ...(written === undefined
+          ? {}
+          : {
+              userMessage: `The build was cancelled after it wrote the bundle at ${written}.`,
+              diagnostics: { output_directory: written, bundle_written: true },
+            }),
+      })
+    : undefined;
+
 const notCaptureEvidence = (operation: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
@@ -164,7 +224,7 @@ const unnamed = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `The capture's origin is a loopback or IP address and ${path} yields no name; pass --name.`,
+      userMessage: `The capture's origin is a loopback or IP address, and ${path} yields no portable environment name (a kebab-case label of at most 64 characters that is not a Windows device name); pass --name.`,
     },
     [
       {
@@ -198,7 +258,7 @@ const environmentName = (
   if (input.name !== undefined) return ok(input.name);
   if (!anonymousOrigin(manifest.origin)) return ok(undefined);
   const name = nameFromCaptureFile(input.capturePath);
-  if (name === "") return err(unnamed(input.capturePath));
+  if (!isPortableBundleName(name)) return err(unnamed(input.capturePath));
   warnings.push({
     code: "name-from-file",
     message: `The capture's origin ${manifest.origin} names no application, so the environment is named ${name} after the capture file; pass --name to choose another.`,
@@ -206,19 +266,41 @@ const environmentName = (
   return ok(name);
 };
 
+/** A path as one POSIX shell word. */
+const shellWord = (path: string): string =>
+  /^[\w./@%+=:,-]+$/u.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
+
 const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
   source.kind === "registry"
     ? { kind: "registry", specifier: source.specifier }
     : { kind: "tarball", path: source.path };
 
+/** The tarball's size once it opens for reading as a regular file, refused as a build would refuse it. */
 const tarballBytes = async (
   path: string,
-): Promise<Result<number, AnalysisInputError>> => {
+): Promise<Result<number, AnalysisInputError | AnalysisAccessDeniedError>> => {
   try {
-    const found = await stat(path);
-    if (found.isFile()) return ok(found.size);
-  } catch {
-    // Reported below as the same refusal a build gives.
+    const handle = await open(path, "r");
+    try {
+      const found = await handle.stat();
+      if (found.isFile()) return ok(found.size);
+    } finally {
+      await handle.close();
+    }
+  } catch (cause: unknown) {
+    const code =
+      cause instanceof Error && "code" in cause ? String(cause.code) : "";
+    if (code === "EACCES" || code === "EPERM")
+      return err(
+        new AnalysisAccessDeniedError(
+          ENVIRONMENT_EXPORT_OPERATION,
+          path,
+          code,
+          {
+            cause,
+          },
+        ),
+      );
   }
   return err(
     new AnalysisInputError(
@@ -247,6 +329,10 @@ export const buildEnvironment = async (
 ): Promise<Result<EnvironmentBuildReport, AnalysisError>> => {
   if (input.directory === undefined && !input.dryRun)
     return err(missingDirectory());
+  if (new Set(input.templateRules).size !== input.templateRules.length)
+    return err(repeatedRules());
+  if (input.captureInput === "evidence" && harDocument(input.capture.value))
+    return err(harAsJson(input.capturePath));
   const evidence = parseEvidenceFile(
     ENVIRONMENT_BUILD_OPERATION,
     "evidence",
@@ -266,6 +352,8 @@ export const buildEnvironment = async (
     (id) => (id === capture.evidence_id ? capture : undefined),
   );
   if (!projected.ok) return projected;
+  const stopped = cancelled(input.signal);
+  if (stopped !== undefined) return err(stopped);
   const manifest = await environmentExportFile(
     "manifest",
     "manifest.json",
@@ -283,6 +371,8 @@ export const buildEnvironment = async (
   const named = environmentName(input, source.value.manifest, warnings);
   if (!named.ok) return named;
   const name = named.value ?? source.value.manifest.name;
+  const beforeState = cancelled(input.signal);
+  if (beforeState !== undefined) return err(beforeState);
   input.progress?.("state");
   // Prepared as the export prepares it, so its report and the bundle's README match the three-step path.
   const served = prepareServedState(source.value, input.capture.value, {
@@ -331,6 +421,8 @@ export const buildEnvironment = async (
     warnings,
   };
   if (input.dryRun) {
+    const beforePlan = cancelled(input.signal);
+    if (beforePlan !== undefined) return err(beforePlan);
     const plan = planEnvironmentBundle(source.value, {
       name,
       packageSource,
@@ -365,6 +457,8 @@ export const buildEnvironment = async (
   }
   const directory = input.directory;
   if (directory === undefined) return err(missingDirectory());
+  const beforeWrite = cancelled(input.signal);
+  if (beforeWrite !== undefined) return err(beforeWrite);
   input.progress?.("bundle");
   const exported = await exportEnvironmentBundle({
     manifest: manifest.value,
@@ -376,13 +470,16 @@ export const buildEnvironment = async (
     packageTarball: input.packageTarball,
   });
   if (!exported.ok) return exported;
-  return ok({
+  const report: EnvironmentBuildReport = {
     status: "built",
     directory,
     ...base,
     tool_count: exported.value.tool_count,
     package_source: exported.value.package_source,
     files: exported.value.files,
-    next: [`agent-env run ${directory}`],
-  });
+    next: [`agent-env run ${shellWord(directory)}`],
+  };
+  // A cancellation that arrives during the write still names the bundle it wrote.
+  const afterWrite = cancelled(input.signal, directory);
+  return afterWrite === undefined ? ok(report) : err(afterWrite);
 };

@@ -34,7 +34,7 @@ export const WITHHELD_WRITE_HINTS = {
     "No recorded call of this tool was modelled, for example because every call failed. Record a successful call.",
   "body-unusable": "The request body is not a usable JSON object.",
   "no-observation":
-    "Nothing showed the written entity. Read it back by id right after the write.",
+    "Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it.",
   "unexplained-change":
     "The write changed fields it did not send, in a way no rule explains. A second, different call of the same tool can show the pattern.",
   contradicted:
@@ -171,7 +171,7 @@ export const projectEnvironmentCoverageView = (
     coverage: state.coverage,
     limitations: [
       ...state.limitations,
-      "Coverage summarizes the environment-state view the environment derives at startup; it does not run the environment. Hints are advice about what to record next.",
+      "Coverage summarizes the environment-state view an environment derives at startup; it does not run the environment. An environment whose served catalog exceeds the discovery budget, or whose state exceeds what data/add loads, serves replay instead, which this view does not check. Hints are advice about what to record next.",
     ],
     unknowns: state.unknowns,
     origin: state.origin,
