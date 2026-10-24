@@ -113,12 +113,42 @@ const EMPTY: LineShape = {
 /** Line pairs and entity lookups the variant pass may make; a plan whose lines need more keeps every line checked. */
 const VARIANT_WORK_LIMIT = 1 << 24;
 
-/** Whether two lines show a shared entity with different members. */
-const conflicts = (left: LineShape, right: LineShape): boolean =>
-  [...left.entities].some(
-    ([key, members]) =>
-      right.entities.has(key) && right.entities.get(key) !== members,
-  );
+/** For each entity some lines show, those lines by the members they show it with. */
+type LinesByEntity = ReadonlyMap<
+  string,
+  ReadonlyMap<string, readonly StateRecordFacts[]>
+>;
+
+/** The lines by the entities they show, an entry for each entity each line shows charged before it is kept. */
+const linesByEntity = (
+  lines: readonly StateRecordFacts[],
+  shape: (record: StateRecordFacts) => LineShape,
+  retain: (bytes: number) => void,
+): LinesByEntity => {
+  const shown = new Map<string, Map<string, StateRecordFacts[]>>();
+  for (const line of lines)
+    for (const [key, members] of shape(line).entities) {
+      retain(ENTRY_BYTES);
+      const showing = shown.get(key) ?? new Map<string, StateRecordFacts[]>();
+      shown.set(key, showing);
+      const group = showing.get(members);
+      if (group === undefined) showing.set(members, [line]);
+      else group.push(line);
+    }
+  return shown;
+};
+
+/** The lines that show one of a line's entities with other members. */
+const conflictingLines = (
+  mine: LineShape,
+  shown: LinesByEntity,
+): Set<StateRecordFacts> => {
+  const conflicting = new Set<StateRecordFacts>();
+  for (const [key, members] of mine.entities)
+    for (const [others, lines] of shown.get(key)!)
+      if (others !== members) for (const line of lines) conflicting.add(line);
+  return conflicting;
+};
 
 /** What lines compared later are compared with: the shaping parameter names they named, the members their objects carried, and those every one carried. */
 interface LineTotals {
@@ -172,7 +202,7 @@ const showsOtherMembers = (
 
 /** The base lines so far, with their totals. */
 interface BaseLines extends LineTotals {
-  readonly lines: StateRecordFacts[];
+  readonly lines: Set<StateRecordFacts>;
 }
 
 /**
@@ -182,6 +212,7 @@ interface BaseLines extends LineTotals {
 export const variantLines = (
   latest: readonly StateRecordFacts[],
   shapeOf: (record: StateRecordFacts) => LineShape | undefined,
+  retain: (bytes: number) => void = () => undefined,
 ): StateRecordFacts[] => {
   if (latest.length < 2) return [];
   const shapes = new Map(
@@ -191,16 +222,16 @@ export const variantLines = (
     (sum, line) => sum + line.entities.size,
     0,
   );
-  // Each line is compared with every other, pair by pair and entity by entity.
+  // Comparing every pair of lines entity by entity bounds comparing only the lines that share an entity.
   if (latest.length * (latest.length + entities) > VARIANT_WORK_LIMIT)
     return [];
   const shape = (record: StateRecordFacts): LineShape => shapes.get(record)!;
+  const shown = linesByEntity(latest, shape, retain);
   const ranks = new Map(
     latest.map((record) => {
       const names = shapingNames(record.query).length;
-      const agreeing = latest.filter(
-        (other) => other !== record && !conflicts(shape(record), shape(other)),
-      ).length;
+      const agreeing =
+        latest.length - 1 - conflictingLines(shape(record), shown).size;
       return [
         record,
         [
@@ -219,13 +250,13 @@ export const variantLines = (
     const differs = a.findIndex((value, index) => value !== b[index]);
     return differs === -1 ? 0 : a[differs]! - b[differs]!;
   });
-  const base: BaseLines = { ...noLines(), lines: [] };
+  const base: BaseLines = { ...noLines(), lines: new Set() };
   const variants: StateRecordFacts[] = [];
   for (const record of ordered) {
-    if (base.lines.length > 0 && isVariant(record, base, shape))
+    if (base.lines.size > 0 && isVariant(record, base, shape(record), shown))
       variants.push(record);
     else {
-      base.lines.push(record);
+      base.lines.add(record);
       addLine(base, record.query, shape(record));
     }
   }
@@ -236,12 +267,11 @@ export const variantLines = (
 const isVariant = (
   record: StateRecordFacts,
   base: BaseLines,
-  shape: (record: StateRecordFacts) => LineShape,
-): boolean => {
-  const mine = shape(record);
-  if (base.lines.some((line) => conflicts(mine, shape(line)))) return true;
-  return namesNewParameter(record.query, base) && showsOtherMembers(mine, base);
-};
+  mine: LineShape,
+  shown: LinesByEntity,
+): boolean =>
+  [...conflictingLines(mine, shown)].some((line) => base.lines.has(line)) ||
+  (namesNewParameter(record.query, base) && showsOtherMembers(mine, base));
 
 /** The keys that tell replayed lines from base lines: a parameter or value only replayed lines give, or a parameter every base line names that one leaves out. */
 export const replayKeys = (
@@ -369,11 +399,15 @@ export const withoutVariants = (
     readonly queryOf: (ordinal: number) => string | null | undefined;
     readonly position: (ordinal: number) => number;
     readonly retain: (bytes: number) => void;
+    readonly checkpoint: () => () => void;
   },
 ):
   | { readonly plan: StatePlan; readonly dropped: ReadonlySet<number> }
   | undefined => {
-  const found = variantLines(plan.latest, facts.shapeOf);
+  // The lines indexed by entity are dropped once compared, so what they were charged is released.
+  const release = facts.checkpoint();
+  const found = variantLines(plan.latest, facts.shapeOf, facts.retain);
+  release();
   const unkeyed = plan.latest.filter((record) => !found.includes(record));
   const variants = found.filter(
     (record) =>

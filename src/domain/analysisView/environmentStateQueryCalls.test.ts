@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
-import { readOnlyTools } from "./environmentStateQueryCalls.js";
+import {
+  readOnlyTools,
+  type QueryCallIo,
+} from "./environmentStateQueryCalls.js";
 import type {
   StateRecordFacts,
   StateToolFacts,
@@ -20,8 +23,14 @@ interface Call {
   readonly end?: number;
 }
 
+/** How the read-only pass parses response bodies and charges what it keeps of them, when a test watches either. */
+interface Bodies {
+  readonly withBody?: QueryCallIo["withBody"];
+  readonly retain?: (bytes: number) => void;
+}
+
 /** The read-only tools of a timeline of calls, ordinals in order; a call spans its index unless it gives its times. */
-const readOnlyOf = (calls: readonly Call[]): string[] => {
+const readOnlyOf = (calls: readonly Call[], bodies: Bodies = {}): string[] => {
   const records: StateRecordFacts[] = calls.map((call, index) => ({
     ordinal: index,
     method: call.method,
@@ -41,10 +50,13 @@ const readOnlyOf = (calls: readonly Call[]): string[] => {
       record_ordinals: [...(known?.record_ordinals ?? []), index],
     });
   });
+  const withBody: QueryCallIo["withBody"] =
+    bodies.withBody ?? ((ordinal, use) => use(calls[ordinal]?.response));
   return [
     ...readOnlyTools([...tools.values()], records, {
-      response: (ordinal) => calls[ordinal]?.response,
+      withBody,
       request: (ordinal) => calls[ordinal]?.request,
+      retain: bodies.retain ?? (() => undefined),
     }),
   ].sort();
 };
@@ -476,8 +488,9 @@ describe("read-only decisions over many calls", () => {
     visits = 0;
     expect([
       ...readOnlyTools(tools, records, {
-        response: () => [],
+        withBody: (_ordinal, use) => use([]),
         request: () => undefined,
+        retain: () => undefined,
       }),
     ]).toEqual(["post_ids"]);
     expect(visits).toBeLessThan(50 * records.length);
@@ -531,8 +544,9 @@ describe("read-only decisions over a long run of calls", () => {
     visits = 0;
     expect([
       ...readOnlyTools(tools, records, {
-        response: () => JOBS,
+        withBody: (_ordinal, use) => use(JOBS),
         request: () => ({ jobs: ["night-watch"] }),
+        retain: () => undefined,
       }),
     ]).toEqual(["post_statuses"]);
     expect(visits).toBeLessThan(50 * records.length);
@@ -583,10 +597,82 @@ describe("read-only decisions over many lines", () => {
     ];
     expect([
       ...readOnlyTools(tools, records, {
-        response: () => [],
+        withBody: (_ordinal, use) => use([]),
         request: () => undefined,
+        retain: () => undefined,
       }),
     ]).toEqual(["post_ids"]);
     expect(reads).toBeLessThan(20 * records.length);
+  });
+});
+
+describe("the bodies read-only decisions compare", () => {
+  const read = (members: string[]): Call => ({
+    method: "GET",
+    path: "/api/members",
+    tool: "get_members",
+    response: members,
+  });
+  const lookup: Call = {
+    method: "POST",
+    path: "/api/members/ids",
+    tool: "post_ids",
+    response: ["a"],
+  };
+  const refresh: Call = {
+    method: "POST",
+    path: "/api/collections/_superusers/auth-refresh",
+    tool: "post_auth_refresh",
+    response: { token: "x" },
+  };
+  // The change across the lookup's calls drops it on the first pass, so the refresh is checked again.
+  const calls = [read(["a"]), lookup, lookup, refresh, read(["a", "b"])];
+
+  it("parses each read once across a tool's calls and the passes that drop vetoed tools", () => {
+    const parses = new Map<number, number>();
+    expect(
+      readOnlyOf(calls, {
+        withBody: (ordinal, use) => {
+          parses.set(ordinal, (parses.get(ordinal) ?? 0) + 1);
+          return use(calls[ordinal]?.response);
+        },
+      }),
+    ).toEqual(["post_auth_refresh"]);
+    expect([...parses].filter(([, count]) => count > 1)).toEqual([]);
+  });
+
+  it("compares bodies only while their parse is charged, and charges what it keeps of each", () => {
+    const [parsed, outside] = [new Set<number>(), new Set<number>()];
+    let parsing = false;
+    let retained = 0;
+    expect(
+      readOnlyOf(calls, {
+        withBody: (ordinal, use) => {
+          parsed.add(ordinal);
+          const body = calls[ordinal]?.response;
+          parsing = true;
+          try {
+            return use(
+              typeof body === "object" && body !== null
+                ? new Proxy(body, {
+                    get: (target, key, receiver) => {
+                      if (!parsing) outside.add(ordinal);
+                      return Reflect.get(target, key, receiver) as unknown;
+                    },
+                  })
+                : body,
+            );
+          } finally {
+            parsing = false;
+          }
+        },
+        retain: (bytes) => {
+          retained += bytes;
+        },
+      }),
+    ).toEqual(["post_auth_refresh"]);
+    expect([...outside]).toEqual([]);
+    // Each body is kept as its digest's hex text, charged before it is.
+    expect(retained).toBeGreaterThanOrEqual(parsed.size * 64);
   });
 });

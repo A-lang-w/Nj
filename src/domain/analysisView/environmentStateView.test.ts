@@ -26,14 +26,17 @@ import {
   replaceAt,
   renderStateList,
   type JsonObject,
+  type StateRecordFacts,
 } from "./environmentStateRules.js";
 import { environmentStateFields } from "./environmentStateView.js";
 import {
   lineShapes,
   replayKeys,
   variantLines,
+  type LineShape,
 } from "./environmentStateVariants.js";
 import { rewriteCuts } from "./environmentStateRewrites.js";
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 
 type State = Extract<AnalysisViewResult, { kind: "environment-state" }>;
 const ALL_RULES = [
@@ -929,6 +932,68 @@ it("leaves every line checked when comparing many mostly empty lines would excee
   ).toEqual([]);
   // Comparing every pair would read each line's query thousands of times.
   expect(reads).toBeLessThan(10 * lines.length);
+});
+
+/** Item lines reading each of `items` items plainly, then each again with `?expand=shelf`; each shape's entities count the walks over them. */
+const expandedItemLines = (items: number) => {
+  let walks = 0;
+  const lines: StateRecordFacts[] = Array.from(
+    { length: items * 2 },
+    (_, ordinal) => ({
+      ordinal,
+      method: "GET",
+      path: `/api/items/${String(ordinal % items)}`,
+      query: ordinal < items ? undefined : "?expand=shelf",
+      status: 200,
+      start: ordinal,
+      end: ordinal,
+    }),
+  );
+  const shapes = new Map(
+    lines.map((line): [StateRecordFacts, LineShape] => {
+      const members =
+        line.query === undefined ? ["id", "name"] : ["id", "name", "shelf"];
+      const entities = new Map([
+        [
+          JSON.stringify([
+            "/api/items",
+            "/api/items",
+            String(line.ordinal % items),
+          ]),
+          JSON.stringify(members),
+        ],
+      ]);
+      const walk = entities[Symbol.iterator].bind(entities);
+      entities[Symbol.iterator] = () => {
+        walks += 1;
+        return walk();
+      };
+      const carried = new Set(members);
+      return [line, { entities, carried, common: carried }];
+    }),
+  );
+  return {
+    lines,
+    shapeOf: (record: StateRecordFacts) => shapes.get(record),
+    walks: () => walks,
+  };
+};
+
+it("compares lines through the entities they show, so items read plainly and expanded are not compared pair by pair", () => {
+  const { lines, shapeOf, walks } = expandedItemLines(1000);
+  expect(variantLines(lines, shapeOf)).toEqual(lines.slice(1000));
+  // Comparing every pair would walk each line's entities thousands of times.
+  expect(walks()).toBeLessThan(10 * lines.length);
+});
+
+it("counts what it holds to compare lines by the entities they show against the budget", () => {
+  const { lines, shapeOf } = expandedItemLines(100);
+  let retained = 0;
+  variantLines(lines, shapeOf, (bytes) => {
+    retained += bytes;
+  });
+  // An entry for each entity each line shows.
+  expect(retained).toBeGreaterThanOrEqual(lines.length * ENTRY_BYTES);
 });
 
 /** The smallest allowance, to a KiB, a capture's state projects within. */

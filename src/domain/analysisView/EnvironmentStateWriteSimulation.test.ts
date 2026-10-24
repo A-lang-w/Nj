@@ -1,6 +1,6 @@
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import { checkedLines, servedLine } from "./environmentStateCheckedLines.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   timedCaptureEvidence,
@@ -2296,6 +2296,38 @@ describe("entities an unmodelled write made", () => {
       unseen.adopt(view as unknown as StateItemView, { record, index: 1 }),
     ).toMatchObject({ id: "3", fields: read });
     expect(retained).toBeGreaterThan(20_000);
+  });
+
+  it("finds no read's target among the held entities until an unplanned write came before the read", () => {
+    const state = new SimulatedState([], []);
+    const targets = vi.spyOn(state, "ofType");
+    const unseen = new UnseenEntities([], {
+      state,
+      io: { withBody: (_ordinal, use) => use(THIRD_BOOK), retain: () => 0 },
+      lastCheck: new Map(),
+      idField: () => "id",
+    });
+    const view = { shape: "item", type: "/api/books", pointer: "" };
+    const read = (index: number) => ({
+      record: {
+        ordinal: index,
+        method: "GET",
+        path: "/api/books/3",
+        query: undefined,
+        status: 200,
+        start: index,
+        end: index,
+      },
+      index,
+    });
+    const adopt = (index: number) =>
+      unseen.adopt(view as unknown as StateItemView, read(index));
+    expect(adopt(1)).toBeUndefined();
+    // A write after the read cannot have made what it shows either.
+    unseen.unplanned(2);
+    expect(adopt(1)).toBeUndefined();
+    expect(targets).not.toHaveBeenCalled();
+    expect(adopt(3)).toMatchObject({ id: "3" });
   });
 
   it("takes back no book a modelled delete removed, so a list showing it again confirms no delete", () => {
