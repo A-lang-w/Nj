@@ -437,7 +437,9 @@ const projectedSourceFactsAtRead = (
   // Alias paths can reach one store through both its parent and shared child.
   // Retain one source fact per projection and capture authority at this owner.
   const retainSource = (source: ProjectedSource): void => {
-    const paths = retainedSources.get(source.node) ?? new Map();
+    const paths =
+      retainedSources.get(source.node) ??
+      new Map<string, (readonly SemanticCapturedSelection[])[]>();
     const key = JSON.stringify(source.path);
     const alternatives = paths.get(key) ?? [];
     const captures =
