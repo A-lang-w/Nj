@@ -195,7 +195,7 @@ const corroboratedAddresses = (snapshot: FunctionSnapshot): Set<bigint> => {
 
 /**
  * Typed calls and jumps into another procedure name callees the callees facet
- * may omit. A partial call classification counts even without reference flags.
+ * may omit. A call classification counts even without reference flags.
  */
 const outgoingCallTargets = (
   snapshot: FunctionSnapshot,
@@ -205,9 +205,10 @@ const outgoingCallTargets = (
     const target = edge.target_procedure;
     const intoOtherProcedure =
       target !== null && parseAddress(target.address.toLowerCase()) !== entry;
+    // Producers attach call classifications only to call references, so any
+    // classification other than none names a call target.
     const classifiedCall =
-      edge.call?.classification === "direct" ||
-      edge.call?.classification === "objective_c";
+      edge.call !== undefined && edge.call.classification !== "none";
     const typedCall =
       edge.kind.available &&
       (edge.kind.call || (edge.kind.jump && intoOtherProcedure));

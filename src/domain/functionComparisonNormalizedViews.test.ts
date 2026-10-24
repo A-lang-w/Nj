@@ -1110,55 +1110,61 @@ describe("normalized view callee facts beyond typed edges", () => {
     });
   });
 
-  it("treats a partially classified outgoing call target as a masked callee", () => {
-    const make = (base: string, target: string) => {
-      const name = `FUN_${BigInt(target).toString(16)}`;
-      const dossier = syntheticDossier({
-        base,
-        name: `FUN_${BigInt(base).toString(16)}`,
-        pseudocode: `void f(void) { ${name}(); }`,
-        assembly: [`${base}: CALL ${target}`],
-      });
-      return {
-        ...dossier,
-        // Hopper reports a call classification without detailed reference flags.
-        outgoing_references: [
-          {
-            source_address: base,
-            target_address: target,
-            source_procedure: null,
-            target_procedure: null,
-            kind: {
-              available: false as const,
-              reason: "detailed reference flags unavailable",
+  it.each([
+    { classification: "direct", providerType: 2 },
+    { classification: "unknown", providerType: 1 },
+  ] as const)(
+    "treats a Hopper call reference classified $classification without reference flags as a masked callee",
+    ({ classification, providerType }) => {
+      const make = (base: string, target: string) => {
+        const name = `FUN_${BigInt(target).toString(16)}`;
+        const dossier = syntheticDossier({
+          base,
+          name: `FUN_${BigInt(base).toString(16)}`,
+          pseudocode: `void f(void) { ${name}(); }`,
+          assembly: [`${base}: CALL ${target}`],
+        });
+        return {
+          ...dossier,
+          // Hopper reports a call classification without detailed reference flags.
+          outgoing_references: [
+            {
+              source_address: base,
+              target_address: target,
+              source_procedure: null,
+              target_procedure: null,
+              kind: {
+                available: false as const,
+                reason: "detailed reference flags unavailable",
+              },
+              call: {
+                classification,
+                provider_type: providerType,
+                provenance: "fixture",
+              },
             },
-            call: {
-              classification: "direct" as const,
-              provider_type: 1,
-              provenance: "fixture",
-            },
-          },
-        ],
+          ],
+        };
       };
-    };
-    const [before, after] = syntheticPair(
-      make("0x411700", "0x411860"),
-      make("0x511700", "0x511860"),
-    );
-    const result = compareFunctions(before, after, {
-      includeNormalizedViews: true,
-    });
-    expect(dimension(result, "calls")).toMatchObject({ status: "unknown" });
-    for (const name of ["pseudocode_normalized", "assembly_normalized"])
-      expect(view(result, name), name).toMatchObject({
-        status: "unknown",
-        limitations: expect.arrayContaining([
-          expect.stringContaining(
-            "cannot establish callee identity or call order",
-          ),
-        ]),
+      const [before, after] = syntheticPair(
+        make("0x411700", "0x411860"),
+        make("0x511700", "0x511860"),
+      );
+      const result = compareFunctions(before, after, {
+        includeNormalizedViews: true,
       });
-  });
+      expect(dimension(result, "calls")).toMatchObject({ status: "unknown" });
+      for (const name of ["pseudocode_normalized", "assembly_normalized"])
+        expect(view(result, name), name).toMatchObject({
+          status: "unknown",
+          limitations: expect.arrayContaining([
+            expect.stringContaining(
+              "cannot establish callee identity or call order",
+            ),
+          ]),
+        });
+    },
+  );
 });
 
 describe("normalized view fail-closed parsing", () => {
