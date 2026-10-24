@@ -84,3 +84,4 @@ vault/evidences/*.err
 
 # Local reverse-engineering evidence and investigation artifacts (local-only)
 /vault/
+pi-session-*.html
