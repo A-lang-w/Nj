@@ -51,19 +51,24 @@ const browserEvidence = effects({
 });
 const sessionEvidence = effects({ mutatesSession: true });
 
-/**
- * Attached IDA's legacy profile jumps to functions and opens pseudocode views,
- * and its MCP transport can use the network. These are possible effects across
- * the tool's supported provider paths, not only the selected profile.
- */
-const attachedIdaNavigation = effects({
-  mutatesSession: true,
+type EffectAudit =
+  | ToolEffects
+  | { readonly session: ToolEffects; readonly global: Partial<ToolEffects> };
+
+/** Keep provider-neutral effects with the additions possible across profiles. */
+const providerEffects = (
+  session: ToolEffects,
+  global: Partial<ToolEffects>,
+): EffectAudit => ({ session, global });
+
+const idaNetworkEvidence = providerEffects(evidence, { accessesNetwork: true });
+const attachedIdaNavigation = providerEffects(evidence, {
   accessesNetwork: true,
   changesUiState: true,
 });
 
 /** Explicit effect audit for every public tool. */
-export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   list_cutter_sessions: effects({ accessesNetwork: true }),
   cutter_command: effects({
     mutatesTarget: true,
@@ -513,7 +518,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_native_load_image: evidence,
   inspect_native_dispatch_metadata: evidence,
   trace_native_ui_action: evidence,
-  trace_native_values: evidence,
+  trace_native_values: attachedIdaNavigation,
   address_name: evidence,
   comment: evidence,
   current_address: evidence,
@@ -522,17 +527,17 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   goto_address: effects({ mutatesSession: true, changesUiState: true }),
   inline_comment: evidence,
   list_bookmarks: evidence,
-  list_documents: evidence,
+  list_documents: idaNetworkEvidence,
   list_names: evidence,
-  list_procedures: evidence,
+  list_procedures: idaNetworkEvidence,
   list_segments: evidence,
-  list_strings: evidence,
+  list_strings: idaNetworkEvidence,
   next_address: evidence,
   prev_address: evidence,
-  procedure_address: evidence,
+  procedure_address: idaNetworkEvidence,
   procedure_assembly: attachedIdaNavigation,
-  procedure_callees: evidence,
-  procedure_callers: evidence,
+  procedure_callees: idaNetworkEvidence,
+  procedure_callers: idaNetworkEvidence,
   procedure_info: evidence,
   read_function_instructions: attachedIdaNavigation,
   inspect_native_instruction: evidence,
@@ -543,9 +548,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   address_to_file_offset: evidence,
   procedure_references: evidence,
   procedure_pseudo_code: attachedIdaNavigation,
-  resolve_containing_procedure: evidence,
-  search_procedures: evidence,
-  search_strings: evidence,
+  resolve_containing_procedure: idaNetworkEvidence,
+  search_procedures: idaNetworkEvidence,
+  search_strings: idaNetworkEvidence,
   set_address_name: effects({
     mutatesTarget: true,
     mutatesSession: true,
@@ -576,23 +581,35 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mutatesSession: true,
     mayDiscardData: true,
   }),
-  xrefs: evidence,
+  xrefs: idaNetworkEvidence,
   get_objc_classes: evidence,
   get_objc_protocols: evidence,
-  batch_decompile: evidence,
-  decompile_all: effects({
-    mutatesSession: true,
-    writesFilesystem: true,
-    idempotent: false,
-  }),
-  get_call_graph: evidence,
-  analyze_swift_types: evidence,
-  find_xrefs_to_name: evidence,
-  binary_overview: evidence,
+  batch_decompile: attachedIdaNavigation,
+  decompile_all: providerEffects(
+    effects({
+      mutatesSession: true,
+      writesFilesystem: true,
+      idempotent: false,
+    }),
+    { accessesNetwork: true, changesUiState: true },
+  ),
+  get_call_graph: providerEffects(evidence, { accessesNetwork: true }),
+  analyze_swift_types: providerEffects(evidence, { accessesNetwork: true }),
+  find_xrefs_to_name: providerEffects(evidence, { accessesNetwork: true }),
+  binary_overview: providerEffects(evidence, { accessesNetwork: true }),
   analyze_function: attachedIdaNavigation,
-  inspect_native_api: effects({ mutatesSession: true, idempotent: false }),
-  trace_feature: effects({ mutatesSession: true, idempotent: false }),
-  trace_call_path: effects({ mutatesSession: true, idempotent: false }),
+  inspect_native_api: providerEffects(
+    effects({ mutatesSession: true, idempotent: false }),
+    { accessesNetwork: true, changesUiState: true },
+  ),
+  trace_feature: providerEffects(
+    effects({ mutatesSession: true, idempotent: false }),
+    { accessesNetwork: true },
+  ),
+  trace_call_path: providerEffects(
+    effects({ mutatesSession: true, idempotent: false }),
+    { accessesNetwork: true },
+  ),
   observe_native_ui: effects({
     mutatesSession: true,
     launchesProcess: true,
@@ -730,7 +747,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mayDiscardData: true,
   }),
   get_evidence_bundle: effects(),
-  get_navigation_context: effects({ mutatesSession: true }),
+  get_navigation_context: providerEffects(effects({ mutatesSession: true }), {
+    accessesNetwork: true,
+  }),
   inspect_address_context: effects({ mutatesSession: true }),
   import_evidence_bundle: effects({ mutatesSession: true }),
   capture_process_scenario: effects({
@@ -757,24 +776,26 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   verify_unknown_resolution: effects(),
 };
 
-/**
- * Tools whose UI and network effects come only from the selected provider.
- * Canonical metadata includes every supported profile, but session discovery
- * must not inherit effects from a profile that was not selected.
- */
-const PROVIDER_COMPOSED_EVIDENCE_TOOLS: ReadonlySet<string> = new Set([
-  "procedure_pseudo_code",
-  "procedure_assembly",
-  "read_function_instructions",
-  "analyze_function",
-]);
+const sessionEffects = (audit: EffectAudit): ToolEffects =>
+  "session" in audit ? audit.session : audit;
+
+/** Possible effects across every supported provider profile. */
+export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> =
+  Object.fromEntries(
+    Object.entries(TOOL_EFFECT_AUDIT).map(([name, audit]) => [
+      name,
+      "session" in audit
+        ? effects({ ...audit.session, ...audit.global })
+        : audit,
+    ]),
+  );
 
 /** Effects owned by the tool before composing the selected provider. */
 export const toolSessionEffects = (name: string): ToolEffects => {
-  const audited = TOOL_EFFECTS[name];
+  const audited = TOOL_EFFECT_AUDIT[name];
   if (audited === undefined)
     throw new Error(`Missing effect audit for ${name}`);
-  return PROVIDER_COMPOSED_EVIDENCE_TOOLS.has(name) ? evidence : audited;
+  return sessionEffects(audited);
 };
 
 /** Derive MCP annotations without tool-name or tool-family heuristics. */

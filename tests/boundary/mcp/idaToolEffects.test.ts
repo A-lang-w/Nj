@@ -15,6 +15,15 @@ const ATTACHED_IDA_NAVIGATION = [
   "read_function_instructions",
   "analyze_function",
 ] as const;
+const IDA_NETWORK_DISCOVERY = [
+  ...ATTACHED_IDA_NAVIGATION,
+  "list_procedures",
+  "search_strings",
+  "batch_decompile",
+  "decompile_all",
+  "trace_native_values",
+  "inspect_native_api",
+] as const;
 
 type DiscoveryStatus = {
   readonly capabilities: readonly {
@@ -94,6 +103,14 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
       expect(availability?.annotations, name).toContain("open_world");
       const advertised = tools.find((tool) => tool.name === name);
       expect(advertised?.annotations?.openWorldHint, name).toBe(true);
+    }
+    for (const name of IDA_NETWORK_DISCOVERY) {
+      const advertised = tools.find((tool) => tool.name === name);
+      expect(advertised?.annotations?.openWorldHint, name).toBe(true);
+      const availability = status.tool_availability.groups.find(({ names }) =>
+        names.includes(name),
+      );
+      expect(availability?.effects, name).toContain("accessesNetwork");
     }
   } finally {
     await mcp.close();
