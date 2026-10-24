@@ -1,4 +1,15 @@
-import { parseAddress } from "./functionComparisonNormalization.js";
+import { nativeAddressCoordinateInputSchema } from "./native/nativeAddress.js";
+
+/**
+ * Parse one default-space provider address. Address-space-qualified
+ * coordinates return null, so their operands keep their own spelling.
+ */
+export const parseAddress = (value: string): bigint | null => {
+  const parsed = nativeAddressCoordinateInputSchema.safeParse(value);
+  return parsed.success && parsed.data.space === null
+    ? parsed.data.offset
+    : null;
+};
 
 export interface TextAddressLocation {
   readonly instructionAddress: bigint | null;

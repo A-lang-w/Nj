@@ -1,6 +1,8 @@
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
-import { parseAddress } from "./functionComparisonNormalization.js";
-import type { TextAddressLocation } from "./functionComparisonTextParsing.js";
+import {
+  parseAddress,
+  type TextAddressLocation,
+} from "./functionComparisonTextParsing.js";
 
 export interface AddressMask {
   readonly kind: "relative" | "external";

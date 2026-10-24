@@ -9,7 +9,11 @@ import {
   USE_GADGET_RIGHT,
   wallaceDossier,
 } from "./functionComparisonNormalizedViews.fixture.js";
-import { compareFunctions } from "./functionComparison.js";
+import {
+  compareFunctions as compareSnapshots,
+  type FunctionComparisonRequest,
+} from "./functionComparison.js";
+import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
@@ -19,6 +23,19 @@ import { correlateStaticAndRuntime } from "./staticRuntimeCorrelation.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
+
+/** Authenticate fixture Evidence before the pure snapshot comparison. */
+const compareFunctions = (
+  left: Evidence,
+  right: Evidence,
+  request?: FunctionComparisonRequest,
+) =>
+  compareSnapshots(
+    functionSnapshotFixture(left),
+    functionSnapshotFixture(right),
+    request,
+  );
 
 const G_HIDRA = {
   id: "ghidra",
@@ -983,9 +1000,26 @@ describe("normalized view consumers", () => {
       relocatedRight,
       evidence,
     ]);
-    expect(() =>
-      verifyReconstruction(claim("pseudocode_normalized", evidence), bundle),
-    ).toThrow(/normalized view was not requested/u);
+    try {
+      verifyReconstruction(claim("pseudocode_normalized", evidence), bundle);
+      throw new Error("Expected an unrequested normalized view to be rejected");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(AnalysisInputError);
+      expect(error).toMatchObject({
+        userMessage: expect.stringMatching(
+          /normalized view was not requested/u,
+        ),
+        issues: [
+          {
+            path: ["claims", 0, "dimension"],
+            reason: "invalid_value",
+            message: expect.stringMatching(
+              /normalized view was not requested/u,
+            ),
+          },
+        ],
+      });
+    }
   });
 
   it("preserves selected normalized-view limitations in reconstruction claims", () => {
@@ -1104,6 +1138,24 @@ describe("normalized view static/runtime consumer", () => {
       [{ observed_pattern: "cochanged", classification: "hypothesis" }],
     );
     expect(correlate("pseudocode")).toMatchObject({ status: "correlated" });
+    try {
+      correlate(
+        "pseudocode_normalized",
+        comparisonEvidence(editedLeft, editedRight, false),
+      );
+      throw new Error("Expected an unrequested normalized view to be rejected");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(AnalysisInputError);
+      expect(error).toMatchObject({
+        userMessage: expect.stringMatching(/requested normalized view/u),
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["mappings", 0, "static", "selector"],
+            reason: "invalid_value",
+          }),
+        ]),
+      });
+    }
 
     const [uncertainLeft, uncertainRight] = unresolvedCallPair();
     const uncertainComparison = comparisonEvidence(

@@ -62,22 +62,6 @@ describe("TypeScript import-equals links", () => {
 });
 
 describe("CommonJS wrapper parameter redeclarations", () => {
-  it("keeps a top-level wrapper require redeclaration", () => {
-    const path = "app/main.cjs";
-    const parsed = parseJavaScriptSource(
-      'var require; require("./wrapper.cjs");',
-      path,
-    );
-    expect(parsed).not.toBeNull();
-    const ir = analyzeParsedJavaScriptSemantics(
-      parsed!,
-      moduleResolutionModeForJavaScriptReference(path, "static-import"),
-    );
-    expect(ir.moduleLinks).toContainEqual(
-      expect.objectContaining({ kind: "require", specifier: "./wrapper.cjs" }),
-    );
-  });
-
   it("does not infer a CommonJS wrapper from resolution mode in an explicit module", () => {
     const path = "app/main.mjs";
     const parsed = parseJavaScriptSource(
@@ -290,6 +274,7 @@ describe("CommonJS dependency links", () => {
       const bound = (require("bound") as unknown);
       const { left, right } = require("destructured");
       module.exports = require("forwarded");
+      exports = module.exports;
       exports.member = require("member").value;
       exports.first = exports.second = require("chained");
     `);

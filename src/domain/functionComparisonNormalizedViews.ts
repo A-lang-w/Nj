@@ -7,9 +7,9 @@ import {
   type AddressProjection,
 } from "./functionComparisonAddressProjection.js";
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
-import { parseAddress } from "./functionComparisonNormalization.js";
 import {
   createTextAddressLocator,
+  parseAddress,
   transformProviderText,
 } from "./functionComparisonTextParsing.js";
 import type {
