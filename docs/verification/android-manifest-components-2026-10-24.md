@@ -180,3 +180,62 @@ Its schema/client-buffer and comparison qualifications above remain in force.
 These legacy-SDK edge cases are production-boundary/golden checks; the real
 APK has an explicit SDK 33 target, so a legacy APK without uses-sdk was not
 independently exercised through binary XML decoding or on a device.
+
+## DEX names and hexadecimal SDK follow-up
+
+Commit `27b7dc1656b66a71796d6f0d1119d79be7ab586a` corrects two additional
+interpretation boundaries. Class identity expansion accepts the documented
+[DEX SimpleName character ranges](https://source.android.com/docs/core/runtime/dex-format#simplename),
+including leading digits, hyphens and supplemental Unicode, instead of Java
+source identifier categories. The same predicate supplies activity and alias
+reference matching. Package declaration validation remains separate. Spaces
+are admitted by the character union introduced in DEX 040; this decoded
+manifest projection does not establish a DEX version, class existence or
+runtime loadability.
+
+SDK interpretation now accepts decimal or hexadecimal positive signed-32-bit
+resource integers once per inventory. [JADX's typed value decoder](https://github.com/skylot/jadx/blob/v1.5.3/jadx-core/src/main/java/jadx/core/xmlgen/entry/ValuesParser.java#L84)
+prints `TYPE_INT_HEX` with a hexadecimal prefix. The unchanged Java bridge
+retains those declaration strings; only the local numeric interpretation used
+for default rules changes. Unrecognized previews, malformed hex, exponent
+syntax, nonpositive values and signed-int overflow remain unknown. Omission
+and present-empty handling from the prior correction remains intact.
+
+Nine new controls fail before the correction: four legal DEX name/alias
+combinations, three hexadecimal target levels, hexadecimal minimum fallback,
+and decimal signed-int overflow. The former malformed-name fixture incorrectly
+rejected a digit-led class; it now uses forbidden descriptor separators
+instead. The component/MCP selection passes 77 checks. `check:fast`, complete
+formatting and documentation pass. The first combined 117-case selection has
+116 passes and one 30-second MCP timeout; the unchanged MCP file then passes
+all three cases in isolation, with its complete retained-manifest workflow
+finishing in 16.957 seconds. That workflow supplies a 1 MiB non-XML string;
+the changed class and SDK interpreters are not reached for that input. No
+deadline was raised. Further combined verification is recorded below.
+
+Six alternating completed CLI tasks compare the immediately preceding head
+`58b71c19b35204ebb37c94d9510025bcd18fc4ee` with this correction using the
+unchanged ApiDemos APK. Every projected field for all 355 components matches
+the independent decoded-XML oracle, and all normalized facts and provenance
+agree. Per-session raw engine observations and their Evidence IDs are excluded
+for the same documented reason as the previous comparison. Estimated full CLI
+stdout plus invocation tokens remain **135,958** (tokenx 1.3.0).
+
+Elapsed medians are 19.619 -> 17.893 s (ranges 12.708–23.907 /
+13.658–30.088), waited CPU 30.279 -> 29.507 s (19.684–32.572 /
+24.001–37.071), and sampled process-family RSS 1094.6 -> 1064.9 MiB
+(985.0–1106.2 / 1038.3–1108.5). Every range overlaps; the environment varies
+substantially and these runs establish no speed or memory improvement. CLI
+and JVM processes are fresh, with warm OS/JAR caches; cold-disk and fresh
+bridge-compilation costs remain unmeasured. The actual stdio SDK workflow also
+passes summary, three manifest pages, warm complete output, retained summary
+and advertised-schema validation again: 72.614 s elapsed, 78.638 s CPU and
+1693.3 MiB sampled family RSS. Its full schema/catalog/transport token cost is
+not measured. That workflow validates the existing APK's explicit SDK 33
+values; no binary-XML hex fixture or numeric-led DEX class was executed or
+qualified on a device. The new edge cases are boundary controls supported by
+the format/decoder sources, not claims of real-device coverage.
+
+The subsequent unchanged full selection passes **all 117 cases** in 67.186 s
+elapsed, 52.269 s waited CPU and 2028.3 MiB sampled family RSS. This rerun
+does not erase the earlier timeout recorded above.
