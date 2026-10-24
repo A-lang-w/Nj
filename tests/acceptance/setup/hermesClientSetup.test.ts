@@ -112,6 +112,96 @@ for (const [version, keyStyle] of [
 }
 
 cliTest(
+  "Hermes setup preserves an existing tool allowlist and client-owned policy",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-hermes-tool-policy-");
+    const profile = join(home, "hermes");
+    const config = join(profile, "config.yaml");
+    const original = [
+      "# Caller configuration",
+      "mcp_servers:",
+      "  rea:",
+      "    command: rea-old",
+      "    args: [mcp]",
+      "    env:",
+      "      CALLER_SETTING: keep exactly",
+      "    # Curated for this client.",
+      "    tools:",
+      "      include: [open_binary, binary_overview]",
+      "      future_option:",
+      "        selected: caller choice",
+      "    future_policy:",
+      "      review: required",
+      "",
+    ].join("\n");
+    await mkdir(profile);
+    await writeFile(config, original);
+    const run = (arguments_: readonly string[]) =>
+      cli.run({
+        arguments: arguments_,
+        cwd: home,
+        environment: { USERPROFILE: home, HERMES_HOME: profile },
+        timeoutMs: 20_000,
+      });
+    const setup = ["setup", "--client", "hermes", "--skill=false", "--json"];
+    const preview = await run([...setup, "--dry-run"]);
+    expect(preview.exitCode, preview.stdout).toBe(0);
+    expect(preview.json).toMatchObject({
+      status: "planned",
+      plannedActions: expect.arrayContaining([
+        expect.objectContaining({ target: config }),
+      ]),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const applied = await run([...setup, "--yes"]);
+    expect(applied.exitCode, applied.stdout).toBe(0);
+    expect(applied.json).toMatchObject({
+      status: "ready",
+      clients: { hermes: { status: "configured" } },
+    });
+    const configured = await readFile(config, "utf8");
+    expect(parse(configured)).toMatchObject({
+      mcp_servers: {
+        rea: {
+          command: expect.stringMatching(/\S/u),
+          args: expect.arrayContaining(["mcp"]),
+          enabled: true,
+          env: { CALLER_SETTING: "keep exactly" },
+          tools: {
+            include: ["open_binary", "binary_overview"],
+            future_option: { selected: "caller choice" },
+          },
+          future_policy: { review: "required" },
+        },
+      },
+    });
+    expect(parse(configured)).not.toMatchObject({
+      mcp_servers: { rea: { command: "rea-old" } },
+    });
+    expect(configured).toContain("# Curated for this client.");
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    expect(
+      (await run(["doctor", "--client", "hermes", "--skill=false", "--json"]))
+        .json,
+    ).toMatchObject({
+      identity: { registrations: [{ client: "hermes", state: "aligned" }] },
+    });
+    const repeated = await run([...setup, "--yes"]);
+    expect(repeated.exitCode, repeated.stdout).toBe(0);
+    expect(repeated.json).toMatchObject({
+      status: "ready",
+      appliedActions: [],
+    });
+    expect(await readFile(config, "utf8")).toBe(configured);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+  },
+);
+
+cliTest(
   "Hermes setup, doctor and uninstall use the expanded profile and its personal skill",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-hermes-cli-");
@@ -140,7 +230,7 @@ cliTest(
       "--dry-run",
       "--json",
     ]);
-    expect(planned.exitCode).toBe(0);
+    expect(planned.exitCode, planned.stdout).toBe(0);
     expect(planned.json).toMatchObject({
       status: "planned",
       plannedActions: expect.arrayContaining([
@@ -159,7 +249,7 @@ cliTest(
       "--yes",
       "--json",
     ]);
-    expect(applied.exitCode).toBe(0);
+    expect(applied.exitCode, applied.stdout).toBe(0);
     expect(applied.json).toMatchObject({ status: "ready" });
     expect(parse(await readFile(config, "utf8"))).toMatchObject({
       model: "custom",
@@ -182,7 +272,7 @@ cliTest(
       "--skill",
       "--json",
     ]);
-    expect(doctor.exitCode).toBe(0);
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
     expect(doctor.json).toMatchObject({
       healthy: true,
       identity: { skill: { state: "aligned" } },
@@ -196,7 +286,7 @@ cliTest(
     ]);
     expect(repeat.json).toMatchObject({ status: "ready", appliedActions: [] });
     const uninstall = await run(["uninstall", "--json"]);
-    expect(uninstall.exitCode).toBe(0);
+    expect(uninstall.exitCode, uninstall.stdout).toBe(0);
     expect(parse(await readFile(config, "utf8"))).toEqual(parse(original));
     await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
   },
@@ -250,7 +340,7 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
         "--dry-run",
         "--json",
       ]);
-      expect(plan.exitCode).toBe(0);
+      expect(plan.exitCode, plan.stdout).toBe(0);
       expect(plan.json).toMatchObject({
         status: "planned",
         plannedActions: expect.arrayContaining([
@@ -260,10 +350,14 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
           }),
         ]),
       });
-      expect(
-        (await run(["setup", "--client", "hermes", "--yes", "--json"]))
-          .exitCode,
-      ).toBe(0);
+      const applied = await run([
+        "setup",
+        "--client",
+        "hermes",
+        "--yes",
+        "--json",
+      ]);
+      expect(applied.exitCode, applied.stdout).toBe(0);
       expect(parse(await readFile(config, "utf8"))).toMatchObject({
         mcp_servers: {
           rea: { enabled: true },
@@ -288,7 +382,7 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
           "--skill",
           "--json",
         ]);
-        expect(doctor.exitCode).toBe(0);
+        expect(doctor.exitCode, doctor.stdout).toBe(0);
         expect(doctor.json).toMatchObject({
           healthy: true,
           identity: {
@@ -322,11 +416,12 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
 for (const selection of [
   "missing",
   "selected",
+  "nested-selected",
   "default",
   "symlink",
 ] as const) {
   cliTest(
-    `Hermes nested homes preserve upstream sticky selection: ${selection}`,
+    `Hermes nested homes use the native profile root: ${selection}`,
     async ({ cli }) => {
       const home = await createTestTempDirectory("rea-hermes-nested-");
       const native =
@@ -351,12 +446,17 @@ for (const selection of [
       await writeFile(join(root, "config.yaml"), "model: nested-root\n");
       if (selection !== "default")
         await writeFile(join(native, "active_profile"), "coder");
-      if (selection === "selected" || selection === "symlink") {
-        await mkdir(join(root, "profiles", "coder"));
+      if (selection === "missing" || selection === "nested-selected") {
+        await mkdir(join(root, "profiles", "coder"), { recursive: true });
         await writeFile(
           join(root, "profiles", "coder", "config.yaml"),
           "model: nested-coder\n",
         );
+      }
+      const profile = join(native, "profiles", "coder");
+      if (selection !== "missing" && selection !== "default") {
+        await mkdir(profile, { recursive: true });
+        await writeFile(join(profile, "config.yaml"), "model: native-coder\n");
       }
       const plan = await cli.run({
         arguments: ["setup", "--client", "hermes", "--dry-run", "--json"],
@@ -377,9 +477,8 @@ for (const selection of [
           remediation: expect.stringContaining('Hermes profile "coder"'),
         });
       } else {
-        const selected =
-          selection === "default" ? root : join(root, "profiles", "coder");
-        expect(plan.exitCode).toBe(0);
+        const selected = selection === "default" ? root : profile;
+        expect(plan.exitCode, plan.stdout).toBe(0);
         expect(plan.json).toMatchObject({
           status: "planned",
           plannedActions: expect.arrayContaining([
@@ -395,12 +494,114 @@ for (const selection of [
       expect(await readFile(join(root, "config.yaml"), "utf8")).toBe(
         "model: nested-root\n",
       );
-      await expect(access(`${otherConfig}.rea.backup`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      await expect(access(join(root, "skills"))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
+      expect(await readFile(join(root, "active_profile"), "utf8")).toBe(
+        "other",
+      );
+      if (selection !== "default")
+        expect(await readFile(join(native, "active_profile"), "utf8")).toBe(
+          "coder",
+        );
+      if (selection !== "missing" && selection !== "default")
+        expect(await readFile(join(profile, "config.yaml"), "utf8")).toBe(
+          "model: native-coder\n",
+        );
+      if (selection === "missing" || selection === "nested-selected")
+        expect(
+          await readFile(
+            join(root, "profiles", "coder", "config.yaml"),
+            "utf8",
+          ),
+        ).toBe("model: nested-coder\n");
+      for (const directory of [
+        native,
+        root,
+        profile,
+        join(root, "profiles", "coder"),
+        join(root, "profiles", "other"),
+      ]) {
+        await expect(
+          access(join(directory, "config.yaml.rea.backup")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(access(join(directory, "skills"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+    },
+  );
+}
+
+for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
+  cliTest(
+    `Hermes preview distinguishes missing and existing overrides: ${layout}`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory(
+        "rea-hermes-missing-override-",
+      );
+      const native =
+        process.platform === "win32"
+          ? join(home, "AppData", "Local", "hermes")
+          : join(home, ".hermes");
+      const physical = join(home, "hermes-data");
+      await mkdir(physical);
+      await mkdir(dirname(native), { recursive: true });
+      const linkType = process.platform === "win32" ? "junction" : "dir";
+      let root: string;
+      if (layout === "symlinked-default") {
+        await symlink(physical, native, linkType);
+        root = join(native, "new");
+      } else {
+        await mkdir(native);
+        await symlink(physical, join(native, "link"), linkType);
+        root = join(native, "link", "new");
+      }
+      const profile = join(native, "profiles", "coder");
+      const config = join(profile, "config.yaml");
+      await mkdir(profile, { recursive: true });
+      await writeFile(config, "model: native-coder\n");
+      await writeFile(join(native, "active_profile"), "coder");
+      for (const exists of [false, true]) {
+        if (exists) await mkdir(root);
+        const usesNative = layout === "symlinked-default" ? exists : !exists;
+        const selected = usesNative ? profile : root;
+        const plan = await cli.run({
+          arguments: ["setup", "--client", "hermes", "--dry-run", "--json"],
+          cwd: home,
+          environment: {
+            USERPROFILE: home,
+            LOCALAPPDATA: join(home, "AppData", "Local"),
+            HERMES_HOME: root,
+          },
+          timeoutMs: 20_000,
+        });
+        expect(plan.exitCode, plan.stdout).toBe(0);
+        expect(plan.json).toMatchObject({
+          status: "planned",
+          plannedActions: expect.arrayContaining([
+            expect.objectContaining({ target: join(selected, "config.yaml") }),
+            expect.objectContaining({
+              target: join(selected, "skills", "reverse-engineer-anything"),
+            }),
+          ]),
+          appliedActions: [],
+        });
+        if (!exists)
+          await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+        for (const directory of [native, root, profile]) {
+          await expect(access(join(directory, "skills"))).rejects.toMatchObject(
+            { code: "ENOENT" },
+          );
+          await expect(
+            access(join(directory, "config.yaml.rea.backup")),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+        }
+        await expect(access(join(root, "config.yaml"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        expect(await readFile(config, "utf8")).toBe("model: native-coder\n");
+        expect(await readFile(join(native, "active_profile"), "utf8")).toBe(
+          "coder",
+        );
+      }
     },
   );
 }
@@ -475,7 +676,7 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
         "--yes",
         "--json",
       ]);
-      expect(unrelated.exitCode).toBe(0);
+      expect(unrelated.exitCode, unrelated.stdout).toBe(0);
     },
   );
 }
@@ -511,7 +712,7 @@ cliTest.skipIf(process.platform === "win32")(
       "--dry-run",
       "--json",
     ]);
-    expect(planned.exitCode).toBe(0);
+    expect(planned.exitCode, planned.stdout).toBe(0);
     expect(planned.json).toMatchObject({
       status: "planned",
       plannedActions: expect.arrayContaining([

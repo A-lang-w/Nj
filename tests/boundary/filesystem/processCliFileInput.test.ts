@@ -4,13 +4,14 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
+  PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
 } from "../../../src/application/process/ProcessCli.js";
 import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { err } from "../../../src/domain/result.js";
@@ -18,6 +19,8 @@ import * as jsonFiles from "../../../src/application/JsonFiles.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
+import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
+import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
 
 describe("process CLI error projection", () => {
   it.each([
@@ -51,6 +54,7 @@ describe("process CLI error projection", () => {
           retryable: false,
           message:
             "Process command could not complete: SECRET internal failure /private/path",
+          remediation: { action: PROCESS_UNEXPECTED_FAILURE_REMEDIATION },
           details: {
             operation,
             provider_id: PROCESS_PROVIDER.id,
@@ -58,6 +62,10 @@ describe("process CLI error projection", () => {
           },
         });
         expect(JSON.stringify(projected)).not.toContain("stack");
+        expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toContain("SECRET");
+        expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toMatch(
+          /\bretry\b/iu,
+        );
       } finally {
         read.mockRestore();
       }
@@ -170,6 +178,79 @@ describe("process CLI file cancellation", () => {
       }
     },
   );
+});
+
+it.each(
+  [
+    {
+      label: "EIO",
+      physical: Object.assign(new Error("physical descriptor failure"), {
+        code: "EIO",
+      }),
+    },
+    { label: "null", physical: null },
+    { label: "undefined", physical: undefined },
+  ].flatMap((failure) => [
+    { ...failure, reader: "native" as const },
+    { ...failure, reader: "streamed" as const },
+  ]),
+)(
+  "preserves a $reader descriptor $label when cancellation arrives after the read fails",
+  async ({ physical, reader }) => {
+    const root = await createTestTempDirectory("rea-process-cli-late-io-");
+    const path = join(root, "scenario.json");
+    const input = JSON.stringify({
+      executable: process.execPath,
+      arguments: [],
+    });
+    await writeFile(path, reader === "streamed" ? stream(input) : input);
+    const controller = new AbortController();
+    await failFileReadAfterAbort(
+      path,
+      controller,
+      new Error("later caller cancellation"),
+      physical,
+    );
+    try {
+      expect(
+        await captureProcessScenarioFile(path, process.env, controller.signal),
+      ).toMatchObject({
+        code: "execution_failure",
+        category: "execution_failure",
+        retryable: false,
+        details: { operation: "read", reason: "io", path },
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it("keeps a physical read primary when its cause is also the abort reason", async () => {
+  const root = await createTestTempDirectory(
+    "rea-process-cli-identical-abort-",
+  );
+  const path = join(root, "scenario.json");
+  await writeFile(
+    path,
+    JSON.stringify({ executable: process.execPath, arguments: [] }),
+  );
+  const controller = new AbortController();
+  const physical = new JsonInputPhysicalReadFailure(
+    Object.assign(new Error("descriptor EIO"), { code: "EIO" }),
+  );
+  await failFileReadAfterAbort(path, controller, physical, physical);
+  try {
+    expect(
+      await captureProcessScenarioFile(path, process.env, controller.signal),
+    ).toMatchObject({
+      code: "execution_failure",
+      category: "execution_failure",
+      details: { operation: "read", reason: "io", path },
+    });
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
 
 describe("process CLI input diagnostics", () => {
@@ -320,40 +401,79 @@ describe("process CLI input diagnostics", () => {
 });
 
 describe("process CLI file cleanup", () => {
-  it.each([false, true])(
-    "preserves the open-file owner when close fails (cancelled: %s)",
-    async (cancelDuringClose) => {
+  it("retries a transient input close refusal before validating the scenario", async () => {
+    const root = await createTestTempDirectory(
+      "rea-process-cli-cleanup-retry-",
+    );
+    const path = join(root, "scenario.json");
+    await writeFile(path, "{}");
+    let owner: OwnedFileHandle | undefined;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(async function (this: OwnedFileHandle) {
+        owner = this;
+        throw new Error("transient close refusal");
+      });
+    try {
+      expect(await captureProcessScenarioFile(path)).toMatchObject({
+        code: "invalid_request",
+      });
+      expect(close).toHaveBeenCalledTimes(2);
+      expect(owner?.handle.fd).toBe(-1);
+    } finally {
+      close.mockRestore();
+      await owner?.close();
+    }
+  });
+
+  it.each([
+    { operation: "capture", cancelDuringClose: false },
+    { operation: "capture", cancelDuringClose: true },
+    { operation: "compare", cancelDuringClose: false },
+    { operation: "compare", cancelDuringClose: true },
+  ] as const)(
+    "preserves the open-file owner when $operation close fails (cancelled: $cancelDuringClose)",
+    async ({ operation, cancelDuringClose }) => {
       const root = await createTestTempDirectory("rea-process-cli-cleanup-");
       const path = join(root, "scenario.json");
       await writeFile(path, JSON.stringify({ executable: process.execPath }));
       const controller = new AbortController();
       const cleanupCause = new Error("injected file close failure");
+      let owner: OwnedFileHandle | undefined;
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
-        .mockImplementationOnce(async () => {
+        .mockImplementation(async function (this: OwnedFileHandle) {
+          owner = this;
           if (cancelDuringClose) controller.abort();
           throw cleanupCause;
         });
       let failure: unknown;
       try {
         try {
-          await captureProcessScenarioFile(
-            path,
-            process.env,
-            cancelDuringClose ? controller.signal : undefined,
-          );
+          const signal = cancelDuringClose ? controller.signal : undefined;
+          if (operation === "capture")
+            await captureProcessScenarioFile(path, process.env, signal);
+          else await compareProcessEvidenceFiles(path, path, undefined, signal);
         } catch (cause: unknown) {
           failure = cause;
         }
-        expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
-        if (!(failure instanceof RegularFileCleanupFailure))
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        if (!(failure instanceof ArtifactReaderFailure))
           throw new Error("Expected the retained file handle owner");
-        expect(failure.cleanupCause).toBe(cleanupCause);
-        expect(failure.owner.handle.fd).toBeGreaterThanOrEqual(0);
+        expect(failure.cleanup).toMatchObject({
+          reason: expect.stringContaining(cleanupCause.message),
+          resources: [path],
+        });
+        expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
+        expect(failure.cleanupLeases).toHaveLength(1);
+        expect(close.mock.calls.length).toBeGreaterThanOrEqual(2);
       } finally {
         close.mockRestore();
-        if (failure instanceof RegularFileCleanupFailure)
-          await failure.owner.close();
+        if (failure instanceof ArtifactReaderFailure)
+          for (const lease of failure.cleanupLeases ?? [])
+            await lease.release();
+        else await owner?.close();
+        expect(owner?.handle.fd).toBe(-1);
       }
     },
   );
