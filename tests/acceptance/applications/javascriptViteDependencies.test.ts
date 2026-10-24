@@ -2680,6 +2680,18 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: [],
     unknown: true,
   },
+  ...[
+    'declare class Erased { [__vite__mapDeps.f[0] = "./last.js"]: string; }',
+    "declare class Erased { [opaque(__vite__mapDeps.f)]: string; }",
+    "type Erased = typeof __vite__mapDeps;",
+  ].map((erased, index) => ({
+    file: `erased-typescript-cache-effect-${index}.ts`,
+    source: mapDependenciesWithEffects(
+      initializeCache + erased + " __vite__mapDeps([0]);",
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  })),
 ];
 
 const batches = Array.from(

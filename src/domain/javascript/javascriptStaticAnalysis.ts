@@ -1,4 +1,7 @@
+import { uniqueSortedBy } from "../canonicalOrdering.js";
 import * as t from "@babel/types";
+import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
+import type { JavaScriptRouteSourceFacts } from "./javascriptRouteFacts.js";
 import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCoverage.js";
 import { collectElectronWrappedCallPaths } from "./electronWrappedCallPaths.js";
 import {
@@ -11,31 +14,36 @@ import {
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
 
+import { isElectronRendererLoad } from "./electronStaticRenderer.js";
+import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
-import { hasPossibleCommonJsDelegateWrite } from "./javascriptSemanticRequireOrigin.js";
+import {
+  hasPossibleCommonJsDelegateWrite,
+  semanticFactoryLoaderMemberAt,
+} from "./javascriptSemanticRequireOrigin.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
-import { createStaticNodePathResolveQuery } from "./javascriptStaticPathIntrinsics.js";
+import { createStaticPathIntrinsicQuery } from "./javascriptStaticPathIntrinsics.js";
+import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
   detectVendors,
   failedJavaScriptStaticAnalysis,
   registrationKey,
-  sortedUnique,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
   addReference,
+  addEndpoint,
   addSourceMapDirectives,
   finishPartialNetworkEndpoints,
   finishModuleRequireCalls,
   finishSqliteStorageCalls,
   inspectCall,
-  inspectRouteProperty,
-  inspectRoleProperty,
   inspectRpcNode,
   finishRpcScanSteps,
 } from "./javascriptStaticAnalysisCalls.js";
 import {
+  finishBundlerExports,
   inspectBundlerRegistration,
   inspectBundlerBootstrap,
   inspectEsbuildWrapper,
@@ -108,30 +116,45 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
       bindings,
     );
   const findings: JavaScriptFindingContext = {
-    nodePathResolve: createStaticNodePathResolveQuery(index),
+    pathIntrinsics: createStaticPathIntrinsicQuery(index),
+    rendererLoad: (callee, site) =>
+      isElectronRendererLoad(callee, site, findings, index),
     source,
     accumulator,
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
+    electronExportIntact: electronIdentity.intactExport,
     electronInvocationPath: electronIdentity.invocationPath,
     electronAppPathChangePossible: electronIdentity.mayChangeAppPath,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
+    expressionShapes: createSemanticExpressionShapeResolver(bindings),
   };
+  const routeScan = yield* JavaScriptRouteScan.createSteps(
+    file,
+    index,
+    (fact) => addEndpoint(findings, { ...fact, kind: "route" }),
+  );
   const viteReferencePositions = yield* traverseStaticSourceSteps(
     file,
     findings,
     bindings,
     viteDependencySpecifiers,
+    routeScan,
   );
   yield* retainViteReferencesSteps(
     findings,
     viteDependencySpecifiers,
     viteReferencePositions,
   );
+  const routes = yield* routeScan.finishSteps();
+  if (accumulator.bundlerExportHelpersObserved)
+    yield* index.indexMemberMutationFactsSteps();
+  finishBundlerExports(accumulator, index);
+  yield* finishElectronNativeBindingsSteps(findings, index);
   yield* finishElectronBrowserWindowsSteps(findings, index);
   if (accumulator.pendingModuleRequireCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();
-    finishModuleRequireCalls(findings, bindings);
+    finishModuleRequireCalls(findings, index);
   }
   if (
     accumulator.pendingNetworkCalls.length > 0 ||
@@ -161,7 +184,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
       break;
     }
   }
-  return finalizeStaticAnalysis(source, file, accumulator, bindings, {
+  return finalizeStaticAnalysis(source, file, accumulator, bindings, routes, {
     references,
     hasElectronReference,
   });
@@ -175,6 +198,7 @@ function* traverseStaticSourceSteps(
     t.CallExpression | t.OptionalCallExpression,
     readonly (string | undefined)[]
   >,
+  routeScan: JavaScriptRouteScan,
 ): Generator<
   void,
   ReadonlyMap<t.CallExpression | t.OptionalCallExpression, number>
@@ -184,14 +208,17 @@ function* traverseStaticSourceSteps(
     number
   >();
   yield* traverseJavaScriptAstSteps(file, {
-    enter: (node) => {
+    enter: (node, parent) => {
       findings.accumulator.visitedNodes += 1;
-      inspectNode(node, findings, bindings);
-      if (
-        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-        viteCalls.has(node)
-      )
-        positions.set(node, findings.accumulator.references.length);
+      routeScan.inspect(node, parent);
+      if (!bindings.erasedSyntaxNodes.has(node)) {
+        inspectNode(node, findings, bindings);
+        if (
+          (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+          viteCalls.has(node)
+        )
+          positions.set(node, findings.accumulator.references.length);
+      }
       return undefined;
     },
   });
@@ -249,6 +276,7 @@ const finalizeStaticAnalysis = (
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
   bindings: JavaScriptSemanticAnalysisState,
+  routes: JavaScriptRouteSourceFacts,
   referenceFacts: {
     readonly references: JavaScriptStaticAnalysis["references"];
     readonly hasElectronReference: boolean;
@@ -305,11 +333,12 @@ const finalizeStaticAnalysis = (
       accumulator.endpoints,
       accumulator.moduleRangeIndex,
     ),
+    routes,
     storage: finalizeLocatedFindings(
       accumulator.storage,
       accumulator.moduleRangeIndex,
     ),
-    bundler_registrations: sortedUnique(
+    bundler_registrations: uniqueSortedBy(
       accumulator.registrations,
       registrationKey,
     ),
@@ -371,6 +400,15 @@ const inspectNode = (
     inspectBundlerBootstrap(source, node, accumulator, bindings);
     inspectBundlerRegistration(source, node, accumulator, bindings);
     inspectEsbuildWrapper(source, node, accumulator, bindings);
+    if (
+      semanticFactoryLoaderMemberAt(
+        node,
+        bindings,
+        accumulator.factoryRequireBindingIds,
+        "d",
+      ) === "factory-loader"
+    )
+      accumulator.bundlerExportHelpersObserved = true;
     inspectCall(node, findings, bindings);
   } else if (t.isOptionalCallExpression(node)) {
     inspectCall(node, findings, bindings);
@@ -406,9 +444,5 @@ const inspectNode = (
       kind: "dynamic-import",
       specifier: stringValue(node.source),
     });
-  if (t.isObjectProperty(node)) {
-    inspectRouteProperty(node, findings);
-    inspectRoleProperty(node, findings);
-  }
   inspectRpcNode(node, findings);
 };

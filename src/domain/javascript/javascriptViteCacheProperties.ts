@@ -4,7 +4,7 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import {
   semanticReadPrecedesWrite,
   semanticWritePrecedesRead,
@@ -114,31 +114,36 @@ export class ViteCacheProperties {
       node: t.CallExpression | t.OptionalCallExpression;
       invocation: JavaScriptIntrinsicInvocation;
     }[] = [];
-    yield* traverseJavaScriptAstSteps(this.state.program, {
-      enter: (node) => {
-        if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-          return;
-        const invocation = this.graph.invocation(node);
-        if (
-          invocation?.kind !== "known" ||
-          invocation.path.length !== 3 ||
-          invocation.path[0] !== "intrinsic" ||
-          (invocation.path[1] !== "Object" && invocation.path[1] !== "Reflect")
-        )
-          return;
-        const method = invocation.path[2];
-        if (
-          method !== "defineProperty" &&
-          method !== "defineProperties" &&
-          method !== "freeze" &&
-          method !== "seal" &&
-          method !== "preventExtensions" &&
-          method !== "setPrototypeOf"
-        )
-          return;
-        calls.push({ node, invocation });
+    yield* traverseJavaScriptValueAstSteps(
+      this.state.program,
+      this.state.erasedSyntaxNodes,
+      {
+        enter: (node) => {
+          if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+            return;
+          const invocation = this.graph.invocation(node);
+          if (
+            invocation?.kind !== "known" ||
+            invocation.path.length !== 3 ||
+            invocation.path[0] !== "intrinsic" ||
+            (invocation.path[1] !== "Object" &&
+              invocation.path[1] !== "Reflect")
+          )
+            return;
+          const method = invocation.path[2];
+          if (
+            method !== "defineProperty" &&
+            method !== "defineProperties" &&
+            method !== "freeze" &&
+            method !== "seal" &&
+            method !== "preventExtensions" &&
+            method !== "setPrototypeOf"
+          )
+            return;
+          calls.push({ node, invocation });
+        },
       },
-    });
+    );
     for (const { node, invocation } of calls) {
       if (examined++ % 1024 === 0) yield;
       const method = invocation.path[2];

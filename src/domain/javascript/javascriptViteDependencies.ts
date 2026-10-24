@@ -19,7 +19,7 @@ import {
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import { semanticBindingMayHaveOpaqueEffect } from "./javascriptSemanticOpaqueEffects.js";
 import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
 
@@ -32,12 +32,16 @@ export function* classifyParsedJavaScriptViteDependencySpecifiersSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, ReadonlyMap<ViteDependencyCall, ViteDependencyTable>> {
   const candidates: JavaScriptViteHelperCandidate[] = [];
-  yield* traverseJavaScriptAstSteps(file.program, {
-    enter: (node) => {
-      const candidate = readJavaScriptViteHelper(node, state);
-      if (candidate !== undefined) candidates.push(candidate);
+  yield* traverseJavaScriptValueAstSteps(
+    file.program,
+    state.erasedSyntaxNodes,
+    {
+      enter: (node) => {
+        const candidate = readJavaScriptViteHelper(node, state);
+        if (candidate !== undefined) candidates.push(candidate);
+      },
     },
-  });
+  );
   const calls = new Map<ViteDependencyCall, ViteDependencyTable>();
   if (candidates.length === 0) return calls;
   const { tables, cacheHelpers } = yield* viteBindingTablesSteps(
@@ -69,22 +73,26 @@ export function* classifyParsedJavaScriptViteDependencySpecifiersSteps(
     readonly node: ViteDependencyCall;
     readonly table: JavaScriptViteCacheTable | null | undefined;
   }[] = [];
-  yield* traverseJavaScriptAstSteps(file.program, {
-    enter: (node) => {
-      if (
-        (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
-        !t.isIdentifier(node.callee, { name: "__vite__mapDeps" })
-      )
-        return;
-      const binding = resolveSemanticBindingState(
-        state,
-        node.callee,
-        node.callee.name,
-      );
-      if (binding !== undefined && tables.has(binding.bindingId))
-        classifiedCalls.push({ node, table: tables.get(binding.bindingId) });
+  yield* traverseJavaScriptValueAstSteps(
+    file.program,
+    state.erasedSyntaxNodes,
+    {
+      enter: (node) => {
+        if (
+          (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
+          !t.isIdentifier(node.callee, { name: "__vite__mapDeps" })
+        )
+          return;
+        const binding = resolveSemanticBindingState(
+          state,
+          node.callee,
+          node.callee.name,
+        );
+        if (binding !== undefined && tables.has(binding.bindingId))
+          classifiedCalls.push({ node, table: tables.get(binding.bindingId) });
+      },
     },
-  });
+  );
   for (const [index, { node, table }] of classifiedCalls.entries()) {
     if (index % 1024 === 0) yield;
     calls.set(

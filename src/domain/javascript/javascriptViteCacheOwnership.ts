@@ -12,7 +12,7 @@ import {
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import {
   createViteCacheReadProofSteps,
@@ -113,6 +113,7 @@ export function* invalidateJavaScriptViteCachesSteps(
     objectPrototypeUncertain,
   });
   const context: CacheEffectContext = {
+    state,
     identities,
     interop,
     reads,
@@ -160,6 +161,7 @@ export function* invalidateJavaScriptViteCachesSteps(
   yield* retainImplicitReceiverEffectsSteps(program, context, invalidate);
   yield* collectJavaScriptIdentityWritesSteps(
     program,
+    state.erasedSyntaxNodes,
     (node, kind) =>
       kind === "member" ? identityPaths(identities.read(node)) : [],
     interop.intrinsicInvocation,
@@ -534,6 +536,7 @@ function* dataDescriptorValueSteps(
     : undefined;
 }
 interface CacheEffectContext {
+  readonly state: JavaScriptSemanticAnalysisState;
   readonly identities: ViteCacheIdentities;
   readonly interop: Interop;
   readonly reads: ViteCacheReadProof;
@@ -581,7 +584,7 @@ function* indexCacheEffectsSteps(
   const expose = (node: t.Node, value: ViteCacheValue): void => {
     if (admittedDepth === 0) exposures.push({ node, value });
   };
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       collectSemanticEsmExport(node, state);
       if (admittedNodes.has(node)) admittedDepth++;
@@ -777,6 +780,7 @@ function* collectIntrinsicWritesSteps(
   }
   yield* collectJavaScriptIdentityWritesSteps(
     program,
+    state.erasedSyntaxNodes,
     (node, kind) => {
       if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
       if (kind === "binding") return [];
@@ -863,79 +867,86 @@ function* retainImplicitReceiverEffectsSteps(
     if (allocation != null) unsafeReceivers.add(allocation);
   };
   let examined = 0;
-  yield* traverseJavaScriptAstSteps(program, {
-    skip: (node) => context.admittedNodes.has(node),
-    enter: (node, parent) => {
-      if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-        const invocation = context.interop.intrinsicInvocation(node);
-        const path =
-          invocation?.kind === "known" ? invocation.path.join(".") : undefined;
-        const target = invocation?.arguments?.[0];
-        if (!t.isSpreadElement(target)) {
-          if (
-            ((path === "intrinsic.Object.defineProperty" ||
-              path === "intrinsic.Reflect.defineProperty") &&
-              !context.dataDefinitions.has(node)) ||
-            path === "intrinsic.Object.defineProperties" ||
-            path === "intrinsic.Object.setPrototypeOf" ||
-            path === "intrinsic.Reflect.setPrototypeOf"
-          )
-            markUnsafe(target);
-          if (
-            target !== undefined &&
-            (path === "intrinsic.Object.assign" ||
-              path === "intrinsic.Reflect.set")
-          )
-            selections.push({ value: target, iteration: false });
+  yield* traverseJavaScriptValueAstSteps(
+    program,
+    context.state.erasedSyntaxNodes,
+    {
+      skip: (node) => context.admittedNodes.has(node),
+      enter: (node, parent) => {
+        if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+          const invocation = context.interop.intrinsicInvocation(node);
+          const path =
+            invocation?.kind === "known"
+              ? invocation.path.join(".")
+              : undefined;
+          const target = invocation?.arguments?.[0];
+          if (!t.isSpreadElement(target)) {
+            if (
+              ((path === "intrinsic.Object.defineProperty" ||
+                path === "intrinsic.Reflect.defineProperty") &&
+                !context.dataDefinitions.has(node)) ||
+              path === "intrinsic.Object.defineProperties" ||
+              path === "intrinsic.Object.setPrototypeOf" ||
+              path === "intrinsic.Reflect.setPrototypeOf"
+            )
+              markUnsafe(target);
+            if (
+              target !== undefined &&
+              (path === "intrinsic.Object.assign" ||
+                path === "intrinsic.Reflect.set")
+            )
+              selections.push({ value: target, iteration: false });
+          }
         }
-      }
-      if (t.isAssignmentExpression(node)) {
-        const target = unwrapJavaScriptExpression(node.left).node;
-        if (
-          t.isMemberExpression(target) ||
-          t.isOptionalMemberExpression(target)
-        ) {
-          const key = semanticStaticPropertyKey(
-            target.property,
-            target.computed,
-          );
-          if (key === null || key === "__proto__") markUnsafe(target.object);
+        if (t.isAssignmentExpression(node)) {
+          const target = unwrapJavaScriptExpression(node.left).node;
+          if (
+            t.isMemberExpression(target) ||
+            t.isOptionalMemberExpression(target)
+          ) {
+            const key = semanticStaticPropertyKey(
+              target.property,
+              target.computed,
+            );
+            if (key === null || key === "__proto__") markUnsafe(target.object);
+          }
         }
-      }
-      if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-        // Explicit receiver calls already have the method read proof and effects owner.
-        if (
-          (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
-          parent.callee === node
-        )
-          return;
-        selections.push({ value: node.object, iteration: false });
-      } else if (t.isSpreadElement(node))
-        selections.push({
-          value: node.argument,
-          iteration: !t.isObjectExpression(parent),
-        });
-      else if (t.isForOfStatement(node))
-        selections.push({ value: node.right, iteration: true });
-      else {
-        const target = t.isVariableDeclarator(node)
-          ? node.id
-          : t.isAssignmentExpression(node)
-            ? node.left
-            : undefined;
-        const value = t.isVariableDeclarator(node)
-          ? node.init
-          : t.isAssignmentExpression(node)
-            ? node.right
-            : undefined;
-        if (
-          value != null &&
-          (t.isObjectPattern(target) || t.isArrayPattern(target))
-        )
-          selections.push({ value, iteration: t.isArrayPattern(target) });
-      }
+        if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+          // Explicit receiver calls already have the method read proof and effects owner.
+          if (
+            (t.isCallExpression(parent) ||
+              t.isOptionalCallExpression(parent)) &&
+            parent.callee === node
+          )
+            return;
+          selections.push({ value: node.object, iteration: false });
+        } else if (t.isSpreadElement(node))
+          selections.push({
+            value: node.argument,
+            iteration: !t.isObjectExpression(parent),
+          });
+        else if (t.isForOfStatement(node))
+          selections.push({ value: node.right, iteration: true });
+        else {
+          const target = t.isVariableDeclarator(node)
+            ? node.id
+            : t.isAssignmentExpression(node)
+              ? node.left
+              : undefined;
+          const value = t.isVariableDeclarator(node)
+            ? node.init
+            : t.isAssignmentExpression(node)
+              ? node.right
+              : undefined;
+          if (
+            value != null &&
+            (t.isObjectPattern(target) || t.isArrayPattern(target))
+          )
+            selections.push({ value, iteration: t.isArrayPattern(target) });
+        }
+      },
     },
-  });
+  );
   const ordinary = new Map<ViteCacheAllocation, boolean>();
   const ordinaryLiteral = function* (
     node: t.ObjectExpression,
