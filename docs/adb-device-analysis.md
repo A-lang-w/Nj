@@ -90,7 +90,7 @@ existing analysis families directly, for example
 | `read_adb_logcat`       | read               | Bounded `logcat -d -t` dump for one buffer, optional pid filter                                                                                                                                                                       |
 | `list_adb_packages`     | read               | `pm list packages -f` with scope; base APK device paths                                                                                                                                                                               |
 | `resolve_adb_packages`  | read               | Case-insensitive package-name substring search with exact-match flag                                                                                                                                                                  |
-| `inspect_adb_package`   | read               | `dumpsys package` projection: versions, install times, installer, flags, permission count                                                                                                                                             |
+| `inspect_adb_package`   | read               | `dumpsys package` projection: versions, install times, installer, flags, and count of listed requested-permission rows (including Unicode names)                                                                                      |
 | `list_adb_directory`    | read               | NUL-framed immediate children, including hidden entries: kinds, permissions, owner, group, sizes, symlink targets                                                                                                                     |
 | `pull_adb_package`      | read               | Complete split APK set from `pm path`, each file digested                                                                                                                                                                             |
 | `pull_adb_file`         | read               | One absolute device path pulled and digested                                                                                                                                                                                          |
@@ -136,6 +136,29 @@ and during shutdown.
 
 ## Interpret the result
 
+- **Package numeric declarations retain failures.** `inspect_adb_package`
+  admits the first valid `userId` or `appId` as `user_id`: a nonnegative safe
+  integer, including zero. A null value means no valid declaration was found.
+  Malformed declarations before or after a valid value remain in
+  `numeric_issues`: the first ten issues with command, field, reason and original
+  `raw_line`, plus the exact `total`. Reasons are `invalid_format` or
+  `unsafe_integer`. Any issue makes package coverage partial; existing section
+  omissions can also make it partial. `version_code` remains exact source text.
+- **Display nulls preserve uncertainty.** `inspect_adb_display` admits positive
+  safe integers. Absent or malformed optional values are null; `numeric_issues`
+  distinguishes malformed declarations from absence. It keeps the first ten
+  issues and exact total, with command, field, original line and reason
+  (`invalid_format`, `unsafe_integer` or `nonpositive`). The last recognized
+  labeled declaration wins, even when malformed. A physical-density label
+  suppresses bare-number fallback even when malformed; without that label, the
+  first unsigned bare number wins, including zero or an unsafe integer that
+  leaves the value null. Display coverage is complete only with known physical
+  density and no numeric issues. Missing or malformed required physical size
+  produces a protocol failure with `details.partial_observation`: an
+  `inspect_adb_display` observation from provider `adb`, reason
+  `physical_size_absent` or `physical_size_malformed`, and a `result` retaining
+  client, serial, optional display facts, numeric issues, null physical size
+  and partial coverage.
 - **Directory names retain whitespace and newlines.** Symlink targets do too,
   including trailing newlines. Records containing invalid UTF-8 remain as
   labelled hex in `unparsed_lines` and make directory coverage partial.
@@ -242,3 +265,13 @@ Record: verified against adb 34.0.5 on Linux against an Android 14
 287 services, 92 features, a real two-APK split set pulled with byte-exact
 digests, a verified push/pull roundtrip, a 1.3 MB screen capture, and the
 complete package lifecycle; see `docs/testing.md` for the lane summary.
+
+Intent integer extras use signed decimal text. The ADB argument encoder removes
+redundant leading zeros for Android's radix-sensitive `--ei` parser while retained
+Evidence keeps the caller's original spelling. Package inspection accepts both
+`userId` and Android 16's `appId` spelling for the legacy `user_id` result field.
+
+A completed push and device digest verification are separate observations. A
+verification timeout, cancellation, or output budget failure returns the typed
+failure with partial Evidence of the completed transfer. An unavailable checksum
+command or unrecognized checksum output leaves verification explicitly unknown.

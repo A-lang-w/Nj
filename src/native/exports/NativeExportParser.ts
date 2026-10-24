@@ -3,9 +3,12 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   mappedFileOffset,
+  imageFileMappings,
+  readMappedCString,
 } from "../metadata/BinaryContainer.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
-import { readElfString, readElfSymbol } from "../metadata/ElfSymbol.js";
+import { isUtf8 } from "node:buffer";
+import { readElfStringBytes, readElfSymbol } from "../metadata/ElfSymbol.js";
 import {
   readNativeDirectoryFromBuffer,
   type NativeSection,
@@ -108,25 +111,22 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       ],
     };
   const reader = new BinaryReader(bytes, true);
-  const mappings =
-    image.pe_header_mapping === undefined
-      ? image.mappings
-      : [image.pe_header_mapping, ...image.mappings];
+  const mappings = imageFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
   const cString = (rva: number): string => {
-    const start = map(rva, 1);
-    const end = bytes
-      .subarray(start, start + MAXIMUM_NAME_BYTES + 1)
-      .indexOf(0);
-    if (end <= 0)
+    const value = readMappedCString(
+      bytes,
+      image,
+      base + BigInt(rva),
+      MAXIMUM_NAME_BYTES,
+    );
+    if (value.length === 0)
       throw new BinaryFormatFailure(
         "malformed",
-        `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+        `Export name at RVA ${hex(rva)} is empty`,
       );
-    // The whole string must stay inside one file-backed mapping.
-    map(rva, end + 1);
-    return bytes.toString("latin1", start, start + end);
+    return value.toString("latin1");
   };
 
   const header = map(directory.virtual_address, PE_EXPORT_DIRECTORY_BYTES);
@@ -278,14 +278,31 @@ const versionSectionData = (
 };
 
 /** Version names by index, read from `.gnu.version_d` and `.gnu.version_r`. */
+type DecodedElfString = {
+  readonly name: string;
+  readonly name_bytes_base64: string | null;
+  readonly name_utf8_decodable: boolean;
+};
+
+const decodeElfString = (bytes: Buffer): DecodedElfString => {
+  const utf8 = isUtf8(bytes);
+  return {
+    name: bytes.toString(utf8 ? "utf8" : "latin1"),
+    name_bytes_base64: bytes.some((byte) => byte >= 0x80)
+      ? bytes.toString("base64")
+      : null,
+    name_utf8_decodable: utf8,
+  };
+};
+
 const readVersionNames = (
   reader: BinaryReader,
   sections: readonly NativeSection[],
   issues: NativeExportIssue[],
-): Map<number, string | null> => {
-  const namesByIndex = new Map<number, string | null>();
-  const addName = (index: number, name: string): void => {
-    namesByIndex.set(index, name || null);
+): Map<number, DecodedElfString | null> => {
+  const namesByIndex = new Map<number, DecodedElfString | null>();
+  const addName = (index: number, name: Buffer): void => {
+    namesByIndex.set(index, name.length === 0 ? null : decodeElfString(name));
   };
   const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
   if (verneed !== undefined) {
@@ -323,7 +340,10 @@ const readVersionNames = (
           const versionIndex = reader.u16(auxAt + 6) & 0x7fff;
           const auxiliaryNext = reader.u32(auxAt + 12);
           try {
-            addName(versionIndex, readElfString(names, reader.u32(auxAt + 8)));
+            addName(
+              versionIndex,
+              readElfStringBytes(names, reader.u32(auxAt + 8)),
+            );
           } catch (cause) {
             issues.push({
               code: "version_unresolved",
@@ -385,7 +405,7 @@ const readVersionNames = (
             "Version definition name entry leaves its section",
           );
         let auxiliary = offset + aux;
-        const versionName = readElfString(
+        const versionName = readElfStringBytes(
           names,
           reader.u32(table.offset + auxiliary),
         );
@@ -439,21 +459,26 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     byte_order: directory.little ? ("little" as const) : ("big" as const),
   };
   const { sections } = directory;
-  if (sections.length === 0)
+  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
+  if (
+    sections.length === 0 ||
+    (dynsym === undefined && directory.programs.some(({ type }) => type === 2))
+  )
     return {
       ...result,
       exports: [],
       coverage: {
         status: "unsupported",
         reason:
-          "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented",
+          sections.length === 0
+            ? "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented"
+            : "The ELF declares a dynamic segment but has no dynamic symbol section; enumerating dynamic symbols from the dynamic segment is not implemented",
         examined_entries: 0,
         exports: 0,
       },
       issues: [],
       limitations: ELF_LIMITATIONS,
     };
-  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
   if (dynsym === undefined)
     return {
       ...result,
@@ -544,8 +569,8 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       const versionIndex = raw & 0x7fff;
       if (versionIndex === 0) continue;
       if (versionIndex >= 2) {
-        const name = versionNames.get(versionIndex) ?? null;
-        if (name === null && !unresolvedVersions.has(versionIndex)) {
+        const decodedName = versionNames.get(versionIndex) ?? null;
+        if (decodedName === null && !unresolvedVersions.has(versionIndex)) {
           unresolvedVersions.add(versionIndex);
           issues.push({
             code: "version_unresolved",
@@ -555,14 +580,22 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
         }
         version = {
           index: versionIndex,
-          name,
+          name: decodedName?.name ?? null,
+          name_bytes_base64: decodedName?.name_bytes_base64 ?? null,
+          name_utf8_decodable: decodedName?.name_utf8_decodable ?? null,
           hidden: (raw & 0x8000) !== 0,
         };
       }
     }
     let name: string;
+    let nameUtf8Decodable: boolean;
+    let rawNameBase64: string | null;
     try {
-      name = readElfString(names, symbol.name_offset);
+      const rawName = readElfStringBytes(names, symbol.name_offset);
+      const decodedName = decodeElfString(rawName);
+      nameUtf8Decodable = decodedName.name_utf8_decodable;
+      name = decodedName.name;
+      rawNameBase64 = decodedName.name_bytes_base64;
     } catch (cause) {
       issues.push({
         code: "name_unreadable",
@@ -579,9 +612,16 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       });
       continue;
     }
-    retain(name, typeof version === "object" ? (version?.name ?? null) : null);
+    retain(
+      name,
+      typeof version === "object" ? (version?.name ?? null) : null,
+      rawNameBase64,
+      typeof version === "object" ? (version?.name_bytes_base64 ?? null) : null,
+    );
     exports.push({
       name,
+      name_bytes_base64: rawNameBase64,
+      name_utf8_decodable: nameUtf8Decodable,
       value: hex(symbol.value),
       size: symbol.size.toString(),
       type: ELF_TYPES[symbol.type] ?? "other",

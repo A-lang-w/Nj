@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { decodeMarshalUtf8 } from "../domain/python/marshalUtf8.js";
 import {
   PYTHON_PYC_CHECK_SOURCE,
   PYTHON_PYC_CONST_PREVIEW_LIMIT,
@@ -26,6 +27,7 @@ const TYPE_TRUE = 0x54;
 const TYPE_STOPITER = 0x53;
 const TYPE_ELLIPSIS = 0x2e;
 const TYPE_INT = 0x69;
+const TYPE_INT64 = 0x49;
 const TYPE_FLOAT_TEXT = 0x66;
 const TYPE_FLOAT = 0x67;
 const TYPE_COMPLEX_TEXT = 0x78;
@@ -78,6 +80,7 @@ type MarshalValue =
       readonly bytes: number;
       /** Marshal bytes. JavaScript strings merge lone surrogates with pairs. */
       readonly raw: Buffer;
+      readonly previewEnd: number;
     }
   | { readonly kind: "tuple"; readonly items: MarshalValue[] }
   | { readonly kind: "list"; readonly items: MarshalValue[] }
@@ -390,6 +393,10 @@ class MarshalReader {
         const value = BigInt(this.i32());
         return { kind: "int", value, bits: smallBitLength(value) };
       }
+      case TYPE_INT64: {
+        const value = this.i64();
+        return { kind: "int", value, bits: smallBitLength(value) };
+      }
       case TYPE_FLOAT_TEXT:
         return { kind: "float", value: this.textFloat() };
       case TYPE_FLOAT:
@@ -407,26 +414,49 @@ class MarshalReader {
         return { kind: "int", value: decoded.value, bits: decoded.bits };
       }
       case TYPE_BYTES:
-        return { kind: "bytes", value: this.blob(this.u32()) };
+        return {
+          kind: "bytes",
+          value: this.blob(this.nonNegativeInt32("Marshal string length")),
+        };
       case TYPE_INTERNED:
       case TYPE_UNICODE:
-        return this.utf8(this.u32(), false);
+        return this.utf8(this.nonNegativeInt32("Marshal string length"), false);
       case TYPE_ASCII:
       case TYPE_ASCII_INTERNED:
-        return this.utf8(this.u32(), true);
+        return this.utf8(this.nonNegativeInt32("Marshal string length"), true);
       case TYPE_SHORT_ASCII:
       case TYPE_SHORT_ASCII_INTERNED:
         return this.utf8(this.u8(), true);
       case TYPE_TUPLE:
-        return this.sequenceValue("tuple", this.u32(), depth, slot);
+        return this.sequenceValue(
+          "tuple",
+          this.nonNegativeInt32("Marshal tuple length"),
+          depth,
+          slot,
+        );
       case TYPE_SMALL_TUPLE:
         return this.sequenceValue("tuple", this.u8(), depth, slot);
       case TYPE_LIST:
-        return this.sequenceValue("list", this.u32(), depth, slot);
+        return this.sequenceValue(
+          "list",
+          this.nonNegativeInt32("Marshal list length"),
+          depth,
+          slot,
+        );
       case TYPE_SET:
-        return this.setValue("set", this.u32(), depth, slot);
+        return this.setValue(
+          "set",
+          this.nonNegativeInt32("Marshal set length"),
+          depth,
+          slot,
+        );
       case TYPE_FROZENSET:
-        return this.setValue("frozenset", this.u32(), depth, slot);
+        return this.setValue(
+          "frozenset",
+          this.nonNegativeInt32("Marshal frozenset length"),
+          depth,
+          slot,
+        );
       case TYPE_DICT:
         return this.dict(depth, slot);
       case TYPE_CODE:
@@ -1454,13 +1484,17 @@ class MarshalReader {
       return {
         kind: "str",
         value: bytes.toString("latin1"),
+        previewEnd: Math.min(length, PYTHON_PYC_CONST_PREVIEW_LIMIT),
         bytes: length,
         raw: bytes,
       };
     }
+    const decoded = decodeMarshalUtf8(bytes, PYTHON_PYC_CONST_PREVIEW_LIMIT);
+    if (!decoded.ok) return malformed("Marshal string is not valid UTF-8.");
     return {
       kind: "str",
-      value: decodeSurrogatePass(bytes),
+      value: decoded.value.text,
+      previewEnd: decoded.value.prefixEnd,
       bytes: length,
       raw: bytes,
     };
@@ -1514,6 +1548,14 @@ class MarshalReader {
     return value;
   }
 
+  i64(): bigint {
+    if (this.offset > this.bytes.length - 8)
+      malformed("Marshal stream ended inside a 64-bit integer.");
+    const value = this.bytes.readBigInt64LE(this.offset);
+    this.offset += 8;
+    return value;
+  }
+
   /** CPython `r_long` count fields that its constructors require non-negative. */
   nonNegativeInt32(field: string): number {
     const value = this.i32();
@@ -1530,73 +1572,17 @@ class MarshalReader {
   }
 }
 
-/**
- * Decode marshal UTF-8 the way CPython does (`surrogatepass`): encoded lone
- * surrogates are kept, every other ill-formed sequence is rejected.
- */
-const decodeSurrogatePass = (bytes: Buffer): string => {
-  const units: number[] = [];
-  let text = "";
-  for (let index = 0; index < bytes.length;) {
-    const lead = bytes[index] ?? 0;
-    let codePoint: number;
-    let width: number;
-    if (lead < 0x80) {
-      codePoint = lead;
-      width = 1;
-    } else if (lead >= 0xc2 && lead <= 0xdf) {
-      codePoint = lead & 0x1f;
-      width = 2;
-    } else if (lead >= 0xe0 && lead <= 0xef) {
-      codePoint = lead & 0x0f;
-      width = 3;
-    } else if (lead >= 0xf0 && lead <= 0xf4) {
-      codePoint = lead & 0x07;
-      width = 4;
-    } else {
-      return malformed("Marshal string is not valid UTF-8.");
-    }
-    if (index + width > bytes.length)
-      return malformed("Marshal string is not valid UTF-8.");
-    for (let offset = 1; offset < width; offset += 1) {
-      const next = bytes[index + offset] ?? 0;
-      if ((next & 0xc0) !== 0x80)
-        return malformed("Marshal string is not valid UTF-8.");
-      codePoint = (codePoint << 6) | (next & 0x3f);
-    }
-    if (
-      (width === 3 && codePoint < 0x800) ||
-      (width === 4 && (codePoint < 0x10000 || codePoint > 0x10ffff))
-    )
-      return malformed("Marshal string is not valid UTF-8.");
-    units.push(codePoint);
-    index += width;
-    if (units.length === 4096) {
-      text += codePointsToString(units);
-      units.length = 0;
-    }
-  }
-  return text + codePointsToString(units);
-};
-
-const codePointsToString = (codePoints: readonly number[]): string =>
-  codePoints
-    .map((codePoint) =>
-      codePoint >= 0xd800 && codePoint <= 0xdfff
-        ? String.fromCharCode(codePoint)
-        : String.fromCodePoint(codePoint),
-    )
-    .join("");
-
-/** JSON has no non-finite numbers; keep CPython's repr for them. */
-const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" =>
+/** Keep values whose identity JSON numbers cannot preserve as Python repr. */
+const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" | "-0.0" =>
   Number.isNaN(value)
     ? "nan"
     : value === Infinity
       ? "inf"
       : value === -Infinity
         ? "-inf"
-        : value;
+        : Object.is(value, -0)
+          ? "-0.0"
+          : value;
 
 /**
  * Emit each distinct code object once, the top-level object first. A child
@@ -1686,9 +1672,7 @@ const buildConstSummary = (value: MarshalValue): PythonPycConst => {
         kind: "str",
         bytes: value.bytes,
         truncated,
-        value: truncated
-          ? value.value.slice(0, PYTHON_PYC_CONST_PREVIEW_LIMIT)
-          : value.value,
+        value: truncated ? value.value.slice(0, value.previewEnd) : value.value,
       };
     }
     case "bytes":

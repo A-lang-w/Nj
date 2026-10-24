@@ -66,6 +66,7 @@ const algorithm = (identifier: Buffer): Buffer => seq(identifier, nul());
 export const pkcs7SignedDataFixture = (
   commonName = "REA Fixture",
   organization = "REA Tests",
+  signature = octet(Buffer.from("sig")),
 ): Buffer => {
   const serial = Buffer.from([0x11, 0x22, 0x33, 0x44]);
   const subject = name(commonName, organization);
@@ -92,7 +93,7 @@ export const pkcs7SignedDataFixture = (
     seq(subject, integer(serial)),
     algorithm(SHA256),
     algorithm(SHA256_RSA),
-    octet(Buffer.from("sig")),
+    signature,
   );
   const signedData = seq(
     integer(1),
@@ -125,13 +126,14 @@ export const peCertificateFixture = (
   plus = false,
   payload: Buffer = pkcs7SignedDataFixture(),
   type = 0x0002,
+  countAlignmentInLength = false,
 ): Buffer => {
   const headerBytes = 0x200;
   const alignedPayload = payload;
   const entryLength = 8 + alignedPayload.length;
   const padded = align8(entryLength);
   const table = Buffer.alloc(padded);
-  table.writeUInt32LE(entryLength, 0);
+  table.writeUInt32LE(countAlignmentInLength ? padded : entryLength, 0);
   table.writeUInt16LE(0x0200, 4);
   table.writeUInt16LE(type, 6);
   alignedPayload.copy(table, 8);

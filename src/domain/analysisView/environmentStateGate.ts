@@ -7,6 +7,7 @@ import {
   isObject,
   lastSegmentValue,
   listItems,
+  recordedItemCount,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -14,7 +15,9 @@ import {
   scalarText,
   type JsonObject,
   type RecordedViewReason,
+  type ReplayKey,
   type StateEntity,
+  type StateItemView,
   type StateRecordFacts,
   type StateToolFacts,
   type StateView,
@@ -33,6 +36,14 @@ import { startsAtBeginning } from "./environmentStatePaging.js";
 import { readClock, type ClockFormat } from "./environmentStateWriteValues.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
+/** A successful item read first recorded after the initial reads, with the members its object carries. */
+export interface LateLine {
+  readonly record: StateRecordFacts;
+  readonly members: ReadonlySet<string>;
+  /** Whether it asks for some fields (`fields`, `select`, …). */
+  readonly projecting: boolean;
+}
+
 /** A read tool whose recordings locate entities of one type at one pointer. */
 export interface StatePlan {
   readonly tool: StateToolFacts;
@@ -43,9 +54,26 @@ export interface StatePlan {
   readonly recordings: readonly StateRecordFacts[];
   /** The latest of them per request line, in timeline order. */
   readonly latest: readonly StateRecordFacts[];
-  /** Item reads left to replay because they asked for some fields only. */
+  /** Reads left to replay: item reads that asked for some fields only, and representation variants. */
   readonly projected?: readonly number[];
+  /** Item lines first recorded after the initial reads whose identity they show, decided against the lines left once variants are dropped. */
+  readonly late?: readonly LateLine[];
+  /** The query keys that pick calls of the replayed reads out. */
+  readonly projectedKeys?: readonly ReplayKey[];
 }
+
+/** A view's replayed reads and their keys, when it has any. */
+const replayedReads = (
+  plan: StatePlan,
+): Pick<StateItemView, "projected_record_ordinals" | "projected_query_keys"> =>
+  plan.projected === undefined || plan.projected.length === 0
+    ? {}
+    : {
+        projected_record_ordinals: [...plan.projected],
+        ...(plan.projectedKeys === undefined || plan.projectedKeys.length === 0
+          ? {}
+          : { projected_query_keys: [...plan.projectedKeys] }),
+      };
 
 /** What the gate reads from an extraction; `withBody` drops each body's temporary work after `use`. */
 export interface StateGateContext {
@@ -256,9 +284,7 @@ export const checkItemPlan = (
     required_fields: union.required,
     envelope_ordinal: plan.latest[0]!.ordinal,
     checked_record_ordinals: plan.latest.map((record) => record.ordinal),
-    ...(plan.projected === undefined || plan.projected.length === 0
-      ? {}
-      : { projected_record_ordinals: [...plan.projected] }),
+    ...replayedReads(plan),
     ...spellings.view,
   };
 };
@@ -280,17 +306,22 @@ const listFacts = (
       items.forEach((item) => union.add(item));
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
       const counted = Object.keys(parent).filter(
-        (name) => isItemTotal(name) && countOf(parent[name]) !== undefined,
+        (name) =>
+          isItemTotal(name) && recordedItemCount(parent[name]) !== undefined,
       );
       counting.set(
         record.ordinal,
-        counted.filter((name) => parent[name] === items.length),
+        counted.filter(
+          (name) => recordedItemCount(parent[name]) === items.length,
+        ),
       );
       // Only a line that pages at most can hold its whole collection; a total that differs from
       // the number listed, or a next page, shows it is partial.
       if (
         !startsAtBeginning(record.query) ||
-        counted.some((name) => countOf(parent[name]) !== items.length) ||
+        counted.some(
+          (name) => recordedItemCount(parent[name]) !== items.length,
+        ) ||
         Object.keys(parent).some((name) => continues(name, parent[name]))
       )
         return;
@@ -331,14 +362,6 @@ const isItemTotal = (name: string): boolean => {
     )
   );
 };
-
-/** A count recorded as a number or as a string of digits. */
-const countOf = (value: JsonValue | undefined): number | undefined =>
-  typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/u.test(value)
-      ? Number(value)
-      : undefined;
 
 const CONTINUATION_NAMES = new Set([
   "hasmore",
@@ -550,6 +573,7 @@ export const checkListPlan = (
     counters,
     ...(query === undefined ? {} : { query }),
     checked_record_ordinals: plan.latest.map((record) => record.ordinal),
+    ...replayedReads(plan),
     ...spellings.view,
   };
 };

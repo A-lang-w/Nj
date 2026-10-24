@@ -94,6 +94,7 @@ export const cubinFixture = (
     osAbi?: number;
     flags?: number;
     extendedSectionIndex?: boolean;
+    v2ParameterSize?: number;
   } = {},
 ): Buffer => {
   const name = options.name ?? "add_one";
@@ -108,10 +109,24 @@ export const cubinFixture = (
   const global = Buffer.alloc(record.length * (options.globalRecords ?? 1));
   for (let offset = 0; offset < global.length; offset += record.length)
     record.copy(global, offset);
-  const info = Buffer.from(
-    "03190c0004170c00000000000100080000f0110004170c00000000000000000000f02100",
-    "hex",
-  );
+  const info =
+    options.v2ParameterSize === undefined
+      ? Buffer.from(
+          "03190c0004170c00000000000100080000f0110004170c00000000000000000000f02100",
+          "hex",
+        )
+      : (() => {
+          const byteCount = Buffer.alloc(4);
+          byteCount[0] = 3;
+          byteCount[1] = 0x19;
+          byteCount.writeUInt16LE(options.v2ParameterSize!, 2);
+          const v2 = Buffer.alloc(16);
+          v2[0] = 4;
+          v2[1] = 0x45;
+          v2.writeUInt16LE(12, 2);
+          v2.writeUInt32LE(options.v2ParameterSize!, 12);
+          return Buffer.concat([byteCount, v2]);
+        })();
   const paddingSections = options.extendedSectionIndex
     ? Array.from({ length: 65531 }, (_, index) => ({
         name: `.padding.${index}`,
@@ -195,10 +210,10 @@ export const cubinFixture = (
   }
   return result;
 };
-export const amdFixture = (
+/** One producer-shaped AMDGPU MessagePack note, composable with later notes. */
+export const amdNoteFixture = (
   hidden = false,
-  trailingNote?: Buffer,
-  target = "amdgcn-amd-amdhsa--gfx900",
+  target: string | null = "amdgcn-amd-amdhsa--gfx900",
 ): Buffer => {
   const args = [
     { ".offset": 0, ".size": 8, ".value_kind": "global_buffer" },
@@ -210,7 +225,7 @@ export const amdFixture = (
   ];
   const metadata = Buffer.from(
     encode({
-      "amdhsa.target": target,
+      ...(target === null ? {} : { "amdhsa.target": target }),
       "amdhsa.version": [1, 1],
       "amdhsa.kernels": [
         {
@@ -232,6 +247,14 @@ export const amdFixture = (
   note.writeUInt32LE(32, 8);
   note.write("AMDGPU\0", 12);
   metadata.copy(note, 20);
+  return note;
+};
+export const amdFixture = (
+  hidden = false,
+  trailingNote?: Buffer,
+  target: string | null = "amdgcn-amd-amdhsa--gfx900",
+): Buffer => {
+  const note = amdNoteFixture(hidden, target);
   return elfFixture(224, [
     {
       name: ".note",
@@ -242,15 +265,26 @@ export const amdFixture = (
   ]);
 };
 export const cudaFixture = (
-  compression: "none" | "zstd" = "none",
-  entries = [
+  compression: "none" | "zstd" | "legacy" = "none",
+  entries: { kind: number; target: number; bytes: Buffer; flags?: number }[] = [
     { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
     { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
   ],
 ): Buffer => {
-  const records = entries.map(({ kind, target, bytes }) => {
-    const compressed = compression === "zstd",
-      data = compressed ? zstdCompressSync(bytes) : bytes;
+  const records = entries.map(({ kind, target, bytes, flags: entryFlags }) => {
+    const compressed = compression !== "none",
+      data =
+        compression === "zstd"
+          ? zstdCompressSync(bytes)
+          : compression === "legacy"
+            ? deflateSync(bytes)
+            : bytes,
+      compressionFlag =
+        compression === "zstd"
+          ? 0x8000n
+          : compression === "legacy"
+            ? 0x1000n
+            : 0n;
     const result = Buffer.alloc(64 + Math.ceil(data.length / 8) * 8);
     result.writeUInt16LE(kind, 0);
     result.writeUInt16LE(0x101, 2);
@@ -258,7 +292,10 @@ export const cudaFixture = (
     result.writeBigUInt64LE(BigInt(result.length - 64), 8);
     result.writeUInt32LE(compressed ? data.length : 0, 16);
     result.writeUInt32LE(target, 28);
-    result.writeBigUInt64LE(compressed ? 0x8011n : 0x11n, 40);
+    result.writeBigUInt64LE(
+      0x11n | compressionFlag | BigInt(entryFlags ?? 0),
+      40,
+    );
     result.writeBigUInt64LE(compressed ? BigInt(bytes.length) : 0n, 56);
     data.copy(result, 64);
     return result;
@@ -291,6 +328,16 @@ export const hipFixture = (
   head.write("__CLANG_OFFLOAD_BUNDLE__");
   head.writeBigUInt64LE(2n, 24);
   return Buffer.concat([head, ...headers, payload]);
+};
+/** Representation recognition only; these bytes do not establish valid LLVM IR. */
+export const llvmBitcodeFixture = (wrapped = false): Buffer => {
+  const raw = Buffer.from([0x42, 0x43, 0xc0, 0xde, 0, 0, 0, 0]);
+  if (!wrapped) return raw;
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(0x0b17c0de, 0);
+  header.writeUInt32LE(20, 8);
+  header.writeUInt32LE(raw.length, 12);
+  return Buffer.concat([header, raw]);
 };
 export const ccobFixture = (
   version: 1 | 2 | 3 = 2,

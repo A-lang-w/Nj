@@ -59,6 +59,23 @@ const copiedTimeoutGuidance = (
     ? {}
     : { remediationAction: cause.remediationAction }),
 });
+/** A host executable refusal cannot be repaired by changing MI dialect. */
+class GdbExecutableRefusal extends AnalysisCapabilityUnavailableError {
+  constructor(command: string, systemCode: string, cause: Error) {
+    super("gdb", "start_gdb_session", cause.message, {
+      cause,
+      userMessage: `Could not launch the selected GDB executable ${JSON.stringify(command)} (${systemCode}).`,
+      remediationAction:
+        "Set REA_GDB_COMMAND to an installed executable GDB command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.",
+      diagnostics: {
+        boundary: "provider-launch",
+        command,
+        system_code: systemCode,
+      },
+    });
+  }
+}
+
 const MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT_RECORDS = 16_384;
 const MAX_MI_LINE_BYTES = 16 * 1024 * 1024;
@@ -107,7 +124,7 @@ interface PendingCommand {
   outputTruncated: boolean;
   outputInvalidUtf8: boolean;
   terminalRecord: string | undefined;
-  awaitingInferiorStop: boolean;
+  completionToken: number | undefined;
   readonly resolve: (result: GdbCommandResult) => void;
   readonly reject: (error: Error) => void;
   readonly cleanup: () => void;
@@ -728,7 +745,10 @@ export class GdbSessionManager {
       signal,
       options.inferiorTty,
     );
-    return mi3.ok || signal.aborted || this.#sessions.has(id)
+    return mi3.ok ||
+      signal.aborted ||
+      this.#sessions.has(id) ||
+      mi3.error instanceof GdbExecutableRefusal
       ? mi3
       : this.#startProtocol(
           id,
@@ -768,11 +788,22 @@ export class GdbSessionManager {
         cause instanceof AnalysisCancelledError
       )
         return err(new AnalysisCancelledError("start_gdb_session", { cause }));
+      const code: unknown =
+        cause instanceof Error && "code" in cause ? cause.code : undefined;
+      if (
+        cause instanceof Error &&
+        typeof code === "string" &&
+        ["ENOENT", "EACCES", "EPERM", "ENOEXEC", "ENOTDIR", "EISDIR"].includes(
+          code,
+        )
+      )
+        return err(new GdbExecutableRefusal(this.#command, code, cause));
       return err(
         new AnalysisCapabilityUnavailableError(
           "gdb",
           "start_gdb_session",
           cause instanceof Error ? cause.message : "Unable to start GDB",
+          { cause },
         ),
       );
     }
@@ -1224,6 +1255,11 @@ export class GdbSessionManager {
                 subjectUnavailableReason:
                   "The active GDB inferior identity is not established by the debugger session identifier.",
                 limitations: [
+                  ...(result.mi.length === 0
+                    ? [
+                        "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
+                      ]
+                    : []),
                   "MI records are returned as decoded text; their semantics depend on GDB version and target.",
                   ...(result.output_truncated
                     ? [
@@ -1401,12 +1437,17 @@ export class GdbSessionManager {
               throw new Error(
                 "GDB returned an unknown inferior list before shutdown.",
               );
-            if (groupCount > 0 && !session.inferiorTtyVerified)
+            if (
+              groupCount > 1 ||
+              (groupCount > 0 && !session.inferiorTtyVerified)
+            )
               return err(
                 new AnalysisCapabilityUnavailableError(
                   GDB_PROVIDER_IDENTITY.id,
                   "close_gdb_session",
-                  "Live GDB inferiors require an explicit disposition because no durable inferior TTY is verified.",
+                  groupCount > 1
+                    ? "Multiple live GDB inferiors require an explicit disposition because automatic detach supports only one inferior."
+                    : "Live GDB inferiors require an explicit disposition because no durable inferior TTY is verified.",
                   {
                     retryable: true,
                     userMessage:
@@ -1635,45 +1676,68 @@ export class GdbSessionManager {
           pending.outputInvalidUtf8 ||= invalidUtf8;
         } else pending.outputTruncated = true;
       }
-      if (line.startsWith("*stopped")) {
-        for (const [token, pending] of session.pending) {
-          if (!pending.awaitingInferiorStop) continue;
-          clearTimeout(pending.timer);
-          session.pending.delete(token);
-          pending.cleanup();
-
-          pending.resolve({
-            command: "",
-            mi: pending.terminalRecord ?? "",
-            ...snapshotGdbCommandRecords(pending.lines),
-            output_truncated: pending.outputTruncated,
-            ...(pending.outputInvalidUtf8
-              ? { output_invalid_utf8: true as const }
-              : {}),
-            completion_status: "complete",
-          });
+      if (line === "(gdb)" || line === "(gdb) ") {
+        // Shell stdout can precede its result token without an LF. Never scan
+        // caller output for a token-looking suffix. Once GDB returns its prompt,
+        // correlate a fresh read-only query before completing that console turn.
+        for (const pending of session.pending.values()) {
+          if (
+            session.ready &&
+            pending.command.startsWith("-interpreter-exec console ") &&
+            pending.terminalRecord === undefined &&
+            pending.completionToken === undefined
+          ) {
+            pending.completionToken = session.nextToken++;
+            this.#writeMiRequest(
+              session,
+              pending.completionToken,
+              "-gdb-show mi-async",
+            );
+          }
         }
-        continue;
       }
       const match = /^(\d+)\^(done|running|connected|error|exit)(?:,|$)/u.exec(
         line,
       );
       if (match === null) continue;
       const token = Number(match[1]);
-      const pending = session.pending.get(token);
+      const pending =
+        session.pending.get(token) ??
+        [...session.pending.values()].find(
+          (command) => command.completionToken === token,
+        );
       if (pending === undefined) continue;
-      if (match[2] === "running") {
+      if (token === pending.completionToken) {
+        if (match[2] !== "done") {
+          this.#failProtocol(session, "GDB command completion query failed.");
+          continue;
+        }
+      } else {
         pending.terminalRecord = line;
-        pending.awaitingInferiorStop = true;
-        continue;
+        if (match[2] === "running" && pending.completionToken === undefined) {
+          // ^running and *stopped describe inferior execution, not completion
+          // of an outer CLI command such as a multi-run command file. GDB
+          // processes this read-only query after returning to its command loop.
+          pending.completionToken = session.nextToken++;
+          this.#writeMiRequest(
+            session,
+            pending.completionToken,
+            "-gdb-show mi-async",
+          );
+        }
+        if (pending.completionToken !== undefined) continue;
       }
       clearTimeout(pending.timer);
-      session.pending.delete(token);
+      session.pending.delete(pending.token);
       pending.cleanup();
 
       pending.resolve({
         command: "",
-        mi: line,
+        // A query proves return to the command loop, not the class of a
+        // result record that raw stdout prevented us from framing separately.
+        mi:
+          pending.terminalRecord ??
+          (token === pending.completionToken ? "" : line),
         ...snapshotGdbCommandRecords(pending.lines),
         output_truncated: pending.outputTruncated,
         ...(pending.outputInvalidUtf8
@@ -1825,11 +1889,8 @@ export class GdbSessionManager {
     // incomplete, malformed, or reports multiple inferiors, no earlier PID
     // can stand in for the current unknown inventory.
     session.knownInferiorIdentities.clear();
-    if (
-      session.protocolError !== undefined ||
-      session.pending.size > 0 ||
-      session.pendingCommandCount > 1
-    )
+    // Queue reservations have not sent MI requests and do not affect synchronization.
+    if (session.protocolError !== undefined || session.pending.size > 0)
       throw new Error(
         "GDB MI state is not synchronized; inferior state is unknown.",
       );
@@ -2088,7 +2149,7 @@ export class GdbSessionManager {
         outputTruncated: false,
         outputInvalidUtf8: false,
         terminalRecord: undefined,
-        awaitingInferiorStop: false,
+        completionToken: undefined,
       };
       session.pending.set(token, pending);
       abortListener = (): void => {
@@ -2177,25 +2238,28 @@ export class GdbSessionManager {
         abortListener();
         return;
       }
-      try {
-        session.launched.process.stdin?.write(
-          `${token}${command}\n`,
-          "utf8",
-          (cause?: Error | null) => {
-            if (cause)
-              this.#failProtocol(
-                session,
-                `GDB stdin write failed: ${cause.message}`,
-              );
-          },
-        );
-      } catch (cause) {
-        this.#failProtocol(
-          session,
-          `GDB stdin write failed: ${cause instanceof Error ? cause.message : "unknown error"}`,
-        );
-      }
+      this.#writeMiRequest(session, token, command);
     }).then((result) => ({ ...result, command }));
+  }
+  #writeMiRequest(session: GdbSession, token: number, command: string): void {
+    try {
+      session.launched.process.stdin?.write(
+        `${token}${command}\n`,
+        "utf8",
+        (cause?: Error | null) => {
+          if (cause)
+            this.#failProtocol(
+              session,
+              `GDB stdin write failed: ${cause.message}`,
+            );
+        },
+      );
+    } catch (cause) {
+      this.#failProtocol(
+        session,
+        `GDB stdin write failed: ${cause instanceof Error ? cause.message : "unknown error"}`,
+      );
+    }
   }
 }
 
@@ -2318,6 +2382,10 @@ export const gdbOneShotCommandMayInvalidateDetachProof = (
 
 /** @internal Classify commands that can invalidate the configured output sink. */
 export const commandMayChangeInferiorOutput = (command: string): boolean => {
+  // These complete built-in inspections cannot change output routing. Keep
+  // compound commands and abbreviations under the conservative rules below.
+  if (/^[ \t]*(?:show|help)[ \t]+inferior-tty[ \t]*$/iu.test(command))
+    return false;
   const setting = /^\s*(?:set|with)\s+(\S+)/iu.exec(command)?.[1];
   const maySetInferiorTty =
     setting !== undefined && "inferior-tty".startsWith(setting.toLowerCase());

@@ -1,4 +1,9 @@
 import { readCudaTarget } from "./CudaTarget.js";
+import {
+  type AmdGpuTargetIdentity,
+  readAmdGpuElfProcessor,
+  readAmdGpuNoteTarget,
+} from "./AmdGpuTarget.js";
 import type { GpuPayloadTarget } from "./GpuObject.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -197,7 +202,7 @@ const attachCudaResources = (
   text: NativeSection,
   index: CudaMetadataIndex,
   symbolKey: string,
-): void => {
+): "complete" | "partial" => {
   const { source, directory } = index;
   const registerRows = index.registerFacts.get(symbolKey);
   const registerValues = new Set(registerRows?.keys());
@@ -218,12 +223,12 @@ const attachCudaResources = (
       section_index: text.index,
       section_name: text.name,
     };
-  if (
+  const registerConflict =
     registerValues.size > 1 ||
     (kernel.registers.physical !== null &&
       sectionRegisters !== 0 &&
-      kernel.registers.physical !== sectionRegisters)
-  ) {
+      kernel.registers.physical !== sectionRegisters);
+  if (registerConflict) {
     kernel.registers.physical = null;
     kernel.limitations.push(
       "Conflicting CUDA register declarations; physical count remains unknown",
@@ -244,6 +249,7 @@ const attachCudaResources = (
       section_index: shared[0]!.index,
       section_name: shared[0]!.name,
     };
+  return registerConflict ? "partial" : "complete";
 };
 
 const cudaKernels = async (
@@ -310,12 +316,15 @@ const cudaKernels = async (
         readElfString(names, symbol.name_offset),
         site(source, section, offset, width),
       );
-      attachCudaResources(
-        kernel,
-        text!,
-        index,
-        `${section.index}:${offset / width}`,
-      );
+      if (
+        attachCudaResources(
+          kernel,
+          text!,
+          index,
+          `${section.index}:${offset / width}`,
+        ) === "partial"
+      )
+        complete = false;
       const infos = index.infosByText.get(text!.index) ?? [];
       if (infos.length === 1) {
         const info = infos[0]!;
@@ -351,7 +360,7 @@ const cudaKernels = async (
 };
 export interface AmdElfMetadata {
   readonly target: string | null;
-  readonly target_key: string | null;
+  readonly targetIdentity: AmdGpuTargetIdentity | null;
   readonly limitations: string[];
   readonly notes: {
     section: NativeSection;
@@ -374,22 +383,39 @@ export const readAmdElfMetadata = async (
   const targets = new Set<string>(),
     limitations: string[] = [];
   const notes: AmdElfMetadata["notes"] = [];
+  let processor: string | null = null;
   let retainedBytes = 0;
   const observed = (): AmdElfMetadata => {
-    const target = targets.size === 1 ? [...targets][0]! : null;
+    const noteTarget = targets.size === 1 ? [...targets][0]! : null;
+    const noteIdentity =
+      noteTarget === null ? null : readAmdGpuNoteTarget(noteTarget);
+    const noteConflict = targets.size > 1;
+    const processorConflict =
+      processor !== null &&
+      noteIdentity !== null &&
+      processor !== noteIdentity.processor;
+    const conflict = noteConflict || processorConflict;
+    const limitation = noteConflict
+      ? "AMDGPU notes declare conflicting processor targets; processor identity is unknown"
+      : processorConflict
+        ? "AMDGPU ELF processor flags conflict with target note metadata; processor identity is unknown"
+        : null;
+    if (limitation !== null && !limitations.includes(limitation))
+      limitations.push(limitation);
+    const target = conflict ? null : (noteTarget ?? processor);
     // LLVM notes use both the empty and explicit `unknown` environment forms.
-    const targetMatch =
-      target === null
-        ? null
-        : /^amdgcn-amd-amdhsa-(?:-(gfx[a-zA-Z0-9]+(?::[^\s]+)?)|unknown-(gfx[a-zA-Z0-9]+(?::[^\s]+)?))$/u.exec(
-            target,
-          );
-    const target_key = targetMatch?.[1] ?? targetMatch?.[2] ?? null;
-    return { target, target_key, limitations, notes };
+    const targetIdentity = conflict
+      ? null
+      : (noteIdentity ??
+        (noteTarget === null && processor !== null
+          ? { key: processor, processor }
+          : null));
+    return { target, targetIdentity, limitations, notes };
   };
   try {
     if (directory.machine !== 224)
       rejectGpu("AMDGPU metadata requires an AMDGPU ELF machine");
+    processor = readAmdGpuElfProcessor(directory.flags);
     for (const section of directory.sections) {
       if (section.type !== 7) continue;
       const sectionSize = gpuCount(section.size);
@@ -451,11 +477,11 @@ const amdKernels = (
   prepared: AmdElfMetadata,
   onKernel: (kernel: GpuKernel) => void,
   onTarget?: (target: GpuPayloadTarget) => void,
-): { limitations: string[]; coverage: "complete" } => {
+): { limitations: string[]; coverage: "complete" | "partial" } => {
   onTarget?.({
     value: prepared.target,
-    key: prepared.target_key,
-    scope: "exact",
+    identity: prepared.targetIdentity,
+    scope: "amdgpu",
   });
   for (const {
     section,
@@ -514,6 +540,6 @@ const amdKernels = (
   }
   return {
     limitations: prepared.limitations,
-    coverage: "complete",
+    coverage: prepared.limitations.length === 0 ? "complete" : "partial",
   };
 };
