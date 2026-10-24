@@ -90,7 +90,11 @@ name it `.har`.
   tarballs a build refuses, including one whose contents cannot be read.
 
 The directory must be absent or empty, as for the export; the build never
-replaces a folder. A refusal before the write leaves nothing behind. Each
+replaces a folder. A refusal before the write leaves nothing behind. A capture
+Evidence file, an inspected HAR's Evidence and the projected manifest must each
+fit the live heap headroom for parsing and sealing, checked before the file is
+read or the Evidence serialized; one that does not is refused as
+`resource_constraint`. Each
 refusal names its stage: `environment-build` for the build's own checks,
 `inspect_web_network_capture` and `inspect_analysis_view` for inspection and
 projection, `environment-export` for the bundle. SIGINT cancels the build
@@ -304,7 +308,14 @@ session's cookies, and a header can carry the CSRF cookie or stored token the
 application's own requests send. A write is served only when the capture shows
 its effect, so read each collection before writing, read every written entity
 back by id and in its list right after the write, and leave more than a second
-between a create and its first edit. The environment coverage view names each
+between a create and its first edit. A request step's path is fixed when the
+scenario is written and cannot use a value an earlier response returned, so an
+id must be known before the run: one the caller chooses, such as a `uid` in the
+create body, or one an earlier scenario created. When the server assigns ids,
+read the list after each create (the create's response or the list shows the
+new entity), and record updates and deletes in a second scenario that reads
+the first one's objects by id before editing them, or make them through the
+UI. The environment coverage view names each
 write it withholds and what to record next. A scenario records no request
 times, so the state learns no clock: an update whose response changes a
 timestamp the server sets, such as a modification time, is withheld as
