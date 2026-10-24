@@ -66,14 +66,14 @@ it.for<TextSourceCase>([
   },
   {
     name: "unknown XML scalar",
-    bytes: Buffer.from("<plist><integer> 42 </integer></plist>"),
+    bytes: Buffer.from("<plist><real>1e999</real></plist>"),
     description: "XML 1.0 document text",
     format: "xml",
     value: {
       $plist_type: "unknown",
-      element: "integer",
-      literal: " 42 ",
-      reason: "invalid-literal",
+      element: "real",
+      literal: "1e999",
+      reason: "unrepresentable",
     },
     limitations: [
       expect.stringContaining("1 XML scalar value(s) could not be established"),
@@ -148,6 +148,7 @@ it.for<TextSourceCase>([
   const replay = new NativeFixtureRunner({ file: fixture.description });
   const tools: string[] = [];
   let conversionIndex = 0;
+  let validations = 0;
   const client = new NativeMacOSProvider(
     {},
     {
@@ -155,10 +156,22 @@ it.for<TextSourceCase>([
         tools.push(tool);
         const result = await replay.run(tool, args);
         if (tool !== "plutil" || !result.ok) return result;
+        if (args[0] === "-lint") {
+          expect(args).toEqual(["-lint", "--", path]);
+          validations += 1;
+          return result;
+        }
         const conversion = fixture.conversions[conversionIndex++];
         if (conversion === undefined)
           throw new Error("Unexpected conversion of directly supported source");
-        expect(args[1]).toBe(conversion.format);
+        expect(args).toEqual([
+          "-convert",
+          conversion.format,
+          "-o",
+          "-",
+          "--",
+          path,
+        ]);
         return ok({
           ...result.value,
           stdout: conversion.output,
@@ -181,7 +194,14 @@ it.for<TextSourceCase>([
     source_path: path,
   });
   expect(result.provenance.map((item) => item.tool)).toEqual(tools);
-  expect(tools).toEqual(["file", ...fixture.conversions.map(() => "plutil")]);
+  const directXml =
+    fixture.format === "xml" && fixture.conversions.length === 0;
+  expect(validations).toBe(directXml ? 1 : 0);
+  expect(tools).toEqual([
+    "file",
+    ...(directXml ? ["plutil"] : []),
+    ...fixture.conversions.map(() => "plutil"),
+  ]);
   expect(conversionIndex).toBe(fixture.conversions.length);
   if (fixture.limitations !== undefined)
     expect(result.limitations).toEqual(fixture.limitations);

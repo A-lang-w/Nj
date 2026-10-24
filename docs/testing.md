@@ -169,14 +169,15 @@ rendered declarations. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
-The reused CLI boundary workers cap V8 old space at 384 MiB for ordinary runs
-and 512 MiB with coverage enabled. Covered ADB fixtures exhaust the ordinary
-384 MiB budget; those fixtures also complete with the shared CLI graph preloaded
-at 512 MiB. This is a measured capacity control, not a suite-wide speedup claim.
-Both profiles keep the
-same bounded worker count, and spawned REA processes retain their own heap
-settings. Explicitly disabling coverage retains the ordinary profile; coverage
-provider options alone do not enable instrumentation.
+The reused CLI boundary workers cap V8 old space at 512 MiB, with or without
+coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
+files loaded the shared source/contract graph, while later command registration
+and schema/help rendering still needed transient allocation space. This is a
+measured capacity control, not a suite-wide speedup claim. The worker count
+remains bounded at two, and spawned REA processes retain their own heap settings.
+Coverage enablement still controls instrumentation, test deadlines and coverage
+thresholds; explicitly disabling it or selecting only a provider does not enable
+instrumentation.
 
 Vitest worker limits do not bound subprocesses launched within a test. Bound
 those batches separately so repeated CLI validation cannot oversubscribe the
@@ -548,12 +549,16 @@ uses the same ownership rule to find retained fixtures under a private temporary
 root. Third-party caches remain outside that ownership rule.
 
 Real Hopper, Ghidra, IDA, browser, package, and managed-code claims belong to their
-explicit `npm run verify:*` lanes. The reconstruction-readiness lane also
-checks deterministic rerun, tamper, and stale-input handling; those checks do
-not execute extracted JavaScript modules. When application runtime behavior is
-needed, exercise the actual target through browser, Electron, or process
-capture. Real model trials are manual; Vitest covers deterministic evaluator
-logic.
+explicit `npm run verify:*` lanes. The reconstruction-readiness lane separates
+observed native CLI inspection and JavaScript/Electron static CLI/MCP analysis
+from synthetic report-evaluator conformance. Its determinism, tamper, and
+stale-source checks concern the synthetic evaluator; they do not execute fixture
+applications or verify runtime authority, cleanup, comparison, or reconstruction
+closure. The evaluator and its semantic tests belong to
+`tests/conformance/readiness/report/`, outside the shipped runtime. When
+application runtime behavior is needed, exercise the actual target through
+browser, Electron, or process capture. Real model trials are manual; Vitest
+covers deterministic evaluator logic.
 
 `verify:managed` runs the portable PE byte-fixture conformance entrypoint under
 `scripts/verify/managed/`, with its byte builder under
@@ -1697,6 +1702,15 @@ engine behavior remains unverified; process fixtures do not establish it.
 See [Packet capture analysis](pcap-analysis.md) for contracts and budgets.
 
 ## Apple native metadata and UI
+
+`tests/boundary/mcp/nativeDispatchBoundTarget.test.ts` uses the production
+stdio MCP server on macOS to bind an inert, self-authored Mach-O, then replace
+its path with missing, directory and symlink-loop states. Each refusal must
+report `artifact_changed`; restoring the same bytes must succeed in the same
+session. A separate non-root case checks real read permission denial as
+`access_denied`. These tests read the target without executing it. Controlled
+provider tests retain the physical acquisition failure through descriptor close
+denial and confirm cleanup retry releases the original owner.
 
 `npm run verify:apple-dispatch` compiles the Objective-C fixture (classes,
 protocols, a property and an `NSString` category) and the Swift
