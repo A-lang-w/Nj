@@ -88,7 +88,7 @@ it.each([
     applicability: "applicable",
     compression: null,
     next_probe: null,
-    coverage: { status: "complete", examined_entries: 8 },
+    coverage: { status: "complete", examined_entries: 9 },
   });
   expect(
     report.modinfo?.entries.map((entry) => [entry.key, entry.value]),
@@ -187,7 +187,10 @@ it("closes __versions when the section size is not a multiple of 64", () => {
     layout: "elf64_unsigned_long_name56",
     entry_bytes: 64,
   });
-  expect(report.coverage.examined_entries).toBe(report.modinfo?.entries.length);
+  expect(report.coverage.examined_entries).toBe(
+    (report.modinfo?.entries.length ?? 0) +
+      (report.ksymtab?.sections.length ?? 0),
+  );
 });
 
 it("observes a version name with nonzero padding and rejects a missing NUL", () => {
@@ -416,7 +419,33 @@ it("names a non-file-backed __ksymtab section without dropping the module", () =
   const report = parse(bytes);
   expect(report.ksymtab?.sections).toEqual([]);
   expect(report.limitations.join("\n")).toContain(
-    "__ksymtab is declared but not file-backed",
+    "1 __ksymtab* section(s) are declared but not file-backed",
   );
   expect(report.modinfo?.entries[0]?.key).toBe("license");
+});
+
+it("charges many sections sharing one huge __ksymtab name to the entry budget", () => {
+  const name = `__ksymtab_${"x".repeat(65_490)}`;
+  const bytes = kernelModuleFixture({
+    sharedNameSections: { name, count: 8192 },
+  });
+  const started = performance.now();
+  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  const report = parse(bytes, { max_entries: 65_536 });
+  expect(performance.now() - started).toBeLessThan(5_000);
+  const huge = report.ksymtab?.sections.slice(1) ?? [];
+  expect(huge).toHaveLength(8192);
+  expect(
+    huge.every(
+      (section) =>
+        section.name === null &&
+        section.reason === "ksymtab_name_exceeds_limit",
+    ),
+  ).toBe(true);
+  expect(report.ksymtab?.sections[0]).toMatchObject({
+    name: "__ksymtab",
+    reason: null,
+  });
+  expect(report.coverage.examined_entries).toBe(6 + 2 + 1 + 8192);
+  expect(JSON.stringify(report).length).toBeLessThan(2 * 1024 * 1024);
 });

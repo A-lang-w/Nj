@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
+import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import { localPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
 
@@ -11,7 +12,10 @@ const hex = z.string().regex(/^[0-9a-f]*$/u);
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_KERNEL_MODULE_FILE_BYTES = 536870912;
-/** Hard ceiling on decoded .modinfo and __versions entries combined. */
+/**
+ * Hard ceiling on decoded .modinfo and __versions entries plus listed
+ * file-backed __ksymtab* sections combined.
+ */
 export const MAX_INSPECT_KERNEL_MODULE_ENTRIES = 65536;
 /**
  * Retained .modinfo key length. Longer keys stay malformed per entry and are
@@ -23,6 +27,11 @@ export const MAX_KERNEL_MODULE_KEY_BYTES = 256;
  * are not copied into the result.
  */
 export const MAX_KERNEL_MODULE_VALUE_BYTES = 4096;
+/**
+ * Retained __ksymtab* section-name length. Longer names stay listed with a
+ * null name and are not copied into the result.
+ */
+export const MAX_KERNEL_MODULE_SECTION_NAME_BYTES = 256;
 /** Inline raw-entry hex ceiling. Longer entries keep only their SHA-256. */
 export const MAX_KERNEL_MODULE_RAW_BYTES = 4096;
 /**
@@ -65,6 +74,10 @@ export const KERNEL_MODULE_VERSION_SECTION_REASONS = [
   "versions_size_not_multiple",
   "versions_section_compressed",
   "versions_section_not_file_backed",
+] as const;
+
+export const KERNEL_MODULE_KSYMTAB_SECTION_REASONS = [
+  "ksymtab_name_exceeds_limit",
 ] as const;
 
 export const KERNEL_MODULE_SIGNATURE_REASONS = [
@@ -146,9 +159,14 @@ const ksymtabSchema = z.strictObject({
   status: z.enum(["observed", "unknown"]),
   sections: z.array(
     z.strictObject({
-      name: z.string().min(1),
+      name: z
+        .string()
+        .min(1)
+        .max(MAX_KERNEL_MODULE_SECTION_NAME_BYTES)
+        .nullable(),
       location: range,
       compressed: z.boolean(),
+      reason: z.enum(KERNEL_MODULE_KSYMTAB_SECTION_REASONS).nullable(),
     }),
   ),
 });
@@ -160,7 +178,7 @@ const signatureInfoSchema = z.strictObject({
   id_type: uint8,
   signer_len: uint8,
   key_id_len: uint8,
-  pad: z.tuple([uint8, uint8, uint8]),
+  pad: fixedTupleSchema([uint8, uint8, uint8]),
   sig_len: uint,
 });
 
@@ -196,7 +214,7 @@ export const inspectKernelModuleInputSchema = z.strictObject({
     .max(MAX_INSPECT_KERNEL_MODULE_ENTRIES)
     .default(8192)
     .describe(
-      "Maximum .modinfo and __versions entries to examine; exceeding the budget fails without partial success",
+      "Maximum .modinfo and __versions entries plus file-backed __ksymtab* sections to examine; exceeding the budget fails without partial success",
     ),
 });
 

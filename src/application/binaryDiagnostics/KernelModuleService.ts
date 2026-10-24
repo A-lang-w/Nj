@@ -347,7 +347,15 @@ const validReport = (
     return false;
   if (
     report.coverage.examined_entries !==
-    report.modinfo.entries.length + report.versions.entries.length
+    report.modinfo.entries.length +
+      report.versions.entries.length +
+      report.ksymtab.sections.length
+  )
+    return false;
+  if (
+    !report.ksymtab.sections.every(
+      (section) => (section.name === null) === (section.reason !== null),
+    )
   )
     return false;
   if (report.type !== 1) return false;

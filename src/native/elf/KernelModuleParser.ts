@@ -6,6 +6,7 @@ import {
   KERNEL_MODULE_VERSION_ENTRY_BYTES,
   MAX_KERNEL_MODULE_KEY_BYTES,
   MAX_KERNEL_MODULE_RAW_BYTES,
+  MAX_KERNEL_MODULE_SECTION_NAME_BYTES,
   MAX_KERNEL_MODULE_VALUE_BYTES,
   MODULE_SIGNATURE_INFO_BYTES,
   MODULE_SIGNATURE_MAGIC,
@@ -560,18 +561,31 @@ export const parseKernelModule = (
   const ksymtabNamed = sections.filter(
     (section) => section.name?.startsWith("__ksymtab") === true,
   );
-  for (const section of ksymtabNamed) {
-    if (
-      section.name !== null &&
-      (section.type === 8 || !inFile(section, bytes.length))
-    )
-      limitations.push(
-        `${section.name} is declared but not file-backed, so its range is unknown.`,
-      );
-  }
   const ksymtabSections = ksymtabNamed.filter(
     (section) => section.type !== 8 && inFile(section, bytes.length),
   );
+  const unbacked = ksymtabNamed.length - ksymtabSections.length;
+  if (unbacked > 0)
+    limitations.push(
+      `${String(unbacked)} __ksymtab* section(s) are declared but not file-backed, so their ranges are unknown.`,
+    );
+  const ksymtab = ksymtabSections.flatMap((section) => {
+    const location = locationOf(section);
+    if (section.name === null || location === null) return [];
+    const fitsName =
+      section.name.length <= MAX_KERNEL_MODULE_SECTION_NAME_BYTES;
+    return [
+      {
+        name: fitsName ? section.name : null,
+        location,
+        compressed: section.compressed,
+        reason: fitsName ? null : ("ksymtab_name_exceeds_limit" as const),
+      },
+    ];
+  });
+  // Each listed section repeats its name, so the list shares the entry budget.
+  examined.count += ksymtab.length;
+  exceeds(examined.count, input.max_entries);
   if (!namesComplete)
     limitations.push(
       "Section names are incomplete, so a missing .modinfo, __versions, this_module, __ksymtab, .init.text, or .exit.text section is unknown rather than absent.",
@@ -597,12 +611,7 @@ export const parseKernelModule = (
     },
     ksymtab: {
       status: namesComplete ? "observed" : "unknown",
-      sections: ksymtabSections.flatMap((section) => {
-        const location = locationOf(section);
-        return section.name === null || location === null
-          ? []
-          : [{ name: section.name, location, compressed: section.compressed }];
-      }),
+      sections: ksymtab,
     },
     init_text: sized(
       bytes,

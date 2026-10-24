@@ -3,6 +3,7 @@ import { KernelModuleService } from "./KernelModuleService.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
 import type { KernelModule } from "../../domain/native/kernelModule.js";
 import { ok } from "../../domain/result.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -92,7 +93,6 @@ it("records an applicable module and its x86_64 architecture", async () => {
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
@@ -116,19 +116,63 @@ it("rejects a report whose entry count does not match the examined sections", as
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it.each([
+  ["__ksymtab", "ksymtab_name_exceeds_limit"],
+  [null, null],
+] as const)(
+  "rejects a __ksymtab listing whose name %s disagrees with reason %s",
+  async (name, reason) => {
+    const result = await new KernelModuleService({
+      identity,
+      inspect: () =>
+        Promise.resolve(
+          ok({
+            ...report,
+            ksymtab: {
+              status: "observed",
+              sections: [
+                {
+                  name,
+                  location: { offset: 64, bytes: 0 },
+                  compressed: false,
+                  reason,
+                },
+              ],
+            },
+            coverage: { status: "complete", examined_entries: 1 },
+          }),
+        ),
+    }).inspect({ path: report.artifact.path });
+    if (result.ok) throw new Error("Expected malformed provider output");
+    expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  },
+);
+
+it("retains a completed observation if the caller cancels while the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late kernel module cancellation" };
   const service = new KernelModuleService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
-  const result = await service.inspect(
+  const late = await service.inspect(
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(late).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (late.ok) throw new Error("Expected late cancellation");
+  expect(late.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(late.error.cause).toBe(reason);
+  expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+    operation: "inspect_kernel_module",
+    confidence: "observed",
+    subject: { format: "elf", architecture: "x86_64" },
+    normalized_result: report,
+  });
 });

@@ -75,7 +75,6 @@ describe("kernel module stable filesystem boundary", () => {
     const service = createKernelModuleService();
     try {
       const result = await service.inspect({ path });
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.subject?.format).toBe("file");
       expect(result.value.normalized_result).toMatchObject({

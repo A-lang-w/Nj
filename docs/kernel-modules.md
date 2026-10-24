@@ -43,8 +43,10 @@ the section is absent.
 
 `.gnu.linkonce.this_module` is reported as present, absent, or unknown.
 `layout` is always `unknown` because `struct module` changes with the kernel
-version and is not decoded. `__ksymtab*` sections are listed by name and file
-range; their records are not decoded. `.init.text` and `.exit.text` report the
+version and is not decoded. File-backed `__ksymtab*` sections are listed in
+section-header order by name and file range; their records are not decoded.
+Sections that are `SHT_NOBITS` or leave the file are counted in one limitation
+without their names. `.init.text` and `.exit.text` report the
 observed file-backed size. A compressed payload reports the stored size and a
 limitation that the decoded size is unknown.
 
@@ -62,10 +64,12 @@ rather than `absent`. An empty file-backed section is present and empty.
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
-8192 `.modinfo` and `__versions` entries are examined by default (65536
-maximum). Exceeding that budget fails with no partial success. Keys longer
+8192 `.modinfo` and `__versions` entries plus listed `__ksymtab*` sections are
+examined by default (65536 maximum); `coverage.examined_entries` counts all
+three. Exceeding that budget fails with no partial success. Keys longer
 than 256 bytes and values longer than 4096 bytes stay malformed per entry;
-the field that fits is still copied. Inline raw hex stops at 4096 bytes and
+the field that fits is still copied. A `__ksymtab*` section name longer than
+256 bytes keeps its range with `name: null` and `ksymtab_name_exceeds_limit`. Inline raw hex stops at 4096 bytes and
 the SHA-256 remains.
 
 A `.modinfo` span with no trailing NUL is `unterminated_modinfo_entry` and
