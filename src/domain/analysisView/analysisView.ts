@@ -9,6 +9,12 @@ import {
 } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import {
+  erlangBeamViewRequestSchema,
+  erlangBeamViewPageSchema,
+  erlangBeamSummarySchema,
+  projectErlangBeamView,
+} from "./erlangBeamView.js";
+import {
   pythonPycViewRequestSchema,
   pythonPycViewItemsSchema,
   pythonPycSummarySchema,
@@ -345,6 +351,7 @@ const nativeViewSchema = z.strictObject({
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  erlangBeamViewRequestSchema,
   pythonPycViewRequestSchema,
   nativeExportsViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
@@ -471,6 +478,7 @@ const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
     "inspect_python_pyc",
+    "inspect_erlang_beam",
     "inspect_byte_entropy",
     "inspect_native_exports",
     "inspect_binary_layout",
@@ -524,6 +532,20 @@ export const nativeExportsSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_native_exports"),
   summary: nativeExportsSummarySchema,
+});
+
+export const erlangBeamSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_erlang_beam"),
+  summary: erlangBeamSummarySchema,
+});
+export const erlangBeamTableViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("beam"),
+  parent_operation: z.literal("inspect_erlang_beam"),
+  view: erlangBeamViewRequestSchema,
+  beam: erlangBeamSummarySchema,
+  page: erlangBeamViewPageSchema,
 });
 
 export const pythonPycSummaryViewResultSchema = z.strictObject({
@@ -961,6 +983,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentCoverageViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    erlangBeamSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
@@ -992,6 +1015,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
   ]),
+  erlangBeamTableViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
   z.strictObject({
     ...viewResultBase,
@@ -1260,6 +1284,7 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 
 /** Named source owners for views that need no extra decoder or accumulator. */
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
+  ["inspect_erlang_beam", projectErlangBeamView],
   ["inspect_native_exports", projectNativeExportsView],
   ["inspect_python_pyc", projectPythonPycView],
   ["frida_session_status", projectFridaSessionStatusView],
